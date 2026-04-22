@@ -63,6 +63,7 @@ import SectionCard from "../../components/ui-client/section-card";
 import TransactionRow from "../../components/ui-client/transaction-row";
 import UpcomingLessonRow from "../../components/ui-client/upcoming-lesson-row";
 import UrgentPayCard from "../../components/ui-client/urgent-pay-card";
+import { normalizeUiLanguage, type UiLanguage, uiText } from "../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type AgendaView = "agenda" | "week" | "day";
@@ -70,6 +71,19 @@ type DashboardTab = "home" | "planning" | "courses" | "reservations" | "offers" 
 type MessageScope = "LAST_3_MONTHS" | "CURRENT_YEAR" | "ALL";
 type TimeBucket = "ALL" | "MORNING" | "AFTERNOON" | "EVENING";
 type PlanningSlotFilter = "ALL" | "AVAILABLE" | "ALREADY_BOOKED";
+type PlanningStatusCode =
+  | "ALREADY_BOOKED"
+  | "WAITLISTED"
+  | "PAYMENT_PENDING"
+  | "FULL"
+  | "PAST"
+  | "CLOSED"
+  | "PAYMENT_REQUIRED"
+  | "AVAILABLE"
+  | "INCOMPATIBLE_PLAN"
+  | "NO_PLAN"
+  | "BOOKABLE"
+  | "UNAVAILABLE";
 type FinanceView = "transactions" | "invoices";
 type FinanceStatusFilter = "ALL" | "TO_PAY" | "PAID" | "CANCELLED" | "FAILED";
 type FinancePeriodFilter = "ALL" | "LAST_30_DAYS" | "LAST_90_DAYS" | "LAST_365_DAYS";
@@ -273,40 +287,40 @@ function statusClass(value: string): string {
   return "status-scheduled";
 }
 
-function statusLabel(value: string): string {
+function statusLabel(value: string, language: UiLanguage = "fr"): string {
   const normalized = normalizeStatus(value);
   if (normalized === "SKIPPED") {
-    return "NON ENVOYÉ";
+    return uiText(language, "client.status_not_sent");
   }
   if (normalized === "BOOKED") {
-    return "RÉSERVÉ";
+    return uiText(language, "client.status_booked");
   }
   if (normalized === "WAITLISTED") {
-    return "ATTENTE";
+    return uiText(language, "client.status_waitlisted");
   }
   if (normalized === "CANCELLED") {
-    return "ANNULE";
+    return uiText(language, "client.status_cancelled");
   }
   if (normalized === "COMPLETED") {
-    return "TERMINE";
+    return uiText(language, "client.status_completed");
   }
   if (normalized === "ATTENDED") {
-    return "PRESENT";
+    return uiText(language, "client.status_attended");
   }
   if (normalized === "NO_SHOW") {
-    return "ABSENT";
+    return uiText(language, "client.status_absent");
   }
   if (normalized === "EXCUSED_ABSENCE") {
-    return "ABSENCE EXCUSEE";
+    return uiText(language, "client.status_excused_absence");
   }
   if (normalized === "NOT_BILLABLE") {
-    return "NON FACTURABLE";
+    return uiText(language, "client.status_not_billable");
   }
   if (normalized === "ACTIVE") {
-    return "ACTIF";
+    return uiText(language, "client.status_active");
   }
   if (normalized === "PAID") {
-    return "PAYE";
+    return uiText(language, "client.status_paid");
   }
   if (
     normalized === "PENDING" ||
@@ -316,26 +330,26 @@ function statusLabel(value: string): string {
     normalized === "PROCESSING" ||
     normalized === "WAITING_PAYMENT"
   ) {
-    return "EN ATTENTE";
+    return uiText(language, "client.status_pending");
   }
   return normalized || "-";
 }
 
-function financeStatusLabel(value: string): string {
+function financeStatusLabel(value: string, language: UiLanguage = "fr"): string {
   const normalized = normalizeStatus(value);
   if (normalized === "PAID") {
-    return "Payee";
+    return uiText(language, "client.finance_status_paid");
   }
   if (FINANCE_PENDING_STATUSES.has(normalized)) {
-    return "A payer";
+    return uiText(language, "client.finance_status_to_pay");
   }
   if (FINANCE_CANCELLED_STATUSES.has(normalized)) {
-    return "Annulee";
+    return uiText(language, "client.finance_status_cancelled");
   }
   if (FINANCE_FAILED_STATUSES.has(normalized)) {
-    return "Echouee";
+    return uiText(language, "client.finance_status_failed");
   }
-  return statusLabel(value);
+  return statusLabel(value, language);
 }
 
 function isCancelledFinanceStatus(value: string): boolean {
@@ -380,17 +394,17 @@ function matchesFinanceAsOf(dateValue: string, asOfUtcEnd: Date): boolean {
   return rowDate.getTime() <= asOfUtcEnd.getTime();
 }
 
-function financePeriodLabel(period: FinancePeriodFilter): string {
+function financePeriodLabel(period: FinancePeriodFilter, language: UiLanguage = "fr"): string {
   if (period === "LAST_30_DAYS") {
-    return "30j";
+    return language === "en" ? "30d" : "30j";
   }
   if (period === "LAST_90_DAYS") {
-    return "90j";
+    return language === "en" ? "90d" : "90j";
   }
   if (period === "LAST_365_DAYS") {
-    return "1 an";
+    return language === "en" ? "1y" : "1 an";
   }
-  return "Toutes periodes";
+  return uiText(language, "client.all_periods");
 }
 
 function canPayNowForPayment(row: ClientPaymentOut): boolean {
@@ -428,41 +442,41 @@ function parseMoneyValue(raw: string | null | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function sourceLabel(value: string): string {
+function sourceLabel(value: string, language: UiLanguage = "fr"): string {
   const normalized = normalizeStatus(value);
   if (normalized === "PLAN_PURCHASE") {
-    return "Facture";
+    return uiText(language, "client.finance_source_invoice");
   }
   if (normalized === "BOOKING") {
-    return "Facture";
+    return uiText(language, "client.finance_source_invoice");
   }
   if (normalized === "INVOICE_RANGE") {
-    return "Facture";
+    return uiText(language, "client.finance_source_invoice");
   }
   if (normalized === "BOOKING_CREDIT") {
-    return "Rabais";
+    return uiText(language, "client.finance_source_discount");
   }
   if (normalized === "REFUND") {
-    return "Remboursement";
+    return uiText(language, "client.finance_source_refund");
   }
   if (normalized === "MANUAL") {
-    return "Paiement";
+    return uiText(language, "client.finance_source_payment");
   }
-  return "Transaction";
+  return uiText(language, "client.finance_source_transaction");
 }
 
-function planKindLabel(value: string): string {
+function planKindLabel(value: string, language: UiLanguage = "fr"): string {
   const normalized = normalizeStatus(value);
   if (normalized === "PACK") {
-    return "Carnet";
+    return uiText(language, "client.plan_pack");
   }
   if (normalized === "SUBSCRIPTION") {
-    return "Abonnement";
+    return uiText(language, "client.plan_subscription");
   }
   if (normalized === "FORFAIT") {
-    return "Forfait";
+    return uiText(language, "client.plan_forfait");
   }
-  return normalized || "Forfait";
+  return normalized || uiText(language, "client.plan_forfait");
 }
 
 function compactId(value: string): string {
@@ -833,9 +847,12 @@ function accentColorForId(id: string): string {
   return SESSION_ACCENT_COLORS[Math.abs(hash) % SESSION_ACCENT_COLORS.length];
 }
 
-function memberDisplayName(member: { first_name: string | null; last_name: string | null; email: string | null }): string {
+function memberDisplayName(
+  member: { first_name: string | null; last_name: string | null; email: string | null },
+  language: UiLanguage = "fr",
+): string {
   const fullName = [member.first_name, member.last_name].filter(Boolean).join(" ");
-  return fullName || member.email || "Membre";
+  return fullName || member.email || uiText(language, "common.member");
 }
 
 function normalizeLooseSearch(value: string | null | undefined): string {
@@ -864,14 +881,14 @@ function flattenCourseLessons(
   return rows;
 }
 
-function courseAudienceLabel(course: ClientContentCourseOut): string {
+function courseAudienceLabel(course: ClientContentCourseOut, language: UiLanguage = "fr"): string {
   if (course.member_accesses.length === 0) {
-    return "Acces non determine";
+    return uiText(language, "client.unknown_access");
   }
   if (course.member_accesses.length === 1) {
     return course.member_accesses[0].member_display_name;
   }
-  return `${course.member_accesses.length} membres`;
+  return uiText(language, "client.member_count", { count: course.member_accesses.length });
 }
 
 function emptyAsAll(value: string): string {
@@ -923,6 +940,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   }
 
   const me = meResult.data;
+  const language = normalizeUiLanguage(me.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const tab = parseTab(readParam(searchParams, "tab"));
   const impersonationClaims = readPortalImpersonationClaims();
   const isImpersonating = Boolean(impersonationClaims?.imp);
@@ -997,13 +1016,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     );
     if (!confirm.ok) {
       preFetchErrors.push(`confirm-payment: ${confirm.message}`);
-      paymentResultError = "Le paiement est en attente de confirmation.";
+      paymentResultError = t("client.payment_pending_confirmation");
     } else if (!confirm.data.paid) {
       const reason = confirm.data.message ? ` (${confirm.data.message})` : "";
       preFetchErrors.push(`confirm-payment: paiement non confirme${reason}`);
-      paymentResultError = "Le paiement n'a pas encore ete confirme.";
+      paymentResultError = t("client.payment_not_confirmed");
     } else {
-      paymentResultMessage = "Paiement effectue.";
+      paymentResultMessage = t("client.payment_completed");
       if (purchaseContextParam) {
         const purchaseContext = await backendRequest<PublicFormulaPurchaseContextOut>(
           `/api/v1/public/formulas/purchase-context/${encodeURIComponent(purchaseContextParam)}`,
@@ -1023,15 +1042,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
             preFetchErrors.push(`session-checkout-after-plan: ${bookingResult.message}`);
             paymentResultError = bookingResult.message;
           } else if ((bookingResult.data.booking_status || "").toUpperCase() === "WAITLISTED") {
-            paymentResultMessage = "Paiement effectue. Le membre a ete place en liste d attente.";
+            paymentResultMessage = t("client.payment_completed_waitlist");
           } else {
-            paymentResultMessage = "Paiement effectue et reservation confirmee.";
+            paymentResultMessage = t("client.payment_completed_booking_confirmed");
           }
         }
       }
     }
   } else if (paymentSourceParam === "PLAN_PURCHASE" && paymentIdParam && paymentReturnParam === "cancel") {
-    paymentResultError = "Paiement annule.";
+    paymentResultError = t("client.payment_cancelled");
   }
 
   const [
@@ -1187,7 +1206,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     }
     memberMap.set(candidate.id, {
       id: candidate.id,
-      display_name: memberDisplayName(candidate),
+      display_name: memberDisplayName(candidate, language),
       email: candidate.email,
       kind: candidate.client_kind,
     });
@@ -1213,7 +1232,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     }
   }
 
-  const members = [...memberMap.values()].sort((a, b) => a.display_name.localeCompare(b.display_name, "fr"));
+  const members = [...memberMap.values()].sort((a, b) =>
+    a.display_name.localeCompare(b.display_name, language === "en" ? "en" : "fr"),
+  );
   const linkedMembers = members.filter((member) => member.id !== me.id);
   const hasMultipleVisibleMembers = members.length > 1;
   const validMemberIds = new Set(members.map((member) => member.id));
@@ -1232,8 +1253,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const bookingOwnerLabel =
     bookingOwnerId === FAMILY_BOOKING_OWNER
       ? hasMultipleVisibleMembers
-        ? "Toute la famille"
-        : members[0]?.display_name ?? "Mon compte"
+        ? t("client.whole_family")
+        : members[0]?.display_name ?? t("client.account_self")
       : bookingOwnerMember?.display_name ?? "-";
   const normalizedHomeCalendarView = hasMultipleVisibleMembers ? homeCalendarView : "FAMILY";
   const filteredContentCourses = contentCourses.filter((course) =>
@@ -1256,7 +1277,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     : ownBookings.map((row) => ({
         id: row.id,
         owner_client_id: me.id,
-        owner_display_name: memberDisplayName({ first_name: me.first_name, last_name: me.last_name, email: me.email }),
+        owner_display_name: memberDisplayName({ first_name: me.first_name, last_name: me.last_name, email: me.email }, language),
         owner_email: me.email,
         client_plan_subscription_id: row.client_plan_subscription_id,
         status: row.status,
@@ -1568,6 +1589,85 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     label: agendaDayLabel(key, agendaView),
     sessions: sessionsByDay.get(key) ?? [],
   }));
+  const planningStatusLabel = (code: PlanningStatusCode): string => {
+    switch (code) {
+      case "ALREADY_BOOKED":
+        return t("client.planning_status_already_booked");
+      case "WAITLISTED":
+        return t("client.planning_status_waitlisted");
+      case "PAYMENT_PENDING":
+        return t("client.planning_status_payment_pending");
+      case "FULL":
+        return t("client.planning_status_full");
+      case "PAST":
+        return t("client.planning_status_past");
+      case "CLOSED":
+        return t("client.planning_status_closed");
+      case "PAYMENT_REQUIRED":
+        return t("client.planning_status_payment_required");
+      case "AVAILABLE":
+        return t("client.planning_status_available");
+      case "INCOMPATIBLE_PLAN":
+        return t("client.planning_status_incompatible");
+      case "NO_PLAN":
+        return t("client.planning_status_no_plan");
+      case "BOOKABLE":
+        return t("client.planning_status_bookable");
+      case "UNAVAILABLE":
+      default:
+        return t("client.planning_status_unavailable");
+    }
+  };
+  const planningStatusCodeFromLabel = (label: string | null | undefined): PlanningStatusCode | null => {
+    const normalized = normalizeLooseSearch(label);
+    switch (normalized) {
+      case "deja reserve":
+      case "already booked":
+        return "ALREADY_BOOKED";
+      case "liste d attente":
+      case "on waitlist":
+        return "WAITLISTED";
+      case "paiement en attente":
+      case "payment pending":
+        return "PAYMENT_PENDING";
+      case "complet":
+      case "full":
+        return "FULL";
+      case "passe":
+      case "past":
+        return "PAST";
+      case "reservation fermee":
+      case "booking closed":
+        return "CLOSED";
+      case "paiement requis":
+      case "payment required":
+        return "PAYMENT_REQUIRED";
+      case "disponible":
+      case "available":
+        return "AVAILABLE";
+      case "offre incompatible":
+      case "incompatible plan":
+        return "INCOMPATIBLE_PLAN";
+      case "aucune formule":
+      case "no plan":
+        return "NO_PLAN";
+      case "reservation possible":
+      case "booking available":
+        return "BOOKABLE";
+      case "non reservable":
+      case "unavailable":
+        return "UNAVAILABLE";
+      default:
+        return null;
+    }
+  };
+  const planningStatusDisplayLabel = (label: string | null | undefined): string => {
+    const code = planningStatusCodeFromLabel(label);
+    if (!code) {
+      return label || "";
+    }
+    return planningStatusLabel(code);
+  };
   const isAlreadyReservedByMember = (status: string): boolean => {
     const normalized = normalizeStatus(status);
     return (
@@ -1597,30 +1697,30 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       && !isFull
       && (paymentPending || (!memberBooking && (eligibleByPlan || hasDirectPayment)));
 
-    let statusLabel = "Non reservable";
+    let statusCode: PlanningStatusCode = "UNAVAILABLE";
     if (alreadyReserved) {
-      statusLabel = bookingStatus === "WAITLISTED" ? "Liste d attente" : "Deja reserve";
+      statusCode = bookingStatus === "WAITLISTED" ? "WAITLISTED" : "ALREADY_BOOKED";
     } else if (paymentPending) {
-      statusLabel = "Paiement en attente";
+      statusCode = "PAYMENT_PENDING";
     } else if (isFull) {
-      statusLabel = "Complet";
+      statusCode = "FULL";
     } else if (sessionIsPastOrStarted) {
-      statusLabel = "Passe";
+      statusCode = "PAST";
     } else if (!session.online_booking_enabled) {
-      statusLabel = "Reservation fermee";
+      statusCode = "CLOSED";
     } else if (canCheckout) {
-      statusLabel = hasDirectPayment && !eligibleByPlan ? "Paiement requis" : "Disponible";
+      statusCode = hasDirectPayment && !eligibleByPlan ? "PAYMENT_REQUIRED" : "AVAILABLE";
     } else if (hasAnySubscription) {
-      statusLabel = "Offre incompatible";
+      statusCode = "INCOMPATIBLE_PLAN";
     } else {
-      statusLabel = "Aucune formule";
+      statusCode = "NO_PLAN";
     }
 
     const actionLabel = paymentPending
-      ? "Finaliser le paiement"
+      ? t("client.complete_payment_action")
       : hasDirectPayment && !eligibleByPlan
-        ? "Payer et reserver"
-        : "Reserver";
+        ? t("client.pay_and_book_action")
+        : t("client.book_action");
 
     return {
       memberBooking,
@@ -1633,7 +1733,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       isFull,
       hasDirectPayment,
       canCheckout,
-      statusLabel,
+      statusCode,
+      statusLabel: planningStatusLabel(statusCode),
       actionLabel,
     };
   };
@@ -1642,29 +1743,30 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     const hasDirectPayment = sessionHasDirectPayment(session);
     if (bookingOwnerId !== FAMILY_BOOKING_OWNER) {
       const ownerState = memberPlanningStateForSession(session, bookingOwnerId);
-      const ownerName = bookingOwnerMember?.display_name ?? "ce membre";
+      const ownerName = bookingOwnerMember?.display_name ?? t("common.member");
       const contextLine = ownerState.alreadyReserved
-        ? "Vous etes deja inscrit sur ce creneau"
+        ? t("client.already_registered_slot")
         : ownerState.paymentPending
-          ? "Paiement a finaliser pour ce membre"
+          ? t("client.payment_to_finalize_for_member")
           : ownerState.canCheckout
             ? hasDirectPayment && !ownerState.eligibleByPlan
-              ? "Paiement en ligne requis pour confirmer"
-              : "Disponible pour reservation"
-            : ownerState.statusLabel === "Offre incompatible"
-              ? "La formule de ce membre n est pas compatible"
-              : ownerState.statusLabel === "Aucune formule"
-                ? `Aucune formule active pour ${ownerName}`
-                : ownerState.statusLabel === "Reservation fermee"
-                  ? "Reservation en ligne fermee"
-                  : ownerState.statusLabel === "Passe"
-                    ? "Creneau passe"
-                    : ownerState.statusLabel === "Complet"
-                      ? "Creneau complet"
-                      : `Non reservable pour ${ownerName}`;
+              ? t("client.online_payment_required_confirmation")
+              : t("client.available_for_booking")
+            : ownerState.statusCode === "INCOMPATIBLE_PLAN"
+              ? t("client.member_plan_incompatible")
+              : ownerState.statusCode === "NO_PLAN"
+                ? t("client.no_active_plan_for_member", { member: ownerName })
+                : ownerState.statusCode === "CLOSED"
+                  ? t("client.online_booking_closed")
+                  : ownerState.statusCode === "PAST"
+                    ? t("client.planning_status_past")
+                    : ownerState.statusCode === "FULL"
+                      ? t("client.planning_status_full")
+                      : t("client.unavailable_for_member", { member: ownerName });
       return {
         ...ownerState,
         statusLabel: ownerState.statusLabel,
+        cardStatusCode: ownerState.statusCode,
         cardStatusLabel: ownerState.statusLabel,
         contextLine,
         familyBookings: ownerState.memberBooking ? [ownerState.memberBooking] : [],
@@ -1689,47 +1791,47 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     const hasAnySubscription = members.some((member) => activeSubscriptionByOwner.has(member.id));
     const requiresMemberChoice = actionableMembers.length > 1 || hasAdditionalFamilyOptions;
 
-    let statusLabel = "Non reservable";
-    let contextLine = "Aucune action disponible pour la famille";
+    let statusCode: PlanningStatusCode = "UNAVAILABLE";
+    let contextLine = t("client.no_family_action_available");
     if (hasAdditionalFamilyOptions) {
-      statusLabel = "Reservation possible";
+      statusCode = "BOOKABLE";
       contextLine =
         reservedFamilyBookings.length > 1
-          ? `${reservedFamilyBookings.length} reservations famille. Vous pouvez encore reserver pour un autre membre.`
-          : `Reserve pour ${reservedNames}. Vous pouvez encore reserver pour un autre membre.`;
+          ? t("client.family_bookings_and_can_book_other", { count: reservedFamilyBookings.length })
+          : t("client.booked_for_and_can_book_other", { members: reservedNames });
     } else if (reservedFamilyBookings.length > 0) {
-      statusLabel = "Deja reserve";
-      contextLine = `Reserve pour ${reservedNames}`;
+      statusCode = "ALREADY_BOOKED";
+      contextLine = t("client.booked_for", { members: reservedNames });
     } else if (pendingFamilyBookings.length > 0) {
-      statusLabel = "Paiement en attente";
-      contextLine = `Paiement a finaliser pour ${pendingNames}`;
+      statusCode = "PAYMENT_PENDING";
+      contextLine = t("client.payment_to_finalize_for_names", { members: pendingNames });
     } else if (session.booked_count >= session.capacity_max) {
-      statusLabel = "Complet";
-      contextLine = "Creneau complet";
+      statusCode = "FULL";
+      contextLine = t("client.planning_status_full");
     } else if (sessionIsPastOrStarted) {
-      statusLabel = "Passe";
-      contextLine = "Creneau passe";
+      statusCode = "PAST";
+      contextLine = t("client.planning_status_past");
     } else if (!session.online_booking_enabled) {
-      statusLabel = "Reservation fermee";
-      contextLine = "Reservation en ligne fermee";
+      statusCode = "CLOSED";
+      contextLine = t("client.online_booking_closed");
     } else if (actionableMembers.length > 1) {
-      statusLabel = "Reservation possible";
-      contextLine = "Choisissez le membre a inscrire a l etape suivante.";
+      statusCode = "BOOKABLE";
+      contextLine = t("client.choose_member_next_step");
     } else if (actionableMembers.length === 1) {
-      statusLabel = actionableMembers[0].state.statusLabel;
+      statusCode = actionableMembers[0].state.statusCode;
       contextLine =
         actionableMembers[0].state.hasDirectPayment && !actionableMembers[0].state.eligibleByPlan
-          ? `Paiement requis pour ${actionableMembers[0].member.display_name}`
-          : `Disponible pour ${actionableMembers[0].member.display_name}`;
+          ? t("client.payment_required_for_member", { member: actionableMembers[0].member.display_name })
+          : t("client.available_for_member", { member: actionableMembers[0].member.display_name });
     } else if (hasAnySubscription) {
-      statusLabel = "Offre incompatible";
-      contextLine = "Aucune formule famille compatible";
+      statusCode = "INCOMPATIBLE_PLAN";
+      contextLine = t("client.no_compatible_family_plan");
     } else if (hasDirectPayment) {
-      statusLabel = "Reservation possible";
-      contextLine = "Choisissez le membre a rattacher a cette reservation";
+      statusCode = "BOOKABLE";
+      contextLine = t("client.choose_member_for_reservation");
     } else {
-      statusLabel = "Aucune formule";
-      contextLine = "Aucune formule active dans la famille";
+      statusCode = "NO_PLAN";
+      contextLine = t("client.no_active_plan_in_family");
     }
 
     return {
@@ -1743,17 +1845,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       isFull: session.booked_count >= session.capacity_max,
       hasDirectPayment,
       canCheckout: actionableMembers.length > 0,
-      statusLabel,
-      cardStatusLabel: statusLabel,
+      statusCode,
+      statusLabel: planningStatusLabel(statusCode),
+      cardStatusCode: statusCode,
+      cardStatusLabel: planningStatusLabel(statusCode),
       contextLine,
       familyBookings,
       actionableMembers,
       actionLabel:
         requiresMemberChoice
-          ? "Reserver"
+          ? t("client.book_action")
           : actionableMembers.length === 1
           ? actionableMembers[0].state.actionLabel
-          : "Reserver",
+          : t("client.book_action"),
     };
   };
   const selectedSession = filteredSessions.find((session) => session.id === selectedSessionId) ?? null;
@@ -1808,7 +1912,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
             : state.hasDirectPayment && !state.eligibleByPlan
               ? "PAY_UNIT"
               : "BOOK_WITH_CREDIT",
-          action_label: state.paymentPending ? "Finaliser le paiement" : state.actionLabel,
+          action_label: state.paymentPending ? t("client.complete_payment_action") : state.actionLabel,
           status_label: state.statusLabel,
           reason: state.paymentPending
             ? "Une reservation provisoire existe deja pour ce membre. Finalisez le paiement pour confirmer la place."
@@ -1901,7 +2005,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     session_ok: null,
     session_error: null,
   });
-  const selectedSessionModalStatusLabel = selectedReservationMemberOption?.status_label || selectedSessionPlanningState?.cardStatusLabel || "";
+  const selectedSessionModalStatusCode =
+    planningStatusCodeFromLabel(selectedReservationMemberOption?.status_label) ?? selectedSessionPlanningState?.cardStatusCode ?? null;
+  const selectedSessionModalStatusLabel = selectedReservationMemberOption?.status_label
+    ? planningStatusDisplayLabel(selectedReservationMemberOption.status_label)
+    : selectedSessionPlanningState?.cardStatusLabel || "";
   const compatiblePackCreditSummaryForMember = (memberId: string | null | undefined) => {
     if (!memberId || !selectedSession) {
       return null;
@@ -1930,22 +2038,33 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     return { remaining, initial, packCount };
   };
   const selectedSessionPackCreditSummary = compatiblePackCreditSummaryForMember(selectedReservationMemberOption?.member_id);
+  const formatPackCreditLabel = (
+    summary: { remaining: number; initial: number; packCount: number } | null,
+    includeInitial: boolean,
+  ): string | null => {
+    if (!summary) {
+      return null;
+    }
+    if (includeInitial && summary.packCount === 1 && summary.initial > 0) {
+      return t("client.remaining_pack_credits_with_total", {
+        remaining: summary.remaining,
+        initial: summary.initial,
+      });
+    }
+    return t("client.remaining_pack_credits", { remaining: summary.remaining });
+  };
   const selectedSessionPackCreditLabel = selectedSessionPackCreditSummary
-    ? `${selectedSessionPackCreditSummary.remaining} credit${selectedSessionPackCreditSummary.remaining > 1 ? "s" : ""} restant${selectedSessionPackCreditSummary.remaining > 1 ? "s" : ""}${
-        selectedSessionPackCreditSummary.packCount === 1 && selectedSessionPackCreditSummary.initial > 0
-          ? ` sur ${selectedSessionPackCreditSummary.initial}`
-          : ""
-      }`
+    ? formatPackCreditLabel(selectedSessionPackCreditSummary, true)
     : null;
   const selectedSessionCoverageLabel =
     selectedReservationMemberOption?.coverage_source === "MANUAL_CREDIT"
-      ? "Credit manuel disponible"
+      ? t("client.manual_credit_available")
       : selectedReservationMemberOption?.coverage_source === "PACK"
-        ? selectedSessionPackCreditLabel || "Carnet compatible disponible"
+        ? selectedSessionPackCreditLabel || t("client.compatible_pack_available")
         : selectedReservationMemberOption?.coverage_source === "FORFAIT"
-          ? "Forfait compatible disponible"
+          ? t("client.compatible_fixed_plan_available")
           : selectedReservationMemberOption?.coverage_source === "SUBSCRIPTION"
-            ? "Abonnement compatible disponible"
+            ? t("client.compatible_subscription_available")
             : null;
   const selectedSessionActionCode = selectedReservationMemberOption?.action_code ?? "";
   const selectedSessionRequiresMemberChoice = reservationOptionsMembers.length > 1 && !selectedReservationMemberOption;
@@ -1970,82 +2089,150 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const alternativeReservationOptions = otherMemberOptions.filter((option) =>
     ["BOOK_WITH_CREDIT", "PAY_UNIT", "BUY_FORMULA", "BUY_FORMULA_OR_PAY_UNIT", "JOIN_WAITLIST"].includes(option.action_code),
   );
+  const reservationOptionActionLabel = (
+    option: ClientSessionReservationMemberOptionOut,
+    actionCode: string = option.action_code,
+  ): string => {
+    switch (actionCode) {
+      case "FINALIZE_PAYMENT":
+        return t("client.finalize_payment_for", { member: option.member_display_name });
+      case "BOOK_WITH_CREDIT":
+        return option.coverage_source === "PACK" ? t("client.use_your_credits") : t("client.book_without_paying");
+      case "BUY_FORMULA_OR_PAY_UNIT":
+        return t("client.choose_your_option");
+      case "BUY_FORMULA":
+        return t("client.buy_a_plan");
+      case "PAY_UNIT":
+        return t("client.pay_unit");
+      case "JOIN_WAITLIST":
+        return t("client.waitlist_available");
+      default:
+        return option.action_label || t("client.view_this_slot");
+    }
+  };
+  const reservationOptionReasonLabel = (option: ClientSessionReservationMemberOptionOut): string | null => {
+    if (option.action_code === "FINALIZE_PAYMENT") {
+      return t("client.finalize_payment_for", { member: option.member_display_name });
+    }
+    if (option.action_code === "BOOK_WITH_CREDIT") {
+      if (option.coverage_source === "PACK") {
+        const packSummary = compatiblePackCreditSummaryForMember(option.member_id);
+        const credits = formatPackCreditLabel(packSummary, true);
+        if (credits) {
+          return t("client.pack_covers_slot", { member: option.member_display_name, credits });
+        }
+      }
+      if (option.coverage_source === "SUBSCRIPTION") {
+        return t("client.subscription_covers_slot", { member: option.member_display_name });
+      }
+      return t("client.booking_confirmed_without_payment", { member: option.member_display_name });
+    }
+    if (option.action_code === "BUY_FORMULA_OR_PAY_UNIT") {
+      return t("client.no_credit_choose_plan_or_unit", { member: option.member_display_name });
+    }
+    if (option.action_code === "BUY_FORMULA") {
+      return t("client.no_credit_choose_plan", { member: option.member_display_name });
+    }
+    if (option.action_code === "JOIN_WAITLIST") {
+      return t("client.waitlist_available");
+    }
+    if (option.action_code === "ALREADY_WAITLISTED") {
+      return t("client.waitlist_confirmed_for", { member: option.member_display_name });
+    }
+    if (option.action_code === "ALREADY_BOOKED") {
+      return t("client.booking_confirmed_for", { member: option.member_display_name });
+    }
+    return option.reason || option.action_label || null;
+  };
   const reservationOptionSupportLabel = (option: ClientSessionReservationMemberOptionOut): string | null => {
     if (option.action_code === "FINALIZE_PAYMENT" && option.direct_payment_amount_ttc) {
-      return `Paiement en attente · ${toMoney(option.direct_payment_amount_ttc, option.direct_payment_currency)}`;
+      return t("client.pending_payment_support", {
+        amount: toMoney(option.direct_payment_amount_ttc, option.direct_payment_currency),
+      });
     }
     if (option.action_code === "BUY_FORMULA_OR_PAY_UNIT") {
       const formulaCount = option.formula_options.length;
       const parts = [];
       if (formulaCount > 0) {
-        parts.push(`${formulaCount} formule${formulaCount > 1 ? "s" : ""}`);
+        parts.push(t("client.compatible_plan_count", { count: formulaCount }));
       }
       if (option.direct_payment_amount_ttc) {
-        parts.push(`Paiement unitaire ${toMoney(option.direct_payment_amount_ttc, option.direct_payment_currency)}`);
+        parts.push(
+          t("client.unit_payment_support", {
+            amount: toMoney(option.direct_payment_amount_ttc, option.direct_payment_currency),
+          }),
+        );
       }
       return parts.join(" · ") || null;
     }
     if (option.action_code === "BUY_FORMULA" && option.formula_options.length > 0) {
-      return `${option.formula_options.length} formule${option.formula_options.length > 1 ? "s" : ""} compatible${option.formula_options.length > 1 ? "s" : ""}`;
+      return t("client.compatible_plan_count", { count: option.formula_options.length });
     }
     if (option.action_code === "PAY_UNIT" && option.direct_payment_amount_ttc) {
-      return `Paiement unitaire ${toMoney(option.direct_payment_amount_ttc, option.direct_payment_currency)}`;
+      return t("client.unit_payment_support", {
+        amount: toMoney(option.direct_payment_amount_ttc, option.direct_payment_currency),
+      });
     }
     if (option.action_code === "BOOK_WITH_CREDIT") {
       if (option.coverage_source === "PACK") {
         const packSummary = compatiblePackCreditSummaryForMember(option.member_id);
         if (packSummary) {
-          return `${packSummary.remaining} credit${packSummary.remaining > 1 ? "s" : ""} restant${packSummary.remaining > 1 ? "s" : ""}`;
+          return formatPackCreditLabel(packSummary, false);
         }
       }
       if (option.coverage_source === "SUBSCRIPTION") {
-        return "Abonnement actif";
+        return t("client.active_subscription");
       }
       if (option.coverage_source === "FORFAIT") {
-        return "Forfait actif";
+        return t("client.active_fixed_plan");
       }
       if (option.coverage_source === "MANUAL_CREDIT") {
-        return "Credit manuel disponible";
+        return t("client.manual_credit_available");
       }
-      return "Reservation couverte sans paiement supplementaire";
+      return t("client.booking_covered_no_payment");
     }
     if (option.action_code === "JOIN_WAITLIST") {
-      return "Inscription possible sur liste d attente";
+      return t("client.waitlist_available");
     }
     return null;
   };
   const selectedSessionStateTitle =
     selectedSessionRequiresMemberChoice
-      ? "Choisissez le membre"
+      ? t("client.member_concerned")
       : selectedSessionEffectiveActionCode === "FINALIZE_PAYMENT" && selectedReservationMemberOption
-        ? `Finaliser le paiement pour ${selectedReservationMemberOption.member_display_name}`
+        ? t("client.finalize_payment_for", { member: selectedReservationMemberOption.member_display_name })
         : selectedSessionEffectiveActionCode === "BOOK_WITH_CREDIT" && selectedReservationMemberOption
           ? selectedReservationMemberOption.coverage_source === "PACK"
-            ? "Utiliser vos credits"
-            : "Reserver sans payer"
+            ? t("client.use_your_credits")
+            : t("client.book_without_paying")
         : selectedSessionEffectiveActionCode === "BUY_FORMULA_OR_PAY_UNIT"
-          ? "Choisir votre option"
+          ? t("client.choose_your_option")
           : selectedSessionEffectiveActionCode === "BUY_FORMULA"
-            ? "Acheter une formule"
-            : selectedReservationMemberOption?.action_label || "Consulter ce creneau";
+            ? t("client.buy_a_plan")
+            : selectedReservationMemberOption
+              ? reservationOptionActionLabel(selectedReservationMemberOption, selectedSessionEffectiveActionCode)
+              : t("client.view_this_slot");
   const selectedSessionStateDescription =
     selectedSessionRequiresMemberChoice
-      ? "Nous vous proposerons automatiquement la meilleure option: credit, formule compatible ou paiement a l unite."
+      ? t("client.best_option_auto")
       : selectedSessionEffectiveActionCode === "FINALIZE_PAYMENT" && selectedReservationMemberOption
         ? alternativeReservationOptions.length > 0
-          ? `Une reservation provisoire existe deja pour ${selectedReservationMemberOption.member_display_name}. Pour voir les formules ou le paiement a l unite d un autre membre, choisissez une autre carte ci-dessous.`
-          : selectedReservationMemberOption.reason || selectedSessionPlanningState?.contextLine || ""
+          ? t("client.pending_payment_other_member", { member: selectedReservationMemberOption.member_display_name })
+          : reservationOptionReasonLabel(selectedReservationMemberOption) || selectedSessionPlanningState?.contextLine || ""
         : selectedSessionEffectiveActionCode === "BOOK_WITH_CREDIT" && selectedReservationMemberOption
           ? selectedReservationMemberOption.coverage_source === "PACK" && selectedSessionPackCreditLabel
-            ? `Votre carnet couvre deja ce creneau pour ${selectedReservationMemberOption.member_display_name}. ${selectedSessionPackCreditLabel} apres cette verification.`
+            ? t("client.pack_covers_slot", {
+                member: selectedReservationMemberOption.member_display_name,
+                credits: selectedSessionPackCreditLabel,
+              })
             : selectedReservationMemberOption.coverage_source === "SUBSCRIPTION"
-              ? `Votre abonnement couvre deja ce creneau pour ${selectedReservationMemberOption.member_display_name}.`
-              : `Cette reservation sera confirmee pour ${selectedReservationMemberOption.member_display_name} sans paiement supplementaire.`
+              ? t("client.subscription_covers_slot", { member: selectedReservationMemberOption.member_display_name })
+              : t("client.booking_confirmed_without_payment", { member: selectedReservationMemberOption.member_display_name })
         : selectedSessionEffectiveActionCode === "BUY_FORMULA_OR_PAY_UNIT" && selectedReservationMemberOption
-          ? `Aucun credit disponible pour ${selectedReservationMemberOption.member_display_name}. Vous pouvez choisir une formule compatible ou payer ce creneau a l unite.`
+          ? t("client.no_credit_choose_plan_or_unit", { member: selectedReservationMemberOption.member_display_name })
           : selectedSessionEffectiveActionCode === "BUY_FORMULA" && selectedReservationMemberOption
-            ? `Aucun credit disponible pour ${selectedReservationMemberOption.member_display_name}. Choisissez une formule compatible pour confirmer la reservation.`
-        : selectedReservationMemberOption?.reason || selectedSessionPlanningState?.contextLine || "";
+            ? t("client.no_credit_choose_plan", { member: selectedReservationMemberOption.member_display_name })
+        : selectedReservationMemberOption ? reservationOptionReasonLabel(selectedReservationMemberOption) : selectedSessionPlanningState?.contextLine || "";
   const selectedSessionPurchaseChoiceCount =
     (selectedSessionDirectPaymentAmount ? 1 : 0) + selectedSessionFormulaOptions.length;
   const selectedSessionPrimaryActionLabel =
@@ -2053,25 +2240,25 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       ? null
       : selectedSessionEffectiveActionCode === "BOOK_WITH_CREDIT"
         ? selectedReservationMemberOption.coverage_source === "PACK"
-          ? "Utiliser mes credits"
+          ? t("client.use_my_credits")
           : selectedReservationMemberOption.coverage_source === "SUBSCRIPTION"
-            ? "Utiliser mon abonnement"
+            ? t("client.use_my_subscription")
             : selectedReservationMemberOption.coverage_source === "FORFAIT"
-              ? "Utiliser mon forfait"
-              : "Confirmer sans payer"
-        : selectedReservationMemberOption.action_label;
+              ? t("client.use_my_fixed_plan")
+              : t("client.confirm_without_paying")
+        : reservationOptionActionLabel(selectedReservationMemberOption, selectedSessionEffectiveActionCode);
   const selectedSessionBookingStatus = (selectedReservationMemberOption?.booking_status || "").toUpperCase();
   const selectedSessionHasBooking =
     Boolean(selectedReservationMemberOption?.booking_id) &&
     ["BOOKED", "WAITLISTED"].includes(selectedSessionBookingStatus);
   const selectedSessionBookedStateTitle =
-    selectedSessionBookingStatus === "WAITLISTED" ? "En liste d attente" : "Reservation confirmee";
+    selectedSessionBookingStatus === "WAITLISTED" ? t("client.waitlist_confirmed") : t("client.booking_confirmed");
   const selectedSessionBookedStateDescription =
     selectedReservationMemberOption == null
       ? ""
       : selectedSessionBookingStatus === "WAITLISTED"
-        ? `Votre demande est bien en liste d attente pour ${selectedReservationMemberOption.member_display_name}. Nous vous confirmerons des qu une place se libere.`
-        : `Cette reservation est deja confirmee pour ${selectedReservationMemberOption.member_display_name}.`;
+        ? t("client.waitlist_confirmed_for", { member: selectedReservationMemberOption.member_display_name })
+        : t("client.booking_confirmed_for", { member: selectedReservationMemberOption.member_display_name });
   const selectedSessionCheckoutReturnTo =
     selectedSession && selectedReservationMemberOption
       ? buildClientSessionCheckoutHref(selectedSession.id, selectedSessionReturnTo, selectedReservationMemberOption.member_id)
@@ -2088,11 +2275,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const allBookingStatuses = Array.from(new Set(allBookings.map((row) => normalizeStatus(row.status)))).sort();
   const allPaymentSources = Array.from(new Set(payments.map((row) => normalizeStatus(row.source)))).sort();
   const visibleFinanceStatusOptions: Array<{ value: FinanceStatusFilter; label: string }> = [
-    { value: "ALL", label: "Tous statuts" },
-    { value: "TO_PAY", label: "A payer" },
-    { value: "PAID", label: "Payee" },
-    { value: "CANCELLED", label: "Annulee" },
-    { value: "FAILED", label: "Echouee" },
+    { value: "ALL", label: t("client.all_statuses") },
+    { value: "TO_PAY", label: t("client.finance_status_to_pay") },
+    { value: "PAID", label: t("client.finance_status_paid") },
+    { value: "CANCELLED", label: t("client.finance_status_cancelled") },
+    { value: "FAILED", label: t("client.finance_status_failed") },
   ];
 
   const totalCreditsByMember = new Map<string, number>();
@@ -2127,22 +2314,22 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     : [{ value: timezone, label: `${timezone} (personnalise)` }, ...TIMEZONE_OPTIONS];
 
   const tabLinks: Array<{ id: DashboardTab; label: string; icon: string }> = [
-    { id: "home", label: "Accueil", icon: "🏠" },
-    { id: "planning", label: "Planning", icon: "📅" },
-    { id: "courses", label: "Mes cours", icon: "📚" },
-    { id: "reservations", label: "Réservations", icon: "✅" },
-    { id: "offers", label: "Forfaits", icon: "🧾" },
-    { id: "finance", label: "Finance", icon: "💳" },
-    { id: "messages", label: "Messages", icon: "✉️" },
-    { id: "account", label: "Compte", icon: "👤" },
+    { id: "home", label: uiText(language, "client.home"), icon: "🏠" },
+    { id: "planning", label: uiText(language, "client.planning"), icon: "📅" },
+    { id: "courses", label: uiText(language, "client.courses"), icon: "📚" },
+    { id: "reservations", label: uiText(language, "client.bookings"), icon: "✅" },
+    { id: "offers", label: uiText(language, "client.offers"), icon: "🧾" },
+    { id: "finance", label: uiText(language, "client.finance"), icon: "💳" },
+    { id: "messages", label: uiText(language, "client.messages"), icon: "✉️" },
+    { id: "account", label: uiText(language, "client.account"), icon: "👤" },
   ];
   const mobileTabLinks = [
-    { id: "home", label: "Accueil", icon: "🏠", href: withUpdatedQuery(rawParams, { tab: "home" }) },
-    { id: "planning", label: "Planning", icon: "📅", href: withUpdatedQuery(rawParams, { tab: "planning" }) },
-    { id: "courses", label: "Cours", icon: "📚", href: withUpdatedQuery(rawParams, { tab: "courses" }) },
-    { id: "reservations", label: "Réservations", icon: "✅", href: withUpdatedQuery(rawParams, { tab: "reservations" }) },
-    { id: "offers", label: "Forfaits", icon: "🧾", href: withUpdatedQuery(rawParams, { tab: "offers" }) },
-    { id: "account", label: "Compte", icon: "👤", href: withUpdatedQuery(rawParams, { tab: "account" }) },
+    { id: "home", label: uiText(language, "client.home"), icon: "🏠", href: withUpdatedQuery(rawParams, { tab: "home" }) },
+    { id: "planning", label: uiText(language, "client.planning"), icon: "📅", href: withUpdatedQuery(rawParams, { tab: "planning" }) },
+    { id: "courses", label: uiText(language, "client.courses"), icon: "📚", href: withUpdatedQuery(rawParams, { tab: "courses" }) },
+    { id: "reservations", label: uiText(language, "client.bookings"), icon: "✅", href: withUpdatedQuery(rawParams, { tab: "reservations" }) },
+    { id: "offers", label: uiText(language, "client.offers"), icon: "🧾", href: withUpdatedQuery(rawParams, { tab: "offers" }) },
+    { id: "account", label: uiText(language, "client.account"), icon: "👤", href: withUpdatedQuery(rawParams, { tab: "account" }) },
   ];
   const activeMobileTabId = mobileTabLinks.some((item) => item.id === tab)
     ? tab
@@ -2150,7 +2337,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       ? "account"
       : "home";
 
-  const displayName = memberDisplayName({ first_name: me.first_name, last_name: me.last_name, email: me.email });
+  const displayName = memberDisplayName({ first_name: me.first_name, last_name: me.last_name, email: me.email }, language);
   const impersonationDisplayName = impersonationNameHint || displayName;
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error");
@@ -2161,49 +2348,46 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const hasPhoneNumber = Boolean(me.mobile_phone_1 || me.mobile_phone_2 || me.home_phone || me.phone);
   const selectedMessageId = readParam(searchParams, "message_id");
   const selectedMessage = selectedMessageId ? messageRows.find((row) => row.id === selectedMessageId) ?? null : null;
-  const communicationSummary = `Rappels: Email ${me.lesson_reminder_email_opt_in ? "ON" : "OFF"} / SMS ${
-    me.lesson_reminder_sms_opt_in ? "ON" : "OFF"
-  } · Communications: Email ${me.email_opt_in ? "ON" : "OFF"} / SMS ${me.sms_opt_in ? "ON" : "OFF"}`;
-  const planningStatusClass = (statusLabelText: string): string => {
-    switch (statusLabelText) {
-      case "Deja reserve":
-      case "Reserve":
-      case "Liste d attente":
-      case "Credit disponible":
+  const communicationSummary = t("client.communication_summary", {
+    lessonEmail: t(me.lesson_reminder_email_opt_in ? "common.on" : "common.off"),
+    lessonSms: t(me.lesson_reminder_sms_opt_in ? "common.on" : "common.off"),
+    communicationEmail: t(me.email_opt_in ? "common.on" : "common.off"),
+    communicationSms: t(me.sms_opt_in ? "common.on" : "common.off"),
+  });
+  const planningStatusClass = (statusCode: PlanningStatusCode | null | undefined): string => {
+    switch (statusCode) {
+      case "ALREADY_BOOKED":
+      case "WAITLISTED":
         return "status-booked";
-      case "Reservation possible":
-      case "Reserver":
+      case "BOOKABLE":
+      case "AVAILABLE":
+      case "PAYMENT_REQUIRED":
         return "status-scheduled";
-      case "Paiement en attente":
+      case "PAYMENT_PENDING":
         return "status-waitlist";
-      case "Disponible":
-      case "Paiement requis":
-      case "Choisir le membre":
-        return "status-scheduled";
-      case "Complet":
+      case "FULL":
         return "status-cancelled";
-      case "Passe":
+      case "PAST":
         return "status-completed";
-      case "Reservation fermee":
-      case "Offre incompatible":
-      case "Aucune formule":
-      case "Aucune couverture":
-      case "Non reservable":
+      case "CLOSED":
+      case "INCOMPATIBLE_PLAN":
+      case "NO_PLAN":
+      case "UNAVAILABLE":
       default:
         return "status-draft";
     }
   };
-  const shouldRenderPlanningStateBadge = (statusLabelText: string): boolean => {
-    return new Set([
-      "Paiement en attente",
-      "Complet",
-      "Passe",
-      "Reservation fermee",
-      "Offre incompatible",
-      "Aucune formule",
-      "Non reservable",
-      "Liste d attente",
-    ]).has(statusLabelText);
+  const shouldRenderPlanningStateBadge = (statusCode: PlanningStatusCode | null | undefined): boolean => {
+    return new Set<PlanningStatusCode>([
+      "PAYMENT_PENDING",
+      "FULL",
+      "PAST",
+      "CLOSED",
+      "INCOMPATIBLE_PLAN",
+      "NO_PLAN",
+      "UNAVAILABLE",
+      "WAITLISTED",
+    ]).has(statusCode ?? "UNAVAILABLE");
   };
 
   return (
@@ -2211,8 +2395,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       <aside className="client-portal-sidebar">
         <div className="client-brand">
           <PortalBrandLockup
-            title="Piano Academie"
-            subtitle="Portail client"
+            title={uiText(language, "common.app_name")}
+            subtitle={uiText(language, "client.portal_subtitle")}
             eyebrow="Mi-Young Lee"
             tone="dark"
             compact
@@ -2228,12 +2412,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           <form action={endPortalImpersonationAction} className="client-admin-exit-form">
             <input type="hidden" name="return_to" value={impersonationReturnTo} />
             <button className="ghost client-admin-exit-btn" type="submit">
-              Retour BO
+              {uiText(language, "common.back_office")}
             </button>
           </form>
         ) : null}
 
-        <nav className="client-nav" aria-label="Navigation client">
+        <nav className="client-nav" aria-label={uiText(language, "portal.client")}>
           {tabLinks.map((item) => {
             const href = withUpdatedQuery(rawParams, { tab: item.id });
             return (
@@ -2249,51 +2433,52 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           <button className="ghost" type="submit">
             ⎋
           </button>
-          <span>Déconnexion</span>
+          <span>{uiText(language, "common.logout")}</span>
         </form>
       </aside>
 
       <section className="client-portal-main">
         <MobileHeader
-          title={tabLinks.find((item) => item.id === tab)?.label ?? "Portail client"}
+          title={tabLinks.find((item) => item.id === tab)?.label ?? uiText(language, "portal.client")}
           subtitle={`${displayName} · ${timezone}`}
+          menuLabel={uiText(language, "portal.client_menu")}
           menu={
             <div className="client-mobile-menu-items">
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "home" })}>
-                Accueil
+                {uiText(language, "client.home")}
               </a>
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "planning" })}>
-                Planning
+                {uiText(language, "client.planning")}
               </a>
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "reservations" })}>
-                Réservations
+                {uiText(language, "client.bookings")}
               </a>
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "offers" })}>
-                Forfaits
+                {uiText(language, "client.offers")}
               </a>
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "finance" })}>
-                Finance
+                {uiText(language, "client.finance")}
               </a>
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>
-                Messages
+                {uiText(language, "client.messages")}
               </a>
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "courses" })}>
-                Mes cours
+                {uiText(language, "client.courses")}
               </a>
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "account" })}>
-                Compte
+                {uiText(language, "client.account")}
               </a>
               {isImpersonating ? (
                 <form action={endPortalImpersonationAction}>
                   <input type="hidden" name="return_to" value={impersonationReturnTo} />
                   <button className="ghost client-mobile-menu-btn" type="submit">
-                    Retour BO
+                    {uiText(language, "common.back_office")}
                   </button>
                 </form>
               ) : null}
               <form action={logoutAction}>
                 <button className="ghost client-mobile-menu-btn" type="submit">
-                  Se deconnecter
+                  {uiText(language, "common.logout")}
                 </button>
               </form>
             </div>
@@ -2302,34 +2487,37 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
         <header className="client-topbar">
           <div>
-            <h1>{tabLinks.find((item) => item.id === tab)?.label ?? "Portail client"}</h1>
+            <h1>{tabLinks.find((item) => item.id === tab)?.label ?? uiText(language, "client.default_title")}</h1>
             <p className="muted">
-              Réservations actives: {upcomingBookings.length} | {hasMultipleVisibleMembers ? "Membres visibles" : "Membre visible"}: {members.length}
+              {uiText(language, "client.active_bookings")}: {upcomingBookings.length} | {uiText(
+                language,
+                hasMultipleVisibleMembers ? "client.visible_members_plural" : "client.visible_members_singular",
+              )}: {members.length}
             </p>
           </div>
           <div className="row">
-            <span className="badge">Fuseau: {timezone}</span>
-            <span className="badge">Devise: {me.preferred_currency}</span>
+            <span className="badge">{uiText(language, "client.timezone")}: {timezone}</span>
+            <span className="badge">{uiText(language, "client.currency")}: {me.preferred_currency}</span>
           </div>
         </header>
 
         <section className="client-content">
           {isImpersonating ? (
-            <PortalImpersonationBanner displayName={impersonationDisplayName} returnTo={impersonationReturnTo} />
+            <PortalImpersonationBanner displayName={impersonationDisplayName} returnTo={impersonationReturnTo} language={language} />
           ) : null}
           {globalOkMessage ? <Toast message={globalOkMessage} tone="ok" /> : null}
           {globalErrorMessage ? <section className="flash-err">{globalErrorMessage}</section> : null}
-          {errors.length > 0 ? <section className="flash-err">Erreur backend: {errors.join(" | ")}</section> : null}
+          {errors.length > 0 ? <section className="flash-err">{t("client.backend_error")}: {errors.join(" | ")}</section> : null}
           {subscriptionAlerts.length > 0 ? (
             <section className={hasPreTerminationAlert ? "flash-err" : "flash-warn"}>
               {hasPreTerminationAlert
-                ? "Votre abonnement est en attente de regularisation. Les nouvelles reservations sont temporairement indisponibles jusqu au paiement."
-                : "Le renouvellement de votre abonnement n a pas pu etre finalise. Vous pouvez regulariser votre paiement des maintenant."}
+                ? t("client.subscription_regularization_blocked")
+                : t("client.subscription_regularization_failed")}
               {primaryRecoveryUrl ? (
                 <>
                   {" "}
                   <a className="mode-link" href={primaryRecoveryUrl} target="_blank" rel="noreferrer">
-                    Regulariser mon paiement
+                    {t("client.regularize_payment")}
                   </a>
                 </>
               ) : null}
@@ -2339,15 +2527,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           {tab === "home" ? (
             <>
               <SectionCard
-                title="Accueil"
+                title={t("client.home")}
                 className="client-home-header-v2"
-                action={<Link className="mode-link" href={homePlanningHref}>Voir le planning</Link>}
+                action={<Link className="mode-link" href={homePlanningHref}>{t("client.view_schedule")}</Link>}
               >
-                <p className="muted">Bonjour {me.first_name || displayName}</p>
+                <p className="muted">{t("client.hello", { name: me.first_name || displayName })}</p>
                 {linkedMembers.length > 0 ? (
                   <FilterChipsBar className="client-member-chips">
                     <a className={`badge ${selectedMemberFilter === "ALL" ? "active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "home", member_id: "ALL" })}>
-                      Tous
+                      {t("common.all")}
                     </a>
                     {linkedMembers.map((member) => (
                       <a
@@ -2365,7 +2553,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               <section className="client-home-layout">
                 <div className="client-home-main">
                   {homeDueTotal > 0 ? (
-                    <UrgentPayCard amountLabel={toMoney(String(homeDueTotal), me.preferred_currency)} countLabel={`${homeDueInvoices.length} facture(s)`}>
+                    <UrgentPayCard amountLabel={toMoney(String(homeDueTotal), me.preferred_currency)} countLabel={t("client.invoice_count", { count: homeDueInvoices.length })}>
                       <div className="client-home-due-list">
                         {homeDueInvoicePreview.map((invoice) => {
                           const linkedPayment = paymentByInvoiceId.get(invoice.id);
@@ -2374,7 +2562,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             <CompactInvoiceRow
                               key={`home-due-${invoice.id}`}
                               title={compactId(invoice.invoice_number)}
-                              statusBadge={<span className={`status-pill ${statusClass(invoice.status)}`}>{financeStatusLabel(invoice.status)}</span>}
+                              statusBadge={<span className={`status-pill ${statusClass(invoice.status)}`}>{financeStatusLabel(invoice.status, language)}</span>}
                               meta={`${toMoney(invoice.total_incl_vat, invoice.currency)} · ${formatDate(invoice.issued_at)}`}
                               subline={invoice.label}
                               actions={
@@ -2384,7 +2572,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                       {linkedPayment ? <input type="hidden" name="payment_id" value={linkedPayment.id} /> : null}
                                       {invoice.payment_url ? <input type="hidden" name="payment_url" value={invoice.payment_url} /> : null}
                                       <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "home" })} />
-                                      <button type="submit" className="client-card-primary-action">Payer</button>
+                                      <button type="submit" className="client-card-primary-action">{t("common.pay")}</button>
                                     </form>
                                   ) : null}
                                   <a
@@ -2393,7 +2581,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     target="_blank"
                                     rel="noreferrer"
                                   >
-                                    Ouvrir
+                                    {t("common.view")}
                                   </a>
                                 </div>
                               }
@@ -2408,24 +2596,24 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             {homePrimaryPayUrl ? <input type="hidden" name="payment_url" value={homePrimaryPayUrl} /> : null}
                             <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "home" })} />
                             <button type="submit" className="client-pay-cta">
-                              Payer {toMoney(String(homeDueTotal), me.preferred_currency)}
+                              {t("common.pay")} {toMoney(String(homeDueTotal), me.preferred_currency)}
                             </button>
                           </form>
                         ) : (
                           <a className="client-pay-cta" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions", finance_status: "TO_PAY" })}>
-                            Payer {toMoney(String(homeDueTotal), me.preferred_currency)}
+                            {t("common.pay")} {toMoney(String(homeDueTotal), me.preferred_currency)}
                           </a>
                         )}
                         <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", finance_status: "TO_PAY" })}>
-                          Voir toutes les factures
+                          {t("client.view_all_invoices")}
                         </a>
                       </div>
                     </UrgentPayCard>
                   ) : null}
 
-                  <SectionCard title="À venir (14 jours)" action={<Link className="mode-link" href={homePlanningHref}>Voir le planning</Link>}>
+                  <SectionCard title={t("client.upcoming_14_days")} action={<Link className="mode-link" href={homePlanningHref}>{t("client.view_schedule")}</Link>}>
                     {upcomingBookings14.length === 0 ? (
-                      <p className="muted">Aucun cours a venir sur 14 jours.</p>
+                      <p className="muted">{t("client.no_upcoming_14_days")}</p>
                     ) : (
                       <div className="client-home-coming-list">
                         {upcomingBookings14.slice(0, 3).map((booking) => (
@@ -2433,7 +2621,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             key={`home-upcoming-${booking.id}`}
                             timeLabel={formatTimeInTimezone(booking.session.start_at_utc, timezone)}
                             title={booking.session.title}
-                            subtitle={`${formatDateInTimezone(booking.session.start_at_utc, timezone)} · ${booking.owner_display_name} · ${statusLabel(booking.status)}`}
+                            subtitle={`${formatDateInTimezone(booking.session.start_at_utc, timezone)} · ${booking.owner_display_name} · ${statusLabel(booking.status, language)}`}
                             action={
                               <a
                                 className="mode-link"
@@ -2445,7 +2633,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   booking_owner_id: booking.owner_client_id,
                                 })}
                               >
-                                Voir
+                                {t("common.view")}
                               </a>
                             }
                           />
@@ -2456,9 +2644,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </div>
 
                 <aside className="client-home-side">
-                  <SectionCard title="Mes forfaits" action={<a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers" })}>Voir tout</a>}>
+                  <SectionCard title={t("client.my_plans")} action={<a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers" })}>{t("common.view_all")}</a>}>
                     {homeSubscriptionsPreview.length === 0 ? (
-                      <p className="muted">Aucun carnet / abonnement actif.</p>
+                      <p className="muted">{t("client.no_active_subscription_preview")}</p>
                     ) : (
                       <div className="client-forfait-preview-list">
                         {homeSubscriptionsPreview.map((sub) => {
@@ -2469,24 +2657,24 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           const ratio = initialCredits > 0 ? Math.min(100, Math.round((consumedCredits / initialCredits) * 100)) : 0;
                           const linkedPlan = plans.find((plan) => plan.id === sub.plan.id);
                           const detailLine = isPack
-                            ? `Credits restants: ${remainingCredits}/${initialCredits || "?"}`
-                            : `${toMoney(sub.plan.kind === "FORFAIT" ? "0" : planDisplayPrice(linkedPlan), me.preferred_currency)} / periode · ${paymentMethodLabel(sub.billing_method_code)}`;
+                            ? t("client.remaining_credits", { remaining: remainingCredits, initial: initialCredits || "?" })
+                            : `${toMoney(sub.plan.kind === "FORFAIT" ? "0" : planDisplayPrice(linkedPlan), me.preferred_currency)} ${language === "en" ? "/ period" : "/ periode"} · ${paymentMethodLabel(sub.billing_method_code)}`;
                           const expiryLine = sub.ends_at
-                            ? `Expiration: ${formatDate(sub.ends_at)}`
+                            ? t("client.expiration", { date: formatDate(sub.ends_at) })
                             : sub.next_payment_at
-                              ? `Prochain prelevement: ${formatDate(sub.next_payment_at)}`
-                              : "Sans date de fin";
+                              ? t("client.next_debit", { date: formatDate(sub.next_payment_at) })
+                              : t("client.no_end_date");
                           return (
                             <PlanCard
                               key={`home-sub-${sub.id}`}
                               title={sub.plan.name}
-                              typeBadge={<span className="badge">{planKindLabel(sub.plan.kind)}</span>}
-                              memberStatus={`${sub.owner_display_name} · ${statusLabel(sub.status)}`}
+                              typeBadge={<span className="badge">{planKindLabel(sub.plan.kind, language)}</span>}
+                              memberStatus={`${sub.owner_display_name} · ${statusLabel(sub.status, language)}`}
                               detailLine={detailLine}
                               expiryLine={expiryLine}
                               progressRatio={isPack ? ratio : undefined}
-                              progressLabel={isPack ? `Progression: ${consumedCredits}/${initialCredits || "?"}` : undefined}
-                              action={<a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: sub.id })}>Voir details</a>}
+                              progressLabel={isPack ? t("client.progress", { consumed: consumedCredits, initial: initialCredits || "?" }) : undefined}
+                              action={<a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: sub.id })}>{t("client.view_details")}</a>}
                             />
                           );
                         })}
@@ -2494,16 +2682,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     )}
                   </SectionCard>
 
-                  <SectionCard title="Dernieres factures" action={<a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices" })}>Voir tout</a>}>
+                  <SectionCard title={t("client.latest_invoices")} action={<a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices" })}>{t("common.view_all")}</a>}>
                     {baseInvoiceRows.length === 0 ? (
-                      <p className="muted">Aucune facture.</p>
+                      <p className="muted">{t("client.no_invoice")}</p>
                     ) : (
                       <div className="client-home-due-list">
                         {baseInvoiceRows.slice(0, 3).map((invoice) => (
                           <CompactInvoiceRow
                             key={`home-last-invoice-${invoice.id}`}
                             title={compactId(invoice.invoice_number)}
-                            statusBadge={<span className={`status-pill ${statusClass(invoice.status)}`}>{financeStatusLabel(invoice.status)}</span>}
+                            statusBadge={<span className={`status-pill ${statusClass(invoice.status)}`}>{financeStatusLabel(invoice.status, language)}</span>}
                             meta={`${toMoney(invoice.total_incl_vat, invoice.currency)} · ${formatDate(invoice.issued_at)} · ${invoice.owner_display_name}`}
                             subline={invoice.label}
                             actions={
@@ -2514,11 +2702,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   target="_blank"
                                   rel="noreferrer"
                                 >
-                                  Ouvrir
+                                  {t("common.view")}
                                 </a>
                                 {invoice.download_url ? (
                                   <a className="mode-link" href={invoice.download_url}>
-                                    Télécharger
+                                    {t("common.download")}
                                   </a>
                                 ) : null}
                               </div>
@@ -2532,22 +2720,22 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               </section>
 
               <SectionCard
-                title={hasMultipleVisibleMembers ? "Calendrier famille" : "Calendrier"}
+                title={hasMultipleVisibleMembers ? t("client.family_calendar") : t("client.calendar")}
                 action={
                   hasMultipleVisibleMembers ? (
                     <div className="row">
                       <a className={`mode-link ${normalizedHomeCalendarView === "FAMILY" ? "active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "home", home_calendar_view: "FAMILY" })}>
-                        Vue famille
+                        {t("client.family_view")}
                       </a>
                       <a className={`mode-link ${normalizedHomeCalendarView === "BY_MEMBER" ? "active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "home", home_calendar_view: "BY_MEMBER" })}>
-                        Par enfant
+                        {t("client.by_child")}
                       </a>
                     </div>
                   ) : undefined
                 }
               >
                 {homeCalendarRows.length === 0 ? (
-                  <p className="muted">Aucun cours a venir sur 14 jours.</p>
+                  <p className="muted">{t("client.no_upcoming_14_days")}</p>
                 ) : normalizedHomeCalendarView === "BY_MEMBER" ? (
                   <div className="client-home-calendar-groups">
                     {homeCalendarGroups.map(([memberName, rows]) => (
@@ -2559,7 +2747,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               key={`home-booking-group-${booking.id}`}
                               timeLabel={formatTimeInTimezone(booking.session.start_at_utc, timezone)}
                               title={booking.session.title}
-                              subtitle={`${formatDateInTimezone(booking.session.start_at_utc, timezone)} · ${statusLabel(booking.status)}`}
+                              subtitle={`${formatDateInTimezone(booking.session.start_at_utc, timezone)} · ${statusLabel(booking.status, language)}`}
                               action={
                                 <a
                                   className="mode-link"
@@ -2571,7 +2759,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     booking_owner_id: booking.owner_client_id,
                                   })}
                                 >
-                                  Voir
+                                  {t("common.view")}
                                 </a>
                               }
                             />
@@ -2587,7 +2775,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         key={`home-booking-${booking.id}`}
                         timeLabel={formatTimeInTimezone(booking.session.start_at_utc, timezone)}
                         title={booking.session.title}
-                        subtitle={`${formatDateInTimezone(booking.session.start_at_utc, timezone)} · ${booking.owner_display_name} · ${statusLabel(booking.status)}`}
+                        subtitle={`${formatDateInTimezone(booking.session.start_at_utc, timezone)} · ${booking.owner_display_name} · ${statusLabel(booking.status, language)}`}
                         action={
                           <a
                             className="mode-link"
@@ -2599,7 +2787,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               booking_owner_id: booking.owner_client_id,
                             })}
                           >
-                            Voir
+                            {t("common.view")}
                           </a>
                         }
                       />
@@ -2608,14 +2796,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 )}
               </SectionCard>
 
-              <SectionCard title="Derniers rappels" action={<a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>Voir tout</a>}>
+              <SectionCard title={t("client.latest_reminders")} action={<a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>{t("common.view_all")}</a>}>
                 {newsRows.length === 0 ? (
-                  <p className="muted">Aucun rappel récent.</p>
+                  <p className="muted">{t("client.no_recent_reminder")}</p>
                 ) : (
                   <div className="list">
                     {newsRows.map((message) => (
                       <article key={`home-news-${message.id}`} className="item">
-                        <strong>{message.subject_preview || "Message"}</strong>
+                        <strong>{message.subject_preview || t("client.message_fallback")}</strong>
                         <p className="muted">{formatDateTime(message.sent_at || message.scheduled_for_utc)} · {message.channel}</p>
                       </article>
                     ))}
@@ -2631,12 +2819,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       {homePrimaryPayUrl ? <input type="hidden" name="payment_url" value={homePrimaryPayUrl} /> : null}
                       <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "home" })} />
                       <button type="submit" className="client-pay-cta">
-                        Payer {toMoney(String(homeDueTotal), me.preferred_currency)}
+                        {t("common.pay")} {toMoney(String(homeDueTotal), me.preferred_currency)}
                       </button>
                     </form>
                   ) : (
                     <a className="client-pay-cta" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions", finance_status: "TO_PAY" })}>
-                      Payer {toMoney(String(homeDueTotal), me.preferred_currency)}
+                      {t("common.pay")} {toMoney(String(homeDueTotal), me.preferred_currency)}
                     </a>
                   )}
                 </div>
@@ -2649,11 +2837,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               <Card className="client-planning-shell">
                 <div className="row spread client-planning-heading">
                   <div>
-                    <h2>Planning hebdomadaire</h2>
-                    <p className="muted">Une seule grille semaine pour distinguer vos reservations et les disponibilites en ligne.</p>
+                    <h2>{t("client.weekly_schedule")}</h2>
+                    <p className="muted">{t("client.weekly_schedule_help")}</p>
                   </div>
                   <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers" })}>
-                    🛍️ Offres
+                    🛍️ {t("client.offers")}
                   </a>
                 </div>
 
@@ -2663,12 +2851,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
                   <div className="client-planning-hero">
                     <label className="client-planning-pill client-planning-pill-location">
-                      <span>📍 Planning</span>
+                      <span>📍 {t("client.planning")}</span>
                       <AutoSubmitSelect
                         name="location_id"
                         defaultValue={selectedLocation}
                         options={[
-                          { value: "", label: "Tous les lieux" },
+                          { value: "", label: t("client.all_locations") },
                           ...locations.map((location) => ({ value: location.id, label: location.name })),
                         ]}
                       />
@@ -2680,7 +2868,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         type="date"
                         name="agenda_date"
                         defaultValue={agendaDate}
-                        ariaLabel="Date du planning"
+                        ariaLabel={t("client.schedule_date")}
                       />
                     </label>
 
@@ -2699,55 +2887,55 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           agenda_date: todayKeyInTimezone(timezone),
                           booking_owner_id: FAMILY_BOOKING_OWNER,
                         })}
-                        title="Reinitialiser"
+                        title={t("common.reset")}
                       >
                         ↺
                       </a>
                     </div>
                   </div>
 
-                  <DrawerFilters title="⚙ Filtres avances" className={`client-planning-advanced ${advancedFiltersOpen ? "has-active" : ""}`} defaultOpen={advancedFiltersOpen}>
+                  <DrawerFilters title={`⚙ ${t("client.advanced_filters")}`} className={`client-planning-advanced ${advancedFiltersOpen ? "has-active" : ""}`} defaultOpen={advancedFiltersOpen}>
                     <div className="client-planning-advanced-grid">
                       <label>
-                        Activite
+                        {t("client.activity")}
                         <AutoSubmitSelect
                           name="course_type_id"
                           defaultValue={selectedCourseType}
                           options={[
-                            { value: "", label: "Toutes" },
+                            { value: "", label: t("common.all") },
                             ...courseTypes.map((courseType) => ({ value: courseType.id, label: courseType.name })),
                           ]}
                         />
                       </label>
 
                       <label>
-                        Coach
+                        {t("client.coach")}
                         <AutoSubmitSelect
                           name="coach_id"
                           defaultValue={selectedCoachId}
                           options={[
-                            { value: "", label: "Tous" },
+                            { value: "", label: t("common.all") },
                             ...coachOptions.map((coach) => ({ value: coach.id, label: coach.name })),
                           ]}
                         />
                       </label>
 
                       <label>
-                        Horaire
+                        {t("client.time_label")}
                         <AutoSubmitSelect
                           name="time_bucket"
                           defaultValue={selectedTimeBucket}
                           options={[
-                            { value: "ALL", label: "Toutes heures" },
-                            { value: "MORNING", label: "Matin (6h-12h)" },
-                            { value: "AFTERNOON", label: "Apres-midi (12h-18h)" },
-                            { value: "EVENING", label: "Soir (18h-minuit)" },
+                            { value: "ALL", label: t("client.all_hours") },
+                            { value: "MORNING", label: t("client.morning") },
+                            { value: "AFTERNOON", label: t("client.afternoon") },
+                            { value: "EVENING", label: t("client.evening") },
                           ]}
                         />
                       </label>
 
                       <label>
-                        Fuseau horaire
+                        {t("client.timezone_label")}
                         <AutoSubmitSelect
                           name="timezone"
                           defaultValue={timezone}
@@ -2757,12 +2945,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
                       {hasMultipleVisibleMembers ? (
                       <label>
-                        Reservation pour
+                        {t("client.booking_for")}
                           <AutoSubmitSelect
                             name="booking_owner_id"
                             defaultValue={bookingOwnerId}
                             options={[
-                              { value: FAMILY_BOOKING_OWNER, label: "Toute la famille" },
+                              { value: FAMILY_BOOKING_OWNER, label: t("client.whole_family") },
                               ...members.map((member) => ({ value: member.id, label: member.display_name })),
                             ]}
                           />
@@ -2772,14 +2960,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       )}
 
                       <label>
-                        Statut creneaux
+                        {t("client.slot_status")}
                         <AutoSubmitSelect
                           name="planning_slot_filter"
                           defaultValue={planningSlotFilter}
                           options={[
-                            { value: "ALL", label: "Tous" },
-                            { value: "AVAILABLE", label: "Disponibles uniquement" },
-                            { value: "ALREADY_BOOKED", label: "Deja reserves" },
+                            { value: "ALL", label: t("common.all") },
+                            { value: "AVAILABLE", label: t("client.available_only") },
+                            { value: "ALREADY_BOOKED", label: t("client.already_booked") },
                           ]}
                         />
                       </label>
@@ -2792,23 +2980,23 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <div className="client-week-title-group">
                       <span className="badge">{bookingOwnerLabel}</span>
                       <strong>{agendaRange.title}</strong>
-                      <small>{hasMultipleVisibleMembers ? "Une seule grille mobile-first pour suivre les reservations famille et les creneaux reservables." : "Une seule grille mobile-first pour suivre vos reservations et les creneaux reservables."}</small>
+                      <small>{hasMultipleVisibleMembers ? t("client.week_toolbar_family_help") : t("client.week_toolbar_single_help")}</small>
                     </div>
                     <div className="client-week-toolbar-actions">
                       <a
                         className="client-date-nav-btn"
                         href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: shiftDateKeyByDays(agendaDate, -7), agenda_view: "week" })}
-                        aria-label="Semaine precedente"
+                        aria-label={t("client.previous_week")}
                       >
                         ←
                       </a>
                       <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: todayKeyInTimezone(timezone), agenda_view: "week" })}>
-                        Aujourd'hui
+                        {t("client.today")}
                       </a>
                       <a
                         className="client-date-nav-btn"
                         href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: shiftDateKeyByDays(agendaDate, 7), agenda_view: "week" })}
-                        aria-label="Semaine suivante"
+                        aria-label={t("client.next_week")}
                       >
                         →
                       </a>
@@ -2817,15 +3005,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   <div className="client-week-legend">
                     <span className="client-week-legend-item">
                       <span className="client-week-legend-swatch reserved" />
-                      Mes reservations
+                      {t("client.my_bookings")}
                     </span>
                     <span className="client-week-legend-item">
                       <span className="client-week-legend-swatch available" />
-                      Reserver ou payer
+                      {t("client.book_or_pay")}
                     </span>
                     <span className="client-week-legend-item">
                       <span className="client-week-legend-swatch full" />
-                      Ferme ou complet
+                      {t("client.closed_or_full")}
                     </span>
                   </div>
                 </div>
@@ -2833,10 +3021,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
               <Card className="client-available-section client-week-planning-board">
                 <div className="row spread">
-                  <h2>Ma semaine de reservation</h2>
+                  <h2>{t("client.my_booking_week")}</h2>
                   <span className="badge">{agendaSessionCount}</span>
                 </div>
-                <p className="muted">Vos creneaux reserves et les disponibilites en ligne sont reunis sur la meme grille.</p>
+                <p className="muted">{t("client.booking_week_help")}</p>
                 <form method="get" className="client-planning-quick-filter-form">
                   <input type="hidden" name="tab" value="planning" />
                   <input type="hidden" name="agenda_view" value="week" />
@@ -2848,14 +3036,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   <input type="hidden" name="timezone" value={timezone} />
                   <input type="hidden" name="booking_owner_id" value={bookingOwnerId} />
                   <label className="client-planning-quick-filter-label">
-                    <span>Afficher</span>
+                    <span>{t("client.show")}</span>
                     <AutoSubmitSelect
                       name="planning_slot_filter"
                       defaultValue={planningSlotFilter}
                       options={[
-                        { value: "ALL", label: "Tous les creneaux" },
-                        { value: "AVAILABLE", label: "A reserver maintenant" },
-                        { value: "ALREADY_BOOKED", label: "Mes reservations" },
+                        { value: "ALL", label: t("client.all_slots") },
+                        { value: "AVAILABLE", label: t("client.book_now") },
+                        { value: "ALREADY_BOOKED", label: t("client.my_bookings") },
                       ]}
                     />
                   </label>
@@ -2882,7 +3070,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <span className="badge">{daySessions.length}</span>
                         </div>
 
-                        {daySessions.length === 0 ? <p className="muted agenda-empty">Aucun cours</p> : null}
+                        {daySessions.length === 0 ? <p className="muted agenda-empty">{t("client.no_course")}</p> : null}
 
                         <div className="agenda-events">
                           {daySessions.map((session) => {
@@ -2904,44 +3092,44 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             });
                             const reservationFlagLabel =
                               sessionState.familyBookings.length > 1
-                                ? `${sessionState.familyBookings.length} reservations`
+                                ? t("client.bookings_count", { count: sessionState.familyBookings.length })
                                 : null;
                             const bookingBadges = sessionState.familyBookings.filter((booking) =>
                               isAlreadyReservedByMember(booking.status) || isPendingPaymentBooking(booking.status),
                             );
                             const bookingSummaryLabel =
                               bookingBadges.length > 1
-                                ? `${bookingBadges.length} reservations famille`
+                                ? t("client.family_bookings_badge", { count: bookingBadges.length })
                                 : bookingBadges.length === 1
                                   ? bookingOwnerId === FAMILY_BOOKING_OWNER
                                     ? isPendingPaymentBooking(bookingBadges[0].status)
-                                      ? `${bookingBadges[0].owner_display_name} · Paiement`
-                                      : `Reserve pour ${bookingBadges[0].owner_display_name}`
+                                      ? `${bookingBadges[0].owner_display_name} · ${t("client.payment_short")}`
+                                      : t("client.booked_for", { members: bookingBadges[0].owner_display_name })
                                     : isPendingPaymentBooking(bookingBadges[0].status)
-                                      ? "Paiement en attente"
-                                      : "Reserve"
+                                      ? t("client.planning_status_payment_pending")
+                                      : t("client.reserved_short")
                                   : null;
-                            const cardStatusClass = planningStatusClass(sessionState.cardStatusLabel);
+                            const cardStatusClass = planningStatusClass(sessionState.cardStatusCode);
                             const showPlanningStateBadge =
-                              !sessionState.alreadyReserved && shouldRenderPlanningStateBadge(sessionState.cardStatusLabel);
+                              !sessionState.alreadyReserved && shouldRenderPlanningStateBadge(sessionState.cardStatusCode);
                             const sessionCtaLabel = sessionState.alreadyReserved
                               ? sessionState.actionableMembers.length > 0
-                                ? "Reserver"
-                                : "Voir la reservation"
+                                ? t("client.book_action")
+                                : t("client.view_booking")
                               : sessionState.paymentPending
-                                ? "Finaliser le paiement"
+                                ? t("client.complete_payment_action")
                                 : sessionState.canCheckout
                                   ? sessionState.actionLabel
                                   : sessionState.isFull
-                                  ? "Complet"
-                                  : "Voir details";
+                                  ? planningStatusLabel("FULL")
+                                  : t("client.view_details");
 
                             return (
                               <a
                                 key={session.id}
                                 className="client-session-link"
                                 href={openDetailsHref}
-                                aria-label={`Ouvrir le detail du creneau ${session.title}`}
+                                aria-label={t("client.open_slot_detail", { title: session.title })}
                               >
                                 <article
                                   className={`client-session-card ${compactAgendaCard ? "client-session-card-compact" : ""} ${sessionState.alreadyReserved ? "client-session-card-booked" : ""} ${statusClass(session.status)}`}
@@ -3009,7 +3197,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <a
                         className="modal-close-x"
                         href={selectedSessionCloseHref}
-                        aria-label="Fermer le detail du creneau"
+                        aria-label={t("client.close_slot_detail")}
                       >
                         ×
                       </a>
@@ -3022,31 +3210,31 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           {selectedSession.booked_count}/{selectedSession.capacity_max}
                         </span>
                         {selectedSessionModalStatusLabel ? (
-                          <span className={`status-badge ${planningStatusClass(selectedSessionModalStatusLabel)}`}>
+                          <span className={`status-badge ${planningStatusClass(selectedSessionModalStatusCode)}`}>
                             {selectedSessionModalStatusLabel}
                           </span>
                         ) : null}
-                        {!selectedSession.online_booking_enabled ? <span className="badge">Reservation en ligne fermee</span> : null}
+                        {!selectedSession.online_booking_enabled ? <span className="badge">{t("client.online_booking_closed")}</span> : null}
                       </div>
                     </header>
 
                     <section className="modal-card client-session-modal-grid">
                       <article className="item">
-                        <small className="muted">Coach</small>
+                        <small className="muted">{t("client.coach_label")}</small>
                         <p>
                           {sessionProfessorName(selectedSession)}
                         </p>
                       </article>
                       <article className="item">
-                        <small className="muted">Lieu</small>
+                        <small className="muted">{t("client.location_label")}</small>
                         <p>{selectedSession.location.name}</p>
                       </article>
                       <article className="item">
-                        <small className="muted">Activite</small>
+                        <small className="muted">{t("client.activity_label")}</small>
                         <p>{selectedSession.course_type.name}</p>
                       </article>
                       <article className="item">
-                        <small className="muted">Duree</small>
+                        <small className="muted">{t("client.duration_label")}</small>
                         <p>
                           {Math.max(
                             1,
@@ -3059,14 +3247,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
                     {selectedSession.description ? (
                       <section className="modal-card">
-                        <small className="muted">Description</small>
+                        <small className="muted">{t("client.description_label")}</small>
                         <p>{selectedSession.description}</p>
                       </section>
                     ) : null}
 
                     {selectedSession.zoom_link ? (
                       <section className="modal-card">
-                        <small className="muted">Lien Zoom</small>
+                        <small className="muted">{t("client.zoom_link_label")}</small>
                         <p>
                           <a href={selectedSession.zoom_link} target="_blank" rel="noreferrer">
                             {selectedSession.zoom_link}
@@ -3079,12 +3267,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <section className="modal-card client-session-modal-state">
                         <div className="row spread">
                           <div className="client-session-modal-state-copy">
-                            <small className="muted">Statut de la reservation</small>
+                            <small className="muted">{t("client.booking_status_label")}</small>
                             <p className="client-session-modal-state-title">{selectedSessionBookedStateTitle}</p>
                             <p>{selectedSessionBookedStateDescription}</p>
                           </div>
                           {selectedSessionModalStatusLabel ? (
-                            <span className={`status-badge ${planningStatusClass(selectedSessionModalStatusLabel)}`}>
+                            <span className={`status-badge ${planningStatusClass(selectedSessionModalStatusCode)}`}>
                               {selectedSessionModalStatusLabel}
                             </span>
                           ) : null}
@@ -3094,35 +3282,37 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <section className="modal-card client-session-modal-state">
                         <div className="row spread">
                           <div className="client-session-modal-state-copy">
-                            <small className="muted">Prochaine etape</small>
+                            <small className="muted">{t("client.next_step_label")}</small>
                             <p className="client-session-modal-state-title">
                               {selectedSessionStateTitle}
                             </p>
                             <p>{selectedSessionStateDescription}</p>
                           </div>
                           {selectedSessionModalStatusLabel ? (
-                            <span className={`status-badge ${planningStatusClass(selectedSessionModalStatusLabel)}`}>
+                            <span className={`status-badge ${planningStatusClass(selectedSessionModalStatusCode)}`}>
                               {selectedSessionModalStatusLabel}
                             </span>
                           ) : null}
                         </div>
-                    {selectedSessionCoverageLabel ? (
-                      <div className="client-session-modal-state-meta">
-                        <span className="badge">{selectedSessionCoverageLabel}</span>
-                        {selectedReservationMemberOption ? (
-                          <span className="badge">{`Pour ${selectedReservationMemberOption.member_display_name}`}</span>
+                        {selectedSessionCoverageLabel ? (
+                          <div className="client-session-modal-state-meta">
+                            <span className="badge">{selectedSessionCoverageLabel}</span>
+                            {selectedReservationMemberOption ? (
+                              <span className="badge">
+                                {t("client.for_member", { member: selectedReservationMemberOption.member_display_name })}
+                              </span>
+                            ) : null}
+                          </div>
                         ) : null}
-                      </div>
+                      </section>
                     ) : null}
-                  </section>
-                ) : null}
 
                     {reservationOptionsMembers.length > 1 ? (
                       <section className="modal-card">
                         <div className="client-session-member-picker">
                           <div className="client-session-member-picker-heading">
-                            <small className="muted">Membre concerne</small>
-                            <p>Choisissez le membre a inscrire. Nous adaptons ensuite automatiquement le parcours.</p>
+                            <small className="muted">{t("client.member_concerned")}</small>
+                            <p>{t("client.member_picker_help")}</p>
                           </div>
                           <div className="client-session-member-grid">
                             {reservationOptionsMembers.map((option) => {
@@ -3148,17 +3338,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   aria-current={isSelected ? "true" : undefined}
                                 >
                                   {isSelected ? (
-                                    <span className="client-session-member-selected-label">Membre selectionne</span>
+                                    <span className="client-session-member-selected-label">{t("client.selected_member")}</span>
                                   ) : null}
                                   <div className="client-session-member-card-head">
                                     <strong>{option.member_display_name}</strong>
                                     <div className="client-session-member-card-badges">
-                                      <span className={`status-badge ${planningStatusClass(option.status_label)}`}>
-                                        {option.status_label}
+                                      <span className={`status-badge ${planningStatusClass(planningStatusCodeFromLabel(option.status_label))}`}>
+                                        {planningStatusDisplayLabel(option.status_label)}
                                       </span>
                                     </div>
                                   </div>
-                                  <small className="muted">{option.reason || option.action_label}</small>
+                                  <small className="muted">{reservationOptionReasonLabel(option) || reservationOptionActionLabel(option)}</small>
                                   {reservationOptionSupportLabel(option) ? (
                                     <small className={`client-session-member-support ${isSelected ? "active" : ""}`}>
                                       {reservationOptionSupportLabel(option)}
@@ -3176,11 +3366,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     selectedSessionActionCode === "FINALIZE_PAYMENT" &&
                     alternativeReservationOptions.length > 0 ? (
                       <section className="modal-card client-session-inline-warning">
-                        <strong>Autres options disponibles dans la famille</strong>
-                        <p>
-                          Le paiement en attente concerne seulement {selectedReservationMemberOption.member_display_name}. Vous pouvez
-                          toujours choisir un autre membre pour voir ses formules compatibles ou son paiement unitaire.
-                        </p>
+                        <strong>{t("client.alternative_family_options_title")}</strong>
+                        <p>{t("client.alternative_family_options_help", { member: selectedReservationMemberOption.member_display_name })}</p>
                         <div className="client-session-inline-warning-list">
                           {alternativeReservationOptions.map((option) => (
                             <span key={`alt-option-${option.member_id}`} className="badge">
@@ -3203,13 +3390,18 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         <div className="client-session-choice-heading">
                           <strong>
                             {selectedSessionEffectiveActionCode === "BUY_FORMULA_OR_PAY_UNIT"
-                              ? `${selectedSessionPurchaseChoiceCount} choix disponibles pour ${selectedReservationMemberOption.member_display_name}`
-                              : `Formules compatibles pour ${selectedReservationMemberOption.member_display_name}`}
+                              ? t("client.available_choices_for", {
+                                  count: selectedSessionPurchaseChoiceCount,
+                                  member: selectedReservationMemberOption.member_display_name,
+                                })
+                              : t("client.compatible_plans_for", {
+                                  member: selectedReservationMemberOption.member_display_name,
+                                })}
                           </strong>
                           <small className="muted">
                             {selectedSessionEffectiveActionCode === "BUY_FORMULA_OR_PAY_UNIT"
-                              ? "Choisissez librement une formule ou le paiement unitaire. Ces options ont le meme niveau."
-                              : "Choisissez la formule la plus adaptee pour confirmer la reservation."}
+                              ? t("client.choose_freely_plan_or_unit")
+                              : t("client.choose_best_plan")}
                           </small>
                         </div>
                         <div className="client-plan-grid client-session-formula-grid client-session-choice-grid">
@@ -3217,12 +3409,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             <article className="modal-card client-plan-card client-session-formula-card client-session-choice-card">
                               <div className="client-session-formula-copy">
                                 <div className="client-session-choice-card-head">
-                                  <strong>Paiement unitaire</strong>
-                                  <span className="badge">Reservation immediate</span>
+                                  <strong>{t("client.unit_payment")}</strong>
+                                  <span className="badge">{t("client.immediate_booking")}</span>
                                 </div>
-                                <p className="muted">Reglez uniquement ce creneau, sans achat de formule.</p>
+                                <p className="muted">{t("client.pay_current_slot_only")}</p>
                                 <small className="muted">
-                                  {`Achat unitaire · ${toMoney(
+                                  {`${t("client.unit_purchase")} · ${toMoney(
                                     selectedSessionDirectPaymentAmount,
                                     selectedSessionDirectPaymentCurrency,
                                   )}`}
@@ -3234,7 +3426,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 <input type="hidden" name="planning_return_to" value={selectedSessionReturnTo} />
                                 <input type="hidden" name="checkout_return_to" value={selectedSessionCheckoutReturnTo} />
                                 <button type="submit" className="client-session-secondary-button client-session-choice-button">
-                                  {`Payer a l unite · ${toMoney(
+                                  {`${t("client.pay_unit")} · ${toMoney(
                                     selectedSessionDirectPaymentAmount,
                                     selectedSessionDirectPaymentCurrency,
                                   )}`}
@@ -3250,7 +3442,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               <div className="client-session-formula-copy">
                                 <div className="client-session-choice-card-head">
                                   <strong>{formula.name}</strong>
-                                  <span className="badge">Formule</span>
+                                  <span className="badge">{t("client.plan_badge")}</span>
                                 </div>
                                 {formula.description ? <p className="muted">{formula.description}</p> : null}
                                 <small className="muted">
@@ -3265,8 +3457,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 <input type="hidden" name="planning_return_to" value={selectedSessionReturnTo} />
                                 <button type="submit" className="client-session-secondary-button client-session-choice-button">
                                   {formula.price_ttc
-                                    ? `Acheter pour ${selectedReservationMemberOption.member_display_name} · ${toMoney(formula.price_ttc, formula.currency)}`
-                                    : `Acheter la formule pour ${selectedReservationMemberOption.member_display_name}`}
+                                    ? `${t("client.buy_for_member", { member: selectedReservationMemberOption.member_display_name })} · ${toMoney(formula.price_ttc, formula.currency)}`
+                                    : t("client.buy_plan_for_member", { member: selectedReservationMemberOption.member_display_name })}
                                 </button>
                               </form>
                             </article>
@@ -3282,31 +3474,29 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <section className="modal-card client-session-secondary-options">
                         <details>
                           <summary>
-                            <span>Autres options d achat</span>
+                            <span>{t("client.other_purchase_options")}</span>
                             <small className="muted">
                               {selectedSessionPurchaseChoiceCount > 0
-                                ? `${selectedSessionPurchaseChoiceCount} option${selectedSessionPurchaseChoiceCount > 1 ? "s" : ""} secondaire${selectedSessionPurchaseChoiceCount > 1 ? "s" : ""}`
-                                : "Options alternatives"}
+                                ? t("client.secondary_options_count", { count: selectedSessionPurchaseChoiceCount })
+                                : t("client.alternative_options")}
                             </small>
                           </summary>
                           <div className="client-session-secondary-options-body">
                             <div className="client-session-choice-heading">
-                              <strong>{`Autres options pour ${selectedReservationMemberOption.member_display_name}`}</strong>
-                              <small className="muted">
-                                Votre credit reste la meilleure option. Vous pouvez tout de meme acheter une formule ou payer a l unite.
-                              </small>
+                              <strong>{t("client.other_options_for", { member: selectedReservationMemberOption.member_display_name })}</strong>
+                              <small className="muted">{t("client.credit_best_option_help")}</small>
                             </div>
                             <div className="client-plan-grid client-session-formula-grid client-session-choice-grid">
                               {selectedSessionDirectPaymentAmount ? (
                                 <article className="modal-card client-plan-card client-session-formula-card client-session-choice-card">
                                   <div className="client-session-formula-copy">
                                     <div className="client-session-choice-card-head">
-                                      <strong>Paiement unitaire</strong>
-                                      <span className="badge">Option secondaire</span>
+                                      <strong>{t("client.unit_payment")}</strong>
+                                      <span className="badge">{t("client.secondary_option")}</span>
                                     </div>
-                                    <p className="muted">Reglez ce creneau sans utiliser votre credit disponible.</p>
+                                    <p className="muted">{t("client.pay_without_credit")}</p>
                                     <small className="muted">
-                                      {`Achat unitaire · ${toMoney(
+                                      {`${t("client.unit_purchase")} · ${toMoney(
                                         selectedSessionDirectPaymentAmount,
                                         selectedSessionDirectPaymentCurrency,
                                       )}`}
@@ -3318,7 +3508,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     <input type="hidden" name="planning_return_to" value={selectedSessionReturnTo} />
                                     <input type="hidden" name="checkout_return_to" value={selectedSessionCheckoutReturnTo} />
                                     <button type="submit" className="client-session-secondary-button client-session-choice-button">
-                                      {`Payer a l unite · ${toMoney(
+                                      {`${t("client.pay_unit")} · ${toMoney(
                                         selectedSessionDirectPaymentAmount,
                                         selectedSessionDirectPaymentCurrency,
                                       )}`}
@@ -3334,7 +3524,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   <div className="client-session-formula-copy">
                                     <div className="client-session-choice-card-head">
                                       <strong>{formula.name}</strong>
-                                      <span className="badge">Formule</span>
+                                      <span className="badge">{t("client.plan_badge")}</span>
                                     </div>
                                     {formula.description ? <p className="muted">{formula.description}</p> : null}
                                     <small className="muted">
@@ -3349,8 +3539,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     <input type="hidden" name="planning_return_to" value={selectedSessionReturnTo} />
                                     <button type="submit" className="client-session-secondary-button client-session-choice-button">
                                       {formula.price_ttc
-                                        ? `Acheter pour ${selectedReservationMemberOption.member_display_name} · ${toMoney(formula.price_ttc, formula.currency)}`
-                                        : `Acheter la formule pour ${selectedReservationMemberOption.member_display_name}`}
+                                        ? `${t("client.buy_for_member", { member: selectedReservationMemberOption.member_display_name })} · ${toMoney(formula.price_ttc, formula.currency)}`
+                                        : t("client.buy_plan_for_member", { member: selectedReservationMemberOption.member_display_name })}
                                     </button>
                                   </form>
                                 </article>
@@ -3366,7 +3556,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         className="mode-link client-session-modal-back-link"
                         href={selectedSessionCloseHref}
                       >
-                        Retour au planning
+                        {t("client.back_to_schedule")}
                       </a>
                       <div className="client-session-modal-action-list">
                         {selectedSessionHasBooking && selectedReservationMemberOption?.booking_id ? (
@@ -3375,12 +3565,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               <input type="hidden" name="booking_id" value={selectedReservationMemberOption.booking_id} />
                               <input type="hidden" name="return_to" value={selectedSessionReturnTo} />
                               <button className="client-session-cancel-button" type="submit">
-                                {`Annuler pour ${selectedReservationMemberOption.member_display_name}`}
+                                {t("client.cancel_for", { member: selectedReservationMemberOption.member_display_name })}
                               </button>
                             </form>
                             {(selectedReservationMemberOption.booking_status || "").toUpperCase() === "BOOKED" ? (
                               <a className="mode-link client-session-calendar-link" href={`/client/bookings/${selectedReservationMemberOption.booking_id}/calendar`}>
-                                {`Ajouter a l agenda pour ${selectedReservationMemberOption.member_display_name}`}
+                                {t("client.add_to_calendar_for", { member: selectedReservationMemberOption.member_display_name })}
                               </a>
                             ) : null}
                           </div>
@@ -3418,7 +3608,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             <input type="hidden" name="planning_return_to" value={selectedSessionReturnTo} />
                             <input type="hidden" name="checkout_return_to" value={selectedSessionCheckoutReturnTo} />
                             <button type="submit" className="client-session-primary-button">
-                              {`Payer a l unite · ${toMoney(
+                              {`${t("client.pay_unit")} · ${toMoney(
                                 selectedSessionDirectPaymentAmount,
                                 selectedSessionDirectPaymentCurrency,
                               )}`}
@@ -3428,24 +3618,24 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         {selectedReservationMemberOption && selectedSessionEffectiveActionCode === "UNAVAILABLE" ? (
                           <div className="stack-sm">
                             <span className="badge">
-                              {selectedReservationMemberOption.reason || "Reservation non disponible pour ce creneau"}
+                              {reservationOptionReasonLabel(selectedReservationMemberOption) || t("client.unavailable_slot")}
                             </span>
                           </div>
                         ) : null}
                         {selectedSessionRequiresMemberChoice ? (
                           <div className="stack-sm">
-                            <span className="badge">Choisissez d abord le membre a inscrire pour voir l option la plus adaptee.</span>
+                            <span className="badge">{t("client.choose_member_first")}</span>
                           </div>
                         ) : null}
                         {!selectedReservationMemberOption && !selectedSessionRequiresMemberChoice ? (
                           <div className="stack-sm">
                             <span className="badge">
-                              {selectedSessionPlanningState?.contextLine || "Reservation non disponible pour ce creneau"}
+                              {selectedSessionPlanningState?.contextLine || t("client.unavailable_slot")}
                             </span>
                             {!selectedSessionPlanningState?.hasDirectPayment &&
-                            selectedSessionPlanningState?.statusLabel === "Aucune formule" ? (
+                            selectedSessionPlanningState?.statusCode === "NO_PLAN" ? (
                               <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers" })}>
-                                Voir les offres compatibles
+                                {t("client.view_compatible_offers")}
                               </a>
                             ) : null}
                           </div>
@@ -3455,8 +3645,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <div className="client-session-inline-note">
                             <small className="muted">
                               {selectedSessionEffectiveActionCode === "BUY_FORMULA_OR_PAY_UNIT"
-                                ? "Vous pouvez reserver tout de suite a l unite ou choisir une formule plus avantageuse."
-                                : "Selectionnez une formule pour activer des credits puis confirmer la reservation."}
+                                ? t("client.unit_or_plan_note")
+                                : t("client.select_plan_then_confirm")}
                             </small>
                           </div>
                         ) : null}
@@ -3474,21 +3664,21 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               <Card className="client-content-shell">
                 <div className="row spread client-content-heading">
                   <div>
-                    <h2>Mes cours en ligne</h2>
-                    <p className="muted">Retrouvez ici les contenus de solfege rattaches a vos activites actives.</p>
+                    <h2>{t("client.online_courses_title")}</h2>
+                    <p className="muted">{t("client.online_courses_help")}</p>
                   </div>
-                  <span className="badge">{filteredContentCourses.length} cours</span>
+                  <span className="badge">{t("client.course_count", { count: filteredContentCourses.length })}</span>
                 </div>
                 <form method="get" className="client-content-filter-form">
                   <input type="hidden" name="tab" value="courses" />
                   {hasMultipleVisibleMembers ? (
                     <label className="client-content-member-filter">
-                      <span>Afficher pour</span>
+                      <span>{t("client.show_for")}</span>
                       <AutoSubmitSelect
                         name="content_member_id"
                         defaultValue={contentMemberFilter}
                         options={[
-                          { value: "ALL", label: "Toute la famille" },
+                          { value: "ALL", label: t("client.whole_family") },
                           ...members.map((member) => ({ value: member.id, label: member.display_name })),
                         ]}
                       />
@@ -3499,16 +3689,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
               <div className="client-content-layout">
                 <SectionCard
-                  title="Cours accessibles"
+                  title={t("client.accessible_courses")}
                   className="client-content-course-list-card"
-                  action={selectedContentCourse ? <span className="badge">{courseAudienceLabel(selectedContentCourse)}</span> : undefined}
+                  action={selectedContentCourse ? <span className="badge">{courseAudienceLabel(selectedContentCourse, language)}</span> : undefined}
                 >
                   {filteredContentCourses.length === 0 ? (
                     <div className="client-content-empty-state">
-                      <strong>Aucun cours en ligne disponible pour le moment.</strong>
-                      <p className="muted">
-                        Des qu une activite en ligne avec contenu pedagogique sera active sur votre compte, elle apparaitra ici.
-                      </p>
+                      <strong>{t("client.no_online_course")}</strong>
+                      <p className="muted">{t("client.no_online_course_help")}</p>
                     </div>
                   ) : (
                     <div className="client-content-course-list">
@@ -3532,11 +3720,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 {course.level_code ? <span className="badge">{course.level_code}</span> : null}
                                 <h3>{course.title}</h3>
                               </div>
-                              <span className="badge">{totalLessons} lecons</span>
+                              <span className="badge">{t("client.lesson_count", { count: totalLessons })}</span>
                             </div>
                             {course.summary ? <p>{course.summary}</p> : null}
                             <div className="client-content-course-card-meta">
-                              <span>{courseAudienceLabel(course)}</span>
+                              <span>{courseAudienceLabel(course, language)}</span>
                               <span>
                                 {course.member_accesses
                                   .flatMap((access) => access.course_type_names)
@@ -3552,13 +3740,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </SectionCard>
 
                 <SectionCard
-                  title={selectedContentCourse ? selectedContentCourse.title : "Selectionnez un cours"}
+                  title={selectedContentCourse ? selectedContentCourse.title : t("client.select_course")}
                   className="client-content-course-detail-card"
                   action={selectedContentCourse?.level_code ? <span className="badge">{selectedContentCourse.level_code}</span> : undefined}
                 >
                   {!selectedContentCourse ? (
                     <div className="client-content-empty-state">
-                      <strong>Choisissez un cours pour afficher son contenu.</strong>
+                      <strong>{t("client.choose_course_to_view")}</strong>
                     </div>
                   ) : (
                     <>
@@ -3575,18 +3763,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             <p className="client-content-course-summary">{selectedContentCourse.summary}</p>
                           ) : null}
                           <p className="muted client-content-course-bridge">
-                            Accessible via{" "}
-                            {selectedContentCourse.member_accesses
-                              .flatMap((access) => access.course_type_names)
-                              .filter((value, index, array) => array.indexOf(value) === index)
-                              .join(", ")}
+                            {t("client.accessible_via", {
+                              values: selectedContentCourse.member_accesses
+                                .flatMap((access) => access.course_type_names)
+                                .filter((value, index, array) => array.indexOf(value) === index)
+                                .join(", "),
+                            })}
                           </p>
                         </div>
                         {selectedContentCourse.cover_image_url ? (
                           <img
                             className="client-content-course-cover"
                             src={selectedContentCourse.cover_image_url}
-                            alt={`Illustration ${selectedContentCourse.title}`}
+                            alt={t("client.course_illustration", { title: selectedContentCourse.title })}
                           />
                         ) : null}
                       </div>
@@ -3623,7 +3812,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             <section className="client-content-outline-section">
                               <header>
                                 <span className="badge">{selectedContentCourse.standalone_lessons.length}</span>
-                                <h3>Lecons</h3>
+                                <h3>{t("client.lessons")}</h3>
                               </header>
                               <div className="client-content-outline-lessons">
                                 {selectedContentCourse.standalone_lessons.map((lesson) => (
@@ -3662,12 +3851,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               <div className="client-content-lesson-actions">
                                 {selectedContentLesson.lesson.video_url ? (
                                   <a className="mode-link" href={selectedContentLesson.lesson.video_url} target="_blank" rel="noreferrer">
-                                    Ouvrir la video
+                                    {t("client.open_video")}
                                   </a>
                                 ) : null}
                                 {selectedContentLesson.lesson.resource_url ? (
                                   <a className="mode-link" href={selectedContentLesson.lesson.resource_url} target="_blank" rel="noreferrer">
-                                    Ressource jointe
+                                    {t("client.attached_resource")}
                                   </a>
                                 ) : null}
                               </div>
@@ -3679,14 +3868,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 />
                               ) : (
                                 <div className="client-content-empty-state">
-                                  <strong>Le contenu detaille de cette lecon n est pas encore disponible.</strong>
-                                  <p className="muted">Le titre et les ressources sont deja synchronises depuis WordPress / LearnDash.</p>
+                                  <strong>{t("client.lesson_content_unavailable")}</strong>
+                                  <p className="muted">{t("client.lesson_content_pending_help")}</p>
                                 </div>
                               )}
                             </>
                           ) : (
                             <div className="client-content-empty-state">
-                              <strong>Ce cours ne contient pas encore de lecon publiee.</strong>
+                              <strong>{t("client.no_published_lesson")}</strong>
                             </div>
                           )}
                         </article>
@@ -3701,24 +3890,24 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           {tab === "reservations" ? (
             <Card>
               <div className="row spread">
-                <h2>Mes reservations</h2>
+                <h2>{t("client.my_bookings")}</h2>
                 <span className="badge">{reservationRows.length}</span>
               </div>
 
               <form method="get" className="client-filter-grid client-reservation-filters">
                 <input type="hidden" name="tab" value="reservations" />
                 <label>
-                  Perimetre
+                  {t("client.scope")}
                   <select name="reservation_scope" defaultValue={reservationScope}>
-                    <option value="CURRENT">En cours</option>
-                    <option value="HISTORY">Historique</option>
-                    <option value="ALL">Toutes</option>
+                    <option value="CURRENT">{t("client.current")}</option>
+                    <option value="HISTORY">{t("client.history")}</option>
+                    <option value="ALL">{t("common.all")}</option>
                   </select>
                 </label>
                 <label>
-                  Membre
+                  {t("common.member")}
                   <select name="member_id" defaultValue={selectedMemberFilter}>
-                    <option value="ALL">{hasMultipleVisibleMembers ? "Tous les membres" : "Mon compte"}</option>
+                    <option value="ALL">{hasMultipleVisibleMembers ? t("client.all_members") : t("client.account_self")}</option>
                     {members.map((member) => (
                       <option key={member.id} value={member.id}>
                         {member.display_name}
@@ -3726,14 +3915,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     ))}
                   </select>
                 </label>
-                <DrawerFilters title="Filtres avancés" className="client-reservation-drawer">
+                <DrawerFilters title={t("client.advanced_filters_reservations")} className="client-reservation-drawer">
                   <label>
-                    Statut
+                    {t("common.status")}
                     <select name="reservation_status" defaultValue={reservationStatusFilter}>
-                      <option value="">Tous</option>
+                      <option value="">{t("common.all")}</option>
                       {allBookingStatuses.map((status) => (
                         <option key={status} value={status}>
-                          {statusLabel(status)}
+                          {statusLabel(status, language)}
                         </option>
                       ))}
                     </select>
@@ -3748,18 +3937,18 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               </form>
 
               {reservationRows.length === 0 ? (
-                <p className="muted">Aucune reservation sur ce filtre.</p>
+                <p className="muted">{t("client.no_reservation_filter")}</p>
               ) : (
                 <>
                 <div className="table-wrap client-desktop-table">
                   <table className="data-table client-data-table">
                     <thead>
                       <tr>
-                        <th>Membre</th>
-                        <th>Cours</th>
-                        <th>Debut</th>
-                        <th>Montant</th>
-                        <th>Statut</th>
+                        <th>{t("common.member")}</th>
+                        <th>{t("common.course")}</th>
+                        <th>{t("common.start")}</th>
+                        <th>{t("common.amount")}</th>
+                        <th>{t("common.status")}</th>
                         <th></th>
                       </tr>
                     </thead>
@@ -3773,14 +3962,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             <td>{formatDateTimeInTimezone(booking.session.start_at_utc, timezone)}</td>
                             <td>{toMoney(booking.total_incl_vat_snapshot, booking.currency_snapshot)}</td>
                             <td>
-                              <span className={`status-pill ${statusClass(booking.status)}`}>{statusLabel(booking.status)}</span>
+                              <span className={`status-pill ${statusClass(booking.status)}`}>{statusLabel(booking.status, language)}</span>
                             </td>
                             <td>
                               {canCancel ? (
                                 <form action={cancelBookingAction}>
                                   <input type="hidden" name="booking_id" value={booking.id} />
                                   <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "reservations" })} />
-                                  <button className="danger" type="submit" title="Annuler">
+                                  <button className="danger" type="submit" title={t("common.cancel")}>
                                     🗑️
                                   </button>
                                 </form>
@@ -3801,7 +3990,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <article key={`${booking.id}-mobile`} className="item client-mobile-card">
                         <div className="row spread">
                           <strong>{booking.owner_display_name}</strong>
-                          <span className={`status-pill ${statusClass(booking.status)}`}>{statusLabel(booking.status)}</span>
+                          <span className={`status-pill ${statusClass(booking.status)}`}>{statusLabel(booking.status, language)}</span>
                         </div>
                         <p className="muted">{booking.session.title}</p>
                         <p className="muted">{formatDateTimeInTimezone(booking.session.start_at_utc, timezone)}</p>
@@ -3811,7 +4000,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             <form action={cancelBookingAction}>
                               <input type="hidden" name="booking_id" value={booking.id} />
                               <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "reservations" })} />
-                              <button className="ghost" type="submit">Annuler</button>
+                              <button className="ghost" type="submit">{t("common.cancel")}</button>
                             </form>
                           ) : null}
                         </div>
@@ -3828,16 +4017,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
             <>
               <Card className="client-offers-header">
                 <div className="row spread">
-                  <h2>Mes forfaits</h2>
+                  <h2>{t("client.my_plans")}</h2>
                   <span className="badge">{plans.length}</span>
                 </div>
-                <p className="muted">Pour reserver un nouveau creneau, ouvrez l onglet Planning puis touchez un creneau disponible.</p>
-                <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning" })}>Aller au planning</a>
+                <p className="muted">{t("client.offers_help")}</p>
+                <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning" })}>{t("client.go_to_schedule")}</a>
 
                 <form method="get" className="row">
                   <input type="hidden" name="tab" value="offers" />
                   <label>
-                    Beneficiaire
+                    {t("client.beneficiary")}
                     <select name="purchase_user_id" defaultValue={selectedPurchaseOwner}>
                       {members.map((member) => (
                         <option key={member.id} value={member.id}>
@@ -3847,25 +4036,25 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     </select>
                   </label>
                   <label>
-                    Date de demarrage
+                    {t("client.start_date_input")}
                     <input type="date" name="purchase_start_date" defaultValue={selectedPurchaseStartDate} />
                   </label>
-                  <button type="submit">Afficher les offres</button>
+                  <button type="submit">{t("client.show_offers")}</button>
                 </form>
               </Card>
 
               {confirmExistingPackPurchase && confirmPlan ? (
                 <Card className="client-offers-confirm-card">
                   <section className="flash-warn client-offers-confirm-alert">
-                    <strong>Verification avant achat</strong>
-                    <span>{warningMessage || "Vous avez deja un carnet actif avec des credits restants. Confirmez ce nouvel achat seulement si vous souhaitez cumuler une nouvelle formule."}</span>
+                    <strong>{t("client.pre_purchase_check")}</strong>
+                    <span>{warningMessage || t("client.pre_purchase_default_warning")}</span>
                   </section>
                   <div className="client-offers-confirm-head">
                     <div>
-                      <p className="client-offers-confirm-kicker">Confirmation d achat</p>
-                      <h3>Derniere verification avant paiement</h3>
+                      <p className="client-offers-confirm-kicker">{t("client.purchase_confirmation")}</p>
+                      <h3>{t("client.final_check_before_payment")}</h3>
                       <p className="muted">
-                        Vous ajoutez une nouvelle formule au compte de {selectedPurchaseOwnerProfile?.display_name || "ce beneficiaire"}. Votre formule actuelle restera active.
+                        {t("client.adding_new_plan_to_account", { beneficiary: selectedPurchaseOwnerProfile?.display_name || t("client.this_beneficiary") })}
                       </p>
                     </div>
                     <div className="client-offers-confirm-price">
@@ -3874,25 +4063,25 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   </div>
                   <div className="client-offers-confirm-summary">
                     <article className="item">
-                      <h4>Beneficiaire</h4>
-                      <p>{selectedPurchaseOwnerProfile?.display_name || "Beneficiaire"}</p>
+                      <h4>{t("client.beneficiary")}</h4>
+                      <p>{selectedPurchaseOwnerProfile?.display_name || t("client.beneficiary")}</p>
                     </article>
                     <article className="item">
-                      <h4>Offre choisie</h4>
+                      <h4>{t("client.selected_offer")}</h4>
                       <p>{confirmPlan.name}</p>
                     </article>
                     <article className="item">
-                      <h4>Type</h4>
-                      <p>{confirmPlan.kind === "PACK" ? "Carnet / seances" : confirmPlan.kind === "FORFAIT" ? "Forfait" : "Abonnement"}</p>
+                      <h4>{t("common.type")}</h4>
+                      <p>{confirmPlan.kind === "PACK" ? t("client.pack_sessions") : confirmPlan.kind === "FORFAIT" ? t("client.plan_fixed") : t("client.subscription")}</p>
                     </article>
                     <article className="item">
-                      <h4>Paiement</h4>
-                      <p>{Number(planDisplayPrice(confirmPlan) ?? "0") > 0 ? "Paiement securise en ligne" : "Aucun paiement requis"}</p>
+                      <h4>{t("common.payment")}</h4>
+                      <p>{Number(planDisplayPrice(confirmPlan) ?? "0") > 0 ? t("client.secure_online_payment") : t("client.no_payment_required")}</p>
                     </article>
                   </div>
                   <div className="client-offers-confirm-note">
-                    <strong>Ce qui va se passer ensuite</strong>
-                    <p>{Number(planDisplayPrice(confirmPlan) ?? "0") > 0 ? "Apres confirmation, vous serez redirige vers la page de paiement securise." : "Apres confirmation, la formule sera ajoutee immediatement a votre compte."}</p>
+                    <strong>{t("client.next_steps_after_purchase")}</strong>
+                    <p>{Number(planDisplayPrice(confirmPlan) ?? "0") > 0 ? t("client.redirect_to_secure_payment") : t("client.immediate_plan_addition")}</p>
                   </div>
                   <div className="client-offers-confirm-actions">
                     <form action={purchasePlanAction}>
@@ -3901,7 +4090,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <input type="hidden" name="start_date" value={selectedPurchaseStartDate} />
                       <input type="hidden" name="confirm_existing_pack_purchase" value="1" />
                       <button type="submit">
-                        {Number(planDisplayPrice(confirmPlan) ?? "0") > 0 ? "Confirmer et payer en ligne" : "Confirmer l achat"}
+                        {Number(planDisplayPrice(confirmPlan) ?? "0") > 0 ? t("client.confirm_and_pay_online") : t("client.confirm_purchase")}
                       </button>
                     </form>
                     <a
@@ -3914,7 +4103,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         error: null,
                       })}
                     >
-                      Annuler
+                      {t("common.cancel")}
                     </a>
                   </div>
                 </Card>
@@ -3922,11 +4111,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
               <Card>
                 <div className="row spread">
-                  <h3>Abonnements et carnets actifs</h3>
+                  <h3>{t("client.active_subscriptions_and_packs")}</h3>
                   <span className="badge">{visibleSelectedOwnerSubscriptions.length}</span>
                 </div>
                 {visibleSelectedOwnerSubscriptions.length === 0 ? (
-                  <p className="muted">Aucun carnet / abonnement actif.</p>
+                  <p className="muted">{t("client.no_active_subscription_preview")}</p>
                 ) : (
                   <div className="list client-forfait-card-list">
                     {visibleSelectedOwnerSubscriptions.map((sub) => {
@@ -3944,12 +4133,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               <strong>{sub.plan.name}</strong>
                               <p className="muted">{sub.owner_display_name}</p>
                             </div>
-                            <span className="badge">{planKindLabel(sub.plan.kind)}</span>
+                            <span className="badge">{planKindLabel(sub.plan.kind, language)}</span>
                           </div>
                           <div className="row spread">
-                            <span className={`status-pill ${statusClass(sub.status)}`}>{statusLabel(sub.status)}</span>
+                            <span className={`status-pill ${statusClass(sub.status)}`}>{statusLabel(sub.status, language)}</span>
                             <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: sub.id })}>
-                              Voir details
+                              {t("client.view_details")}
                             </a>
                           </div>
                           {isPack ? (
@@ -3957,15 +4146,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               <div className="client-progress">
                                 <div className="client-progress-bar" style={{ width: `${ratio}%` }} />
                               </div>
-                              <p className="muted">Credits restants: {remainingCredits}/{initialCredits || "?"}</p>
+                              <p className="muted">{t("client.remaining_credits", { remaining: remainingCredits, initial: initialCredits || "?" })}</p>
                             </>
                           ) : (
                             <p className="muted">
-                              {toMoney(sub.plan.kind === "FORFAIT" ? "0" : planPrice, me.preferred_currency)} / mois · {paymentMethodLabel(sub.billing_method_code)}
+                              {toMoney(sub.plan.kind === "FORFAIT" ? "0" : planPrice, me.preferred_currency)} {t("client.per_month_suffix")} · {paymentMethodLabel(sub.billing_method_code)}
                             </p>
                           )}
                           <p className="muted">
-                            {sub.ends_at ? `Expiration: ${formatDate(sub.ends_at)}` : sub.next_payment_at ? `Prochain prelevement: ${formatDate(sub.next_payment_at)}` : "Reconduction en cours"}
+                            {sub.ends_at ? t("client.expiration", { date: formatDate(sub.ends_at) }) : sub.next_payment_at ? t("client.next_debit", { date: formatDate(sub.next_payment_at) }) : t("client.renewal_in_progress")}
                           </p>
                         </article>
                       );
@@ -3977,25 +4166,25 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               {selectedOfferSubscription ? (
                 <Card>
                   <div className="row spread">
-                    <h3>Detail forfait</h3>
+                    <h3>{t("client.offer_detail_title")}</h3>
                     <a className="reset-link" href={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: null })}>
-                      Fermer
+                      {t("common.close")}
                     </a>
                   </div>
                   <div className="list">
                     <article className="item">
-                      <h4>Contrat</h4>
+                      <h4>{t("client.contract")}</h4>
                       <p className="muted">
-                        Identifiant: {compactId(selectedOfferSubscription.id)}{" "}
-                        <CopyIdButton value={selectedOfferSubscription.id} label="Copier" />
+                        {t("client.identifier")}: {compactId(selectedOfferSubscription.id)}{" "}
+                        <CopyIdButton value={selectedOfferSubscription.id} label={t("common.copy")} />
                       </p>
                     </article>
                     <article className="item">
-                      <h4>Formule</h4>
-                      <p className="muted">{selectedOfferSubscription.plan.name} · {planKindLabel(selectedOfferSubscription.plan.kind)}</p>
+                      <h4>{t("client.formula")}</h4>
+                      <p className="muted">{selectedOfferSubscription.plan.name} · {planKindLabel(selectedOfferSubscription.plan.kind, language)}</p>
                     </article>
                     <article className="item">
-                      <h4>Tarif</h4>
+                      <h4>{t("client.price")}</h4>
                       <p className="muted">
                         {toMoney(
                           selectedOfferSubscription.plan.kind === "FORFAIT"
@@ -4003,19 +4192,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             : planDisplayPrice(plans.find((plan) => plan.id === selectedOfferSubscription.plan.id)),
                           me.preferred_currency,
                         )}{" "}
-                        / periode
+                        {language === "en" ? "/ period" : "/ periode"}
                       </p>
                     </article>
                     <article className="item">
-                      <h4>Moyen de paiement</h4>
+                      <h4>{t("client.payment_method")}</h4>
                       <p className="muted">{paymentMethodLabel(selectedOfferSubscription.billing_method_code)}</p>
                     </article>
                     <article className="item">
-                      <h4>Restrictions d acces</h4>
+                      <h4>{t("client.access_restrictions")}</h4>
                       <p className="muted">
                         {selectedOfferSubscription.entitlement_course_type_names.length > 0
-                          ? `${selectedOfferSubscription.entitlement_course_type_names.length} activite(s) autorisee(s)`
-                          : "Aucune restriction declarative"}
+                          ? t("client.allowed_activities_count", { count: selectedOfferSubscription.entitlement_course_type_names.length })
+                          : t("client.no_declarative_restriction")}
                       </p>
                       <div className="client-chip-row">
                         {selectedOfferSubscription.entitlement_course_type_names.slice(0, 8).map((name) => (
@@ -4029,9 +4218,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </div>
                     </article>
                     <article className="item">
-                      <h4>Factures associees</h4>
+                      <h4>{t("client.linked_invoices")}</h4>
                       {selectedOfferInvoices.length === 0 ? (
-                        <p className="muted">Aucune facture associee.</p>
+                        <p className="muted">{t("client.no_linked_invoices")}</p>
                       ) : (
                         <div className="list client-mobile-list">
                           {selectedOfferInvoices.slice(0, 6).map((invoice) => (
@@ -4047,7 +4236,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     target="_blank"
                                     rel="noreferrer"
                                   >
-                                    Ouvrir
+                                    {t("common.view")}
                                   </a>
                                   {invoice.download_url ? (
                                     <a className="mode-link" href={invoice.download_url}>
@@ -4067,33 +4256,33 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
               <section className="grid cols-2">
                 <Card>
-                  <h3>Abonnements et credits</h3>
+                  <h3>{t("client.subscriptions_and_credits")}</h3>
                   <div className="list">
                     {visibleSelectedOwnerSubscriptions.map((sub) => (
                       <article key={sub.id} className="item">
                         <h3>{sub.plan.name}</h3>
                         <small className="muted">
-                          Membre: {sub.owner_display_name} | Statut: {statusLabel(sub.status)} |{" "}
+                          {t("common.member")}: {sub.owner_display_name} | {t("common.status")}: {statusLabel(sub.status, language)} |{" "}
                           {sub.plan.kind === "SUBSCRIPTION"
-                            ? "Abonnement (tarification au forfait)"
+                            ? t("client.subscription_fixed_billing")
                             : sub.plan.kind === "FORFAIT"
-                              ? "Forfait (facturation au reel)"
-                            : `Credits: ${sub.credits_remaining ?? 0}/${sub.credits_initial ?? sub.credits_remaining ?? 0}`}
+                              ? t("client.plan_actual_billing_label")
+                            : t("client.credit_line", { remaining: sub.credits_remaining ?? 0, initial: sub.credits_initial ?? sub.credits_remaining ?? 0 })}
                         </small>
-                        <small className="muted">Debut: {formatDate(sub.started_at)} {sub.ends_at ? `| Fin: ${formatDate(sub.ends_at)}` : ""}</small>
+                        <small className="muted">{t("client.start_date_label", { date: formatDate(sub.started_at) })} {sub.ends_at ? `| ${t("client.end_date_label", { date: formatDate(sub.ends_at) })}` : ""}</small>
                       </article>
                     ))}
                     {selectedOwnerSubscriptions.length === 0 ? (
-                      <p className="muted">Aucun abonnement/carnet pour ce membre.</p>
+                      <p className="muted">{t("client.no_subscription_for_member")}</p>
                     ) : null}
                     {selectedOwnerSubscriptions.length > 0 && visibleSelectedOwnerSubscriptions.length === 0 ? (
-                      <p className="muted">Aucun credit positif sur les carnets de ce membre.</p>
+                      <p className="muted">{t("client.no_positive_pack_credit_member")}</p>
                     ) : null}
                   </div>
                 </Card>
 
                 <Card>
-                  <h3>Credits cumules (positifs)</h3>
+                  <h3>{t("client.cumulative_positive_credits")}</h3>
                   <div className="list">
                     {membersWithPositiveCredits.map((member) => (
                       <article key={`credit-${member.id}`} className="item row spread">
@@ -4102,36 +4291,36 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </article>
                     ))}
                     {membersWithPositiveCredits.length === 0 ? (
-                      <p className="muted">Aucun credit positif a afficher.</p>
+                      <p className="muted">{t("client.no_positive_credit_display")}</p>
                     ) : null}
                   </div>
                 </Card>
               </section>
 
               <Card>
-                <h3>Catalogue des offres</h3>
+                <h3>{t("client.offer_catalog")}</h3>
                 <div className="client-plan-grid">
                   {plans.map((plan) => (
                     <article key={plan.id} className="item client-plan-card">
                       <div>
                         <h3>{plan.name}</h3>
-                        <p className="muted">{plan.kind === "PACK" ? "Carnet / seances" : plan.kind === "FORFAIT" ? "Forfait" : "Abonnement"}</p>
+                        <p className="muted">{plan.kind === "PACK" ? t("client.pack_sessions") : plan.kind === "FORFAIT" ? t("client.plan_fixed") : t("client.subscription")}</p>
                         <p className="muted">
                           {plan.kind === "FORFAIT"
-                            ? "Facturation: au reel selon planning"
-                            : `Credits: ${plan.credits_count ?? "illimite"}`}{" "}
-                          | Prix: {toMoney(planDisplayPrice(plan), plan.currency_code ?? me.preferred_currency)}
+                            ? t("client.actual_billing_based_on_schedule")
+                            : t("client.credit_line", { remaining: plan.credits_count ?? t("client.unlimited"), initial: plan.credits_count ?? t("client.unlimited") })}{" "}
+                          | {t("client.price")}: {toMoney(planDisplayPrice(plan), plan.currency_code ?? me.preferred_currency)}
                         </p>
                       </div>
                       <form action={purchasePlanAction}>
                         <input type="hidden" name="plan_id" value={plan.id} />
                         <input type="hidden" name="purchase_user_id" value={selectedPurchaseOwner} />
                         <input type="hidden" name="start_date" value={selectedPurchaseStartDate} />
-                        <button type="submit" title="Souscrire cette offre">Choisir</button>
+                        <button type="submit" title={t("client.subscribe_offer_title")}>{t("common.choose")}</button>
                       </form>
                     </article>
                   ))}
-                  {plans.length === 0 ? <p className="muted">Aucune offre active.</p> : null}
+                  {plans.length === 0 ? <p className="muted">{t("client.no_active_offer")}</p> : null}
                 </div>
               </Card>
             </>
@@ -4140,7 +4329,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           {tab === "finance" ? (
             <>
               <SectionCard
-                title="Finance"
+                title={t("client.finance")}
                 className="client-finance-shell"
                 action={
                   financeDueTotal > 0 ? (
@@ -4150,27 +4339,27 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         {primaryDuePaymentUrl ? <input type="hidden" name="payment_url" value={primaryDuePaymentUrl} /> : null}
                         <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", finance_status: "TO_PAY" })} />
                         <button type="submit" className="client-pay-cta">
-                          Payer {toMoney(String(financeDueTotal), me.preferred_currency)}
+                          {t("common.pay")} {toMoney(String(financeDueTotal), me.preferred_currency)}
                         </button>
                       </form>
                     ) : (
                       <a className="client-pay-cta" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", finance_status: "TO_PAY" })}>
-                        Payer {toMoney(String(financeDueTotal), me.preferred_currency)}
+                        {t("common.pay")} {toMoney(String(financeDueTotal), me.preferred_currency)}
                       </a>
                     )
                   ) : null
                 }
               >
                 <section className="client-kpi-grid">
-                  <KPIBlock label="A payer" value={toMoney(String(financeDueTotal), me.preferred_currency)} helper="Factures en attente" />
-                  <KPIBlock label="Paye" value={toMoney(String(paidTotal), me.preferred_currency)} helper="Reglements confirmes" />
+                  <KPIBlock label={t("client.amount_due")} value={toMoney(String(financeDueTotal), me.preferred_currency)} helper={t("client.pending_invoices")} />
+                  <KPIBlock label={t("client.paid_total")} value={toMoney(String(paidTotal), me.preferred_currency)} helper={t("client.confirmed_payments")} />
                   <KPIBlock
-                    label="Transactions en attente"
+                    label={t("client.pending_transactions")}
                     value={toMoney(String(pendingTransactionsTotal), me.preferred_currency)}
-                    helper="Tous mouvements non soldes"
+                    helper={t("client.unsettled_movements")}
                   />
                 </section>
-                <p className="muted">Comptes arrêtés au {formatDate(financeAsOfDateKey)}.</p>
+                <p className="muted">{t("client.accounts_as_of", { date: formatDate(financeAsOfDateKey) })}</p>
 
                 <div className="client-finance-toolbar">
                   <div className="client-finance-tab-scroll">
@@ -4178,26 +4367,26 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       className={`mode-link ${financeView === "transactions" ? "active" : ""}`}
                       href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions", invoice_id: null, finance_page: "1" })}
                     >
-                      Transactions
+                      {t("common.transactions")}
                     </a>
                     <a
                       className={`mode-link ${financeView === "invoices" ? "active" : ""}`}
                       href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", finance_page: "1" })}
                     >
-                      Factures
+                      {t("common.invoices")}
                     </a>
                   </div>
 
-                  <DrawerFilters title="Filtres" className="client-finance-drawer">
+                  <DrawerFilters title={t("common.filters")} className="client-finance-drawer">
                     <form method="get" className="client-finance-drawer-form">
                       <input type="hidden" name="tab" value="finance" />
                       <input type="hidden" name="finance_view" value={financeView} />
                       <input type="hidden" name="invoice_id" value="" />
                       <input type="hidden" name="finance_page" value="1" />
                       <label>
-                        Membre
+                        {t("common.member")}
                         <select name="member_id" defaultValue={selectedMemberFilter}>
-                          <option value="ALL">{hasMultipleVisibleMembers ? "Tous les membres" : "Mon compte"}</option>
+                          <option value="ALL">{hasMultipleVisibleMembers ? t("client.all_members") : t("client.account_self")}</option>
                           {members.map((member) => (
                             <option key={member.id} value={member.id}>
                               {member.display_name}
@@ -4206,7 +4395,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         </select>
                       </label>
                       <label>
-                        Statut
+                        {t("common.status")}
                         <select name="finance_status" defaultValue={financeStatusFilter}>
                           {visibleFinanceStatusOptions.map((option) => (
                             <option key={option.value} value={option.value}>
@@ -4216,20 +4405,20 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         </select>
                       </label>
                       <label>
-                        Periode
+                        {t("common.period")}
                         <select name="finance_period" defaultValue={financePeriodFilter}>
-                          <option value="ALL">Toutes periodes</option>
-                          <option value="LAST_30_DAYS">30 derniers jours</option>
-                          <option value="LAST_90_DAYS">3 derniers mois</option>
-                          <option value="LAST_365_DAYS">Derniere annee</option>
+                          <option value="ALL">{t("client.all_periods")}</option>
+                          <option value="LAST_30_DAYS">{t("client.last_30_days")}</option>
+                          <option value="LAST_90_DAYS">{t("client.last_90_days")}</option>
+                          <option value="LAST_365_DAYS">{t("client.last_365_days")}</option>
                         </select>
                       </label>
                       <label>
-                        Date d'arrete
+                        {t("client.as_of_date")}
                         <input type="date" name="finance_as_of" defaultValue={financeAsOfDateKey} />
                       </label>
                       <label>
-                        Lignes / page
+                        {t("client.lines_per_page")}
                         <select name="finance_page_size" defaultValue={String(financePageSize)}>
                           {FINANCE_PAGE_SIZES.map((size) => (
                             <option key={size} value={size}>
@@ -4240,12 +4429,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </label>
                       {financeView === "transactions" ? (
                         <label>
-                          Type
+                          {t("common.type")}
                           <select name="finance_source" defaultValue={financeSourceFilter}>
-                            <option value="ALL">Tous types</option>
+                            <option value="ALL">{t("client.all_types")}</option>
                             {allPaymentSources.map((source) => (
                               <option key={source} value={source}>
-                                {sourceLabel(source)}
+                                {sourceLabel(source, language)}
                               </option>
                             ))}
                           </select>
@@ -4254,7 +4443,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         <input type="hidden" name="finance_source" value={financeSourceFilter} />
                       )}
                       <div className="row client-finance-drawer-actions">
-                        <button type="submit">Appliquer</button>
+                        <button type="submit">{t("common.apply")}</button>
                         <a
                           className="reset-link"
                           href={withUpdatedQuery(rawParams, {
@@ -4269,7 +4458,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             invoice_id: null,
                           })}
                         >
-                          Reinitialiser
+                          {t("common.reset")}
                         </a>
                       </div>
                     </form>
@@ -4283,7 +4472,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         className={`badge ${selectedMemberFilter === "ALL" ? "active" : ""}`}
                         href={withUpdatedQuery(rawParams, { tab: "finance", member_id: "ALL", finance_page: "1", invoice_id: null })}
                       >
-                        Tous
+                        {t("common.all")}
                       </a>
                       {members.map((member) => (
                         <a
@@ -4296,19 +4485,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       ))}
                     </>
                   ) : (
-                    <span className="badge active">{members[0]?.display_name ?? "Mon compte"}</span>
+                    <span className="badge active">{members[0]?.display_name ?? t("client.account_self")}</span>
                   )}
-                  {financeStatusFilter !== "ALL" ? <span className="badge">Statut: {visibleFinanceStatusOptions.find((item) => item.value === financeStatusFilter)?.label}</span> : null}
-                  {financePeriodFilter !== "ALL" ? <span className="badge">Periode: {financePeriodLabel(financePeriodFilter)}</span> : null}
-                  <span className="badge">Arrêté: {formatDate(financeAsOfDateKey)}</span>
-                  {financeView === "transactions" && financeSourceFilter !== "ALL" ? <span className="badge">Type: {sourceLabel(financeSourceFilter)}</span> : null}
+                  {financeStatusFilter !== "ALL" ? <span className="badge">{t("client.status_filter_badge", { status: visibleFinanceStatusOptions.find((item) => item.value === financeStatusFilter)?.label ?? financeStatusFilter })}</span> : null}
+                  {financePeriodFilter !== "ALL" ? <span className="badge">{t("client.period_filter_badge", { period: financePeriodLabel(financePeriodFilter, language) })}</span> : null}
+                  <span className="badge">{t("client.as_of_filter_badge", { date: formatDate(financeAsOfDateKey) })}</span>
+                  {financeView === "transactions" && financeSourceFilter !== "ALL" ? <span className="badge">{t("client.type_filter_badge", { type: sourceLabel(financeSourceFilter, language) })}</span> : null}
                 </FilterChipsBar>
               </SectionCard>
 
               {financeView === "transactions" ? (
-                <SectionCard title="Transactions" className="client-finance-list-card" action={<span className="badge">{paymentRows.length}</span>}>
+                <SectionCard title={t("common.transactions")} className="client-finance-list-card" action={<span className="badge">{paymentRows.length}</span>}>
                   {paymentRows.length === 0 ? (
-                    <p className="muted">Aucune transaction sur cette selection.</p>
+                    <p className="muted">{t("client.no_transaction_selection")}</p>
                   ) : (
                     <div className="client-finance-list">
                       {pagedPaymentRows.map((row) => {
@@ -4321,11 +4510,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         return (
                           <TransactionRow
                             key={`tx-${row.id}`}
-                            typeBadge={<span className={`status-pill ${isBilled ? "status-ok" : "status-off"}`}>{isBilled ? "Facturé" : "Non facturé"}</span>}
+                            typeBadge={<span className={`status-pill ${isBilled ? "status-ok" : "status-off"}`}>{isBilled ? t("client.billed") : t("client.unbilled")}</span>}
                             label={row.label}
-                            meta={`${formatDateTime(row.occurred_at)} · ${row.owner_display_name} · ${sourceLabel(row.source)}`}
+                            meta={`${formatDateTime(row.occurred_at)} · ${row.owner_display_name} · ${sourceLabel(row.source, language)}`}
                             amount={toMoney(row.total_incl_vat, row.currency)}
-                            statusBadge={<span className={`status-pill ${statusClass(row.status)}`}>{financeStatusLabel(row.status)}</span>}
+                            statusBadge={<span className={`status-pill ${statusClass(row.status)}`}>{financeStatusLabel(row.status, language)}</span>}
                             actions={
                               <div className="row client-finance-card-actions">
                                 {linkedInvoice ? (
@@ -4337,14 +4526,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     target="_blank"
                                     rel="noreferrer"
                                   >
-                                    Ouvrir facture
+                                    {t("client.open_invoice")}
                                   </a>
                                 ) : null}
                                 {canPayNow ? (
                                   <form action={openClientPaymentCheckoutAction}>
                                     <input type="hidden" name="payment_id" value={row.id} />
                                     <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions" })} />
-                                    <button type="submit">Payer</button>
+                                    <button type="submit">{t("common.pay")}</button>
                                   </form>
                                 ) : null}
                               </div>
@@ -4356,9 +4545,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   )}
                 </SectionCard>
               ) : (
-                <SectionCard title="Factures" className="client-finance-list-card" action={<span className="badge">{invoiceRows.length}</span>}>
+                <SectionCard title={t("common.invoices")} className="client-finance-list-card" action={<span className="badge">{invoiceRows.length}</span>}>
                   {invoiceRows.length === 0 ? (
-                    <p className="muted">Aucune facture.</p>
+                    <p className="muted">{t("client.no_invoice")}</p>
                   ) : (
                     <div className="client-finance-list">
                       {pagedInvoiceRows.map((row) => {
@@ -4368,7 +4557,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <CompactInvoiceRow
                             key={`inv-${row.id}`}
                             title={compactId(row.invoice_number)}
-                            statusBadge={<span className={`status-pill ${statusClass(row.status)}`}>{financeStatusLabel(row.status)}</span>}
+                            statusBadge={<span className={`status-pill ${statusClass(row.status)}`}>{financeStatusLabel(row.status, language)}</span>}
                             meta={`${toMoney(row.total_incl_vat, row.currency)} · ${formatDate(row.issued_at)} · ${row.owner_display_name}`}
                             subline={row.label}
                             actions={
@@ -4378,7 +4567,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     {linkedPayment ? <input type="hidden" name="payment_id" value={linkedPayment.id} /> : null}
                                     {row.payment_url ? <input type="hidden" name="payment_url" value={row.payment_url} /> : null}
                                     <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices" })} />
-                                    <button type="submit" className="client-card-primary-action">Payer</button>
+                                    <button type="submit" className="client-card-primary-action">{t("common.pay")}</button>
                                   </form>
                                 ) : (
                                   <a
@@ -4387,12 +4576,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     target="_blank"
                                     rel="noreferrer"
                                   >
-                                    Ouvrir
+                                    {t("common.view")}
                                   </a>
                                 )}
                                 {row.download_url ? (
                                   <a className="mode-link" href={row.download_url}>
-                                    Télécharger
+                                    {t("common.download")}
                                   </a>
                                 ) : null}
                               </div>
@@ -4407,19 +4596,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <article className="item client-invoice-viewer">
                       <div className="row spread">
                         <h4>{selectedInvoice.invoice_number}</h4>
-                        <span className={`status-pill ${statusClass(selectedInvoice.status)}`}>{financeStatusLabel(selectedInvoice.status)}</span>
+                        <span className={`status-pill ${statusClass(selectedInvoice.status)}`}>{financeStatusLabel(selectedInvoice.status, language)}</span>
                       </div>
                       <p className="muted">{selectedInvoice.label}</p>
                       <p className="muted">
-                        Date: {formatDateTime(selectedInvoice.issued_at)} · Membre: {selectedInvoice.owner_display_name}
+                        {t("common.date")}: {formatDateTime(selectedInvoice.issued_at)} · {t("common.member")}: {selectedInvoice.owner_display_name}
                       </p>
                       <p>
                         <strong>{toMoney(selectedInvoice.total_incl_vat, selectedInvoice.currency)}</strong>
                       </p>
                       <div className="row client-invoice-viewer-actions">
-                        <CopyIdButton value={selectedInvoice.invoice_number} label="Copier numero" />
-                        {selectedInvoice.download_url ? <a className="mode-link" href={selectedInvoice.download_url}>Télécharger PDF</a> : null}
-                        <a className="reset-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: null })}>Fermer</a>
+                        <CopyIdButton value={selectedInvoice.invoice_number} label={t("client.copy_number")} />
+                        {selectedInvoice.download_url ? <a className="mode-link" href={selectedInvoice.download_url}>{t("client.download_pdf")}</a> : null}
+                        <a className="reset-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", invoice_id: null })}>{t("common.close")}</a>
                       </div>
                     </article>
                   ) : null}
@@ -4430,7 +4619,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 <Card className="client-finance-pagination-card">
                   <div className="row spread">
                     <p className="muted">
-                      Page {financePage}/{financePageCount} · {financeTotalRows} ligne(s)
+                      {t("client.page_summary", { page: financePage, count: financePageCount, rows: financeTotalRows })}
                     </p>
                     <div className="row client-finance-pagination-actions">
                       {financePage > 1 ? (
@@ -4438,11 +4627,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           className="mode-link"
                           href={withUpdatedQuery(rawParams, { tab: "finance", finance_page: String(financePage - 1), invoice_id: null })}
                         >
-                          Precedent
+                          {t("common.previous")}
                         </a>
                       ) : (
                         <span className="mode-link disabled" aria-disabled="true">
-                          Precedent
+                          {t("common.previous")}
                         </span>
                       )}
                       {financePage < financePageCount ? (
@@ -4450,11 +4639,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           className="mode-link"
                           href={withUpdatedQuery(rawParams, { tab: "finance", finance_page: String(financePage + 1), invoice_id: null })}
                         >
-                          Suivant
+                          {t("common.next")}
                         </a>
                       ) : (
                         <span className="mode-link disabled" aria-disabled="true">
-                          Suivant
+                          {t("common.next")}
                         </span>
                       )}
                     </div>
@@ -4470,12 +4659,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       {primaryDuePaymentUrl ? <input type="hidden" name="payment_url" value={primaryDuePaymentUrl} /> : null}
                       <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", finance_status: "TO_PAY" })} />
                       <button type="submit" className="client-pay-cta">
-                        Payer {toMoney(String(financeDueTotal), me.preferred_currency)}
+                        {t("common.pay")} {toMoney(String(financeDueTotal), me.preferred_currency)}
                       </button>
                     </form>
                   ) : (
                     <a className="client-pay-cta" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", finance_status: "TO_PAY" })}>
-                      Payer {toMoney(String(financeDueTotal), me.preferred_currency)}
+                      {t("common.pay")} {toMoney(String(financeDueTotal), me.preferred_currency)}
                     </a>
                   )}
                 </div>
@@ -4486,28 +4675,26 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           {tab === "messages" ? (
             <Card>
               <div className="row spread">
-                <h2>Messages envoyes</h2>
+                <h2>{t("client.messages_sent")}</h2>
                 <span className="badge">{messageRows.length}</span>
               </div>
-              <p className="muted">
-                Par defaut, seuls les 3 derniers mois sont affiches. Vous pouvez afficher l&apos;annee en cours ou l&apos;historique complet.
-              </p>
+              <p className="muted">{t("client.messages_scope_help")}</p>
 
               <form method="get" className="client-filter-grid">
                 <input type="hidden" name="tab" value="messages" />
                 <input type="hidden" name="message_id" value="" />
                 <label>
-                  Periode
+                  {t("common.period")}
                   <select name="message_scope" defaultValue={messageScope}>
-                    <option value="LAST_3_MONTHS">3 derniers mois</option>
-                    <option value="CURRENT_YEAR">Annee en cours</option>
-                    <option value="ALL">Tous les messages</option>
+                    <option value="LAST_3_MONTHS">{t("client.last_90_days")}</option>
+                    <option value="CURRENT_YEAR">{t("client.current_year")}</option>
+                    <option value="ALL">{t("client.all_messages")}</option>
                   </select>
                 </label>
                 <label>
-                  Membre
+                  {t("common.member")}
                   <select name="member_id" defaultValue={selectedMemberFilter}>
-                    <option value="ALL">{hasMultipleVisibleMembers ? "Tous les membres" : "Mon compte"}</option>
+                    <option value="ALL">{hasMultipleVisibleMembers ? t("client.all_members") : t("client.account_self")}</option>
                     {members.map((member) => (
                       <option key={member.id} value={member.id}>
                         {member.display_name}
@@ -4516,16 +4703,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   </select>
                 </label>
                 <label>
-                  Rechercher
+                  {t("client.search")}
                   <input
                     type="search"
                     name="message_query"
                     defaultValue={messageQuery}
-                    placeholder="Sujet, membre, email, contexte..."
+                    placeholder={t("client.message_search_placeholder")}
                   />
                 </label>
                 <div className="row client-message-filter-actions">
-                  <button type="submit" aria-label="Rechercher dans les messages">
+                  <button type="submit" aria-label={t("client.search_messages_aria")}>
                     🔎
                   </button>
                   <a
@@ -4544,20 +4731,20 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               </form>
 
               {messageRows.length === 0 ? (
-                <p className="muted">Aucun message sur ce filtre.</p>
+                <p className="muted">{t("client.no_message_filter")}</p>
               ) : (
                 <>
                 <div className="table-wrap client-desktop-table client-messages-table-wrap">
                   <table className="data-table client-data-table">
                     <thead>
                       <tr>
-                        <th>Date</th>
-                        <th>Membre</th>
-                        <th>Canal</th>
-                        <th>Sujet</th>
-                        <th>Statut</th>
-                        <th>Contexte</th>
-                        <th>Action</th>
+                        <th>{t("common.date")}</th>
+                        <th>{t("common.member")}</th>
+                        <th>{t("client.channel")}</th>
+                        <th>{t("client.subject")}</th>
+                        <th>{t("common.status")}</th>
+                        <th>{t("client.context")}</th>
+                        <th>{t("client.action")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -4568,12 +4755,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <td>{msg.channel}</td>
                           <td>{msg.subject_preview}</td>
                           <td>
-                            <span className={`status-pill ${statusClass(msg.status)}`}>{statusLabel(msg.status)}</span>
+                            <span className={`status-pill ${statusClass(msg.status)}`}>{statusLabel(msg.status, language)}</span>
                           </td>
-                          <td>{msg.session_title ?? "Message transactionnel"}</td>
+                          <td>{msg.session_title ?? t("client.transactional_message")}</td>
                           <td>
                             <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "messages", message_id: msg.id })}>
-                              Lire
+                              {t("client.read")}
                             </a>
                           </td>
                         </tr>
@@ -4585,12 +4772,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   {messageRows.map((msg) => (
                     <a key={`${msg.id}-mobile`} href={withUpdatedQuery(rawParams, { tab: "messages", message_id: msg.id })} className="mode-link">
                       <ListRow
-                        title={msg.subject_preview || "Message sans sujet"}
+                        title={msg.subject_preview || t("client.message_without_subject")}
                         subtitle={`${formatDateTime(msg.sent_at ?? msg.scheduled_for_utc)} | ${msg.owner_display_name}`}
                         right={
                           <div className="stack-xs">
                             <span className="badge">{msg.channel}</span>
-                            <span className={`status-pill ${statusClass(msg.status)}`}>{statusLabel(msg.status)}</span>
+                            <span className={`status-pill ${statusClass(msg.status)}`}>{statusLabel(msg.status, language)}</span>
                           </div>
                         }
                       />
@@ -4604,11 +4791,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         <a
                           className="modal-close-x"
                           href={withUpdatedQuery(rawParams, { tab: "messages", message_id: null })}
-                          aria-label="Fermer le message"
+                          aria-label={t("client.close_message")}
                         >
                           ×
                         </a>
-                        <h3>{selectedMessage.subject_preview || "Message sans sujet"}</h3>
+                        <h3>{selectedMessage.subject_preview || t("client.message_without_subject")}</h3>
                         <p className="muted">
                           {formatDateTime(selectedMessage.sent_at ?? selectedMessage.scheduled_for_utc)} · {selectedMessage.owner_display_name} · {selectedMessage.channel}
                         </p>
@@ -4617,19 +4804,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <section className="modal-card client-message-modal-meta">
                         <div className="client-message-meta-grid">
                           <article className="item">
-                            <small className="muted">Destinataire</small>
-                            <p>{selectedMessage.recipient_email || "Non affiche pour ce membre"}</p>
+                            <small className="muted">{t("client.recipient")}</small>
+                            <p>{selectedMessage.recipient_email || t("client.hidden_for_member")}</p>
                           </article>
                           <article className="item">
-                            <small className="muted">Statut</small>
-                            <p>{statusLabel(selectedMessage.status)}</p>
+                            <small className="muted">{t("common.status")}</small>
+                            <p>{statusLabel(selectedMessage.status, language)}</p>
                           </article>
                           <article className="item">
-                            <small className="muted">Contexte</small>
-                            <p>{selectedMessage.session_title ?? "Message transactionnel"}</p>
+                            <small className="muted">{t("client.context")}</small>
+                            <p>{selectedMessage.session_title ?? t("client.transactional_message")}</p>
                           </article>
                           <article className="item">
-                            <small className="muted">Canal</small>
+                            <small className="muted">{t("client.channel")}</small>
                             <p>{selectedMessage.channel}</p>
                           </article>
                         </div>
@@ -4643,7 +4830,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           />
                         ) : (
                           <pre className="client-message-detail-content">
-                            {selectedMessage.content_preview || "Contenu indisponible"}
+                            {selectedMessage.content_preview || t("client.content_unavailable")}
                           </pre>
                         )}
                       </section>
@@ -4659,38 +4846,38 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
             <>
               <section className="client-account-mobile">
                 <details className="client-account-accordion card" open>
-                  <summary>Mon compte</summary>
+                  <summary>{t("client.account_title")}</summary>
                   <div className="client-account-accordion-content">
                     <div className="list client-mobile-list">
-                      <ListRow title="Prenom" right={me.first_name ?? "-"} />
-                      <ListRow title="Nom" right={me.last_name ?? "-"} />
-                      <ListRow title="Email" right={me.email} />
-                      <ListRow title="Tel mob 1" right={me.mobile_phone_1 ?? "-"} />
-                      <ListRow title="Tel mob 2" right={me.mobile_phone_2 ?? "-"} />
-                      <ListRow title="Tel domicile" right={me.home_phone ?? "-"} />
+                      <ListRow title={t("client.first_name_label")} right={me.first_name ?? "-"} />
+                      <ListRow title={t("client.last_name_label")} right={me.last_name ?? "-"} />
+                      <ListRow title={t("common.email")} right={me.email} />
+                      <ListRow title={t("client.mobile_phone_1")} right={me.mobile_phone_1 ?? "-"} />
+                      <ListRow title={t("client.mobile_phone_2")} right={me.mobile_phone_2 ?? "-"} />
+                      <ListRow title={t("client.home_phone_label")} right={me.home_phone ?? "-"} />
                       <ListRow
-                        title="Adresse"
+                        title={t("client.address_label")}
                         subtitle={`${me.address_line ?? "-"}, ${me.postal_code ?? "-"} ${me.city ?? "-"}, ${labelFromOptions(COUNTRY_OPTIONS, me.address_country)}`}
                       />
-                      <ListRow title="Pays residence" right={labelFromOptions(COUNTRY_OPTIONS, me.residence_country)} />
-                      <ListRow title="Devise" right={labelFromOptions(CURRENCY_OPTIONS, me.preferred_currency)} />
-                      <ListRow title="Langue" right={me.preferred_language === "en" ? "English" : "Francais"} />
-                      <ListRow title="Fuseau" right={labelFromOptions(TIMEZONE_OPTIONS, me.timezone)} />
+                      <ListRow title={t("client.residence_country_label")} right={labelFromOptions(COUNTRY_OPTIONS, me.residence_country)} />
+                      <ListRow title={t("client.currency")} right={labelFromOptions(CURRENCY_OPTIONS, me.preferred_currency)} />
+                      <ListRow title={t("common.language")} right={me.preferred_language === "en" ? t("common.english") : t("common.french")} />
+                      <ListRow title={t("client.timezone_label")} right={labelFromOptions(TIMEZONE_OPTIONS, me.timezone)} />
                     </div>
                     <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "account", edit_profile: editProfile ? null : "1" })}>
-                      {editProfile ? "Fermer edition" : "Modifier mon compte"}
+                      {editProfile ? t("client.edit_profile_close") : t("client.edit_profile_open")}
                     </a>
                   </div>
                 </details>
 
                 <details className="client-account-accordion card" open={linkedMembers.length > 0}>
                   <summary>
-                    <span>Membres</span>
+                    <span>{t("client.members")}</span>
                     <span className="badge">{linkedMembers.length}</span>
                   </summary>
                   <div className="client-account-accordion-content">
                     {linkedMembers.length === 0 ? (
-                      <p className="muted">Aucun membre rattache.</p>
+                      <p className="muted">{t("client.no_linked_member")}</p>
                     ) : (
                       <div className="list client-mobile-list">
                         {linkedMembers.map((member) => (
@@ -4698,7 +4885,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               key={`mob-member-${member.id}`}
                               title={member.display_name}
                               subtitle={member.email ?? undefined}
-                              right={<span className="badge">{member.kind === "CHILD" ? "Enfant" : "Adulte"}</span>}
+                              right={<span className="badge">{member.kind === "CHILD" ? t("client.child") : t("client.adult")}</span>}
                             />
                         ))}
                       </div>
@@ -4707,63 +4894,63 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </details>
 
                 <details className="client-account-accordion card">
-                  <summary>Preferences</summary>
+                  <summary>{t("common.preferences")}</summary>
                   <div className="client-account-accordion-content">
                     <article className="item">
-                      <strong>Resume</strong>
+                      <strong>{t("common.summary")}</strong>
                       <p className="muted">{communicationSummary}</p>
                     </article>
                     <article className="item">
-                      <strong>Rappels de cours</strong>
-                      <p className="muted">Notifications automatiques avant les seances.</p>
-                      <label className="client-switch-row"><span>Rappels de cours par email</span><span className={`client-switch ${me.lesson_reminder_email_opt_in ? "on" : ""}`} /></label>
-                      <label className="client-switch-row"><span>Rappels de cours par SMS</span><span className={`client-switch ${me.lesson_reminder_sms_opt_in ? "on" : ""}`} /></label>
-                      {me.lesson_reminder_sms_opt_in && !hasPhoneNumber ? <p className="muted">Numero requis pour les rappels SMS.</p> : null}
+                      <strong>{t("client.lesson_reminders")}</strong>
+                      <p className="muted">{t("client.lesson_reminders_help")}</p>
+                      <label className="client-switch-row"><span>{t("client.lesson_reminders_email")}</span><span className={`client-switch ${me.lesson_reminder_email_opt_in ? "on" : ""}`} /></label>
+                      <label className="client-switch-row"><span>{t("client.lesson_reminders_sms")}</span><span className={`client-switch ${me.lesson_reminder_sms_opt_in ? "on" : ""}`} /></label>
+                      {me.lesson_reminder_sms_opt_in && !hasPhoneNumber ? <p className="muted">{t("client.phone_required_sms_reminders")}</p> : null}
                     </article>
                     <article className="item">
-                      <strong>Communications de l ecole</strong>
-                      <p className="muted">Information generale, nouveautes et alertes importantes.</p>
-                      <label className="client-switch-row"><span>Recevoir les emails de communication</span><span className={`client-switch ${me.email_opt_in ? "on" : ""}`} /></label>
-                      <label className="client-switch-row"><span>Recevoir les SMS de communication</span><span className={`client-switch ${me.sms_opt_in ? "on" : ""}`} /></label>
-                      {me.sms_opt_in && !hasPhoneNumber ? <p className="muted">Numero requis pour les SMS de communication.</p> : null}
+                      <strong>{t("client.school_communications")}</strong>
+                      <p className="muted">{t("client.school_communications_help")}</p>
+                      <label className="client-switch-row"><span>{t("client.communication_email")}</span><span className={`client-switch ${me.email_opt_in ? "on" : ""}`} /></label>
+                      <label className="client-switch-row"><span>{t("client.communication_sms")}</span><span className={`client-switch ${me.sms_opt_in ? "on" : ""}`} /></label>
+                      {me.sms_opt_in && !hasPhoneNumber ? <p className="muted">{t("client.phone_required_sms_communications")}</p> : null}
                     </article>
-                    <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>Voir la messagerie</a>
+                    <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>{t("client.view_messaging")}</a>
                   </div>
                 </details>
 
                 <details className="client-account-accordion card">
-                  <summary>Messages</summary>
+                  <summary>{t("client.recent_messages")}</summary>
                   <div className="client-account-accordion-content">
                     {messageRows.length === 0 ? (
-                      <p className="muted">Aucun message recent.</p>
+                      <p className="muted">{t("client.recent_messages_empty")}</p>
                     ) : (
                       <div className="list client-mobile-list client-inbox-list">
                         {messageRows.slice(0, 8).map((msg) => (
                           <ListRow
                             key={`account-message-${msg.id}`}
-                            title={msg.subject_preview || "Message"}
+                            title={msg.subject_preview || t("client.message_fallback")}
                             subtitle={`${formatDateTime(msg.sent_at ?? msg.scheduled_for_utc)} · ${msg.owner_display_name}`}
                             right={<span className="badge">{msg.channel}</span>}
                           />
                         ))}
                       </div>
                     )}
-                    <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>Historique complet</a>
+                    <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>{t("client.full_history")}</a>
                   </div>
                 </details>
 
                 <details className="client-account-accordion card">
-                  <summary>Credits</summary>
+                  <summary>{t("common.credits")}</summary>
                   <div className="client-account-accordion-content">
                     {positivePackSubscriptions.length === 0 ? (
-                      <p className="muted">Aucun credit positif.</p>
+                      <p className="muted">{t("client.no_positive_credit")}</p>
                     ) : (
                       <div className="list client-mobile-list">
                         {positivePackSubscriptions.map((sub) => (
                           <ListRow
                             key={`mob-credit-${sub.id}`}
                             title={sub.plan.name}
-                            subtitle={`Debut: ${formatDate(sub.started_at)}${sub.ends_at ? ` | Fin: ${formatDate(sub.ends_at)}` : ""}`}
+                            subtitle={`${t("client.start_date_label", { date: formatDate(sub.started_at) })}${sub.ends_at ? ` | ${t("client.end_date_label", { date: formatDate(sub.ends_at) })}` : ""}`}
                             right={`${sub.credits_remaining ?? 0}/${sub.credits_initial ?? sub.credits_remaining ?? 0}`}
                           />
                         ))}
@@ -4776,33 +4963,33 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               <section className="grid cols-2 client-account-desktop">
                 <Card>
                   <div className="row spread">
-                    <h2>Mon compte</h2>
+                    <h2>{t("client.account_title")}</h2>
                     <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "account", edit_profile: editProfile ? null : "1" })}>
                       {editProfile ? "✖" : "✎"}
                     </a>
                   </div>
 
                   <div className="client-info-list">
-                    <p><strong>Prenom:</strong> {me.first_name ?? "-"}</p>
-                    <p><strong>Nom:</strong> {me.last_name ?? "-"}</p>
-                    <p><strong>Email:</strong> {me.email}</p>
-                    <p><strong>Tel mob 1:</strong> {me.mobile_phone_1 ?? "-"}</p>
-                    <p><strong>Tel mob 2:</strong> {me.mobile_phone_2 ?? "-"}</p>
-                    <p><strong>Tel domicile:</strong> {me.home_phone ?? "-"}</p>
+                    <p><strong>{t("client.first_name_label")}:</strong> {me.first_name ?? "-"}</p>
+                    <p><strong>{t("client.last_name_label")}:</strong> {me.last_name ?? "-"}</p>
+                    <p><strong>{t("common.email")}:</strong> {me.email}</p>
+                    <p><strong>{t("client.mobile_phone_1")}:</strong> {me.mobile_phone_1 ?? "-"}</p>
+                    <p><strong>{t("client.mobile_phone_2")}:</strong> {me.mobile_phone_2 ?? "-"}</p>
+                    <p><strong>{t("client.home_phone_label")}:</strong> {me.home_phone ?? "-"}</p>
                     <p>
-                      <strong>Adresse:</strong> {me.address_line ?? "-"}, {me.postal_code ?? "-"} {me.city ?? "-"}, {labelFromOptions(COUNTRY_OPTIONS, me.address_country)}
+                      <strong>{t("client.address_label")}:</strong> {me.address_line ?? "-"}, {me.postal_code ?? "-"} {me.city ?? "-"}, {labelFromOptions(COUNTRY_OPTIONS, me.address_country)}
                     </p>
-                    <p><strong>Pays residence:</strong> {labelFromOptions(COUNTRY_OPTIONS, me.residence_country)}</p>
-                    <p><strong>Devise:</strong> {labelFromOptions(CURRENCY_OPTIONS, me.preferred_currency)}</p>
-                    <p><strong>Langue:</strong> {me.preferred_language === "en" ? "English" : "Francais"}</p>
-                    <p><strong>Fuseau:</strong> {labelFromOptions(TIMEZONE_OPTIONS, me.timezone)}</p>
+                    <p><strong>{t("client.residence_country_label")}:</strong> {labelFromOptions(COUNTRY_OPTIONS, me.residence_country)}</p>
+                    <p><strong>{t("client.currency")}:</strong> {labelFromOptions(CURRENCY_OPTIONS, me.preferred_currency)}</p>
+                    <p><strong>{t("common.language")}:</strong> {me.preferred_language === "en" ? t("common.english") : t("common.french")}</p>
+                    <p><strong>{t("client.timezone_label")}:</strong> {labelFromOptions(TIMEZONE_OPTIONS, me.timezone)}</p>
                   </div>
                 </Card>
 
                 <Card>
-                  <h2>Membres rattaches</h2>
+                  <h2>{t("client.linked_members")}</h2>
                   {linkedMembers.length === 0 ? (
-                    <p className="muted">Aucun membre rattache.</p>
+                    <p className="muted">{t("client.no_linked_member")}</p>
                   ) : (
                     <div className="list">
                       {linkedMembers.map((member) => (
@@ -4811,7 +4998,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               <strong>{member.display_name}</strong>
                               {member.email ? <p className="muted">{member.email}</p> : null}
                             </div>
-                            <span className="badge">{member.kind === "CHILD" ? "Enfant" : "Adulte"}</span>
+                            <span className="badge">{member.kind === "CHILD" ? t("client.child") : t("client.adult")}</span>
                           </article>
                       ))}
                     </div>
@@ -4820,37 +5007,37 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               </section>
 
               <Card className="client-account-desktop">
-                <h2>Preferences communication</h2>
+                <h2>{t("client.communication_preferences")}</h2>
                 <p className="muted">{communicationSummary}</p>
                 <div className="client-preferences-list">
                   <article className="item">
-                    <strong>Rappels de cours</strong>
-                    <label className="client-switch-row"><span>Rappels de cours par email</span><span className={`client-switch ${me.lesson_reminder_email_opt_in ? "on" : ""}`} /></label>
-                    <label className="client-switch-row"><span>Rappels de cours par SMS</span><span className={`client-switch ${me.lesson_reminder_sms_opt_in ? "on" : ""}`} /></label>
+                    <strong>{t("client.lesson_reminders")}</strong>
+                    <label className="client-switch-row"><span>{t("client.lesson_reminders_email")}</span><span className={`client-switch ${me.lesson_reminder_email_opt_in ? "on" : ""}`} /></label>
+                    <label className="client-switch-row"><span>{t("client.lesson_reminders_sms")}</span><span className={`client-switch ${me.lesson_reminder_sms_opt_in ? "on" : ""}`} /></label>
                   </article>
                   <article className="item">
-                    <strong>Communications de l ecole</strong>
-                    <label className="client-switch-row"><span>Recevoir les emails de communication</span><span className={`client-switch ${me.email_opt_in ? "on" : ""}`} /></label>
-                    <label className="client-switch-row"><span>Recevoir les SMS de communication</span><span className={`client-switch ${me.sms_opt_in ? "on" : ""}`} /></label>
+                    <strong>{t("client.school_communications")}</strong>
+                    <label className="client-switch-row"><span>{t("client.communication_email")}</span><span className={`client-switch ${me.email_opt_in ? "on" : ""}`} /></label>
+                    <label className="client-switch-row"><span>{t("client.communication_sms")}</span><span className={`client-switch ${me.sms_opt_in ? "on" : ""}`} /></label>
                   </article>
                 </div>
               </Card>
 
               <Card className="client-account-desktop">
                 <div className="row spread">
-                  <h2>Messages</h2>
+                  <h2>{t("client.recent_messages")}</h2>
                   <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>
-                    Voir tout
+                    {t("common.view_all")}
                   </a>
                 </div>
                 {messageRows.length === 0 ? (
-                  <p className="muted">Aucun message recent.</p>
+                  <p className="muted">{t("client.recent_messages_empty")}</p>
                 ) : (
                   <div className="list">
                     {messageRows.slice(0, 6).map((msg) => (
                       <article key={`desktop-account-message-${msg.id}`} className="item row spread">
                         <div>
-                          <strong>{msg.subject_preview || "Message"}</strong>
+                          <strong>{msg.subject_preview || t("client.message_fallback")}</strong>
                           <p className="muted">{formatDateTime(msg.sent_at ?? msg.scheduled_for_utc)} · {msg.owner_display_name}</p>
                         </div>
                         <span className="badge">{msg.channel}</span>
@@ -4861,10 +5048,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               </Card>
 
               <Card className="client-account-desktop">
-                <h2>Credits disponibles</h2>
-                <p className="muted">Affichage des credits strictement positifs.</p>
+                <h2>{t("client.available_credits")}</h2>
+                <p className="muted">{t("client.positive_credits_only")}</p>
                 {positivePackSubscriptions.length === 0 ? (
-                  <p className="muted">Aucun credit positif.</p>
+                  <p className="muted">{t("client.no_positive_credit")}</p>
                 ) : (
                   <div className="list">
                     {positivePackSubscriptions.map((sub) => (
@@ -4874,11 +5061,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <span className="badge">{sub.owner_display_name}</span>
                         </div>
                         <p className="muted">
-                          Credits: {sub.credits_remaining ?? 0}/{sub.credits_initial ?? sub.credits_remaining ?? 0}
+                          {t("client.credit_line", { remaining: sub.credits_remaining ?? 0, initial: sub.credits_initial ?? sub.credits_remaining ?? 0 })}
                         </p>
                         <p className="muted">
-                          Debut: {formatDate(sub.started_at)}
-                          {sub.ends_at ? ` | Fin: ${formatDate(sub.ends_at)}` : ""}
+                          {t("client.start_date_label", { date: formatDate(sub.started_at) })}
+                          {sub.ends_at ? ` | ${t("client.end_date_label", { date: formatDate(sub.ends_at) })}` : ""}
                         </p>
                       </article>
                     ))}
@@ -4888,46 +5075,46 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
               {editProfile ? (
                 <Card className="client-account-edit">
-                  <h2>Modifier mes informations</h2>
+                  <h2>{t("client.edit_my_information")}</h2>
                   <form action={updateProfileAction} className="client-filter-grid">
                     <label>
-                      Prenom
+                      {t("client.first_name_label")}
                       <input type="text" name="first_name" defaultValue={me.first_name ?? ""} maxLength={100} required />
                     </label>
                     <label>
-                      Nom
+                      {t("client.last_name_label")}
                       <input type="text" name="last_name" defaultValue={me.last_name ?? ""} maxLength={100} required />
                     </label>
                     <label>
-                      Email
+                      {t("common.email")}
                       <input type="email" value={me.email} disabled readOnly />
                     </label>
                     <label>
-                      Tel mob 1
+                      {t("client.mobile_phone_1")}
                       <input type="text" name="mobile_phone_1" defaultValue={me.mobile_phone_1 ?? me.phone ?? ""} maxLength={30} />
                     </label>
                     <label>
-                      Tel mob 2
+                      {t("client.mobile_phone_2")}
                       <input type="text" name="mobile_phone_2" defaultValue={me.mobile_phone_2 ?? ""} maxLength={30} />
                     </label>
                     <label>
-                      Tel domicile
+                      {t("client.home_phone_label")}
                       <input type="text" name="home_phone" defaultValue={me.home_phone ?? ""} maxLength={30} />
                     </label>
                     <label>
-                      Adresse
+                      {t("client.address_label")}
                       <input type="text" name="address_line" defaultValue={me.address_line ?? ""} maxLength={255} />
                     </label>
                     <label>
-                      Code postal
+                      {t("client.postal_code_label")}
                       <input type="text" name="postal_code" defaultValue={me.postal_code ?? ""} maxLength={20} />
                     </label>
                     <label>
-                      Ville
+                      {t("client.city_label")}
                       <input type="text" name="city" defaultValue={me.city ?? ""} maxLength={120} />
                     </label>
                     <label>
-                      Pays adresse
+                      {t("client.address_country_label")}
                       <select name="address_country" defaultValue={me.address_country || DEFAULT_COUNTRY} required>
                         {COUNTRY_OPTIONS.map((country) => (
                           <option key={country.value} value={country.value}>
@@ -4937,7 +5124,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </select>
                     </label>
                     <label>
-                      Pays residence
+                      {t("client.residence_country_label")}
                       <select name="residence_country" defaultValue={me.residence_country || DEFAULT_COUNTRY} required>
                         {COUNTRY_OPTIONS.map((country) => (
                           <option key={country.value} value={country.value}>
@@ -4947,7 +5134,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </select>
                     </label>
                     <label>
-                      Devise
+                      {t("client.currency")}
                       <select name="preferred_currency" defaultValue={me.preferred_currency || DEFAULT_CURRENCY} required>
                         {CURRENCY_OPTIONS.map((currency) => (
                           <option key={currency.value} value={currency.value}>
@@ -4957,14 +5144,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </select>
                     </label>
                     <label>
-                      Langue
+                      {t("common.language")}
                       <select name="preferred_language" defaultValue={me.preferred_language || "fr"} required>
-                        <option value="fr">Francais</option>
-                        <option value="en">English</option>
+                        <option value="fr">{t("common.french")}</option>
+                        <option value="en">{t("common.english")}</option>
                       </select>
                     </label>
                     <label>
-                      Fuseau
+                      {t("client.timezone_label")}
                       <select name="timezone" defaultValue={me.timezone || DEFAULT_TIMEZONE} required>
                         {TIMEZONE_OPTIONS.map((item) => (
                           <option key={item.value} value={item.value}>
@@ -4974,26 +5161,26 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </select>
                     </label>
                     <label className="span-2">
-                      Informations importantes
+                      {t("client.important_information")}
                       <textarea name="important_info" rows={3} defaultValue={me.important_info ?? ""} maxLength={1000} />
                     </label>
 
                     <input type="hidden" name="portal_contact_visible" value={me.portal_contact_visible ? "on" : "off"} />
                     <label className="checkline">
                       <input type="checkbox" name="email_opt_in" defaultChecked={me.email_opt_in} />
-                      <span className="client-switch-label">Recevoir les emails de communication</span>
+                      <span className="client-switch-label">{t("client.communication_email")}</span>
                     </label>
                     <label className="checkline">
                       <input type="checkbox" name="sms_opt_in" defaultChecked={me.sms_opt_in} />
-                      <span className="client-switch-label">Recevoir les SMS de communication</span>
+                      <span className="client-switch-label">{t("client.communication_sms")}</span>
                     </label>
                     <label className="checkline">
                       <input type="checkbox" name="lesson_reminder_email_opt_in" defaultChecked={me.lesson_reminder_email_opt_in} />
-                      <span className="client-switch-label">Rappels de cours par email</span>
+                      <span className="client-switch-label">{t("client.lesson_reminders_email")}</span>
                     </label>
                     <label className="checkline">
                       <input type="checkbox" name="lesson_reminder_sms_opt_in" defaultChecked={me.lesson_reminder_sms_opt_in} />
-                      <span className="client-switch-label">Rappels de cours par SMS</span>
+                      <span className="client-switch-label">{t("client.lesson_reminders_sms")}</span>
                     </label>
 
                     <input type="hidden" name="phone" value={me.mobile_phone_1 ?? me.phone ?? ""} readOnly />
@@ -5012,7 +5199,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         </section>
       </section>
 
-        <MobileTabs items={mobileTabLinks} activeId={activeMobileTabId} />
+        <MobileTabs items={mobileTabLinks} activeId={activeMobileTabId} ariaLabel={uiText(language, "portal.mobile_client_nav")} />
     </main>
   );
 }

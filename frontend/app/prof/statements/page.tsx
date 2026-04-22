@@ -17,7 +17,8 @@ import BottomTabs from "../../../components/teacher-ui/bottom-tabs";
 import PageHeaderMobile from "../../../components/teacher-ui/page-header-mobile";
 import TeacherMissingServiceForm, { type MissingServiceActivityOption, type MissingServiceLocationOption } from "../../../components/teacher-missing-service-form";
 import PortalImpersonationBanner from "../../../components/portal-impersonation-banner";
-import type { CourseTypeOut, LocationOut, ProfessorContractGridOut, TeacherInvoiceOut, TeacherStatementOut } from "../../../lib/types";
+import type { CourseTypeOut, LocationOut, ProfessorContractGridOut, TeacherInvoiceOut, TeacherStatementOut, UserOut } from "../../../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -36,21 +37,6 @@ type StatementServiceRow = {
   totalTtc: string;
 };
 
-const MONTH_LABELS = [
-  "Janvier",
-  "Fevrier",
-  "Mars",
-  "Avril",
-  "Mai",
-  "Juin",
-  "Juillet",
-  "Aout",
-  "Septembre",
-  "Octobre",
-  "Novembre",
-  "Decembre",
-];
-
 function profTabHref(tab: string): string {
   return `/prof?tab=${encodeURIComponent(tab)}`;
 }
@@ -63,24 +49,24 @@ function readQueryParam(searchParams: SearchParams, key: string): string {
   return value ?? "";
 }
 
-function toDateFr(value: string): string {
+function formatDateLabel(value: string, language: UiLanguage): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     return value;
   }
-  return parsed.toLocaleDateString("fr-FR", {
+  return parsed.toLocaleDateString(localeForUiLanguage(language), {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
   });
 }
 
-function toTimeFr(value: string): string {
+function formatTimeLabel(value: string, language: UiLanguage): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return parsed.toLocaleTimeString("fr-FR", {
+  return parsed.toLocaleTimeString(localeForUiLanguage(language), {
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -96,28 +82,28 @@ function safeMoney(value: unknown): string {
   return parsed.toFixed(2);
 }
 
-function statusLabel(rawStatus: string): string {
+function statusLabel(rawStatus: string, language: UiLanguage): string {
   const normalized = rawStatus.trim().toLowerCase();
   if (normalized === "to_verify" || normalized === "ready" || normalized === "draft") {
-    return "A verifier";
+    return uiText(language, "teacher.statement_status_to_verify");
   }
   if (normalized === "in_dispute" || normalized === "disputed") {
-    return "En litige";
+    return uiText(language, "teacher.statement_status_in_dispute");
   }
   if (normalized === "awaiting_admin_feedback") {
-    return "En attente retour administration";
+    return uiText(language, "teacher.statement_status_awaiting_admin_feedback");
   }
   if (normalized === "validated" || normalized === "approved") {
-    return "Valide";
+    return uiText(language, "teacher.statement_status_validated");
   }
   if (normalized === "invoice_generated" || normalized === "closed") {
-    return "Facture generee";
+    return uiText(language, "teacher.statement_status_invoice_generated");
   }
   if (normalized === "exported") {
-    return "Exporte";
+    return uiText(language, "teacher.statement_status_exported");
   }
   if (normalized === "awaiting_attendance") {
-    return "Presences a renseigner";
+    return uiText(language, "teacher.statement_status_attendance_pending");
   }
   return rawStatus;
 }
@@ -133,18 +119,18 @@ function statusTone(rawStatus: string): string {
   return "status-off";
 }
 
-function modeLabel(rawMode: string): string {
+function modeLabel(rawMode: string, language: UiLanguage): string {
   const normalized = rawMode.trim().toUpperCase();
   if (normalized === "EN_LIGNE" || normalized === "ONLINE") {
-    return "En ligne";
+    return uiText(language, "teacher.mode_online");
   }
   if (normalized === "PRESENTIEL" || normalized === "ONSITE") {
-    return "Presentiel";
+    return uiText(language, "teacher.mode_onsite");
   }
-  return "Tous modes";
+  return uiText(language, "teacher.mode_all");
 }
 
-function flattenServices(statements: TeacherStatementOut[]): StatementServiceRow[] {
+function flattenServices(statements: TeacherStatementOut[], language: UiLanguage): StatementServiceRow[] {
   const out: StatementServiceRow[] = [];
   for (const statement of statements) {
     for (const line of statement.lines) {
@@ -155,8 +141,8 @@ function flattenServices(statements: TeacherStatementOut[]): StatementServiceRow
           const record = (item ?? {}) as Record<string, unknown>;
           const startAt = String(record.start_at_utc ?? "").trim();
           const endAt = String(record.end_at_utc ?? "").trim();
-          const dateLabel = String(record.date ?? "").trim() || (startAt ? toDateFr(startAt) : "-");
-          const timeLabel = startAt && endAt ? `${toTimeFr(startAt)} - ${toTimeFr(endAt)}` : "-";
+          const dateLabel = String(record.date ?? "").trim() || (startAt ? formatDateLabel(startAt, language) : "-");
+          const timeLabel = startAt && endAt ? `${formatTimeLabel(startAt, language)} - ${formatTimeLabel(endAt, language)}` : "-";
           const amountHt = safeMoney(record.amount_ht ?? line.amount_ht);
           const totalTtc = safeMoney(record.amount_ttc ?? line.amount_ttc);
           const vat = (safeNumber(totalTtc) - safeNumber(amountHt)).toFixed(2);
@@ -199,13 +185,35 @@ function flattenServices(statements: TeacherStatementOut[]): StatementServiceRow
   return out;
 }
 
-function formatPeriodRange(year: number, month: number): { start: string; end: string } {
+function formatPeriodRange(year: number, month: number, language: UiLanguage): { start: string; end: string } {
   const start = new Date(Date.UTC(year, month - 1, 1));
   const end = new Date(Date.UTC(year, month, 0));
+  const locale = localeForUiLanguage(language);
   return {
-    start: start.toLocaleDateString("fr-FR"),
-    end: end.toLocaleDateString("fr-FR"),
+    start: start.toLocaleDateString(locale),
+    end: end.toLocaleDateString(locale),
   };
+}
+
+function formatMonthLabel(year: number, month: number, language: UiLanguage): string {
+  const label = new Intl.DateTimeFormat(localeForUiLanguage(language), {
+    month: "long",
+  }).format(new Date(Date.UTC(year, month - 1, 1)));
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function invoiceStatusLabel(rawStatus: string, language: UiLanguage): string {
+  const normalized = rawStatus.trim().toLowerCase();
+  if (normalized === "sent_to_accounting") {
+    return uiText(language, "teacher.invoice_status_sent_to_accounting");
+  }
+  if (normalized === "cancelled") {
+    return uiText(language, "teacher.invoice_status_cancelled");
+  }
+  if (normalized === "generated") {
+    return uiText(language, "teacher.invoice_status_generated");
+  }
+  return rawStatus;
 }
 
 function isValidatedForBilling(statuses: string[]): boolean {
@@ -252,12 +260,14 @@ export default async function TeacherStatementsPage({
   const impersonationNameHint = readQueryParam(searchParams, "imp_name").trim();
 
   const [
+    meResult,
     statementsResult,
     courseTypesResult,
     locationsResult,
     contractGridsResult,
     invoicesResult,
   ] = await Promise.all([
+    backendRequest<UserOut>("/api/v1/auth/me", {}, token),
     backendRequest<TeacherStatementOut[]>(`/api/v1/teacher/statements/${year}/${month}`, {}, token),
     backendRequest<CourseTypeOut[]>("/api/v1/course-types?active=true", {}, token),
     backendRequest<LocationOut[]>("/api/v1/locations?active=true", {}, token),
@@ -265,10 +275,14 @@ export default async function TeacherStatementsPage({
     backendRequest<TeacherInvoiceOut[]>(`/api/v1/teacher/invoices?year=${year}&month=${month}`, {}, token),
   ]);
 
+  const language = normalizeUiLanguage(meResult.ok ? meResult.data.preferred_language : "fr");
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const locale = localeForUiLanguage(language);
+
   const statements = statementsResult.ok ? statementsResult.data : [];
-  const monthLabel = MONTH_LABELS[Math.max(1, Math.min(12, month)) - 1] ?? String(month);
-  const period = formatPeriodRange(year, month);
-  const services = flattenServices(statements);
+  const monthLabel = formatMonthLabel(year, month, language);
+  const period = formatPeriodRange(year, month, language);
+  const services = flattenServices(statements, language);
 
   const totalServices = services.length;
   const totalMinutes = services.reduce((sum, row) => sum + row.durationMinutes, 0);
@@ -277,14 +291,14 @@ export default async function TeacherStatementsPage({
   const totalVat = statements.reduce((sum, row) => sum + safeNumber(row.totals_vat), 0).toFixed(2);
   const totalTtc = statements.reduce((sum, row) => sum + safeNumber(row.totals_ttc), 0).toFixed(2);
   const statusValues = statements.map((row) => row.status);
-  const globalStatus = statusValues[0] ? statusLabel(statusValues[0]) : "A verifier";
+  const globalStatus = statusValues[0] ? statusLabel(statusValues[0], language) : t("teacher.statement_status_to_verify");
   const globalStatusTone = statusValues[0] ? statusTone(statusValues[0]) : "status-off";
   const billingUnlocked = isValidatedForBilling(statusValues);
 
   const impersonationClaims = readPortalImpersonationClaims();
   const isImpersonating = Boolean(impersonationClaims?.imp);
   const impersonationReturnTo = getPortalReturnTo() ?? "/admin";
-  const impersonationDisplayName = impersonationNameHint || "Portail professeur";
+  const impersonationDisplayName = impersonationNameHint || t("portal.teacher");
 
   const statementsMonthHref = `/prof/statements?year=${year}&month=${month}`;
   const { prevYear, prevMonth, nextYear, nextMonth } = computeAdjacentMonths(year, month);
@@ -295,9 +309,9 @@ export default async function TeacherStatementsPage({
   const missingPanelHref = "#statement-missing-modal";
   const fallbackCurrency = statements[0]?.currency || "EUR";
   const successMessage = notice === "missing_service_sent"
-    ? "Votre signalement de prestation manquante a bien ete envoye."
+    ? t("teacher.statement_missing_service_success")
     : notice === "dispute_sent"
-      ? "Votre signalement de probleme a bien ete envoye."
+      ? t("teacher.statement_dispute_success")
       : "";
   const showSuccessModal = successMessage.length > 0;
   const monthInvoices = invoicesResult.ok ? invoicesResult.data : [];
@@ -326,14 +340,14 @@ export default async function TeacherStatementsPage({
         continue;
       }
       const line = gridLineByCourseTypeId.get(courseType.id);
-      activitiesMap.set(courseType.id, {
-        id: courseType.id,
-        label: (line?.course_type_name || courseType.name || "").trim() || "Prestation",
-        duration_minutes: Number(line?.reference_duration_minutes ?? courseType.duration_minutes ?? 60) || 60,
-        mode_label: modeLabel(line?.mode ?? courseType.mode),
-        default_hourly_rate: line?.default_hourly_rate ?? courseType.default_hourly_rate,
-        rules: line?.rules ?? [],
-      });
+        activitiesMap.set(courseType.id, {
+          id: courseType.id,
+          label: (line?.course_type_name || courseType.name || "").trim() || t("teacher.service_type"),
+          duration_minutes: Number(line?.reference_duration_minutes ?? courseType.duration_minutes ?? 60) || 60,
+          mode_label: modeLabel(line?.mode ?? courseType.mode, language),
+          default_hourly_rate: line?.default_hourly_rate ?? courseType.default_hourly_rate,
+          rules: line?.rules ?? [],
+        });
     }
   }
 
@@ -345,9 +359,9 @@ export default async function TeacherStatementsPage({
         }
         activitiesMap.set(line.course_type_id, {
           id: line.course_type_id,
-          label: (line.course_type_name || line.service_type || "").trim() || "Prestation",
+          label: (line.course_type_name || line.service_type || "").trim() || t("teacher.service_type"),
           duration_minutes: Number(line.reference_duration_minutes ?? 60) || 60,
-          mode_label: modeLabel(line.mode),
+          mode_label: modeLabel(line.mode, language),
           default_hourly_rate: line.default_hourly_rate,
           rules: line.rules,
         });
@@ -355,7 +369,7 @@ export default async function TeacherStatementsPage({
     }
   }
 
-  const missingServiceActivities = Array.from(activitiesMap.values()).sort((a, b) => a.label.localeCompare(b.label, "fr"));
+  const missingServiceActivities = Array.from(activitiesMap.values()).sort((a, b) => a.label.localeCompare(b.label, locale));
   const missingServiceLocations: MissingServiceLocationOption[] = locationsResult.ok
     ? locationsResult.data.map((location) => ({ id: location.id, label: location.name }))
     : [];
@@ -364,112 +378,114 @@ export default async function TeacherStatementsPage({
   return (
     <section className="page teacher-shell teacher-subpage">
       <PageHeaderMobile
-        title="Releves"
+        title={t("teacher.statements")}
         subtitle={`${monthLabel} ${year}`}
         trailing={
           <Link className="mode-link teacher-header-link" href="/prof">
-            Retour accueil
+            {t("teacher.return_home")}
           </Link>
         }
+        menuLabel={t("portal.teacher_menu")}
         menu={
           <div className="teacher-header-menu-items">
             <Link className="teacher-header-menu-link" href="/prof">
-              Accueil
+              {t("common.home")}
             </Link>
             <form action={logoutAction}>
               <button className="ghost teacher-header-menu-btn" type="submit">
-                Se deconnecter
+                {t("common.logout")}
               </button>
             </form>
           </div>
         }
       />
 
-      <section className="card prof-nav teacher-desktop-nav" aria-label="Navigation professeur">
+      <section className="card prof-nav teacher-desktop-nav" aria-label={t("teacher.navigation")}>
         <Link className="prof-nav-link" href={profTabHref("overview")}>
           <span aria-hidden>🗂</span>
-          A traiter
+          {t("teacher.todo")}
         </Link>
         <Link className="prof-nav-link" href={profTabHref("planning")}>
           <span aria-hidden>📅</span>
-          Planning
+          {t("teacher.planning")}
         </Link>
         <Link className="prof-nav-link" href={profTabHref("catalog")}>
           <span aria-hidden>📦</span>
-          Produits
+          {t("teacher.products")}
         </Link>
         <Link className="prof-nav-link" href={profTabHref("finance")}>
           <span aria-hidden>💶</span>
-          Solde
+          {t("teacher.balance")}
         </Link>
         <Link className="prof-nav-link active" href={statementsMonthHref}>
           <span aria-hidden>🧾</span>
-          Releves
+          {t("teacher.statements")}
         </Link>
       </section>
 
       <BottomTabs
         activeId="statements"
+        ariaLabel={t("portal.mobile_teacher_nav")}
         items={[
-          { id: "overview", label: "A traiter", icon: "📌", href: profTabHref("overview") },
-          { id: "planning", label: "Planning", icon: "📅", href: profTabHref("planning") },
-          { id: "statements", label: "Releves", icon: "🧾", href: statementsMonthHref },
-          { id: "messages", label: "Messages", icon: "✉️", href: profTabHref("messages") },
-          { id: "profile", label: "Profil", icon: "👤", href: profTabHref("profile") },
+          { id: "overview", label: t("teacher.todo"), icon: "📌", href: profTabHref("overview") },
+          { id: "planning", label: t("teacher.planning"), icon: "📅", href: profTabHref("planning") },
+          { id: "statements", label: t("teacher.statements"), icon: "🧾", href: statementsMonthHref },
+          { id: "messages", label: t("teacher.messages"), icon: "✉️", href: profTabHref("messages") },
+          { id: "profile", label: t("teacher.profile"), icon: "👤", href: profTabHref("profile") },
         ]}
       />
 
       {isImpersonating ? (
-        <PortalImpersonationBanner displayName={impersonationDisplayName} returnTo={impersonationReturnTo} />
+        <PortalImpersonationBanner displayName={impersonationDisplayName} returnTo={impersonationReturnTo} language={language} />
       ) : null}
 
       {ok && !successMessage ? <AlertCard tone="ok">{ok}</AlertCard> : null}
       {error ? <AlertCard tone="error">{error}</AlertCard> : null}
-      {!statementsResult.ok ? <AlertCard tone="error">Erreur releve detail: {statementsResult.message}</AlertCard> : null}
-      {!courseTypesResult.ok ? <AlertCard tone="error">Erreur prestations: {courseTypesResult.message}</AlertCard> : null}
-      {!locationsResult.ok ? <AlertCard tone="error">Erreur lieux: {locationsResult.message}</AlertCard> : null}
-      {!contractGridsResult.ok ? <AlertCard tone="error">Erreur grille contractuelle: {contractGridsResult.message}</AlertCard> : null}
-      {!invoicesResult.ok ? <AlertCard tone="error">Erreur factures: {invoicesResult.message}</AlertCard> : null}
+      {!statementsResult.ok ? <AlertCard tone="error">{t("teacher.statement_detail_error")}: {statementsResult.message}</AlertCard> : null}
+      {!courseTypesResult.ok ? <AlertCard tone="error">{t("teacher.statement_services_error")}: {courseTypesResult.message}</AlertCard> : null}
+      {!locationsResult.ok ? <AlertCard tone="error">{t("teacher.statement_locations_error")}: {locationsResult.message}</AlertCard> : null}
+      {!contractGridsResult.ok ? <AlertCard tone="error">{t("teacher.statement_contract_grid_error")}: {contractGridsResult.message}</AlertCard> : null}
+      {!invoicesResult.ok ? <AlertCard tone="error">{t("teacher.statement_invoices_error")}: {invoicesResult.message}</AlertCard> : null}
 
       <article className="card statement-month-switcher">
         <div className="row spread">
           <Link className="mode-link" href={previousMonthHref}>
-            ← Mois precedent
+            ← {t("teacher.previous_month")}
           </Link>
           <strong>{monthLabel} {year}</strong>
           <Link className="mode-link" href={nextMonthHref}>
-            Mois suivant →
+            {t("teacher.next_month")} →
           </Link>
         </div>
       </article>
 
       <article className="card statement-period-hero">
-        <p className="statement-title">Releve de prestations</p>
-        <p className="statement-period-strong">Periode du {period.start} au {period.end}</p>
+        <p className="statement-title">{t("teacher.statement_title")}</p>
+        <p className="statement-period-strong">{t("teacher.statement_period", period)}</p>
         <span className={`status-pill ${globalStatusTone}`}>{globalStatus}</span>
       </article>
 
       <article className="card statement-summary-card">
-        <h3>Resume financier</h3>
+        <h3>{t("teacher.financial_summary")}</h3>
         <div className="statement-summary-grid">
           <div>
-            <small className="muted">Nombre de prestations</small>
+            <small className="muted">{t("teacher.services_count")}</small>
             <strong>{totalServices}</strong>
           </div>
           <div>
-            <small className="muted">Total heures</small>
+            <small className="muted">{t("teacher.total_hours")}</small>
             <strong>{totalHours} h</strong>
           </div>
           <div>
-            <small className="muted">Total HT</small>
+            <small className="muted">{t("teacher.total_excl_tax")}</small>
             <strong>{totalHt} EUR</strong>
           </div>
           <div>
-            <small className="muted">TVA</small>
+            <small className="muted">{t("common.vat")}</small>
             <strong>{totalVat} EUR</strong>
           </div>
           <div>
-            <small className="muted">Total TTC</small>
+            <small className="muted">{t("common.ttc")}</small>
             <strong>{totalTtc} EUR</strong>
           </div>
         </div>
@@ -478,13 +494,13 @@ export default async function TeacherStatementsPage({
       <article className="card">
         <div className="row spread statement-list-head">
           <h3>
-            Prestations du releve
+            {t("teacher.statement_services")}
             <span className="badge statement-list-count">{services.length}</span>
           </h3>
-          <small className="muted">Cochez les lignes a signaler.</small>
+          <small className="muted">{t("teacher.statement_select_lines")}</small>
         </div>
         {services.length === 0 ? (
-          <p className="muted">Aucune prestation detaillee sur cette periode.</p>
+          <p className="muted">{t("teacher.statement_no_services")}</p>
         ) : (
           <div className="statement-service-list">
             {services.map((row, index) => {
@@ -507,11 +523,11 @@ export default async function TeacherStatementsPage({
                     {row.locationOrMode !== "-" ? <span>{row.locationOrMode}</span> : null}
                   </div>
                   <div className="statement-service-grid">
-                    <small>Duree: <strong>{row.durationMinutes} min</strong></small>
-                    <small>Taux HT: <strong>{row.rateHt} EUR</strong></small>
-                    <small>HT: <strong>{row.amountHt} EUR</strong></small>
-                    <small>TVA: <strong>{row.vat} EUR</strong></small>
-                    <small>TTC: <strong>{row.totalTtc} EUR</strong></small>
+                    <small>{t("teacher.duration")}: <strong>{row.durationMinutes} min</strong></small>
+                    <small>{t("teacher.hourly_rate_excl_tax")}: <strong>{row.rateHt} EUR</strong></small>
+                    <small>{t("common.ht")}: <strong>{row.amountHt} EUR</strong></small>
+                    <small>{t("common.vat")}: <strong>{row.vat} EUR</strong></small>
+                    <small>{t("common.ttc")}: <strong>{row.totalTtc} EUR</strong></small>
                   </div>
                 </article>
               );
@@ -521,36 +537,36 @@ export default async function TeacherStatementsPage({
       </article>
 
       <article className="card statement-action-block">
-        <h3>Signaler un probleme sur lignes existantes</h3>
-        <p className="muted">Selectionnez une ou plusieurs lignes puis ouvrez le parcours dedie pour envoyer un commentaire a l administration.</p>
+        <h3>{t("teacher.report_issue_existing_lines")}</h3>
+        <p className="muted">{t("teacher.report_issue_existing_lines_help")}</p>
         <a className="mode-link" href={disputePanelHref}>
-          Signaler un probleme sur les lignes selectionnees
+          {t("teacher.report_issue_existing_lines_cta")}
         </a>
       </article>
 
       <article className="card statement-action-block">
-        <h3>Ajouter une prestation manquante</h3>
-        <p className="muted">Parcours distinct pour signaler une prestation effectuee mais absente du releve.</p>
+        <h3>{t("teacher.add_missing_service")}</h3>
+        <p className="muted">{t("teacher.add_missing_service_help")}</p>
         <a className="mode-link" href={missingPanelHref}>
-          Ajouter une prestation manquante
+          {t("teacher.add_missing_service_cta")}
         </a>
       </article>
 
       <article className="card statement-validation-block">
-        <h3>Validation du releve</h3>
-        <p className="muted">Validez d abord le releve, puis choisissez votre mode de facturation.</p>
+        <h3>{t("teacher.statement_validation")}</h3>
+        <p className="muted">{t("teacher.statement_validation_help")}</p>
         <div className="statement-validation-actions">
           <form action={teacherApproveStatementsOnlyAction}>
             <input type="hidden" name="year" value={year} />
             <input type="hidden" name="month" value={month} />
             <input type="hidden" name="return_to" value={statementsMonthHref} />
-            <button type="submit">Approuver le releve</button>
+            <button type="submit">{t("teacher.approve_statement")}</button>
           </form>
         </div>
       </article>
 
       <article className="card statement-validation-block">
-        <h3>Facturation</h3>
+        <h3>{t("teacher.billing")}</h3>
         {billingUnlocked ? (
           <div className="statement-billing-options">
             <form action={teacherGenerateStatementsInvoiceAction}>
@@ -558,14 +574,14 @@ export default async function TeacherStatementsPage({
               <input type="hidden" name="month" value={month} />
               <input type="hidden" name="return_to" value={statementsMonthHref} />
               <button type="submit" className="ghost">
-                Generer ma facture (modele Piano Academie)
+                {t("teacher.generate_invoice")}
               </button>
             </form>
             <details className="statement-external-billing">
-              <summary>Facturation externe (modele personnel)</summary>
-              <p className="muted">Exportez vos prestations puis emettez votre facture depuis votre propre logiciel.</p>
+              <summary>{t("teacher.external_billing")}</summary>
+              <p className="muted">{t("teacher.external_billing_help")}</p>
               <a className="mode-link" href={`/prof/statements/${year}/${month}/export`}>
-                Exporter les prestations
+                {t("teacher.export_services")}
               </a>
               {externalPayorOptions.length > 0 ? (
                 <form action={teacherSendExternalInvoiceAction} className="grid top-gap-sm teacher-form-stack statement-external-send-form">
@@ -573,7 +589,7 @@ export default async function TeacherStatementsPage({
                   <input type="hidden" name="month" value={month} />
                   <input type="hidden" name="return_to" value={statementsMonthHref} />
                   <label>
-                    Entite destinataire
+                    {t("teacher.payor_entity")}
                     <select name="payor_legal_entity_id" required>
                       {externalPayorOptions.map((payor) => (
                         <option key={payor.id} value={payor.id}>
@@ -583,46 +599,46 @@ export default async function TeacherStatementsPage({
                     </select>
                   </label>
                   <label>
-                    Facture PDF
+                    {t("teacher.invoice_pdf")}
                     <input type="file" name="invoice_file" accept="application/pdf,.pdf" required />
                   </label>
                   <label>
-                    Note (optionnelle)
-                    <textarea name="note" rows={3} maxLength={1000} placeholder="Informations utiles pour la comptabilite" />
+                    {t("teacher.optional_note")}
+                    <textarea name="note" rows={3} maxLength={1000} placeholder={t("teacher.accounting_note_placeholder")} />
                   </label>
-                  <button type="submit">Envoyer la facture externe a la comptabilite</button>
+                  <button type="submit">{t("teacher.send_external_invoice")}</button>
                 </form>
               ) : null}
             </details>
             {monthInvoices.length > 0 ? (
               <section className="statement-generated-invoices">
-                <h4>Factures generees sur cette periode</h4>
+                <h4>{t("teacher.generated_invoices_period")}</h4>
                 <div className="statement-generated-list">
                   {monthInvoices.map((invoice) => (
                     <article key={invoice.id} className="statement-generated-card">
                       <div className="row spread statement-generated-head">
                         <strong>{invoice.invoice_number}</strong>
                         <span className={`status-pill ${invoice.status === "sent_to_accounting" ? "status-ok" : "status-off"}`}>
-                          {invoice.status === "sent_to_accounting" ? "Envoyee comptabilite" : "Generee"}
+                          {invoiceStatusLabel(invoice.status, language)}
                         </span>
                       </div>
                       <small className="muted">
-                        Date: {invoice.invoice_date} • TTC: {invoice.totals_ttc} EUR
+                        {t("common.date")}: {formatDateLabel(invoice.invoice_date, language)} • {t("common.ttc")}: {invoice.totals_ttc} EUR
                       </small>
                       <div className="statement-generated-actions">
                         <Link className="mode-link" href={`/prof/invoices/${invoice.id}`}>
-                          Ouvrir
+                          {t("teacher.open")}
                         </Link>
                         <a className="mode-link" href={`/api/v1/teacher/invoices/${invoice.id}/pdf`}>
                           PDF
                         </a>
                         {invoice.status === "sent_to_accounting" ? (
-                          <small className="muted">Facture deja envoyee a la comptabilite.</small>
+                          <small className="muted">{t("teacher.already_sent_accounting")}</small>
                         ) : (
                           <form action={teacherSendInvoiceToAccountingAction}>
                             <input type="hidden" name="invoice_id" value={invoice.id} />
                             <input type="hidden" name="return_to" value={statementsMonthHref} />
-                            <button type="submit">Envoyer a la comptabilite</button>
+                            <button type="submit">{t("teacher.send_to_accounting")}</button>
                           </form>
                         )}
                       </div>
@@ -633,43 +649,43 @@ export default async function TeacherStatementsPage({
             ) : null}
           </div>
         ) : (
-          <p className="muted">Facturation verrouillee: le releve doit etre approuve avant generation ou export.</p>
+          <p className="muted">{t("teacher.billing_locked")}</p>
         )}
       </article>
 
       <section id="statement-dispute-modal" className="modal-overlay statement-target-modal">
         <article className="modal-panel modal-compact">
-          <a className="close-link" href="#" aria-label="Fermer le signalement">
+          <a className="close-link" href="#" aria-label={t("teacher.close_issue_report")}>
             ✕
           </a>
-          <h3>Signaler un probleme sur les lignes selectionnees</h3>
-          <p className="muted">Les lignes cochees dans le releve seront jointes a votre signalement.</p>
+          <h3>{t("teacher.selected_lines_report_title")}</h3>
+          <p className="muted">{t("teacher.selected_lines_report_help")}</p>
           <form id="statement-dispute-form" action={teacherDisputeSelectedLinesAction} className="grid top-gap-sm">
             <input type="hidden" name="year" value={year} />
             <input type="hidden" name="month" value={month} />
             <input type="hidden" name="return_to" value={statementsMonthHref} />
             <label>
-              Commentaire (obligatoire)
+              {t("teacher.required_comment")}
               <textarea
                 name="message"
                 required
                 minLength={5}
                 maxLength={4000}
                 rows={5}
-                placeholder="Expliquez le probleme constate sur les prestations selectionnees"
+                placeholder={t("teacher.selected_lines_report_placeholder")}
               />
             </label>
-            <button type="submit" className="ghost">Envoyer a l administration</button>
+            <button type="submit" className="ghost">{t("teacher.send_to_admin")}</button>
           </form>
         </article>
       </section>
 
       <section id="statement-missing-modal" className="modal-overlay statement-target-modal">
         <article className="modal-panel modal-compact">
-          <a className="close-link" href="#" aria-label="Fermer la prestation manquante">
+          <a className="close-link" href="#" aria-label={t("teacher.close_missing_service")}>
             ✕
           </a>
-          <h3>Ajouter une prestation manquante</h3>
+          <h3>{t("teacher.add_missing_service")}</h3>
           <TeacherMissingServiceForm
             action={teacherReportMissingServiceAction}
             year={year}
@@ -677,6 +693,7 @@ export default async function TeacherStatementsPage({
             returnTo={statementsMonthHref}
             defaultDate={defaultMissingServiceDate}
             currency={fallbackCurrency}
+            language={language}
             activities={missingServiceActivities}
             locations={missingServiceLocations}
           />
@@ -688,13 +705,13 @@ export default async function TeacherStatementsPage({
         className={`modal-overlay statement-target-modal${showSuccessModal ? " is-open" : ""}`}
       >
         <article className="modal-panel modal-compact">
-          <a className="close-link" href={statementsMonthHref} aria-label="Fermer la confirmation">
+          <a className="close-link" href={statementsMonthHref} aria-label={t("teacher.close_confirmation")}>
             ✕
           </a>
-          <h3>Signalement envoye</h3>
-          <p className="muted">{successMessage || ok || "Votre message a ete transmis a l administration."}</p>
+          <h3>{t("teacher.report_sent")}</h3>
+          <p className="muted">{successMessage || ok || t("teacher.statement_default_success")}</p>
           <a className="mode-link" href={statementsMonthHref}>
-            Continuer
+            {t("common.continue")}
           </a>
         </article>
       </section>

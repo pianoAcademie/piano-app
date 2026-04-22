@@ -5,9 +5,10 @@ type MobileHeaderProps = {
   subtitle?: string;
   menu?: ReactNode;
   titleHref?: string;
+  menuLabel?: string;
 };
 
-export default function MobileHeader({ title, subtitle, menu, titleHref }: MobileHeaderProps): JSX.Element {
+export default function MobileHeader({ title, subtitle, menu, titleHref, menuLabel = "Menu" }: MobileHeaderProps): JSX.Element {
   return (
     <header className="client-mobile-header card">
       <div className="client-mobile-header-main">
@@ -16,7 +17,7 @@ export default function MobileHeader({ title, subtitle, menu, titleHref }: Mobil
       </div>
       <div className="client-mobile-header-actions">
         <details className="client-mobile-menu">
-          <summary aria-label="Menu client">⋯</summary>
+          <summary aria-label={menuLabel}>⋯</summary>
           <div className="client-mobile-menu-panel">{menu}</div>
         </details>
       </div>

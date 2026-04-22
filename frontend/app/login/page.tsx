@@ -4,6 +4,7 @@ import { forgotPasswordAction, loginAction, registerAction, resetPasswordAction 
 import AuthSignupFields from "../../components/auth-signup-fields";
 import PortalBrandLockup from "../../components/portal-brand-lockup";
 import { COUNTRY_OPTIONS, DEFAULT_COUNTRY } from "../../lib/reference-data";
+import { normalizeUiLanguage, uiText } from "../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type AuthMode = "login" | "signup" | "forgot";
@@ -30,6 +31,7 @@ function resolveMode(rawMode: string, resetToken: string): AuthMode {
 }
 
 export default function LoginPage({ searchParams }: { searchParams: SearchParams }): JSX.Element {
+  const language = normalizeUiLanguage(readParam(searchParams, "lang"));
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error");
   const resetToken = readParam(searchParams, "reset_token");
@@ -43,24 +45,25 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
   const preservedEmail = emailHint ? `&email=${encodeURIComponent(emailHint)}` : "";
   const preservedRegistrationSubjectType =
     registrationSubjectType === "child" ? `&registration_subject_type=${encodeURIComponent(registrationSubjectType)}` : "";
-  const loginHref = `/login?mode=login${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}${preservedRegistrationSubjectType}`;
-  const signupHref = `/login?mode=signup${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}${preservedRegistrationSubjectType}`;
-  const forgotHref = `/login?mode=forgot${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}${preservedRegistrationSubjectType}`;
+  const preservedLanguage = language === "en" ? "&lang=en" : "";
+  const loginHref = `/login?mode=login${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}${preservedRegistrationSubjectType}${preservedLanguage}`;
+  const signupHref = `/login?mode=signup${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}${preservedRegistrationSubjectType}${preservedLanguage}`;
+  const forgotHref = `/login?mode=forgot${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}${preservedRegistrationSubjectType}${preservedLanguage}`;
 
   return (
     <main className="page auth-page">
       <section className="auth-shell">
         <header className="auth-header">
           <PortalBrandLockup
-            title="Piano Academie"
-            subtitle="Portail eleves, parents et reservations"
+            title={uiText(language, "common.app_name")}
+            subtitle={uiText(language, "auth.portal_subtitle")}
             tone="light"
             compact
             className="auth-brand-lockup"
           />
           <div className="auth-header-copy">
-            <h1>Espace client</h1>
-            <p>Reservations, documents et informations de compte.</p>
+            <h1>{uiText(language, "auth.client_space_title")}</h1>
+            <p>{uiText(language, "auth.client_space_subtitle")}</p>
           </div>
         </header>
 
@@ -68,37 +71,38 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
         {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
 
         <article className="card auth-card">
-          <nav className="auth-tabs" aria-label="Navigation authentification">
+          <nav className="auth-tabs" aria-label={uiText(language, "auth.nav_label")}>
             <Link className={`auth-tab ${mode === "login" ? "active" : ""}`} href={loginHref}>
-              Se connecter
+              {uiText(language, "auth.login_tab")}
             </Link>
             <Link className={`auth-tab ${mode === "signup" ? "active" : ""}`} href={signupHref}>
-              Creer un compte
+              {uiText(language, "auth.signup_tab")}
             </Link>
           </nav>
 
           {mode === "login" ? (
             <section className="auth-section">
-              <h2>Connexion</h2>
-              <p className="muted">Utilisez votre compte existant pour acceder a votre espace client.</p>
+              <h2>{uiText(language, "auth.login_title")}</h2>
+              <p className="muted">{uiText(language, "auth.login_subtitle")}</p>
               <form action={loginAction} className="grid auth-form">
                 <input type="hidden" name="auth_mode" value="login" />
                 <input type="hidden" name="purchase_context" value={purchaseContext} />
                 <input type="hidden" name="return_to" value={returnTo} />
                 <input type="hidden" name="registration_subject_type" value={registrationSubjectType} />
+                <input type="hidden" name="lang" value={language} />
                 <label>
-                  Email
+                  {uiText(language, "common.email")}
                   <input type="email" name="email" required autoComplete="email" defaultValue={emailHint} />
                 </label>
                 <label>
-                  Mot de passe
+                  {uiText(language, "common.password")}
                   <input type="password" name="password" required minLength={8} autoComplete="current-password" />
                 </label>
-                <button type="submit">Se connecter</button>
+                <button type="submit">{uiText(language, "auth.login_tab")}</button>
               </form>
               <div className="auth-links">
-                <Link href={forgotHref}>Mot de passe oublie ?</Link>
-                <Link href={signupHref}>Creer un compte</Link>
+                <Link href={forgotHref}>{uiText(language, "auth.forgot_link")}</Link>
+                <Link href={signupHref}>{uiText(language, "auth.create_account_link")}</Link>
               </div>
             </section>
           ) : null}
@@ -107,118 +111,117 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
             <section className="auth-section">
               {resetToken ? (
                 <>
-                  <h2>Reinitialiser votre mot de passe</h2>
-                  <p className="muted">Choisissez un nouveau mot de passe pour votre compte.</p>
+                  <h2>{uiText(language, "auth.reset_title")}</h2>
+                  <p className="muted">{uiText(language, "auth.reset_subtitle")}</p>
                   <form action={resetPasswordAction} className="grid auth-form">
                     <input type="hidden" name="token" value={resetToken} />
                     <label>
-                      Nouveau mot de passe
+                      {uiText(language, "common.new_password")}
                       <input type="password" name="password" required minLength={8} autoComplete="new-password" />
                     </label>
                     <label>
-                      Confirmer le mot de passe
+                      {uiText(language, "common.confirm_password")}
                       <input type="password" name="password_confirm" required minLength={8} autoComplete="new-password" />
                     </label>
-                    <button type="submit">Mettre a jour le mot de passe</button>
+                    <button type="submit">{uiText(language, "auth.update_password")}</button>
                   </form>
                 </>
               ) : (
                 <>
-                  <h2>Reinitialiser votre mot de passe</h2>
-                  <p className="muted">Saisissez votre adresse email pour recevoir un lien de reinitialisation.</p>
+                  <h2>{uiText(language, "auth.reset_title")}</h2>
+                  <p className="muted">{uiText(language, "auth.reset_request_subtitle")}</p>
                   <form action={forgotPasswordAction} className="grid auth-form">
                     <input type="hidden" name="auth_mode" value="forgot" />
                     <input type="hidden" name="purchase_context" value={purchaseContext} />
                     <input type="hidden" name="return_to" value={returnTo} />
+                    <input type="hidden" name="lang" value={language} />
                     <label>
-                      Email
+                      {uiText(language, "common.email")}
                       <input type="email" name="email" required autoComplete="email" defaultValue={emailHint} />
                     </label>
-                    <button type="submit">Envoyer le lien</button>
+                    <button type="submit">{uiText(language, "auth.send_link")}</button>
                   </form>
                 </>
               )}
               <div className="auth-links">
-                <Link href={loginHref}>Retour a la connexion</Link>
+                <Link href={loginHref}>{uiText(language, "auth.back_to_login")}</Link>
               </div>
             </section>
           ) : null}
 
           {mode === "signup" ? (
             <section className="auth-section">
-              <h2>Creer un compte</h2>
-              <p className="muted">Renseignez les informations de base puis validez les consentements. La photo eleve est facultative.</p>
+              <h2>{uiText(language, "auth.signup_title")}</h2>
+              <p className="muted">{uiText(language, "auth.signup_subtitle")}</p>
 
               <ol className="auth-step-indicator">
-                <li>Etape 1 - Informations obligatoires</li>
-                <li>Etape 2 - Photo de l eleve (optionnel)</li>
-                <li>Etape 3 - Consentements et validation</li>
+                <li>{uiText(language, "auth.step_1")}</li>
+                <li>{uiText(language, "auth.step_2")}</li>
+                <li>{uiText(language, "auth.step_3")}</li>
               </ol>
 
               <form action={registerAction} className="grid auth-form" encType="multipart/form-data">
                 <input type="hidden" name="auth_mode" value="signup" />
                 <input type="hidden" name="purchase_context" value={purchaseContext} />
                 <input type="hidden" name="return_to" value={returnTo} />
+                <input type="hidden" name="lang" value={language} />
                 <AuthSignupFields
                   emailHint={emailHint}
                   defaultCountry={DEFAULT_COUNTRY}
                   countryOptions={COUNTRY_OPTIONS}
+                  language={language}
                   defaultRegistrationSubjectType={registrationSubjectType}
                 />
 
                 <section className="auth-step-card auth-consent-card">
-                  <h3>Etape 3 - Consentements et validation</h3>
+                  <h3>{uiText(language, "auth.step_3")}</h3>
                   <div className="auth-consent-copy">
-                    <p>
-                      En creant votre compte, vous autorisez Piano Academie a vous envoyer les emails et SMS necessaires a la gestion de votre compte, de vos reservations et de vos cours.
-                    </p>
-                    <p className="muted">
-                      Vous pourrez ensuite modifier vos preferences de communication depuis votre espace client et vous desinscrire des communications non essentielles.
-                    </p>
+                    <p>{uiText(language, "auth.consent_intro")}</p>
+                    <p className="muted">{uiText(language, "auth.consent_followup")}</p>
                   </div>
 
                   <div className="auth-consent-group">
-                    <p className="auth-consent-group-title">Preferences optionnelles</p>
+                    <p className="auth-consent-group-title">{uiText(language, "auth.optional_preferences")}</p>
                     <label className="auth-consent-option">
                       <input type="checkbox" name="marketing_email_opt_in" />
                       <span>
-                        <strong>Recevoir les actualites et offres par email</strong>
-                        <small className="muted">Informations commerciales occasionnelles de Piano Academie.</small>
+                        <strong>{uiText(language, "auth.marketing_email_title")}</strong>
+                        <small className="muted">{uiText(language, "auth.marketing_email_help")}</small>
                       </span>
                     </label>
                     <label className="auth-consent-option">
                       <input type="checkbox" name="marketing_sms_opt_in" />
                       <span>
-                        <strong>Recevoir les actualites et offres par SMS</strong>
-                        <small className="muted">Messages promotionnels ponctuels sur mobile.</small>
+                        <strong>{uiText(language, "auth.marketing_sms_title")}</strong>
+                        <small className="muted">{uiText(language, "auth.marketing_sms_help")}</small>
                       </span>
                     </label>
                   </div>
 
                   <div className="auth-consent-group">
-                    <p className="auth-consent-group-title">Confirmations obligatoires</p>
+                    <p className="auth-consent-group-title">{uiText(language, "auth.required_confirmations")}</p>
                     <label className="auth-consent-option is-required">
                       <input type="checkbox" name="confirm_accuracy" required />
                       <span>
-                        <strong>Je confirme l exactitude des informations renseignees</strong>
-                        <small className="muted">Ces informations servent a creer et gerer votre compte client.</small>
+                        <strong>{uiText(language, "auth.confirm_accuracy_title")}</strong>
+                        <small className="muted">{uiText(language, "auth.confirm_accuracy_help")}</small>
                       </span>
                     </label>
                     <label className="auth-consent-option is-required">
                       <input type="checkbox" name="accept_account_terms" required />
                       <span>
-                        <strong>J accepte les conditions de creation de mon compte</strong>
-                        <small className="muted">Validation necessaire pour finaliser l ouverture du compte.</small>
+                        <strong>{uiText(language, "auth.accept_terms_title")}</strong>
+                        <small className="muted">{uiText(language, "auth.accept_terms_help")}</small>
                       </span>
                     </label>
                   </div>
                 </section>
 
-                <button type="submit">Creer mon compte</button>
+                <button type="submit">{uiText(language, "auth.submit_account")}</button>
               </form>
 
               <div className="auth-links">
-                <Link href={loginHref}>J ai deja un compte</Link>
+                <Link href={loginHref}>{uiText(language, "auth.already_have_account")}</Link>
               </div>
             </section>
           ) : null}

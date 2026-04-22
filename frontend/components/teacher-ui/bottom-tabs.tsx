@@ -10,11 +10,12 @@ type BottomTabItem = {
 type BottomTabsProps = {
   items: BottomTabItem[];
   activeId: string;
+  ariaLabel?: string;
 };
 
-export default function BottomTabs({ items, activeId }: BottomTabsProps): JSX.Element {
+export default function BottomTabs({ items, activeId, ariaLabel = "Navigation" }: BottomTabsProps): JSX.Element {
   return (
-    <nav className="teacher-bottom-tabs" aria-label="Navigation professeur mobile">
+    <nav className="teacher-bottom-tabs" aria-label={ariaLabel}>
       {items.map((item) => (
         <Link key={item.id} href={item.href} className={`teacher-bottom-tab ${activeId === item.id ? "active" : ""}`}>
           <span className="teacher-bottom-tab-icon" aria-hidden="true">

@@ -6,6 +6,7 @@ type PageHeaderMobileProps = {
   statusLabel?: string;
   trailing?: ReactNode;
   menu?: ReactNode;
+  menuLabel?: string;
 };
 
 export default function PageHeaderMobile({
@@ -14,6 +15,7 @@ export default function PageHeaderMobile({
   statusLabel,
   trailing,
   menu,
+  menuLabel = "Menu",
 }: PageHeaderMobileProps): JSX.Element {
   return (
     <header className="teacher-page-header card">
@@ -26,7 +28,7 @@ export default function PageHeaderMobile({
         {trailing}
         {menu ? (
           <details className="teacher-header-menu">
-            <summary aria-label="Menu">⋯</summary>
+            <summary aria-label={menuLabel}>⋯</summary>
             <div className="teacher-header-menu-panel">{menu}</div>
           </details>
         ) : null}

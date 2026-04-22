@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import AdminNav from "./admin-nav";
+import { type UiLanguage, uiText } from "../lib/ui-i18n";
 
 const SIDEBAR_COLLAPSED_KEY = "admin_sidebar_collapsed_v1";
 
@@ -10,6 +11,7 @@ type AdminSidebarProps = {
   displayName: string;
   email: string;
   roleLabel: string;
+  language: UiLanguage;
 };
 
 function initialsFromDisplayName(value: string): string {
@@ -23,7 +25,7 @@ function initialsFromDisplayName(value: string): string {
   return `${tokens[0].slice(0, 1)}${tokens[1].slice(0, 1)}`.toUpperCase();
 }
 
-export default function AdminSidebar({ displayName, email, roleLabel }: AdminSidebarProps): JSX.Element {
+export default function AdminSidebar({ displayName, email, roleLabel, language }: AdminSidebarProps): JSX.Element {
   const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
@@ -64,16 +66,18 @@ export default function AdminSidebar({ displayName, email, roleLabel }: AdminSid
         </div>
       </div>
 
-      <AdminNav collapsed={collapsed} />
+      <AdminNav collapsed={collapsed} language={language} />
 
       <button
         type="button"
         className="admin-sidebar-toggle"
         onClick={toggleCollapsed}
-        aria-label={collapsed ? "Etendre la barre laterale" : "Replier la barre laterale"}
+        aria-label={collapsed ? uiText(language, "admin.sidebar_expand_aria") : uiText(language, "admin.sidebar_collapse_aria")}
       >
         <span aria-hidden="true">{collapsed ? "»" : "«"}</span>
-        <span className="admin-sidebar-toggle-label">{collapsed ? "Etendre" : "Replier"}</span>
+        <span className="admin-sidebar-toggle-label">
+          {collapsed ? uiText(language, "admin.sidebar_expand") : uiText(language, "admin.sidebar_collapse")}
+        </span>
       </button>
     </aside>
   );

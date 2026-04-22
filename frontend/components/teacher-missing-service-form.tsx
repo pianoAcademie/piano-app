@@ -3,6 +3,9 @@
 import { useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
 
+import type { UiLanguage } from "../lib/ui-i18n";
+import { uiText } from "../lib/ui-i18n";
+
 type MissingServiceRule = {
   min_students: number;
   max_students: number | null;
@@ -30,6 +33,7 @@ type TeacherMissingServiceFormProps = {
   returnTo: string;
   defaultDate: string;
   currency: string;
+  language: UiLanguage;
   activities: MissingServiceActivityOption[];
   locations: MissingServiceLocationOption[];
 };
@@ -66,11 +70,11 @@ function resolveHourlyRate(activity: MissingServiceActivityOption | null, attend
   return parseDecimal(activity.default_hourly_rate);
 }
 
-function SubmitButton({ disabled }: { disabled: boolean }): JSX.Element {
+function SubmitButton({ disabled, language }: { disabled: boolean; language: UiLanguage }): JSX.Element {
   const { pending } = useFormStatus();
   return (
     <button type="submit" className="ghost" disabled={disabled || pending}>
-      {pending ? "Envoi en cours..." : "Envoyer a l administration"}
+      {pending ? uiText(language, "teacher.sending") : uiText(language, "teacher.send_to_admin")}
     </button>
   );
 }
@@ -82,6 +86,7 @@ export default function TeacherMissingServiceForm({
   returnTo,
   defaultDate,
   currency,
+  language,
   activities,
   locations,
 }: TeacherMissingServiceFormProps): JSX.Element {
@@ -105,12 +110,12 @@ export default function TeacherMissingServiceForm({
       <input type="hidden" name="return_to" value={returnTo} />
 
       <label>
-        Date (obligatoire)
+        {uiText(language, "teacher.service_date")}
         <input type="date" name="service_date" required defaultValue={defaultDate} />
       </label>
 
       <label>
-        Type de prestation (obligatoire)
+        {uiText(language, "teacher.service_type")}
         <select
           name="course_type_id"
           required
@@ -118,7 +123,7 @@ export default function TeacherMissingServiceForm({
           onChange={(event) => setCourseTypeId(event.target.value)}
           disabled={!hasSelectableData}
         >
-          {activities.length === 0 ? <option value="">Aucune prestation disponible</option> : null}
+          {activities.length === 0 ? <option value="">{uiText(language, "teacher.no_service_available")}</option> : null}
           {activities.map((activity) => (
             <option key={activity.id} value={activity.id}>
               {activity.label} • {activity.mode_label}
@@ -128,9 +133,9 @@ export default function TeacherMissingServiceForm({
       </label>
 
       <label>
-        Lieu (obligatoire)
+        {uiText(language, "teacher.location_required")}
         <select name="location_id" required disabled={!hasSelectableData}>
-          {locations.length === 0 ? <option value="">Aucun lieu disponible</option> : null}
+          {locations.length === 0 ? <option value="">{uiText(language, "teacher.no_location_available")}</option> : null}
           {locations.map((location) => (
             <option key={location.id} value={location.id}>
               {location.label}
@@ -140,12 +145,12 @@ export default function TeacherMissingServiceForm({
       </label>
 
       <label>
-        Eleve ou groupe
-        <input type="text" name="student_or_group" maxLength={200} placeholder="Ex: Marie Besnard" />
+        {uiText(language, "teacher.student_or_group")}
+        <input type="text" name="student_or_group" maxLength={200} placeholder={uiText(language, "teacher.student_or_group_placeholder")} />
       </label>
 
       <label>
-        Nombre d eleves presents
+        {uiText(language, "teacher.attendee_count")}
         <input
           type="number"
           name="attendee_count"
@@ -160,7 +165,7 @@ export default function TeacherMissingServiceForm({
       </label>
 
       <label>
-        Duree (auto)
+        {uiText(language, "teacher.duration_auto")}
         <input
           type="text"
           value={selectedActivity ? `${selectedActivity.duration_minutes} min` : "-"}
@@ -170,21 +175,28 @@ export default function TeacherMissingServiceForm({
       </label>
 
       <label>
-        Taux horaire estime HT (auto)
+        {uiText(language, "teacher.estimated_hourly_rate_excl_tax")}
         <input type="text" value={formatMoney(estimatedRate, currency)} readOnly disabled />
       </label>
 
       {!hasSelectableData ? (
-        <p className="muted">Impossible d envoyer sans activites et lieux disponibles.</p>
+        <p className="muted">{uiText(language, "teacher.cannot_send_missing_service")}</p>
       ) : (
-        <p className="muted">Le taux est calcule automatiquement selon la prestation et l effectif.</p>
+        <p className="muted">{uiText(language, "teacher.rate_auto_help")}</p>
       )}
 
       <label>
-        Commentaire (obligatoire)
-        <textarea name="comment" required minLength={5} maxLength={4000} rows={5} placeholder="Precisez la prestation manquante" />
+        {uiText(language, "teacher.required_comment")}
+        <textarea
+          name="comment"
+          required
+          minLength={5}
+          maxLength={4000}
+          rows={5}
+          placeholder={uiText(language, "teacher.missing_service_placeholder")}
+        />
       </label>
-      <SubmitButton disabled={!hasSelectableData} />
+      <SubmitButton disabled={!hasSelectableData} language={language} />
     </form>
   );
 }

@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { type UiLanguage, uiText } from "../lib/ui-i18n";
+
 type NavItem = {
   href: string;
   label: string;
@@ -14,47 +16,50 @@ type NavSection = {
   items: NavItem[];
 };
 
-const NAV_SECTIONS: NavSection[] = [
-  {
-    title: "Operations",
-    items: [
-      { href: "/admin", label: "Planning", icon: "📅" },
-      { href: "/admin/clients", label: "Clients", icon: "👥" },
-      { href: "/admin/professors", label: "Collaborateurs", icon: "🧑‍🏫" },
-    ],
-  },
-  {
-    title: "Finance",
-    items: [
-      { href: "/admin/salary-payments", label: "Paiement des salaires", icon: "💶" },
-      { href: "/admin/teacher-invoicing", label: "Facturation professeurs", icon: "🧾" },
-      { href: "/admin/subscriptions", label: "Abonnements", icon: "🔁" },
-      { href: "/admin/intakes", label: "Intakes", icon: "🧠" },
-      { href: "/admin/quotes", label: "Devis", icon: "📑" },
-      { href: "/admin/prospects", label: "Prospects", icon: "🧲" },
-      { href: "/admin/products", label: "Produits", icon: "📦" },
-    ],
-  },
-  {
-    title: "Communication",
-    items: [
-      { href: "/admin/a-traiter", label: "A traiter", icon: "📥" },
-      { href: "/admin/communications", label: "Communications", icon: "✉️" },
-      { href: "/admin/notifications/jobs", label: "Monitoring jobs", icon: "🧭" },
-      { href: "/admin/notifications/incidents", label: "Incidents", icon: "🚨" },
-    ],
-  },
-  {
-    title: "Administration",
-    items: [
-      { href: "/admin/config", label: "Configuration", icon: "⚙️" },
-      { href: "/admin/reporting", label: "Reporting", icon: "📊" },
-    ],
-  },
-];
+function navSections(language: UiLanguage): NavSection[] {
+  return [
+    {
+      title: uiText(language, "admin.nav.operations"),
+      items: [
+        { href: "/admin", label: uiText(language, "admin.nav.planning"), icon: "📅" },
+        { href: "/admin/clients", label: uiText(language, "admin.nav.clients"), icon: "👥" },
+        { href: "/admin/professors", label: uiText(language, "admin.nav.professors"), icon: "🧑‍🏫" },
+      ],
+    },
+    {
+      title: uiText(language, "admin.nav.finance"),
+      items: [
+        { href: "/admin/salary-payments", label: uiText(language, "admin.nav.salary_payments"), icon: "💶" },
+        { href: "/admin/teacher-invoicing", label: uiText(language, "admin.nav.teacher_invoicing"), icon: "🧾" },
+        { href: "/admin/subscriptions", label: uiText(language, "admin.nav.subscriptions"), icon: "🔁" },
+        { href: "/admin/intakes", label: uiText(language, "admin.nav.intakes"), icon: "🧠" },
+        { href: "/admin/quotes", label: uiText(language, "admin.nav.quotes"), icon: "📑" },
+        { href: "/admin/prospects", label: uiText(language, "admin.nav.prospects"), icon: "🧲" },
+        { href: "/admin/products", label: uiText(language, "admin.nav.products"), icon: "📦" },
+      ],
+    },
+    {
+      title: uiText(language, "admin.nav.communication"),
+      items: [
+        { href: "/admin/a-traiter", label: uiText(language, "admin.nav.todo"), icon: "📥" },
+        { href: "/admin/communications", label: uiText(language, "admin.nav.communications"), icon: "✉️" },
+        { href: "/admin/notifications/jobs", label: uiText(language, "admin.nav.jobs"), icon: "🧭" },
+        { href: "/admin/notifications/incidents", label: uiText(language, "admin.nav.incidents"), icon: "🚨" },
+      ],
+    },
+    {
+      title: uiText(language, "admin.nav.administration"),
+      items: [
+        { href: "/admin/config", label: uiText(language, "admin.nav.config"), icon: "⚙️" },
+        { href: "/admin/reporting", label: uiText(language, "admin.nav.reporting"), icon: "📊" },
+      ],
+    },
+  ];
+}
 
 type AdminNavProps = {
   collapsed: boolean;
+  language: UiLanguage;
 };
 
 function isLinkActive(pathname: string, href: string): boolean {
@@ -64,12 +69,13 @@ function isLinkActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export default function AdminNav({ collapsed }: AdminNavProps): JSX.Element {
+export default function AdminNav({ collapsed, language }: AdminNavProps): JSX.Element {
   const pathname = usePathname() || "";
+  const sections = navSections(language);
 
   return (
     <nav className={`admin-nav ${collapsed ? "collapsed" : ""}`}>
-      {NAV_SECTIONS.map((section) => (
+      {sections.map((section) => (
         <section className="admin-nav-section" key={section.title}>
           <h3 className="admin-nav-section-title">{section.title}</h3>
           <div className="admin-nav-section-items">

@@ -8,6 +8,7 @@ import { getAdminToken } from "../../lib/auth-cookies";
 import { logoutAction } from "../../lib/actions";
 import { backendRequest } from "../../lib/backend";
 import type { UserOut } from "../../lib/types";
+import { normalizeUiLanguage, uiText } from "../../lib/ui-i18n";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }): Promise<JSX.Element> {
   const token = getAdminToken();
@@ -21,26 +22,32 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   }
 
   const displayName = [meResult.data.first_name, meResult.data.last_name].filter(Boolean).join(" ") || meResult.data.email;
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
 
   return (
     <div className="admin-shell">
-      <AdminSidebar displayName={displayName} email={meResult.data.email} roleLabel="Administrateur" />
+      <AdminSidebar
+        displayName={displayName}
+        email={meResult.data.email}
+        roleLabel={uiText(language, "common.administrator")}
+        language={language}
+      />
 
       <div className="admin-main">
         <header className="admin-topbar">
           <div className="admin-topbar-left">
-            <strong className="admin-topbar-title">Portail admin</strong>
+            <strong className="admin-topbar-title">{uiText(language, "admin.portal_title")}</strong>
             <Suspense fallback={<span className="muted">...</span>}>
-              <AdminBreadcrumb compact />
+              <AdminBreadcrumb compact language={language} />
             </Suspense>
           </div>
           <div className="row admin-topbar-actions">
             <Link className="reset-link topbar-btn" href="/client?tab=home">
-              Vue client
+              {uiText(language, "admin.client_view")}
             </Link>
             <form action={logoutAction}>
               <button className="ghost topbar-btn" type="submit">
-                Se deconnecter
+                {uiText(language, "common.logout")}
               </button>
             </form>
           </div>

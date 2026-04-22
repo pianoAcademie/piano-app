@@ -10,11 +10,12 @@ type MobileTabItem = {
 type MobileTabsProps = {
   items: MobileTabItem[];
   activeId: string;
+  ariaLabel?: string;
 };
 
-export default function MobileTabs({ items, activeId }: MobileTabsProps): JSX.Element {
+export default function MobileTabs({ items, activeId, ariaLabel = "Navigation" }: MobileTabsProps): JSX.Element {
   return (
-    <nav className="client-mobile-tabs" aria-label="Navigation client mobile">
+    <nav className="client-mobile-tabs" aria-label={ariaLabel}>
       {items.map((item) => (
         <a key={item.id} className={`client-mobile-tab ${activeId === item.id ? "active" : ""}`} href={item.href}>
           <span className="client-mobile-tab-icon" aria-hidden="true">
