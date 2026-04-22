@@ -159,25 +159,25 @@ function parseTab(value: string): ClientTab {
   return "fiche";
 }
 
-function formatDate(value: string): string {
-  return new Date(value).toLocaleString("fr-FR", {
+function formatDate(value: string, language: UiLanguage = "fr"): string {
+  return new Date(value).toLocaleString(localeForUiLanguage(language), {
     dateStyle: "medium",
     timeStyle: "short",
     timeZone: "Europe/Paris",
   });
 }
 
-function formatDateOnly(value: string | null): string {
+function formatDateOnly(value: string | null, language: UiLanguage = "fr"): string {
   if (!value) {
-    return "Non renseignee";
+    return uiText(language, "admin.client_detail.not_provided_feminine");
   }
-  return new Date(value).toLocaleDateString("fr-FR", {
+  return new Date(value).toLocaleDateString(localeForUiLanguage(language), {
     dateStyle: "medium",
   });
 }
 
-function formatDateOnlyNumeric(value: string): string {
-  return new Date(value).toLocaleDateString("fr-FR", {
+function formatDateOnlyNumeric(value: string, language: UiLanguage = "fr"): string {
+  return new Date(value).toLocaleDateString(localeForUiLanguage(language), {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -250,11 +250,11 @@ function endOfDateUtcMs(value: string): number {
   return new Date(`${value}T23:59:59.999Z`).getTime();
 }
 
-function formatDateInputLabel(value: string): string {
+function formatDateInputLabel(value: string, language: UiLanguage = "fr"): string {
   if (!isDateInput(value)) {
     return value;
   }
-  return new Date(`${value}T00:00:00.000Z`).toLocaleDateString("fr-FR", {
+  return new Date(`${value}T00:00:00.000Z`).toLocaleDateString(localeForUiLanguage(language), {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -270,9 +270,9 @@ function truncatePreview(value: string, maxLength = 100): string {
   return `${normalized.slice(0, maxLength).trimEnd()}...`;
 }
 
-function formatMoney(value: string | null | undefined, currency: string): string {
+function formatMoney(value: string | null | undefined, currency: string, language: UiLanguage = "fr"): string {
   const amount = Number(value ?? "0");
-  return new Intl.NumberFormat("fr-FR", {
+  return new Intl.NumberFormat(localeForUiLanguage(language), {
     style: "currency",
     currency: currency || "EUR",
     maximumFractionDigits: 2,
@@ -286,100 +286,100 @@ function formatPercent(value: number): string {
   return `${Math.round(value)}%`;
 }
 
-function formatVatRateLabel(value: string | null | undefined): string {
+function formatVatRateLabel(value: string | null | undefined, language: UiLanguage = "fr"): string {
   const rate = Number(value ?? "0");
   if (!Number.isFinite(rate) || rate <= 0) {
     return "0%";
   }
   const hasDecimals = Math.abs(rate % 1) > 0.0001;
-  return `${new Intl.NumberFormat("fr-FR", {
+  return `${new Intl.NumberFormat(localeForUiLanguage(language), {
     minimumFractionDigits: hasDecimals ? 2 : 0,
     maximumFractionDigits: 2,
   }).format(rate)}%`;
 }
 
-function billingMethodLabel(code: string | null): string {
+function billingMethodLabel(code: string | null, language: UiLanguage = "fr"): string {
   const normalized = (code ?? "").toUpperCase();
   if (normalized === "CARD_ONLINE") {
-    return "CB en ligne (Mollie / Payplug)";
+    return uiText(language, "admin.client_detail.billing.card_online");
   }
   if (normalized === "SEPA_DEBIT") {
-    return "Prelevement SEPA";
+    return uiText(language, "admin.client_detail.billing.sepa_debit");
   }
   if (normalized === "CARD_TERMINAL") {
-    return "CB sur TPE";
+    return uiText(language, "admin.client_detail.billing.card_terminal");
   }
   if (normalized === "BANK_TRANSFER") {
-    return "Virement";
+    return uiText(language, "admin.client_detail.billing.bank_transfer");
   }
   if (normalized === "CASH") {
-    return "Especes";
+    return uiText(language, "admin.client_detail.billing.cash");
   }
   if (normalized === "CHECK") {
-    return "Cheque";
+    return uiText(language, "admin.client_detail.billing.check");
   }
   if (normalized === "PAYPAL") {
     return "PayPal";
   }
   if (normalized === "FACTURATION_AUTO") {
-    return "Paiement sur facture";
+    return uiText(language, "admin.client_detail.billing.invoice");
   }
-  return code || "Non defini";
+  return code || uiText(language, "admin.client_detail.not_defined");
 }
 
-function paymentSourceLabel(source: string): string {
+function paymentSourceLabel(source: string, language: UiLanguage = "fr"): string {
   const normalized = source.trim().toUpperCase();
   if (normalized === "PLAN_PURCHASE") {
-    return "Achat formule";
+    return uiText(language, "admin.client_detail.payment_source.plan_purchase");
   }
   if (normalized === "BOOKING") {
-    return "Reservation";
+    return uiText(language, "admin.client_detail.payment_source.booking");
   }
   if (normalized === "BOOKING_CREDIT") {
-    return "Avoir";
+    return uiText(language, "admin.client_detail.payment_source.booking_credit");
   }
   if (normalized === "MANUAL") {
-    return "Manuel";
+    return uiText(language, "admin.client_detail.payment_source.manual");
   }
-  return normalized || "Paiement";
+  return normalized || uiText(language, "admin.client_detail.payment_source.payment");
 }
 
-function paymentStatusLabel(status: string): string {
+function paymentStatusLabel(status: string, language: UiLanguage = "fr"): string {
   const normalized = status.trim().toUpperCase();
   if (normalized === "REFUNDED") {
-    return "Rembourse";
+    return uiText(language, "admin.client_detail.payment_status.refunded");
   }
   if (normalized === "PAID") {
-    return "Paye";
+    return uiText(language, "admin.client_detail.payment_status.paid");
   }
   if (normalized === "INCLUDED_PLAN") {
-    return "Inclus formule";
+    return uiText(language, "admin.client_detail.payment_status.included_plan");
   }
   if (normalized === "BOOKED" || normalized === "ATTENDED" || normalized === "NO_SHOW") {
-    return "A facturer";
+    return uiText(language, "admin.client_detail.payment_status.to_bill");
   }
   if (normalized === "INVOICED") {
-    return "Facturee";
+    return uiText(language, "admin.client_detail.payment_status.invoiced");
   }
   if (normalized === "FAILED") {
-    return "Echec";
+    return uiText(language, "admin.client_detail.payment_status.failed");
   }
   if (normalized === "PENDING" || normalized === "PENDING_PAYMENT" || normalized === "WAITLISTED" || normalized === "TRIAL") {
-    return "En attente";
+    return uiText(language, "admin.client_detail.payment_status.pending");
   }
   if (normalized === "ACTIVE") {
-    return "Actif";
+    return uiText(language, "admin.client_detail.payment_status.active");
   }
   if (normalized === "EXCUSED_ABSENCE") {
-    return "Absence excusee";
+    return uiText(language, "admin.client_detail.payment_status.excused_absence");
   }
   if (normalized === "NOT_BILLABLE") {
-    return "Non facturable";
+    return uiText(language, "admin.client_detail.payment_status.not_billable");
   }
   if (normalized === "CANCELLED" || normalized === "EXPIRED" || normalized === "ARCHIVED" || normalized === "INACTIVE") {
-    return "Annule";
+    return uiText(language, "admin.client_detail.payment_status.cancelled");
   }
-  return normalized || "Inconnu";
+  return normalized || uiText(language, "admin.client_detail.unknown");
 }
 
 function parseAmountFilter(value: string): number | null {
@@ -410,8 +410,10 @@ function isIncludedPlanBooking(row: AdminClientPaymentOut): boolean {
   return Number.isFinite(total) && Math.abs(total) < 0.01 && Boolean(row.reference);
 }
 
-function paymentStatusDisplayLabel(row: AdminClientPaymentOut): string {
-  return isIncludedPlanBooking(row) ? "Inclus formule" : paymentStatusLabel(row.status);
+function paymentStatusDisplayLabel(row: AdminClientPaymentOut, language: UiLanguage = "fr"): string {
+  return isIncludedPlanBooking(row)
+    ? uiText(language, "admin.client_detail.payment_status.included_plan")
+    : paymentStatusLabel(row.status, language);
 }
 
 const PAID_PAYMENT_STATUSES = new Set(["PAID", "SUCCEEDED", "COMPLETED"]);
@@ -450,18 +452,18 @@ function shouldCountInClientBalance(row: AdminClientPaymentOut): boolean {
   return PENDING_PAYMENT_STATUSES.has(status);
 }
 
-function invoiceStatusLabel(status: string | null): string {
+function invoiceStatusLabel(status: string | null, language: UiLanguage = "fr"): string {
   const normalized = (status ?? "").trim().toUpperCase();
   if (normalized === "PAID") {
-    return "Facture payee";
+    return uiText(language, "admin.client_detail.invoice_status.paid");
   }
   if (normalized === "CANCELLED") {
-    return "Facture annulee";
+    return uiText(language, "admin.client_detail.invoice_status.cancelled");
   }
   if (normalized === "PENDING") {
-    return "Facture en attente";
+    return uiText(language, "admin.client_detail.invoice_status.pending");
   }
-  return "Facture";
+  return uiText(language, "admin.client_detail.invoice_status.default");
 }
 
 function normalizedBookingStatus(row: AdminClientBookingOut): string {
@@ -841,13 +843,13 @@ function parseRangeInvoiceNote(note: AdminClientNoteOut): RangeInvoiceNotePayloa
   }
 }
 
-function rangeInvoiceTotalLabel(totalsByCurrency: Record<string, string>): string {
+function rangeInvoiceTotalLabel(totalsByCurrency: Record<string, string>, language: UiLanguage = "fr"): string {
   const entries = Object.entries(totalsByCurrency);
   if (entries.length === 0) {
     return "-";
   }
   return entries
-    .map(([currency, amount]) => formatMoney(amount, currency))
+    .map(([currency, amount]) => formatMoney(amount, currency, language))
     .join(" | ");
 }
 
@@ -867,15 +869,15 @@ function paymentReceiptPdfHref(clientId: string, receiptId: string, inline = fal
   return `/admin/clients/${clientId}/payment-receipts/${receiptId}/pdf?${params.toString()}`;
 }
 
-function rangeInvoiceStatusLabel(status: string): string {
+function rangeInvoiceStatusLabel(status: string, language: UiLanguage = "fr"): string {
   const normalized = status.trim().toUpperCase();
   if (normalized === "PAID") {
-    return "Paye";
+    return uiText(language, "admin.client_detail.range_invoice_status.paid");
   }
   if (normalized === "CANCELLED") {
-    return "Annulee";
+    return uiText(language, "admin.client_detail.range_invoice_status.cancelled");
   }
-  return "Emise";
+  return uiText(language, "admin.client_detail.range_invoice_status.issued");
 }
 
 function rangeInvoiceStatusClass(status: string): string {
@@ -1114,15 +1116,15 @@ function isCancellationAlreadyEffective(sub: AdminClientSubscriptionOut): boolea
   return effectiveAt <= Date.now();
 }
 
-function planKindLabel(kind: string): string {
+function planKindLabel(kind: string, language: UiLanguage = "fr"): string {
   const normalized = kind.trim().toUpperCase();
   if (normalized === "PACK") {
-    return "Carnet";
+    return uiText(language, "admin.client_detail.plan_kind.pack");
   }
   if (normalized === "FORFAIT") {
-    return "Forfait";
+    return uiText(language, "admin.client_detail.plan_kind.forfait");
   }
-  return "Abonnement";
+  return uiText(language, "admin.client_detail.plan_kind.subscription");
 }
 
 function contactDisplayLabel(firstName: string | null | undefined, lastName: string | null | undefined, email: string): string {
@@ -1509,13 +1511,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         errors.push(`payment_methods: ${paymentMethodsResult.message}`);
         return DEFAULT_PAYMENT_METHOD_OPTIONS.map((item) => ({ ...item, enabled: true }));
       })();
-  const paymentMethodLabelByCode = new Map<string, string>();
-  for (const method of DEFAULT_PAYMENT_METHOD_OPTIONS) {
-    paymentMethodLabelByCode.set(method.code.toUpperCase(), method.label);
-  }
-  for (const method of enabledPaymentMethods) {
-    paymentMethodLabelByCode.set(method.code.toUpperCase(), method.label);
-  }
   const legalEntities = legalEntitiesResult.ok
     ? legalEntitiesResult.data.filter((row) => row.is_active)
     : (() => {
@@ -1697,15 +1692,15 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       ? purchaseCatalogProducts.map((product) => ({
           id: product.id,
           label: `${product.title}${product.category_name ? ` · ${product.category_name}` : ""}`,
-          helper: `${formatMoney(product.price_incl_vat, client.preferred_currency || "EUR")} · Produit catalogue`,
+          helper: `${formatMoney(product.price_incl_vat, client.preferred_currency || "EUR", language)} · ${t("admin.client_detail.purchase_type.product")}`,
         }))
       : formulas.map((formula) => ({
           id: formula.id,
-          label: `${formula.name} (${planKindLabel(formula.kind)})`,
+          label: `${formula.name} (${planKindLabel(formula.kind, language)})`,
           helper:
             formula.monthly_price_excl_vat !== null
-              ? `${formatMoney(formula.monthly_price_excl_vat, formula.currency_code || client.preferred_currency || "EUR")} · ${planKindLabel(formula.kind)}`
-              : planKindLabel(formula.kind),
+              ? `${formatMoney(formula.monthly_price_excl_vat, formula.currency_code || client.preferred_currency || "EUR", language)} · ${planKindLabel(formula.kind, language)}`
+              : planKindLabel(formula.kind, language),
         }));
   const selectedPurchaseOfferHelper =
     purchaseOfferOptions.find((offer) => offer.id === purchasePlanId)?.helper ?? purchaseOfferOptions[0]?.helper ?? null;
@@ -1738,7 +1733,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     const uniqueCodes = Array.from(new Set((sourceCodes.length > 0 ? sourceCodes : fallbackCodes).map((code) => code.toUpperCase())));
     return uniqueCodes.map((code) => ({
       code,
-      label: paymentMethodLabelByCode.get(code) ?? billingMethodLabel(code),
+      label: localizedBillingMethodLabel(code, language),
     }));
   })();
   const selectedPurchaseOfferForTerms =
@@ -1767,7 +1762,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       : selectedPlanForPurchase?.currency_code || client.preferred_currency || "EUR";
   const isCardOnlinePurchase = purchasePaymentMethod === "CARD_ONLINE";
   const canSendPaymentLink = isCardOnlinePurchase && normalizedPurchaseType === "FORMULA";
-  const purchaseTypeLabel = normalizedPurchaseType === "PRODUCT" ? "Produits catalogues" : "Formule de cours";
+  const purchaseTypeLabel =
+    normalizedPurchaseType === "PRODUCT"
+      ? t("admin.client_detail.purchase_type.product_plural")
+      : t("admin.client_detail.purchase_type.formula");
   const purchaseWizardReturnSearch = new URLSearchParams({
     tab: purchaseReturnTab,
     purchase_modal: "wizard",
@@ -1946,11 +1944,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const filteredPayments = payments.filter((row) => {
     if (paymentFilterQuery.length > 0) {
       const searchable = [
-        paymentSourceLabel(row.source),
-        row.payment_method_label ?? "",
+        paymentSourceLabel(row.source, language),
+        row.payment_method_code ? localizedBillingMethodLabel(row.payment_method_code, language) : row.payment_method_label ?? "",
         row.label,
         row.reference ?? "",
-        paymentStatusDisplayLabel(row),
+        paymentStatusDisplayLabel(row, language),
         row.invoice_number ?? "",
       ]
         .join(" ")
@@ -1981,7 +1979,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       key: `payment-${row.source}-${row.id}`,
       occurredAt: row.occurred_at,
       invoiceNumber: row.invoice_number,
-      typeLabel: paymentSourceLabel(row.source),
+      typeLabel: paymentSourceLabel(row.source, language),
       label: row.label,
       status: row.invoice_status,
       total: row.total_incl_vat,
@@ -1997,19 +1995,25 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       noteId: row.note_id,
       occurredAt: `${row.issued_date}T00:00:00.000Z`,
       invoiceNumber: row.invoice_number,
-      typeLabel: row.generation_mode === "AUTO" ? "Facture periode auto" : "Facture periode",
-      modeLabel: row.generation_mode === "AUTO" ? "Auto" : "Manuel",
-      label: `${formatDateInputLabel(row.start_date)} - ${formatDateInputLabel(row.end_date)}${
+      typeLabel:
+        row.generation_mode === "AUTO"
+          ? t("admin.client_detail.invoice_generation_type_auto")
+          : t("admin.client_detail.invoice_generation_type_manual"),
+      modeLabel:
+        row.generation_mode === "AUTO"
+          ? t("admin.client_detail.invoice_generation_auto")
+          : t("admin.client_detail.invoice_generation_manual"),
+      label: `${formatDateInputLabel(row.start_date, language)} - ${formatDateInputLabel(row.end_date, language)}${
         row.generation_mode === "AUTO"
           ? row.auto_period_scope === "FUTURE"
-            ? " | Prestations a venir"
-            : " | Prestations precedentes"
+            ? ` | ${t("admin.client_detail.invoice_scope_upcoming")}`
+            : ` | ${t("admin.client_detail.invoice_scope_previous")}`
           : ""
       }`,
       status: row.invoice_status,
       emailedAt: row.emailed_at ?? null,
       remindedAt: row.reminded_at ?? null,
-      totalLabel: rangeInvoiceTotalLabel(row.totals_by_currency),
+      totalLabel: rangeInvoiceTotalLabel(row.totals_by_currency, language),
       downloadHref: rangeInvoicePdfHref(client.id, row.note_id, false),
       viewHref: rangeInvoicePdfHref(client.id, row.note_id, true),
       sellerLegalEntityId: row.seller_legal_entity_id ?? null,
@@ -2169,32 +2173,32 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     fees: "CHARGE",
   };
   const manualTransactionTitleByModal: Record<ManualTransactionModalType, string> = {
-    payment: "Paiement",
-    refund: "Remboursement",
-    charge: "Facturation (montant du)",
-    discount: "Remise (rabais)",
-    fees: "Frais",
+    payment: t("admin.client_detail.manual_type.payment_title"),
+    refund: t("admin.client_detail.manual_type.refund_title"),
+    charge: t("admin.client_detail.manual_type.charge_title"),
+    discount: t("admin.client_detail.manual_type.discount_title"),
+    fees: t("admin.client_detail.manual_type.fees_title"),
   };
   const manualTransactionHelpByModal: Record<ManualTransactionModalType, string> = {
-    payment: "Encaissement d un paiement client.",
-    refund: "Sortie de fonds vers le client.",
-    charge: "Ajoute un montant du sans encaissement immediat.",
-    discount: "Reduit un montant du (transaction negative).",
-    fees: "Ajoute des frais au solde client.",
+    payment: t("admin.client_detail.manual_type.payment_help"),
+    refund: t("admin.client_detail.manual_type.refund_help"),
+    charge: t("admin.client_detail.manual_type.charge_help"),
+    discount: t("admin.client_detail.manual_type.discount_help"),
+    fees: t("admin.client_detail.manual_type.fees_help"),
   };
   const manualTransactionDefaultLabelByModal: Record<ManualTransactionModalType, string> = {
-    payment: "Paiement manuel",
-    refund: "Remboursement",
-    charge: "Montant facture",
-    discount: "Rabais manuel",
-    fees: "Frais",
+    payment: t("admin.client_detail.manual_default.payment"),
+    refund: t("admin.client_detail.manual_default.refund"),
+    charge: t("admin.client_detail.manual_default.charge"),
+    discount: t("admin.client_detail.manual_default.discount"),
+    fees: t("admin.client_detail.manual_default.fees"),
   };
   const manualTransactionSubmitLabelByModal: Record<ManualTransactionModalType, string> = {
-    payment: "Enregistrer le paiement",
-    refund: "Enregistrer le remboursement",
-    charge: "Ajouter au solde",
-    discount: "Appliquer la remise",
-    fees: "Ajouter les frais",
+    payment: t("admin.client_detail.manual_submit.payment"),
+    refund: t("admin.client_detail.manual_submit.refund"),
+    charge: t("admin.client_detail.manual_submit.charge"),
+    discount: t("admin.client_detail.manual_submit.discount"),
+    fees: t("admin.client_detail.manual_submit.fees"),
   };
   const manualTransactionTypeCode =
     manualTransactionModalType === null ? null : manualTransactionTypeCodeByModal[manualTransactionModalType];
@@ -2836,40 +2840,42 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       {(currentTab === "fiche" || currentTab === "paiements") && purchaseModalAction === "wizard" ? (
         <section className="modal-overlay">
           <article className="modal-panel purchase-wizard-modal">
-            <Link className="modal-close-x" href={tabHref(client.id, purchaseReturnTab)} aria-label="Fermer">
+            <Link className="modal-close-x" href={tabHref(client.id, purchaseReturnTab)} aria-label={t("common.close")}>
               ×
             </Link>
             <header className="purchase-wizard-header">
-              <h3 className="modal-title">Nouvel achat</h3>
-              <div className="purchase-wizard-stepper" aria-label="Progression de l achat">
-                <span className="active">1. Achat</span>
-                <span>2. Paiement</span>
+              <h3 className="modal-title">{t("admin.client_detail.purchase_modal_title")}</h3>
+              <div className="purchase-wizard-stepper" aria-label={t("admin.client_detail.purchase_stepper_aria")}>
+                <span className="active">{t("admin.client_detail.purchase_step_offer")}</span>
+                <span>{t("admin.client_detail.purchase_step_payment")}</span>
               </div>
-              <p className="muted">Selectionnez l offre, le prix et le reglement avant validation.</p>
+              <p className="muted">{t("admin.client_detail.purchase_intro")}</p>
             </header>
             <form action={adminOpenClientPurchaseTermsAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="return_tab" value={purchaseReturnTab} />
               <input type="hidden" name="purchase_type" value={normalizedPurchaseType} />
-              <section className="purchase-type-toggle" aria-label="Type d achat">
+              <section className="purchase-type-toggle" aria-label={t("admin.client_detail.purchase_type_aria")}>
                 <Link
                   href={purchaseTypeFormulaHref}
                   className={`purchase-type-chip${normalizedPurchaseType === "FORMULA" ? " active" : ""}`}
                 >
-                  Formule de cours
+                  {t("admin.client_detail.purchase_type.formula")}
                 </Link>
                 <Link
                   href={purchaseTypeProductHref}
                   className={`purchase-type-chip${normalizedPurchaseType === "PRODUCT" ? " active" : ""}`}
                 >
-                  Produits catalogues
+                  {t("admin.client_detail.purchase_type.product_plural")}
                 </Link>
               </section>
               <label>
-                Offre
+                {t("admin.client_detail.purchase_offer_label")}
                 <select name="plan_id" required defaultValue={purchasePlanId || ""}>
                   <option value="" disabled>
-                    {normalizedPurchaseType === "PRODUCT" ? "Selectionner un produit catalogue actif" : "Selectionner une offre active"}
+                    {normalizedPurchaseType === "PRODUCT"
+                      ? t("admin.client_detail.purchase_offer_placeholder_product")
+                      : t("admin.client_detail.purchase_offer_placeholder_formula")}
                   </option>
                   {purchaseOfferOptions.map((offer) => (
                     <option key={offer.id} value={offer.id}>
@@ -2880,32 +2886,32 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 {selectedPurchaseOfferHelper ? (
                   <small className="muted">{selectedPurchaseOfferHelper}</small>
                 ) : (
-                  <small className="muted">Aucune offre active pour ce type d achat.</small>
+                  <small className="muted">{t("admin.client_detail.purchase_offer_empty")}</small>
                 )}
               </label>
               <label>
-                Prix remisé (optionnel)
+                {t("admin.client_detail.discounted_price_label")}
                 <input
                   type="text"
                   name="discounted_total_incl_vat"
-                  placeholder="Ex: 115.00"
+                  placeholder={t("admin.client_detail.discounted_price_placeholder")}
                   defaultValue={hasDiscountedTotalForPurchase ? discountedTotalForPurchase.toFixed(2) : ""}
                 />
-                <small className="muted">Laisser vide pour appliquer le prix catalogue.</small>
+                <small className="muted">{t("admin.client_detail.discounted_price_help")}</small>
               </label>
               {normalizedPurchaseType === "FORMULA" ? (
                 <label>
-                  Date de debut (abonnement)
+                  {t("admin.client_detail.purchase_start_date")}
                   <input type="date" name="start_date" defaultValue={purchaseStartDateInputValue} />
                 </label>
               ) : (
                 <input type="hidden" name="start_date" value="" />
               )}
               <label>
-                Reglement
+                {t("admin.client_detail.purchase_payment_method")}
                 <select name="payment_method_code" required defaultValue={purchasePaymentMethod || ""}>
                   <option value="" disabled>
-                    Choisir un moyen de paiement
+                    {t("admin.client_detail.purchase_payment_method_placeholder")}
                   </option>
                   {purchasePaymentMethodOptions.map((method) => (
                     <option key={method.code} value={method.code}>
@@ -2914,17 +2920,17 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   ))}
                 </select>
                 {purchasePaymentMethod === "CARD_ONLINE" ? (
-                  <small className="muted">Un lien de paiement sera propose a l etape suivante.</small>
+                  <small className="muted">{t("admin.client_detail.purchase_payment_link_help")}</small>
                 ) : (
-                  <small className="muted">Paiement enregistre sans envoi de lien.</small>
+                  <small className="muted">{t("admin.client_detail.purchase_payment_no_link_help")}</small>
                 )}
               </label>
               <div className="row modal-actions-end purchase-wizard-footer">
                 <Link className="reset-link" href={tabHref(client.id, purchaseReturnTab)}>
-                  Annuler
+                  {t("common.cancel")}
                 </Link>
                 <button type="submit" disabled={purchaseOfferOptions.length === 0}>
-                  Continuer
+                  {t("common.continue")}
                 </button>
               </div>
             </form>
@@ -2938,47 +2944,75 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <Link
               className="modal-close-x"
               href={purchaseWizardReturnHref}
-              aria-label="Fermer"
+              aria-label={t("common.close")}
             >
               ×
             </Link>
             <header className="purchase-wizard-header">
-              <h3 className="modal-title">Nouvel achat</h3>
-              <div className="purchase-wizard-stepper" aria-label="Progression de l achat">
-                <span>1. Achat</span>
-                <span className="active">2. Paiement</span>
+              <h3 className="modal-title">{t("admin.client_detail.purchase_modal_title")}</h3>
+              <div className="purchase-wizard-stepper" aria-label={t("admin.client_detail.purchase_stepper_aria")}>
+                <span>{t("admin.client_detail.purchase_step_offer")}</span>
+                <span className="active">{t("admin.client_detail.purchase_step_payment")}</span>
               </div>
             </header>
             <h4 className="purchase-wizard-offer-title">{selectedPurchaseOfferForTerms.name}</h4>
             <p className="muted">
-              Reglement: {billingMethodLabel(purchasePaymentMethod)} | Type d achat: {purchaseTypeLabel}
+              {t("admin.client_detail.purchase_terms_summary", {
+                method: billingMethodLabel(purchasePaymentMethod, language),
+                type: purchaseTypeLabel,
+              })}
             </p>
             {normalizedPurchaseType === "FORMULA" && selectedPlanForPurchase ? (
               <p className="muted">
                 {selectedPlanForPurchase.kind === "FORFAIT"
-                  ? `Periode forfait: ${selectedPlanForPurchase.forfait_start_date ? formatDateInputLabel(selectedPlanForPurchase.forfait_start_date) : "-"} - ${selectedPlanForPurchase.forfait_end_date ? formatDateInputLabel(selectedPlanForPurchase.forfait_end_date) : "-"}`
-                  : `Demarrage souhaite: ${formatDateInputLabel(purchaseStartDateInputValue)}`}
+                  ? t("admin.client_detail.purchase_forfait_period", {
+                      start: selectedPlanForPurchase.forfait_start_date
+                        ? formatDateInputLabel(selectedPlanForPurchase.forfait_start_date, language)
+                        : "-",
+                      end: selectedPlanForPurchase.forfait_end_date
+                        ? formatDateInputLabel(selectedPlanForPurchase.forfait_end_date, language)
+                        : "-",
+                    })
+                  : t("admin.client_detail.purchase_requested_start", {
+                      date: formatDateInputLabel(purchaseStartDateInputValue, language),
+                    })}
               </p>
             ) : null}
             <article className="card modal-card purchase-summary-card">
-              <h4>Recapitulatif de la commande</h4>
+              <h4>{t("admin.client_detail.purchase_summary_title")}</h4>
               <p className="muted">
-                Offre: {selectedPurchaseOfferForTerms.name}{" "}
-                ({normalizedPurchaseType === "PRODUCT" ? "Produit catalogue" : planKindLabel(selectedPlanForPurchase?.kind ?? "SUBSCRIPTION")})
+                {t("admin.client_detail.purchase_summary_offer", {
+                  offer: selectedPurchaseOfferForTerms.name,
+                  kind:
+                    normalizedPurchaseType === "PRODUCT"
+                      ? t("admin.client_detail.purchase_type.product")
+                      : planKindLabel(selectedPlanForPurchase?.kind ?? "SUBSCRIPTION", language),
+                })}
               </p>
-              {selectedPlanBaseTotal ? <p className="muted">Prix catalogue: {formatMoney(selectedPlanBaseTotal, selectedPlanCurrency)}</p> : null}
+              {selectedPlanBaseTotal ? (
+                <p className="muted">
+                  {t("admin.client_detail.purchase_catalog_price", {
+                    amount: formatMoney(selectedPlanBaseTotal, selectedPlanCurrency, language),
+                  })}
+                </p>
+              ) : null}
               {hasDiscountedTotalForPurchase ? (
-                <p className="muted">Prix remisé: {formatMoney(String(discountedTotalForPurchase), selectedPlanCurrency)}</p>
+                <p className="muted">
+                  {t("admin.client_detail.purchase_discounted_price", {
+                    amount: formatMoney(String(discountedTotalForPurchase), selectedPlanCurrency, language),
+                  })}
+                </p>
               ) : (
-                <p className="muted">Prix remisé: aucune remise</p>
+                <p className="muted">{t("admin.client_detail.purchase_no_discount")}</p>
               )}
               <p className="purchase-total-line">
-                Total a payer aujourd hui:{" "}
-                {hasDiscountedTotalForPurchase
-                  ? formatMoney(String(discountedTotalForPurchase), selectedPlanCurrency)
-                  : selectedPlanBaseTotal
-                    ? formatMoney(selectedPlanBaseTotal, selectedPlanCurrency)
-                    : formatMoney("0", selectedPlanCurrency)}
+                {t("admin.client_detail.purchase_total_due", {
+                  amount: hasDiscountedTotalForPurchase
+                    ? formatMoney(String(discountedTotalForPurchase), selectedPlanCurrency, language)
+                    : selectedPlanBaseTotal
+                      ? formatMoney(selectedPlanBaseTotal, selectedPlanCurrency, language)
+                      : formatMoney("0", selectedPlanCurrency, language),
+                })}
               </p>
             </article>
 
@@ -3001,10 +3035,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
               {canSendPaymentLink ? (
                 <label>
-                  Canal d envoi du lien de paiement
+                  {t("admin.client_detail.purchase_signature_channel")}
                   <select name="signature_channel" defaultValue="EMAIL">
-                    <option value="EMAIL">Envoyer par email</option>
-                    <option value="SMS">Envoyer par SMS</option>
+                    <option value="EMAIL">{t("admin.client_detail.purchase_signature_email")}</option>
+                    <option value="SMS">{t("admin.client_detail.purchase_signature_sms")}</option>
                   </select>
                 </label>
               ) : (
@@ -3012,8 +3046,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <input type="hidden" name="signature_channel" value="NONE" />
                   <p className="muted">
                     {normalizedPurchaseType === "PRODUCT"
-                      ? "Achat catalogue enregistre sans envoi de lien de paiement."
-                      : "Paiement hors carte: la transaction sera enregistree sans envoi de lien de paiement."}
+                      ? t("admin.client_detail.purchase_product_saved_no_link")
+                      : t("admin.client_detail.purchase_non_card_saved_no_link")}
                   </p>
                 </>
               )}
@@ -3023,10 +3057,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   className="reset-link"
                   href={purchaseWizardReturnHref}
                 >
-                  Retour
+                  {t("common.previous")}
                 </Link>
                 <button type="submit">
-                  {canSendPaymentLink ? "Envoyer le lien" : "Valider l achat"}
+                  {canSendPaymentLink ? t("admin.client_detail.purchase_send_link") : t("admin.client_detail.purchase_validate")}
                 </button>
               </div>
             </form>
@@ -4491,37 +4525,37 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         <section className="admin-page-grid">
           <article className="card">
             <div className="row spread">
-              <h3>Factures emises et annulees</h3>
+              <h3>{t("admin.client_detail.invoices_section_title")}</h3>
               <div className="row">
                 <Link
                   className="mode-link"
                   href={invoicesHref(client.id, { payment_modal: "invoice_range", payment_return_tab: "factures" })}
                 >
-                  Generer une facture
+                  {t("admin.client_detail.invoice_create")}
                 </Link>
               </div>
             </div>
 
             {invoices.length === 0 ? (
-              <p className="muted">Aucune facture emise/annulee pour ce client.</p>
+              <p className="muted">{t("admin.client_detail.no_invoices")}</p>
             ) : (
               <div className="table-wrap">
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Date</th>
-                      <th>Numero</th>
-                      <th>Type</th>
-                      <th>Libelle</th>
-                      <th>Statut facture</th>
-                      <th>Total</th>
-                      <th>Actions</th>
+                      <th>{t("common.date")}</th>
+                      <th>{t("admin.client_detail.invoices_column_number")}</th>
+                      <th>{t("common.type")}</th>
+                      <th>{t("admin.client_detail.invoices_column_label")}</th>
+                      <th>{t("admin.client_detail.invoices_column_status")}</th>
+                      <th>{t("common.total")}</th>
+                      <th>{t("common.actions")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {invoices.map((row) => (
                       <tr key={row.key}>
-                        <td>{formatDate(row.occurredAt)}</td>
+                        <td>{formatDate(row.occurredAt, language)}</td>
                         <td>{row.invoiceNumber ?? "-"}</td>
                         <td>
                           {row.typeLabel}
@@ -4536,31 +4570,43 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                           {row.kind === "range" ? (
                             <div className="stack-xs">
                               <span className={`status-pill ${rangeInvoiceStatusClass(row.status)}`}>
-                                {rangeInvoiceStatusLabel(row.status)}
+                                {rangeInvoiceStatusLabel(row.status, language)}
                               </span>
                               {row.emailedAt ? (
-                                <span className="status-pill status-ok" title={`Envoye le ${formatDate(row.emailedAt)}`}>
-                                  Envoye par mail
+                                <span
+                                  className="status-pill status-ok"
+                                  title={t("admin.client_detail.invoice_emailed_on", { date: formatDate(row.emailedAt, language) })}
+                                >
+                                  {t("admin.client_detail.invoice_emailed")}
                                 </span>
                               ) : null}
                               {row.remindedAt ? (
-                                <span className="status-pill status-warn" title={`Relance le ${formatDate(row.remindedAt)}`}>
-                                  Relance
+                                <span
+                                  className="status-pill status-warn"
+                                  title={t("admin.client_detail.invoice_reminded_on", { date: formatDate(row.remindedAt, language) })}
+                                >
+                                  {t("admin.client_detail.invoice_reminder")}
                                 </span>
                               ) : null}
                             </div>
                           ) : (
-                            invoiceStatusLabel(row.status)
+                            invoiceStatusLabel(row.status, language)
                           )}
                         </td>
-                        <td>{row.kind === "range" ? row.totalLabel : formatMoney(row.total, row.currency)}</td>
+                        <td>{row.kind === "range" ? row.totalLabel : formatMoney(row.total, row.currency, language)}</td>
                         <td>
                           {row.kind === "range" ? (
                             <div className="row payment-row-actions">
-                              <a className="client-action-icon" href={row.viewHref} target="_blank" rel="noreferrer" title="Voir la facture">
+                              <a
+                                className="client-action-icon"
+                                href={row.viewHref}
+                                target="_blank"
+                                rel="noreferrer"
+                                title={t("admin.client_detail.view_invoice")}
+                              >
                                 V
                               </a>
-                              <a className="client-action-icon" href={row.downloadHref} title="Telecharger la facture">
+                              <a className="client-action-icon" href={row.downloadHref} title={t("admin.client_detail.download_invoice")}>
                                 ↓
                               </a>
                               <Link
@@ -4571,7 +4617,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   invoice_note_id: row.noteId,
                                   invoice_email_kind: "INVOICE",
                                 })}
-                                title="Envoyer la facture par courriel"
+                                title={t("admin.client_detail.email_invoice")}
                               >
                                 ✉
                               </Link>
@@ -4583,7 +4629,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   invoice_note_id: row.noteId,
                                   invoice_email_kind: "REMINDER",
                                 })}
-                                title="Envoyer une relance"
+                                title={t("admin.client_detail.send_invoice_reminder")}
                               >
                                 R
                               </Link>
@@ -4593,7 +4639,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   <input type="hidden" name="note_id" value={row.noteId} />
                                   <input type="hidden" name="status" value="PAID" />
                                   <input type="hidden" name="return_tab" value="factures" />
-                                  <button type="submit" className="client-action-icon" title="Marquer comme payee">
+                                  <button type="submit" className="client-action-icon" title={t("admin.client_detail.mark_invoice_paid")}>
                                     €
                                   </button>
                                 </form>
@@ -4603,7 +4649,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   <input type="hidden" name="note_id" value={row.noteId} />
                                   <input type="hidden" name="status" value="ISSUED" />
                                   <input type="hidden" name="return_tab" value="factures" />
-                                  <button type="submit" className="client-action-icon" title="Retirer la mention payee (remettre en emise)">
+                                  <button type="submit" className="client-action-icon" title={t("admin.client_detail.reopen_invoice_paid")}>
                                     ↺
                                   </button>
                                 </form>
@@ -4614,7 +4660,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   <input type="hidden" name="note_id" value={row.noteId} />
                                   <input type="hidden" name="status" value="CANCELLED" />
                                   <input type="hidden" name="return_tab" value="factures" />
-                                  <button type="submit" className="client-action-icon danger" title="Annuler la facture">
+                                  <button type="submit" className="client-action-icon danger" title={t("admin.client_detail.cancel_invoice")}>
                                     ×
                                   </button>
                                 </form>
@@ -4624,7 +4670,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   <input type="hidden" name="note_id" value={row.noteId} />
                                   <input type="hidden" name="status" value="ISSUED" />
                                   <input type="hidden" name="return_tab" value="factures" />
-                                  <button type="submit" className="client-action-icon" title="Remettre en statut emise">
+                                  <button type="submit" className="client-action-icon" title={t("admin.client_detail.restore_invoice_issued")}>
                                     ↺
                                   </button>
                                 </form>
@@ -4637,14 +4683,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                 href={`/admin/clients/${client.id}/payments/${encodeURIComponent(row.source)}/${row.paymentId}/invoice?inline=true`}
                                 target="_blank"
                                 rel="noreferrer"
-                                title="Voir la facture"
+                                title={t("admin.client_detail.view_invoice")}
                               >
                                 V
                               </a>
                               <a
                                 className="client-action-icon"
                                 href={`/admin/clients/${client.id}/payments/${encodeURIComponent(row.source)}/${row.paymentId}/invoice`}
-                                title="Telecharger la facture"
+                                title={t("admin.client_detail.download_invoice")}
                               >
                                 ↓
                               </a>
@@ -4659,7 +4705,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                         payment_id: row.paymentId,
                                         payment_return_tab: "factures",
                                       })}
-                                      title="Creer un avoir"
+                                      title={t("admin.client_detail.create_credit_note")}
                                     >
                                       A
                                     </Link>
@@ -4669,7 +4715,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                     <input type="hidden" name="payment_source" value={row.source.toUpperCase()} />
                                     <input type="hidden" name="payment_id" value={row.paymentId} />
                                     <input type="hidden" name="return_tab" value="factures" />
-                                    <button type="submit" className="client-action-icon danger" title="Annuler la facture">
+                                    <button type="submit" className="client-action-icon danger" title={t("admin.client_detail.cancel_invoice")}>
                                       ×
                                     </button>
                                   </form>
@@ -4692,34 +4738,46 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         <section className="admin-page-grid">
           <article className="card">
             <div className="row spread">
-              <h3>Paiements et transactions</h3>
+              <h3>{t("admin.client_detail.payments_section_title")}</h3>
               <div className="row">
-                <span className="badge">Solde en date du {formatDateInputLabel(selectedBalanceDate)}</span>
+                <span className="badge">{t("admin.client_detail.balance_as_of", { date: formatDateInputLabel(selectedBalanceDate, language) })}</span>
                 {[...totalsByCurrency.entries()].map(([currency, total]) => (
                   <span key={currency} className="badge">
-                    Solde {currency}: {formatMoney(String(total), currency)}
+                    {t("admin.client_detail.balance_currency", {
+                      currency,
+                      amount: formatMoney(String(total), currency, language),
+                    })}
                   </span>
                 ))}
                 {[...pendingTotalsByCurrency.entries()].map(([currency, total]) => (
                   <span key={`pending-${currency}`} className="badge">
-                    En attente {currency}: {formatMoney(String(total), currency)}
+                    {t("admin.client_detail.pending_currency", {
+                      currency,
+                      amount: formatMoney(String(total), currency, language),
+                    })}
                   </span>
                 ))}
                 {[...paidTotalsByCurrency.entries()].map(([currency, total]) => (
                   <span key={`paid-${currency}`} className="badge">
-                    Paye {currency}: {formatMoney(String(total), currency)}
+                    {t("admin.client_detail.paid_currency", {
+                      currency,
+                      amount: formatMoney(String(total), currency, language),
+                    })}
                   </span>
                 ))}
                 {[...cancelledOrNotBillableTotalsByCurrency.entries()].map(([currency, total]) => (
                   <span key={`cancelled-${currency}`} className="badge">
-                    Annule/non facturable {currency}: {formatMoney(String(total), currency)}
+                    {t("admin.client_detail.cancelled_currency", {
+                      currency,
+                      amount: formatMoney(String(total), currency, language),
+                    })}
                   </span>
                 ))}
                 {hasPaymentFilters ? (
                   <span className="badge">
-                    Filtres actifs
-                    {paymentFilterQuery ? ` | texte: ${paymentFilterQuery}` : ""}
-                    {paymentFilterAmount !== null ? ` | montant: ${paymentFilterAmount.toFixed(2)}` : ""}
+                    {t("admin.client_detail.active_filters")}
+                    {paymentFilterQuery ? ` | ${t("admin.client_detail.active_filters_text", { value: paymentFilterQuery })}` : ""}
+                    {paymentFilterAmount !== null ? ` | ${t("admin.client_detail.active_filters_amount", { value: paymentFilterAmount.toFixed(2) })}` : ""}
                   </span>
                 ) : null}
                 <form method="get" className="row balance-date-form">
@@ -4727,18 +4785,18 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   {paymentFilterQuery ? <input type="hidden" name="payment_filter_q" value={paymentFilterQuery} /> : null}
                   {paymentFilterAmountRaw ? <input type="hidden" name="payment_filter_amount" value={paymentFilterAmountRaw} /> : null}
                   <label className="balance-date-label">
-                    Date solde
+                    {t("admin.client_detail.balance_date")}
                     <input type="date" name="balance_date" defaultValue={selectedBalanceDate} />
                   </label>
                   <button type="submit" className="ghost">
-                    Mettre a jour
+                    {t("admin.client_detail.refresh")}
                   </button>
                 </form>
                 <Link
                   className="mode-link"
                   href={paymentsHref(client.id, { payment_modal: "manual", balance_date: selectedBalanceDate })}
                 >
-                  Ajouter une transaction
+                  {t("admin.client_detail.add_transaction")}
                 </Link>
                 <Link
                   className="mode-link"
@@ -4749,13 +4807,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     payment_filter_amount: paymentFilterAmountRaw,
                   })}
                 >
-                  Filtrer
+                  {t("admin.client_detail.filter_transactions")}
                 </Link>
                 <Link
                   className="mode-link"
                   href={paymentsHref(client.id, { payment_modal: "invoice_range", balance_date: selectedBalanceDate })}
                 >
-                  Generer une facture
+                  {t("admin.client_detail.invoice_create")}
                 </Link>
                 <Link
                   className="client-action-icon payment-add-icon"
@@ -4764,7 +4822,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     purchase_return_tab: "paiements",
                     balance_date: selectedBalanceDate,
                   })}
-                  title="Ajouter un achat"
+                  title={t("admin.client_detail.add_purchase_title")}
                 >
                   +
                 </Link>
@@ -4772,53 +4830,56 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             </div>
 
             {payments.length === 0 ? (
-              <p className="muted">Aucune transaction pour ce client.</p>
+              <p className="muted">{t("admin.client_detail.no_transactions")}</p>
             ) : (
               <div className="table-wrap">
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Date</th>
-                      <th>Type</th>
-                      <th>Mode paiement</th>
-                      <th>Libelle</th>
-                      <th>Formule liee</th>
-                      <th>Tarif prestation</th>
-                      <th>Statut</th>
-                      <th>Total</th>
-                      <th>Actions</th>
+                      <th>{t("common.date")}</th>
+                      <th>{t("common.type")}</th>
+                      <th>{t("admin.client_detail.payment_method_column")}</th>
+                      <th>{t("admin.client_detail.invoices_column_label")}</th>
+                      <th>{t("admin.client_detail.linked_plan_column")}</th>
+                      <th>{t("admin.client_detail.service_rate_column")}</th>
+                      <th>{t("common.status")}</th>
+                      <th>{t("common.total")}</th>
+                      <th>{t("common.actions")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredPayments.map((row) => (
                       <tr key={`${row.source}-${row.id}`}>
-                        <td>{formatDate(row.occurred_at)}</td>
-                        <td>{paymentSourceLabel(row.source)}</td>
-                        <td>{row.payment_method_label ?? "-"}</td>
+                        <td>{formatDate(row.occurred_at, language)}</td>
+                        <td>{paymentSourceLabel(row.source, language)}</td>
+                        <td>{row.payment_method_code ? localizedBillingMethodLabel(row.payment_method_code, language) : row.payment_method_label ?? "-"}</td>
                         <td>
                           <div className="stack-xs">
                             <span>{row.label}</span>
                             <small className="muted">
-                              {row.invoice_number ?? "Sans facture"} | {invoiceStatusLabel(row.invoice_status)}
+                              {row.invoice_number ?? t("admin.client_detail.no_invoice")} | {invoiceStatusLabel(row.invoice_status, language)}
                             </small>
                           </div>
                         </td>
                         <td>{row.source.toUpperCase() === "BOOKING" ? row.reference ?? "-" : "-"}</td>
                         <td>
                           <div className="stack-xs">
-                            <span>{formatMoney(row.total_incl_vat, row.currency)}</span>
+                            <span>{formatMoney(row.total_incl_vat, row.currency, language)}</span>
                             <small className="muted">
-                              HT {formatMoney(row.amount_excl_vat, row.currency)} + TVA {formatMoney(row.vat_amount, row.currency)} (
-                              {formatVatRateLabel(row.vat_rate)})
+                              {t("admin.client_detail.price_breakdown", {
+                                excl: formatMoney(row.amount_excl_vat, row.currency, language),
+                                vat: formatMoney(row.vat_amount, row.currency, language),
+                                rate: formatVatRateLabel(row.vat_rate, language),
+                              })}
                             </small>
                           </div>
                         </td>
                         <td>
                           <span className={`status-pill ${isIncludedPlanBooking(row) ? "status-off" : paymentStatusClass(row.status)}`}>
-                            {paymentStatusDisplayLabel(row)}
+                            {paymentStatusDisplayLabel(row, language)}
                           </span>
                         </td>
-                        <td>{formatMoney(row.total_incl_vat, row.currency)}</td>
+                        <td>{formatMoney(row.total_incl_vat, row.currency, language)}</td>
                         <td>
                           <div className="row payment-row-actions">
                             {row.source.toUpperCase() === "MANUAL" ? (
@@ -4832,14 +4893,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                       payment_source: "MANUAL",
                                       payment_return_tab: "paiements",
                                     })}
-                                    title="Modifier la transaction"
+                                    title={t("admin.client_detail.edit_transaction")}
                                   >
                                     ✎
                                   </Link>
                                 ) : row.locked_by_invoice_number ? (
                                   <span
                                     className="client-action-icon"
-                                    title={`Transaction verrouillee par la facture ${row.locked_by_invoice_number}`}
+                                    title={t("admin.client_detail.transaction_locked_by_invoice", {
+                                      invoice: row.locked_by_invoice_number,
+                                    })}
                                   >
                                     🔒
                                   </span>
@@ -4848,7 +4911,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   <form action={deleteAdminClientManualTransactionAction}>
                                     <input type="hidden" name="client_id" value={client.id} />
                                     <input type="hidden" name="transaction_id" value={row.id} />
-                                    <button type="submit" className="client-action-icon danger" title="Supprimer la transaction">
+                                    <button type="submit" className="client-action-icon danger" title={t("admin.client_detail.delete_transaction")}>
                                       ×
                                     </button>
                                   </form>
@@ -4864,7 +4927,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   payment_id: row.id,
                                   payment_return_tab: "paiements",
                                 })}
-                                title="Lancer un remboursement"
+                                title={t("admin.client_detail.refund_payment_action")}
                               >
                                 ↔
                               </Link>
@@ -4876,20 +4939,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </tbody>
                 </table>
                 {filteredPayments.length === 0 ? (
-                  <p className="muted top-gap-sm">Aucune ligne ne correspond aux filtres.</p>
+                  <p className="muted top-gap-sm">{t("admin.client_detail.no_filtered_rows")}</p>
                 ) : null}
               </div>
             )}
           </article>
 
           <article id="payments-history" className="card">
-            <h3>Historique des abonnements</h3>
+            <h3>{t("admin.client_detail.subscription_history")}</h3>
             {subscriptions.length === 0 ? (
-              <p className="muted">Aucun abonnement.</p>
+              <p className="muted">{t("admin.client_detail.no_subscriptions")}</p>
             ) : (
               <div className="list top-gap-sm">
                 {subscriptions.map((sub) => {
-                  const statusPill = subscriptionStatusPill(sub);
+                  const statusPill = localizedSubscriptionStatusPill(sub, language);
                   return (
                     <article key={sub.id} className="item row spread">
                     <div className="stack-sm">
@@ -4898,11 +4961,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         <strong>{sub.plan.name}</strong>
                       </div>
                       <small className="muted">
-                        Debut: {formatDate(sub.started_at)} | Prochain paiement: {sub.next_payment_at ? formatDate(sub.next_payment_at) : "Non programme"}
+                        {t("admin.client_detail.subscription_history_line", {
+                          start: formatDate(sub.started_at, language),
+                          next: sub.next_payment_at ? formatDate(sub.next_payment_at, language) : t("admin.client_detail.not_scheduled"),
+                        })}
                       </small>
                     </div>
                     <div className="row">
-                      <span className="muted">ID: {sub.id}</span>
+                      <span className="muted">{t("admin.client_detail.subscription_id", { id: sub.id })}</span>
                     </div>
                     </article>
                   );
@@ -4916,32 +4982,32 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       {currentTab === "paiements" && paymentModalAction === "add" ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={tabHref(client.id, "paiements")} aria-label="Fermer">
+            <Link className="modal-close-x" href={tabHref(client.id, "paiements")} aria-label={t("common.close")}>
               ×
             </Link>
-            <h3 className="modal-title">Ajouter un achat</h3>
-            <p className="muted">Associer une formule ou un produit au client.</p>
+            <h3 className="modal-title">{t("admin.client_detail.add_purchase_title")}</h3>
+            <p className="muted">{t("admin.client_detail.add_purchase_help")}</p>
             <form action={adminPurchasePlanForClientAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="return_tab" value="paiements" />
               <label>
-                Produit
+                {t("admin.client_detail.product_label")}
                 <select name="plan_id" required defaultValue="">
                   <option value="" disabled>
-                    Selectionner un produit
+                    {t("admin.client_detail.select_product")}
                   </option>
                   {plans.map((plan) => (
                     <option key={plan.id} value={plan.id}>
-                      {plan.name} ({planKindLabel(plan.kind)})
+                      {plan.name} ({planKindLabel(plan.kind, language)})
                     </option>
                   ))}
                 </select>
               </label>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, "paiements")}>
-                  Annuler
+                  {t("common.cancel")}
                 </Link>
-                <button type="submit">Ajouter</button>
+                <button type="submit">{t("admin.client_detail.add")}</button>
               </div>
             </form>
           </article>
@@ -4951,14 +5017,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       {currentTab === "paiements" && openManualTransactionStepOne ? (
         <section className="modal-overlay">
           <article className="modal-panel transaction-wizard-modal">
-            <Link className="modal-close-x" href={manualStepOneBackHref} aria-label="Fermer">
+            <Link className="modal-close-x" href={manualStepOneBackHref} aria-label={t("common.close")}>
               ×
             </Link>
             <header className="transaction-wizard-header">
-              <h3 className="modal-title">Ajouter une transaction</h3>
-              <div className="purchase-wizard-stepper" aria-label="Progression transaction">
-                <span className="active">1. Type & montant</span>
-                <span>2. Affectation & details</span>
+              <h3 className="modal-title">{t("admin.client_detail.transaction_modal_title")}</h3>
+              <div className="purchase-wizard-stepper" aria-label={t("admin.client_detail.transaction_progress_aria")}>
+                <span className="active">{t("admin.client_detail.transaction_step_amount")}</span>
+                <span>{t("admin.client_detail.transaction_step_details")}</span>
               </div>
             </header>
             <form method="get" action={`/admin/clients/${client.id}`} className="grid top-gap-sm transaction-step-form">
@@ -4967,7 +5033,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <input type="hidden" name="manual_step" value="2" />
               <input type="hidden" name="balance_date" value={selectedBalanceDate} />
 
-              <section className="transaction-type-segmented span-2" aria-label="Type de transaction">
+              <section className="transaction-type-segmented span-2" aria-label={t("admin.client_detail.transaction_type_aria")}>
                 {(["payment", "refund", "charge", "discount", "fees"] as ManualTransactionModalType[]).map((type) => (
                   <Link
                     key={`manual-type-${type}`}
@@ -4982,7 +5048,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <input type="hidden" name="manual_type" value={manualTransactionSelectedType} />
 
               <label>
-                {manualIsCashFlow ? "Montant TTC *" : "Montant TTC (optionnel)"}
+                {manualIsCashFlow ? t("admin.client_detail.transaction_amount_required") : t("admin.client_detail.transaction_amount_optional")}
                 <input
                   type="number"
                   name="manual_amount"
@@ -4993,27 +5059,27 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 />
                 {!manualIsCashFlow ? (
                   <small className="muted">
-                    Laisser vide si vous voulez choisir un produit/kit du catalogue a l etape suivante.
+                    {t("admin.client_detail.transaction_catalog_amount_help")}
                   </small>
                 ) : null}
               </label>
               <label>
-                Date *
+                {t("admin.client_detail.transaction_date_required")}
                 <input type="date" name="manual_date" defaultValue={manualDateInputValue} required />
               </label>
 
               {!manualIsCashFlow ? (
                 <label className="transaction-vat-field">
-                  TVA (%) (optionnel)
+                  {t("admin.client_detail.transaction_vat_optional")}
                   <input type="number" name="manual_vat" step="0.001" min="0" max="100" defaultValue={manualVatInputValue || manualVatDefault} />
                 </label>
               ) : null}
 
               <div className="row modal-actions-end transaction-wizard-footer">
                 <Link className="reset-link" href={manualStepOneBackHref}>
-                  Annuler
+                  {t("common.cancel")}
                 </Link>
-                <button type="submit">Continuer</button>
+                <button type="submit">{t("common.continue")}</button>
               </div>
             </form>
           </article>
@@ -5030,35 +5096,40 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 payment_filter_q: paymentFilterQuery,
                 payment_filter_amount: paymentFilterAmountRaw,
               })}
-              aria-label="Fermer"
+              aria-label={t("common.close")}
             >
               ×
             </Link>
-            <h3 className="modal-title">Filtrer les transactions</h3>
-            <p className="muted">Recherche libre (libelle, statut, formule) et/ou montant exact TTC.</p>
+            <h3 className="modal-title">{t("admin.client_detail.filters_title")}</h3>
+            <p className="muted">{t("admin.client_detail.filters_help")}</p>
             <form method="get" action={`/admin/clients/${client.id}`} className="grid top-gap-sm">
               <input type="hidden" name="tab" value="paiements" />
               <input type="hidden" name="balance_date" value={selectedBalanceDate} />
               <label>
-                Recherche
-                <input type="text" name="payment_filter_q" defaultValue={paymentFilterQuery} placeholder="Ex: collectif, inclus formule..." />
+                {t("common.search")}
+                <input
+                  type="text"
+                  name="payment_filter_q"
+                  defaultValue={paymentFilterQuery}
+                  placeholder={t("admin.client_detail.filter_search_placeholder")}
+                />
               </label>
               <label>
-                Montant TTC
+                {t("common.amount")} {t("common.ttc")}
                 <input
                   type="number"
                   name="payment_filter_amount"
                   step="0.01"
                   min="-999999"
                   defaultValue={paymentFilterAmountRaw}
-                  placeholder="Ex: 38.00"
+                  placeholder={t("admin.client_detail.filter_amount_placeholder")}
                 />
               </label>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={paymentsHref(client.id, { balance_date: selectedBalanceDate })}>
-                  Reinitialiser
+                  {t("common.reset")}
                 </Link>
-                <button type="submit">Appliquer</button>
+                <button type="submit">{t("common.apply")}</button>
               </div>
             </form>
           </article>
@@ -5068,18 +5139,18 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       {currentTab === "paiements" && openManualTransactionStepTwo && manualTransactionTypeCode ? (
         <section className="modal-overlay">
           <article className="modal-panel transaction-wizard-modal">
-            <Link className="modal-close-x" href={manualStepOneBackHref} aria-label="Fermer">
+            <Link className="modal-close-x" href={manualStepOneBackHref} aria-label={t("common.close")}>
               ×
             </Link>
             <header className="transaction-wizard-header">
-              <h3 className="modal-title">Ajouter une transaction</h3>
-              <div className="purchase-wizard-stepper" aria-label="Progression transaction">
-                <span>1. Type & montant</span>
-                <span className="active">2. Affectation & details</span>
+              <h3 className="modal-title">{t("admin.client_detail.transaction_modal_title")}</h3>
+              <div className="purchase-wizard-stepper" aria-label={t("admin.client_detail.transaction_progress_aria")}>
+                <span>{t("admin.client_detail.transaction_step_amount")}</span>
+                <span className="active">{t("admin.client_detail.transaction_step_details")}</span>
               </div>
               <p className="muted">
-                Type: <strong>{manualTransactionTitle}</strong> · Montant:{" "}
-                <strong>{manualAmountInputValue ? `${manualAmountInputValue} EUR` : "-"}</strong>
+                {t("common.type")}: <strong>{manualTransactionTitle}</strong> · {t("common.amount")}:{" "}
+                <strong>{manualAmountInputValue ? formatMoney(manualAmountInputValue, client.preferred_currency || "EUR", language) : "-"}</strong>
               </p>
             </header>
             <form action={createAdminClientManualTransactionAction} className="grid top-gap-sm">
@@ -5093,7 +5164,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     <input type="hidden" name="amount_incl_vat" value={manualAmountInputValue} />
                   ) : (
                     <label>
-                      Montant TTC *
+                      {t("admin.client_detail.transaction_amount_required")}
                       <input type="number" name="amount_incl_vat" step="0.01" min="0.01" placeholder="0.00" required />
                     </label>
                   )}
@@ -5102,7 +5173,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               ) : manualNonCashFlowType ? (
                 <ManualTransactionNonCashFlowFields
                   transactionType={manualNonCashFlowType}
-                  amountLabel="Montant TTC *"
+                  amountLabel={t("admin.client_detail.transaction_amount_required")}
                   defaultVatRate={manualVatDefault}
                   initialAmountInclVat={manualAmountInputValue}
                   initialVatRate={manualVatInputValue}
@@ -5111,9 +5182,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 />
               ) : null}
               <label>
-                Etudiant (optionnel)
+                {t("admin.client_detail.student_optional")}
                 <select name="student_id" defaultValue="">
-                  <option value="">(Non precise)</option>
+                  <option value="">{t("admin.client_detail.not_specified")}</option>
                   <option value={client.id}>{fullName || client.email}</option>
                   {family.links_as_adult.map((link) => (
                     <option key={link.child.id} value={link.child.id}>
@@ -5134,41 +5205,52 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <ManualTransactionLegalEntityFields legalEntities={manualTransactionLegalEntities} />
               )}
               <small className="muted span-2">
-                L entite correspond au compte bancaire / PSP concerne. Si une facture est rapprochee, l entite est deduite automatiquement.
+                {t("admin.client_detail.legal_entity_help")}
               </small>
               <label>
-                Libelle (optionnel)
-                <input type="text" name="label" maxLength={255} defaultValue={manualTransactionDefaultLabel} placeholder="Ex: Frais de dossier" />
+                {t("admin.client_detail.label_optional")}
+                <input
+                  type="text"
+                  name="label"
+                  maxLength={255}
+                  defaultValue={manualTransactionDefaultLabel}
+                  placeholder={t("admin.client_detail.fees_label_placeholder")}
+                />
               </label>
               <label>
-                Reference (optionnelle)
-                <input type="text" name="reference" maxLength={120} placeholder="Ex: CHEQUE-1024 / VIREMENT-2026-02" />
+                {t("admin.client_detail.reference_optional")}
+                <input type="text" name="reference" maxLength={120} placeholder={t("admin.client_detail.reference_placeholder")} />
               </label>
               <label>
-                Description (optionnel)
-                <textarea name="description" rows={3} maxLength={2000} placeholder="Ce texte apparaitra dans la facture." />
+                {t("admin.client_detail.description_optional")}
+                <textarea
+                  name="description"
+                  rows={3}
+                  maxLength={2000}
+                  placeholder={t("admin.client_detail.description_invoice_help")}
+                />
               </label>
               {manualIsPayment ? (
                 <>
                   <input type="hidden" name="send_receipt_email" value="off" />
                   <label className="checkline span-2">
                     <input type="checkbox" name="send_receipt_email" value="on" />
-                    Envoyer un recu par courriel (validation manuelle)
+                    {t("admin.client_detail.send_receipt_email")}
                   </label>
                 </>
               ) : null}
               {!manualIsCashFlow && manualChargeCategories.length === 0 ? (
                 <p className="muted">
-                  Aucun produit / kit catalogue disponible. Vous pouvez tout de meme saisir manuellement le montant TTC et la TVA. Configuration dans{" "}
+                  {t("admin.client_detail.no_catalog_items_help")}{" "}
                   <Link className="mode-link" href="/admin/products">
-                    Les produits
+                    {t("admin.client_detail.products_link")}
                   </Link>
                   .
                 </p>
               ) : null}
               <div className="row modal-actions-end transaction-wizard-footer">
                 <Link className="reset-link" href={manualStepTwoBackHref}>
-                  Retour
+                  {t("common.previous")}
                 </Link>
                 <button type="submit">{manualTransactionSubmitLabel}</button>
               </div>
@@ -5180,10 +5262,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       {currentTab === "paiements" && openManualTransactionEditModal && selectedManualTransactionForEdit ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={tabHref(client.id, "paiements")} aria-label="Fermer">
+            <Link className="modal-close-x" href={tabHref(client.id, "paiements")} aria-label={t("common.close")}>
               ×
             </Link>
-            <h3 className="modal-title">Modifier la transaction</h3>
+            <h3 className="modal-title">{t("admin.client_detail.edit_transaction_title")}</h3>
             {selectedManualTransactionForEdit.can_edit ? (
               <form action={updateAdminClientManualTransactionAction} className="grid top-gap-sm">
                 <input type="hidden" name="client_id" value={client.id} />
@@ -5192,9 +5274,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <input type="hidden" name="transaction_type" value={editManualTransactionTypeCode} />
 
                 <label>
-                  Etudiant (optionnel)
+                  {t("admin.client_detail.student_optional")}
                   <select name="student_id" defaultValue={selectedManualTransactionForEdit.student_user_id ?? ""}>
-                    <option value="">(Non precise)</option>
+                    <option value="">{t("admin.client_detail.not_specified")}</option>
                     <option value={client.id}>{fullName || client.email}</option>
                     {family.links_as_adult.map((link) => (
                       <option key={link.child.id} value={link.child.id}>
@@ -5204,16 +5286,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </select>
                 </label>
                 <label>
-                  Date
+                  {t("common.date")}
                   <input type="date" name="occurred_at" defaultValue={editManualOccurredAt} required />
                 </label>
                 <label>
-                  Montant TTC
+                  {t("common.amount")} {t("common.ttc")}
                   <input type="number" name="amount_incl_vat" step="0.01" min="0.01" defaultValue={editManualAmountAbs} required />
                 </label>
                 {!editManualIsPayment ? (
                   <label>
-                    TVA (%)
+                    {t("common.vat")} (%)
                     <input type="number" name="vat_rate" step="0.001" min="0" max="100" defaultValue={editManualVatDefault} required />
                   </label>
                 ) : (
@@ -5234,40 +5316,40 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   />
                 )}
                 <label>
-                  Libelle (optionnel)
+                  {t("admin.client_detail.label_optional")}
                   <input type="text" name="label" maxLength={255} defaultValue={selectedManualTransactionForEdit.label} />
                 </label>
                 <label>
-                  Categorie (optionnelle)
+                  {t("admin.client_detail.category_optional")}
                   <input type="text" name="category" maxLength={120} defaultValue={selectedManualTransactionForEdit.category ?? ""} />
                 </label>
                 <label>
-                  Reference (optionnelle)
+                  {t("admin.client_detail.reference_optional")}
                   <input type="text" name="reference" maxLength={120} defaultValue={selectedManualTransactionForEdit.reference ?? ""} />
                 </label>
                 <label>
-                  Description (optionnel)
+                  {t("admin.client_detail.description_optional")}
                   <textarea name="description" rows={3} maxLength={2000} defaultValue={selectedManualTransactionForEdit.description ?? ""} />
                 </label>
 
                 <div className="row modal-actions-end">
                   <Link className="reset-link" href={tabHref(client.id, "paiements")}>
-                    Annuler
+                    {t("common.cancel")}
                   </Link>
-                  <button type="submit">Enregistrer</button>
+                  <button type="submit">{t("common.save")}</button>
                 </div>
               </form>
             ) : (
               <div className="stack-sm top-gap-sm">
                 <p className="muted">
-                  Cette transaction ne peut plus etre modifiee car elle est liee a une facture non annulee.
+                  {t("admin.client_detail.transaction_locked_help")}
                 </p>
                 {selectedManualTransactionForEdit.locked_by_invoice_number ? (
-                  <p className="muted">Facture: {selectedManualTransactionForEdit.locked_by_invoice_number}</p>
+                  <p className="muted">{t("admin.client_detail.invoice_prefix", { invoice: selectedManualTransactionForEdit.locked_by_invoice_number })}</p>
                 ) : null}
                 <div className="row modal-actions-end">
                   <Link className="reset-link" href={tabHref(client.id, "paiements")}>
-                    Fermer
+                    {t("common.close")}
                   </Link>
                 </div>
               </div>
@@ -5279,18 +5361,18 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       {(currentTab === "paiements" || currentTab === "factures") && paymentModalAction === "invoice_range" ? (
         <section className="modal-overlay">
           <article className="modal-panel invoice-wizard-modal">
-            <Link className="modal-close-x" href={invoiceWizardCloseHref} aria-label="Fermer">
+            <Link className="modal-close-x" href={invoiceWizardCloseHref} aria-label={t("common.close")}>
               ×
             </Link>
             <header className="invoice-wizard-header">
-              <h3 className="modal-title">Nouvelle facture</h3>
+              <h3 className="modal-title">{t("admin.client_detail.new_invoice_title")}</h3>
               {invoiceGenerationMode === "MANUAL" ? (
-                <div className="purchase-wizard-stepper" aria-label="Progression de la facture">
-                  <span className={openInvoiceRangeStepOne ? "active" : ""}>1. Details de la facture</span>
-                  <span className={openInvoiceRangeStepTwo ? "active" : ""}>2. Preferences</span>
+                <div className="purchase-wizard-stepper" aria-label={t("admin.client_detail.invoice_progress_aria")}>
+                  <span className={openInvoiceRangeStepOne ? "active" : ""}>{t("admin.client_detail.invoice_step_details")}</span>
+                  <span className={openInvoiceRangeStepTwo ? "active" : ""}>{t("admin.client_detail.invoice_step_preferences")}</span>
                 </div>
               ) : (
-                <p className="muted">Configuration d une regle de facturation recurrente.</p>
+                <p className="muted">{t("admin.client_detail.invoice_auto_help")}</p>
               )}
             </header>
             <div className="invoice-wizard-body">
@@ -5298,12 +5380,12 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
               <div className="invoice-mode-segmented span-2">
                 <Link className={`invoice-mode-chip ${invoiceGenerationMode === "MANUAL" ? "active" : ""}`} href={invoiceWizardModeHref("MANUAL")}>
-                  <strong>Facture manuelle</strong>
-                  <small className="muted">Saisie unique sur une plage de dates.</small>
+                  <strong>{t("admin.client_detail.invoice_mode_manual_title")}</strong>
+                  <small className="muted">{t("admin.client_detail.invoice_mode_manual_help")}</small>
                 </Link>
                 <Link className={`invoice-mode-chip ${invoiceGenerationMode === "AUTO" ? "active" : ""}`} href={invoiceWizardModeHref("AUTO")}>
-                  <strong>Facturation automatique</strong>
-                  <small className="muted">Configuration d une regle de cycle.</small>
+                  <strong>{t("admin.client_detail.invoice_mode_auto_title")}</strong>
+                  <small className="muted">{t("admin.client_detail.invoice_mode_auto_help")}</small>
                 </Link>
               </div>
 
@@ -5313,7 +5395,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 </section>
               ) : invoiceErrorFields.length > 0 ? (
                 <section className="flash-err invoice-modal-error" role="alert">
-                  Veuillez corriger les champs en erreur.
+                  {t("admin.client_detail.invoice_fix_errors")}
                 </section>
               ) : null}
 
@@ -5336,10 +5418,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <input type="hidden" name="private_note" value={invoicePrivateNote} />
 
                   <article className="card modal-card invoice-wizard-card span-2">
-                    <h4>Cycle</h4>
+                    <h4>{t("admin.client_detail.invoice_section_cycle")}</h4>
                     <div className="grid cols-2">
                       <label>
-                        Date de debut du cycle (obligatoire)
+                        {t("admin.client_detail.invoice_cycle_start_required")}
                         <input
                           type="date"
                           name="auto_cycle_start_date"
@@ -5355,22 +5437,22 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         ) : null}
                       </label>
                       <label>
-                        Frequence (obligatoire)
+                        {t("admin.client_detail.invoice_frequency_required")}
                         <select name="auto_frequency" defaultValue={invoiceAutoFrequency}>
-                          <option value="MONTHLY">Mensuelle</option>
-                          <option value="QUARTERLY">Trimestrielle</option>
-                          <option value="YEARLY">Annuelle</option>
+                          <option value="MONTHLY">{t("admin.client_detail.invoice_frequency_monthly")}</option>
+                          <option value="QUARTERLY">{t("admin.client_detail.invoice_frequency_quarterly")}</option>
+                          <option value="YEARLY">{t("admin.client_detail.invoice_frequency_yearly")}</option>
                         </select>
                       </label>
                       <label>
-                        Mode de facturation (obligatoire)
+                        {t("admin.client_detail.invoice_billing_mode_required")}
                         <select name="auto_billing_timing" defaultValue={invoiceAutoBillingTiming}>
-                          <option value="UPCOMING_LESSONS">Lecons a venir</option>
-                          <option value="PREVIOUS_LESSONS">Lecons passees</option>
+                          <option value="UPCOMING_LESSONS">{t("admin.client_detail.invoice_billing_upcoming")}</option>
+                          <option value="PREVIOUS_LESSONS">{t("admin.client_detail.invoice_billing_previous")}</option>
                         </select>
                       </label>
                       <label>
-                        Entite legale emettrice (obligatoire)
+                        {t("admin.client_detail.invoice_legal_entity_required")}
                         <select
                           name="auto_legal_entity_id"
                           defaultValue={invoiceAutoLegalEntityIdInputValue}
@@ -5378,7 +5460,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                           data-invalid={invoiceFieldInvalid("auto_legal_entity_id") ? "true" : undefined}
                           autoFocus={invoiceFieldAutoFocus("auto_legal_entity_id")}
                         >
-                          <option value="">Selectionner</option>
+                          <option value="">{t("admin.quote_config.select_option")}</option>
                           {legalEntities.map((entity) => (
                             <option key={entity.id} value={entity.id}>
                               {entity.name}
@@ -5395,17 +5477,17 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </article>
 
                   <article className="card modal-card invoice-wizard-card span-2">
-                    <h4>Echeance</h4>
+                    <h4>{t("admin.client_detail.invoice_due_section")}</h4>
                     <div className="grid cols-2">
                       <label>
-                        Regle d echeance (obligatoire)
+                        {t("admin.client_detail.invoice_due_rule_required")}
                         <select name="auto_due_date_rule_type" defaultValue={invoiceAutoDueDateRuleType}>
-                          <option value="SAME_DAY_ISSUE">Meme jour que l emission</option>
-                          <option value="X_DAYS_AFTER_ISSUE">X jours apres l emission</option>
+                          <option value="SAME_DAY_ISSUE">{t("admin.client_detail.invoice_due_same_day")}</option>
+                          <option value="X_DAYS_AFTER_ISSUE">{t("admin.client_detail.invoice_due_after_days")}</option>
                         </select>
                       </label>
                       <label>
-                        Nombre de jours (si regle X jours)
+                        {t("admin.client_detail.invoice_due_days_label")}
                         <input
                           type="number"
                           name="auto_due_date_days_offset"
@@ -5427,40 +5509,47 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </article>
 
                   <article className="card modal-card invoice-wizard-card span-2">
-                    <h4>Contenu</h4>
+                    <h4>{t("admin.client_detail.invoice_content_section")}</h4>
                     <div className="grid cols-2">
                       <label>
-                        Lignes en attente
+                        {t("admin.client_detail.invoice_pending_lines")}
                         <select name="include_pending" defaultValue={invoiceIncludePending ? "true" : "false"}>
-                          <option value="true">Inclure</option>
-                          <option value="false">Exclure</option>
+                          <option value="true">{t("admin.client_detail.invoice_include")}</option>
+                          <option value="false">{t("admin.client_detail.invoice_exclude")}</option>
                         </select>
                       </label>
                       <label>
-                        Lignes annulees
+                        {t("admin.client_detail.invoice_cancelled_lines")}
                         <select name="include_cancelled" defaultValue={invoiceIncludeCancelled ? "true" : "false"}>
-                          <option value="false">Exclure</option>
-                          <option value="true">Inclure</option>
+                          <option value="false">{t("admin.client_detail.invoice_exclude")}</option>
+                          <option value="true">{t("admin.client_detail.invoice_include")}</option>
                         </select>
                       </label>
                     </div>
                   </article>
 
                   <article className="card modal-card invoice-wizard-card span-2">
-                    <h4>Apercu</h4>
+                    <h4>{t("admin.client_detail.invoice_preview_section")}</h4>
                     <div className="grid cols-2">
-                      <p>Prochaine date de generation: <strong>{formatDateInputLabel(invoiceAutoNextRunInputValue)}</strong></p>
+                      <p>{t("admin.client_detail.invoice_preview_next_run", { date: formatDateInputLabel(invoiceAutoNextRunInputValue, language) })}</p>
                       <p>
-                        Periode couverte:{" "}
-                        <strong>
-                          {formatDateInputLabel(invoiceAutoPreviewPeriodInputValues.startDate)} -{" "}
-                          {formatDateInputLabel(invoiceAutoPreviewPeriodInputValues.endDate)}
-                        </strong>
+                        {t("admin.client_detail.invoice_preview_period", {
+                          start: formatDateInputLabel(invoiceAutoPreviewPeriodInputValues.startDate, language),
+                          end: formatDateInputLabel(invoiceAutoPreviewPeriodInputValues.endDate, language),
+                        })}
                       </p>
-                      <p>Date d echeance calculee: <strong>{formatDateInputLabel(invoiceAutoPreviewDueDateInputValue)}</strong></p>
                       <p>
-                        Mode:{" "}
-                        <strong>{invoiceAutoBillingTiming === "PREVIOUS_LESSONS" ? "Lecons passees" : "Lecons a venir"}</strong>
+                        {t("admin.client_detail.invoice_preview_due", {
+                          date: formatDateInputLabel(invoiceAutoPreviewDueDateInputValue, language),
+                        })}
+                      </p>
+                      <p>
+                        {t("admin.client_detail.invoice_preview_mode", {
+                          mode:
+                            invoiceAutoBillingTiming === "PREVIOUS_LESSONS"
+                              ? t("admin.client_detail.invoice_billing_previous")
+                              : t("admin.client_detail.invoice_billing_upcoming"),
+                        })}
                       </p>
                     </div>
                   </article>
@@ -5491,9 +5580,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <input type="hidden" name="private_note" value={invoicePrivateNote} />
 
                   <article className="card modal-card invoice-wizard-card span-2">
-                    <h4>Date de la facture</h4>
+                    <h4>{t("admin.client_detail.invoice_date_section")}</h4>
                     <label>
-                      Date d emission (obligatoire)
+                      {t("admin.client_detail.invoice_issue_date_required")}
                       <input
                         type="date"
                         name="issued_date"
@@ -5511,10 +5600,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </article>
 
                   <article className="card modal-card invoice-wizard-card span-2">
-                    <h4>Contenu et periode</h4>
+                    <h4>{t("admin.client_detail.invoice_content_period_section")}</h4>
                     <div className="grid cols-2">
                       <label>
-                        Date de debut
+                        {t("admin.client_detail.invoice_start_date")}
                         <input
                           type="date"
                           name="start_date"
@@ -5530,7 +5619,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         ) : null}
                       </label>
                       <label>
-                        Date de fin
+                        {t("admin.client_detail.invoice_end_date")}
                         <input
                           type="date"
                           name="end_date"
@@ -5546,7 +5635,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         ) : null}
                       </label>
                       <label>
-                        Date d echeance
+                        {t("admin.client_detail.invoice_due_date")}
                         <input
                           type="date"
                           name="due_date"
@@ -5563,20 +5652,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       </label>
                       <label className="checkbox">
                         <input type="checkbox" name="no_due_date" value="true" defaultChecked={invoiceNoDueDate} />
-                        Pas de date d echeance (meme date que l emission)
+                        {t("admin.client_detail.invoice_no_due_date")}
                       </label>
                       <label>
-                        Lignes en attente
+                        {t("admin.client_detail.invoice_pending_lines")}
                         <select name="include_pending" defaultValue={invoiceIncludePending ? "true" : "false"}>
-                          <option value="true">Inclure</option>
-                          <option value="false">Exclure</option>
+                          <option value="true">{t("admin.client_detail.invoice_include")}</option>
+                          <option value="false">{t("admin.client_detail.invoice_exclude")}</option>
                         </select>
                       </label>
                       <label>
-                        Lignes annulees
+                        {t("admin.client_detail.invoice_cancelled_lines")}
                         <select name="include_cancelled" defaultValue={invoiceIncludeCancelled ? "true" : "false"}>
-                          <option value="false">Exclure</option>
-                          <option value="true">Inclure</option>
+                          <option value="false">{t("admin.client_detail.invoice_exclude")}</option>
+                          <option value="true">{t("admin.client_detail.invoice_include")}</option>
                         </select>
                       </label>
                     </div>
@@ -5605,27 +5694,27 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <input type="hidden" name="auto_legal_entity_id" value={invoiceAutoLegalEntityIdInputValue} />
 
                   <article className="card modal-card invoice-wizard-card span-2">
-                    <h4>Style d affichage</h4>
+                    <h4>{t("admin.client_detail.invoice_display_style_section")}</h4>
                     <label>
-                      Style de facture
+                      {t("admin.client_detail.invoice_style_label")}
                       <select name="layout" defaultValue={invoiceLayout}>
-                        <option value="DETAILED">Normal: chaque prestation sur sa propre ligne</option>
-                        <option value="COMPILED">Condense: prestations identiques regroupees</option>
+                        <option value="DETAILED">{t("admin.client_detail.invoice_style_detailed")}</option>
+                        <option value="COMPILED">{t("admin.client_detail.invoice_style_compiled")}</option>
                       </select>
                     </label>
                   </article>
 
                   <article className="card modal-card invoice-wizard-card span-2">
-                    <h4>Preferences</h4>
+                    <h4>{t("admin.client_detail.invoice_preferences_section")}</h4>
                     <input type="hidden" name="group_adjustments_by_type" value="off" />
                     <label className="checkbox">
                       <input type="checkbox" name="group_adjustments_by_type" value="on" defaultChecked={invoiceGroupAdjustmentsByType} />
-                      Regrouper les remises/supplements par type
+                      {t("admin.client_detail.invoice_group_adjustments")}
                     </label>
                     <input type="hidden" name="include_discount_adjustments" value="off" />
                     <label className="checkbox">
                       <input type="checkbox" name="include_discount_adjustments" value="on" defaultChecked={invoiceIncludeDiscountAdjustments} />
-                      Inclure les remises (fidelite, famille)
+                      {t("admin.client_detail.invoice_include_discounts")}
                     </label>
                     <input type="hidden" name="include_supplement_adjustments" value="off" />
                     <label className="checkbox">
@@ -5635,30 +5724,30 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         value="on"
                         defaultChecked={invoiceIncludeSupplementAdjustments}
                       />
-                      Inclure les supplements
+                      {t("admin.client_detail.invoice_include_supplements")}
                     </label>
                   </article>
 
                   <article className="card modal-card invoice-wizard-card span-2">
-                    <h4>Notes</h4>
+                    <h4>{t("common.notes")}</h4>
                     <label>
-                      Note publique (optionnel)
+                      {t("admin.client_detail.invoice_public_note_optional")}
                       <textarea
                         name="public_note"
                         rows={3}
                         maxLength={2000}
                         defaultValue={invoicePublicNote}
-                        placeholder="Cette note apparaitra en bas de la facture."
+                        placeholder={t("admin.client_detail.invoice_public_note_placeholder")}
                       />
                     </label>
                     <label>
-                      Note privee (optionnel)
+                      {t("admin.client_detail.invoice_private_note_optional")}
                       <textarea
                         name="private_note"
                         rows={3}
                         maxLength={2000}
                         defaultValue={invoicePrivateNote}
-                        placeholder="Visible uniquement dans le back-office (admin/comptable)."
+                        placeholder={t("admin.client_detail.invoice_private_note_placeholder")}
                       />
                     </label>
                   </article>
@@ -5668,23 +5757,23 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
             <footer className="row spread invoice-wizard-footer">
               <Link className="reset-link" href={invoiceWizardCloseHref}>
-                Annuler
+                {t("common.cancel")}
               </Link>
               {invoiceGenerationMode === "AUTO" ? (
                 <button type="submit" form="invoice-wizard-form-main">
-                  Enregistrer la regle automatique
+                  {t("admin.client_detail.invoice_save_auto_rule")}
                 </button>
               ) : openInvoiceRangeStepOne ? (
                 <button type="submit" form="invoice-wizard-form-main">
-                  Suivant
+                  {t("common.next")}
                 </button>
               ) : (
                 <div className="row modal-actions-end">
                   <Link className="reset-link" href={invoiceWizardBackToStepOneHref}>
-                    Precedent
+                    {t("common.previous")}
                   </Link>
                   <button type="submit" form="invoice-wizard-form-main">
-                    Creer la facture
+                    {t("admin.client_detail.invoice_create")}
                   </button>
                 </div>
               )}
@@ -5698,37 +5787,39 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       selectedRangeInvoiceForModal ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={tabHref(client.id, paymentReturnTab)} aria-label="Fermer">
+            <Link className="modal-close-x" href={tabHref(client.id, paymentReturnTab)} aria-label={t("common.close")}>
               ×
             </Link>
-            <h3 className="modal-title">Courriel facture</h3>
-            <p className="muted">Facture {selectedRangeInvoiceForModal.invoiceNumber}. Vous pouvez modifier destinataires, objet et message.</p>
+            <h3 className="modal-title">{t("admin.client_detail.invoice_email_title")}</h3>
+            <p className="muted">
+              {t("admin.client_detail.invoice_email_help", { invoice: selectedRangeInvoiceForModal.invoiceNumber })}
+            </p>
             <form action={sendAdminClientRangeInvoiceEmailAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="note_id" value={selectedRangeInvoiceForModal.noteId} />
               <input type="hidden" name="return_tab" value={paymentReturnTab} />
               <label>
-                Type d envoi
+                {t("admin.client_detail.invoice_send_type")}
                 <select name="kind" defaultValue={invoiceEmailKind}>
-                  <option value="INVOICE">Facture</option>
-                  <option value="REMINDER">Relance facture</option>
+                  <option value="INVOICE">{t("admin.client_detail.invoice_send_type_invoice")}</option>
+                  <option value="REMINDER">{t("admin.client_detail.invoice_send_type_reminder")}</option>
                 </select>
               </label>
               <label className="span-2">
-                Destinataires (un email par ligne)
+                {t("admin.client_detail.invoice_recipients_help")}
                 <textarea
                   name="to_emails"
                   rows={3}
                   defaultValue={(invoiceEmailPreview?.to_emails ?? []).join("\n")}
-                  placeholder="client@exemple.com"
+                  placeholder={t("admin.client_detail.email_placeholder")}
                 />
               </label>
               <label className="span-2">
-                Objet
+                {t("common.subject")}
                 <input type="text" name="subject" maxLength={255} defaultValue={invoiceEmailPreview?.subject ?? ""} />
               </label>
               <label className="span-2">
-                Message
+                {t("common.message")}
                 <RichMessageEditor
                   name="body"
                   formatName="body_format"
@@ -5736,14 +5827,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   defaultFormat={invoiceEmailPreview?.body_format ?? "TEXT"}
                   rows={12}
                   maxLength={20000}
-                  placeholder="Contenu du courriel"
+                  placeholder={t("admin.client_detail.email_body_placeholder")}
                 />
               </label>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, paymentReturnTab)}>
-                  Annuler
+                  {t("common.cancel")}
                 </Link>
-                <button type="submit">Envoyer</button>
+                <button type="submit">{t("common.send")}</button>
               </div>
             </form>
           </article>
@@ -5753,12 +5844,12 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       {(currentTab === "paiements" || currentTab === "factures") && selectedPaymentForModal ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={tabHref(client.id, paymentReturnTab)} aria-label="Fermer">
+            <Link className="modal-close-x" href={tabHref(client.id, paymentReturnTab)} aria-label={t("common.close")}>
               ×
             </Link>
-            <h3 className="modal-title">Rembourser le paiement</h3>
+            <h3 className="modal-title">{t("admin.client_detail.refund_payment_title")}</h3>
             <p className="muted">
-              {selectedPaymentForModal.label} | {formatMoney(selectedPaymentForModal.total_incl_vat, selectedPaymentForModal.currency)}
+              {selectedPaymentForModal.label} | {formatMoney(selectedPaymentForModal.total_incl_vat, selectedPaymentForModal.currency, language)}
             </p>
             <form action={refundAdminClientPaymentAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
@@ -5766,15 +5857,15 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <input type="hidden" name="payment_id" value={selectedPaymentForModal.id} />
               <input type="hidden" name="return_tab" value={paymentReturnTab} />
               <label>
-                Motif (optionnel)
-                <textarea name="reason" rows={3} maxLength={1000} placeholder="Ex: remboursement commercial" />
+                {t("admin.client_detail.refund_reason_optional")}
+                <textarea name="reason" rows={3} maxLength={1000} placeholder={t("admin.client_detail.refund_reason_placeholder")} />
               </label>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, paymentReturnTab)}>
-                  Annuler
+                  {t("common.cancel")}
                 </Link>
                 <button type="submit" className="danger">
-                  Confirmer le remboursement
+                  {t("admin.client_detail.refund_confirm")}
                 </button>
               </div>
             </form>
