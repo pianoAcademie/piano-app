@@ -60,7 +60,9 @@ import type {
   AdminSessionOut,
   LocationOut,
   PlanOut,
+  UserOut,
 } from "../../../../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type QuoteWorkspaceSection =
@@ -295,8 +297,10 @@ function messagingTemplateRef(template: AdminMessagingTemplateOut): string {
   return `custom:${template.id}`;
 }
 
-function messagingTemplateOptionLabel(template: AdminMessagingTemplateOut): string {
-  const suffix = template.kind === "PREDEFINED" ? "Systeme" : "Personnalise";
+function messagingTemplateOptionLabel(template: AdminMessagingTemplateOut, language: UiLanguage = "fr"): string {
+  const suffix = template.kind === "PREDEFINED"
+    ? uiText(language, "admin.quote_detail.template_system")
+    : uiText(language, "admin.quote_detail.template_custom");
   return `${template.name} · ${suffix}`;
 }
 
@@ -439,7 +443,7 @@ function buildQuoteTransformationFailureUi(
   };
 }
 
-function formatDate(value: string | null): string {
+function formatDate(value: string | null, language: UiLanguage = "fr"): string {
   if (!value) {
     return "-";
   }
@@ -447,16 +451,16 @@ function formatDate(value: string | null): string {
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return parsed.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+  return parsed.toLocaleString(localeForUiLanguage(language), { dateStyle: "short", timeStyle: "short" });
 }
 
-function formatAmount(value: string, currency: string): string {
+function formatAmount(value: string, currency: string, language: UiLanguage = "fr"): string {
   const amount = Number(value);
   if (!Number.isFinite(amount)) {
     return `${value} ${currency}`;
   }
   try {
-    return new Intl.NumberFormat("fr-FR", { style: "currency", currency: currency || "EUR" }).format(amount);
+    return new Intl.NumberFormat(localeForUiLanguage(language), { style: "currency", currency: currency || "EUR" }).format(amount);
   } catch {
     return `${amount.toFixed(2)} ${(currency || "EUR").toUpperCase()}`;
   }
@@ -477,58 +481,60 @@ function isSolfegeActivityName(value: string | null | undefined): boolean {
     .includes("solfege");
 }
 
-function paymentMethodLabel(methodCode: string): string {
+function paymentMethodLabel(methodCode: string, language: UiLanguage = "fr"): string {
   const normalized = String(methodCode || "").trim().toUpperCase();
-  if (normalized === "CARD") return "Carte bancaire";
-  if (normalized === "CARD_MONTHLY") return "Carte bancaire mensuelle";
-  if (normalized === "CHECK") return "Cheque";
-  if (normalized === "BANK_TRANSFER") return "Virement bancaire";
-  if (normalized === "CASH") return "Especes";
-  if (normalized === "CARD_4X_FEES") return "4 fois avec frais";
+  if (normalized === "CARD") return uiText(language, "admin.quote_detail.payment_method_card");
+  if (normalized === "CARD_MONTHLY") return uiText(language, "admin.quote_detail.payment_method_card_monthly");
+  if (normalized === "CHECK") return uiText(language, "admin.quote_detail.payment_method_check");
+  if (normalized === "BANK_TRANSFER") return uiText(language, "admin.quote_detail.payment_method_bank_transfer");
+  if (normalized === "CASH") return uiText(language, "admin.quote_detail.payment_method_cash");
+  if (normalized === "CARD_4X_FEES") return uiText(language, "admin.quote_detail.payment_method_card_4x_fees");
   if (!normalized) return "-";
   return normalized;
 }
 
-function labelForContext(contextType: string): string {
-  return contextType === "active_client" ? "Client actif" : "Acquisition";
+function labelForContext(contextType: string, language: UiLanguage = "fr"): string {
+  return contextType === "active_client"
+    ? uiText(language, "admin.quotes.context_active_client")
+    : uiText(language, "admin.quotes.context_acquisition");
 }
 
-function labelForProspectType(value: string): string {
+function labelForProspectType(value: string, language: UiLanguage = "fr"): string {
   const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "child") return "Enfant";
-  if (normalized === "adult") return "Adulte";
+  if (normalized === "child") return uiText(language, "admin.quote_detail.prospect_type_child");
+  if (normalized === "adult") return uiText(language, "admin.quote_detail.prospect_type_adult");
   return "-";
 }
 
-function labelForClientKind(value: string | null | undefined): string {
+function labelForClientKind(value: string | null | undefined, language: UiLanguage = "fr"): string {
   const normalized = String(value || "").trim().toUpperCase();
-  if (normalized === "CHILD") return "Enfant";
-  if (normalized === "ADULT") return "Adulte";
+  if (normalized === "CHILD") return uiText(language, "admin.quote_detail.prospect_type_child");
+  if (normalized === "ADULT") return uiText(language, "admin.quote_detail.prospect_type_adult");
   return "-";
 }
 
-function labelForQuoteStatus(value: string | null | undefined): string {
+function labelForQuoteStatus(value: string | null | undefined, language: UiLanguage = "fr"): string {
   const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "created") return "Brouillon";
-  if (normalized === "sent") return "Envoye";
-  if (normalized === "approved") return "Approuve";
-  if (normalized === "rejected") return "Refuse";
-  if (normalized === "change_requested") return "Modification demandee";
-  if (normalized === "cancelled") return "Annule";
-  if (normalized === "expired") return "Expire";
+  if (normalized === "created") return uiText(language, "admin.quotes.status_created");
+  if (normalized === "sent") return uiText(language, "admin.quotes.status_sent");
+  if (normalized === "approved") return uiText(language, "admin.quotes.status_approved");
+  if (normalized === "rejected") return uiText(language, "admin.quotes.status_rejected");
+  if (normalized === "change_requested") return uiText(language, "admin.quotes.validation.modification_demandee");
+  if (normalized === "cancelled") return uiText(language, "admin.quotes.status_cancelled");
+  if (normalized === "expired") return uiText(language, "admin.quotes.status_expired");
   return normalized || "-";
 }
 
-function displayName(firstName: string | null, lastName: string | null, fallback: string | null): string {
+function displayName(firstName: string | null, lastName: string | null, fallback: string | null, language: UiLanguage = "fr"): string {
   const value = [firstName, lastName].filter(Boolean).join(" ").trim();
-  return value || fallback || "Client";
+  return value || fallback || uiText(language, "admin.quote_detail.default_client");
 }
 
-function locationNameById(locations: LocationOut[], locationId: string | null): string {
+function locationNameById(locations: LocationOut[], locationId: string | null, language: UiLanguage = "fr"): string {
   if (!locationId) {
-    return "Lieu non defini";
+    return uiText(language, "admin.quote_detail.location_not_defined");
   }
-  return locations.find((row) => row.id === locationId)?.name || "Lieu non defini";
+  return locations.find((row) => row.id === locationId)?.name || uiText(language, "admin.quote_detail.location_not_defined");
 }
 
 function getScheduleItems(snapshot: Record<string, unknown>): Array<Record<string, unknown>> {
@@ -1004,14 +1010,14 @@ function adjustmentSignedAmount(adjustment: QuoteFinancialAdjustment): number {
   return 0;
 }
 
-function adjustmentTypeLabel(type: QuoteFinancialAdjustment["type"]): string {
+function adjustmentTypeLabel(type: QuoteFinancialAdjustment["type"], language: UiLanguage = "fr"): string {
   if (type === "credit") {
-    return "Avoir";
+    return uiText(language, "admin.quote_detail.adjustment_credit");
   }
   if (type === "debt") {
-    return "Dette";
+    return uiText(language, "admin.quote_detail.adjustment_debt");
   }
-  return "Aucun";
+  return uiText(language, "admin.quote_detail.none");
 }
 
 function parseQuotePreRegistrationDeposit(meta: Record<string, unknown>): QuotePreRegistrationDeposit {
@@ -1059,46 +1065,53 @@ function commercialStateFromQuote(quote: QuoteOut): QuoteValidationUiState {
   return "incomplet";
 }
 
-function commercialStateLabel(state: QuoteValidationUiState): string {
-  if (state === "brouillon") return "Brouillon";
-  if (state === "incomplet") return "Incomplet";
-  if (state === "pret_a_envoyer") return "Pret a envoyer";
-  if (state === "envoye") return "Envoye";
-  if (state === "consulte") return "Consulte";
-  if (state === "modification_demandee") return "Modification demandee";
-  if (state === "valide") return "Valide";
-  if (state === "refuse") return "Refuse";
-  return "Expire";
+function commercialStateLabel(state: QuoteValidationUiState, language: UiLanguage = "fr"): string {
+  const key = {
+    brouillon: "admin.quotes.validation.brouillon",
+    incomplet: "admin.quotes.validation.incomplet",
+    pret_a_envoyer: "admin.quotes.validation.pret_a_envoyer",
+    envoye: "admin.quotes.validation.envoye",
+    consulte: "admin.quotes.validation.consulte",
+    modification_demandee: "admin.quotes.validation.modification_demandee",
+    valide: "admin.quotes.validation.valide",
+    refuse: "admin.quotes.validation.refuse",
+    expire: "admin.quotes.validation.expire",
+  }[state];
+  return uiText(language, key);
 }
 
-function validationClientLabelFromQuote(quote: QuoteOut): string {
+function validationClientLabelFromQuote(quote: QuoteOut, language: UiLanguage = "fr"): string {
   const status = String(quote.status || "").trim().toLowerCase();
   if (status === "approved") {
-    return "Valide";
+    return uiText(language, "admin.quotes.validation.valide");
   }
   if (status === "change_requested") {
-    return "Modification demandee";
+    return uiText(language, "admin.quotes.validation.modification_demandee");
   }
   if (status === "rejected") {
-    return "Refuse";
+    return uiText(language, "admin.quotes.validation.refuse");
   }
-  return "En attente";
+  return uiText(language, "admin.quote_detail.pending");
 }
 
-function validationClientDateLabelFromQuote(quote: QuoteOut): string {
+function validationClientDateLabelFromQuote(quote: QuoteOut, language: UiLanguage = "fr"): string {
   const status = String(quote.status || "").trim().toLowerCase();
   const meta = quote.meta || {};
   const lastPublicResponseAt = readStringMeta(meta, "public_response_last_at", "");
   if (status === "approved") {
-    return formatDate(quote.approved_at);
+    return formatDate(quote.approved_at, language);
   }
   if (status === "change_requested") {
-    return lastPublicResponseAt ? `Recue le ${formatDate(lastPublicResponseAt)}` : "Recue";
+    return lastPublicResponseAt
+      ? uiText(language, "admin.quotes.received_on", { date: formatDate(lastPublicResponseAt, language) })
+      : uiText(language, "admin.quote_detail.received");
   }
   if (status === "rejected") {
-    return lastPublicResponseAt ? `Refuse le ${formatDate(lastPublicResponseAt)}` : "Refuse";
+    return lastPublicResponseAt
+      ? uiText(language, "admin.quote_detail.rejected_on", { date: formatDate(lastPublicResponseAt, language) })
+      : uiText(language, "admin.quotes.validation.refuse");
   }
-  return "En attente";
+  return uiText(language, "admin.quote_detail.pending");
 }
 
 const QUOTE_INTERACTION_EVENT_TYPES = new Set([
@@ -1251,14 +1264,17 @@ function integrationStateFromQuote(
   return "a_preparer";
 }
 
-function integrationStateLabel(state: QuoteIntegrationUiState): string {
-  if (state === "non_concerne") return "Non concerne";
-  if (state === "en_attente_validation_client") return "En attente validation client";
-  if (state === "a_preparer") return "A preparer";
-  if (state === "a_verifier") return "A verifier";
-  if (state === "pret_a_integrer") return "Pret a integrer";
-  if (state === "integre") return "Integre";
-  return "Erreur integration";
+function integrationStateLabel(state: QuoteIntegrationUiState, language: UiLanguage = "fr"): string {
+  const key = {
+    non_concerne: "admin.quotes.integration.non_concerne",
+    en_attente_validation_client: "admin.quotes.integration.en_attente_validation_client",
+    a_preparer: "admin.quotes.integration.a_preparer",
+    a_verifier: "admin.quotes.integration.a_verifier",
+    pret_a_integrer: "admin.quotes.integration.pret_a_integrer",
+    integre: "admin.quotes.integration.integre",
+    erreur_integration: "admin.quotes.integration.erreur_integration",
+  }[state];
+  return uiText(language, key);
 }
 
 export default async function AdminQuoteDetailPage({ params, searchParams }: RouteParams): Promise<JSX.Element> {
@@ -1266,6 +1282,12 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const quoteId = String(params.quoteId || "").trim();
   if (!quoteId) {
@@ -1350,10 +1372,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     return (
       <section className="admin-page-grid">
         <section className="card">
-          <h2>Detail devis</h2>
+          <h2>{t("admin.quote_detail.page_title")}</h2>
           <p className="flash-err">{detailResult.message}</p>
           <div className="row top-gap-sm">
-            <Link className="ghost" href={backPath}>Retour liste devis</Link>
+            <Link className="ghost" href={backPath}>{t("admin.quote_detail.back_to_quotes")}</Link>
           </div>
         </section>
       </section>
@@ -1500,7 +1522,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     : selectedClient;
 
   const ownerName = owner
-    ? displayName(owner.first_name, owner.last_name, owner.email)
+    ? displayName(owner.first_name, owner.last_name, owner.email, language)
     : "-";
   const ownerPhone = selectedProspect?.phone
     || selectedClient?.mobile_phone_1
@@ -1509,8 +1531,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     || "-";
   const prospectMeta = readObject(selectedProspect?.meta) || {};
   const prospectType = String(prospectMeta.prospect_type ?? "").trim().toLowerCase();
-  const prospectTypeLabel = labelForProspectType(prospectType);
-  const clientKindLabel = labelForClientKind(selectedClient?.client_kind);
+  const prospectTypeLabel = labelForProspectType(prospectType, language);
+  const clientKindLabel = labelForClientKind(selectedClient?.client_kind, language);
   const sourceTypeLabel = prospectTypeLabel !== "-" ? prospectTypeLabel : clientKindLabel;
   const sourceTypeOrigin = prospectTypeLabel !== "-" ? "prospect" : clientKindLabel !== "-" ? "client" : "inconnu";
   const isChildSource = prospectType === "child" || selectedClient?.client_kind === "CHILD";
@@ -1519,7 +1541,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     ? displayName(
       typeof parentReferent.first_name === "string" ? parentReferent.first_name : null,
       typeof parentReferent.last_name === "string" ? parentReferent.last_name : null,
-      typeof parentReferent.email === "string" ? parentReferent.email : "Parent referent",
+      typeof parentReferent.email === "string" ? parentReferent.email : t("admin.quote_detail.parent_referent"),
+      language,
     )
     : "-";
   const parentReferentEmail = parentReferent && typeof parentReferent.email === "string" ? parentReferent.email : "-";
@@ -1529,15 +1552,15 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     ? [
       ...clientFamily.links_as_adult.map((link) => ({
         key: `adult-${link.id}`,
-        role: "Enfant rattache",
-        personName: displayName(link.child.first_name, link.child.last_name, link.child.email),
+        role: t("admin.quote_detail.linked_child"),
+        personName: displayName(link.child.first_name, link.child.last_name, link.child.email, language),
         personEmail: link.child.email,
         billing: link.is_billing_recipient,
       })),
       ...clientFamily.links_as_child.map((link) => ({
         key: `child-${link.id}`,
-        role: "Adulte rattache",
-        personName: displayName(link.adult.first_name, link.adult.last_name, link.adult.email),
+        role: t("admin.quote_detail.linked_adult"),
+        personName: displayName(link.adult.first_name, link.adult.last_name, link.adult.email, language),
         personEmail: link.adult.email,
         billing: link.is_billing_recipient,
       })),
@@ -1553,6 +1576,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
         inferredParentFromFamily.adult.first_name,
         inferredParentFromFamily.adult.last_name,
         inferredParentFromFamily.adult.email,
+        language,
       )
       : "-";
   const resolvedParentReferentEmail = parentReferentEmail !== "-"
@@ -1571,8 +1595,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const publicResponseLastMessage = readStringMeta(detail.quote.meta || {}, "public_response_last_message", "");
   const publicResponseLastAt = readStringMeta(detail.quote.meta || {}, "public_response_last_at", "");
   const hasPublicChangeRequest = quoteStatus === "change_requested" || publicResponseLastAction === "change_requested";
-  const publicChangeRequestReceivedLabel = publicResponseLastAt ? formatDate(publicResponseLastAt) : "Date non disponible";
-  const publicChangeRequestMessage = publicResponseLastMessage || "Le client a demande une modification sans laisser de message detaille.";
+  const publicChangeRequestReceivedLabel = publicResponseLastAt
+    ? formatDate(publicResponseLastAt, language)
+    : t("admin.quote_detail.date_not_available");
+  const publicChangeRequestMessage = publicResponseLastMessage || t("admin.quote_detail.public_change_request_fallback");
   const canSendQuote = quoteStatus === "created";
   const canResendQuote = ["sent", "approved", "rejected", "expired", "change_requested"].includes(quoteStatus);
   const canCancelQuote = !["cancelled", "approved"].includes(quoteStatus);
@@ -1582,8 +1608,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     restoreTargetStatusRaw === "sent" || restoreTargetStatusRaw === "change_requested"
       ? restoreTargetStatusRaw
       : "sent";
-  const restoreTargetStatusLabel = labelForQuoteStatus(restoreTargetStatus);
-  const primaryRecipientLabel = detail.quote.context_type === "acquisition" ? "prospect" : "client";
+  const restoreTargetStatusLabel = labelForQuoteStatus(restoreTargetStatus, language);
+  const primaryRecipientLabel = detail.quote.context_type === "acquisition"
+    ? t("admin.quote_detail.primary_recipient_prospect")
+    : t("admin.quote_detail.primary_recipient_client");
   const ownerEmail = String(owner?.email || "").trim().toLowerCase();
   const lastRecipientEmail = readStringMeta(detail.quote.meta || {}, "recipient_email", "").trim().toLowerCase();
   const lastRecipientPhone = readStringMeta(detail.quote.meta || {}, "recipient_phone", "").trim();
@@ -1607,8 +1635,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const defaultCancelSmsTemplateRef =
     messagingSettings?.quote_cancel_sms_template_ref ||
     (quoteCancelSmsTemplates[0] ? messagingTemplateRef(quoteCancelSmsTemplates[0]) : "");
-  const validationClientStatusLabel = validationClientLabelFromQuote(detail.quote);
-  const validationClientStatusDetail = validationClientDateLabelFromQuote(detail.quote);
+  const validationClientStatusLabel = validationClientLabelFromQuote(detail.quote, language);
+  const validationClientStatusDetail = validationClientDateLabelFromQuote(detail.quote, language);
   const quoteLanguage = readStringMeta(detail.quote.meta || {}, "language", "fr").toLowerCase();
   const quoteTemplateId = detail.quote.quote_template_id || readStringMeta(detail.quote.meta || {}, "quote_template_uuid");
   const interactionEvents = Array.isArray(detail.events)
@@ -1763,7 +1791,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     }
     paymentMethodOptionsByCode.set(code, {
       code,
-      label: paymentMethodLabel(code),
+      label: paymentMethodLabel(code, language),
       sourcePlans: [row.name],
     });
   }
@@ -1839,25 +1867,25 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const quickScenarioLinks = [
     {
       key: "live" as const,
-      label: "Live",
+      label: t("admin.quote_detail.quick_transform.scenario_live"),
       href: sectionHref("integration"),
       active: quickScenario === "live",
     },
     {
       key: "A" as const,
-      label: "Scenario 1 (auto-validable)",
+      label: t("admin.quote_detail.quick_transform.scenario_auto_validable"),
       href: appendQuickScenario(sectionHref("integration"), "A"),
       active: quickScenario === "A",
     },
     {
       key: "B" as const,
-      label: "Scenario 2 (a verifier)",
+      label: t("admin.quote_detail.quick_transform.scenario_review_required"),
       href: appendQuickScenario(sectionHref("integration"), "B"),
       active: quickScenario === "B",
     },
     {
       key: "C" as const,
-      label: "Scenario 3 (bloque)",
+      label: t("admin.quote_detail.quick_transform.scenario_blocked"),
       href: appendQuickScenario(sectionHref("integration"), "C"),
       active: quickScenario === "C",
     },
@@ -1870,50 +1898,56 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const clientMatchStatus = clientMatchRaw === "probable" || clientMatchRaw === "multiple" || clientMatchRaw === "deja_lie" ? clientMatchRaw : "aucun";
   const integrationAlerts: string[] = [];
   if (detail.quote.status === "approved" && integrationState === "a_preparer") {
-    integrationAlerts.push("Devis valide a preparer pour integration.");
+    integrationAlerts.push(t("admin.quote_detail.integration_alert_prepare"));
   }
   if (integrationState === "a_verifier") {
-    integrationAlerts.push("Correspondance client a verifier.");
+    integrationAlerts.push(t("admin.quote_detail.integration_alert_match_review"));
   }
   if (integrationState === "erreur_integration") {
     integrationAlerts.push(
       followupTransformationFailureUi?.summary
-        || "Erreur d'integration detectee.",
+        || t("admin.quote_detail.integration_alert_error"),
     );
   }
   if (detail.quote.document_status === "stale") {
-    integrationAlerts.push("Document modifie apres validation.");
+    integrationAlerts.push(t("admin.quote_detail.integration_alert_document_stale"));
   }
   const validationRows = [
-    { label: "Date validation", value: formatDate(detail.quote.approved_at) },
-    { label: "Canal validation", value: validationChannel },
-    { label: "Version validee (hash)", value: detail.quote.document_hash || "-" },
+    { label: t("admin.quote_detail.validation_date"), value: formatDate(detail.quote.approved_at, language) },
+    { label: t("admin.quote_detail.validation_channel"), value: validationChannel },
+    { label: t("admin.quote_detail.approved_version_hash"), value: detail.quote.document_hash || "-" },
     {
-      label: "Version utilisee pour integration",
+      label: t("admin.quote_detail.integration_version_hash"),
       value: readStringMeta(detail.quote.meta || {}, "integration_document_hash", detail.quote.document_hash || "-"),
     },
-    { label: "Derniere modification admin", value: formatDate(detail.quote.created_at) },
+    { label: t("admin.quote_detail.last_admin_change"), value: formatDate(detail.quote.created_at, language) },
   ];
   const projectionRows = [
-    { label: "Mode cible", value: integrationTargetMode },
-    { label: "Contact payeur", value: ownerName },
-    { label: "Eleve(s)", value: readStringMeta(detail.quote.meta || {}, "integration_students_label", ownerName) },
-    { label: "Activites acceptees", value: String(getPlanningBlocks(planningSnapshotForEditor).length || 0) },
-    { label: "Creneaux a creer / maj", value: String(calendarSessions.length) },
-    { label: "Annee scolaire", value: detail.quote.school_year_label || "-" },
+    { label: t("admin.quote_detail.target_mode"), value: integrationTargetMode },
+    { label: t("admin.quote_detail.billing_contact"), value: ownerName },
+    { label: t("admin.quote_detail.students"), value: readStringMeta(detail.quote.meta || {}, "integration_students_label", ownerName) },
+    { label: t("admin.quote_detail.accepted_activities"), value: String(getPlanningBlocks(planningSnapshotForEditor).length || 0) },
+    { label: t("admin.quote_detail.slots_to_create"), value: String(calendarSessions.length) },
+    { label: t("admin.quotes.school_year"), value: detail.quote.school_year_label || "-" },
     {
-      label: "Plan de paiement",
-      value: paymentPlans.find((plan) => plan.id === detail.quote.payment_plan_id)?.name || "Aucun",
+      label: t("admin.quote_detail.payment_plan"),
+      value: paymentPlans.find((plan) => plan.id === detail.quote.payment_plan_id)?.name || t("admin.quote_detail.none"),
     },
-    { label: "Options a reprendre", value: readStringMeta(detail.quote.meta || {}, "integration_options_label", "Selon devis valide") },
+    {
+      label: t("admin.quote_detail.options_to_reuse"),
+      value: readStringMeta(detail.quote.meta || {}, "integration_options_label", t("admin.quote_detail.according_to_approved_quote")),
+    },
   ];
   const integrationResultRows = [
-    { label: "Statut integration", value: integrationStateLabel(integrationState) },
-    { label: "Client central", value: readStringMeta(detail.quote.meta || {}, "integration_client_result", "-") },
-    { label: "Creneaux", value: readStringMeta(detail.quote.meta || {}, "integration_slots_result", "-") },
-    { label: "Date integration", value: readStringMeta(detail.quote.meta || {}, "integration_completed_at", "-") },
-    { label: "Utilisateur", value: readStringMeta(detail.quote.meta || {}, "integration_by", "-") },
-    { label: "Lien fiche centrale", value: readStringMeta(detail.quote.meta || {}, "integration_client_link", "A venir") },
+    { label: t("admin.quote_detail.integration_status"), value: integrationStateLabel(integrationState, language) },
+    { label: t("admin.quote_detail.central_client"), value: readStringMeta(detail.quote.meta || {}, "integration_client_result", "-") },
+    { label: t("admin.quote_detail.slots"), value: readStringMeta(detail.quote.meta || {}, "integration_slots_result", "-") },
+    { label: t("admin.quote_detail.integration_date"), value: readStringMeta(detail.quote.meta || {}, "integration_completed_at", "-") },
+    { label: t("admin.quote_detail.user"), value: readStringMeta(detail.quote.meta || {}, "integration_by", "-") },
+    {
+      label: t("admin.quote_detail.central_profile_link"),
+      value: readStringMeta(detail.quote.meta || {}, "integration_client_link", t("admin.quote_detail.coming_soon")),
+    },
   ];
 
   const quickProspectTypeRaw = String((selectedProspect?.meta || {}).prospect_type || "").trim().toLowerCase();
@@ -1959,7 +1993,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     quoteType: detail.quote.quote_type,
     quoteTypeFormulaName: selectedQuoteType?.formula_name || null,
     locationId: detail.quote.location_id,
-    locationName: locationNameById(locations, detail.quote.location_id),
+    locationName: locationNameById(locations, detail.quote.location_id, language),
   };
 
   const quickLines: QuoteTransformLine[] = detail.lines.map((line) => ({
@@ -2046,34 +2080,34 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   });
 
   const sidebarItems: SidebarItem[] = [
-    { id: "overview", label: "Vue d'ensemble", href: sectionHref("overview"), active: activeSection === "overview" },
-    { id: "cadre", label: "Cadre du devis", href: sectionHref("cadre"), active: activeSection === "cadre" },
+    { id: "overview", label: t("admin.quote_detail.sidebar_overview"), href: sectionHref("overview"), active: activeSection === "overview" },
+    { id: "cadre", label: t("admin.quote_detail.sidebar_cadre"), href: sectionHref("cadre"), active: activeSection === "cadre" },
     {
       id: "planning",
-      label: "Activites planifiees",
+      label: t("admin.quote_detail.sidebar_planning"),
       href: sectionHref("planning"),
       badge: `${calendarSessions.length}`,
       active: activeSection === "planning",
     },
     {
       id: "pricing",
-      label: "Lignes facturees",
+      label: t("admin.quote_detail.sidebar_pricing"),
       href: sectionHref("pricing"),
       badge: `${detail.lines.length}`,
       active: activeSection === "pricing",
     },
     {
       id: "interactions",
-      label: "Interactions client",
+      label: t("admin.quote_detail.sidebar_interactions"),
       href: sectionHref("interactions"),
       badge: hasPublicChangeRequest ? "!" : interactionEvents.length > 0 ? `${interactionEvents.length}` : undefined,
       badgeTone: hasPublicChangeRequest ? "alert" : "default",
       active: activeSection === "interactions",
     },
-    { id: "document", label: "Envoi", href: sectionHref("document"), active: activeSection === "document" },
+    { id: "document", label: t("admin.quote_detail.sidebar_document"), href: sectionHref("document"), active: activeSection === "document" },
     {
       id: "integration",
-      label: "Validation et integration",
+      label: t("admin.quote_detail.sidebar_integration"),
       href: sectionHref("integration"),
       active: activeSection === "integration",
     },
@@ -2084,40 +2118,45 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       <QuoteWorkspaceShell
         header={(
           <QuoteWorkspaceHeader
-            title={`Devis ${detail.quote.quote_number}`}
-            subtitle={`${labelForContext(detail.quote.context_type)} · ${formatAmount(detail.quote.total_ttc, detail.quote.currency)} · Destinataire ${ownerName}`}
+            title={t("admin.quote_detail.quote_title", { number: detail.quote.quote_number })}
+            subtitle={t("admin.quote_detail.header_subtitle", {
+              context: labelForContext(detail.quote.context_type, language),
+              total: formatAmount(detail.quote.total_ttc, detail.quote.currency, language),
+              owner: ownerName,
+            })}
             backLink={(
               <>
-                <Link className="ghost" href={backPath}>Retour liste devis</Link>
-                <Link className="ghost" href="/admin/quotes/new">Nouveau devis</Link>
+                <Link className="ghost" href={backPath}>{t("admin.quote_detail.back_to_quotes")}</Link>
+                <Link className="ghost" href="/admin/quotes/new">{t("admin.quotes.new_quote")}</Link>
               </>
             )}
             statuses={[
-              { label: "Commercial", value: commercialStateLabel(commercialState) },
-              { label: "Document", value: detail.quote.document_status || "stale" },
+              { label: t("admin.quote_detail.status_commercial"), value: commercialStateLabel(commercialState, language) },
+              { label: t("admin.quote_detail.status_document"), value: detail.quote.document_status || "stale" },
               {
-                label: "Validation client",
+                label: t("admin.quotes.client_validation"),
                 value: validationClientStatusLabel,
                 className: commercialState === "modification_demandee" ? "quote-header-status-info" : "",
               },
-              { label: "Integration", value: integrationStateLabel(integrationState) },
+              { label: t("admin.quote_detail.status_integration"), value: integrationStateLabel(integrationState, language) },
             ]}
           />
         )}
-        sidebar={<QuoteWorkspaceSidebar items={sidebarItems} />}
+        sidebar={<QuoteWorkspaceSidebar items={sidebarItems} language={language} />}
         rightRail={(
           <QuoteRightSummaryRail
             top={[
-              { label: "Total TTC", value: formatAmount(detail.quote.total_ttc, detail.quote.currency) },
-              { label: "Expiration", value: formatDate(detail.quote.expires_at) },
+              { label: t("admin.quotes.total_ttc"), value: formatAmount(detail.quote.total_ttc, detail.quote.currency, language) },
+              { label: t("admin.quotes.expiration"), value: formatDate(detail.quote.expires_at, language) },
             ]}
             statuses={[
-              { label: "Validation client", value: validationClientStatusDetail },
-              { label: "Integration centrale", value: integrationStateLabel(integrationState) },
-              { label: "Mode cible", value: integrationTargetMode },
-              { label: "Creneaux prevus", value: String(calendarSessions.length) },
+              { label: t("admin.quotes.client_validation"), value: validationClientStatusDetail },
+              { label: t("admin.quotes.central_integration"), value: integrationStateLabel(integrationState, language) },
+              { label: t("admin.quote_detail.target_mode"), value: integrationTargetMode },
+              { label: t("admin.quote_detail.planned_slots"), value: String(calendarSessions.length) },
             ]}
             alerts={integrationAlerts}
+            language={language}
           />
         )}
       >
@@ -2128,23 +2167,24 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           <>
             <QuoteOverviewSection
               cards={[
-                { label: "Statut devis", value: commercialStateLabel(commercialState) },
-                { label: "Statut document", value: detail.quote.document_status || "stale" },
-                { label: "Validation client", value: validationClientStatusDetail },
-                { label: "Integration centrale", value: integrationStateLabel(integrationState) },
-                { label: "Total TTC", value: formatAmount(detail.quote.total_ttc, detail.quote.currency) },
-                { label: "Expiration", value: formatDate(detail.quote.expires_at) },
+                { label: t("admin.quote_detail.quote_status"), value: commercialStateLabel(commercialState, language) },
+                { label: t("admin.quote_detail.document_status"), value: detail.quote.document_status || "stale" },
+                { label: t("admin.quotes.client_validation"), value: validationClientStatusDetail },
+                { label: t("admin.quotes.central_integration"), value: integrationStateLabel(integrationState, language) },
+                { label: t("admin.quotes.total_ttc"), value: formatAmount(detail.quote.total_ttc, detail.quote.currency, language) },
+                { label: t("admin.quotes.expiration"), value: formatDate(detail.quote.expires_at, language) },
               ]}
               alerts={integrationAlerts.map((message) => ({ level: message.toLowerCase().includes("erreur") ? "error" : "warn", message }))}
               quickActions={(
                 <>
-                  <Link className="ghost" href={sectionHref("document")}>Envoi</Link>
-                  <Link className="ghost" href={sectionHref("interactions")}>Interactions client</Link>
-                  <Link className="ghost" href={sectionHref("planning")}>Activites planifiees</Link>
-                  <Link className="ghost" href={sectionHref("pricing")}>Lignes facturees</Link>
-                  <Link className="ghost" href={sectionHref("integration")}>Validation et integration</Link>
+                  <Link className="ghost" href={sectionHref("document")}>{t("admin.quote_detail.sidebar_document")}</Link>
+                  <Link className="ghost" href={sectionHref("interactions")}>{t("admin.quote_detail.sidebar_interactions")}</Link>
+                  <Link className="ghost" href={sectionHref("planning")}>{t("admin.quote_detail.sidebar_planning")}</Link>
+                  <Link className="ghost" href={sectionHref("pricing")}>{t("admin.quote_detail.sidebar_pricing")}</Link>
+                  <Link className="ghost" href={sectionHref("integration")}>{t("admin.quote_detail.sidebar_integration")}</Link>
                 </>
               )}
+              language={language}
             />
 
             <section className="card" id="quote-contact-family">
@@ -2248,8 +2288,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 
             {!hasPublicChangeRequest && !interactionHistorySection ? (
               <section className="card">
-                <h3>Interactions client</h3>
-                <p className="muted top-gap-sm">Aucune interaction client ou automatisation notable n'a encore ete enregistree pour ce devis.</p>
+                <h3>{t("admin.quote_detail.sidebar_interactions")}</h3>
+                <p className="muted top-gap-sm">{t("admin.quote_detail.no_interactions")}</p>
               </section>
             ) : null}
           </>
@@ -2283,7 +2323,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                           <select name="template_ref" defaultValue={defaultSendTemplateRefForQuote} disabled={!ownerEmail || quoteSendTemplates.length === 0}>
                             {quoteSendTemplates.map((template) => (
                               <option key={`primary-send-${template.id}`} value={messagingTemplateRef(template)}>
-                                {messagingTemplateOptionLabel(template)}
+                                {messagingTemplateOptionLabel(template, language)}
                               </option>
                             ))}
                           </select>
@@ -2307,7 +2347,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                               >
                                 {quoteSendSmsTemplates.map((template) => (
                                   <option key={`primary-send-sms-${template.id}`} value={messagingTemplateRef(template)}>
-                                    {messagingTemplateOptionLabel(template)}
+                                    {messagingTemplateOptionLabel(template, language)}
                                   </option>
                                 ))}
                               </select>
@@ -2360,7 +2400,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                           <select name="template_ref" defaultValue={defaultSendTemplateRefForQuote} disabled={quoteSendTemplates.length === 0}>
                             {quoteSendTemplates.map((template) => (
                               <option key={`third-send-${template.id}`} value={messagingTemplateRef(template)}>
-                                {messagingTemplateOptionLabel(template)}
+                                {messagingTemplateOptionLabel(template, language)}
                               </option>
                             ))}
                           </select>
@@ -2417,7 +2457,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                         <select name="template_ref" defaultValue={defaultCancelTemplateRef} disabled={quoteCancelTemplates.length === 0}>
                           {quoteCancelTemplates.map((template) => (
                             <option key={`cancel-${template.id}`} value={messagingTemplateRef(template)}>
-                              {messagingTemplateOptionLabel(template)}
+                              {messagingTemplateOptionLabel(template, language)}
                             </option>
                           ))}
                         </select>
@@ -2441,7 +2481,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                             >
                               {quoteCancelSmsTemplates.map((template) => (
                                 <option key={`cancel-sms-${template.id}`} value={messagingTemplateRef(template)}>
-                                  {messagingTemplateOptionLabel(template)}
+                                  {messagingTemplateOptionLabel(template, language)}
                                 </option>
                               ))}
                             </select>
@@ -3006,6 +3046,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               returnTo={selfPath}
               scenarioLinks={quickScenarioLinks}
               quickTransformAction={quickTransformQuoteAction}
+              language={language}
             />
 
             <section className="card">
@@ -3022,23 +3063,25 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             <section id="quote-validation-integration">
               <QuoteValidationIntegrationSection
                 validationRows={validationRows}
-                projectionCard={<QuoteIntegrationProjectionCard rows={projectionRows} />}
+                projectionCard={<QuoteIntegrationProjectionCard rows={projectionRows} language={language} />}
                 clientMatchCard={(
                   <QuoteClientMatchCard
                     status={clientMatchStatus}
                     detail={
                       clientMatchStatus === "deja_lie"
-                        ? "Le devis est deja relie a un client."
+                        ? t("admin.quote_detail.client_match_detail_linked")
                         : clientMatchStatus === "multiple"
-                        ? "Plusieurs correspondances detectees, verification manuelle necessaire."
+                        ? t("admin.quote_detail.client_match_detail_multiple")
                         : clientMatchStatus === "probable"
-                        ? "Une correspondance probable a ete detectee."
-                        : "Aucune correspondance client detectee pour le moment."
+                        ? t("admin.quote_detail.client_match_detail_probable")
+                        : t("admin.quote_detail.client_match_detail_none")
                     }
+                    language={language}
                   />
                 )}
-                integrationResultCard={<QuoteIntegrationResultCard rows={integrationResultRows} />}
-                note="Le wizard de transformation est actif via le bouton ci-dessus. Ce panneau conserve la synthese des controles d'integration."
+                integrationResultCard={<QuoteIntegrationResultCard rows={integrationResultRows} language={language} />}
+                note={t("admin.quote_detail.integration_note")}
+                language={language}
               />
             </section>
 
@@ -3081,7 +3124,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                         <select name="payment_plan_id" defaultValue={followupPaymentPlanId}>
                           <option value="">Aucun</option>
                           {paymentPlans.map((row) => (
-                            <option key={row.id} value={row.id}>{row.name} ({paymentMethodLabel(row.payment_method)})</option>
+                            <option key={row.id} value={row.id}>{row.name} ({paymentMethodLabel(row.payment_method, language)})</option>
                           ))}
                         </select>
                       </label>

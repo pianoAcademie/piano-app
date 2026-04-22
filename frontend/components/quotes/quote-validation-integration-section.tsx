@@ -1,26 +1,30 @@
 import React from "react";
 
+import { type UiLanguage, uiText } from "../../lib/ui-i18n";
+
 export default function QuoteValidationIntegrationSection({
   validationRows,
   projectionCard,
   clientMatchCard,
   integrationResultCard,
   note,
+  language = "fr",
 }: {
   validationRows: Array<{ label: string; value: string }>;
   projectionCard: React.ReactNode;
   clientMatchCard: React.ReactNode;
   integrationResultCard: React.ReactNode;
   note?: string;
+  language?: UiLanguage;
 }): JSX.Element {
   return (
     <section className="card quote-validation-integration-section">
-      <h3>Validation et integration</h3>
+      <h3>{uiText(language, "admin.quote_detail.validation_integration_title")}</h3>
       <p className="muted">
-        Section preparee pour la future connexion a l'application centrale. Lecture seule pour le moment.
+        {uiText(language, "admin.quote_detail.validation_integration_subtitle")}
       </p>
       <article className="item top-gap-sm">
-        <h4>Validation client</h4>
+        <h4>{uiText(language, "admin.quote_detail.client_validation_title")}</h4>
         <div className="grid cols-2 top-gap-sm">
           {validationRows.map((row) => (
             <p key={row.label}>
