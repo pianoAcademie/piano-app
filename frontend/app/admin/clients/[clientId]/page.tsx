@@ -69,7 +69,9 @@ import type {
   AdminCatalogProductOut,
   AdminProductCategoriesOut,
   PlanOut,
+  UserOut,
 } from "../../../../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -1128,6 +1130,124 @@ function contactDisplayLabel(firstName: string | null | undefined, lastName: str
   return name ? `${name} <${email}>` : email;
 }
 
+function formatLocalizedDate(value: string, language: UiLanguage): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "-";
+  }
+  return parsed.toLocaleString(localeForUiLanguage(language), {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Europe/Paris",
+  });
+}
+
+function formatLocalizedDateOnly(value: string | null, language: UiLanguage): string {
+  if (!value) {
+    return uiText(language, "admin.client_detail.not_provided_feminine");
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return uiText(language, "admin.client_detail.not_provided_feminine");
+  }
+  return parsed.toLocaleDateString(localeForUiLanguage(language), {
+    dateStyle: "medium",
+  });
+}
+
+function formatLocalizedMoney(value: string | null | undefined, currency: string, language: UiLanguage): string {
+  const amount = Number(value ?? "0");
+  return new Intl.NumberFormat(localeForUiLanguage(language), {
+    style: "currency",
+    currency: currency || "EUR",
+    maximumFractionDigits: 2,
+  }).format(Number.isFinite(amount) ? amount : 0);
+}
+
+function clientDetailTabLabel(tab: ClientTab, language: UiLanguage): string {
+  if (tab === "infos") return uiText(language, "admin.client_detail.tab_info");
+  if (tab === "famille") return uiText(language, "admin.client_detail.tab_family");
+  if (tab === "messages") return uiText(language, "admin.client_detail.tab_messages");
+  if (tab === "paiements") return uiText(language, "admin.client_detail.tab_account");
+  if (tab === "factures") return uiText(language, "admin.client_detail.tab_invoices");
+  if (tab === "reservations") return uiText(language, "admin.client_detail.tab_bookings");
+  return uiText(language, "admin.client_detail.tab_sheet");
+}
+
+function clientKindLabel(kind: string, language: UiLanguage): string {
+  return kind.trim().toUpperCase() === "CHILD"
+    ? uiText(language, "admin.client_detail.kind_child")
+    : uiText(language, "admin.client_detail.kind_adult");
+}
+
+function clientStatusLabel(status: string, language: UiLanguage): string {
+  const normalized = status.trim().toUpperCase();
+  if (normalized === "ACTIVE") return uiText(language, "admin.clients.status_active");
+  if (normalized === "RESPONSABLE") return uiText(language, "admin.clients.status_responsable");
+  if (normalized === "TRIAL") return uiText(language, "admin.clients.status_trial");
+  if (normalized === "PENDING") return uiText(language, "admin.clients.status_pending");
+  if (normalized === "INACTIVE") return uiText(language, "admin.clients.status_inactive");
+  if (normalized === "ARCHIVED") return uiText(language, "admin.clients.status_archived");
+  return normalized || uiText(language, "admin.client_detail.unknown");
+}
+
+function localizedBillingMethodLabel(code: string | null, language: UiLanguage): string {
+  const normalized = (code ?? "").toUpperCase();
+  if (normalized === "CARD_ONLINE") return uiText(language, "admin.client_detail.billing.card_online");
+  if (normalized === "SEPA_DEBIT") return uiText(language, "admin.client_detail.billing.sepa_debit");
+  if (normalized === "CARD_TERMINAL") return uiText(language, "admin.client_detail.billing.card_terminal");
+  if (normalized === "BANK_TRANSFER") return uiText(language, "admin.client_detail.billing.bank_transfer");
+  if (normalized === "CASH") return uiText(language, "admin.client_detail.billing.cash");
+  if (normalized === "CHECK") return uiText(language, "admin.client_detail.billing.check");
+  if (normalized === "PAYPAL") return "PayPal";
+  if (normalized === "FACTURATION_AUTO") return uiText(language, "admin.client_detail.billing.invoice");
+  return code || uiText(language, "admin.client_detail.not_defined");
+}
+
+function localizedSubscriptionStatusPill(sub: AdminClientSubscriptionOut, language: UiLanguage): { label: string; toneClass: string } {
+  const normalized = (sub.status ?? "").toUpperCase();
+  if (normalized === "CANCELLED" || normalized === "EXPIRED" || normalized === "ARCHIVED" || normalized === "INACTIVE") {
+    return { label: uiText(language, "admin.client_detail.subscription_cancelled"), toneClass: "status-off" };
+  }
+  if (sub.cancellation_requested_at) {
+    const effectiveAt = sub.cancellation_effective_at ? Date.parse(sub.cancellation_effective_at) : Number.NaN;
+    if (Number.isFinite(effectiveAt) && effectiveAt <= Date.now()) {
+      return { label: uiText(language, "admin.client_detail.subscription_cancelled"), toneClass: "status-off" };
+    }
+    return { label: uiText(language, "admin.client_detail.subscription_end_of_period"), toneClass: "status-warn" };
+  }
+  if (normalized === "PAUSED") {
+    return { label: uiText(language, "admin.client_detail.subscription_paused"), toneClass: "status-warn" };
+  }
+  return { label: clientStatusLabel(normalized, language), toneClass: statusClass(normalized || "UNKNOWN") };
+}
+
+function localizedClientPhotoAlt(fullName: string, language: UiLanguage): string {
+  if (fullName) {
+    return uiText(language, "admin.client_detail.photo_of", { name: fullName });
+  }
+  return uiText(language, "admin.client_detail.photo");
+}
+
+function deliveryStatusLabel(status: string, language: UiLanguage): string {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (normalized === "suspended") {
+    return uiText(language, "admin.client_detail.delivery_suspended");
+  }
+  if (normalized === "active") {
+    return uiText(language, "admin.client_detail.delivery_active");
+  }
+  return status || uiText(language, "admin.client_detail.unknown");
+}
+
+function booleanEnabledLabel(value: boolean, language: UiLanguage): string {
+  return value ? uiText(language, "admin.client_detail.active") : uiText(language, "admin.client_detail.disabled");
+}
+
+function optInLabel(value: boolean, language: UiLanguage): string {
+  return value ? uiText(language, "admin.client_detail.opt_in") : uiText(language, "admin.client_detail.opt_out");
+}
+
 export default async function AdminClientDetailPage({ params, searchParams }: PageProps): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
@@ -1206,6 +1326,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const messagesApiPath = `/api/v1/admin/clients/${params.clientId}/messages?${messageApiSearch.toString()}`;
 
   const [
+    meResult,
     clientResult,
     plansResult,
     formulasResult,
@@ -1224,6 +1345,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     manualCreditsResult,
     notesResult,
   ] = await Promise.all([
+    backendRequest<UserOut>("/api/v1/me", {}, token),
     backendRequest<AdminClientOut>(`/api/v1/admin/clients/${params.clientId}`, {}, token),
     backendRequest<PlanOut[]>("/api/v1/plans", {}, token),
     backendRequest<AdminFormulaOut[]>("/api/v1/admin/formulas", {}, token),
@@ -1243,11 +1365,15 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     backendRequest<AdminClientNoteOut[]>(`/api/v1/admin/clients/${params.clientId}/notes`, {}, token),
   ]);
 
+  const language = meResult.ok ? normalizeUiLanguage(meResult.data.preferred_language) : "fr";
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const sortLocale = localeForUiLanguage(language);
+
   if (!clientResult.ok) {
     if (clientResult.status === 404) {
-      redirect("/admin/clients?error=Client%20introuvable");
+      redirect(`/admin/clients?error=${encodeURIComponent(t("admin.client_detail.client_not_found"))}`);
     }
-    return <section className="flash-err">Erreur backend: {clientResult.message}</section>;
+    return <section className="flash-err">{t("admin.client_detail.backend_error", { message: clientResult.message })}</section>;
   }
 
   const client = clientResult.data;
@@ -1375,7 +1501,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       ...productCategories,
       ...manualChargeProductOptions.map((product) => String(product.categoryName ?? "").trim()).filter((value) => value.length > 0),
     ]),
-  ).sort((a, b) => a.localeCompare(b, "fr-FR"));
+  ).sort((a, b) => a.localeCompare(b, sortLocale));
 
   const enabledPaymentMethods = paymentMethodsResult.ok
     ? paymentMethodsResult.data.methods.filter((method) => method.enabled)
@@ -1474,7 +1600,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       addOption(link.child.email, link.child.first_name, link.child.last_name);
     }
 
-    return Array.from(byEmail.values()).sort((a, b) => a.label.localeCompare(b.label, "fr-FR"));
+    return Array.from(byEmail.values()).sort((a, b) => a.label.localeCompare(b.label, sortLocale));
   })();
   const billingRecipientEmail = (() => {
     const billingId = family.billing_recipient_adult_id;
@@ -2026,13 +2152,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   );
 
   const tabs: Array<{ id: ClientTab; label: string }> = [
-    { id: "fiche", label: "Fiche" },
-    { id: "infos", label: "Infos" },
-    { id: "famille", label: "Famille" },
-    { id: "messages", label: "Messages" },
-    { id: "paiements", label: "Compte" },
-    { id: "factures", label: "Factures" },
-    { id: "reservations", label: "Reservations" },
+    { id: "fiche", label: clientDetailTabLabel("fiche", language) },
+    { id: "infos", label: clientDetailTabLabel("infos", language) },
+    { id: "famille", label: clientDetailTabLabel("famille", language) },
+    { id: "messages", label: clientDetailTabLabel("messages", language) },
+    { id: "paiements", label: clientDetailTabLabel("paiements", language) },
+    { id: "factures", label: clientDetailTabLabel("factures", language) },
+    { id: "reservations", label: clientDetailTabLabel("reservations", language) },
   ];
 
   const manualTransactionTypeCodeByModal: Record<ManualTransactionModalType, "PAYMENT" | "REFUND" | "CHARGE" | "DISCOUNT"> = {
@@ -2254,13 +2380,21 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const invoiceFieldError = (fieldName: string): string | null => invoiceErrorFieldMap[fieldName] ?? null;
   const invoiceFieldInvalid = (fieldName: string): boolean => invoiceFieldError(fieldName) !== null;
   const invoiceFieldAutoFocus = (fieldName: string): boolean => invoiceFirstInvalidField === fieldName;
+  const formatDateUi = (value: string): string => formatLocalizedDate(value, language);
+  const formatDateOnlyUi = (value: string | null): string => formatLocalizedDateOnly(value, language);
+  const formatMoneyUi = (value: string | null | undefined, currency: string): string => formatLocalizedMoney(value, currency, language);
   const visibleEmail = visibleClientEmail(client.email);
+  const fullNameLabel = fullName || t("admin.client_detail.client_fallback");
+  const clientKindText = clientKindLabel(client.client_kind, language);
+  const clientLanguageText = client.preferred_language === "en"
+    ? uiText(language, "admin.client_detail.language_name_en")
+    : uiText(language, "admin.client_detail.language_name_fr");
   const heroMeta = [
     visibleEmail,
-    client.mobile_phone_1 ? `Mobile 1: ${client.mobile_phone_1}` : null,
-    client.residence_country,
-    client.preferred_currency,
-    client.client_kind === "CHILD" ? "Enfant" : "Adulte",
+    client.mobile_phone_1 ? `${t("admin.client_detail.mobile_1")}: ${client.mobile_phone_1}` : null,
+    labelFromOptions(COUNTRY_OPTIONS, client.residence_country),
+    labelFromOptions(CURRENCY_OPTIONS, client.preferred_currency),
+    clientKindText,
   ].filter(Boolean) as string[];
 
   return (
@@ -2269,20 +2403,22 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         <div className="row spread">
           <div className="row">
             <Link className="reset-link" href="/admin/clients">
-              Retour liste clients
+              {t("admin.client_detail.back_to_clients")}
             </Link>
             <Link className="mode-link" href="/admin/clients?new_client=1">
-              Nouveau client
+              {t("admin.client_detail.new_client")}
             </Link>
             <form action={adminViewClientPortalAction} target="_blank" rel="noopener noreferrer">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="return_to" value={`/admin/clients/${client.id}?tab=${currentTab}`} />
               <button type="submit" className="mode-link">
-                Vue client
+                {t("admin.client_detail.client_view")}
               </button>
             </form>
           </div>
-          <small className="muted">Cree le {formatDate(client.created_at)} | Maj {formatDate(client.updated_at)}</small>
+          <small className="muted">
+            {t("admin.client_detail.created_on")} {formatDateUi(client.created_at)} | {t("admin.client_detail.updated_on")} {formatDateUi(client.updated_at)}
+          </small>
         </div>
 
         <div className="client-hero-main">
@@ -2291,18 +2427,18 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <img
                 className="client-photo"
                 src={client.photo_url}
-                alt={clientPhotoAlt(client, fullName)}
+                alt={localizedClientPhotoAlt(fullName, language)}
               />
             ) : (
               <div className="client-avatar" aria-hidden="true">
                 {initials(client)}
               </div>
             )}
-            <div className="client-photo-caption">Photo client</div>
+            <div className="client-photo-caption">{t("admin.client_detail.photo")}</div>
           </div>
           <div className="client-hero-identity">
-            <h2>{fullName || "Client"}</h2>
-            <div className="client-hero-meta" aria-label="Informations du client">
+            <h2>{fullNameLabel}</h2>
+            <div className="client-hero-meta" aria-label={t("admin.client_detail.client_information_aria")}>
               {heroMeta.map((item) => (
                 <span key={item} className="client-hero-meta-chip">
                   {item}
@@ -2327,55 +2463,55 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
       {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
       {pageLevelErrorMessage ? <section className="flash-err">{pageLevelErrorMessage}</section> : null}
-      {errors.length > 0 ? <section className="flash-err">Erreur backend: {errors.join(" | ")}</section> : null}
+      {errors.length > 0 ? <section className="flash-err">{t("admin.client_detail.backend_error", { message: errors.join(" | ") })}</section> : null}
 
       {currentTab === "fiche" ? (
         <section className="grid cols-2 client-sheet-grid">
           <article className="card client-summary-card">
-            <h3>Solde de l&apos;adherent</h3>
+            <h3>{t("admin.client_detail.member_balance")}</h3>
             <p className="client-balance-main">{totalRemainingCredits}</p>
-            <p className="muted">credits restants (packs actifs)</p>
+            <p className="muted">{t("admin.client_detail.remaining_credits_active_packs")}</p>
             <div className="client-summary-stats">
-              <span className="badge">Abonnements actifs: {activeMonthlySubscriptions}</span>
-              <span className="badge">Reservations en cours: {bookedReservations.length}</span>
+              <span className="badge">{t("admin.client_detail.active_subscriptions_count", { count: activeMonthlySubscriptions })}</span>
+              <span className="badge">{t("admin.client_detail.current_bookings_count", { count: bookedReservations.length })}</span>
             </div>
           </article>
 
           <article className="card">
             <div className="row spread">
-              <h3>Ajouter un produit</h3>
+              <h3>{t("admin.client_detail.add_product")}</h3>
               <Link
                 className="client-action-icon payment-add-icon"
                 href={ficheHref(client.id, { purchase_modal: "wizard", purchase_return_tab: "fiche" })}
-                title="Nouveau achat"
+                title={t("admin.client_detail.new_purchase_title")}
               >
                 +
               </Link>
             </div>
-            <p className="muted">Associer une formule de cours ou un produit catalogue, avec mode de reglement et validation CGV.</p>
+            <p className="muted">{t("admin.client_detail.add_product_help")}</p>
             <p className="muted top-gap-sm">
-              Flux: Type d&apos;achat -&gt; Offre -&gt; Prix remisé -&gt; Reglement -&gt; Validation.
+              {t("admin.client_detail.add_product_flow")}
             </p>
             <p className="muted">
-              Regles appliquees: pas de doublon d&apos;abonnement sur le mois, pas de nouveau carnet si credits restants.
+              {t("admin.client_detail.add_product_rules")}
             </p>
           </article>
 
           <article className="card span-2">
             <div className="row spread">
-              <h3>Abonnements et produits en cours</h3>
+              <h3>{t("admin.client_detail.current_products")}</h3>
               <div className="row">
-                <span className="badge">Actifs: {activeSubscriptions.length}</span>
-                <span className="badge">Fin de periode: {endingSubscriptions.length}</span>
+                <span className="badge">{t("admin.client_detail.active_count", { count: activeSubscriptions.length })}</span>
+                <span className="badge">{t("admin.client_detail.ending_period_count", { count: endingSubscriptions.length })}</span>
               </div>
             </div>
 
             {visibleCurrentSubscriptions.length === 0 ? (
-              <p className="muted top-gap-sm">Aucun produit en cours.</p>
+              <p className="muted top-gap-sm">{t("admin.client_detail.no_current_product")}</p>
             ) : (
               <div className="subscription-stack top-gap-sm">
                 {visibleCurrentSubscriptions.map((sub) => {
-                  const statusPill = subscriptionStatusPill(sub);
+                  const statusPill = localizedSubscriptionStatusPill(sub, language);
                   const pendingCancellation = isPendingSubscriptionCancellation(sub);
                   return (
                     <article key={sub.id} className="subscription-detail-card">
@@ -2384,15 +2520,15 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         <small className="muted">
                           {sub.plan.kind === "SUBSCRIPTION"
                             ? pendingCancellation
-                              ? "Abonnement en fin de periode"
-                              : "Abonnement en cours"
+                              ? t("admin.client_detail.subscription_ending_period")
+                              : t("admin.client_detail.subscription_current")
                             : sub.plan.kind === "PACK"
-                              ? "Carnet actif"
-                              : "Forfait actif"}
+                              ? t("admin.client_detail.active_pack")
+                              : t("admin.client_detail.active_forfait")}
                         </small>
                         <h4>{sub.plan.name}</h4>
                         <span className="muted">
-                          Numero de contrat: {shortContractRef(sub.id)} ({sub.id})
+                          {t("admin.client_detail.contract_number")}: {shortContractRef(sub.id)} ({sub.id})
                         </span>
                       </div>
                       <div className="row subscription-head-actions">
@@ -2402,7 +2538,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                             <Link
                               className="client-action-icon"
                               href={ficheHref(client.id, { subscription_modal: "billing", subscription_id: sub.id })}
-                              title="Configurer les references de prelevement"
+                              title={t("admin.client_detail.configure_sepa_refs")}
                             >
                               ✎
                             </Link>
@@ -2411,21 +2547,21 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                 <Link
                                   className="client-action-icon"
                                   href={ficheHref(client.id, { subscription_modal: "suspend", subscription_id: sub.id })}
-                                  title="Suspendre l abonnement"
+                                  title={t("admin.client_detail.suspend_subscription")}
                                 >
                                   ⏸
                                 </Link>
                                 <Link
                                   className="client-action-icon danger"
                                   href={ficheHref(client.id, { subscription_modal: "cancel", subscription_id: sub.id })}
-                                  title="Resilier a fin de periode"
+                                  title={t("admin.client_detail.cancel_end_of_period")}
                                 >
                                   ✕
                                 </Link>
                                 <Link
                                   className="client-action-icon danger"
                                   href={ficheHref(client.id, { subscription_modal: "cancel_now", subscription_id: sub.id })}
-                                  title="Resilier immediatement"
+                                  title={t("admin.client_detail.cancel_now")}
                                 >
                                   ⚠
                                 </Link>
@@ -2438,7 +2574,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                               <Link
                                 className="client-action-icon"
                                 href={ficheHref(client.id, { subscription_modal: "billing", subscription_id: sub.id })}
-                                title="Modifier le mode de paiement du forfait"
+                                title={t("admin.client_detail.edit_forfait_payment_method")}
                               >
                                 $
                               </Link>
@@ -2447,7 +2583,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                               <Link
                                 className="client-action-icon"
                                 href={ficheHref(client.id, { subscription_modal: "forfait_pricing", subscription_id: sub.id })}
-                                title="Modifier la surcouche tarifaire forfait"
+                                title={t("admin.client_detail.edit_forfait_pricing")}
                               >
                                 €
                               </Link>
@@ -2455,14 +2591,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                             <Link
                               className="client-action-icon"
                               href={ficheHref(client.id, { subscription_modal: "expiry", subscription_id: sub.id })}
-                              title="Modifier la date d expiration"
+                              title={t("admin.client_detail.edit_expiry_date")}
                             >
                               ✎
                             </Link>
                             <Link
                               className="client-action-icon danger"
                               href={ficheHref(client.id, { subscription_modal: "cancel_now", subscription_id: sub.id })}
-                              title="Annuler le carnet / forfait"
+                              title={t("admin.client_detail.cancel_pack_forfait")}
                             >
                               ✕
                             </Link>
@@ -2473,27 +2609,27 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
                     <section className="subscription-meta-grid">
                       <article className="subscription-field">
-                        <p className="muted">Formule</p>
+                        <p className="muted">{t("admin.client_detail.field_plan")}</p>
                         <strong>{sub.plan.name}</strong>
                         <small className="muted">
                           {sub.plan.kind === "SUBSCRIPTION"
-                            ? "Reconduction tacite"
+                            ? t("admin.client_detail.tacit_renewal")
                             : sub.plan.kind === "PACK"
-                              ? "Carnet de credits"
-                              : "Forfait facture au reel"}
+                              ? t("admin.client_detail.credit_pack")
+                              : t("admin.client_detail.forfait_billed_actual")}
                         </small>
                       </article>
                       <article className="subscription-field">
-                        <p className="muted">Prix / Tarif TTC</p>
+                        <p className="muted">{t("admin.client_detail.field_price_ttc")}</p>
                         <strong>
                           {sub.estimated_total_incl_vat
-                            ? `${formatMoney(sub.estimated_total_incl_vat, sub.estimated_currency || client.preferred_currency)} TTC`
-                            : "n/a"}
+                            ? `${formatMoneyUi(sub.estimated_total_incl_vat, sub.estimated_currency || client.preferred_currency)} TTC`
+                            : t("admin.client_detail.not_available")}
                         </strong>
                         <small className="muted">
-                          TVA {sub.estimated_vat_rate ?? "-"}% incluse
+                          {t("admin.client_detail.vat_included", { rate: sub.estimated_vat_rate ?? "-" })}
                           {sub.plan.kind === "FORFAIT"
-                            ? ` | Activites configurees: ${
+                            ? ` | ${t("admin.client_detail.configured_activities")}: ${
                                 sub.forfait_activity_pricing.filter(
                                   (row) =>
                                     Number.parseFloat(row.loyalty_discount_per_hour_ttc || "0") > 0 ||
@@ -2506,64 +2642,64 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         </small>
                       </article>
                       <article className="subscription-field">
-                        <p className="muted">Moyen de paiement</p>
-                        <strong>{billingMethodLabel(sub.billing_method_code)}</strong>
+                        <p className="muted">{t("admin.client_detail.field_billing_method")}</p>
+                        <strong>{localizedBillingMethodLabel(sub.billing_method_code, language)}</strong>
                         <small className="muted">
-                          Auto-renouvellement: {sub.auto_renew ? "Oui" : "Non"} | Dernier statut: {sub.last_payment_status ?? "n/a"}
+                          {t("admin.client_detail.auto_renewal")}: {sub.auto_renew ? t("admin.client_detail.yes") : t("admin.client_detail.no")} | {t("admin.client_detail.last_status")}: {sub.last_payment_status ?? "n/a"}
                         </small>
                       </article>
                       <article className="subscription-field">
-                        <p className="muted">Credits</p>
+                        <p className="muted">{t("admin.client_detail.field_credits")}</p>
                         <strong>
                           {sub.credits_remaining ?? "-"}/{sub.credits_initial ?? "-"}
                         </strong>
-                        <small className="muted">restants / initial</small>
+                        <small className="muted">{t("admin.client_detail.remaining_initial")}</small>
                       </article>
                       <article className="subscription-field">
-                        <p className="muted">References PSP</p>
+                        <p className="muted">{t("admin.client_detail.field_psp_refs")}</p>
                         <strong>{sub.payment_provider_customer_ref ?? "-"}</strong>
                         <small className="muted">
-                          Mandat: {sub.payment_provider_mandate_ref ?? "-"} | Subscription:{" "}
+                          {t("admin.client_detail.mandate")}: {sub.payment_provider_mandate_ref ?? "-"} | {t("admin.client_detail.subscription_ref")}:{" "}
                           {sub.payment_provider_subscription_ref ?? "-"}
                         </small>
                       </article>
                       <article className="subscription-field">
-                        <p className="muted">Periode</p>
+                        <p className="muted">{t("admin.client_detail.field_period")}</p>
                         <strong>
-                          Debut: {formatDate(sub.started_at)}
-                          {sub.ends_at ? ` | Fin: ${formatDate(sub.ends_at)}` : ""}
+                          {t("admin.client_detail.start")}: {formatDateUi(sub.started_at)}
+                          {sub.ends_at ? ` | ${t("admin.client_detail.end")}: ${formatDateUi(sub.ends_at)}` : ""}
                         </strong>
                         <small className="muted">
                           {sub.plan.kind === "SUBSCRIPTION"
-                            ? `Prochain prelevement: ${sub.next_payment_at ? formatDate(sub.next_payment_at) : "Non programme"}`
-                            : "Pas de prelevement recurrent"}
+                            ? `${t("admin.client_detail.next_payment")}: ${sub.next_payment_at ? formatDateUi(sub.next_payment_at) : t("admin.client_detail.not_scheduled")}`
+                            : t("admin.client_detail.no_recurring_debit")}
                         </small>
                       </article>
                     </section>
 
                     {sub.suspension_starts_at && sub.suspension_ends_at ? (
                       <p className="muted top-gap-sm">
-                        Suspension active: du {formatDate(sub.suspension_starts_at)} au {formatDate(sub.suspension_ends_at)} (
-                        {sub.suspension_duration_value ?? 0} {sub.suspension_duration_unit === "MONTH" ? "mois" : "jours"}).
+                        {t("admin.client_detail.suspension_active")} {t("admin.client_detail.start").toLowerCase()} {formatDateUi(sub.suspension_starts_at)} {t("admin.client_detail.end").toLowerCase()} {formatDateUi(sub.suspension_ends_at)} (
+                        {sub.suspension_duration_value ?? 0} {sub.suspension_duration_unit === "MONTH" ? t("admin.client_detail.months") : t("admin.client_detail.days")}).
                       </p>
                     ) : null}
                     {sub.cancellation_requested_at ? (
                       <p className="muted">
-                        Resiliation demandee le {formatDate(sub.cancellation_requested_at)} | Fin effective:{" "}
-                        {sub.cancellation_effective_at ? formatDate(sub.cancellation_effective_at) : "a definir"}.
+                        {t("admin.client_detail.cancellation_requested")} {formatDateUi(sub.cancellation_requested_at)} | {t("admin.client_detail.effective_end")}:{" "}
+                        {sub.cancellation_effective_at ? formatDateUi(sub.cancellation_effective_at) : t("admin.client_detail.to_define")}.
                       </p>
                     ) : null}
 
                     {sub.plan.kind === "SUBSCRIPTION" ? (
                       <p className="muted">
-                        Actions rapides: utilisez les icones pour configurer le prelevement, suspendre ou resilier.
+                        {t("admin.client_detail.quick_actions_subscription")}
                       </p>
                     ) : sub.plan.kind === "FORFAIT" ? (
                       <p className="muted">
-                        Actions rapides: modifiez le mode de paiement, la surcouche tarifaire, la date d expiration ou cloturez immediatement.
+                        {t("admin.client_detail.quick_actions_forfait")}
                       </p>
                     ) : (
-                      <p className="muted">Actions rapides: modifiez la date d expiration ou cloturez immediatement.</p>
+                      <p className="muted">{t("admin.client_detail.quick_actions_pack")}</p>
                     )}
                     </article>
                   );
@@ -2573,9 +2709,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           </article>
 
           <article className="card span-2">
-            <h3>Produits termines</h3>
+            <h3>{t("admin.client_detail.finished_products")}</h3>
             {archivedSubscriptions.length === 0 ? (
-              <p className="muted">Aucun produit termine.</p>
+              <p className="muted">{t("admin.client_detail.no_finished_product")}</p>
             ) : (
               <div className="list top-gap-sm">
                 {archivedSubscriptions.map((sub) => (
@@ -2583,11 +2719,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     <div className="stack-sm">
                       <strong>{sub.plan.name}</strong>
                       <small className="muted">
-                        Contrat {shortContractRef(sub.id)} | Debut: {formatDate(sub.started_at)}
-                        {sub.ends_at ? ` | Fin: ${formatDate(sub.ends_at)}` : ""}
+                        {sub.ends_at
+                          ? t("admin.client_detail.contract_start_end", {
+                              contract: shortContractRef(sub.id),
+                              start: formatDateUi(sub.started_at),
+                              end: formatDateUi(sub.ends_at),
+                            })
+                          : `${t("admin.client_detail.contract_number")} ${shortContractRef(sub.id)} | ${t("admin.client_detail.start")}: ${formatDateUi(sub.started_at)}`}
                       </small>
                     </div>
-                    <span className={`status-pill ${statusClass(sub.status)}`}>{sub.status}</span>
+                    <span className={`status-pill ${statusClass(sub.status)}`}>{clientStatusLabel(sub.status, language)}</span>
                   </article>
                 ))}
               </div>
@@ -2595,9 +2736,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           </article>
 
           <article className="card">
-            <h3>Credits manuels</h3>
+            <h3>{t("admin.client_detail.manual_credits")}</h3>
             {manualCredits.length === 0 ? (
-              <p className="muted">Aucun type de credit configure.</p>
+              <p className="muted">{t("admin.client_detail.no_manual_credit_types")}</p>
             ) : (
               <div className="list top-gap-sm">
                 {manualCredits.map((row) => (
@@ -2608,7 +2749,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       <Link
                         className="client-action-icon"
                         href={ficheHref(client.id, { edit_credit: "1", credit_type_id: row.credit_type_id })}
-                        title="Modifier le nombre de credits"
+                        title={t("admin.client_detail.edit_credit_count")}
                       >
                         ✎
                       </Link>
@@ -2620,25 +2761,25 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           </article>
 
           <article className="card span-2">
-            <h3>Notes</h3>
+            <h3>{t("admin.client_detail.notes")}</h3>
             {notes.length === 0 ? (
-              <p className="muted">Aucune note.</p>
+              <p className="muted">{t("admin.client_detail.no_notes")}</p>
             ) : (
               <div className="table-wrap top-gap-sm">
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Date</th>
-                      <th>Type</th>
-                      <th>Auteur</th>
-                      <th>Message</th>
-                      <th>Voir</th>
+                      <th>{t("admin.client_detail.col_date")}</th>
+                      <th>{t("admin.client_detail.col_type")}</th>
+                      <th>{t("admin.client_detail.col_author")}</th>
+                      <th>{t("admin.client_detail.col_message")}</th>
+                      <th>{t("admin.client_detail.col_view")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {notes.map((row) => (
                       <tr key={row.id}>
-                        <td>{formatDate(row.created_at)}</td>
+                        <td>{formatDateUi(row.created_at)}</td>
                         <td>{row.entry_type}</td>
                         <td>{row.author_display_name}</td>
                         <td title={row.message}>{truncatePreview(row.message, 100)}</td>
@@ -2646,9 +2787,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                           <Link
                             className="client-action-icon"
                             href={ficheHref(client.id, { note_modal: "view", note_id: row.id })}
-                            title="Voir le message complet"
+                            title={t("admin.client_detail.view_message_full")}
                           >
-                            V
+                            {t("admin.client_detail.view_short")}
                           </Link>
                         </td>
                       </tr>
@@ -2661,11 +2802,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <form action={createAdminClientNoteAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <label>
-                Ajouter une note
+                {t("admin.client_detail.add_note")}
                 <textarea name="message" rows={4} maxLength={4000} required />
               </label>
               <div className="row">
-                <button type="submit">Enregistrer</button>
+                <button type="submit">{t("admin.client_detail.save")}</button>
               </div>
             </form>
           </article>
@@ -2675,17 +2816,17 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       {openNoteViewModal && selectedNoteForView ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label="Fermer">
+            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label={t("admin.client_detail.close")}>
               ×
             </Link>
-            <h3 className="modal-title">Detail de la note</h3>
+            <h3 className="modal-title">{t("admin.client_detail.note_detail")}</h3>
             <p className="muted">
-              {formatDate(selectedNoteForView.created_at)} | {selectedNoteForView.entry_type} | {selectedNoteForView.author_display_name}
+              {formatDateUi(selectedNoteForView.created_at)} | {selectedNoteForView.entry_type} | {selectedNoteForView.author_display_name}
             </p>
             <textarea readOnly rows={12} value={selectedNoteForView.message} />
             <div className="row modal-actions-end top-gap-sm">
               <Link className="reset-link" href={tabHref(client.id, "fiche")}>
-                Fermer
+                {t("admin.client_detail.close")}
               </Link>
             </div>
           </article>
@@ -3285,87 +3426,87 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           <section className="grid cols-2">
             <article className="card">
               <div className="row spread">
-                <h3>Informations personnelles</h3>
+                <h3>{t("admin.client_detail.personal_info")}</h3>
                 <Link className="mode-link" href={`/admin/clients/${client.id}?tab=infos&edit_infos=1`}>
-                  Modifier
+                  {t("admin.client_detail.edit")}
                 </Link>
               </div>
               <div className="list">
                 <article className="item row spread">
-                  <span className="muted">Nom complet</span>
-                  <strong>{fullName || "Non renseigne"}</strong>
+                  <span className="muted">{t("admin.client_detail.full_name")}</span>
+                  <strong>{fullName || t("admin.client_detail.not_provided")}</strong>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Email</span>
+                  <span className="muted">{t("admin.client_detail.email")}</span>
                   <strong>{client.email}</strong>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Tel mob 1</span>
-                  <strong>{client.mobile_phone_1 ?? "Non renseigne"}</strong>
+                  <span className="muted">{t("admin.client_detail.mobile_1_short")}</span>
+                  <strong>{client.mobile_phone_1 ?? t("admin.client_detail.not_provided")}</strong>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Tel mob 2</span>
-                  <strong>{client.mobile_phone_2 ?? "Non renseigne"}</strong>
+                  <span className="muted">{t("admin.client_detail.mobile_2_short")}</span>
+                  <strong>{client.mobile_phone_2 ?? t("admin.client_detail.not_provided")}</strong>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Tel domicile</span>
-                  <strong>{client.home_phone ?? "Non renseigne"}</strong>
+                  <span className="muted">{t("admin.client_detail.home_phone")}</span>
+                  <strong>{client.home_phone ?? t("admin.client_detail.not_provided")}</strong>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Adresse</span>
+                  <span className="muted">{t("admin.client_detail.address")}</span>
                   <strong>
-                    {client.address_line ?? "Non renseignee"}, {client.postal_code ?? "-"} {client.city ?? "-"} ({client.address_country})
+                    {client.address_line ?? t("admin.client_detail.not_provided_feminine")}, {client.postal_code ?? "-"} {client.city ?? "-"} ({client.address_country})
                   </strong>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Date de naissance</span>
-                  <strong>{formatDateOnly(client.birth_date)}</strong>
+                  <span className="muted">{t("admin.client_detail.birth_date")}</span>
+                  <strong>{formatDateOnlyUi(client.birth_date)}</strong>
                 </article>
                 <article className="item">
-                  <span className="muted">Informations a connaitre</span>
-                  <p>{client.important_info ?? "Aucune information specifique"}</p>
+                  <span className="muted">{t("admin.client_detail.important_info_label")}</span>
+                  <p>{client.important_info ?? t("admin.client_detail.no_specific_info")}</p>
                 </article>
               </div>
             </article>
 
             <article className="card">
-              <h3>Inscription et rattachements</h3>
+              <h3>{t("admin.client_detail.registration_links")}</h3>
               <div className="list">
                 <article className="item row spread">
-                  <span className="muted">Type adherent</span>
-                  <strong>{client.client_kind === "CHILD" ? "Enfant" : "Adulte"}</strong>
+                  <span className="muted">{t("admin.client_detail.member_type")}</span>
+                  <strong>{clientKindText}</strong>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Statut</span>
-                  <span className={`status-pill ${statusClass(client.client_status)}`}>{client.client_status}</span>
+                  <span className="muted">{t("admin.client_detail.status")}</span>
+                  <span className={`status-pill ${statusClass(client.client_status)}`}>{clientStatusLabel(client.client_status, language)}</span>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Pays residence</span>
+                  <span className="muted">{t("admin.client_detail.country_residence")}</span>
                   <strong>{labelFromOptions(COUNTRY_OPTIONS, client.residence_country)}</strong>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Devise</span>
+                  <span className="muted">{t("admin.client_detail.currency")}</span>
                   <strong>{labelFromOptions(CURRENCY_OPTIONS, client.preferred_currency)}</strong>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Langue</span>
-                  <strong>{client.preferred_language === "en" ? "English" : "Francais"}</strong>
+                  <span className="muted">{t("admin.client_detail.language")}</span>
+                  <strong>{clientLanguageText}</strong>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Fuseau horaire</span>
+                  <span className="muted">{t("admin.client_detail.timezone")}</span>
                   <strong>{client.timezone}</strong>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Date du premier cours</span>
-                  <strong>{client.first_course_at ? formatDate(client.first_course_at) : "Aucun cours reserve"}</strong>
+                  <span className="muted">{t("admin.client_detail.first_lesson_date")}</span>
+                  <strong>{client.first_course_at ? formatDateUi(client.first_course_at) : t("admin.client_detail.no_booked_lesson")}</strong>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Cree le</span>
-                  <strong>{formatDate(client.created_at)}</strong>
+                  <span className="muted">{t("admin.client_detail.created_on")}</span>
+                  <strong>{formatDateUi(client.created_at)}</strong>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Mis a jour le</span>
-                  <strong>{formatDate(client.updated_at)}</strong>
+                  <span className="muted">{t("admin.client_detail.updated_on")}</span>
+                  <strong>{formatDateUi(client.updated_at)}</strong>
                 </article>
               </div>
 
@@ -3373,7 +3514,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <input type="hidden" name="client_id" value={client.id} />
                 <input type="hidden" name="return_tab" value="infos" />
                 <label>
-                  Groupes adherent
+                  {t("admin.client_detail.groups")}
                   <select
                     name="group_ids"
                     multiple
@@ -3387,9 +3528,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     ))}
                   </select>
                 </label>
-                <p className="muted">Maintenir Ctrl/Cmd pour selection multiple.</p>
+                <p className="muted">{t("admin.client_detail.multi_select_hint")}</p>
                 <button type="submit" className="ghost">
-                  Enregistrer les groupes
+                  {t("admin.client_detail.save_groups")}
                 </button>
               </form>
             </article>
@@ -3397,58 +3538,58 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
           <section className="grid cols-2">
             <article className="card">
-              <h3>Preferences de communication (opt-in)</h3>
+              <h3>{uiText(language, "admin.clients.communication_preferences")}</h3>
               {client.email_delivery_status.toLowerCase() === "suspended" ? (
                 <p className="flash-err">
-                  Email en suspens: bounce detecte le {client.email_suspended_at ? formatDate(client.email_suspended_at) : "-"}.
+                  {t("admin.client_detail.email_suspended")} {client.email_suspended_at ? formatDateUi(client.email_suspended_at) : "-"}.
                 </p>
               ) : null}
               {client.phone_delivery_status.toLowerCase() === "suspended" ? (
                 <p className="flash-err">
-                  Telephone en suspens: echec permanent detecte le {client.phone_suspended_at ? formatDate(client.phone_suspended_at) : "-"}.
+                  {t("admin.client_detail.phone_suspended")} {client.phone_suspended_at ? formatDateUi(client.phone_suspended_at) : "-"}.
                 </p>
               ) : null}
               <div className="list">
                 <article className="item row spread">
-                  <span>Afficher dans les contacts du portail etudiant</span>
+                  <span>{uiText(language, "admin.clients.portal_contact_visible")}</span>
                   <span className={`status-pill ${client.portal_contact_visible ? "status-ok" : "status-off"}`}>
-                    {client.portal_contact_visible ? "Actif" : "Desactive"}
+                    {booleanEnabledLabel(client.portal_contact_visible, language)}
                   </span>
                 </article>
                 <article className="item row spread">
-                  <span>Recevoir les emails d information</span>
+                  <span>{uiText(language, "admin.clients.email_info_opt_in")}</span>
                   <span className={`status-pill ${client.email_opt_in ? "status-ok" : "status-off"}`}>
-                    {client.email_opt_in ? "Opt-in" : "Opt-out"}
+                    {optInLabel(client.email_opt_in, language)}
                   </span>
                 </article>
                 <article className="item row spread">
-                  <span>Recevoir les SMS d information</span>
+                  <span>{uiText(language, "admin.clients.sms_info_opt_in")}</span>
                   <span className={`status-pill ${client.sms_opt_in ? "status-ok" : "status-off"}`}>
-                    {client.sms_opt_in ? "Opt-in" : "Opt-out"}
+                    {optInLabel(client.sms_opt_in, language)}
                   </span>
                 </article>
                 <article className="item row spread">
-                  <span>Rappels de cours par email</span>
+                  <span>{uiText(language, "admin.clients.email_reminders_opt_in")}</span>
                   <span className={`status-pill ${client.lesson_reminder_email_opt_in ? "status-ok" : "status-off"}`}>
-                    {client.lesson_reminder_email_opt_in ? "Opt-in" : "Opt-out"}
+                    {optInLabel(client.lesson_reminder_email_opt_in, language)}
                   </span>
                 </article>
                 <article className="item row spread">
-                  <span>Rappels de cours par SMS</span>
+                  <span>{uiText(language, "admin.clients.sms_reminders_opt_in")}</span>
                   <span className={`status-pill ${client.lesson_reminder_sms_opt_in ? "status-ok" : "status-off"}`}>
-                    {client.lesson_reminder_sms_opt_in ? "Opt-in" : "Opt-out"}
+                    {optInLabel(client.lesson_reminder_sms_opt_in, language)}
                   </span>
                 </article>
                 <article className="item row spread">
-                  <span>Statut email</span>
+                  <span>{t("admin.client_detail.email_delivery_status")}</span>
                   <span className={`status-pill ${client.email_delivery_status.toLowerCase() === "suspended" ? "status-cancelled" : "status-ok"}`}>
-                    {client.email_delivery_status}
+                    {deliveryStatusLabel(client.email_delivery_status, language)}
                   </span>
                 </article>
                 <article className="item row spread">
-                  <span>Statut telephone</span>
+                  <span>{t("admin.client_detail.phone_delivery_status")}</span>
                   <span className={`status-pill ${client.phone_delivery_status.toLowerCase() === "suspended" ? "status-cancelled" : "status-ok"}`}>
-                    {client.phone_delivery_status}
+                    {deliveryStatusLabel(client.phone_delivery_status, language)}
                   </span>
                 </article>
               </div>
@@ -3457,36 +3598,36 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <input type="hidden" name="return_tab" value="infos" />
                 <label className="row">
                   <input type="checkbox" name="reactivate_email" defaultChecked={client.email_delivery_status.toLowerCase() === "suspended"} />
-                  <span>Reactiver email</span>
+                  <span>{t("admin.client_detail.reactivate_email")}</span>
                 </label>
                 <label className="row">
                   <input type="checkbox" name="reactivate_phone" defaultChecked={client.phone_delivery_status.toLowerCase() === "suspended"} />
-                  <span>Reactiver telephone</span>
+                  <span>{t("admin.client_detail.reactivate_phone")}</span>
                 </label>
                 <div className="row top-gap-sm">
-                  <button type="submit" className="ghost">Reactiver coordonnees</button>
+                  <button type="submit" className="ghost">{t("admin.client_detail.reactivate_contacts")}</button>
                   <Link className="ghost" href="/admin/notifications/incidents">
-                    Voir historique incidents
+                    {t("admin.client_detail.incident_history")}
                   </Link>
                 </div>
               </form>
             </article>
 
             <article className="card">
-              <h3>Operations fiche client</h3>
+              <h3>{t("admin.client_detail.profile_operations")}</h3>
               <form action={sendAdminClientPasswordAction} className="grid">
                 <input type="hidden" name="client_id" value={client.id} />
                 <input type="hidden" name="return_tab" value="infos" />
-                <button type="submit">Generer et envoyer le mot de passe</button>
+                <button type="submit">{t("admin.client_detail.generate_send_password")}</button>
                 <p className="muted">
-                  Le mot de passe est genere automatiquement puis envoye par email avec le template configure.
+                  {t("admin.client_detail.password_help")}
                 </p>
               </form>
 
               <article className="item top-gap-sm">
-                <h4>Note privee interne</h4>
-                <p className="muted">Cette note n est jamais visible par le client.</p>
-                <p>{client.private_note ?? "Aucune note privee."}</p>
+                <h4>{t("admin.client_detail.private_note_internal")}</h4>
+                <p className="muted">{t("admin.client_detail.private_note_hidden")}</p>
+                <p>{client.private_note ?? t("admin.client_detail.no_private_note")}</p>
               </article>
             </article>
           </section>
@@ -3494,12 +3635,12 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           {openEditInfosModal ? (
             <section className="modal-overlay">
               <article className="modal-panel client-info-modal">
-                <Link className="modal-close-x" href={tabHref(client.id, "infos")} aria-label="Fermer">
+                <Link className="modal-close-x" href={tabHref(client.id, "infos")} aria-label={t("admin.client_detail.close")}>
                   ×
                 </Link>
                 <header className="activity-modal-header">
-                  <h2 className="modal-title">Modifier la fiche client</h2>
-                  <p className="muted">Les champs marques * sont obligatoires.</p>
+                  <h2 className="modal-title">{t("admin.client_detail.edit_client_record")}</h2>
+                  <p className="muted">{t("admin.client_detail.required_fields_help")}</p>
                 </header>
 
                 <section className="card modal-card">
@@ -3508,52 +3649,52 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     <input type="hidden" name="return_tab" value="infos" />
 
                     <label>
-                      Email (optionnel)
+                      {uiText(language, "admin.clients.email_optional")}
                       <input type="email" name="email" defaultValue={client.email} />
                     </label>
 
                     <label>
-                      Prenom <span className="required-star">*</span>
+                      {t("admin.client_detail.first_name")} <span className="required-star">*</span>
                       <input type="text" name="first_name" defaultValue={client.first_name ?? ""} maxLength={100} required />
                     </label>
 
                     <label>
-                      Nom <span className="required-star">*</span>
+                      {t("admin.client_detail.last_name")} <span className="required-star">*</span>
                       <input type="text" name="last_name" defaultValue={client.last_name ?? ""} maxLength={100} required />
                     </label>
 
                     <label>
-                      Tel mob 1
+                      {t("admin.client_detail.mobile_1_short")}
                       <input type="text" name="mobile_phone_1" defaultValue={client.mobile_phone_1 ?? ""} maxLength={30} />
                     </label>
 
                     <label>
-                      Tel mob 2
+                      {t("admin.client_detail.mobile_2_short")}
                       <input type="text" name="mobile_phone_2" defaultValue={client.mobile_phone_2 ?? ""} maxLength={30} />
                     </label>
 
                     <label>
-                      Tel domicile
+                      {t("admin.client_detail.home_phone")}
                       <input type="text" name="home_phone" defaultValue={client.home_phone ?? ""} maxLength={30} />
                     </label>
 
                     <label className="span-2">
-                      Adresse postale
+                      {t("admin.client_detail.postal_address")}
                       <input type="text" name="address_line" defaultValue={client.address_line ?? ""} maxLength={255} />
                     </label>
 
                     <label>
-                      Code postal
+                      {t("admin.client_detail.postal_code")}
                       <input type="text" name="postal_code" defaultValue={client.postal_code ?? ""} maxLength={20} />
                     </label>
 
                     <label>
-                      Ville
+                      {t("admin.client_detail.city")}
                       <input type="text" name="city" defaultValue={client.city ?? ""} maxLength={120} />
                     </label>
 
                     <label>
-                      Pays taxation <span className="required-star">*</span>
+                      {uiText(language, "admin.clients.tax_country")} <span className="required-star">*</span>
                       <select name="address_country" defaultValue={client.address_country || DEFAULT_COUNTRY} required>
                         {COUNTRY_OPTIONS.map((country) => (
                           <option key={country.value} value={country.value}>
@@ -3564,27 +3705,27 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     </label>
 
                     <label>
-                      Type adherent
+                      {uiText(language, "admin.clients.client_type")}
                       <select name="client_kind" defaultValue={client.client_kind === "CHILD" ? "CHILD" : "ADULT"} required>
-                        <option value="ADULT">Adulte</option>
-                        <option value="CHILD">Enfant</option>
+                        <option value="ADULT">{t("admin.client_detail.kind_adult")}</option>
+                        <option value="CHILD">{t("admin.client_detail.kind_child")}</option>
                       </select>
                     </label>
 
                     <label>
-                      Statut
+                      {t("admin.client_detail.status")}
                       <select name="client_status" defaultValue={client.client_status || "ACTIVE"} required>
-                        <option value="ACTIVE">ACTIF</option>
-                        <option value="RESPONSABLE">RESPONSABLE</option>
-                        <option value="TRIAL">ESSAI</option>
-                        <option value="PENDING">EN ATTENTE</option>
-                        <option value="INACTIVE">INACTIF</option>
-                        <option value="ARCHIVED">ARCHIVE</option>
+                        <option value="ACTIVE">{uiText(language, "admin.clients.status_active")}</option>
+                        <option value="RESPONSABLE">{uiText(language, "admin.clients.status_responsable")}</option>
+                        <option value="TRIAL">{uiText(language, "admin.clients.status_trial")}</option>
+                        <option value="PENDING">{uiText(language, "admin.clients.status_pending")}</option>
+                        <option value="INACTIVE">{uiText(language, "admin.clients.status_inactive")}</option>
+                        <option value="ARCHIVED">{uiText(language, "admin.clients.status_archived")}</option>
                       </select>
                     </label>
 
                     <label>
-                      Pays residence
+                      {t("admin.client_detail.country_residence")}
                       <select name="residence_country" defaultValue={client.residence_country || DEFAULT_COUNTRY} required>
                         {COUNTRY_OPTIONS.map((country) => (
                           <option key={country.value} value={country.value}>
@@ -3595,7 +3736,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     </label>
 
                     <label>
-                      Devise
+                      {t("admin.client_detail.currency")}
                       <select name="preferred_currency" defaultValue={client.preferred_currency || DEFAULT_CURRENCY} required>
                         {CURRENCY_OPTIONS.map((currency) => (
                           <option key={currency.value} value={currency.value}>
@@ -3605,15 +3746,15 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       </select>
                     </label>
                     <label>
-                      Langue
+                      {t("admin.client_detail.language")}
                       <select name="preferred_language" defaultValue={client.preferred_language || "fr"} required>
-                        <option value="fr">Francais</option>
+                        <option value="fr">{uiText(language, "admin.client_detail.language_name_fr")}</option>
                         <option value="en">English</option>
                       </select>
                     </label>
 
                     <label>
-                      Fuseau horaire
+                      {t("admin.client_detail.timezone")}
                       <select name="timezone" defaultValue={client.timezone || DEFAULT_TIMEZONE} required>
                         {TIMEZONE_OPTIONS.map((item) => (
                           <option key={item.value} value={item.value}>
@@ -3624,33 +3765,33 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     </label>
 
                     <label>
-                      Date de naissance
+                      {uiText(language, "admin.clients.birth_date")}
                       <input type="date" name="birth_date" defaultValue={client.birth_date ?? ""} />
                     </label>
 
                     <label className="span-2">
-                      Informations a connaitre
+                      {uiText(language, "admin.clients.important_info")}
                       <textarea name="important_info" defaultValue={client.important_info ?? ""} rows={4} maxLength={1000} />
                     </label>
 
                     <label className="span-2">
-                      Note privee interne
+                      {uiText(language, "admin.clients.private_note")}
                       <textarea name="private_note" defaultValue={client.private_note ?? ""} rows={4} maxLength={5000} />
                     </label>
 
                     <fieldset className="span-2 config-payment-fieldset">
-                      <legend>Preferences de communication</legend>
+                      <legend>{uiText(language, "admin.clients.communication_preferences")}</legend>
                       <label className="checkline">
                         <input type="checkbox" name="portal_contact_visible" defaultChecked={client.portal_contact_visible} />
-                        Afficher dans les contacts du portail etudiant
+                        {uiText(language, "admin.clients.portal_contact_visible")}
                       </label>
                       <label className="checkline">
                         <input type="checkbox" name="email_opt_in" defaultChecked={client.email_opt_in} />
-                        Recevoir les emails d information
+                        {uiText(language, "admin.clients.email_info_opt_in")}
                       </label>
                       <label className="checkline">
                         <input type="checkbox" name="sms_opt_in" defaultChecked={client.sms_opt_in} />
-                        Recevoir les SMS d information
+                        {uiText(language, "admin.clients.sms_info_opt_in")}
                       </label>
                       <label className="checkline">
                         <input
@@ -3658,7 +3799,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                           name="lesson_reminder_email_opt_in"
                           defaultChecked={client.lesson_reminder_email_opt_in}
                         />
-                        Recevoir les rappels de cours par email
+                        {uiText(language, "admin.clients.email_reminders_opt_in")}
                       </label>
                       <label className="checkline">
                         <input
@@ -3666,15 +3807,15 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                           name="lesson_reminder_sms_opt_in"
                           defaultChecked={client.lesson_reminder_sms_opt_in}
                         />
-                        Recevoir les rappels de cours par SMS
+                        {uiText(language, "admin.clients.sms_reminders_opt_in")}
                       </label>
                     </fieldset>
 
                     <div className="row span-2 modal-actions-end">
                       <Link className="reset-link" href={tabHref(client.id, "infos")}>
-                        Annuler
+                        {t("admin.client_detail.cancel")}
                       </Link>
-                      <button type="submit">Enregistrer</button>
+                      <button type="submit">{t("admin.client_detail.save")}</button>
                     </div>
                   </form>
                 </section>
