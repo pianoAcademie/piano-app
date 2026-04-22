@@ -481,7 +481,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
   const defaultGridByCourseTypeId = new Map(defaultProfessorGrid.lines.map((line) => [line.course_type_id, line]));
   const activeGeneralPeriodLabel =
     defaultProfessorGrid.active_period_start_date
-      ? `${defaultProfessorGrid.active_period_start_date} -> ${defaultProfessorGrid.active_period_end_date ?? "en cours"}`
+      ? `${defaultProfessorGrid.active_period_start_date} -> ${defaultProfessorGrid.active_period_end_date ?? t("admin.professor_detail.ongoing")}`
       : null;
   const payrollActivities = editableCourseTypes.map((courseType) => {
     const activeRate = activeRatesByKey.get(courseType.id) ?? null;
@@ -972,6 +972,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                 baseHourlyRate={activeBaseRate?.hourly_rate ?? ""}
                 activities={payrollActivities}
                 activeGeneralPeriodLabel={activeGeneralPeriodLabel}
+                language={language}
               />
             </form>
           </article>
@@ -980,24 +981,24 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
             <>
               <article className="card">
                 <div className="row spread">
-                  <h3>Grilles contractuelles (legacy)</h3>
+                  <h3>{t("admin.professor_detail.legacy_grids_title")}</h3>
                   <Link className="mode-link" href={tabHref(professor.id, "tarifs")}>
-                    Nouvelle grille
+                    {t("admin.professor_detail.new_grid")}
                   </Link>
                 </div>
                 {contractGrids.length === 0 ? (
-                  <p className="muted">Aucune grille contractuelle definie.</p>
+                  <p className="muted">{t("admin.professor_detail.no_contract_grid")}</p>
                 ) : (
                   <div className="table-wrap">
                     <table className="data-table">
                       <thead>
                         <tr>
-                          <th>Lieu</th>
-                          <th>Debut</th>
-                          <th>Fin</th>
-                          <th>Lignes</th>
-                          <th>Statut</th>
-                          <th>Action</th>
+                          <th>{t("common.location")}</th>
+                          <th>{t("common.start")}</th>
+                          <th>{t("admin.professor_detail.end")}</th>
+                          <th>{t("admin.professor_detail.lines")}</th>
+                          <th>{t("common.status")}</th>
+                          <th>{t("common.actions")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1007,10 +1008,10 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                             <td>{row.valid_from}</td>
                             <td>{row.valid_to ?? "-"}</td>
                             <td>{row.lines.length}</td>
-                            <td>{row.is_active_today ? "Active" : "Historique/Future"}</td>
+                            <td>{row.is_active_today ? t("admin.professor_detail.grid_status_active") : t("admin.professor_detail.grid_status_history_future")}</td>
                             <td>
                               <Link className="mode-link" href={`/admin/professors/${professor.id}?tab=tarifs&legacy_contract=1&edit_grid_id=${row.id}`}>
-                                Modifier
+                                {t("common.edit")}
                               </Link>
                             </td>
                           </tr>
@@ -1021,34 +1022,34 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                 )}
 
                 <article className="item top-gap-sm">
-                  <strong>Fallback legacy</strong>
+                  <strong>{t("admin.professor_detail.legacy_fallback_title")}</strong>
                   <p className="muted">
-                    Utilise uniquement en secours si aucune surcharge professeur et aucune grille generale ne matchent l activite.
+                    {t("admin.professor_detail.legacy_fallback_help")}
                   </p>
-                  <p className="muted">Taux legacy en base: {rates.length}</p>
+                  <p className="muted">{t("admin.professor_detail.legacy_rates_count", { count: rates.length })}</p>
                 </article>
               </article>
 
               <article className="card">
-                <h3>{selectedContractGrid ? "Modifier une grille existante" : "Creer une grille contractuelle"}</h3>
+                <h3>{selectedContractGrid ? t("admin.professor_detail.edit_contract_grid") : t("admin.professor_detail.create_contract_grid")}</h3>
                 <form action={upsertAdminCollaboratorContractGridAction} className="grid">
                   <input type="hidden" name="professor_id" value={professor.id} />
                   {selectedContractGrid ? <input type="hidden" name="grid_id" value={selectedContractGrid.id} /> : null}
 
                   <label>
-                    Date de prise d effet
+                    {t("admin.professor_detail.effective_date")}
                     <input type="date" name="valid_from" defaultValue={selectedContractGrid?.valid_from ?? effectiveDateDefault} required />
                   </label>
 
                   <label>
-                    Date de fin (optionnel)
+                    {t("admin.professor_detail.end_date_optional")}
                     <input type="date" name="valid_to" defaultValue={selectedContractGrid?.valid_to ?? ""} />
                   </label>
 
                   <label>
-                    Lieu
+                    {t("common.location")}
                     <select name="location_code" defaultValue={selectedContractGrid?.location_code ?? "NONE"}>
-                      <option value="NONE">Tous lieux / non specifie</option>
+                      <option value="NONE">{t("admin.professor_detail.all_locations_unspecified")}</option>
                       {contractLocationOptions.map((option) => (
                         <option key={option.code} value={option.code}>
                           {option.label}
@@ -1058,9 +1059,9 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                   </label>
 
                   <label>
-                    Dupliquer depuis (optionnel)
+                    {t("admin.professor_detail.clone_from_optional")}
                     <select name="clone_from_grid_id" defaultValue="">
-                      <option value="">Ne pas dupliquer</option>
+                      <option value="">{t("admin.professor_detail.do_not_clone")}</option>
                       {contractGrids.map((row) => (
                         <option key={`clone-${row.id}`} value={row.id}>
                           {row.location_label} | {row.valid_from}
@@ -1070,22 +1071,22 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                   </label>
 
                   <label className="span-2">
-                    Notes
+                    {t("common.notes")}
                     <textarea name="notes" rows={2} defaultValue={selectedContractGrid?.notes ?? ""} />
                   </label>
 
                   <article className="item span-2">
-                    <strong>Lignes de grille</strong>
-                    <p className="muted">Regles effectif: format `0-3:35; 4-8:42; 9+:50`.</p>
+                    <strong>{t("admin.professor_detail.grid_lines")}</strong>
+                    <p className="muted">{t("admin.professor_detail.headcount_rules_help")}</p>
                     <div className="table-wrap top-gap-sm">
                       <table className="data-table">
                         <thead>
                           <tr>
-                            <th>Activite (BackOffice)</th>
-                            <th>Mode (derive)</th>
-                            <th>Duree ref (min, derive)</th>
-                            <th>Taux default</th>
-                            <th>Regles effectif</th>
+                            <th>{t("admin.professor_detail.activity_backoffice")}</th>
+                            <th>{t("admin.professor_detail.derived_mode")}</th>
+                            <th>{t("admin.professor_detail.derived_duration")}</th>
+                            <th>{t("admin.professor_detail.default_rate")}</th>
+                            <th>{t("admin.professor_detail.headcount_rules")}</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1105,7 +1106,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                               <tr key={`grid-line-${index}`}>
                                 <td>
                                   <select name={`line_course_type_id_${index}`} defaultValue={defaultCourseTypeId}>
-                                    <option value="">Selectionner une activite</option>
+                                    <option value="">{t("admin.professor_detail.select_activity")}</option>
                                     {courseTypes.map((courseType) => (
                                       <option key={`grid-line-course-type-${index}-${courseType.id}`} value={courseType.id}>
                                         {courseType.name}
@@ -1127,7 +1128,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                                     type="text"
                                     name={`line_rules_${index}`}
                                     defaultValue={line ? encodeHeadcountRules(line.rules) : ""}
-                                    placeholder="0-3:35; 4-8:42; 9+:50"
+                                    placeholder={t("admin.professor_detail.headcount_rules_placeholder")}
                                   />
                                 </td>
                               </tr>
@@ -1139,10 +1140,10 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                   </article>
 
                   <div className="row">
-                    <button type="submit">{selectedContractGrid ? "Mettre a jour la grille" : "Creer la grille"}</button>
+                    <button type="submit">{selectedContractGrid ? t("admin.professor_detail.update_grid") : t("admin.professor_detail.create_grid")}</button>
                     {selectedContractGrid ? (
                       <Link className="reset-link" href={`${tabHref(professor.id, "tarifs")}&legacy_contract=1`}>
-                        Annuler edition
+                        {t("admin.professor_detail.cancel_edit")}
                       </Link>
                     ) : null}
                   </div>
@@ -1150,9 +1151,9 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
               </article>
 
               <article className="card span-2">
-                <h3>Apercu coach/professeur (lecture seule)</h3>
+                <h3>{t("admin.professor_detail.coach_preview_readonly")}</h3>
                 {contractGrids.filter((row) => row.is_active_today).length === 0 ? (
-                  <p className="muted">Aucune grille active aujourd hui.</p>
+                  <p className="muted">{t("admin.professor_detail.no_active_grid_today")}</p>
                 ) : (
                   <div className="list">
                     {contractGrids
@@ -1162,18 +1163,18 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                           <div className="row spread">
                             <strong>{grid.location_label}</strong>
                             <span className="badge">
-                              {grid.valid_from} - {grid.valid_to ?? "non definie"}
+                              {grid.valid_from} - {grid.valid_to ?? t("admin.professor_detail.not_defined")}
                             </span>
                           </div>
                           <div className="table-wrap top-gap-sm">
                             <table className="data-table">
                               <thead>
                                 <tr>
-                                  <th>Activite</th>
-                                  <th>Mode</th>
-                                  <th>Duree ref</th>
-                                  <th>Taux default</th>
-                                  <th>Regles effectif</th>
+                                  <th>{t("admin.professor_detail.activity")}</th>
+                                  <th>{t("admin.professor_detail.mode")}</th>
+                                  <th>{t("admin.professor_detail.reference_duration")}</th>
+                                  <th>{t("admin.professor_detail.default_rate")}</th>
+                                  <th>{t("admin.professor_detail.headcount_rules")}</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -1197,12 +1198,12 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
             </>
           ) : (
             <article className="card span-2">
-              <h3>Grilles contractuelles</h3>
+              <h3>{t("admin.professor_detail.contract_grids_title")}</h3>
               <p className="muted">
-                Masquees par defaut pour eviter le double emploi avec la grille generale + surcharges professeur.
+                {t("admin.professor_detail.contract_grids_hidden_help")}
               </p>
               <Link className="mode-link" href={`${tabHref(professor.id, "tarifs")}&legacy_contract=1`}>
-                Afficher les grilles contractuelles (mode legacy)
+                {t("admin.professor_detail.show_legacy_grids")}
               </Link>
             </article>
           )}

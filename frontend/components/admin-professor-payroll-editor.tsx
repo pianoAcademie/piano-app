@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { localeForUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
 
 type RateRule = {
   min_students: number;
@@ -33,6 +34,7 @@ type Props = {
   baseHourlyRate: string;
   activities: ActivityPayrollRow[];
   activeGeneralPeriodLabel: string | null;
+  language: UiLanguage;
 };
 
 type EditableRule = {
@@ -46,7 +48,7 @@ function normalizeMoneyInput(value: string): string {
   return value.replace(",", ".").trim();
 }
 
-function formatMoney(value: string | null, currencyCode: string): string {
+function formatMoney(value: string | null, currencyCode: string, language: UiLanguage): string {
   if (!value) {
     return "-";
   }
@@ -54,7 +56,14 @@ function formatMoney(value: string | null, currencyCode: string): string {
   if (!Number.isFinite(amount)) {
     return `${value} ${currencyCode}`;
   }
-  return `${amount.toFixed(2).replace(".", ",")} ${currencyCode}`;
+  try {
+    return new Intl.NumberFormat(localeForUiLanguage(language), {
+      style: "currency",
+      currency: currencyCode || "EUR",
+    }).format(amount);
+  } catch {
+    return `${amount.toFixed(2)} ${currencyCode}`;
+  }
 }
 
 function gridToEditableRules(grid: RateGrid | null): EditableRule[] {
@@ -106,25 +115,42 @@ function resolveRate(grid: RateGrid | null, studentsCount: number): string | nul
   return grid.default_hourly_rate;
 }
 
-function buildRuleLabel(rule: RateRule, currencyCode: string): string {
+function buildRuleLabel(rule: RateRule, currencyCode: string, language: UiLanguage): string {
   if (rule.max_students === null) {
-    return `${rule.min_students} eleves et + : ${formatMoney(rule.hourly_rate, currencyCode)}`;
+    return uiText(language, "admin.professor_payroll.rule_open", {
+      min: rule.min_students,
+      amount: formatMoney(rule.hourly_rate, currencyCode, language),
+    });
   }
-  return `${rule.min_students} a ${rule.max_students} eleves : ${formatMoney(rule.hourly_rate, currencyCode)}`;
+  return uiText(language, "admin.professor_payroll.rule_range", {
+    min: rule.min_students,
+    max: rule.max_students,
+    amount: formatMoney(rule.hourly_rate, currencyCode, language),
+  });
 }
 
-function GridPreview({ title, grid, currencyCode }: { title: string; grid: RateGrid | null; currencyCode: string }): JSX.Element {
+function GridPreview({
+  title,
+  grid,
+  currencyCode,
+  language,
+}: {
+  title: string;
+  grid: RateGrid | null;
+  currencyCode: string;
+  language: UiLanguage;
+}): JSX.Element {
   return (
     <article className="prof-pay-preview">
       <p className="prof-pay-preview-title">{title}</p>
-      {!grid ? <p className="muted">Aucune grille definie.</p> : null}
+      {!grid ? <p className="muted">{uiText(language, "admin.professor_payroll.no_grid")}</p> : null}
       {grid && grid.rules.length === 0 ? (
-        <p className="muted">Taux unique: {formatMoney(grid.default_hourly_rate, currencyCode)}</p>
+        <p className="muted">{uiText(language, "admin.professor_payroll.single_rate", { amount: formatMoney(grid.default_hourly_rate, currencyCode, language) })}</p>
       ) : null}
       {grid && grid.rules.length > 0 ? (
         <ul className="prof-pay-rule-list">
           {grid.rules.map((rule, index) => (
-            <li key={`${title}-rule-${index}`}>{buildRuleLabel(rule, currencyCode)}</li>
+            <li key={`${title}-rule-${index}`}>{buildRuleLabel(rule, currencyCode, language)}</li>
           ))}
         </ul>
       ) : null}
@@ -139,6 +165,7 @@ function RuleRowsEditor({
   onAdd,
   onReset,
   resetLabel,
+  language,
 }: {
   rows: EditableRule[];
   currencyCode: string;
@@ -146,6 +173,7 @@ function RuleRowsEditor({
   onAdd: () => void;
   onReset: () => void;
   resetLabel: string;
+  language: UiLanguage;
 }): JSX.Element {
   return (
     <div className="prof-pay-grid-editor">
@@ -153,17 +181,17 @@ function RuleRowsEditor({
         <table className="data-table">
           <thead>
             <tr>
-              <th>De</th>
-              <th>A</th>
-              <th>Taux horaire ({currencyCode})</th>
-              <th>Action</th>
+              <th>{uiText(language, "admin.professor_payroll.column_from")}</th>
+              <th>{uiText(language, "admin.professor_payroll.column_to")}</th>
+              <th>{uiText(language, "admin.professor_payroll.column_hourly_rate", { currency: currencyCode })}</th>
+              <th>{uiText(language, "common.actions")}</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
                 <td colSpan={4} className="muted">
-                  Aucune tranche definie.
+                  {uiText(language, "admin.professor_payroll.no_bracket")}
                 </td>
               </tr>
             ) : null}
@@ -236,7 +264,7 @@ function RuleRowsEditor({
                     className="ghost"
                     onClick={() => onChange(rows.filter((candidate) => candidate.id !== row.id))}
                   >
-                    Supprimer
+                    {uiText(language, "common.delete")}
                   </button>
                 </td>
               </tr>
@@ -246,7 +274,7 @@ function RuleRowsEditor({
       </div>
       <div className="row">
         <button type="button" className="ghost" onClick={onAdd}>
-          Ajouter une tranche
+          {uiText(language, "admin.professor_payroll.add_bracket")}
         </button>
         <button type="button" className="ghost" onClick={onReset}>
           {resetLabel}
@@ -264,7 +292,9 @@ export default function AdminProfessorPayrollEditor({
   baseHourlyRate,
   activities,
   activeGeneralPeriodLabel,
+  language,
 }: Props): JSX.Element {
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const [activitySearch, setActivitySearch] = useState("");
   const [activityFilter, setActivityFilter] = useState<"ALL" | "INHERITED" | "OVERRIDDEN">("ALL");
 
@@ -318,22 +348,22 @@ export default function AdminProfessorPayrollEditor({
 
       <article className="card prof-pay-base-card">
         <div className="row spread">
-          <h3>1. Paie de base</h3>
-          <span className="badge">{overriddenCount} surcouche(s) active(s)</span>
+          <h3>{t("admin.professor_payroll.base_title")}</h3>
+          <span className="badge">{t("admin.professor_payroll.overrides_count", { count: overriddenCount })}</span>
         </div>
         <p className="muted">
-          Ce taux s applique uniquement si aucune grille generale active ni surcouche par activite n est applicable.
+          {t("admin.professor_payroll.base_help")}
         </p>
         {activeGeneralPeriodLabel ? (
-          <p className="muted">Periode de grille generale active: {activeGeneralPeriodLabel}</p>
+          <p className="muted">{t("admin.professor_payroll.general_period", { period: activeGeneralPeriodLabel })}</p>
         ) : null}
         <div className="grid cols-3">
           <label>
-            Date de prise d effet
+            {t("admin.professor_payroll.effective_from")}
             <input type="date" name="effective_from" defaultValue={effectiveFrom} required />
           </label>
           <label>
-            Devise
+            {t("admin.professor_payroll.currency")}
             <select name="currency_code" defaultValue={currencyCode}>
               {availableCurrencies.map((code) => (
                 <option key={`pay-currency-${code}`} value={code}>
@@ -343,7 +373,7 @@ export default function AdminProfessorPayrollEditor({
             </select>
           </label>
           <label>
-            Taux horaire de base
+            {t("admin.professor_payroll.base_hourly_rate")}
             <input type="number" name="base_hourly_rate" min="0" step="0.01" defaultValue={baseHourlyRate} required />
           </label>
         </div>
@@ -351,26 +381,26 @@ export default function AdminProfessorPayrollEditor({
 
       <article className="card prof-pay-activities-card">
         <div className="row spread">
-          <h3>2. Regles par activite</h3>
-          <span className="badge">{activities.length} activite(s)</span>
+          <h3>{t("admin.professor_payroll.activity_rules_title")}</h3>
+          <span className="badge">{t("admin.professor_payroll.activities_count", { count: activities.length })}</span>
         </div>
 
         <div className="row top-gap-sm">
           <label className="prof-pay-search">
-            Recherche activite
+            {t("admin.professor_payroll.activity_search")}
             <input
               type="search"
               value={activitySearch}
               onChange={(event) => setActivitySearch(event.target.value)}
-              placeholder="Nom ou mode"
+              placeholder={t("admin.professor_payroll.activity_search_placeholder")}
             />
           </label>
           <label>
-            Filtre
+            {t("common.filters")}
             <select value={activityFilter} onChange={(event) => setActivityFilter(event.target.value as "ALL" | "INHERITED" | "OVERRIDDEN") }>
-              <option value="ALL">Toutes</option>
-              <option value="INHERITED">Heritees</option>
-              <option value="OVERRIDDEN">Surchargees</option>
+              <option value="ALL">{t("admin.professor_payroll.filter_all")}</option>
+              <option value="INHERITED">{t("admin.professor_payroll.filter_inherited")}</option>
+              <option value="OVERRIDDEN">{t("admin.professor_payroll.filter_overridden")}</option>
             </select>
           </label>
         </div>
@@ -410,14 +440,17 @@ export default function AdminProfessorPayrollEditor({
                   <div>
                     <strong>{activity.course_type_name}</strong>
                     <p className="muted">
-                      {activity.mode_label} | Duree ref: {activity.reference_duration_minutes ?? "-"} min
+                      {t("admin.professor_payroll.activity_meta", {
+                        mode: activity.mode_label,
+                        duration: activity.reference_duration_minutes ?? "-",
+                      })}
                     </p>
                   </div>
-                  <span className="badge">{mode === "SPECIFIC" ? "Surcouche professeur" : "Grille generale"}</span>
+                  <span className="badge">{mode === "SPECIFIC" ? t("admin.professor_payroll.override_badge") : t("admin.professor_payroll.general_badge")}</span>
                 </div>
 
                 <label className="top-gap-sm">
-                  Regle de paie
+                  {t("admin.professor_payroll.pay_rule")}
                   <select
                     value={mode}
                     onChange={(event) => {
@@ -440,8 +473,8 @@ export default function AdminProfessorPayrollEditor({
                       }
                     }}
                   >
-                    <option value="GENERAL">Utiliser la grille generale</option>
-                    <option value="SPECIFIC">Definir une surcouche professeur</option>
+                    <option value="GENERAL">{t("admin.professor_payroll.use_general_grid")}</option>
+                    <option value="SPECIFIC">{t("admin.professor_payroll.define_override")}</option>
                   </select>
                 </label>
 
@@ -449,7 +482,7 @@ export default function AdminProfessorPayrollEditor({
                   <>
                     <div className="grid cols-2 top-gap-sm">
                       <label>
-                        Date debut surcouche
+                        {t("admin.professor_payroll.override_start")}
                         <input
                           type="date"
                           value={activityValidFrom[activity.course_type_id] ?? effectiveFrom}
@@ -463,7 +496,7 @@ export default function AdminProfessorPayrollEditor({
                         />
                       </label>
                       <label>
-                        Date fin surcouche (optionnel)
+                        {t("admin.professor_payroll.override_end")}
                         <input
                           type="date"
                           value={activityValidTo[activity.course_type_id] ?? ""}
@@ -478,7 +511,7 @@ export default function AdminProfessorPayrollEditor({
                     </div>
 
                     <label>
-                      Taux de base de l activite (fallback)
+                      {t("admin.professor_payroll.activity_base_rate")}
                       <input
                         type="number"
                         min="0"
@@ -519,12 +552,23 @@ export default function AdminProfessorPayrollEditor({
                           [activity.course_type_id]: seed?.default_hourly_rate ?? "",
                         }));
                       }}
-                      resetLabel="Reinitialiser depuis la grille generale"
+                      resetLabel={t("admin.professor_payroll.reset_from_general")}
+                      language={language}
                     />
 
                     <div className="grid cols-2 top-gap-sm">
-                      <GridPreview title="Grille generale de reference" grid={activity.general_grid} currencyCode={currencyCode} />
-                      <GridPreview title="Surcouche professeur" grid={specificGrid} currencyCode={currencyCode} />
+                      <GridPreview
+                        title={t("admin.professor_payroll.general_reference_grid")}
+                        grid={activity.general_grid}
+                        currencyCode={currencyCode}
+                        language={language}
+                      />
+                      <GridPreview
+                        title={t("admin.professor_payroll.teacher_override_grid")}
+                        grid={specificGrid}
+                        currencyCode={currencyCode}
+                        language={language}
+                      />
                     </div>
 
                     <input
@@ -556,26 +600,36 @@ export default function AdminProfessorPayrollEditor({
                   </>
                 ) : (
                   <div className="grid cols-2 top-gap-sm">
-                    <GridPreview title="Grille appliquee" grid={activity.general_grid} currencyCode={currencyCode} />
-                    <GridPreview title="Simulation" grid={activity.general_grid} currencyCode={currencyCode} />
+                    <GridPreview
+                      title={t("admin.professor_payroll.applied_grid")}
+                      grid={activity.general_grid}
+                      currencyCode={currencyCode}
+                      language={language}
+                    />
+                    <GridPreview
+                      title={t("admin.professor_payroll.simulation")}
+                      grid={activity.general_grid}
+                      currencyCode={currencyCode}
+                      language={language}
+                    />
                   </div>
                 )}
 
                 <div className="prof-pay-simulation top-gap-sm">
-                  <strong>Simulation rapide</strong>
-                  <p className="muted">2 eleves: {formatMoney(resolveRate(activeGrid, 2), currencyCode)}</p>
-                  <p className="muted">4 eleves: {formatMoney(resolveRate(activeGrid, 4), currencyCode)}</p>
-                  <p className="muted">6 eleves: {formatMoney(resolveRate(activeGrid, 6), currencyCode)}</p>
+                  <strong>{t("admin.professor_payroll.quick_simulation")}</strong>
+                  <p className="muted">{t("admin.professor_payroll.simulation_students", { count: 2, amount: formatMoney(resolveRate(activeGrid, 2), currencyCode, language) })}</p>
+                  <p className="muted">{t("admin.professor_payroll.simulation_students", { count: 4, amount: formatMoney(resolveRate(activeGrid, 4), currencyCode, language) })}</p>
+                  <p className="muted">{t("admin.professor_payroll.simulation_students", { count: 6, amount: formatMoney(resolveRate(activeGrid, 6), currencyCode, language) })}</p>
                 </div>
               </article>
             );
           })}
-          {filteredActivities.length === 0 ? <p className="muted">Aucune activite ne correspond a ce filtre.</p> : null}
+          {filteredActivities.length === 0 ? <p className="muted">{t("admin.professor_payroll.no_activity")}</p> : null}
         </div>
       </article>
 
       <div className="row prof-pay-submit-row">
-        <button type="submit">Enregistrer la configuration de paie</button>
+        <button type="submit">{t("admin.professor_payroll.save")}</button>
       </div>
     </section>
   );
