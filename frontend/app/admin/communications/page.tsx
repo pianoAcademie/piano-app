@@ -8,7 +8,9 @@ import type {
   CommunicationPeriod,
   CommunicationReportPageOut,
   CommunicationReportRow,
+  UserOut,
 } from "../../../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type ChannelFilter = "ALL" | "EMAIL" | "SMS";
@@ -61,67 +63,67 @@ function parsePage(value: string): number {
   return parsed;
 }
 
-function formatDate(value: string): string {
+function formatDate(value: string, language: UiLanguage): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return parsed.toLocaleString("fr-FR", {
+  return parsed.toLocaleString(localeForUiLanguage(language), {
     dateStyle: "medium",
     timeStyle: "short",
   });
 }
 
-function deliveryLabel(value: CommunicationReportRow["delivery_status"]): string {
+function deliveryLabel(value: CommunicationReportRow["delivery_status"], language: UiLanguage): string {
   if (value === "DELIVERED") {
-    return "Livre";
+    return uiText(language, "admin.communications.delivery_delivered");
   }
   if (value === "SENT") {
-    return "Envoye";
+    return uiText(language, "admin.communications.delivery_sent");
   }
   if (value === "FAILED") {
-    return "Echec";
+    return uiText(language, "admin.communications.delivery_failed");
   }
   if (value === "PENDING") {
-    return "En attente";
+    return uiText(language, "admin.communications.delivery_pending");
   }
   if (value === "SKIPPED") {
-    return "Ignore";
+    return uiText(language, "admin.communications.delivery_skipped");
   }
-  return "Inconnu";
+  return uiText(language, "admin.communications.delivery_unknown");
 }
 
-function senderCategoryLabel(value: CommunicationReportRow["sender_category"]): string {
+function senderCategoryLabel(value: CommunicationReportRow["sender_category"], language: UiLanguage): string {
   if (value === "PROFESSOR") {
-    return "Professeur";
+    return uiText(language, "admin.communications.sender_professor");
   }
   if (value === "SYSTEM") {
-    return "Systeme";
+    return uiText(language, "admin.communications.sender_system");
   }
-  return "Autre utilisateur";
+  return uiText(language, "admin.communications.sender_other");
 }
 
-function channelLabel(value: CommunicationReportRow["channel"]): string {
-  return value === "SMS" ? "SMS" : "Email";
+function channelLabel(value: CommunicationReportRow["channel"], language: UiLanguage): string {
+  return value === "SMS" ? uiText(language, "common.sms") : uiText(language, "common.email");
 }
 
-function periodLabel(value: CommunicationPeriod): string {
+function periodLabel(value: CommunicationPeriod, language: UiLanguage): string {
   if (value === "TODAY") {
-    return "du jour";
+    return uiText(language, "admin.communications.period_today");
   }
   if (value === "WEEK") {
-    return "des 7 derniers jours";
+    return uiText(language, "admin.communications.period_week");
   }
   if (value === "MONTH") {
-    return "des 30 derniers jours";
+    return uiText(language, "admin.communications.period_month");
   }
   if (value === "SEMESTER") {
-    return "des 6 derniers mois";
+    return uiText(language, "admin.communications.period_semester");
   }
   if (value === "YEAR") {
-    return "de la derniere annee";
+    return uiText(language, "admin.communications.period_year");
   }
-  return "depuis origine";
+  return uiText(language, "admin.communications.period_all");
 }
 
 type CommunicationFiltersState = {
@@ -191,6 +193,12 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const channel = parseChannel(readParam(searchParams, "channel"));
   const selectedMessageId = readParam(searchParams, "message_id");
@@ -251,35 +259,35 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
   return (
     <section className="admin-page-grid">
       <section className="card">
-        <h2>Suivi des communications</h2>
-        <p className="muted">Journal unifie persistant: emetteur, destinataire, date, canal, type, sujet et etat de livraison.</p>
+        <h2>{t("admin.communications.title")}</h2>
+        <p className="muted">{t("admin.communications.subtitle")}</p>
       </section>
 
       <section className="card">
         {flashError ? <p className="flash-err top-gap-sm">{flashError}</p> : null}
         {flashOk ? <p className="flash-ok top-gap-sm">{flashOk}</p> : null}
-        {!dataResult.ok ? <p className="flash-err top-gap-sm">Erreur backend: {dataResult.message}</p> : null}
-        {!filtersResult.ok ? <p className="flash-err top-gap-sm">Erreur filtres: {filtersResult.message}</p> : null}
+        {!dataResult.ok ? <p className="flash-err top-gap-sm">{t("admin.communications.backend_error")}: {dataResult.message}</p> : null}
+        {!filtersResult.ok ? <p className="flash-err top-gap-sm">{t("admin.communications.filters_error")}: {filtersResult.message}</p> : null}
       </section>
 
       <section className="card">
         <form method="get" className="grid cols-4">
           <label className="stack-sm">
-            Recherche libre
-            <input type="text" name="q" defaultValue={q} placeholder="Sujet, destinataire, contenu..." />
+            {t("admin.communications.search")}
+            <input type="text" name="q" defaultValue={q} placeholder={t("admin.communications.search_placeholder")} />
           </label>
           <label className="stack-sm">
-            Canal
+            {t("admin.communications.channel")}
             <select name="channel" defaultValue={channel}>
-              <option value="ALL">Tous</option>
-              <option value="EMAIL">Emails</option>
-              <option value="SMS">SMS</option>
+              <option value="ALL">{t("common.all")}</option>
+              <option value="EMAIL">{t("admin.communications.channel_email_plural")}</option>
+              <option value="SMS">{t("common.sms")}</option>
             </select>
           </label>
           <label className="stack-sm">
-            Type communication
+            {t("admin.communications.communication_type")}
             <select name="communication_type" defaultValue={communicationType || ""}>
-              <option value="">Tous</option>
+              <option value="">{t("common.all")}</option>
               {communicationTypeOptions.map((option) => (
                 <option key={option.code} value={option.code}>
                   {option.label}
@@ -288,20 +296,20 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
             </select>
           </label>
           <label className="stack-sm">
-            Periode
+            {t("common.period")}
             <select name="period" defaultValue={period}>
-              <option value="TODAY">Jour</option>
-              <option value="WEEK">Semaine (7 jours)</option>
-              <option value="MONTH">Dernier mois</option>
-              <option value="SEMESTER">Dernier semestre</option>
-              <option value="YEAR">Derniere annee</option>
-              <option value="ALL">Depuis origine</option>
+              <option value="TODAY">{t("admin.communications.period_option_today")}</option>
+              <option value="WEEK">{t("admin.communications.period_option_week")}</option>
+              <option value="MONTH">{t("admin.communications.period_option_month")}</option>
+              <option value="SEMESTER">{t("admin.communications.period_option_semester")}</option>
+              <option value="YEAR">{t("admin.communications.period_option_year")}</option>
+              <option value="ALL">{t("admin.communications.period_option_all")}</option>
             </select>
           </label>
           <label className="stack-sm">
-            Professeur
+            {t("admin.communications.professor")}
             <select name="professor_id" defaultValue={professorId || ""}>
-              <option value="">Tous</option>
+              <option value="">{t("common.all")}</option>
               {professorOptions.map((professor) => (
                 <option key={professor.id} value={professor.id}>
                   {professor.label}
@@ -310,7 +318,7 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
             </select>
           </label>
           <label className="stack-sm">
-            Messages / page
+            {t("admin.communications.messages_per_page")}
             <select name="per_page" defaultValue={String(perPage)}>
               <option value="25">25</option>
               <option value="50">50</option>
@@ -319,33 +327,33 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
           </label>
           <input type="hidden" name="page" value="1" />
           <div className="row">
-            <button type="submit">Filtrer</button>
+            <button type="submit">{t("common.apply")}</button>
             <a className="mode-link" href={resetHref}>
-              Reinitialiser
+              {t("common.reset")}
             </a>
           </div>
         </form>
         <p className="muted">
-          Affichage par defaut: communications du jour. Archive automatique des messages de plus d&apos;un an.
+          {t("admin.communications.default_display_note")}
         </p>
       </section>
 
       <section className="card row" style={{ justifyContent: "space-between", alignItems: "center" }}>
         <p className="muted">
-          {pageData.total} message(s) {periodLabel(period)}.
+          {t("admin.communications.total_messages_period", { count: pageData.total, period: periodLabel(period, language) })}
         </p>
         <div className="row">
           <a className={`mode-link ${pageData.page <= 1 ? "disabled" : ""}`} href={pageData.page <= 1 ? "#" : previousPageHref}>
-            ← Precedent
+            ← {t("common.previous")}
           </a>
           <span className="muted">
-            Page {pageData.page} / {pageData.total_pages}
+            {t("common.page")} {pageData.page} / {pageData.total_pages}
           </span>
           <a
             className={`mode-link ${pageData.page >= pageData.total_pages ? "disabled" : ""}`}
             href={pageData.page >= pageData.total_pages ? "#" : nextPageHref}
           >
-            Suivant →
+            {t("common.next")} →
           </a>
         </div>
       </section>
@@ -354,49 +362,49 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
         <table className="data-table">
           <thead>
             <tr>
-              <th>Date & heure</th>
-              <th>Canal</th>
-              <th>Envoye par</th>
-              <th>Type communication</th>
-              <th>Sujet</th>
-              <th>Destinataire</th>
-              <th>Etat livraison</th>
-              <th>Action</th>
+              <th>{t("admin.communications.column_datetime")}</th>
+              <th>{t("admin.communications.channel")}</th>
+              <th>{t("admin.communications.sender")}</th>
+              <th>{t("admin.communications.communication_type")}</th>
+              <th>{t("admin.communications.subject")}</th>
+              <th>{t("admin.communications.recipient")}</th>
+              <th>{t("admin.communications.delivery_status")}</th>
+              <th>{t("client.action")}</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
                 <td colSpan={8}>
-                  <p className="muted">Aucune communication pour les filtres selectionnes.</p>
+                  <p className="muted">{t("admin.communications.no_results")}</p>
                 </td>
               </tr>
             ) : (
               rows.map((row) => (
                 <tr key={row.id}>
-                  <td>{formatDate(row.occurred_at)}</td>
-                  <td>{channelLabel(row.channel)}</td>
+                  <td>{formatDate(row.occurred_at, language)}</td>
+                  <td>{channelLabel(row.channel, language)}</td>
                   <td>
                     <strong>{row.sender_label}</strong>
-                    <div className="muted">{senderCategoryLabel(row.sender_category)}</div>
+                    <div className="muted">{senderCategoryLabel(row.sender_category, language)}</div>
                   </td>
                   <td>{row.communication_type_label}</td>
                   <td>{row.subject}</td>
                   <td>{row.recipient}</td>
                   <td>
-                    <span className="badge">{deliveryLabel(row.delivery_status)}</span>
+                    <span className="badge">{deliveryLabel(row.delivery_status, language)}</span>
                   </td>
                   <td>
                     <div className="row wrap gap-sm">
                       <a className="mode-link" href={buildHref(filters, { messageId: row.id })}>
-                        Voir
+                        {t("common.view")}
                       </a>
                       {row.channel === "EMAIL" ? (
                         <form action={resendCommunicationAction}>
                           <input type="hidden" name="communication_id" value={row.id} />
                           <input type="hidden" name="recipient_email" value={row.recipient} />
                           <input type="hidden" name="return_to" value={buildHref(filters, { messageId: row.id })} />
-                          <button type="submit" className="ghost">Renvoyer</button>
+                          <button type="submit" className="ghost">{t("admin.communications.resend")}</button>
                         </form>
                       ) : null}
                     </div>
@@ -411,52 +419,51 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
       {selected ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
-            <a className="modal-close-x" href={closeDetailHref} aria-label="Fermer">
+            <a className="modal-close-x" href={closeDetailHref} aria-label={t("common.close")}>
               ×
             </a>
-            <h2 className="modal-title">Detail communication</h2>
+            <h2 className="modal-title">{t("admin.communications.detail_title")}</h2>
             <p className="muted">
-              {selected.channel} | {selected.source}
+              {channelLabel(selected.channel, language)} | {selected.source}
             </p>
             <p>
-              <strong>Date:</strong> {formatDate(selected.occurred_at)}
+              <strong>{t("admin.communications.detail_date")}:</strong> {formatDate(selected.occurred_at, language)}
             </p>
             <p>
-              <strong>Envoye par:</strong> {selected.sender_label} ({senderCategoryLabel(selected.sender_category)})
+              <strong>{t("admin.communications.detail_sender")}:</strong> {selected.sender_label} ({senderCategoryLabel(selected.sender_category, language)})
             </p>
             <p>
-              <strong>Type:</strong> {selected.communication_type_label}
+              <strong>{t("admin.communications.detail_type")}:</strong> {selected.communication_type_label}
             </p>
             <p>
-              <strong>Destinataire:</strong> {selected.recipient}
+              <strong>{t("admin.communications.detail_recipient")}:</strong> {selected.recipient}
             </p>
             <p>
-              <strong>Sujet:</strong> {selected.subject}
+              <strong>{t("admin.communications.detail_subject")}:</strong> {selected.subject}
             </p>
             <p>
-              <strong>Etat:</strong> {deliveryLabel(selected.delivery_status)}
+              <strong>{t("admin.communications.detail_status")}:</strong> {deliveryLabel(selected.delivery_status, language)}
             </p>
             {selected.provider ? (
               <p>
-                <strong>Provider:</strong> {selected.provider}
+                <strong>{t("admin.communications.detail_provider")}:</strong> {selected.provider}
               </p>
             ) : null}
             {selected.provider_message_id ? (
               <p>
-                <strong>Provider message id:</strong> {selected.provider_message_id}
+                <strong>{t("admin.communications.detail_provider_message_id")}:</strong> {selected.provider_message_id}
               </p>
             ) : null}
             {selected.error_message ? (
               <p>
-                <strong>Erreur provider:</strong> {selected.error_message}
+                <strong>{t("admin.communications.detail_provider_error")}:</strong> {selected.error_message}
               </p>
             ) : null}
             {flashError ? <p className="flash-err top-gap-sm">{flashError}</p> : null}
             {flashOk ? <p className="flash-ok top-gap-sm">{flashOk}</p> : null}
             {selected.provider === "LOG" ? (
               <p className="flash-err top-gap-sm">
-                Envoi email reel desactive sur ce serveur. Cette communication a ete seulement journalisee, donc rien ne peut apparaitre
-                dans Brevo tant que la configuration SMTP/Brevo n&apos;est pas active.
+                {t("admin.communications.log_only_warning")}
               </p>
             ) : null}
 
@@ -466,12 +473,12 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
                   <input type="hidden" name="communication_id" value={selected.id} />
                   <input type="hidden" name="return_to" value={buildHref(filters, { messageId: selected.id })} />
                   <input type="email" name="recipient_email" defaultValue={selected.recipient} />
-                  <button type="submit">Renvoyer cet email</button>
+                  <button type="submit">{t("admin.communications.resend_email")}</button>
                 </form>
               </div>
             ) : null}
 
-            <h3>Contenu</h3>
+            <h3>{t("admin.communications.content")}</h3>
             {selected.content_format === "HTML" ? (
               <div className="card modal-card">
                 <div dangerouslySetInnerHTML={{ __html: selected.content }} />
