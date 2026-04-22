@@ -466,6 +466,44 @@ function invoiceStatusLabel(status: string | null, language: UiLanguage = "fr"):
   return uiText(language, "admin.client_detail.invoice_status.default");
 }
 
+function bookingStatusLabel(status: string | null, language: UiLanguage = "fr"): string {
+  const normalized = (status ?? "").trim().toUpperCase();
+  if (normalized === "BOOKED") {
+    return uiText(language, "client.status_booked");
+  }
+  if (normalized === "WAITLISTED") {
+    return uiText(language, "client.status_waitlisted");
+  }
+  if (normalized === "CANCELLED") {
+    return uiText(language, "client.status_cancelled");
+  }
+  if (normalized === "COMPLETED") {
+    return uiText(language, "client.status_completed");
+  }
+  if (normalized === "ATTENDED") {
+    return uiText(language, "client.status_attended");
+  }
+  if (normalized === "EXCUSED_ABSENCE") {
+    return uiText(language, "client.status_excused_absence");
+  }
+  if (normalized === "NO_SHOW") {
+    return uiText(language, "admin.client_detail.booking_status.no_show");
+  }
+  if (normalized === "PENDING_PAYMENT") {
+    return uiText(language, "admin.client_detail.booking_status.pending_payment");
+  }
+  if (normalized === "SCHEDULED") {
+    return uiText(language, "admin.client_detail.booking_status.scheduled");
+  }
+  if (normalized === "PAID") {
+    return uiText(language, "client.status_paid");
+  }
+  if (normalized === "PENDING") {
+    return uiText(language, "client.status_pending");
+  }
+  return normalized || uiText(language, "admin.client_detail.unknown");
+}
+
 function normalizedBookingStatus(row: AdminClientBookingOut): string {
   return (row.status || "").trim().toUpperCase();
 }
@@ -487,177 +525,187 @@ function waitsForServiceCompletion(row: AdminClientBookingOut): boolean {
   return !row.final_invoice_generated && !bookingCannotGenerateFinalInvoice(row) && normalizedSessionStatus(row) !== "COMPLETED";
 }
 
-function bookingWorkflowSteps(row: AdminClientBookingOut): BookingWorkflowStep[] {
+function bookingWorkflowSteps(row: AdminClientBookingOut, language: UiLanguage = "fr"): BookingWorkflowStep[] {
   const bookingStatus = normalizedBookingStatus(row);
   const sessionStatus = normalizedSessionStatus(row);
   const receiptStatus = (row.payment_receipt_status || "").trim().toUpperCase();
   const finalInvoiceStatus = (row.final_invoice_status || "").trim().toUpperCase();
+  const paymentLabel = uiText(language, "admin.client_detail.booking_workflow.payment");
+  const receiptLabel = uiText(language, "admin.client_detail.booking_workflow.receipt");
+  const refundLabel = uiText(language, "admin.client_detail.booking_workflow.refund");
+  const finalInvoiceLabel = uiText(language, "admin.client_detail.booking_workflow.final_invoice");
 
   if (row.payment_refunded) {
     const refundedAmount = formatMoney(
       row.payment_refunded_amount ?? row.payment_received_amount ?? row.total_incl_vat_snapshot,
       row.currency_snapshot,
+      language,
     );
     return [
       {
-        label: "Paiement",
-        value: "Rembourse",
+        label: paymentLabel,
+        value: uiText(language, "admin.client_detail.booking_workflow.value_refunded"),
         toneClass: "status-cancelled",
-        helper: `${refundedAmount}${row.payment_refunded_at ? ` · ${formatDate(row.payment_refunded_at)}` : ""}`,
+        helper: `${refundedAmount}${row.payment_refunded_at ? ` · ${formatDate(row.payment_refunded_at, language)}` : ""}`,
       },
       {
-        label: "Remboursement",
-        value: row.payment_refund_email_sent_at ? "Envoye" : "A notifier",
+        label: refundLabel,
+        value: row.payment_refund_email_sent_at
+          ? uiText(language, "admin.client_detail.booking_workflow.value_sent")
+          : uiText(language, "admin.client_detail.booking_workflow.value_notify"),
         toneClass: row.payment_refund_email_sent_at ? "status-ok" : "status-warn",
         helper:
           row.payment_refund_reason ||
           (row.payment_refund_email_sent_at
-            ? "Le client a recu la confirmation du remboursement."
-            : "Confirmation client a envoyer."),
+            ? uiText(language, "admin.client_detail.booking_workflow.helper_client_received_refund")
+            : uiText(language, "admin.client_detail.booking_workflow.helper_refund_confirmation_to_send")),
       },
       {
-        label: "Facture finale",
-        value: "Non facturee",
+        label: finalInvoiceLabel,
+        value: uiText(language, "admin.client_detail.booking_workflow.value_not_invoiced"),
         toneClass: "status-off",
-        helper: "Reservation annulee et paiement rembourse.",
+        helper: uiText(language, "admin.client_detail.booking_workflow.helper_cancelled_refunded"),
       },
     ];
   }
 
   const paymentStep: BookingWorkflowStep = row.payment_received
     ? {
-        label: "Paiement",
-        value: "Recu",
+        label: paymentLabel,
+        value: uiText(language, "admin.client_detail.booking_workflow.value_received"),
         toneClass: "status-ok",
-        helper: `${formatMoney(row.payment_received_amount ?? row.total_incl_vat_snapshot, row.currency_snapshot)}${
-          row.payment_received_at ? ` · ${formatDate(row.payment_received_at)}` : ""
+        helper: `${formatMoney(row.payment_received_amount ?? row.total_incl_vat_snapshot, row.currency_snapshot, language)}${
+          row.payment_received_at ? ` · ${formatDate(row.payment_received_at, language)}` : ""
         }`,
       }
       : bookingStatus === "CANCELLED"
       ? {
-          label: "Paiement",
-          value: "Sans objet",
+          label: paymentLabel,
+          value: uiText(language, "admin.client_detail.booking_workflow.value_not_applicable"),
           toneClass: "status-off",
-          helper: "Reservation annulee avant paiement.",
+          helper: uiText(language, "admin.client_detail.booking_workflow.helper_cancelled_before_payment"),
         }
       : bookingStatus === "PENDING_PAYMENT"
         ? {
-            label: "Paiement",
-            value: "En attente",
+            label: paymentLabel,
+            value: uiText(language, "admin.client_detail.booking_workflow.value_pending"),
             toneClass: "status-warn",
-            helper: "Reservation provisoire en attente de validation PSP.",
+            helper: uiText(language, "admin.client_detail.booking_workflow.helper_pending_psp"),
           }
       : {
-          label: "Paiement",
-          value: "En attente",
+          label: paymentLabel,
+          value: uiText(language, "admin.client_detail.booking_workflow.value_pending"),
           toneClass: "status-warn",
-          helper: "Aucun paiement confirme pour l instant.",
+          helper: uiText(language, "admin.client_detail.booking_workflow.helper_no_confirmed_payment"),
         };
 
   let receiptStep: BookingWorkflowStep;
   if (row.payment_receipt_sent_at) {
     receiptStep = {
-      label: "Justificatif",
-      value: "Envoye",
+      label: receiptLabel,
+      value: uiText(language, "admin.client_detail.booking_workflow.value_sent"),
       toneClass: "status-ok",
-      helper: `${row.payment_receipt_number || "Justificatif cree"} · ${formatDate(row.payment_receipt_sent_at)}`,
+      helper: `${row.payment_receipt_number || uiText(language, "admin.client_detail.booking_workflow.receipt_created_fallback")} · ${formatDate(
+        row.payment_receipt_sent_at,
+        language,
+      )}`,
     };
   } else if (receiptStatus === "COMPLETED") {
     receiptStep = {
-      label: "Justificatif",
-      value: "A renvoyer",
+      label: receiptLabel,
+      value: uiText(language, "admin.client_detail.booking_workflow.value_resend"),
       toneClass: "status-warn",
-      helper: row.payment_receipt_number || "Paiement confirme, justificatif pret.",
+      helper: row.payment_receipt_number || uiText(language, "admin.client_detail.booking_workflow.helper_receipt_ready"),
     };
   } else if (row.payment_received) {
     receiptStep = {
-      label: "Justificatif",
-      value: "A creer",
+      label: receiptLabel,
+      value: uiText(language, "admin.client_detail.booking_workflow.value_create"),
       toneClass: "status-warn",
-      helper: "Paiement recu, justificatif non envoye.",
+      helper: uiText(language, "admin.client_detail.booking_workflow.helper_receipt_missing"),
     };
   } else if (bookingStatus === "CANCELLED") {
     receiptStep = {
-      label: "Justificatif",
-      value: "Sans objet",
+      label: receiptLabel,
+      value: uiText(language, "admin.client_detail.booking_workflow.value_not_applicable"),
       toneClass: "status-off",
-      helper: "Pas de justificatif tant que le paiement n est pas recu.",
+      helper: uiText(language, "admin.client_detail.booking_workflow.helper_receipt_not_applicable"),
     };
   } else if (bookingStatus === "PENDING_PAYMENT") {
     receiptStep = {
-      label: "Justificatif",
-      value: "En attente",
+      label: receiptLabel,
+      value: uiText(language, "admin.client_detail.booking_workflow.value_pending"),
       toneClass: "status-off",
-      helper: "Le justificatif sera envoye apres validation du paiement.",
+      helper: uiText(language, "admin.client_detail.booking_workflow.helper_receipt_after_validation"),
     };
   } else {
     receiptStep = {
-      label: "Justificatif",
-      value: "En attente",
+      label: receiptLabel,
+      value: uiText(language, "admin.client_detail.booking_workflow.value_pending"),
       toneClass: "status-off",
-      helper: "Le justificatif sera disponible apres paiement.",
+      helper: uiText(language, "admin.client_detail.booking_workflow.helper_receipt_after_payment"),
     };
   }
 
   let invoiceStep: BookingWorkflowStep;
   if (row.final_invoice_generated) {
     invoiceStep = {
-      label: "Facture finale",
+      label: finalInvoiceLabel,
       value:
         finalInvoiceStatus === "PAID"
-          ? "Emise / payee"
+          ? uiText(language, "admin.client_detail.booking_workflow.value_issued_paid")
           : finalInvoiceStatus === "CANCELLED"
-            ? "Annulee"
-            : "Emise",
+            ? uiText(language, "admin.client_detail.booking_workflow.value_cancelled")
+            : uiText(language, "admin.client_detail.booking_workflow.value_issued"),
       toneClass:
         finalInvoiceStatus === "PAID"
           ? "status-ok"
           : finalInvoiceStatus === "CANCELLED"
             ? "status-cancelled"
             : "status-info",
-      helper: row.final_invoice_number || invoiceStatusLabel(row.final_invoice_status),
+      helper: row.final_invoice_number || invoiceStatusLabel(row.final_invoice_status, language),
     };
   } else if (bookingStatus === "EXCUSED_ABSENCE") {
     invoiceStep = {
-      label: "Facture finale",
-      value: "Non facturee",
+      label: finalInvoiceLabel,
+      value: uiText(language, "admin.client_detail.booking_workflow.value_not_invoiced"),
       toneClass: "status-off",
-      helper: "Absence excusee: aucune facture finale.",
+      helper: uiText(language, "admin.client_detail.booking_workflow.helper_excused_absence_no_invoice"),
     };
   } else if (bookingStatus === "CANCELLED") {
     invoiceStep = {
-      label: "Facture finale",
-      value: "Non facturee",
+      label: finalInvoiceLabel,
+      value: uiText(language, "admin.client_detail.booking_workflow.value_not_invoiced"),
       toneClass: "status-off",
-      helper: "Reservation annulee: aucune facture finale.",
+      helper: uiText(language, "admin.client_detail.booking_workflow.helper_cancelled_no_invoice"),
     };
   } else if (bookingStatus === "PENDING_PAYMENT") {
     invoiceStep = {
-      label: "Facture finale",
-      value: "En attente",
+      label: finalInvoiceLabel,
+      value: uiText(language, "admin.client_detail.booking_workflow.value_pending"),
       toneClass: "status-off",
-      helper: "La reservation doit d abord etre payee puis realisee.",
+      helper: uiText(language, "admin.client_detail.booking_workflow.helper_pay_then_complete"),
     };
   } else if (sessionStatus === "COMPLETED") {
     invoiceStep = {
-      label: "Facture finale",
-      value: "A emettre",
+      label: finalInvoiceLabel,
+      value: uiText(language, "admin.client_detail.booking_workflow.value_to_issue"),
       toneClass: "status-warn",
-      helper: "Prestation realisee, facture finale prete.",
+      helper: uiText(language, "admin.client_detail.booking_workflow.helper_invoice_ready"),
     };
   } else if (row.payment_received) {
     invoiceStep = {
-      label: "Facture finale",
-      value: "A la realisation",
+      label: finalInvoiceLabel,
+      value: uiText(language, "admin.client_detail.booking_workflow.value_on_completion"),
       toneClass: "status-info",
-      helper: "La facture finale sera emise quand la prestation sera realisee.",
+      helper: uiText(language, "admin.client_detail.booking_workflow.helper_invoice_on_completion"),
     };
   } else {
     invoiceStep = {
-      label: "Facture finale",
-      value: "En attente",
+      label: finalInvoiceLabel,
+      value: uiText(language, "admin.client_detail.booking_workflow.value_pending"),
       toneClass: "status-off",
-      helper: "La facturation finale suit la realisation de la prestation.",
+      helper: uiText(language, "admin.client_detail.booking_workflow.helper_invoice_follows_completion"),
     };
   }
 
@@ -999,7 +1047,11 @@ function statusClass(status: string): string {
   return "status-off";
 }
 
-function messageStatusMeta(status: string, errorMessage?: string | null): { label: string; toneClass: string; helpText: string } {
+function messageStatusMeta(
+  status: string,
+  errorMessage?: string | null,
+  language: UiLanguage = "fr",
+): { label: string; toneClass: string; helpText: string } {
   const normalized = String(status || "").trim().toUpperCase();
   const normalizedError = String(errorMessage || "").toLowerCase();
   const looksLikeBounce =
@@ -1009,55 +1061,116 @@ function messageStatusMeta(status: string, errorMessage?: string | null): { labe
     normalizedError.includes("undeliverable") ||
     normalizedError.includes("mailbox unavailable");
   if (normalized === "DELIVERED" || normalized === "SENT") {
-    return { label: "LIVRE", toneClass: "status-ok", helpText: "Message envoye." };
+    return {
+      label: uiText(language, "admin.client_detail.message_status.delivered"),
+      toneClass: "status-ok",
+      helpText: uiText(language, "admin.client_detail.message_status.delivered_help"),
+    };
   }
   if (looksLikeBounce) {
-    return { label: "BOUNCE", toneClass: "status-warn", helpText: "Message rejete par la messagerie destinataire." };
+    return {
+      label: uiText(language, "admin.client_detail.message_status.bounced"),
+      toneClass: "status-warn",
+      helpText: uiText(language, "admin.client_detail.message_status.bounced_help"),
+    };
   }
   if (normalized === "FAILED") {
-    return { label: "ECHEC", toneClass: "status-warn", helpText: "Echec d envoi." };
+    return {
+      label: uiText(language, "admin.client_detail.message_status.failed"),
+      toneClass: "status-warn",
+      helpText: uiText(language, "admin.client_detail.message_status.failed_help"),
+    };
   }
   if (normalized === "SKIPPED") {
     return {
-      label: "NON ENVOYE",
+      label: uiText(language, "admin.client_detail.message_status.skipped"),
       toneClass: "status-off",
-      helpText: "Skipped = envoi ignore (condition non remplie, mode LOG ou destinataire indisponible).",
+      helpText: uiText(language, "admin.client_detail.message_status.skipped_help"),
     };
   }
   if (normalized === "PENDING") {
-    return { label: "EN ATTENTE", toneClass: "status-warn", helpText: "Envoi en attente de traitement." };
+    return {
+      label: uiText(language, "admin.client_detail.message_status.pending"),
+      toneClass: "status-warn",
+      helpText: uiText(language, "admin.client_detail.message_status.pending_help"),
+    };
   }
-  return { label: normalized || "INCONNU", toneClass: statusClass(normalized || "INCONNU"), helpText: "Statut brut du provider." };
+  return {
+    label: normalized || uiText(language, "admin.client_detail.unknown").toUpperCase(),
+    toneClass: statusClass(normalized || "UNKNOWN"),
+    helpText: uiText(language, "admin.client_detail.message_status.provider_help"),
+  };
 }
 
-function buildForwardSubject(subject: string): string {
-  const normalized = String(subject || "").trim();
+function messageSourceLabel(source: string | null, channel: string | null | undefined, language: UiLanguage = "fr"): string {
+  const normalized = String(source || "").trim().toUpperCase();
   if (!normalized) {
-    return "TR: Message";
+    const normalizedChannel = String(channel || "").trim().toUpperCase();
+    if (normalizedChannel === "SMS") {
+      return uiText(language, "common.sms");
+    }
+    if (normalizedChannel === "EMAIL") {
+      return uiText(language, "common.email");
+    }
+    return uiText(language, "common.message");
   }
-  if (normalized.toUpperCase().startsWith("TR:")) {
+  if (normalized === "ADMIN_CLIENT_DIRECT_MESSAGE") {
+    return uiText(language, "admin.client_detail.message_source.direct");
+  }
+  if (normalized === "ADMIN_CLIENT_FORWARD_MESSAGE") {
+    return uiText(language, "admin.client_detail.message_source.forward");
+  }
+  if (normalized === "COURSE_REMINDER" || normalized.includes("REMINDER")) {
+    return uiText(language, "admin.client_detail.message_source.course_reminder");
+  }
+  if (normalized.includes("PAYMENT_RECEIPT")) {
+    return uiText(language, "admin.client_detail.message_source.payment_receipt");
+  }
+  if (normalized.includes("REFUND")) {
+    return uiText(language, "admin.client_detail.message_source.refund");
+  }
+  if (normalized.includes("INVOICE") && normalized.includes("REMINDER")) {
+    return uiText(language, "admin.client_detail.message_source.invoice_reminder");
+  }
+  if (normalized.includes("INVOICE")) {
+    return uiText(language, "admin.client_detail.message_source.invoice");
+  }
+  if (normalized.includes("PASSWORD")) {
+    return uiText(language, "admin.client_detail.message_source.password");
+  }
+  return normalized.replace(/_/g, " ");
+}
+
+function buildForwardSubject(subject: string, language: UiLanguage = "fr"): string {
+  const normalized = String(subject || "").trim();
+  const prefix = uiText(language, "admin.client_detail.message_forward_prefix");
+  if (!normalized) {
+    return `${prefix} ${uiText(language, "common.message")}`;
+  }
+  if (/^(TR:|FWD:|FW:)/i.test(normalized)) {
     return normalized;
   }
-  return `TR: ${normalized}`;
+  return `${prefix} ${normalized}`;
 }
 
-function buildForwardBody(message: AdminClientMessageOut): string {
-  const dateLabel = formatDate(message.sent_at ?? message.scheduled_for_utc);
-  const statusLabel = messageStatusMeta(message.status, message.error_message).label;
+function buildForwardBody(message: AdminClientMessageOut, language: UiLanguage = "fr"): string {
+  const dateLabel = formatDate(message.sent_at ?? message.scheduled_for_utc, language);
+  const statusLabel = messageStatusMeta(message.status, message.error_message, language).label;
   const recipientLabel = message.recipient || "-";
-  const subjectLabel = message.subject_preview || "Message";
+  const subjectLabel = message.subject_preview || uiText(language, "common.message");
   const content = message.body_full || message.body_preview || "";
+  const introLabel = uiText(language, "admin.client_detail.message_forward_intro");
   if ((message.body_format || "TEXT").toUpperCase() === "HTML") {
-    return `<p><strong>Message transfere</strong></p>
-<p><strong>Date:</strong> ${dateLabel}<br><strong>Statut:</strong> ${statusLabel}<br><strong>Destinataire:</strong> ${recipientLabel}<br><strong>Sujet:</strong> ${subjectLabel}</p>
+    return `<p><strong>${introLabel}</strong></p>
+<p><strong>${uiText(language, "common.date")}:</strong> ${dateLabel}<br><strong>${uiText(language, "common.status")}:</strong> ${statusLabel}<br><strong>${uiText(language, "admin.client_detail.recipient")}:</strong> ${recipientLabel}<br><strong>${uiText(language, "common.subject")}:</strong> ${subjectLabel}</p>
 <hr>
 ${content}`;
   }
-  return `Message transfere
-Date: ${dateLabel}
-Statut: ${statusLabel}
-Destinataire: ${recipientLabel}
-Sujet: ${subjectLabel}
+  return `${introLabel}
+${uiText(language, "common.date")}: ${dateLabel}
+${uiText(language, "common.status")}: ${statusLabel}
+${uiText(language, "admin.client_detail.recipient")}: ${recipientLabel}
+${uiText(language, "common.subject")}: ${subjectLabel}
 
 ${content}`;
 }
@@ -1622,7 +1735,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       subject: msg.subject_preview,
       preview: truncatePreview(msg.body_preview || msg.subject_preview || "", 100),
       status: msg.status,
-      statusMeta: messageStatusMeta(msg.status, msg.error_message),
+      statusMeta: messageStatusMeta(msg.status, msg.error_message, language),
       session: msg.session_title ?? "-",
       recipient: msg.recipient ?? "-",
       source: msg.source ?? "-",
@@ -1669,8 +1782,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     return existsInOptions ? "" : recipient;
   })();
   const messageComposeSubject =
-    isForwardCompose && selectedMessageForModal ? buildForwardSubject(selectedMessageForModal.subject_preview) : "";
-  const messageComposeBody = isForwardCompose && selectedMessageForModal ? buildForwardBody(selectedMessageForModal) : "";
+    isForwardCompose && selectedMessageForModal ? buildForwardSubject(selectedMessageForModal.subject_preview, language) : "";
+  const messageComposeBody =
+    isForwardCompose && selectedMessageForModal ? buildForwardBody(selectedMessageForModal, language) : "";
   const messageComposeBodyFormat =
     isForwardCompose && selectedMessageForModal
       ? selectedMessageForModal.body_format === "TEXT"
@@ -4260,7 +4374,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       {currentTab === "messages" ? (
         <section className="grid cols-2">
           <article className="card">
-            <h3>Communiquer</h3>
+            <h3>{t("admin.client_detail.communicate_title")}</h3>
             <div className="grid">
               <Link
                 className="mode-link"
@@ -4270,18 +4384,18 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   messages_q: messageQuery,
                 })}
               >
-                Envoyer un email
+                {t("admin.client_detail.send_email")}
               </Link>
               <form action={adminClientActionPlaceholder}>
                 <input type="hidden" name="client_id" value={client.id} />
                 <input type="hidden" name="action_name" value="Envoi SMS" />
-                <button type="submit">Envoyer un SMS</button>
+                <button type="submit">{t("admin.client_detail.send_sms")}</button>
               </form>
               <form action={adminClientActionPlaceholder}>
                 <input type="hidden" name="client_id" value={client.id} />
                 <input type="hidden" name="action_name" value="Envoi push" />
                 <button className="ghost" type="submit">
-                  Envoyer un push
+                  {t("admin.client_detail.send_push")}
                 </button>
               </form>
             </div>
@@ -4289,47 +4403,52 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
           <article className="card">
             <div className="row spread">
-              <h3>Messages envoyes</h3>
-              <span className="muted">Historique des messages passes uniquement</span>
+              <h3>{t("admin.client_detail.sent_messages_title")}</h3>
+              <span className="muted">{t("admin.client_detail.sent_messages_history_help")}</span>
             </div>
             <form method="get" className="row">
               <input type="hidden" name="tab" value="messages" />
               <label className="balance-date-label">
-                Periode
+                {uiText(language, "common.period")}
                 <select name="messages_months" defaultValue={String(messageMonths)}>
-                  <option value="3">3 derniers mois</option>
-                  <option value="6">6 derniers mois</option>
-                  <option value="12">12 derniers mois</option>
+                  <option value="3">{t("admin.client_detail.messages_period_last_3_months")}</option>
+                  <option value="6">{t("admin.client_detail.messages_period_last_6_months")}</option>
+                  <option value="12">{t("admin.client_detail.messages_period_last_12_months")}</option>
                 </select>
               </label>
               <label className="balance-date-label" style={{ minWidth: 240 }}>
-                Recherche
-                <input type="text" name="messages_q" defaultValue={messageQuery} placeholder="Sujet, contenu, session..." />
+                {uiText(language, "common.search")}
+                <input
+                  type="text"
+                  name="messages_q"
+                  defaultValue={messageQuery}
+                  placeholder={t("admin.client_detail.messages_search_placeholder")}
+                />
               </label>
-              <button type="submit">Filtrer</button>
+              <button type="submit">{t("admin.client_detail.filter_transactions")}</button>
               <Link className="reset-link" href={messagesHref(client.id, { messages_months: "3" })}>
-                Reinitialiser
+                {uiText(language, "common.reset")}
               </Link>
             </form>
             {messageRows.length === 0 ? (
-              <p className="muted">Aucun message pour ce client.</p>
+              <p className="muted">{t("admin.client_detail.no_message_for_client")}</p>
             ) : (
               <div className="table-wrap">
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Date</th>
-                      <th>Sujet</th>
-                      <th>Message</th>
-                      <th>Statut</th>
-                      <th>Session</th>
-                      <th>Actions</th>
+                      <th>{uiText(language, "common.date")}</th>
+                      <th>{uiText(language, "common.subject")}</th>
+                      <th>{uiText(language, "common.message")}</th>
+                      <th>{uiText(language, "common.status")}</th>
+                      <th>{t("admin.client_detail.session_label")}</th>
+                      <th>{uiText(language, "common.actions")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {messageRows.map((msg) => (
                       <tr key={msg.id}>
-                        <td>{formatDate(msg.occurredAt)}</td>
+                        <td>{formatDate(msg.occurredAt, language)}</td>
                         <td>{msg.subject}</td>
                         <td>{msg.preview || "-"}</td>
                         <td>
@@ -4351,7 +4470,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                 messages_months: String(messageMonths),
                                 messages_q: messageQuery,
                               })}
-                              title="Voir le message complet"
+                              title={t("admin.client_detail.view_full_message")}
                             >
                               👁
                             </Link>
@@ -4364,7 +4483,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   messages_months: String(messageMonths),
                                   messages_q: messageQuery,
                                 })}
-                                title="Transferer le message"
+                                title={t("admin.client_detail.forward_message")}
                               >
                                 ↪
                               </Link>
@@ -4387,24 +4506,25 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <Link
               className="modal-close-x"
               href={messagesHref(client.id, { messages_months: String(messageMonths), messages_q: messageQuery })}
-              aria-label="Fermer"
+              aria-label={uiText(language, "common.close")}
             >
               ×
             </Link>
-            <h3 className="modal-title">Detail message</h3>
+            <h3 className="modal-title">{t("admin.client_detail.message_detail_title")}</h3>
             <div className="stack-sm top-gap-sm">
               <p className="muted">
-                {formatDate(selectedMessageForModal.sent_at ?? selectedMessageForModal.scheduled_for_utc)} |{" "}
-                {messageStatusMeta(selectedMessageForModal.status, selectedMessageForModal.error_message).label}
+                {formatDate(selectedMessageForModal.sent_at ?? selectedMessageForModal.scheduled_for_utc, language)} |{" "}
+                {messageStatusMeta(selectedMessageForModal.status, selectedMessageForModal.error_message, language).label}
               </p>
               <p>
-                <strong>Sujet :</strong> {selectedMessageForModal.subject_preview || "-"}
+                <strong>{uiText(language, "common.subject")} :</strong> {selectedMessageForModal.subject_preview || "-"}
               </p>
               <p>
-                <strong>Destinataire :</strong> {selectedMessageForModal.recipient || "-"}
+                <strong>{t("admin.client_detail.recipient")} :</strong> {selectedMessageForModal.recipient || "-"}
               </p>
               <p>
-                <strong>Type :</strong> {selectedMessageForModal.source || "-"}
+                <strong>{uiText(language, "common.type")} :</strong>{" "}
+                {messageSourceLabel(selectedMessageForModal.source, selectedMessageForModal.channel, language)}
               </p>
               {selectedMessageForModal.error_message ? (
                 <p className="flash-err" style={{ margin: 0 }}>
@@ -4412,7 +4532,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 </p>
               ) : null}
               <div className="item">
-                <strong>Contenu</strong>
+                <strong>{t("admin.client_detail.content")}</strong>
                 {(selectedMessageForModal.body_format || "TEXT").toUpperCase() === "HTML" ? (
                   <div
                     className="message-html-preview top-gap-sm"
@@ -4425,7 +4545,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             </div>
             <div className="row modal-actions-end">
               <Link className="reset-link" href={messagesHref(client.id, { messages_months: String(messageMonths), messages_q: messageQuery })}>
-                Fermer
+                {uiText(language, "common.close")}
               </Link>
             </div>
           </article>
@@ -4438,12 +4558,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <Link
               className="modal-close-x"
               href={messagesHref(client.id, { messages_months: String(messageMonths), messages_q: messageQuery })}
-              aria-label="Fermer"
+              aria-label={uiText(language, "common.close")}
             >
               ×
             </Link>
-            <h3 className="modal-title">{isForwardCompose ? "Transferer un message" : "Envoyer un email"}</h3>
-            <p className="muted">{isForwardCompose ? "Le contenu est pre-rempli et modifiable." : "Envoyer un message a ce client."}</p>
+            <h3 className="modal-title">
+              {isForwardCompose ? t("admin.client_detail.message_forward_title") : t("admin.client_detail.message_compose_title")}
+            </h3>
+            <p className="muted">
+              {isForwardCompose ? t("admin.client_detail.message_forward_help") : t("admin.client_detail.message_compose_help")}
+            </p>
             <form action={sendAdminClientMessageAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="return_tab" value="messages" />
@@ -4451,7 +4575,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <input type="hidden" name="messages_months" value={String(messageMonths)} />
               <input type="hidden" name="messages_q" value={messageQuery} />
               <label className="span-2">
-                Destinataires
+                {t("admin.client_detail.recipients")}
                 <div className="item top-gap-sm">
                   <div className="grid">
                     {messageRecipientOptions.map((option) => (
@@ -4469,11 +4593,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 </div>
               </label>
               <label className="span-2">
-                Autres destinataires (un email par ligne)
-                <textarea name="to_emails_free" rows={2} defaultValue={messageComposeDefaultToFree} placeholder="contact@exemple.com" />
+                {t("admin.client_detail.other_recipients")}
+                <textarea
+                  name="to_emails_free"
+                  rows={2}
+                  defaultValue={messageComposeDefaultToFree}
+                  placeholder={t("admin.client_detail.email_placeholder")}
+                />
               </label>
               <label className="span-2">
-                Copie (Cc)
+                {t("admin.client_detail.cc")}
                 <div className="item top-gap-sm">
                   <div className="grid">
                     {messageRecipientOptions.map((option) => (
@@ -4486,20 +4615,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 </div>
               </label>
               <label className="span-2">
-                Autres Cc (un email par ligne)
-                <textarea name="cc_emails_free" rows={2} placeholder="copie@exemple.com" />
+                {t("admin.client_detail.other_cc")}
+                <textarea name="cc_emails_free" rows={2} placeholder={t("admin.client_detail.email_placeholder")} />
               </label>
               <input type="hidden" name="send_copy_to_self" value="off" />
               <label className="checkbox span-2">
                 <input type="checkbox" name="send_copy_to_self" value="on" />
-                M envoyer une copie de ce message
+                {t("admin.client_detail.send_copy_to_self")}
               </label>
               <label className="span-2">
-                Objet
+                {uiText(language, "common.subject")}
                 <input type="text" name="subject" maxLength={255} defaultValue={messageComposeSubject} required />
               </label>
               <label className="span-2">
-                Message
+                {uiText(language, "common.message")}
                 <RichMessageEditor
                   name="body"
                   formatName="body_format"
@@ -4507,14 +4636,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   defaultFormat={messageComposeBodyFormat}
                   rows={12}
                   maxLength={20000}
-                  placeholder="Contenu du courriel"
+                  placeholder={t("admin.client_detail.email_body_placeholder")}
                 />
               </label>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={messagesHref(client.id, { messages_months: String(messageMonths), messages_q: messageQuery })}>
-                  Annuler
+                  {uiText(language, "common.cancel")}
                 </Link>
-                <button type="submit">Envoyer</button>
+                <button type="submit">{uiText(language, "common.send")}</button>
               </div>
             </form>
           </article>
@@ -5876,41 +6005,37 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       {currentTab === "reservations" && selectedBookingReceiptForRefund ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={tabHref(client.id, "reservations")} aria-label="Fermer">
+            <Link className="modal-close-x" href={tabHref(client.id, "reservations")} aria-label={t("common.close")}>
               ×
             </Link>
-            <h3 className="modal-title">Annuler et rembourser la reservation</h3>
+            <h3 className="modal-title">{t("admin.client_detail.booking_refund_title")}</h3>
             <p className="muted">
               {selectedBookingReceiptForRefund.session_title} |{" "}
               {formatMoney(
                 selectedBookingReceiptForRefund.payment_received_amount ??
                   selectedBookingReceiptForRefund.total_incl_vat_snapshot,
                 selectedBookingReceiptForRefund.currency_snapshot,
+                language,
               )}
             </p>
             <div className="stack-xs">
-              <small className="muted">
-                Cette action enregistre le remboursement du justificatif de paiement, annule la reservation si elle est encore
-                active et empeche toute facture finale.
-              </small>
-              <small className="muted">
-                Le client recevra un email de confirmation du remboursement si une adresse est disponible.
-              </small>
+              <small className="muted">{t("admin.client_detail.booking_refund_help")}</small>
+              <small className="muted">{t("admin.client_detail.booking_refund_help_email")}</small>
             </div>
             <form action={refundAdminClientPaymentReceiptAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="receipt_id" value={selectedBookingReceiptForRefund.payment_receipt_id ?? ""} />
               <input type="hidden" name="return_tab" value="reservations" />
               <label>
-                Motif (optionnel)
-                <textarea name="reason" rows={3} maxLength={1000} placeholder="Ex: annulation du cours d essai" />
+                {t("admin.client_detail.refund_reason_optional")}
+                <textarea name="reason" rows={3} maxLength={1000} placeholder={t("admin.client_detail.booking_refund_reason_placeholder")} />
               </label>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, "reservations")}>
-                  Annuler
+                  {uiText(language, "common.cancel")}
                 </Link>
                 <button type="submit" className="danger">
-                  Confirmer l annulation et le remboursement
+                  {t("admin.client_detail.booking_refund_confirm")}
                 </button>
               </div>
             </form>
@@ -5922,26 +6047,26 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         <section className="admin-page-grid">
           <section className="grid cols-2">
             <article className="card">
-              <h3>Stats reservations</h3>
+              <h3>{t("admin.client_detail.bookings_stats_title")}</h3>
               <div className="list">
                 <article className="item row spread">
-                  <span className="muted">Taux de presence</span>
+                  <span className="muted">{t("admin.client_detail.bookings_attendance_rate")}</span>
                   <strong>{formatPercent(attendanceRate)}</strong>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Reservations a venir</span>
+                  <span className="muted">{t("admin.client_detail.bookings_upcoming_count")}</span>
                   <strong>{upcomingBookings.length}</strong>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Historique reservations</span>
+                  <span className="muted">{t("admin.client_detail.bookings_history_count")}</span>
                   <strong>{pastBookings.length}</strong>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Paiements recus</span>
+                  <span className="muted">{t("admin.client_detail.bookings_payments_received_count")}</span>
                   <strong>{paymentsReceivedCount}</strong>
                 </article>
                 <article className="item row spread">
-                  <span className="muted">Factures finales generees</span>
+                  <span className="muted">{t("admin.client_detail.bookings_final_invoices_generated_count")}</span>
                   <strong>{finalInvoicesGeneratedCount}</strong>
                 </article>
               </div>
@@ -5949,43 +6074,43 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <form action={adminClientActionPlaceholder} className="grid">
                 <input type="hidden" name="client_id" value={client.id} />
                 <input type="hidden" name="action_name" value="Rattachement de cours" />
-                <button type="submit">Rattacher un cours</button>
+                <button type="submit">{t("admin.client_detail.attach_course")}</button>
               </form>
             </article>
 
             <article className="card">
-              <h3>Planning du client</h3>
-              <h4>Prochains cours</h4>
+              <h3>{t("admin.client_detail.bookings_schedule_title")}</h3>
+              <h4>{t("admin.client_detail.upcoming_lessons")}</h4>
               {upcomingBookings.length === 0 ? (
-                <p className="muted">Aucune reservation a venir.</p>
+                <p className="muted">{t("admin.client_detail.no_upcoming_bookings")}</p>
               ) : (
                 <div className="list">
                   {upcomingBookings.slice(0, 12).map((row) => (
                     <article key={row.id} className="item">
                       <div className="row spread">
                         <strong>{row.session_title}</strong>
-                        <span className={`status-pill ${statusClass(row.status)}`}>{row.status}</span>
+                        <span className={`status-pill ${statusClass(row.status)}`}>{bookingStatusLabel(row.status, language)}</span>
                       </div>
                       <p className="muted">
-                        {formatDate(row.session_start_at_utc)} | {row.course_type_name} | {row.location_name}
+                        {formatDate(row.session_start_at_utc, language)} | {row.course_type_name} | {row.location_name}
                       </p>
                     </article>
                   ))}
                 </div>
               )}
 
-              <h4>Historique recent</h4>
+              <h4>{t("admin.client_detail.recent_history")}</h4>
               {pastBookings.length === 0 ? (
-                <p className="muted">Pas encore d&apos;historique.</p>
+                <p className="muted">{t("admin.client_detail.no_recent_history")}</p>
               ) : (
                 <div className="list">
                   {pastBookings.slice(0, 10).map((row) => (
                     <article key={row.id} className="item row spread">
                       <div>
                         <strong>{row.session_title}</strong>
-                        <p className="muted">{formatDate(row.session_start_at_utc)}</p>
+                        <p className="muted">{formatDate(row.session_start_at_utc, language)}</p>
                       </div>
-                      <span className={`status-pill ${statusClass(row.status)}`}>{row.status}</span>
+                      <span className={`status-pill ${statusClass(row.status)}`}>{bookingStatusLabel(row.status, language)}</span>
                     </article>
                   ))}
                 </div>
@@ -5996,70 +6121,72 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           <article className="card">
             <div className="row spread">
               <div className="stack-xs">
-                <h3>Suivi paiements / justificatifs / factures finales</h3>
-                <p className="muted">
-                  Pour chaque reservation, l&apos;admin voit si le paiement est recu, si un remboursement a ete traite, si le
-                  justificatif a ete envoye et si la facture finale a deja ete emise.
-                </p>
+                <h3>{t("admin.client_detail.booking_billing_title")}</h3>
+                <p className="muted">{t("admin.client_detail.booking_billing_help")}</p>
               </div>
             </div>
 
             <div className="booking-billing-overview">
               <article className="booking-billing-card">
-                <span className="booking-billing-card-label">Paiements recus</span>
+                <span className="booking-billing-card-label">{t("admin.client_detail.booking_overview_payments_received")}</span>
                 <strong className="booking-billing-card-value">{paymentsReceivedCount}</strong>
-                <small className="muted">Reservations deja reglees ou partiellement reglees.</small>
+                <small className="muted">{t("admin.client_detail.booking_overview_payments_received_help")}</small>
               </article>
               <article className="booking-billing-card">
-                <span className="booking-billing-card-label">Justificatifs envoyes</span>
+                <span className="booking-billing-card-label">{t("admin.client_detail.booking_overview_receipts_sent")}</span>
                 <strong className="booking-billing-card-value">{receiptsSentCount}</strong>
-                <small className="muted">Recu de paiement deja envoye au client.</small>
+                <small className="muted">{t("admin.client_detail.booking_overview_receipts_sent_help")}</small>
               </article>
               <article className="booking-billing-card">
-                <span className="booking-billing-card-label">Remboursements enregistres</span>
+                <span className="booking-billing-card-label">{t("admin.client_detail.booking_overview_refunds_recorded")}</span>
                 <strong className="booking-billing-card-value">{refundsRecordedCount}</strong>
-                <small className="muted">Reservations annulees avec remboursement client.</small>
+                <small className="muted">{t("admin.client_detail.booking_overview_refunds_recorded_help")}</small>
               </article>
               <article className="booking-billing-card">
-                <span className="booking-billing-card-label">Factures finales emises</span>
+                <span className="booking-billing-card-label">{t("admin.client_detail.booking_overview_final_invoices_generated")}</span>
                 <strong className="booking-billing-card-value">{finalInvoicesGeneratedCount}</strong>
-                <small className="muted">Factures definitives deja generees.</small>
+                <small className="muted">{t("admin.client_detail.booking_overview_final_invoices_generated_help")}</small>
               </article>
               <article className="booking-billing-card">
-                <span className="booking-billing-card-label">Factures a emettre</span>
+                <span className="booking-billing-card-label">{t("admin.client_detail.booking_overview_final_invoices_to_issue")}</span>
                 <strong className="booking-billing-card-value">{finalInvoicesReadyCount}</strong>
                 <small className="muted">
-                  {finalInvoicesWaitingCount} en attente de realisation, {finalInvoicesReadyCount} deja prêtes.
+                  {t("admin.client_detail.booking_overview_final_invoices_to_issue_help", {
+                    waiting: finalInvoicesWaitingCount,
+                    ready: finalInvoicesReadyCount,
+                  })}
                 </small>
               </article>
             </div>
 
             {reservationRows.length === 0 ? (
-              <p className="muted">Aucune reservation pour ce client.</p>
+              <p className="muted">{t("admin.client_detail.no_booking_for_client")}</p>
             ) : (
               <div className="table-wrap">
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Date</th>
-                      <th>Prestation</th>
-                      <th>Reservation</th>
-                      <th>Suivi financier</th>
-                      <th>Actions</th>
+                      <th>{uiText(language, "common.date")}</th>
+                      <th>{t("admin.client_detail.service_column")}</th>
+                      <th>{t("admin.client_detail.booking_column")}</th>
+                      <th>{t("admin.client_detail.financial_follow_up_column")}</th>
+                      <th>{uiText(language, "common.actions")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {reservationRows.map((row) => {
                       const canGenerateFinalInvoice = canGenerateFinalInvoiceForBooking(row);
-                      const workflowSteps = bookingWorkflowSteps(row);
+                      const workflowSteps = bookingWorkflowSteps(row, language);
                       return (
                         <tr key={row.id}>
                           <td>
                             <div className="stack-xs">
-                              <strong>{formatDateOnlyNumeric(row.scheduled_service_date ?? row.session_start_at_utc)}</strong>
-                              <small className="muted">{formatDate(row.session_start_at_utc)}</small>
+                              <strong>{formatDateOnlyNumeric(row.scheduled_service_date ?? row.session_start_at_utc, language)}</strong>
+                              <small className="muted">{formatDate(row.session_start_at_utc, language)}</small>
                               {row.service_completed_at ? (
-                                <small className="muted">Realisee le {formatDate(row.service_completed_at)}</small>
+                                <small className="muted">
+                                  {t("admin.client_detail.completed_on", { date: formatDate(row.service_completed_at, language) })}
+                                </small>
                               ) : null}
                             </div>
                           </td>
@@ -6070,15 +6197,19 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                 {row.course_type_name} | {row.location_name}
                               </small>
                               <small className="muted">
-                                Tarif {formatMoney(row.total_incl_vat_snapshot, row.currency_snapshot)} | TVA{" "}
-                                {formatVatRateLabel(row.vat_rate_snapshot)}
+                                {t("admin.client_detail.service_rate_vat", {
+                                  amount: formatMoney(row.total_incl_vat_snapshot, row.currency_snapshot, language),
+                                  vat: formatVatRateLabel(row.vat_rate_snapshot),
+                                })}
                               </small>
                             </div>
                           </td>
                           <td>
                             <div className="stack-xs">
-                              <span className={`status-pill ${statusClass(row.status)}`}>{row.status}</span>
-                              <small className="muted">Session: {row.session_status}</small>
+                              <span className={`status-pill ${statusClass(row.status)}`}>{bookingStatusLabel(row.status, language)}</span>
+                              <small className="muted">
+                                {t("admin.client_detail.session_prefix", { status: bookingStatusLabel(row.session_status, language) })}
+                              </small>
                             </div>
                           </td>
                           <td>
@@ -6102,7 +6233,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   <a
                                     className="client-action-icon"
                                     href={paymentReceiptPdfHref(client.id, row.payment_receipt_id)}
-                                    title="Telecharger le justificatif"
+                                    title={t("admin.client_detail.download_receipt")}
                                   >
                                     ↓
                                   </a>
@@ -6111,7 +6242,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                       <input type="hidden" name="client_id" value={client.id} />
                                       <input type="hidden" name="receipt_id" value={row.payment_receipt_id} />
                                       <input type="hidden" name="return_tab" value="reservations" />
-                                      <button type="submit" className="client-action-icon" title="Renvoyer le justificatif">
+                                      <button type="submit" className="client-action-icon" title={t("admin.client_detail.resend_receipt")}>
                                         ✉
                                       </button>
                                     </form>
@@ -6128,7 +6259,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                     payment_modal: "receipt_refund",
                                     payment_id: row.payment_receipt_id,
                                   })}
-                                  title="Annuler et rembourser la reservation"
+                                  title={t("admin.client_detail.cancel_and_refund_booking")}
                                 >
                                   ↺
                                 </Link>
@@ -6140,14 +6271,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                     href={rangeInvoicePdfHref(client.id, row.final_invoice_note_id, true)}
                                     target="_blank"
                                     rel="noreferrer"
-                                    title="Voir la facture finale"
+                                    title={t("admin.client_detail.view_final_invoice")}
                                   >
                                     V
                                   </a>
                                   <a
                                     className="client-action-icon"
                                     href={rangeInvoicePdfHref(client.id, row.final_invoice_note_id, false)}
-                                    title="Telecharger la facture finale"
+                                    title={t("admin.client_detail.download_final_invoice")}
                                   >
                                     ↓
                                   </a>
@@ -6158,7 +6289,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   <input type="hidden" name="client_id" value={client.id} />
                                   <input type="hidden" name="booking_id" value={row.id} />
                                   <input type="hidden" name="return_tab" value="reservations" />
-                                  <button type="submit" className="client-action-icon" title="Generer la facture finale">
+                                  <button type="submit" className="client-action-icon" title={t("admin.client_detail.generate_final_invoice")}>
                                     F
                                   </button>
                                 </form>
