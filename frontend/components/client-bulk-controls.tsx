@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { type UiLanguage, uiText } from "../lib/ui-i18n";
+
 type GroupOption = {
   id: string;
   name: string;
@@ -13,7 +15,18 @@ type Props = {
   groups: GroupOption[];
   pageCount: number;
   filteredCount: number;
+  language: UiLanguage;
 };
+
+function statusLabel(status: string, language: UiLanguage): string {
+  const normalized = status.trim().toUpperCase();
+  if (normalized === "ACTIVE") return uiText(language, "admin.clients.status_active");
+  if (normalized === "TRIAL") return uiText(language, "admin.clients.status_trial");
+  if (normalized === "PENDING") return uiText(language, "admin.clients.status_pending");
+  if (normalized === "INACTIVE") return uiText(language, "admin.clients.status_inactive");
+  if (normalized === "ARCHIVED") return uiText(language, "admin.clients.status_archived");
+  return normalized;
+}
 
 function getForm(): HTMLFormElement | null {
   const form = document.getElementById("clients-bulk-form");
@@ -57,10 +70,11 @@ function syncHeaderToggle(form: HTMLFormElement): number {
   return selected;
 }
 
-export default function ClientBulkControls({ groups, pageCount, filteredCount }: Props): JSX.Element {
+export default function ClientBulkControls({ groups, pageCount, filteredCount, language }: Props): JSX.Element {
   const [action, setAction] = useState("UPDATE_STATUS");
   const [selectionScope, setSelectionScope] = useState<SelectionScope>("PAGE");
   const [selectedOnPage, setSelectedOnPage] = useState(0);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const canPickGroup = useMemo(() => action === "ASSIGN_GROUP", [action]);
   const canPickStatus = useMemo(() => action === "UPDATE_STATUS", [action]);
@@ -108,35 +122,35 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount }:
 
       <div className="row bulk-controls-row">
         <label className="bulk-inline-field">
-          Action
+          {t("admin.clients.bulk_action")}
           <select name="bulk_action" value={action} onChange={(event) => setAction(event.target.value)}>
-            <option value="UPDATE_STATUS">Mettre a jour les statuts</option>
-            <option value="ASSIGN_GROUP">Affecter a un groupe</option>
-            <option value="ARCHIVE">Archiver</option>
-            <option value="EMAIL_CLIENTS">Nouveau courriel (clients selectionnes)</option>
-            <option value="EMAIL_PARENTS">Nouveau courriel (parents selectionnes)</option>
-            <option value="SMS_CLIENTS">Envoyer SMS (clients selectionnes)</option>
-            <option value="SMS_PARENTS">Envoyer SMS (parents selectionnes)</option>
-            <option value="EXPORT">Telecharger Excel (CSV)</option>
-            <option value="DELETE">Supprimer</option>
+            <option value="UPDATE_STATUS">{t("admin.clients.bulk_update_status")}</option>
+            <option value="ASSIGN_GROUP">{t("admin.clients.bulk_assign_group")}</option>
+            <option value="ARCHIVE">{t("admin.clients.bulk_archive")}</option>
+            <option value="EMAIL_CLIENTS">{t("admin.clients.bulk_email_clients")}</option>
+            <option value="EMAIL_PARENTS">{t("admin.clients.bulk_email_parents")}</option>
+            <option value="SMS_CLIENTS">{t("admin.clients.bulk_sms_clients")}</option>
+            <option value="SMS_PARENTS">{t("admin.clients.bulk_sms_parents")}</option>
+            <option value="EXPORT">{t("admin.clients.bulk_export")}</option>
+            <option value="DELETE">{t("admin.clients.bulk_delete")}</option>
           </select>
         </label>
 
         <label className="bulk-inline-field">
-          Nouveau statut
+          {t("admin.clients.bulk_new_status")}
           <select name="target_status" defaultValue="ACTIVE" disabled={!canPickStatus}>
-            <option value="ACTIVE">ACTIF</option>
-            <option value="TRIAL">ESSAI</option>
-            <option value="PENDING">EN ATTENTE</option>
-            <option value="INACTIVE">INACTIF</option>
-            <option value="ARCHIVED">ARCHIVE</option>
+            <option value="ACTIVE">{statusLabel("ACTIVE", language)}</option>
+            <option value="TRIAL">{statusLabel("TRIAL", language)}</option>
+            <option value="PENDING">{statusLabel("PENDING", language)}</option>
+            <option value="INACTIVE">{statusLabel("INACTIVE", language)}</option>
+            <option value="ARCHIVED">{statusLabel("ARCHIVED", language)}</option>
           </select>
         </label>
 
         <label className="bulk-inline-field">
-          Groupe
+          {t("admin.clients.bulk_group")}
           <select name="group_id" defaultValue="" disabled={!canPickGroup}>
-            <option value="">Selectionner</option>
+            <option value="">{t("admin.clients.bulk_select_group")}</option>
             {groups.map((group) => (
               <option key={group.id} value={group.id}>
                 {group.name}
@@ -149,19 +163,19 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount }:
       {isMessageAction ? (
         <div className="grid cols-2">
           <label className="span-2">
-            Sujet {isEmailMessageAction ? "(obligatoire)" : "(optionnel pour SMS)"}
-            <input type="text" name="message_subject" maxLength={255} placeholder="Objet du message" />
+            {isEmailMessageAction ? t("admin.clients.bulk_subject_required") : t("admin.clients.bulk_subject_optional_sms")}
+            <input type="text" name="message_subject" maxLength={255} placeholder={t("admin.clients.bulk_subject_placeholder")} />
           </label>
           <label>
-            Format
+            {t("admin.clients.bulk_format")}
             <select name="message_body_format" defaultValue="TEXT" disabled={isSmsMessageAction}>
-              <option value="TEXT">Texte</option>
-              <option value="HTML">HTML</option>
+              <option value="TEXT">{t("admin.clients.bulk_text")}</option>
+              <option value="HTML">{uiText(language, "common.html")}</option>
             </select>
           </label>
           <label className="span-2">
-            Message
-            <textarea name="message_body" rows={5} maxLength={12000} placeholder="Contenu du message..." />
+            {t("admin.clients.bulk_message")}
+            <textarea name="message_body" rows={5} maxLength={12000} placeholder={t("admin.clients.bulk_message_placeholder")} />
           </label>
         </div>
       ) : null}
@@ -180,7 +194,7 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount }:
             setSelectedOnPage(syncHeaderToggle(form));
           }}
         >
-          Selectionner la page ({pageCount})
+          {t("admin.clients.bulk_select_page", { count: pageCount })}
         </button>
 
         <button
@@ -196,7 +210,7 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount }:
             setSelectedOnPage(syncHeaderToggle(form));
           }}
         >
-          Selectionner tous les filtres ({filteredCount})
+          {t("admin.clients.bulk_select_filtered", { count: filteredCount })}
         </button>
 
         <button
@@ -212,14 +226,14 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount }:
             setSelectedOnPage(syncHeaderToggle(form));
           }}
         >
-          Effacer la selection
+          {t("admin.clients.bulk_clear_selection")}
         </button>
       </div>
 
       <small className="muted">
         {selectionScope === "FILTERED"
-          ? `Portee selection: tous les clients filtres (${filteredCount}).`
-          : `Portee selection: page courante (${selectedOnPage}/${pageCount}).`}
+          ? t("admin.clients.bulk_scope_filtered", { count: filteredCount })
+          : t("admin.clients.bulk_scope_page", { selected: selectedOnPage, count: pageCount })}
       </small>
 
       <div className="row">
@@ -236,13 +250,13 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount }:
 
             if (selectionScope === "PAGE" && selectedIds.length === 0) {
               event.preventDefault();
-              window.alert("Selectionnez au moins un adherent de la page.");
+              window.alert(t("admin.clients.bulk_alert_select_client"));
               return;
             }
 
             if (selectionScope === "FILTERED" && selectedFilteredIds.length === 0) {
               event.preventDefault();
-              window.alert("Aucun adherent ne correspond au filtre.");
+              window.alert(t("admin.clients.bulk_alert_no_filtered"));
               return;
             }
 
@@ -250,7 +264,7 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount }:
               const groupField = form.elements.namedItem("group_id") as HTMLSelectElement | null;
               if (!groupField || !groupField.value) {
                 event.preventDefault();
-                window.alert("Selectionnez un groupe.");
+                window.alert(t("admin.clients.bulk_alert_select_group"));
                 return;
               }
             }
@@ -262,12 +276,12 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount }:
               const body = (bodyField?.value || "").trim();
               if (!body) {
                 event.preventDefault();
-                window.alert(isEmailMessageAction ? "Sujet et message obligatoires." : "Message SMS obligatoire.");
+                window.alert(isEmailMessageAction ? t("admin.clients.bulk_alert_subject_and_message") : t("admin.clients.bulk_alert_sms_message"));
                 return;
               }
               if (isEmailMessageAction && !subject) {
                 event.preventDefault();
-                window.alert("Sujet et message obligatoires.");
+                window.alert(t("admin.clients.bulk_alert_subject_and_message"));
                 return;
               }
             }
@@ -278,7 +292,7 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount }:
                   ? selectedFilteredIds.length
                   : selectedIds.length;
               const confirmed = window.confirm(
-                `Confirmer la suppression definitive de ${total} adherent(s) ? Cette action est irreversible.`,
+                t("admin.clients.bulk_delete_confirm", { count: total }),
               );
               if (!confirmed) {
                 event.preventDefault();
@@ -286,7 +300,7 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount }:
             }
           }}
         >
-          Appliquer
+          {uiText(language, "common.apply")}
         </button>
       </div>
     </div>

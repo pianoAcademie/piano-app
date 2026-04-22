@@ -19,7 +19,8 @@ import {
   DEFAULT_TIMEZONE,
   TIMEZONE_OPTIONS,
 } from "../../../lib/reference-data";
-import type { AdminClientGroupOut, AdminClientOut } from "../../../lib/types";
+import type { AdminClientGroupOut, AdminClientOut, UserOut } from "../../../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type SortColumn = "last_name" | "first_name" | "family_name" | "client_status" | "client_kind" | "next_session";
@@ -27,14 +28,7 @@ type SortDirection = "asc" | "desc";
 type ClientsView = "students" | "groups";
 type PerPage = 5 | 50;
 
-const CLIENT_STATUS_OPTIONS = [
-  { value: "ACTIVE", label: "ACTIF" },
-  { value: "RESPONSABLE", label: "RESPONSABLE" },
-  { value: "TRIAL", label: "ESSAI" },
-  { value: "PENDING", label: "EN ATTENTE" },
-  { value: "INACTIVE", label: "INACTIF" },
-  { value: "ARCHIVED", label: "ARCHIVE" },
-] as const;
+const CLIENT_STATUS_OPTIONS = ["ACTIVE", "RESPONSABLE", "TRIAL", "PENDING", "INACTIVE", "ARCHIVED"] as const;
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -44,12 +38,12 @@ function readParam(params: SearchParams, key: string): string {
   return value ?? "";
 }
 
-function formatDate(value: string): string {
+function formatDate(value: string, language: UiLanguage): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return parsed.toLocaleString("fr-FR", {
+  return parsed.toLocaleString(localeForUiLanguage(language), {
     dateStyle: "medium",
     timeStyle: "short",
   });
@@ -98,10 +92,15 @@ function parsePage(value: string): number {
   return parsed;
 }
 
-function statusLabel(status: string): string {
+function statusLabel(status: string, language: UiLanguage): string {
   const normalized = status.toUpperCase();
-  const row = CLIENT_STATUS_OPTIONS.find((option) => option.value === normalized);
-  return row?.label ?? normalized;
+  if (normalized === "ACTIVE") return uiText(language, "admin.clients.status_active");
+  if (normalized === "RESPONSABLE") return uiText(language, "admin.clients.status_responsable");
+  if (normalized === "TRIAL") return uiText(language, "admin.clients.status_trial");
+  if (normalized === "PENDING") return uiText(language, "admin.clients.status_pending");
+  if (normalized === "INACTIVE") return uiText(language, "admin.clients.status_inactive");
+  if (normalized === "ARCHIVED") return uiText(language, "admin.clients.status_archived");
+  return normalized;
 }
 
 function statusPillClass(status: string): string {
@@ -118,8 +117,8 @@ function statusPillClass(status: string): string {
   return "status-off";
 }
 
-function clientTypeLabel(kind: string): string {
-  return kind === "CHILD" ? "ENFANT" : "ADULTE";
+function clientTypeLabel(kind: string, language: UiLanguage): string {
+  return kind === "CHILD" ? uiText(language, "client.child") : uiText(language, "client.adult");
 }
 
 function buildClientsHref(params: {
@@ -239,6 +238,13 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
     redirect("/login?error=Session%20expiree");
   }
 
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+
   const search = readParam(searchParams, "search").trim();
   const selectedStatus = readParam(searchParams, "status") || "ALL";
   const selectedGroupId = readParam(searchParams, "group_id");
@@ -329,18 +335,18 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
     <section className="admin-page-grid">
       <section className="card">
         <div className="row spread">
-          <h2>Clients</h2>
+          <h2>{t("admin.clients.page_title")}</h2>
           <Link className="mode-link" href={`${closeHref}${closeHref.includes("?") ? "&" : "?"}new_client=1`}>
-            Ajouter nouveau
+            {t("admin.clients.add_new")}
           </Link>
         </div>
-        <p className="muted">Gestion des adherents, des groupes et des actions en masse.</p>
+        <p className="muted">{t("admin.clients.subtitle")}</p>
       </section>
 
       {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
       {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
-      {!clientsResult.ok ? <section className="flash-err">Erreur backend clients: {clientsResult.message}</section> : null}
-      {!groupsResult.ok ? <section className="flash-err">Erreur backend groupes: {groupsResult.message}</section> : null}
+      {!clientsResult.ok ? <section className="flash-err">{t("admin.clients.backend_clients_error")}: {clientsResult.message}</section> : null}
+      {!groupsResult.ok ? <section className="flash-err">{t("admin.clients.backend_groups_error")}: {groupsResult.message}</section> : null}
 
       <section className="card">
         <div className="row client-subtabs">
@@ -357,7 +363,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
               perPage,
             })}
           >
-            Etudiants
+            {t("admin.clients.tab_students")}
           </Link>
           <Link
             className={`mode-link ${view === "groups" ? "mode-active" : ""}`}
@@ -372,7 +378,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
               perPage,
             })}
           >
-            Etiquettes de groupe
+            {t("admin.clients.tab_groups")}
           </Link>
         </div>
       </section>
@@ -382,28 +388,28 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
           <section className="card">
             <div className="row client-status-counts">
               <span>
-                <strong>{counts.ACTIVE}</strong> Actif
+                <strong>{counts.ACTIVE}</strong> {statusLabel("ACTIVE", language)}
               </span>
               <span>
-                <strong>{counts.RESPONSABLE}</strong> Responsable
+                <strong>{counts.RESPONSABLE}</strong> {statusLabel("RESPONSABLE", language)}
               </span>
               <span>
-                <strong>{counts.TRIAL}</strong> Essai
+                <strong>{counts.TRIAL}</strong> {statusLabel("TRIAL", language)}
               </span>
               <span>
-                <strong>{counts.PENDING}</strong> En attente
+                <strong>{counts.PENDING}</strong> {statusLabel("PENDING", language)}
               </span>
               <span>
-                <strong>{counts.INACTIVE}</strong> Inactif
+                <strong>{counts.INACTIVE}</strong> {statusLabel("INACTIVE", language)}
               </span>
               <span>
-                <strong>{counts.ARCHIVED}</strong> Archive
+                <strong>{counts.ARCHIVED}</strong> {statusLabel("ARCHIVED", language)}
               </span>
             </div>
           </section>
 
           <section className="card">
-            <h2>Filtres</h2>
+            <h2>{t("admin.clients.filters_title")}</h2>
             <form method="get" className="grid cols-4">
               <input type="hidden" name="view" value="students" />
               <input type="hidden" name="sort_by" value={sortBy} />
@@ -411,26 +417,26 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
               <input type="hidden" name="page" value="1" />
 
               <label>
-                Recherche (email, prenom, nom)
-                <input type="text" name="search" defaultValue={search} placeholder="ex: marie, @example.com" />
+                {t("admin.clients.search_label")}
+                <input type="text" name="search" defaultValue={search} placeholder={t("admin.clients.search_placeholder")} />
               </label>
 
               <label>
-                Statut adherent
+                {t("admin.clients.client_status_label")}
                 <select name="status" defaultValue={selectedStatus}>
-                  <option value="ALL">Tous (hors archives)</option>
-                  {CLIENT_STATUS_OPTIONS.map((statusOption) => (
-                    <option key={statusOption.value} value={statusOption.value}>
-                      {statusOption.label}
+                  <option value="ALL">{t("admin.clients.all_excluding_archived")}</option>
+                  {CLIENT_STATUS_OPTIONS.map((statusValue) => (
+                    <option key={statusValue} value={statusValue}>
+                      {statusLabel(statusValue, language)}
                     </option>
                   ))}
                 </select>
               </label>
 
               <label>
-                Groupe
+                {t("admin.clients.group_label")}
                 <select name="group_id" defaultValue={selectedGroupId}>
-                  <option value="">Tous</option>
+                  <option value="">{uiText(language, "common.all")}</option>
                   {groups.filter((group) => group.active).map((group) => (
                     <option key={group.id} value={group.id}>
                       {group.name}
@@ -440,7 +446,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
               </label>
 
               <label>
-                Clients par page
+                {t("admin.clients.clients_per_page")}
                 <select name="per_page" defaultValue={String(perPage)}>
                   <option value="5">5</option>
                   <option value="50">50</option>
@@ -448,9 +454,9 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
               </label>
 
               <div className="row">
-                <button type="submit">Appliquer</button>
+                <button type="submit">{uiText(language, "common.apply")}</button>
                 <a className="reset-link" href="/admin/clients">
-                  Reinitialiser
+                  {uiText(language, "common.reset")}
                 </a>
               </div>
             </form>
@@ -472,6 +478,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                 groups={groups.filter((group) => group.active).map((group) => ({ id: group.id, name: group.name }))}
                 pageCount={listedClients.length}
                 filteredCount={listedClientsRaw.length}
+                language={language}
               />
             </section>
 
@@ -480,7 +487,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                 <thead>
                   <tr>
                     <th style={{ width: "52px" }}>
-                      <input type="checkbox" aria-label="Selectionner la page" data-role="select-page-toggle" />
+                      <input type="checkbox" aria-label={t("admin.clients.select_page_aria")} data-role="select-page-toggle" />
                     </th>
                     <th>
                       <Link
@@ -497,7 +504,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                           perPage,
                         })}
                       >
-                        Nom adherent {sortIndicator(sortBy, sortDir, "last_name")}
+                        {t("admin.clients.sort_last_name")} {sortIndicator(sortBy, sortDir, "last_name")}
                       </Link>
                     </th>
                     <th>
@@ -515,7 +522,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                           perPage,
                         })}
                       >
-                        Prenom adherent {sortIndicator(sortBy, sortDir, "first_name")}
+                        {t("admin.clients.sort_first_name")} {sortIndicator(sortBy, sortDir, "first_name")}
                       </Link>
                     </th>
                     <th>
@@ -533,7 +540,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                           perPage,
                         })}
                       >
-                        Famille adherent {sortIndicator(sortBy, sortDir, "family_name")}
+                        {t("admin.clients.sort_family_name")} {sortIndicator(sortBy, sortDir, "family_name")}
                       </Link>
                     </th>
                     <th>
@@ -551,7 +558,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                           perPage,
                         })}
                       >
-                        Statut {sortIndicator(sortBy, sortDir, "client_status")}
+                        {uiText(language, "common.status")} {sortIndicator(sortBy, sortDir, "client_status")}
                       </Link>
                     </th>
                     <th>
@@ -569,7 +576,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                           perPage,
                         })}
                       >
-                        Type {sortIndicator(sortBy, sortDir, "client_kind")}
+                        {uiText(language, "common.type")} {sortIndicator(sortBy, sortDir, "client_kind")}
                       </Link>
                     </th>
                     <th>
@@ -587,7 +594,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                           perPage,
                         })}
                       >
-                        Prochain cours {sortIndicator(sortBy, sortDir, "next_session")}
+                        {t("admin.clients.sort_next_session")} {sortIndicator(sortBy, sortDir, "next_session")}
                       </Link>
                     </th>
                   </tr>
@@ -596,7 +603,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                   {listedClients.map((client) => (
                     <tr key={client.id}>
                       <td>
-                        <input type="checkbox" name="client_ids" value={client.id} aria-label={`Selection ${client.email}`} />
+                        <input type="checkbox" name="client_ids" value={client.id} aria-label={`${t("admin.clients.select_page_aria")} ${client.email}`} />
                       </td>
                       <td>
                         <Link className="client-name-link" href={`/admin/clients/${client.id}`}>
@@ -609,10 +616,10 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                         {client.group_names.length > 0 ? <small className="muted row-inline">{client.group_names.join(" | ")}</small> : null}
                       </td>
                       <td>
-                        <span className={`status-pill ${statusPillClass(client.client_status)}`}>{statusLabel(client.client_status)}</span>
+                        <span className={`status-pill ${statusPillClass(client.client_status)}`}>{statusLabel(client.client_status, language)}</span>
                       </td>
-                      <td>{clientTypeLabel(client.client_kind)}</td>
-                      <td>{client.next_session_start_at_utc ? formatDate(client.next_session_start_at_utc) : "-"}</td>
+                      <td>{clientTypeLabel(client.client_kind, language)}</td>
+                      <td>{client.next_session_start_at_utc ? formatDate(client.next_session_start_at_utc, language) : "-"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -621,7 +628,11 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
               {clientsResult.ok && totalFiltered > 0 ? (
                 <div className="row spread clients-pagination">
                   <small className="muted">
-                    Affichage {pageStart + 1}-{Math.min(pageStart + listedClients.length, totalFiltered)} sur {totalFiltered} adherent(s)
+                    {t("admin.clients.pagination_summary", {
+                      start: pageStart + 1,
+                      end: Math.min(pageStart + listedClients.length, totalFiltered),
+                      total: totalFiltered,
+                    })}
                   </small>
                   <div className="row">
                     {currentPage > 1 ? (
@@ -638,13 +649,13 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                           perPage,
                         })}
                       >
-                        ← Precedent
+                        ← {uiText(language, "common.previous")}
                       </Link>
                     ) : (
-                      <span className="mode-link disabled-link">← Precedent</span>
+                      <span className="mode-link disabled-link">← {uiText(language, "common.previous")}</span>
                     )}
                     <span className="badge">
-                      Page {currentPage}/{totalPages}
+                      {uiText(language, "common.page")} {currentPage}/{totalPages}
                     </span>
                     {currentPage < totalPages ? (
                       <Link
@@ -660,52 +671,52 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                           perPage,
                         })}
                       >
-                        Suivant →
+                        {uiText(language, "common.next")} →
                       </Link>
                     ) : (
-                      <span className="mode-link disabled-link">Suivant →</span>
+                      <span className="mode-link disabled-link">{uiText(language, "common.next")} →</span>
                     )}
                   </div>
                 </div>
               ) : null}
 
-              {clientsResult.ok && listedClients.length === 0 ? <p className="muted">Aucun client pour ces filtres.</p> : null}
+              {clientsResult.ok && listedClients.length === 0 ? <p className="muted">{t("admin.clients.no_clients_for_filters")}</p> : null}
             </section>
           </form>
         </>
       ) : (
         <>
           <section className="card">
-            <h2>Nouveau groupe</h2>
+            <h2>{t("admin.clients.new_group_title")}</h2>
             <form action={createAdminClientGroupAction} className="grid cols-4">
               <input type="hidden" name="return_to" value="/admin/clients?view=groups" />
               <label>
-                Nom groupe
-                <input name="name" type="text" maxLength={120} required placeholder="ex: collectif enfant" />
+                {t("admin.clients.group_name")}
+                <input name="name" type="text" maxLength={120} required placeholder={t("admin.clients.group_name_placeholder")} />
               </label>
               <label>
-                Code (optionnel)
-                <input name="code" type="text" maxLength={80} placeholder="COLLECTIF_ENFANT" />
+                {t("admin.clients.code_optional")}
+                <input name="code" type="text" maxLength={80} placeholder={t("admin.clients.group_code_placeholder")} />
               </label>
               <label className="checkline">
                 <input type="checkbox" name="active" defaultChecked />
-                Groupe actif
+                {t("admin.clients.group_active")}
               </label>
               <div className="row">
-                <button type="submit">Creer groupe</button>
+                <button type="submit">{t("admin.clients.create_group")}</button>
               </div>
             </form>
           </section>
 
           <section className="card table-wrap">
-            <h2>Groupes existants</h2>
+            <h2>{t("admin.clients.existing_groups")}</h2>
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Nom</th>
-                  <th>Code</th>
-                  <th>Statut</th>
-                  <th>Membres</th>
+                  <th>{t("admin.clients.group_name")}</th>
+                  <th>{t("admin.clients.code_optional")}</th>
+                  <th>{uiText(language, "common.status")}</th>
+                  <th>{t("admin.clients.members_count")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -714,7 +725,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                     <td>{group.name}</td>
                     <td>{group.code}</td>
                     <td>
-                      <span className={`status-pill ${group.active ? "status-ok" : "status-off"}`}>{group.active ? "ACTIF" : "INACTIF"}</span>
+                      <span className={`status-pill ${group.active ? "status-ok" : "status-off"}`}>{group.active ? statusLabel("ACTIVE", language) : statusLabel("INACTIVE", language)}</span>
                     </td>
                     <td>{group.members_count}</td>
                   </tr>
@@ -728,12 +739,12 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
       {openCreateModal ? (
         <section className="modal-overlay">
           <article className="modal-panel client-create-modal">
-            <Link className="modal-close-x" href={closeHref} aria-label="Fermer">
+            <Link className="modal-close-x" href={closeHref} aria-label={uiText(language, "common.close")}>
               ×
             </Link>
             <header className="activity-modal-header">
-              <h2 className="modal-title">Nouveau client</h2>
-              <p className="muted">Creer un adherent et, si besoin, configurer son rattachement famille.</p>
+              <h2 className="modal-title">{t("admin.clients.new_client_title")}</h2>
+              <p className="muted">{t("admin.clients.new_client_subtitle")}</p>
             </header>
 
             <section className="card modal-card">
@@ -742,69 +753,69 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                 <ClientKindCreateSync formId="create-client-form" />
 
                 <label>
-                  Email (optionnel)
+                  {t("admin.clients.email_optional")}
                   <input type="email" name="email" />
                 </label>
                 <label>
-                  Prenom <span className="required-star">*</span>
+                  {uiText(language, "client.first_name_label")} <span className="required-star">*</span>
                   <input type="text" name="first_name" required maxLength={100} />
                 </label>
                 <label>
-                  Nom <span className="required-star">*</span>
+                  {uiText(language, "client.last_name_label")} <span className="required-star">*</span>
                   <input type="text" name="last_name" required maxLength={100} />
                 </label>
 
                 <label>
-                  Type adherent
+                  {t("admin.clients.client_type")}
                   <select name="client_kind" defaultValue="ADULT">
-                    <option value="ADULT">Adulte</option>
-                    <option value="CHILD">Enfant</option>
+                    <option value="ADULT">{uiText(language, "client.adult")}</option>
+                    <option value="CHILD">{uiText(language, "client.child")}</option>
                   </select>
                 </label>
 
                 <label>
-                  Statut
+                  {uiText(language, "common.status")}
                   <select name="client_status" defaultValue="ACTIVE">
-                    {CLIENT_STATUS_OPTIONS.map((statusOption) => (
-                      <option key={statusOption.value} value={statusOption.value}>
-                        {statusOption.label}
+                    {CLIENT_STATUS_OPTIONS.map((statusValue) => (
+                      <option key={statusValue} value={statusValue}>
+                        {statusLabel(statusValue, language)}
                       </option>
                     ))}
                   </select>
                 </label>
 
                 <label>
-                  Tel mob 1
+                  {uiText(language, "client.mobile_phone_1")}
                   <input type="text" name="mobile_phone_1" maxLength={30} />
                 </label>
 
                 <label>
-                  Tel mob 2
+                  {uiText(language, "client.mobile_phone_2")}
                   <input type="text" name="mobile_phone_2" maxLength={30} />
                 </label>
                 <label>
-                  Tel domicile
+                  {uiText(language, "client.home_phone_label")}
                   <input type="text" name="home_phone" maxLength={30} />
                 </label>
                 <label>
-                  Date de naissance
+                  {t("admin.clients.birth_date")}
                   <input type="date" name="birth_date" />
                 </label>
 
                 <label className="span-2">
-                  Adresse postale
+                  {uiText(language, "client.address_label")}
                   <input type="text" name="address_line" maxLength={255} />
                 </label>
                 <label>
-                  Code postal
+                  {uiText(language, "client.postal_code_label")}
                   <input type="text" name="postal_code" maxLength={20} />
                 </label>
                 <label>
-                  Ville
+                  {uiText(language, "client.city_label")}
                   <input type="text" name="city" maxLength={120} />
                 </label>
                 <label>
-                  Pays taxation <span className="required-star">*</span>
+                  {t("admin.clients.tax_country")} <span className="required-star">*</span>
                   <select name="address_country" defaultValue={DEFAULT_COUNTRY}>
                     {COUNTRY_OPTIONS.map((country) => (
                       <option key={country.value} value={country.value}>
@@ -815,7 +826,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                 </label>
 
                 <label>
-                  Pays residence
+                  {uiText(language, "client.residence_country_label")}
                   <select name="residence_country" defaultValue={DEFAULT_COUNTRY}>
                     {COUNTRY_OPTIONS.map((country) => (
                       <option key={country.value} value={country.value}>
@@ -825,7 +836,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                   </select>
                 </label>
                 <label>
-                  Devise
+                  {uiText(language, "client.currency")}
                   <select name="preferred_currency" defaultValue={DEFAULT_CURRENCY}>
                     {CURRENCY_OPTIONS.map((currency) => (
                       <option key={currency.value} value={currency.value}>
@@ -835,14 +846,14 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                   </select>
                 </label>
                 <label>
-                  Langue
+                  {uiText(language, "common.language")}
                   <select name="preferred_language" defaultValue="fr">
-                    <option value="fr">Francais</option>
-                    <option value="en">English</option>
+                    <option value="fr">{uiText(language, "common.french")}</option>
+                    <option value="en">{uiText(language, "common.english")}</option>
                   </select>
                 </label>
                 <label>
-                  Fuseau horaire
+                  {uiText(language, "client.timezone")}
                   <select name="timezone" defaultValue={DEFAULT_TIMEZONE}>
                     {TIMEZONE_OPTIONS.map((item) => (
                       <option key={item.value} value={item.value}>
@@ -853,106 +864,106 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                 </label>
 
                 <label className="span-3">
-                  Informations a connaitre (allergies, etc.)
+                  {t("admin.clients.important_info")}
                   <textarea name="important_info" rows={3} maxLength={1000} />
                 </label>
 
                 <label className="span-3">
-                  Note privee interne
+                  {t("admin.clients.private_note")}
                   <textarea name="private_note" rows={3} maxLength={5000} />
                 </label>
 
                 <fieldset className="span-3 config-payment-fieldset">
-                  <legend>Preferences communication</legend>
+                  <legend>{t("admin.clients.communication_preferences")}</legend>
                   <label className="checkline">
                     <input type="checkbox" name="portal_contact_visible" defaultChecked />
-                    Afficher dans les contacts du portail etudiant
+                    {t("admin.clients.portal_contact_visible")}
                   </label>
                   <label className="checkline">
                     <input type="checkbox" name="email_opt_in" defaultChecked />
-                    Recevoir les emails d information
+                    {t("admin.clients.email_info_opt_in")}
                   </label>
                   <label className="checkline">
                     <input type="checkbox" name="sms_opt_in" defaultChecked />
-                    Recevoir les SMS d information
+                    {t("admin.clients.sms_info_opt_in")}
                   </label>
                   <label className="checkline">
                     <input type="checkbox" name="lesson_reminder_email_opt_in" defaultChecked />
-                    Recevoir les rappels de cours par email
+                    {t("admin.clients.email_reminders_opt_in")}
                   </label>
                   <label className="checkline">
                     <input type="checkbox" name="lesson_reminder_sms_opt_in" />
-                    Recevoir les rappels de cours par SMS
+                    {t("admin.clients.sms_reminders_opt_in")}
                   </label>
                 </fieldset>
 
                 <article className="item span-3">
-                  <h3>Option Famille (activee si type ENFANT)</h3>
+                  <h3>{t("admin.clients.family_option_title")}</h3>
                   <div className="grid cols-2">
-                    <AdultLinkSelector adults={adultPreviewCandidates} />
+                    <AdultLinkSelector adults={adultPreviewCandidates} language={language} />
                     <label className="checkline">
                       <input type="checkbox" name="existing_adult_billing_recipient" defaultChecked />
-                      Adulte existant destinataire facture
+                      {t("admin.clients.existing_adult_billing_recipient")}
                     </label>
                     <label>
-                      Lien de relation
-                      <input type="text" name="relationship_label" maxLength={80} placeholder="ex: parent, pere, mere..." />
+                      {t("admin.clients.relationship_label")}
+                      <input type="text" name="relationship_label" maxLength={80} placeholder={t("admin.clients.relationship_placeholder")} />
                     </label>
                   </div>
 
-                  <p className="muted">Creer un nouvel adulte et le rattacher (optionnel)</p>
+                  <p className="muted">{t("admin.clients.create_and_link_new_adult")}</p>
                   <div className="grid cols-3">
                     <label>
-                      Email parent
+                      {t("admin.clients.parent_email")}
                       <input type="email" name="adult_email" />
                     </label>
                     <label>
-                      Prenom parent
+                      {t("admin.clients.parent_first_name")}
                       <input type="text" name="adult_first_name" maxLength={100} />
                     </label>
                     <label>
-                      Nom parent
+                      {t("admin.clients.parent_last_name")}
                       <input type="text" name="adult_last_name" maxLength={100} />
                     </label>
 
                     <label>
-                      Statut parent
+                      {t("admin.clients.parent_status")}
                       <select name="adult_client_status" defaultValue="ACTIVE">
-                        {CLIENT_STATUS_OPTIONS.map((statusOption) => (
-                          <option key={statusOption.value} value={statusOption.value}>
-                            {statusOption.label}
+                        {CLIENT_STATUS_OPTIONS.map((statusValue) => (
+                          <option key={statusValue} value={statusValue}>
+                            {statusLabel(statusValue, language)}
                           </option>
                         ))}
                       </select>
                     </label>
 
                     <label>
-                      Tel mob 1 parent
+                      {t("admin.clients.parent_mobile_phone_1")}
                       <input type="text" name="adult_mobile_phone_1" maxLength={30} />
                     </label>
                     <label>
-                      Tel mob 2 parent
+                      {t("admin.clients.parent_mobile_phone_2")}
                       <input type="text" name="adult_mobile_phone_2" maxLength={30} />
                     </label>
 
                     <label>
-                      Tel domicile parent
+                      {t("admin.clients.parent_home_phone")}
                       <input type="text" name="adult_home_phone" maxLength={30} />
                     </label>
                     <label className="span-2">
-                      Adresse parent
+                      {t("admin.clients.parent_address")}
                       <input type="text" name="adult_address_line" maxLength={255} />
                     </label>
                     <label>
-                      Code postal parent
+                      {t("admin.clients.parent_postal_code")}
                       <input type="text" name="adult_postal_code" maxLength={20} />
                     </label>
                     <label>
-                      Ville parent
+                      {t("admin.clients.parent_city")}
                       <input type="text" name="adult_city" maxLength={120} />
                     </label>
                     <label>
-                      Pays adresse parent
+                      {t("admin.clients.parent_address_country")}
                       <select name="adult_address_country" defaultValue={DEFAULT_COUNTRY}>
                         {COUNTRY_OPTIONS.map((country) => (
                           <option key={country.value} value={country.value}>
@@ -962,7 +973,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                       </select>
                     </label>
                     <label>
-                      Pays residence parent
+                      {t("admin.clients.parent_residence_country")}
                       <select name="adult_residence_country" defaultValue={DEFAULT_COUNTRY}>
                         {COUNTRY_OPTIONS.map((country) => (
                           <option key={country.value} value={country.value}>
@@ -972,7 +983,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                       </select>
                     </label>
                     <label>
-                      Devise parent
+                      {t("admin.clients.parent_currency")}
                       <select name="adult_preferred_currency" defaultValue={DEFAULT_CURRENCY}>
                         {CURRENCY_OPTIONS.map((currency) => (
                           <option key={currency.value} value={currency.value}>
@@ -982,14 +993,14 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                       </select>
                     </label>
                     <label>
-                      Langue parent
+                      {t("admin.clients.parent_language")}
                       <select name="adult_preferred_language" defaultValue="fr">
-                        <option value="fr">Francais</option>
-                        <option value="en">English</option>
+                        <option value="fr">{uiText(language, "common.french")}</option>
+                        <option value="en">{uiText(language, "common.english")}</option>
                       </select>
                     </label>
                     <label>
-                      Fuseau parent
+                      {t("admin.clients.parent_timezone")}
                       <select name="adult_timezone" defaultValue={DEFAULT_TIMEZONE}>
                         {TIMEZONE_OPTIONS.map((item) => (
                           <option key={item.value} value={item.value}>
@@ -1002,7 +1013,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                 </article>
 
                 <div className="row span-3 modal-actions-end">
-                  <button type="submit">Creer adherent</button>
+                  <button type="submit">{t("admin.clients.create_client")}</button>
                 </div>
               </form>
             </section>

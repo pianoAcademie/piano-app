@@ -2,7 +2,8 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { backendRequest } from "../../../../lib/backend";
-import type { NotificationJobRunDetailOut, NotificationJobRunPageOut } from "../../../../lib/types";
+import type { NotificationJobRunDetailOut, NotificationJobRunPageOut, UserOut } from "../../../../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -14,7 +15,7 @@ function readParam(params: SearchParams, key: string): string {
   return value ?? "";
 }
 
-function formatDateTime(value: string | null): string {
+function formatDateTime(value: string | null, language: UiLanguage): string {
   if (!value) {
     return "-";
   }
@@ -22,22 +23,22 @@ function formatDateTime(value: string | null): string {
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return parsed.toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "medium" });
+  return parsed.toLocaleString(localeForUiLanguage(language), { dateStyle: "short", timeStyle: "medium" });
 }
 
-function statusLabel(status: string): string {
+function statusLabel(status: string, language: UiLanguage): string {
   const normalized = status.trim().toLowerCase();
   if (normalized === "running") {
-    return "En cours";
+    return uiText(language, "admin.jobs.status_running");
   }
   if (normalized === "success") {
-    return "Succes";
+    return uiText(language, "admin.jobs.status_success");
   }
   if (normalized === "warning") {
-    return "Alerte";
+    return uiText(language, "admin.jobs.status_warning");
   }
   if (normalized === "failed") {
-    return "Echec";
+    return uiText(language, "admin.jobs.status_failed");
   }
   return status;
 }
@@ -61,6 +62,13 @@ export default async function AdminNotificationJobsPage({ searchParams }: { sear
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
+
+  const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
+  if (!meResult.ok || meResult.data.role !== "admin") {
+    redirect("/login?error=Acces%20admin%20requis");
+  }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const startedFrom = readParam(searchParams, "started_from");
   const startedTo = readParam(searchParams, "started_to");
@@ -116,44 +124,44 @@ export default async function AdminNotificationJobsPage({ searchParams }: { sear
   return (
     <section className="admin-page-grid">
       <section className="card">
-        <h2>Monitoring des jobs</h2>
-        <p className="muted">Supervision des executions, erreurs et notifications traitees.</p>
+        <h2>{t("admin.jobs.title")}</h2>
+        <p className="muted">{t("admin.jobs.subtitle")}</p>
       </section>
 
       <section className="card">
-        {!jobsResult.ok ? <p className="flash-err">Erreur backend: {jobsResult.message}</p> : null}
-        {detailResult && !detailResult.ok ? <p className="flash-err">Erreur detail: {detailResult.message}</p> : null}
+        {!jobsResult.ok ? <p className="flash-err">{t("admin.jobs.backend_error")}: {jobsResult.message}</p> : null}
+        {detailResult && !detailResult.ok ? <p className="flash-err">{t("admin.jobs.detail_error")}: {detailResult.message}</p> : null}
         <form className="grid cols-4 sticky-filters" method="get">
           <label>
-            Date du
+            {t("admin.jobs.date_from")}
             <input type="datetime-local" name="started_from" defaultValue={startedFrom} />
           </label>
           <label>
-            Date au
+            {t("admin.jobs.date_to")}
             <input type="datetime-local" name="started_to" defaultValue={startedTo} />
           </label>
           <label>
-            Type de job
+            {t("admin.jobs.job_type")}
             <input type="text" name="job_name" defaultValue={jobName} placeholder="reminder_generation_job" />
           </label>
           <label>
-            Statut
+            {t("admin.jobs.status_filter")}
             <select name="status" defaultValue={status}>
-              <option value="">Tous</option>
-              <option value="running">running</option>
-              <option value="success">success</option>
-              <option value="warning">warning</option>
-              <option value="failed">failed</option>
+              <option value="">{uiText(language, "common.all")}</option>
+              <option value="running">{statusLabel("running", language)}</option>
+              <option value="success">{statusLabel("success", language)}</option>
+              <option value="warning">{statusLabel("warning", language)}</option>
+              <option value="failed">{statusLabel("failed", language)}</option>
             </select>
           </label>
           <label className="cols-span-2">
-            Recherche texte
-            <input type="text" name="q" defaultValue={q} placeholder="summary/error/job name" />
+            {t("admin.jobs.search_text")}
+            <input type="text" name="q" defaultValue={q} placeholder={t("admin.jobs.search_placeholder")} />
           </label>
           <div className="row end cols-span-2 top-gap-sm">
-            <button type="submit">Appliquer</button>
+            <button type="submit">{uiText(language, "common.apply")}</button>
             <a className="ghost top-gap-sm-inline" href={resetHref}>
-              Reset filtres
+              {t("admin.jobs.reset_filters")}
             </a>
           </div>
         </form>
@@ -164,25 +172,25 @@ export default async function AdminNotificationJobsPage({ searchParams }: { sear
           <table className="data-table">
             <thead>
               <tr>
-                <th>Debut</th>
-                <th>Fin</th>
-                <th>Job</th>
-                <th>Statut</th>
-                <th>Duree</th>
-                <th>Scannes</th>
-                <th>Traites</th>
-                <th>Envoyes</th>
-                <th>Ignores</th>
-                <th>Erreurs</th>
-                <th>Declenchement</th>
-                <th>Action</th>
+                <th>{t("admin.jobs.column_start")}</th>
+                <th>{t("admin.jobs.column_end")}</th>
+                <th>{t("admin.jobs.column_job")}</th>
+                <th>{uiText(language, "common.status")}</th>
+                <th>{t("admin.jobs.column_duration")}</th>
+                <th>{t("admin.jobs.column_scanned")}</th>
+                <th>{t("admin.jobs.column_processed")}</th>
+                <th>{t("admin.jobs.column_sent")}</th>
+                <th>{t("admin.jobs.column_skipped")}</th>
+                <th>{t("admin.jobs.column_errors")}</th>
+                <th>{t("admin.jobs.column_triggered_by")}</th>
+                <th>{uiText(language, "client.action")}</th>
               </tr>
             </thead>
             <tbody>
               {jobs.length === 0 ? (
                 <tr>
                   <td colSpan={12}>
-                    <p className="muted">Aucun job trouve pour les filtres selectionnes.</p>
+                    <p className="muted">{t("admin.jobs.no_jobs")}</p>
                   </td>
                 </tr>
               ) : (
@@ -192,11 +200,11 @@ export default async function AdminNotificationJobsPage({ searchParams }: { sear
                   const detailHref = `/admin/notifications/jobs?${detailParams.toString()}`;
                   return (
                     <tr key={row.id}>
-                      <td>{formatDateTime(row.started_at)}</td>
-                      <td>{formatDateTime(row.finished_at)}</td>
+                      <td>{formatDateTime(row.started_at, language)}</td>
+                      <td>{formatDateTime(row.finished_at, language)}</td>
                       <td>{row.job_name}</td>
                       <td>
-                        <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
+                        <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status, language)}</span>
                       </td>
                       <td>{row.duration_seconds ?? "-"}</td>
                       <td>{row.items_scanned}</td>
@@ -207,7 +215,7 @@ export default async function AdminNotificationJobsPage({ searchParams }: { sear
                       <td>{row.triggered_by}</td>
                       <td>
                         <a className="ghost" href={detailHref}>
-                          Voir le detail
+                          {t("admin.jobs.view_detail")}
                         </a>
                       </td>
                     </tr>
@@ -222,63 +230,63 @@ export default async function AdminNotificationJobsPage({ searchParams }: { sear
       {detailResult?.ok ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-panel-wide">
-            <a className="modal-close-x" href={baseHref} aria-label="Fermer">
+            <a className="modal-close-x" href={baseHref} aria-label={uiText(language, "common.close")}>
               ×
             </a>
             <header className="activity-modal-header">
-              <h2 className="modal-title">Detail job</h2>
+              <h2 className="modal-title">{t("admin.jobs.detail_title")}</h2>
               <p className="muted">{detailResult.data.run.job_name}</p>
             </header>
 
             <section className="card modal-card">
-              <h3>Resume</h3>
+              <h3>{t("admin.jobs.summary")}</h3>
               <div className="list">
-                <article className="item row spread"><span>Statut</span><strong>{statusLabel(detailResult.data.run.status)}</strong></article>
-                <article className="item row spread"><span>Started</span><strong>{formatDateTime(detailResult.data.run.started_at)}</strong></article>
-                <article className="item row spread"><span>Finished</span><strong>{formatDateTime(detailResult.data.run.finished_at)}</strong></article>
-                <article className="item row spread"><span>Triggered by</span><strong>{detailResult.data.run.triggered_by}</strong></article>
-                <article className="item row spread"><span>Summary</span><strong>{detailResult.data.run.summary_text ?? "-"}</strong></article>
-                <article className="item row spread"><span>Error</span><strong>{detailResult.data.run.error_text ?? "-"}</strong></article>
+                <article className="item row spread"><span>{uiText(language, "common.status")}</span><strong>{statusLabel(detailResult.data.run.status, language)}</strong></article>
+                <article className="item row spread"><span>{t("admin.jobs.started")}</span><strong>{formatDateTime(detailResult.data.run.started_at, language)}</strong></article>
+                <article className="item row spread"><span>{t("admin.jobs.finished")}</span><strong>{formatDateTime(detailResult.data.run.finished_at, language)}</strong></article>
+                <article className="item row spread"><span>{t("admin.jobs.triggered_by")}</span><strong>{detailResult.data.run.triggered_by}</strong></article>
+                <article className="item row spread"><span>{t("admin.jobs.summary_label")}</span><strong>{detailResult.data.run.summary_text ?? "-"}</strong></article>
+                <article className="item row spread"><span>{t("admin.jobs.error_label")}</span><strong>{detailResult.data.run.error_text ?? "-"}</strong></article>
               </div>
             </section>
 
             <section className="card modal-card">
-              <h3>Compteurs</h3>
+              <h3>{t("admin.jobs.counters")}</h3>
               <div className="grid cols-5">
-                <article className="item"><strong>Scannes</strong><p>{detailResult.data.run.items_scanned}</p></article>
-                <article className="item"><strong>Traites</strong><p>{detailResult.data.run.items_processed}</p></article>
-                <article className="item"><strong>Envoyes</strong><p>{detailResult.data.run.items_sent}</p></article>
-                <article className="item"><strong>Ignores</strong><p>{detailResult.data.run.items_skipped}</p></article>
-                <article className="item"><strong>Erreurs</strong><p>{detailResult.data.run.items_failed}</p></article>
+                <article className="item"><strong>{t("admin.jobs.column_scanned")}</strong><p>{detailResult.data.run.items_scanned}</p></article>
+                <article className="item"><strong>{t("admin.jobs.column_processed")}</strong><p>{detailResult.data.run.items_processed}</p></article>
+                <article className="item"><strong>{t("admin.jobs.column_sent")}</strong><p>{detailResult.data.run.items_sent}</p></article>
+                <article className="item"><strong>{t("admin.jobs.column_skipped")}</strong><p>{detailResult.data.run.items_skipped}</p></article>
+                <article className="item"><strong>{t("admin.jobs.column_errors")}</strong><p>{detailResult.data.run.items_failed}</p></article>
               </div>
             </section>
 
             <section className="card modal-card">
-              <h3>Parametres / contexte</h3>
+              <h3>{t("admin.jobs.parameters_context")}</h3>
               <pre className="code-block">{JSON.stringify(detailResult.data.metadata_json, null, 2)}</pre>
             </section>
 
             <section className="card modal-card">
-              <h3>Logs</h3>
+              <h3>{t("admin.jobs.logs")}</h3>
               <div className="table-wrap">
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Date</th>
-                      <th>Level</th>
-                      <th>Message</th>
-                      <th>Contexte</th>
+                      <th>{uiText(language, "common.date")}</th>
+                      <th>{t("admin.jobs.log_level")}</th>
+                      <th>{t("admin.jobs.log_message")}</th>
+                      <th>{t("admin.jobs.log_context")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {detailResult.data.logs.length === 0 ? (
                       <tr>
-                        <td colSpan={4}>Aucun log</td>
+                        <td colSpan={4}>{t("admin.jobs.no_logs")}</td>
                       </tr>
                     ) : (
                       detailResult.data.logs.map((row) => (
                         <tr key={row.id}>
-                          <td>{formatDateTime(row.created_at)}</td>
+                          <td>{formatDateTime(row.created_at, language)}</td>
                           <td>{row.level}</td>
                           <td>{row.message}</td>
                           <td><code>{JSON.stringify(row.context_json)}</code></td>
@@ -291,23 +299,23 @@ export default async function AdminNotificationJobsPage({ searchParams }: { sear
             </section>
 
             <section className="card modal-card">
-              <h3>Entites traitees</h3>
+              <h3>{t("admin.jobs.processed_entities")}</h3>
               <div className="table-wrap">
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>ID</th>
-                      <th>Type</th>
-                      <th>Canal</th>
-                      <th>Statut</th>
-                      <th>Planifie le</th>
-                      <th>Erreur</th>
+                      <th>{t("admin.jobs.entity_id")}</th>
+                      <th>{uiText(language, "common.type")}</th>
+                      <th>{uiText(language, "admin.incidents.channel")}</th>
+                      <th>{uiText(language, "common.status")}</th>
+                      <th>{t("admin.jobs.scheduled_for")}</th>
+                      <th>{t("admin.jobs.error_label")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {detailResult.data.notifications.length === 0 ? (
                       <tr>
-                        <td colSpan={6}>Aucune notification rattachee.</td>
+                        <td colSpan={6}>{t("admin.jobs.no_related_notifications")}</td>
                       </tr>
                     ) : (
                       detailResult.data.notifications.map((row) => (
@@ -316,7 +324,7 @@ export default async function AdminNotificationJobsPage({ searchParams }: { sear
                           <td>{row.notification_type}</td>
                           <td>{row.channel}</td>
                           <td>{row.status}</td>
-                          <td>{formatDateTime(row.scheduled_for)}</td>
+                          <td>{formatDateTime(row.scheduled_for, language)}</td>
                           <td>{row.failure_reason ?? "-"}</td>
                         </tr>
                       ))
