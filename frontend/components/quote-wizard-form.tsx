@@ -549,7 +549,7 @@ export default function QuoteWizardForm({
             : null;
           const pendingSlotOptions =
             selectionPending && pendingLevel
-              ? slotOptionsFromRule(pendingRule).map((slot) => ({
+              ? slotOptionsFromRule(pendingRule, language).map((slot) => ({
                   weekday: slot.weekday,
                   weekday_label: weekdayLabel(slot.weekday, language),
                   start_time: slot.start_time,
