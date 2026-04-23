@@ -3215,6 +3215,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       <form action={createAdminActivityAction} className="activity-modal-form">
                         <input type="hidden" name="service_code" value="ACTIVITY" />
                         <ActivityModalTabs
+                          language={language}
                           activityContent={
                             <>
                               <ActivityModalSection
@@ -3478,6 +3479,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               <ActivityContentAssignmentsPicker
                                 courses={externalContentCourses}
                                 defaultSelectedCourseIds={[]}
+                                language={language}
                               />
                             </ActivityModalSection>
                           }
@@ -3522,6 +3524,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <input type="hidden" name="activity_id" value={selectedActivity.id} />
                         <input type="hidden" name="service_code" value={selectedActivity.service_code} />
                         <ActivityModalTabs
+                          language={language}
                           activityContent={
                             <>
                               <ActivityModalSection
@@ -3851,6 +3854,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               <ActivityContentAssignmentsPicker
                                 courses={externalContentCourses}
                                 defaultSelectedCourseIds={selectedActivityContentCourseIds}
+                                language={language}
                               />
                             </ActivityModalSection>
                           }
