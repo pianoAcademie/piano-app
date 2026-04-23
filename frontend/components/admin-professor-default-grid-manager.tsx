@@ -8,6 +8,7 @@ import type {
   AdminProfessorDefaultGridLineOut,
   AdminProfessorPayGridPeriodOut,
 } from "../lib/types";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
 
 type GridRule = {
   min_students: number;
@@ -34,35 +35,36 @@ type Props = {
   updatePeriodRulesAction: (formData: FormData) => Promise<void>;
   defaultCurrency: string;
   sectionPath?: string;
+  language?: UiLanguage | string;
 };
 
-function formatPeriodLabel(period: AdminProfessorPayGridPeriodOut): string {
-  return `${period.start_date} -> ${period.end_date ?? "en cours"}`;
+function formatPeriodLabel(period: AdminProfessorPayGridPeriodOut, language: UiLanguage): string {
+  return `${period.start_date} -> ${period.end_date ?? uiText(language, "admin.professor_default_grid.ongoing")}`;
 }
 
-function periodBadgeLabel(period: AdminProfessorPayGridPeriodOut): string {
+function periodBadgeLabel(period: AdminProfessorPayGridPeriodOut, language: UiLanguage): string {
   if (period.is_active) {
-    return "Active";
+    return uiText(language, "common.active");
   }
   if (period.is_future) {
-    return "Future";
+    return uiText(language, "admin.professor_default_grid.future");
   }
-  return "Archivee";
+  return uiText(language, "common.archived");
 }
 
 function normalizeMoney(value: string): string {
   return value.replace(",", ".").trim();
 }
 
-function lineModeLabel(mode: string): string {
+function lineModeLabel(mode: string, language: UiLanguage): string {
   const normalized = mode.toUpperCase();
   if (normalized === "EN_LIGNE") {
-    return "En ligne";
+    return uiText(language, "admin.professor_detail.mode_online");
   }
   if (normalized === "PRESENTIEL") {
-    return "Presentiel";
+    return uiText(language, "admin.professor_detail.mode_onsite");
   }
-  return "Autre";
+  return uiText(language, "admin.professor_detail.mode_other");
 }
 
 function toEditableRules(rules: GridRule[]): EditableRule[] {
@@ -97,7 +99,11 @@ export default function AdminProfessorDefaultGridManager({
   updatePeriodRulesAction,
   defaultCurrency,
   sectionPath = "/admin/config?section=params-professor-default-grid",
+  language: languageProp = "fr",
 }: Props): JSX.Element {
+  const language = normalizeUiLanguage(languageProp);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const locale = localeForUiLanguage(language);
   const buildSectionHref = (params: Record<string, string> = {}): string => {
     const query = new URLSearchParams();
     const separator = sectionPath.includes("?") ? "&" : "?";
@@ -115,8 +121,8 @@ export default function AdminProfessorDefaultGridManager({
   };
 
   const sortedActivities = useMemo(
-    () => [...activities].filter((row) => row.active).sort((a, b) => a.name.localeCompare(b.name, "fr")),
-    [activities],
+    () => [...activities].filter((row) => row.active).sort((a, b) => a.name.localeCompare(b.name, locale)),
+    [activities, locale],
   );
   const lineByCourseTypeId = useMemo(
     () => new Map(selectedLines.map((line) => [line.course_type_id, line])),
@@ -174,47 +180,47 @@ export default function AdminProfessorDefaultGridManager({
     <section className="card">
       <div className="row spread">
         <div>
-          <h3>Grille generale de remuneration des professeurs</h3>
-          <p className="muted">Definissez les taux horaires par activite, par nombre d eleves et par periode de validite.</p>
+          <h3>{t("admin.professor_default_grid.title")}</h3>
+          <p className="muted">{t("admin.professor_default_grid.subtitle")}</p>
         </div>
-        <span className="badge">{periods.length} periode(s)</span>
+        <span className="badge">{t("admin.professor_default_grid.period_count", { count: periods.length })}</span>
       </div>
 
       <article className="item top-gap-sm">
-        <strong>Creer une nouvelle periode</strong>
+        <strong>{t("admin.professor_default_grid.create_period_title")}</strong>
         <form action={createPeriodAction} className="grid cols-4 top-gap-sm">
           <input type="hidden" name="return_to" value={sectionPath} />
           <label>
-            Date debut
+            {t("admin.professor_default_grid.start_date")}
             <input type="date" name="start_date" required />
           </label>
           <label>
-            Date fin (optionnel)
+            {t("admin.professor_default_grid.end_date_optional")}
             <input type="date" name="end_date" />
           </label>
           <label>
-            Dupliquer depuis
+            {t("admin.professor_default_grid.clone_from")}
             <select name="clone_from_period_id" defaultValue="">
-              <option value="">Ne pas dupliquer</option>
+              <option value="">{t("admin.professor_default_grid.do_not_clone")}</option>
               {periods.map((period) => (
                 <option key={`clone-${period.id}`} value={period.id}>
-                  {formatPeriodLabel(period)}
+                  {formatPeriodLabel(period, language)}
                 </option>
               ))}
             </select>
           </label>
           <label>
-            Notes
+            {t("common.notes")}
             <input type="text" name="notes" maxLength={2000} />
           </label>
           <div className="row span-4">
-            <button type="submit">Creer la periode</button>
+            <button type="submit">{t("admin.professor_default_grid.create_period")}</button>
           </div>
         </form>
       </article>
 
       <article className="item top-gap-sm">
-        <strong>Periodes disponibles</strong>
+        <strong>{t("admin.professor_default_grid.available_periods")}</strong>
         <div className="list top-gap-sm">
           {periods.map((period) => {
             const isSelected = selectedPeriodId === period.id;
@@ -222,14 +228,14 @@ export default function AdminProfessorDefaultGridManager({
               <article key={period.id} className={`item ${isSelected ? "active" : ""}`}>
                 <div className="row spread">
                   <div>
-                    <strong>{formatPeriodLabel(period)}</strong>
-                    <p className="muted">{period.notes ?? "Sans note"}</p>
+                    <strong>{formatPeriodLabel(period, language)}</strong>
+                    <p className="muted">{period.notes ?? t("admin.professor_default_grid.no_note")}</p>
                   </div>
                   <div className="row">
-                    <span className="badge">{periodBadgeLabel(period)}</span>
-                    <span className="badge">{period.rules_count} regle(s)</span>
+                    <span className="badge">{periodBadgeLabel(period, language)}</span>
+                    <span className="badge">{t("admin.professor_default_grid.rule_count", { count: period.rules_count })}</span>
                     <Link className="mode-link" href={buildSectionHref({ grid_period: period.id })}>
-                      Ouvrir
+                      {t("common.open")}
                     </Link>
                   </div>
                 </div>
@@ -243,22 +249,22 @@ export default function AdminProfessorDefaultGridManager({
         <>
           <article className="item top-gap-sm">
             <div className="row spread">
-              <strong>Periode selectionnee</strong>
-              <span className="badge">{periodBadgeLabel(selectedPeriod)}</span>
+              <strong>{t("admin.professor_default_grid.selected_period")}</strong>
+              <span className="badge">{periodBadgeLabel(selectedPeriod, language)}</span>
             </div>
             <form action={updatePeriodAction} className="grid cols-4 top-gap-sm">
               <input type="hidden" name="period_id" value={selectedPeriod.id} />
               <input type="hidden" name="return_to" value={buildSectionHref({ grid_period: selectedPeriod.id })} />
               <label>
-                Date debut
+                {t("admin.professor_default_grid.start_date")}
                 <input type="date" name="start_date" defaultValue={selectedPeriod.start_date} required />
               </label>
               <label>
-                Date fin
+                {t("admin.professor_default_grid.end_date")}
                 <input type="date" name="end_date" defaultValue={selectedPeriod.end_date ?? ""} />
               </label>
               <label>
-                Statut
+                {t("common.status")}
                 <select name="status" defaultValue={selectedPeriod.status}>
                   <option value="ACTIVE">ACTIVE</option>
                   <option value="FUTURE">FUTURE</option>
@@ -266,26 +272,26 @@ export default function AdminProfessorDefaultGridManager({
                 </select>
               </label>
               <label>
-                Notes
+                {t("common.notes")}
                 <input type="text" name="notes" maxLength={2000} defaultValue={selectedPeriod.notes ?? ""} />
               </label>
               <div className="row span-4">
-                <button type="submit">Mettre a jour la periode</button>
+                <button type="submit">{t("admin.professor_default_grid.update_period")}</button>
               </div>
             </form>
             {!selectedPeriod.is_archived ? (
               <form action={archivePeriodAction} className="top-gap-sm">
                 <input type="hidden" name="period_id" value={selectedPeriod.id} />
                 <input type="hidden" name="return_to" value={buildSectionHref({ grid_period: selectedPeriod.id })} />
-                <button type="submit" className="danger">Archiver la periode</button>
+                <button type="submit" className="danger">{t("admin.professor_default_grid.archive_period")}</button>
               </form>
             ) : null}
           </article>
 
           <article className="item top-gap-sm">
             <div className="row spread">
-              <strong>Activites de la periode</strong>
-              <span className="badge">{activeCount} activite(s) configuree(s)</span>
+              <strong>{t("admin.professor_default_grid.period_activities")}</strong>
+              <span className="badge">{t("admin.professor_default_grid.configured_activity_count", { count: activeCount })}</span>
             </div>
 
             <form action={updatePeriodRulesAction} className="grid top-gap-sm">
@@ -294,22 +300,27 @@ export default function AdminProfessorDefaultGridManager({
               <input type="hidden" name="default_grid_ui_version" value="2" />
               <div className="row">
                 <label>
-                  Devise
+                  {t("admin.professor_payroll.currency")}
                   <select name="currency_code" value={currencyCode} onChange={(event) => setCurrencyCode(event.target.value)}>
                     <option value="EUR">EUR</option>
                     <option value="USD">USD</option>
                   </select>
                 </label>
                 <label className="prof-pay-search">
-                  Recherche activite
-                  <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nom activite" />
+                  {t("admin.professor_payroll.activity_search")}
+                  <input
+                    type="search"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder={t("admin.professor_payroll.activity_search_placeholder")}
+                  />
                 </label>
                 <label>
-                  Filtre mode
+                  {t("admin.professor_default_grid.mode_filter")}
                   <select value={modeFilter} onChange={(event) => setModeFilter(event.target.value as "ALL" | "ONLINE" | "ONSITE") }>
-                    <option value="ALL">Tous modes</option>
-                    <option value="ONSITE">Presentiel</option>
-                    <option value="ONLINE">En ligne</option>
+                    <option value="ALL">{t("admin.professor_default_grid.all_modes")}</option>
+                    <option value="ONSITE">{t("admin.professor_detail.mode_onsite")}</option>
+                    <option value="ONLINE">{t("admin.professor_detail.mode_online")}</option>
                   </select>
                 </label>
               </div>
@@ -325,14 +336,21 @@ export default function AdminProfessorDefaultGridManager({
                         <div>
                           <strong>{activity.name}</strong>
                           <p className="muted">
-                            {lineModeLabel(activity.mode)} | Duree ref: {activity.duration_minutes ?? "-"} min
+                            {t("admin.professor_payroll.activity_meta", {
+                              mode: lineModeLabel(activity.mode, language),
+                              duration: activity.duration_minutes ?? "-",
+                            })}
                           </p>
                         </div>
-                        <span className="badge">{(rules.length > 0 || (defaultRates[activity.id] ?? "").trim()) ? "Configuree" : "Vide"}</span>
+                        <span className="badge">
+                          {(rules.length > 0 || (defaultRates[activity.id] ?? "").trim())
+                            ? t("admin.professor_default_grid.configured")
+                            : t("admin.professor_default_grid.empty")}
+                        </span>
                       </div>
 
                       <label>
-                        Taux de base (fallback)
+                        {t("admin.professor_default_grid.base_rate_fallback")}
                         <input
                           type="number"
                           min="0"
@@ -353,16 +371,16 @@ export default function AdminProfessorDefaultGridManager({
                         <table className="data-table">
                           <thead>
                             <tr>
-                              <th>Min eleves</th>
-                              <th>Max eleves</th>
-                              <th>Taux horaire</th>
-                              <th>Action</th>
+                              <th>{t("admin.professor_default_grid.min_students")}</th>
+                              <th>{t("admin.professor_default_grid.max_students")}</th>
+                              <th>{t("admin.professor_default_grid.hourly_rate")}</th>
+                              <th>{t("common.actions")}</th>
                             </tr>
                           </thead>
                           <tbody>
                             {rules.length === 0 ? (
                               <tr>
-                                <td colSpan={4} className="muted">Aucune tranche definie</td>
+                                <td colSpan={4} className="muted">{t("admin.professor_payroll.no_bracket")}</td>
                               </tr>
                             ) : null}
                             {rules.map((rule) => (
@@ -427,7 +445,7 @@ export default function AdminProfessorDefaultGridManager({
                                       }))
                                     }
                                   >
-                                    Supprimer
+                                    {t("common.delete")}
                                   </button>
                                 </td>
                               </tr>
@@ -447,7 +465,7 @@ export default function AdminProfessorDefaultGridManager({
                             }))
                           }
                         >
-                          Ajouter une tranche
+                          {t("admin.professor_payroll.add_bracket")}
                         </button>
                         <button
                           type="button"
@@ -459,7 +477,7 @@ export default function AdminProfessorDefaultGridManager({
                             }))
                           }
                         >
-                          Vider les tranches
+                          {t("admin.professor_default_grid.clear_brackets")}
                         </button>
                       </div>
 
@@ -473,18 +491,18 @@ export default function AdminProfessorDefaultGridManager({
                     </article>
                   );
                 })}
-                {visibleActivities.length === 0 ? <p className="muted">Aucune activite ne correspond aux filtres.</p> : null}
+                {visibleActivities.length === 0 ? <p className="muted">{t("admin.professor_default_grid.no_activity")}</p> : null}
               </div>
 
               <div className="row">
-                <button type="submit">Enregistrer la grille de la periode</button>
+                <button type="submit">{t("admin.professor_default_grid.save_period_grid")}</button>
               </div>
             </form>
           </article>
         </>
       ) : (
         <article className="item top-gap-sm">
-          <p className="muted">Selectionnez une periode pour modifier sa grille par activite.</p>
+          <p className="muted">{t("admin.professor_default_grid.select_period_help")}</p>
         </article>
       )}
     </section>

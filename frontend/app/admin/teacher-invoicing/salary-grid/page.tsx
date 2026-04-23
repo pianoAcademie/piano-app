@@ -43,6 +43,7 @@ export default async function AdminTeacherInvoicingSalaryGridPage({
     redirect("/login?error=Acces%20admin%20requis");
   }
   const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const params = searchParams ?? {};
   const selectedGridPeriodIdParam = readParam(params, "grid_period").trim();
@@ -80,25 +81,25 @@ export default async function AdminTeacherInvoicingSalaryGridPage({
   const accountDefaultCurrency = accountResult.ok
     ? accountResult.data.default_currency
     : (() => {
-        loadErrors.push(`Configuration compte: ${accountResult.message}`);
+        loadErrors.push(t("admin.professor_default_grid.load_account_config", { message: accountResult.message }));
         return "EUR";
       })();
   const activities = activitiesResult.ok
     ? activitiesResult.data
     : (() => {
-        loadErrors.push(`Activites: ${activitiesResult.message}`);
+        loadErrors.push(t("admin.professor_default_grid.load_activities", { message: activitiesResult.message }));
         return [] as AdminActivityOut[];
       })();
   const periods = periodsResult.ok
     ? periodsResult.data
     : (() => {
-        loadErrors.push(`Periodes grille salaire: ${periodsResult.message}`);
+        loadErrors.push(t("admin.professor_default_grid.load_periods", { message: periodsResult.message }));
         return [] as AdminProfessorPayGridPeriodOut[];
       })();
   const selectedPeriodDetail = selectedPeriodResult.ok
     ? selectedPeriodResult.data
     : (() => {
-        loadErrors.push(`Detail periode grille salaire: ${selectedPeriodResult.message}`);
+        loadErrors.push(t("admin.professor_default_grid.load_period_detail", { message: selectedPeriodResult.message }));
         return null as AdminProfessorPayGridPeriodDetailOut | null;
       })();
 
@@ -133,6 +134,7 @@ export default async function AdminTeacherInvoicingSalaryGridPage({
         updatePeriodRulesAction={updateAdminConfigProfessorDefaultGridPeriodRulesAction}
         defaultCurrency={accountDefaultCurrency}
         sectionPath="/admin/teacher-invoicing/salary-grid"
+        language={language}
       />
     </section>
   );
