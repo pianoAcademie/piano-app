@@ -5,8 +5,10 @@ import PortalBrandLockup from "../../../../components/portal-brand-lockup";
 import { startFormulaPurchaseLinkAction, submitPublicSessionCheckoutAction } from "../../../../lib/actions";
 import { getPortalToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 import type {
   ClientSessionPurchaseCatalogOut,
+  ClientSessionReservationMemberOptionOut,
   ClientSessionReservationOptionsOut,
   SessionOut,
   UserOut,
@@ -22,9 +24,9 @@ function readParam(params: SearchParams, key: string): string {
   return value ?? "";
 }
 
-function formatMoney(amountRaw: string | null, currencyRaw: string | null): string {
+function formatMoney(amountRaw: string | null, currencyRaw: string | null, language: UiLanguage): string {
   if (!amountRaw) {
-    return "Tarif a confirmer";
+    return uiText(language, "public_booking.price_to_confirm");
   }
   const amount = Number(amountRaw);
   const currency = (currencyRaw || "EUR").trim().toUpperCase() || "EUR";
@@ -32,7 +34,7 @@ function formatMoney(amountRaw: string | null, currencyRaw: string | null): stri
     return `${amountRaw} ${currency}`;
   }
   try {
-    return new Intl.NumberFormat("fr-FR", {
+    return new Intl.NumberFormat(localeForUiLanguage(language), {
       style: "currency",
       currency,
       maximumFractionDigits: 2,
@@ -42,12 +44,12 @@ function formatMoney(amountRaw: string | null, currencyRaw: string | null): stri
   }
 }
 
-function formatDateTime(value: string, timezone: string): string {
+function formatDateTime(value: string, timezone: string, language: UiLanguage): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return new Intl.DateTimeFormat("fr-FR", {
+  return new Intl.DateTimeFormat(localeForUiLanguage(language), {
     weekday: "long",
     day: "2-digit",
     month: "long",
@@ -57,19 +59,19 @@ function formatDateTime(value: string, timezone: string): string {
   }).format(parsed);
 }
 
-function formatTime(value: string, timezone: string): string {
+function formatTime(value: string, timezone: string, language: UiLanguage): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     return "--:--";
   }
-  return new Intl.DateTimeFormat("fr-FR", {
+  return new Intl.DateTimeFormat(localeForUiLanguage(language), {
     hour: "2-digit",
     minute: "2-digit",
     timeZone: timezone || "Europe/Paris",
   }).format(parsed);
 }
 
-function buildCheckoutHref(sessionId: string, planningReturnTo: string, bookingUserId: string): string {
+function buildCheckoutHref(sessionId: string, planningReturnTo: string, bookingUserId: string, language: UiLanguage): string {
   const params = new URLSearchParams();
   params.set("session_id", sessionId);
   if (planningReturnTo) {
@@ -78,25 +80,79 @@ function buildCheckoutHref(sessionId: string, planningReturnTo: string, bookingU
   if (bookingUserId) {
     params.set("booking_user_id", bookingUserId);
   }
+  if (language === "en") {
+    params.set("lang", "en");
+  }
   return `/buy/session/checkout?${params.toString()}`;
+}
+
+function memberActionLabel(option: ClientSessionReservationMemberOptionOut, language: UiLanguage): string {
+  if (language === "fr" && option.action_label?.trim()) {
+    return option.action_label;
+  }
+  const normalized = String(option.action_code || "").trim().toUpperCase();
+  if (normalized === "ALREADY_BOOKED" || normalized === "ALREADY_WAITLISTED") return uiText(language, "public_session_checkout.action_view_booking");
+  if (normalized === "FINALIZE_PAYMENT") return uiText(language, "public_session_checkout.action_finalize_payment");
+  if (normalized === "JOIN_WAITLIST") return uiText(language, "public_session_checkout.action_join_waitlist");
+  if (normalized === "BOOK_WITH_CREDIT") return uiText(language, "public_session_checkout.action_book_now");
+  if (normalized === "BUY_FORMULA_OR_PAY_UNIT") return uiText(language, "public_session_checkout.action_choose_option");
+  if (normalized === "BUY_FORMULA") return uiText(language, "public_session_checkout.action_buy_formula");
+  if (normalized === "PAY_UNIT") return uiText(language, "public_session_checkout.action_pay_and_book");
+  if (normalized === "UNAVAILABLE") return uiText(language, "public_session_checkout.action_unavailable");
+  return option.action_label || uiText(language, "public_session_checkout.action_unavailable");
+}
+
+function memberStatusLabel(option: ClientSessionReservationMemberOptionOut, language: UiLanguage): string {
+  if (language === "fr" && option.status_label?.trim()) {
+    return option.status_label;
+  }
+  const normalized = String(option.action_code || "").trim().toUpperCase();
+  if (normalized === "ALREADY_BOOKED") return uiText(language, "public_session_checkout.status_booked");
+  if (normalized === "ALREADY_WAITLISTED" || normalized === "JOIN_WAITLIST") return uiText(language, "public_session_checkout.status_waitlist");
+  if (normalized === "FINALIZE_PAYMENT") return uiText(language, "public_session_checkout.status_payment_pending");
+  if (normalized === "BOOK_WITH_CREDIT") return uiText(language, "public_session_checkout.status_credit_available");
+  if (normalized === "BUY_FORMULA_OR_PAY_UNIT" || normalized === "PAY_UNIT") return uiText(language, "public_session_checkout.status_payment_required");
+  if (normalized === "BUY_FORMULA" || normalized === "UNAVAILABLE") return uiText(language, "public_session_checkout.status_no_coverage");
+  return option.status_label || uiText(language, "public_session_checkout.status_unavailable");
+}
+
+function memberReasonLabel(option: ClientSessionReservationMemberOptionOut, language: UiLanguage): string {
+  if (language === "fr" && option.reason?.trim()) {
+    return option.reason;
+  }
+  const normalized = String(option.action_code || "").trim().toUpperCase();
+  if (normalized === "ALREADY_BOOKED") return uiText(language, "public_session_checkout.reason_already_booked");
+  if (normalized === "ALREADY_WAITLISTED") return uiText(language, "public_session_checkout.reason_already_waitlisted");
+  if (normalized === "FINALIZE_PAYMENT") return uiText(language, "public_session_checkout.reason_finalize_payment");
+  if (normalized === "JOIN_WAITLIST") return uiText(language, "public_session_checkout.reason_join_waitlist");
+  if (normalized === "BOOK_WITH_CREDIT") {
+    return option.coverage_source === "MANUAL_CREDIT"
+      ? uiText(language, "public_session_checkout.reason_credit_manual")
+      : uiText(language, "public_session_checkout.reason_credit_plan");
+  }
+  if (normalized === "BUY_FORMULA_OR_PAY_UNIT") return uiText(language, "public_session_checkout.reason_buy_formula_or_pay_unit");
+  if (normalized === "BUY_FORMULA") return uiText(language, "public_session_checkout.reason_buy_formula");
+  if (normalized === "PAY_UNIT") return uiText(language, "public_session_checkout.reason_pay_unit");
+  return uiText(language, "public_session_checkout.reason_unavailable");
 }
 
 export default async function BuySessionCheckoutPage({ searchParams }: { searchParams?: SearchParams }): Promise<JSX.Element> {
   const params = searchParams ?? {};
+  const queryLanguage = normalizeUiLanguage(readParam(params, "lang"));
   const sessionId = readParam(params, "session_id").trim();
   const planningReturnTo = readParam(params, "planning_return_to").trim();
   const bookingUserId = readParam(params, "booking_user_id").trim();
   const okMessage = readParam(params, "ok");
   const errorMessage = readParam(params, "error");
-  const checkoutReturnTo = sessionId ? buildCheckoutHref(sessionId, planningReturnTo, bookingUserId) : "/buy/session/checkout";
+  const checkoutReturnTo = sessionId ? buildCheckoutHref(sessionId, planningReturnTo, bookingUserId, queryLanguage) : `/buy/session/checkout${queryLanguage === "en" ? "?lang=en" : ""}`;
 
   if (!sessionId) {
     return (
       <main className="page public-buy-page">
         <section className="public-buy-shell">
           <article className="card public-buy-card">
-            <h1>Creneau introuvable</h1>
-            <p className="flash-err">Le lien de reservation est incomplet. Reprends le planning depuis le debut.</p>
+            <h1>{uiText(queryLanguage, "public_session_checkout.invalid_slot_title")}</h1>
+            <p className="flash-err">{uiText(queryLanguage, "public_session_checkout.invalid_slot_body")}</p>
           </article>
         </section>
       </main>
@@ -111,7 +167,7 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
       <main className="page public-buy-page">
         <section className="public-buy-shell">
           <article className="card public-buy-card">
-            <h1>Creneau indisponible</h1>
+            <h1>{uiText(queryLanguage, "public_session_checkout.unavailable_title")}</h1>
             <p className="flash-err">{sessionResult.message}</p>
           </article>
         </section>
@@ -122,17 +178,17 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
   const session = sessionResult.data;
   const portalToken = getPortalToken();
   if (!portalToken) {
-    redirect(`/login?mode=login&return_to=${encodeURIComponent(checkoutReturnTo)}`);
+    redirect(`/login?mode=login&return_to=${encodeURIComponent(checkoutReturnTo)}${queryLanguage === "en" ? "&lang=en" : ""}`);
   }
   const authResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, portalToken);
   if (!authResult.ok) {
     redirect(
-      `/login?mode=login&return_to=${encodeURIComponent(checkoutReturnTo)}&error=${encodeURIComponent(
-        "Session expiree, reconnectez-vous pour poursuivre la reservation",
-      )}`,
+      `/login?mode=login&return_to=${encodeURIComponent(checkoutReturnTo)}&error=${encodeURIComponent(uiText(queryLanguage, "public_booking.session_expired"))}${queryLanguage === "en" ? "&lang=en" : ""}`,
     );
   }
   const me = authResult.data;
+  const language = normalizeUiLanguage(readParam(params, "lang") || me.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const reservationOptionsResult = await backendRequest<ClientSessionReservationOptionsOut>(
     `/api/v1/clients/me/sessions/${encodeURIComponent(sessionId)}/reservation-options`,
     {},
@@ -143,11 +199,11 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
       <main className="page public-buy-page">
         <section className="public-buy-shell">
           <article className="card public-buy-card">
-            <h1>Reservation indisponible</h1>
+            <h1>{t("public_session_checkout.booking_unavailable_title")}</h1>
             <p className="flash-err">{reservationOptionsResult.message}</p>
             <div className="row">
-              <Link className="ghost small-btn" href={planningReturnTo || "/embed/planning"}>
-                Revenir au planning
+              <Link className="ghost small-btn" href={planningReturnTo || `/embed/planning${language === "en" ? "?lang=en" : ""}`}>
+                {t("public_session_checkout.back_to_planning")}
               </Link>
             </div>
           </article>
@@ -183,15 +239,15 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
         : selectedMember.action_code;
   const coverageLabel =
     selectedMember?.coverage_source === "MANUAL_CREDIT"
-      ? "Credit manuel disponible"
+      ? t("public_session_checkout.coverage_manual_credit")
       : selectedMember?.coverage_source === "PACK"
-        ? "Carnet compatible disponible"
+        ? t("public_session_checkout.coverage_pack")
         : selectedMember?.coverage_source === "FORFAIT"
-          ? "Forfait compatible disponible"
+          ? t("public_session_checkout.coverage_package")
           : selectedMember?.coverage_source === "SUBSCRIPTION"
-            ? "Abonnement compatible disponible"
+            ? t("public_session_checkout.coverage_subscription")
             : null;
-  const sessionTimeLabel = `${formatTime(session.start_at_utc, session.session_timezone || session.timezone)} - ${formatTime(session.end_at_utc, session.session_timezone || session.timezone)}`;
+  const sessionTimeLabel = `${formatTime(session.start_at_utc, session.session_timezone || session.timezone, language)} - ${formatTime(session.end_at_utc, session.session_timezone || session.timezone, language)}`;
 
   return (
     <main className="page public-buy-page">
@@ -200,12 +256,12 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
           <header className="public-buy-header">
             <PortalBrandLockup
               title="Piano Academie"
-              subtitle="Reservation en ligne"
+              subtitle={t("public_session_checkout.brand_subtitle")}
               eyebrow="Mi-Young Lee"
               className="public-buy-brand-lockup"
             />
-            <h1>Reservation du creneau</h1>
-            <p className="muted">Verifie les informations puis continue vers le paiement securise.</p>
+            <h1>{t("public_session_checkout.page_title")}</h1>
+            <p className="muted">{t("public_session_checkout.page_subtitle")}</p>
           </header>
 
           {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
@@ -213,28 +269,28 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
 
           <section className="public-buy-summary">
             <article className="public-buy-line">
-              <span>Activite</span>
+              <span>{t("public_session_checkout.activity_label")}</span>
               <strong>{session.title}</strong>
             </article>
             <article className="public-buy-line">
-              <span>Date</span>
-              <strong>{formatDateTime(session.start_at_utc, session.session_timezone || session.timezone)}</strong>
+              <span>{uiText(language, "common.date")}</span>
+              <strong>{formatDateTime(session.start_at_utc, session.session_timezone || session.timezone, language)}</strong>
             </article>
             <article className="public-buy-line">
-              <span>Horaire</span>
+              <span>{t("public_session_checkout.time_label")}</span>
               <strong>{sessionTimeLabel}</strong>
             </article>
             <article className="public-buy-line">
-              <span>Lieu</span>
+              <span>{uiText(language, "common.location")}</span>
               <strong>{session.location.name}</strong>
             </article>
             <article className="public-buy-line">
-              <span>Tarif</span>
-              <strong>{formatMoney(session.external_booking_price_ttc, session.external_booking_currency)}</strong>
+              <span>{t("public_session_checkout.rate_label")}</span>
+              <strong>{formatMoney(session.external_booking_price_ttc, session.external_booking_currency, language)}</strong>
             </article>
             <article className="public-buy-line">
-              <span>Disponibilite</span>
-              <strong>{reservationOptions.is_full ? "Liste d attente possible" : "Reservation disponible"}</strong>
+              <span>{t("public_session_checkout.availability_label")}</span>
+              <strong>{reservationOptions.is_full ? t("public_session_checkout.availability_waitlist_possible") : t("public_session_checkout.availability_available")}</strong>
             </article>
           </section>
 
@@ -242,8 +298,8 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
             <section className="modal-card">
               <div className="client-session-member-picker">
                 <div className="client-session-member-picker-heading">
-                  <small className="muted">Membre concerne</small>
-                  <p>Choisissez le membre a inscrire. Nous adaptons ensuite automatiquement l option la plus pertinente.</p>
+                  <small className="muted">{t("public_session_checkout.member_label")}</small>
+                  <p>{t("public_session_checkout.member_help")}</p>
                 </div>
                 <div className="client-session-member-grid">
                   {members.map((option) => {
@@ -252,19 +308,19 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                       <Link
                         key={option.member_id}
                         className={`client-session-member-card ${isSelected ? "active" : ""}`}
-                        href={buildCheckoutHref(session.id, planningReturnTo, option.member_id)}
+                        href={buildCheckoutHref(session.id, planningReturnTo, option.member_id, language)}
                         aria-current={isSelected ? "true" : undefined}
                       >
                         {isSelected ? (
-                          <span className="client-session-member-selected-label">Membre selectionne</span>
+                          <span className="client-session-member-selected-label">{t("public_session_checkout.member_selected")}</span>
                         ) : null}
                         <div className="client-session-member-card-head">
                           <strong>{option.member_display_name}</strong>
                           <div className="client-session-member-card-badges">
-                            <span className="status-badge status-draft">{option.status_label}</span>
+                            <span className="status-badge status-draft">{memberStatusLabel(option, language)}</span>
                           </div>
                         </div>
-                        <small className="muted">{option.reason || option.action_label}</small>
+                        <small className="muted">{memberReasonLabel(option, language) || memberActionLabel(option, language)}</small>
                       </Link>
                     );
                   })}
@@ -278,15 +334,15 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
               <section className="modal-card client-session-modal-state">
                 <div className="row spread">
                   <div className="client-session-modal-state-copy">
-                    <small className="muted">Prochaine etape</small>
-                    <p className="client-session-modal-state-title">{selectedMember.action_label}</p>
-                    <p>{selectedMember.reason || "Continuez pour finaliser votre reservation."}</p>
+                    <small className="muted">{t("public_session_checkout.next_step_label")}</small>
+                    <p className="client-session-modal-state-title">{memberActionLabel(selectedMember, language)}</p>
+                    <p>{memberReasonLabel(selectedMember, language) || t("public_session_checkout.continue_help")}</p>
                   </div>
                 </div>
                 {coverageLabel ? (
                   <div className="client-session-modal-state-meta">
                     <span className="badge">{coverageLabel}</span>
-                    <span className="badge">{`Pour ${selectedMember.member_display_name}`}</span>
+                    <span className="badge">{t("public_session_checkout.for_member", { member: selectedMember.member_display_name })}</span>
                   </div>
                 ) : null}
               </section>
@@ -295,8 +351,8 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                 <section className="modal-card">
                   <small className="muted">
                     {selectedMemberEffectiveActionCode === "BUY_FORMULA_OR_PAY_UNIT"
-                      ? `Ou choisissez une formule compatible pour ${selectedMember.member_display_name}`
-                      : `Formules compatibles pour ${selectedMember.member_display_name}`}
+                      ? t("public_session_checkout.formulas_alternative_for_member", { member: selectedMember.member_display_name })
+                      : t("public_session_checkout.formulas_for_member", { member: selectedMember.member_display_name })}
                   </small>
                   <div className="client-plan-grid client-session-formula-grid">
                     {selectedMemberFormulaOptions.map((formula) => (
@@ -314,10 +370,14 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                           <input type="hidden" name="session_id" value={session.id} />
                           <input type="hidden" name="booking_user_id" value={selectedMember.member_id} />
                           <input type="hidden" name="planning_return_to" value={planningReturnTo} />
+                          <input type="hidden" name="language" value={language} />
                           <button type="submit" className="client-session-secondary-button">
                             {formula.price_ttc
-                              ? `Acheter pour ${selectedMember.member_display_name} · ${formatMoney(formula.price_ttc, formula.currency)}`
-                              : `Acheter la formule pour ${selectedMember.member_display_name}`}
+                              ? t("public_session_checkout.buy_formula_for_member_price", {
+                                  member: selectedMember.member_display_name,
+                                  amount: formatMoney(formula.price_ttc, formula.currency, language),
+                                })
+                              : t("public_session_checkout.buy_formula_for_member", { member: selectedMember.member_display_name })}
                           </button>
                         </form>
                       </article>
@@ -332,7 +392,7 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                   <div className="client-session-modal-booking-actions">
                     {(selectedMember.booking_status || "").toUpperCase() === "BOOKED" ? (
                       <Link className="mode-link client-session-calendar-link" href={`/client/bookings/${selectedMember.booking_id}/calendar`}>
-                        Ajouter a mon agenda
+                        {t("public_session_checkout.add_to_calendar")}
                       </Link>
                     ) : null}
                   </div>
@@ -352,9 +412,9 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                           : "client-session-secondary-button"
                       }
                     >
-                      {selectedMember.action_label}
+                      {memberActionLabel(selectedMember, language)}
                       {selectedMemberDirectPaymentAmount
-                        ? ` · ${formatMoney(selectedMemberDirectPaymentAmount, selectedMemberDirectPaymentCurrency)}`
+                        ? ` · ${formatMoney(selectedMemberDirectPaymentAmount, selectedMemberDirectPaymentCurrency, language)}`
                         : ""}
                     </button>
                   </form>
@@ -367,26 +427,27 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                     <input type="hidden" name="planning_return_to" value={planningReturnTo} />
                     <input type="hidden" name="booking_user_id" value={selectedMember.member_id} />
                     <button type="submit" className="client-session-primary-button">
-                      {`Payer a l unite · ${formatMoney(selectedMemberDirectPaymentAmount, selectedMemberDirectPaymentCurrency)}`}
+                      {t("public_session_checkout.pay_unit_price", {
+                        amount: formatMoney(selectedMemberDirectPaymentAmount, selectedMemberDirectPaymentCurrency, language),
+                      })}
                     </button>
                   </form>
                 ) : null}
 
                 {selectedMemberEffectiveActionCode === "UNAVAILABLE" ? (
-                  <section className="flash-err">{selectedMember.reason || "Reservation indisponible pour ce membre."}</section>
+                  <section className="flash-err">{memberReasonLabel(selectedMember, language) || t("public_session_checkout.reason_unavailable")}</section>
                 ) : null}
               </div>
             </>
           ) : (
             <section className="flash-ok">
-              Choisissez le membre a inscrire. Nous vous proposerons ensuite automatiquement la meilleure option:
-              credit disponible, formule compatible, paiement a l unite ou liste d attente.
+              {t("public_session_checkout.choose_member_prompt")}
             </section>
           )}
 
           <div className="row">
-            <Link className="ghost small-btn" href={planningReturnTo || "/embed/planning"}>
-              Revenir au planning
+            <Link className="ghost small-btn" href={planningReturnTo || `/embed/planning${language === "en" ? "?lang=en" : ""}`}>
+              {t("public_session_checkout.back_to_planning")}
             </Link>
           </div>
         </article>

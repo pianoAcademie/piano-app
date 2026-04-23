@@ -4,6 +4,7 @@ import { reservePublicPlanningSessionAction } from "../../../lib/actions";
 import PortalBrandLockup from "../../../components/portal-brand-lockup";
 import { getPortalToken } from "../../../lib/auth-cookies";
 import { backendRequest } from "../../../lib/backend";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 import type { ClientBookingOut, CourseTypeOut, LocationOut, SessionOut } from "../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -90,8 +91,8 @@ function todayKeyInTimezone(timezone: string): string {
   return dateKeyInTimezone(new Date().toISOString(), timezone);
 }
 
-function formatDayHeader(dayKey: string, timezone: string): string {
-  return new Intl.DateTimeFormat("fr-FR", {
+function formatDayHeader(dayKey: string, timezone: string, language: UiLanguage): string {
+  return new Intl.DateTimeFormat(localeForUiLanguage(language), {
     weekday: "short",
     day: "2-digit",
     month: "short",
@@ -99,24 +100,24 @@ function formatDayHeader(dayKey: string, timezone: string): string {
   }).format(keyToUtcDate(dayKey));
 }
 
-function formatTime(value: string, timezone: string): string {
+function formatTime(value: string, timezone: string, language: UiLanguage): string {
   const parsed = safeDate(value);
   if (!parsed) {
     return "--:--";
   }
-  return new Intl.DateTimeFormat("fr-FR", {
+  return new Intl.DateTimeFormat(localeForUiLanguage(language), {
     hour: "2-digit",
     minute: "2-digit",
     timeZone: timezone,
   }).format(parsed);
 }
 
-function formatDateTime(value: string, timezone: string): string {
+function formatDateTime(value: string, timezone: string, language: UiLanguage): string {
   const parsed = safeDate(value);
   if (!parsed) {
     return "-";
   }
-  return new Intl.DateTimeFormat("fr-FR", {
+  return new Intl.DateTimeFormat(localeForUiLanguage(language), {
     weekday: "long",
     day: "2-digit",
     month: "long",
@@ -126,9 +127,9 @@ function formatDateTime(value: string, timezone: string): string {
   }).format(parsed);
 }
 
-function formatMoney(amountRaw: string | null, currencyRaw: string | null): string {
+function formatMoney(amountRaw: string | null, currencyRaw: string | null, language: UiLanguage): string {
   if (!amountRaw) {
-    return "Tarif a confirmer";
+    return uiText(language, "public_booking.price_to_confirm");
   }
   const amount = Number(amountRaw);
   const currency = (currencyRaw || "EUR").trim().toUpperCase() || "EUR";
@@ -136,7 +137,7 @@ function formatMoney(amountRaw: string | null, currencyRaw: string | null): stri
     return `${amountRaw} ${currency}`;
   }
   try {
-    return new Intl.NumberFormat("fr-FR", {
+    return new Intl.NumberFormat(localeForUiLanguage(language), {
       style: "currency",
       currency,
       maximumFractionDigits: 2,
@@ -151,11 +152,13 @@ function buildPlanningHref({
   locationId,
   date,
   sessionId,
+  language,
 }: {
   courseTypeId: string;
   locationId?: string | null;
   date: string;
   sessionId?: string | null;
+  language: UiLanguage;
 }): string {
   const params = new URLSearchParams();
   params.set("course_type_id", courseTypeId);
@@ -166,36 +169,46 @@ function buildPlanningHref({
   if (sessionId) {
     params.set("session_id", sessionId);
   }
+  if (language === "en") {
+    params.set("lang", "en");
+  }
   return `/embed/planning?${params.toString()}`;
 }
 
-function buildSessionCheckoutHref(sessionId: string, planningReturnTo: string): string {
+function buildSessionCheckoutHref(sessionId: string, planningReturnTo: string, language: UiLanguage): string {
   const params = new URLSearchParams();
   params.set("session_id", sessionId);
   if (planningReturnTo) {
     params.set("planning_return_to", planningReturnTo);
   }
+  if (language === "en") {
+    params.set("lang", "en");
+  }
   return `/buy/session/checkout?${params.toString()}`;
 }
 
-function bookingStatusLabel(status: string): string {
+function bookingStatusLabel(status: string, language: UiLanguage): string {
   const normalized = status.trim().toUpperCase();
-  if (normalized === "BOOKED") return "Reserve";
-  if (normalized === "WAITLISTED") return "Liste d attente";
-  if (normalized === "ATTENDED") return "Effectue";
-  if (normalized === "EXCUSED_ABSENCE") return "Absence excusee";
-  if (normalized === "NO_SHOW") return "Absence";
+  if (normalized === "BOOKED") return uiText(language, "embed_planning.booking_status_booked");
+  if (normalized === "WAITLISTED") return uiText(language, "embed_planning.booking_status_waitlisted");
+  if (normalized === "ATTENDED") return uiText(language, "embed_planning.booking_status_completed");
+  if (normalized === "EXCUSED_ABSENCE") return uiText(language, "embed_planning.booking_status_excused");
+  if (normalized === "NO_SHOW") return uiText(language, "embed_planning.booking_status_absent");
   return normalized || "-";
 }
 
-function externalAvailabilityLabel(session: SessionOut): string {
+function externalAvailabilityLabel(session: SessionOut, language: UiLanguage): string {
   if (!session.show_external_remaining_seats) {
-    return session.seats_remaining > 0 ? "Reservation disponible" : "Complet";
+    return session.seats_remaining > 0 ? uiText(language, "embed_planning.availability_available") : uiText(language, "embed_planning.availability_full");
   }
-  return session.seats_remaining > 0 ? `${session.seats_remaining} place(s) restante(s)` : "Liste d attente";
+  return session.seats_remaining > 0
+    ? uiText(language, "embed_planning.availability_remaining", { count: session.seats_remaining })
+    : uiText(language, "embed_planning.availability_waitlist");
 }
 
 export default async function EmbedPlanningPage({ searchParams }: { searchParams?: SearchParams }): Promise<JSX.Element> {
+  const language = normalizeUiLanguage(readParam(searchParams, "lang"));
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const courseTypeId = readParam(searchParams, "course_type_id").trim();
   const locationId = readParam(searchParams, "location_id").trim();
   const selectedSessionId = readParam(searchParams, "session_id").trim();
@@ -209,8 +222,8 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
       <main className="embed-planning-page">
         <section className="embed-planning-shell">
           <article className="card embed-planning-card">
-            <h1>Integration planning</h1>
-            <p className="flash-err">Parametre manquant. Ajoutez `course_type_id` dans l URL de l iframe.</p>
+            <h1>{t("embed_planning.invalid_params_title")}</h1>
+            <p className="flash-err">{t("embed_planning.invalid_params_body")}</p>
           </article>
         </section>
       </main>
@@ -235,8 +248,8 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
       <main className="embed-planning-page">
         <section className="embed-planning-shell">
           <article className="card embed-planning-card">
-            <h1>Planning externe indisponible</h1>
-            <p className="flash-err">Le cours ou le lieu selectionne n est plus disponible.</p>
+            <h1>{t("embed_planning.unavailable_title")}</h1>
+            <p className="flash-err">{t("embed_planning.unavailable_body")}</p>
           </article>
         </section>
       </main>
@@ -251,7 +264,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
     const key = utcDateToKey(dayValue);
     return {
       key,
-      label: formatDayHeader(key, timezone),
+      label: formatDayHeader(key, timezone, language),
     };
   });
   const queryFrom = addUtcDays(weekStart, -1).toISOString();
@@ -305,30 +318,35 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
     locationId,
     date: weekStartKey,
     sessionId: selectedSession?.id ?? null,
+    language,
   });
   const previousHref = buildPlanningHref({
     courseTypeId,
     locationId,
     date: utcDateToKey(addUtcDays(weekStart, -7)),
+    language,
   });
   const nextHref = buildPlanningHref({
     courseTypeId,
     locationId,
     date: utcDateToKey(addUtcDays(weekStart, 7)),
+    language,
   });
   const todayHref = buildPlanningHref({
     courseTypeId,
     locationId,
     date: todayKeyInTimezone(timezone),
+    language,
   });
   const closeSessionHref = buildPlanningHref({
     courseTypeId,
     locationId,
     date: weekStartKey,
+    language,
   });
-  const loginHref = `/login?mode=login&return_to=${encodeURIComponent(selectedSessionReturnTo)}`;
-  const sessionCheckoutHref = selectedSession ? buildSessionCheckoutHref(selectedSession.id, selectedSessionReturnTo) : "/buy/session/checkout";
-  const sessionCheckoutLoginHref = `/login?mode=login&return_to=${encodeURIComponent(sessionCheckoutHref)}`;
+  const loginHref = `/login?mode=login&return_to=${encodeURIComponent(selectedSessionReturnTo)}${language === "en" ? "&lang=en" : ""}`;
+  const sessionCheckoutHref = selectedSession ? buildSessionCheckoutHref(selectedSession.id, selectedSessionReturnTo, language) : `/buy/session/checkout${language === "en" ? "?lang=en" : ""}`;
+  const sessionCheckoutLoginHref = `/login?mode=login&return_to=${encodeURIComponent(sessionCheckoutHref)}${language === "en" ? "&lang=en" : ""}`;
   const selectedSessionRequiresCheckout =
     selectedSession !== null && Number(selectedSession.external_booking_price_ttc ?? "0") > 0 && !selectedSessionIsFull;
 
@@ -340,18 +358,20 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
             <div>
               <PortalBrandLockup
                 title="Piano Academie"
-                subtitle="Reservations en ligne"
+                subtitle={t("embed_planning.brand_subtitle")}
                 eyebrow="Mi-Young Lee"
                 className="embed-brand-lockup"
               />
               <h1>{selectedCourseType.name}</h1>
               <p className="muted">
-                {selectedLocation ? `${selectedLocation.name} · vue semaine` : "Tous les lieux · vue semaine"}
+                {selectedLocation
+                  ? t("embed_planning.week_view_location", { location: selectedLocation.name })
+                  : t("embed_planning.week_view_all_locations")}
               </p>
             </div>
             <div className="embed-planning-nav">
               <Link className="mode-link" href={previousHref}>←</Link>
-              <Link className="mode-link" href={todayHref}>Aujourd hui</Link>
+              <Link className="mode-link" href={todayHref}>{uiText(language, "client.today")}</Link>
               <Link className="mode-link" href={nextHref}>→</Link>
             </div>
           </header>
@@ -369,7 +389,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
                 </header>
                 <div className="embed-planning-day-body">
                   {dayValue.sessions.length === 0 ? (
-                    <p className="muted">Aucun creneau.</p>
+                    <p className="muted">{t("embed_planning.no_slots")}</p>
                   ) : (
                     dayValue.sessions.map((session) => {
                       const booking = bookingsBySessionId.get(session.id) ?? null;
@@ -379,17 +399,18 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
                         locationId,
                         date: weekStartKey,
                         sessionId: session.id,
+                        language,
                       });
                       return (
                         <Link key={session.id} className={`embed-slot-card${selectedSession?.id === session.id ? " is-selected" : ""}`} href={detailHref}>
                           <div className="embed-slot-card-top">
-                            <strong>{formatTime(session.start_at_utc, timezone)} - {formatTime(session.end_at_utc, timezone)}</strong>
-                            {isReserved ? <span className="badge">Reserve</span> : null}
+                            <strong>{formatTime(session.start_at_utc, timezone, language)} - {formatTime(session.end_at_utc, timezone, language)}</strong>
+                            {isReserved ? <span className="badge">{t("embed_planning.reserved_badge")}</span> : null}
                           </div>
                           <p>{session.title}</p>
-                          {!selectedLocation ? <small>{session.location?.name || "Lieu a confirmer"}</small> : null}
-                          <small>{formatMoney(session.external_booking_price_ttc, session.external_booking_currency)}</small>
-                          <small>{externalAvailabilityLabel(session)}</small>
+                          {!selectedLocation ? <small>{session.location?.name || t("embed_planning.location_to_confirm")}</small> : null}
+                          <small>{formatMoney(session.external_booking_price_ttc, session.external_booking_currency, language)}</small>
+                          <small>{externalAvailabilityLabel(session, language)}</small>
                         </Link>
                       );
                     })
@@ -404,25 +425,25 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
           <section className="card embed-planning-detail">
             <div className="row spread">
               <h2>{selectedSession.title}</h2>
-              <Link className="reset-link" href={closeSessionHref}>Fermer</Link>
+              <Link className="reset-link" href={closeSessionHref}>{uiText(language, "common.close")}</Link>
             </div>
 
             <p className="muted">
-              {formatDateTime(selectedSession.start_at_utc, timezone)} · {selectedLocation?.name || selectedSession.location?.name || "Lieu a confirmer"}
+              {formatDateTime(selectedSession.start_at_utc, timezone, language)} · {selectedLocation?.name || selectedSession.location?.name || t("embed_planning.location_to_confirm")}
             </p>
 
             <div className="embed-planning-detail-grid">
               <article className="item">
-                <small className="muted">Tarif externe</small>
-                <p>{formatMoney(selectedSession.external_booking_price_ttc, selectedSession.external_booking_currency)}</p>
+                <small className="muted">{t("embed_planning.external_rate")}</small>
+                <p>{formatMoney(selectedSession.external_booking_price_ttc, selectedSession.external_booking_currency, language)}</p>
               </article>
               <article className="item">
-                <small className="muted">Disponibilite</small>
-                <p>{externalAvailabilityLabel(selectedSession)}</p>
+                <small className="muted">{t("embed_planning.availability_label")}</small>
+                <p>{externalAvailabilityLabel(selectedSession, language)}</p>
               </article>
               <article className="item">
-                <small className="muted">Coach</small>
-                <p>{selectedSession.effective_teacher_display_name || "A confirmer"}</p>
+                <small className="muted">{t("embed_planning.coach_label")}</small>
+                <p>{selectedSession.effective_teacher_display_name || t("embed_planning.to_confirm")}</p>
               </article>
             </div>
 
@@ -430,27 +451,27 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
 
             {!portalToken ? (
               <div className="embed-planning-cta-stack">
-                <p className="muted">Reservez en une etape. La page suivante permet de vous connecter, creer un compte ou recuperer votre mot de passe.</p>
+                <p className="muted">{t("embed_planning.unauthenticated_help")}</p>
                 <Link className="mode-link embed-planning-primary-link" href={selectedSessionRequiresCheckout ? sessionCheckoutLoginHref : loginHref}>
-                  Reserver
+                  {t("embed_planning.reserve_cta")}
                 </Link>
               </div>
             ) : selectedBooking ? (
               <div className="embed-planning-cta-stack">
-                <p className="flash-ok">Votre statut actuel: {bookingStatusLabel(selectedBooking.status)}.</p>
+                <p className="flash-ok">{t("embed_planning.current_status", { status: bookingStatusLabel(selectedBooking.status, language) })}</p>
               </div>
             ) : selectedSessionStarted ? (
-              <p className="flash-err">Ce creneau a deja commence.</p>
+              <p className="flash-err">{t("embed_planning.already_started")}</p>
             ) : selectedSessionRequiresCheckout ? (
               <div className="embed-planning-cta-stack">
-                <p className="muted">La reservation se termine par le paiement securise du creneau.</p>
-                <Link className="mode-link embed-planning-primary-link" href={sessionCheckoutHref}>Continuer vers le paiement</Link>
+                <p className="muted">{t("embed_planning.secure_payment_help")}</p>
+                <Link className="mode-link embed-planning-primary-link" href={sessionCheckoutHref}>{t("embed_planning.continue_to_payment")}</Link>
               </div>
             ) : (
               <form action={reservePublicPlanningSessionAction} className="embed-planning-book-form">
                 <input type="hidden" name="session_id" value={selectedSession.id} />
                 <input type="hidden" name="return_to" value={selectedSessionReturnTo} />
-                <button type="submit">{selectedSessionIsFull ? "Rejoindre la liste d attente" : "Reserver ce creneau"}</button>
+                <button type="submit">{selectedSessionIsFull ? t("embed_planning.join_waitlist") : t("embed_planning.reserve_slot")}</button>
               </form>
             )}
           </section>

@@ -1090,6 +1090,23 @@ function publicQuoteActionLanguage(formData: FormData): UiLanguage {
   return normalizeUiLanguage(String(formData.get("language") ?? ""));
 }
 
+function publicActionLanguage(...paths: string[]): UiLanguage {
+  for (const path of paths) {
+    const value = String(path ?? "").trim();
+    if (!value) {
+      continue;
+    }
+    const queryIndex = value.indexOf("?");
+    const search = queryIndex >= 0 ? value.slice(queryIndex + 1) : "";
+    const params = new URLSearchParams(search);
+    const lang = params.get("lang");
+    if (lang) {
+      return normalizeUiLanguage(lang);
+    }
+  }
+  return "fr";
+}
+
 function isDeleteConfirmationValue(value: string): boolean {
   const normalized = value.trim().toUpperCase();
   return normalized === "SUPPRIMER" || normalized === "DELETE";
@@ -1475,13 +1492,14 @@ export async function startFormulaPurchaseLinkAction(formData: FormData): Promis
   const planningReturnTo = safePublicReturnPath(String(formData.get("planning_return_to") ?? "").trim(), "/embed/planning");
   const fallbackReturnTo = formulaId ? `/buy/formula/${formulaId}` : "/buy/formula";
   const returnTo = safePublicBuyPath(String(formData.get("return_to") ?? ""), fallbackReturnTo);
+  const language = publicActionLanguage(returnTo, planningReturnTo);
 
   if (!formulaId) {
-    redirect(appendQueryMessage(returnTo, "error", "Formule invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "public_booking.invalid_formula")));
   }
   if (!email || !email.includes("@")) {
     const pathWithEmail = setQueryParam(returnTo, "email", email);
-    redirect(appendQueryMessage(pathWithEmail, "error", "Veuillez saisir une adresse email valide"));
+    redirect(appendQueryMessage(pathWithEmail, "error", uiText(language, "public_booking.valid_email_required")));
   }
 
   const result = await backendRequest<PublicFormulaPurchaseStartOut>(
@@ -1502,13 +1520,15 @@ export async function startFormulaPurchaseLinkAction(formData: FormData): Promis
   }
 
   if (getPortalToken()) {
-    redirect(`/buy/checkout?purchase_context=${encodeURIComponent(result.data.purchase_context)}`);
+    redirect(setQueryParam(`/buy/checkout?purchase_context=${encodeURIComponent(result.data.purchase_context)}`, "lang", language === "en" ? "en" : null));
   }
 
   const mode = result.data.existing_user ? "login" : "signup";
-  redirect(
+  redirect(setQueryParam(
     `/login?mode=${mode}&email=${encodeURIComponent(email)}&purchase_context=${encodeURIComponent(result.data.purchase_context)}`,
-  );
+    "lang",
+    language === "en" ? "en" : null,
+  ));
 }
 
 export async function submitFormulaCheckoutAction(formData: FormData): Promise<void> {
@@ -1589,18 +1609,21 @@ export async function submitPublicSessionCheckoutAction(formData: FormData): Pro
     String(formData.get("planning_return_to") ?? "").trim(),
     "/embed/planning",
   );
+  const language = publicActionLanguage(checkoutReturnTo, planningReturnTo);
 
   if (!sessionId) {
-    redirect(appendQueryMessage(checkoutReturnTo, "error", "Creneau invalide"));
+    redirect(appendQueryMessage(checkoutReturnTo, "error", uiText(language, "public_booking.invalid_slot")));
   }
 
   const token = currentPortalToken();
   if (!token) {
-    redirect(
+    redirect(setQueryParam(
       `/login?mode=login&return_to=${encodeURIComponent(checkoutReturnTo)}&error=${encodeURIComponent(
-        "Connectez-vous pour poursuivre la reservation",
+        uiText(language, "public_booking.login_required"),
       )}`,
-    );
+      "lang",
+      language === "en" ? "en" : null,
+    ));
   }
 
   const result = await backendRequest<{
@@ -1619,11 +1642,13 @@ export async function submitPublicSessionCheckoutAction(formData: FormData): Pro
   if (!result.ok) {
     if (result.status === 401) {
       clearToken();
-      redirect(
+      redirect(setQueryParam(
         `/login?mode=login&return_to=${encodeURIComponent(checkoutReturnTo)}&error=${encodeURIComponent(
-          "Session expiree, reconnectez-vous pour poursuivre la reservation",
+          uiText(language, "public_booking.session_expired"),
         )}`,
-      );
+        "lang",
+        language === "en" ? "en" : null,
+      ));
     }
     redirect(appendQueryMessage(checkoutReturnTo, "error", result.message));
   }
@@ -1641,16 +1666,16 @@ export async function submitPublicSessionCheckoutAction(formData: FormData): Pro
   successPlanningPath = removeQueryParam(successPlanningPath, "ok");
   successPlanningPath = removeQueryParam(successPlanningPath, "error");
   if (bookingStatus === "WAITLISTED") {
-    redirect(appendQueryMessage(successPlanningPath, "ok", "Ajout a la liste d attente"));
+    redirect(appendQueryMessage(successPlanningPath, "ok", uiText(language, "public_booking.waitlist_joined")));
   }
   if (invoiceStatus === "PAID") {
-    redirect(appendQueryMessage(successPlanningPath, "ok", "Reservation deja reglee"));
+    redirect(appendQueryMessage(successPlanningPath, "ok", uiText(language, "public_booking.already_paid")));
   }
   if (invoiceStatus === "COVERED") {
-    redirect(appendQueryMessage(successPlanningPath, "ok", "Reservation confirmee"));
+    redirect(appendQueryMessage(successPlanningPath, "ok", uiText(language, "public_booking.booking_confirmed")));
   }
 
-  redirect(appendQueryMessage(successPlanningPath, "ok", "Reservation confirmee"));
+  redirect(appendQueryMessage(successPlanningPath, "ok", uiText(language, "public_booking.booking_confirmed")));
 }
 
 export async function openClientPaymentCheckoutAction(formData: FormData): Promise<void> {
@@ -1752,9 +1777,14 @@ export async function bookSessionAction(formData: FormData): Promise<void> {
 export async function reservePublicPlanningSessionAction(formData: FormData): Promise<void> {
   const fallbackReturnTo = "/embed/planning";
   const returnTo = safePublicReturnPath(String(formData.get("return_to") ?? "").trim(), fallbackReturnTo);
+  const language = publicActionLanguage(returnTo);
   const token = currentPortalToken();
   if (!token) {
-    redirect(`/login?mode=login&return_to=${encodeURIComponent(returnTo)}&error=Connexion%20requise`);
+    redirect(setQueryParam(
+      `/login?mode=login&return_to=${encodeURIComponent(returnTo)}&error=${encodeURIComponent(uiText(language, "public_booking.login_required"))}`,
+      "lang",
+      language === "en" ? "en" : null,
+    ));
   }
   let successPlanningPath = removeQueryParam(returnTo, "session_id");
   successPlanningPath = removeQueryParam(successPlanningPath, "session_member_id");
@@ -1765,7 +1795,7 @@ export async function reservePublicPlanningSessionAction(formData: FormData): Pr
 
   const sessionId = String(formData.get("session_id") ?? "").trim();
   if (!sessionId) {
-    redirect(appendQueryMessage(returnTo, "session_error", "Creneau invalide"));
+    redirect(appendQueryMessage(returnTo, "session_error", uiText(language, "public_booking.invalid_slot")));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -1780,9 +1810,9 @@ export async function reservePublicPlanningSessionAction(formData: FormData): Pr
   if (!result.ok) {
     const userMessage =
       result.status === 403 && result.message === "No eligible active plan for this session"
-        ? "Aucune formule active compatible avec ce type de cours."
+        ? uiText(language, "public_booking.no_eligible_plan")
         : result.status === 403 && result.message === "No remaining credits on selected pack"
-          ? "Plus de credits disponibles sur le carnet selectionne."
+          ? uiText(language, "public_booking.no_pack_credits")
           : result.message;
     let failurePath = removeQueryParam(returnTo, "ok");
     failurePath = removeQueryParam(failurePath, "error");
@@ -1793,7 +1823,7 @@ export async function reservePublicPlanningSessionAction(formData: FormData): Pr
   }
 
   revalidatePath("/embed/planning");
-  redirect(appendQueryMessage(successPlanningPath, "ok", "Reservation confirmee"));
+  redirect(appendQueryMessage(successPlanningPath, "ok", uiText(language, "public_booking.booking_confirmed")));
 }
 
 export async function cancelBookingAction(formData: FormData): Promise<void> {
