@@ -1507,42 +1507,47 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
           {requestedSection === "products" ? (
             <>
               <section className="card">
-                <h3>Categories produits</h3>
-                <p className="muted">Ces categories sont utilisees dans le catalogue, les demandes produits et la facturation manuelle.</p>
+                <h3>{t("admin.products.categories_title")}</h3>
+                <p className="muted">{t("admin.products.categories_subtitle")}</p>
                 <form action={createAdminCatalogCategoryAction} className="grid cols-4 config-form-grid">
                   <label>
-                    Nom
-                    <input type="text" name="name" required maxLength={120} placeholder="Partitions" />
+                    {t("common.name")}
+                    <input type="text" name="name" required maxLength={120} placeholder={t("admin.products.categories_name_placeholder")} />
                   </label>
                   <label className="span-2">
-                    Description
-                    <input type="text" name="description" maxLength={2000} placeholder="Categorie produits" />
+                    {t("common.description")}
+                    <input
+                      type="text"
+                      name="description"
+                      maxLength={2000}
+                      placeholder={t("admin.products.categories_description_placeholder")}
+                    />
                   </label>
                   <label className="checkline">
                     <input type="checkbox" name="active" defaultChecked />
-                    Active
+                    {t("common.active")}
                   </label>
                   <label className="checkline span-2">
                     <input type="checkbox" name="can_be_requested_by_professor" defaultChecked />
-                    Commandable par professeur
+                    {t("admin.products.categories_requestable")}
                   </label>
                   <div className="row span-4">
-                    <button type="submit">Ajouter categorie</button>
+                    <button type="submit">{t("admin.products.categories_add")}</button>
                   </div>
                 </form>
 
                 {catalogCategories.length === 0 ? (
-                  <p className="muted">Aucune categorie configuree.</p>
+                  <p className="muted">{t("admin.products.categories_empty")}</p>
                 ) : (
                   <div className="table-wrap">
                     <table className="data-table">
                       <thead>
                         <tr>
-                          <th>Nom</th>
-                          <th>Description</th>
-                          <th>Statut</th>
-                          <th>Professeurs</th>
-                          <th>Actions</th>
+                          <th>{t("common.name")}</th>
+                          <th>{t("common.description")}</th>
+                          <th>{t("common.status")}</th>
+                          <th>{t("admin.products.categories_teachers")}</th>
+                          <th>{t("common.actions")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1550,25 +1555,29 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           <tr key={category.id}>
                             <td>{category.name}</td>
                             <td>{category.description || "-"}</td>
-                            <td>{category.active ? "Active" : "Inactive"}</td>
-                            <td>{category.can_be_requested_by_professor ? "Commandable" : "Masquee"}</td>
+                            <td>{category.active ? t("common.active") : t("common.inactive")}</td>
+                            <td>
+                              {category.can_be_requested_by_professor
+                                ? t("admin.products.categories_requestable_short")
+                                : t("admin.products.categories_hidden")}
+                            </td>
                             <td>
                               <div className="row">
                                 <details>
-                                  <summary className="mode-link">Modifier</summary>
+                                  <summary className="mode-link">{t("common.edit")}</summary>
                                   <form action={updateAdminCatalogCategoryAction} className="grid top-gap-sm">
                                     <input type="hidden" name="category_id" value={category.id} />
                                     <label>
-                                      Nom
+                                      {t("common.name")}
                                       <input type="text" name="name" defaultValue={category.name} required maxLength={120} />
                                     </label>
                                     <label>
-                                      Description
+                                      {t("common.description")}
                                       <input type="text" name="description" defaultValue={category.description || ""} maxLength={2000} />
                                     </label>
                                     <label className="checkline">
                                       <input type="checkbox" name="active" defaultChecked={category.active} />
-                                      Active
+                                      {t("common.active")}
                                     </label>
                                     <label className="checkline">
                                       <input
@@ -1576,17 +1585,17 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                         name="can_be_requested_by_professor"
                                         defaultChecked={category.can_be_requested_by_professor}
                                       />
-                                      Commandable par professeur
+                                      {t("admin.products.categories_requestable")}
                                     </label>
                                     <div className="row">
-                                      <button type="submit">Sauvegarder</button>
+                                      <button type="submit">{t("common.save")}</button>
                                     </div>
                                   </form>
                                 </details>
                                 <form action={deleteAdminCatalogCategoryAction}>
                                   <input type="hidden" name="category_id" value={category.id} />
                                   <button type="submit" className="danger ghost">
-                                    Supprimer
+                                    {t("common.delete")}
                                   </button>
                                 </form>
                               </div>
@@ -1599,22 +1608,26 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                 )}
 
                 <div className="config-products-preview">
-                  <strong>Synchronisation categories legacy ({productCategories.categories.length})</strong>
+                  <strong>{t("admin.products.categories_legacy_sync", { count: productCategories.categories.length })}</strong>
                   {productCategories.updated_at ? (
-                    <p className="muted">Derniere mise a jour: {new Date(productCategories.updated_at).toLocaleString("fr-FR")}</p>
+                    <p className="muted">
+                      {t("admin.billing.updated_at", {
+                        value: new Date(productCategories.updated_at).toLocaleString(locale),
+                      })}
+                    </p>
                   ) : null}
                   <form action={updateAdminConfigProductCategoriesAction} className="grid config-form-grid">
                     <label>
-                      Categories (une par ligne, ou separees par virgules/points-virgules)
+                      {t("admin.products.categories_legacy_label")}
                       <textarea
                         name="categories"
                         rows={6}
                         defaultValue={productCategories.categories.join("\n")}
-                        placeholder={"Partitions\nSolfege\nConcert"}
+                        placeholder={t("admin.products.categories_legacy_placeholder")}
                       />
                     </label>
                     <div className="row">
-                      <button type="submit">Synchroniser</button>
+                      <button type="submit">{t("admin.products.categories_sync")}</button>
                     </div>
                   </form>
                 </div>
