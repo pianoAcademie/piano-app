@@ -65,7 +65,7 @@ import type {
   UserOut,
   QuoteTemplateVariableOut,
 } from "../../../lib/types";
-import { normalizeUiLanguage, uiText } from "../../../lib/ui-i18n";
+import { normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -103,6 +103,7 @@ type ConfigSection =
 type MainNavItem = {
   key: ConfigMainSection;
   label: string;
+  labelKey?: string;
   section: ConfigSection;
 };
 
@@ -113,6 +114,7 @@ type SubNavItem = {
     | "params-payments"
     | "params-messaging";
   label: string;
+  labelKey?: string;
 };
 
 type MessagingTab =
@@ -139,13 +141,13 @@ const MAIN_NAV_ITEMS: MainNavItem[] = [
   { key: "payment-rules", label: "Regles de paiement", section: "payment-rules" },
   { key: "integrations", label: "Integration", section: "integrations" },
   { key: "purchase-link", label: "Creer un lien d'achat", section: "purchase-link" },
-  { key: "credit-types", label: "Types de credit", section: "credit-types" },
+  { key: "credit-types", label: "", labelKey: "admin.breadcrumb.credit_types", section: "credit-types" },
 ];
 
 const PARAMS_SUBNAV_ITEMS: SubNavItem[] = [
   { key: "params-account", label: "Informations du compte" },
   { key: "params-subscriptions", label: "Parametrage des abonnements" },
-  { key: "params-payments", label: "Moyens de paiement" },
+  { key: "params-payments", label: "", labelKey: "admin.breadcrumb.payment_methods" },
   { key: "params-messaging", label: "Messagerie" },
 ];
 
@@ -234,14 +236,17 @@ function ActivityToggleCard({
 function ActivityPlanningAssignments({
   locations,
   defaultSelectedLocationIds,
+  language,
 }: {
   locations: ActivityPlanningLocationOption[];
   defaultSelectedLocationIds: string[];
+  language: UiLanguage;
 }) {
   const defaultSelected = new Set(defaultSelectedLocationIds);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   if (locations.length === 0) {
-    return <p className="muted">Aucun planning actif charge pour le moment.</p>;
+    return <p className="muted">{t("admin.activity_modal.no_active_planning")}</p>;
   }
 
   return (
@@ -259,9 +264,7 @@ function ActivityPlanningAssignments({
           </span>
           <span className="activity-planning-copy">
             <strong>{location.locationName}</strong>
-            <small>
-              {location.selectedActivityCount} activite(s) actuellement visibles sur ce planning.
-            </small>
+            <small>{t("admin.activity_modal.planning_visible_activities", { count: location.selectedActivityCount })}</small>
           </span>
         </label>
       ))}
@@ -604,6 +607,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
   const language = meResult.ok ? normalizeUiLanguage(meResult.data.preferred_language) : "fr";
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const configNavLabel = (fallback: string, labelKey?: string): string => (labelKey ? t(labelKey) : fallback);
   const loadErrors: string[] = [];
 
   let planningLocations: LocationOut[] = [];
@@ -652,8 +656,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const paymentMethods = paymentMethodsResult.ok
     ? paymentMethodsResult.data.methods
     : (() => {
-        loadErrors.push(`Moyens de paiement: ${paymentMethodsResult.message}`);
-      return [] as AdminPaymentMethodsOut["methods"];
+        loadErrors.push(t("admin.formulas.load_payment_methods", { message: paymentMethodsResult.message }));
+        return [] as AdminPaymentMethodsOut["methods"];
     })();
 
   const paymentProvider = paymentProviderResult.ok
@@ -726,7 +730,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const creditTypes = creditTypesResult.ok
     ? creditTypesResult.data
     : (() => {
-        loadErrors.push(`Types de credit: ${creditTypesResult.message}`);
+        loadErrors.push(t("admin.formulas.load_credit_types", { message: creditTypesResult.message }));
         return [] as AdminCreditTypeOut[];
       })();
   const externalContentSettings = externalContentSettingsResult.ok
@@ -927,7 +931,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
               return (
                 <Link key={item.key} className={`config-main-link ${isActive ? "active" : ""}`} href={href}>
-                  {item.label}
+                  {configNavLabel(item.label, item.labelKey)}
                 </Link>
               );
             })}
@@ -944,7 +948,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     item.key === "params-messaging" ? { messaging_tab: messagingTab } : {},
                   )}
                 >
-                  {item.label}
+                  {configNavLabel(item.label, item.labelKey)}
                 </Link>
               ))}
             </nav>
@@ -1344,7 +1348,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               </section>
 
               <section className="card">
-                <h3>Moyens de paiement</h3>
+                <h3>{t("admin.breadcrumb.payment_methods")}</h3>
                 {!paymentMethodsResult.ok ? (
                   <p className="muted">Impossible de charger les moyens de paiement.</p>
                 ) : (
@@ -3197,21 +3201,19 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               {createActivityModalOpen ? (
                 <section className="modal-overlay">
                   <article className="modal-panel activity-modal-panel">
-                    <Link className="modal-close-x" href={buildConfigHref("activities")} aria-label="Fermer">
+                    <Link className="modal-close-x" href={buildConfigHref("activities")} aria-label={t("common.close")}>
                       ×
                     </Link>
                     <header className="activity-modal-header">
                       <div>
-                        <h3>Nouvelle activite</h3>
-                        <p className="muted">Saisir les informations de l activite puis enregistrer.</p>
+                        <h3>{t("admin.activity_modal.new_activity")}</h3>
+                        <p className="muted">{t("admin.activity_modal.new_activity_desc")}</p>
                       </div>
                     </header>
 
                     <section className="card modal-card">
                       {activeLegalEntities.length === 0 ? (
-                        <p className="flash-err">
-                          Impossible de creer une activite sans entite legale active.
-                        </p>
+                        <p className="flash-err">{t("admin.activity_modal.no_legal_entity_create")}</p>
                       ) : (
                       <form action={createAdminActivityAction} className="activity-modal-form">
                         <input type="hidden" name="service_code" value="ACTIVITY" />
@@ -3220,19 +3222,19 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           activityContent={
                             <>
                               <ActivityModalSection
-                                title="Identite et rattachement"
-                                description="Nom lisible par l equipe et rattachement aux entites legales utilisees pour la vente et la paie."
+                                title={t("admin.activity_modal.identity_title")}
+                                description={t("admin.activity_modal.identity_desc")}
                               >
                                 <div className="grid cols-2 config-form-grid">
                                   <label className="span-2">
-                                    Nom de l activite
+                                    {t("admin.activity_modal.activity_name")}
                                     <input type="text" name="name" required maxLength={255} />
                                   </label>
                                   <label>
-                                    Entite legale vendeuse
+                                    {t("admin.activity_modal.seller_legal_entity")}
                                     <select name="seller_legal_entity_id" defaultValue={activeLegalEntities[0]?.id ?? ""} required>
                                       <option value="" disabled>
-                                        Selectionner
+                                        {t("common.select")}
                                       </option>
                                       {activeLegalEntities.map((entity) => (
                                         <option key={entity.id} value={entity.id}>
@@ -3242,10 +3244,10 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                     </select>
                                   </label>
                                   <label>
-                                    Entite legale payeuse prof
+                                    {t("admin.activity_modal.payor_legal_entity")}
                                     <select name="payor_legal_entity_id" defaultValue={activeLegalEntities[0]?.id ?? ""} required>
                                       <option value="" disabled>
-                                        Selectionner
+                                        {t("common.select")}
                                       </option>
                                       {activeLegalEntities.map((entity) => (
                                         <option key={`create-payor-entity-${entity.id}`} value={entity.id}>
@@ -3258,12 +3260,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               </ActivityModalSection>
 
                               <ActivityModalSection
-                                title="Plannings concernes"
-                                description="Choisissez les plannings sur lesquels cette activite doit pouvoir etre utilisee. Decochez un local pour retirer l activite de son planning."
+                                title={t("admin.activity_modal.plannings_title")}
+                                description={t("admin.activity_modal.plannings_desc_create")}
                               >
                                 <ActivityPlanningAssignments
                                   locations={activityPlanningLocations}
                                   defaultSelectedLocationIds={createActivityDefaultPlanningLocationIds}
+                                  language={language}
                                 />
                               </ActivityModalSection>
 
@@ -3457,11 +3460,11 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               </div>
 
                               <ActivityModalSection
-                                title="Description interne"
-                                description="Contexte libre pour aider l equipe a comprendre l usage exact de cette activite."
+                                title={t("admin.activity_modal.internal_description_title")}
+                                description={t("admin.activity_modal.internal_description_desc")}
                               >
                                 <label>
-                                  Description
+                                  {t("common.description")}
                                   <textarea name="description" rows={4} />
                                 </label>
                               </ActivityModalSection>
@@ -3469,8 +3472,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           }
                           contentContent={
                             <ActivityModalSection
-                              title="Contenu pedagogique en ligne"
-                              description="Retrouvez rapidement le bon cours LearnDash, puis rattachez-le a cette activite eleve."
+                              title={t("admin.activity_modal.online_content_title")}
+                              description={t("admin.activity_modal.online_content_desc_create")}
                             >
                               <ActivityContentAssignmentsPicker
                                 courses={externalContentCourses}
@@ -3482,12 +3485,9 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         />
 
                         <div className="activity-modal-footer">
-                          <p className="muted">
-                            Les codes techniques sont geres automatiquement. Organisez surtout cette fiche autour de son
-                            usage metier, pas autour de parametres systeme.
-                          </p>
+                          <p className="muted">{t("admin.activity_modal.technical_codes_note")}</p>
                           <div className="row">
-                            <button type="submit">Ajouter l activite</button>
+                            <button type="submit">{t("admin.activity_modal.add_activity")}</button>
                           </div>
                         </div>
                       </form>
@@ -3500,21 +3500,19 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               {selectedActivity ? (
                 <section className="modal-overlay">
                   <article className="modal-panel activity-modal-panel">
-                    <Link className="modal-close-x" href={buildConfigHref("activities")} aria-label="Fermer">
+                    <Link className="modal-close-x" href={buildConfigHref("activities")} aria-label={t("common.close")}>
                       ×
                     </Link>
                     <header className="activity-modal-header">
                       <div>
                         <h3>{selectedActivity.name}</h3>
-                        <p className="muted">Modifier les informations de l activite.</p>
+                        <p className="muted">{t("admin.activity_modal.edit_activity_desc")}</p>
                       </div>
                     </header>
 
                     <section className="card modal-card">
                       {activeLegalEntities.length === 0 ? (
-                        <p className="flash-err">
-                          Impossible de modifier cette activite sans entite legale active.
-                        </p>
+                        <p className="flash-err">{t("admin.activity_modal.no_legal_entity_edit")}</p>
                       ) : (
                       <form action={updateAdminActivityAction} className="activity-modal-form">
                         <input type="hidden" name="activity_id" value={selectedActivity.id} />
@@ -3524,23 +3522,23 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           activityContent={
                             <>
                               <ActivityModalSection
-                                title="Identite et rattachement"
-                                description="Nom lisible par l equipe et rattachement aux entites legales utilisees pour la vente et la paie."
+                                title={t("admin.activity_modal.identity_title")}
+                                description={t("admin.activity_modal.identity_desc")}
                               >
                                 <div className="grid cols-2 config-form-grid">
                                   <label className="span-2">
-                                    Nom de l activite
+                                    {t("admin.activity_modal.activity_name")}
                                     <input type="text" name="name" defaultValue={selectedActivity.name} required maxLength={255} />
                                   </label>
                                   <label>
-                                    Entite legale vendeuse
+                                    {t("admin.activity_modal.seller_legal_entity")}
                                     <select
                                       name="seller_legal_entity_id"
                                       defaultValue={selectedActivity.seller_legal_entity_id ?? activeLegalEntities[0]?.id ?? ""}
                                       required
                                     >
                                       <option value="" disabled>
-                                        Selectionner
+                                        {t("common.select")}
                                       </option>
                                       {activeLegalEntities.map((entity) => (
                                         <option key={entity.id} value={entity.id}>
@@ -3550,7 +3548,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                     </select>
                                   </label>
                                   <label>
-                                    Entite legale payeuse prof
+                                    {t("admin.activity_modal.payor_legal_entity")}
                                     <select
                                       name="payor_legal_entity_id"
                                       defaultValue={
@@ -3562,7 +3560,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                       required
                                     >
                                       <option value="" disabled>
-                                        Selectionner
+                                        {t("common.select")}
                                       </option>
                                       {activeLegalEntities.map((entity) => (
                                         <option key={`edit-payor-entity-${entity.id}`} value={entity.id}>
@@ -3575,19 +3573,20 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               </ActivityModalSection>
 
                               <ActivityModalSection
-                                title="Plannings concernes"
-                                description="Associez ou retirez cette activite des plannings locaux. Si un local est decoche, l activite n apparaitra plus dans son planning."
+                                title={t("admin.activity_modal.plannings_title")}
+                                description={t("admin.activity_modal.plannings_desc_edit")}
                               >
                                 <ActivityPlanningAssignments
                                   locations={activityPlanningLocations}
                                   defaultSelectedLocationIds={selectedActivityPlanningLocationIds}
+                                  language={language}
                                 />
                               </ActivityModalSection>
 
                               <div className="grid cols-2 activity-modal-zone-grid">
                                 <ActivityModalSection
-                                  title="Usage du creneau"
-                                  description="Definir comment ce type de creneau doit vivre dans le planning et dans les creations recurrentes."
+                                  title={t("admin.activity_modal.usage_title")}
+                                  description={t("admin.activity_modal.usage_desc")}
                                   accent
                                 >
                                   <div className="grid cols-2 config-form-grid">
@@ -3834,11 +3833,11 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               </div>
 
                               <ActivityModalSection
-                                title="Description interne"
-                                description="Contexte libre pour aider l equipe a comprendre l usage exact de cette activite."
+                                title={t("admin.activity_modal.internal_description_title")}
+                                description={t("admin.activity_modal.internal_description_desc")}
                               >
                                 <label>
-                                  Description
+                                  {t("common.description")}
                                   <textarea name="description" rows={4} defaultValue={selectedActivity.description ?? ""} />
                                 </label>
                               </ActivityModalSection>
@@ -3846,8 +3845,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           }
                           contentContent={
                             <ActivityModalSection
-                              title="Contenu pedagogique en ligne"
-                              description="Cherchez le cours LearnDash par titre, puis rattachez-le a cette activite."
+                              title={t("admin.activity_modal.online_content_title")}
+                              description={t("admin.activity_modal.online_content_desc_edit")}
                             >
                               <ActivityContentAssignmentsPicker
                                 courses={externalContentCourses}
@@ -3859,12 +3858,9 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         />
 
                         <div className="activity-modal-footer">
-                          <p className="muted">
-                            Les codes techniques sont geres automatiquement. Organisez surtout cette fiche autour de son
-                            usage metier, pas autour de parametres systeme.
-                          </p>
+                          <p className="muted">{t("admin.activity_modal.technical_codes_note")}</p>
                           <div className="row">
-                            <button type="submit">Enregistrer</button>
+                            <button type="submit">{t("common.save")}</button>
                           </div>
                         </div>
                       </form>
@@ -4189,7 +4185,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               <section className="card">
                 <div className="row between">
                   <div>
-                    <h3>Types de credit</h3>
+                    <h3>{t("admin.breadcrumb.credit_types")}</h3>
                     <p className="muted">
                       Mapping strict backend entre type de credit et activites. Les carnets debitent uniquement les credits du type associe.
                     </p>
