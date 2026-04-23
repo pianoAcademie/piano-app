@@ -62,8 +62,10 @@ import type {
   AdminPaymentMethodsOut,
   AdminProductCategoriesOut,
   AdminSubscriptionSettingsOut,
+  UserOut,
   QuoteTemplateVariableOut,
 } from "../../../lib/types";
+import { normalizeUiLanguage } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -546,6 +548,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const mainSection = toMainSection(section);
 
   const [
+    meResult,
     accountResult,
     subscriptionsResult,
     paymentMethodsResult,
@@ -568,6 +571,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     catalogKitsResult,
   ] =
     await Promise.all([
+    backendRequest<UserOut>("/api/v1/auth/me", {}, token),
     backendRequest<AdminConfigAccountOut>("/api/v1/admin/config/account", {}, token),
     backendRequest<AdminSubscriptionSettingsOut>("/api/v1/admin/config/subscriptions", {}, token),
     backendRequest<AdminPaymentMethodsOut>("/api/v1/admin/config/payment-methods", {}, token),
@@ -598,6 +602,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     backendRequest<AdminCatalogKitOut[]>("/api/v1/admin/config/catalog/kits?include_inactive=true", {}, token),
   ]);
 
+  const language = meResult.ok ? normalizeUiLanguage(meResult.data.preferred_language) : "fr";
   const loadErrors: string[] = [];
 
   let planningLocations: LocationOut[] = [];
@@ -4387,6 +4392,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               selectedActivityId={selectedIntegrationActivityId}
               selectedLocationId={selectedIntegrationLocationId}
               selectedStartDate={selectedIntegrationDate}
+              language={language}
             />
           ) : null}
 
