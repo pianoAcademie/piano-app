@@ -1,3 +1,5 @@
+import { localeForUiLanguage, type UiLanguage, uiText } from "../../lib/ui-i18n";
+
 export type PlanningEventChipData = {
   id: string;
   title: string;
@@ -22,6 +24,7 @@ export type PlanningEventChipData = {
 };
 
 type MonthEventChipProps = {
+  language: UiLanguage;
   event: PlanningEventChipData;
   href: string;
   expanded?: boolean;
@@ -32,12 +35,12 @@ const UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0
 const TEST_TITLE_RE = /\b(smoke|pa\s*day|test)\b/i;
 const LONG_ID_RE = /\b\d{6,}\b/;
 
-function formatEventTime(value: string, timezone?: string): string {
+function formatEventTime(value: string, timezone?: string, language: UiLanguage = "fr"): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
     return "--:--";
   }
-  return parsed.toLocaleTimeString("fr-FR", {
+  return parsed.toLocaleTimeString(localeForUiLanguage(language), {
     timeZone: timezone || "Europe/Paris",
     hour: "2-digit",
     minute: "2-digit",
@@ -77,42 +80,44 @@ function statusBadgeClass(status: string): string {
   return "month-badge-status-warning";
 }
 
-function normalizedTypeLabel(value: string): string {
+function normalizedTypeLabel(value: string, language: UiLanguage = "fr"): string {
   const normalized = (value || "").trim().toLowerCase();
   if (normalized.includes("priv")) {
-    return "Prive";
+    return uiText(language, "admin.planning.session_type.private");
   }
   if (normalized.includes("online")) {
-    return "Online";
+    return uiText(language, "admin.planning.session_type.online");
   }
   if (normalized.includes("domicile")) {
-    return "Domicile";
+    return uiText(language, "admin.planning.session_type.home");
   }
-  return "Collectif";
+  return uiText(language, "admin.planning.session_type.group");
 }
 
-function defaultTitleFromType(typeLabel: string): string {
-  const normalized = normalizedTypeLabel(typeLabel);
-  if (normalized === "Prive") {
-    return "Cours prive";
+function defaultTitleFromType(typeLabel: string, language: UiLanguage = "fr"): string {
+  const normalized = normalizedTypeLabel(typeLabel, language);
+  if (normalized === uiText(language, "admin.planning.session_type.private")) {
+    return uiText(language, "admin.planning.default_private_course");
   }
-  if (normalized === "Online") {
-    return "Cours online";
+  if (normalized === uiText(language, "admin.planning.session_type.online")) {
+    return uiText(language, "admin.planning.default_online_course");
   }
-  if (normalized === "Domicile") {
-    return "Cours domicile";
+  if (normalized === uiText(language, "admin.planning.session_type.home")) {
+    return uiText(language, "admin.planning.default_home_course");
   }
-  return "Cours collectif";
+  return uiText(language, "admin.planning.default_group_course");
 }
 
-function sanitizeTitle(value: string, typeLabel: string): string {
+function sanitizeTitle(value: string, typeLabel: string, language: UiLanguage = "fr"): string {
   const trimmed = (value || "").trim();
   if (!trimmed) {
-    return defaultTitleFromType(typeLabel);
+    return defaultTitleFromType(typeLabel, language);
   }
   const hasTestPattern = TEST_TITLE_RE.test(trimmed) || UUID_RE.test(trimmed) || LONG_ID_RE.test(trimmed);
   if (hasTestPattern) {
-    return defaultTitleFromType(typeLabel) === "Cours collectif" ? "Creneau test" : defaultTitleFromType(typeLabel);
+    return defaultTitleFromType(typeLabel, language) === uiText(language, "admin.planning.default_group_course")
+      ? uiText(language, "admin.planning.test_slot")
+      : defaultTitleFromType(typeLabel, language);
   }
   return trimmed;
 }
@@ -158,10 +163,10 @@ function locationToneClass(value: string): string {
   return `location-tone-${(hash % 6) + 1}`;
 }
 
-function compactLocationLabel(value: string): string {
+function compactLocationLabel(value: string, language: UiLanguage = "fr"): string {
   const trimmed = (value || "").trim();
   if (!trimmed) {
-    return "Lieu";
+    return uiText(language, "common.location");
   }
   if (trimmed.length <= 12) {
     return trimmed;
@@ -177,11 +182,13 @@ function compactLocationLabel(value: string): string {
 }
 
 export default function MonthEventChip({
+  language,
   event,
   href,
   expanded = false,
   compact = false,
 }: MonthEventChipProps): JSX.Element {
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const teacherFullName = (event.teacher_display_name || "").trim();
   const habitualTeacherName = (event.habitual_teacher_display_name || "").trim();
   const substituteTeacherName = (event.substitute_teacher_display_name || "").trim();
@@ -190,29 +197,29 @@ export default function MonthEventChip({
   const teacherRequired = event.requires_professor !== false;
   const teacherMissing = teacherRequired && teacherFullName.length === 0;
   const teacherCompactBase = !teacherRequired
-    ? "non requis"
+    ? t("admin.planning.no_teacher_required")
     : teacherMissing
-      ? "(non renseigne)"
+      ? t("admin.planning.not_provided_compact")
       : compactTeacherName(effectiveTeacherName || teacherFullName);
-  const teacherCompact = isSubstituteActive && !teacherMissing ? `${teacherCompactBase} (rempl.)` : teacherCompactBase;
-  const locationLabel = (event.location_label || "").trim() || "Lieu";
-  const typeLabel = normalizedTypeLabel(event.type_label);
-  const displayTitle = sanitizeTitle(event.title, typeLabel);
+  const teacherCompact = isSubstituteActive && !teacherMissing ? `${teacherCompactBase} (${t("admin.planning.substitute_short")})` : teacherCompactBase;
+  const locationLabel = (event.location_label || "").trim() || t("common.location");
+  const typeLabel = normalizedTypeLabel(event.type_label, language);
+  const displayTitle = sanitizeTitle(event.title, typeLabel, language);
   const timezone = (event.timezone || "").trim() || "Europe/Paris";
-  const startTime = formatEventTime(event.start_at_utc, timezone);
-  const endTime = formatEventTime(event.end_at_utc, timezone);
+  const startTime = formatEventTime(event.start_at_utc, timezone, language);
+  const endTime = formatEventTime(event.end_at_utc, timezone, language);
   const showLocationBadge = Boolean(event.show_location_badge);
-  const locationBadgeLabel = compactLocationLabel(locationLabel);
+  const locationBadgeLabel = compactLocationLabel(locationLabel, language);
   const locationTone = (event.location_tone || "").trim() || locationToneClass(locationLabel);
   const tooltip = [
     `${startTime}-${endTime}`,
     event.title,
-    `Prof effectif: ${!teacherRequired ? "non requis" : teacherMissing ? "(non renseigne)" : effectiveTeacherName}`,
-    isSubstituteActive && habitualTeacherName ? `Prof habituel: ${habitualTeacherName}` : null,
-    isSubstituteActive && substituteTeacherName ? `Remplacant: ${substituteTeacherName}` : null,
-    `Lieu: ${locationLabel}`,
-    `Type: ${typeLabel}`,
-    `Statut: ${event.status_label}`,
+    `${t("admin.planning.effective_teacher")}: ${!teacherRequired ? t("admin.planning.no_teacher_required") : teacherMissing ? t("admin.planning.not_provided_compact") : effectiveTeacherName}`,
+    isSubstituteActive && habitualTeacherName ? `${t("admin.planning.regular_teacher")}: ${habitualTeacherName}` : null,
+    isSubstituteActive && substituteTeacherName ? `${t("admin.planning.substitute_teacher")}: ${substituteTeacherName}` : null,
+    `${t("common.location")}: ${locationLabel}`,
+    `${t("common.type")}: ${typeLabel}`,
+    `${t("common.status")}: ${event.status_label}`,
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");
@@ -240,7 +247,7 @@ export default function MonthEventChip({
       </div>
       <p className="month-event-chip-title">{displayTitle}</p>
       <p className="month-event-chip-sub">
-        <span className={`month-event-chip-prof ${teacherMissing ? "missing" : ""}`}>Prof : {teacherCompact}</span>
+        <span className={`month-event-chip-prof ${teacherMissing ? "missing" : ""}`}>{t("admin.planning.teacher_short")} : {teacherCompact}</span>
         {teacherMissing ? <span className="month-event-chip-warn" aria-hidden="true">⚠</span> : null}
         <span className="month-event-chip-sep" aria-hidden="true">
           ·

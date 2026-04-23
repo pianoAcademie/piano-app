@@ -1,6 +1,8 @@
 import MonthEventChip, { type PlanningEventChipData } from "./month-event-chip";
+import { type UiLanguage, uiText } from "../../lib/ui-i18n";
 
 type MonthDayCardProps = {
+  language: UiLanguage;
   dayLabel: string;
   events: PlanningEventChipData[];
   isToday: boolean;
@@ -11,6 +13,7 @@ type MonthDayCardProps = {
 };
 
 export default function MonthDayCard({
+  language,
   dayLabel,
   events,
   isToday,
@@ -19,6 +22,7 @@ export default function MonthDayCard({
   openSessionHref,
   expanded = false,
 }: MonthDayCardProps): JSX.Element {
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const visibleEvents = events.slice(0, maxVisibleEvents);
   const remainingCount = Math.max(events.length - visibleEvents.length, 0);
 
@@ -38,6 +42,7 @@ export default function MonthDayCard({
             {visibleEvents.map((event) => (
               <MonthEventChip
                 key={event.id}
+                language={language}
                 event={event}
                 href={openSessionHref(event.id)}
                 expanded={expanded}
@@ -47,7 +52,7 @@ export default function MonthDayCard({
           </div>
           {remainingCount > 0 ? (
             <a className="month-day-card-more" href={dayDetailsHref}>
-              +{remainingCount} autres
+              {t("admin.planning.more_events", { count: remainingCount })}
             </a>
           ) : null}
         </div>

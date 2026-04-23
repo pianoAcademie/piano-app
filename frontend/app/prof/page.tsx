@@ -839,6 +839,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
             {agendaCardDays.map((day) => (
               <MonthDayCard
                 key={day.key}
+                language={language}
                 dayLabel={day.label}
                 events={day.events}
                 isToday={day.key === todayKeyUtc()}
@@ -859,6 +860,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
           </div>
 
           <DayEventsDrawer
+            language={language}
             isOpen={Boolean(selectedDayDetails && !selectedSession)}
             dayLabel={selectedDayDetails ? selectedDayDetails.label : ""}
             events={selectedDayDetails ? selectedDayDetails.events : []}

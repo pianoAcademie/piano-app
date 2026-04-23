@@ -2,31 +2,21 @@
 
 import { useMemo, useState } from "react";
 
+import { type UiLanguage, uiText } from "../lib/ui-i18n";
 import type { SessionAudienceScope } from "../lib/types";
 
 type SessionVisibilityFieldsProps = {
+  language: UiLanguage;
   initialVisibilityScopes: SessionAudienceScope[];
   initialBookingScopes: SessionAudienceScope[];
   allowsStudentBookings?: boolean;
   initialShowExternalRemainingSeats?: boolean;
 };
 
-const NON_PRIVATE_SCOPE_OPTIONS: Array<{ value: SessionAudienceScope; label: string; hint: string }> = [
-  {
-    value: "EXTERNAL",
-    label: "Externe",
-    hint: "Visible ou reservable hors connexion, et aussi pour tous les clients connectes.",
-  },
-  {
-    value: "SUBSCRIPTION",
-    label: "Abonne / carnet",
-    hint: "Reserve aux clients avec abonnement ou carnet compatible.",
-  },
-  {
-    value: "FORFAIT",
-    label: "Forfait",
-    hint: "Reserve aux clients couverts par un forfait compatible.",
-  },
+const NON_PRIVATE_SCOPE_OPTIONS: Array<{ value: SessionAudienceScope }> = [
+  { value: "EXTERNAL" },
+  { value: "SUBSCRIPTION" },
+  { value: "FORFAIT" },
 ];
 
 function normalizeScopes(values: SessionAudienceScope[], fallback: SessionAudienceScope[]): SessionAudienceScope[] {
@@ -47,20 +37,30 @@ function toggleScope(current: SessionAudienceScope[], scope: SessionAudienceScop
   return normalizeScopes(next, [scope]);
 }
 
-function scopeGroupSummary(scopes: SessionAudienceScope[]): string {
+function scopeGroupSummary(scopes: SessionAudienceScope[], language: UiLanguage): string {
   if (scopes.length === 1 && scopes[0] === "PRIVATE") {
-    return "Prive (admin seulement)";
+    return uiText(language, "admin.planning.private_admin_only");
   }
-  const labels = NON_PRIVATE_SCOPE_OPTIONS.filter((option) => scopes.includes(option.value)).map((option) => option.label);
+  const labels = NON_PRIVATE_SCOPE_OPTIONS
+    .filter((option) => scopes.includes(option.value))
+    .map((option) =>
+      option.value === "EXTERNAL"
+        ? uiText(language, "admin.planning.audience.external")
+        : option.value === "SUBSCRIPTION"
+          ? uiText(language, "admin.planning.audience.subscription")
+          : uiText(language, "admin.planning.audience.forfait"),
+    );
   return labels.join(" + ");
 }
 
 export default function SessionVisibilityFields({
+  language,
   initialVisibilityScopes,
   initialBookingScopes,
   allowsStudentBookings = true,
   initialShowExternalRemainingSeats = true,
 }: SessionVisibilityFieldsProps): JSX.Element {
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const [visibilityScopes, setVisibilityScopes] = useState<SessionAudienceScope[]>(
     normalizeScopes(initialVisibilityScopes, ["EXTERNAL"]),
   );
@@ -80,9 +80,9 @@ export default function SessionVisibilityFields({
   return (
     <>
       <fieldset className="session-audience-fieldset">
-        <legend>Affichage</legend>
+        <legend>{t("admin.planning.display")}</legend>
         <small className="muted">
-          Cochez un ou plusieurs cas. Les eleves deja inscrits voient toujours le creneau dans leur portail, meme si l'affichage est restreint.
+          {t("admin.planning.visibility_help")}
         </small>
         <div className="session-audience-option-list">
           {NON_PRIVATE_SCOPE_OPTIONS.map((option) => (
@@ -95,8 +95,14 @@ export default function SessionVisibilityFields({
                 onChange={() => setVisibilityScopes((current) => toggleScope(current, option.value))}
               />
               <span>
-                <strong>{option.label}</strong>
-                <small className="muted">{option.hint}</small>
+                <strong>{option.value === "EXTERNAL" ? t("admin.planning.audience.external") : option.value === "SUBSCRIPTION" ? t("admin.planning.audience.subscription") : t("admin.planning.audience.forfait")}</strong>
+                <small className="muted">
+                  {option.value === "EXTERNAL"
+                    ? t("admin.planning.audience.external_hint")
+                    : option.value === "SUBSCRIPTION"
+                      ? t("admin.planning.audience.subscription_hint")
+                      : t("admin.planning.audience.forfait_hint")}
+                </small>
               </span>
             </label>
           ))}
@@ -109,18 +115,18 @@ export default function SessionVisibilityFields({
               onChange={() => setVisibilityScopes((current) => toggleScope(current, "PRIVATE"))}
             />
             <span>
-              <strong>Prive</strong>
-              <small className="muted">Visible uniquement en admin. Les eleves deja inscrits le voient quand meme dans leur portail.</small>
+              <strong>{t("admin.planning.audience.private")}</strong>
+              <small className="muted">{t("admin.planning.audience.private_visibility_hint")}</small>
             </span>
           </label>
         </div>
-        <small className="muted">Actuel: {scopeGroupSummary(visibilityScopes)}.</small>
+        <small className="muted">{t("admin.planning.current_scopes", { value: scopeGroupSummary(visibilityScopes, language) })}</small>
       </fieldset>
 
       <fieldset className="session-audience-fieldset">
-        <legend>Reservation en ligne</legend>
+        <legend>{t("admin.planning.online_booking")}</legend>
         <small className="muted">
-          Cochez un ou plusieurs cas. En pratique, <strong>Externe</strong> rend aussi le creneau reservable pour tous les clients connectes, meme sans formule active.
+          {t("admin.planning.online_booking_help")}
         </small>
         {visibilityIsPrivate || !allowsStudentBookings ? (
           <input type="hidden" name="booking_scopes" value="PRIVATE" />
@@ -140,8 +146,14 @@ export default function SessionVisibilityFields({
                 onChange={() => setBookingScopes((current) => toggleScope(current, option.value))}
               />
               <span>
-                <strong>{option.label}</strong>
-                <small className="muted">{option.hint}</small>
+                <strong>{option.value === "EXTERNAL" ? t("admin.planning.audience.external") : option.value === "SUBSCRIPTION" ? t("admin.planning.audience.subscription") : t("admin.planning.audience.forfait")}</strong>
+                <small className="muted">
+                  {option.value === "EXTERNAL"
+                    ? t("admin.planning.audience.external_hint")
+                    : option.value === "SUBSCRIPTION"
+                      ? t("admin.planning.audience.subscription_hint")
+                      : t("admin.planning.audience.forfait_hint")}
+                </small>
               </span>
             </label>
           ))}
@@ -155,24 +167,24 @@ export default function SessionVisibilityFields({
               onChange={() => setBookingScopes((current) => toggleScope(current, "PRIVATE"))}
             />
             <span>
-              <strong>Prive</strong>
-              <small className="muted">Aucune reservation en ligne. Gestion manuelle uniquement.</small>
+              <strong>{t("admin.planning.audience.private")}</strong>
+              <small className="muted">{t("admin.planning.private_booking_hint")}</small>
             </span>
           </label>
         </div>
         <small className="muted">
           {!allowsStudentBookings
-            ? "Ce type de creneau n'accepte pas de reservation eleve."
+            ? t("admin.planning.no_student_booking_type")
             : visibilityIsPrivate
-              ? "Un creneau prive ne peut pas etre reserve en ligne."
-              : `Actuel: ${scopeGroupSummary(effectiveBookingScopes)}.`}
+              ? t("admin.planning.private_slot_no_booking")
+              : t("admin.planning.current_scopes", { value: scopeGroupSummary(effectiveBookingScopes, language) })}
         </small>
       </fieldset>
 
       <fieldset className="session-audience-fieldset">
-        <legend>Integration externe</legend>
+        <legend>{t("admin.planning.external_integration")}</legend>
         <small className="muted">
-          Controle l information de disponibilite affichee dans l iframe publique pour ce creneau.
+          {t("admin.planning.external_integration_help")}
         </small>
         <label className="session-audience-option">
           <input type="hidden" name="show_external_remaining_seats" value="0" />
@@ -183,8 +195,8 @@ export default function SessionVisibilityFields({
             defaultChecked={initialShowExternalRemainingSeats}
           />
           <span>
-            <strong>Afficher le nombre de places restantes</strong>
-            <small className="muted">Sinon, l iframe affiche seulement Reservation disponible ou Complet.</small>
+            <strong>{t("admin.planning.show_remaining_seats")}</strong>
+            <small className="muted">{t("admin.planning.remaining_seats_help")}</small>
           </span>
         </label>
       </fieldset>

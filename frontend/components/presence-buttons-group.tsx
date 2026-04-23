@@ -2,38 +2,44 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { type UiLanguage, uiText } from "../lib/ui-i18n";
+
 type PresenceValue = "BOOKED" | "ATTENDED" | "EXCUSED_ABSENCE" | "NO_SHOW";
 
 type PresenceButtonsGroupProps = {
   formId: string;
   name?: string;
   initialValue: PresenceValue;
+  language?: UiLanguage;
   previousHref?: string | null;
   nextHref?: string | null;
 };
-
-const OPTIONS: Array<{ value: PresenceValue; label: string; hotkey: string; tone: string }> = [
-  { value: "BOOKED", label: "A saisir", hotkey: "1", tone: "warn" },
-  { value: "ATTENDED", label: "Present", hotkey: "2", tone: "ok" },
-  { value: "EXCUSED_ABSENCE", label: "Abs. excuse", hotkey: "3", tone: "neutral" },
-  { value: "NO_SHOW", label: "Abs. non excuse", hotkey: "4", tone: "danger" },
-];
 
 export default function PresenceButtonsGroup({
   formId,
   name = "attendance_status",
   initialValue,
+  language = "fr",
   previousHref,
   nextHref,
 }: PresenceButtonsGroupProps): JSX.Element {
   const [selected, setSelected] = useState<PresenceValue>(initialValue);
   const isDirty = selected !== initialValue;
+  const options = useMemo(
+    () => [
+      { value: "BOOKED" as const, label: uiText(language, "admin.planning.attendance.to_fill"), hotkey: "1", tone: "warn" },
+      { value: "ATTENDED" as const, label: uiText(language, "admin.planning.attendance.attended"), hotkey: "2", tone: "ok" },
+      { value: "EXCUSED_ABSENCE" as const, label: uiText(language, "admin.planning.attendance.excused"), hotkey: "3", tone: "neutral" },
+      { value: "NO_SHOW" as const, label: uiText(language, "admin.planning.attendance.no_show"), hotkey: "4", tone: "danger" },
+    ],
+    [language],
+  );
 
   useEffect(() => {
     setSelected(initialValue);
   }, [initialValue]);
 
-  const shortcutsHint = useMemo(() => "1-4: statut · Enter: enregistrer · ↑/↓: eleve", []);
+  const shortcutsHint = useMemo(() => uiText(language, "admin.planning.shortcuts_hint"), [language]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -94,8 +100,8 @@ export default function PresenceButtonsGroup({
   return (
     <div className="presence-buttons-group">
       <input type="hidden" name={name} value={selected} />
-      <div className="presence-buttons-grid" role="radiogroup" aria-label="Statut de presence">
-        {OPTIONS.map((option) => {
+      <div className="presence-buttons-grid" role="radiogroup" aria-label={uiText(language, "admin.planning.presence_radio_label")}>
+        {options.map((option) => {
           const active = option.value === selected;
           return (
             <button
@@ -105,7 +111,7 @@ export default function PresenceButtonsGroup({
               onClick={() => setSelected(option.value)}
               role="radio"
               aria-checked={active}
-              aria-label={`${option.label} (raccourci ${option.hotkey})`}
+              aria-label={uiText(language, "admin.planning.presence_shortcut_label", { label: option.label, hotkey: option.hotkey })}
             >
               <span>{option.label}</span>
               <small>{option.hotkey}</small>
@@ -115,7 +121,7 @@ export default function PresenceButtonsGroup({
       </div>
       <div className="presence-group-meta">
         <small className="muted">{shortcutsHint}</small>
-        {isDirty ? <small className="presence-dirty-flag">Modifications non enregistrees</small> : null}
+        {isDirty ? <small className="presence-dirty-flag">{uiText(language, "admin.planning.unsaved_changes")}</small> : null}
       </div>
     </div>
   );

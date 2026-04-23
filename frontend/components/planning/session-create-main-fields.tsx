@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 
+import { type UiLanguage, uiText } from "../../lib/ui-i18n";
 import SessionTimeFields from "../session-time-fields";
 
 type CourseTypeOption = {
@@ -30,6 +31,7 @@ type TimezoneOption = {
 };
 
 type SessionCreateMainFieldsProps = {
+  language: UiLanguage;
   courseTypes: CourseTypeOption[];
   professors: ProfessorOption[];
   locations: LocationOption[];
@@ -80,6 +82,7 @@ function endTimeFromStartAndDuration(startTime: string, durationMinutes: number)
 }
 
 export default function SessionCreateMainFields({
+  language,
   courseTypes,
   professors,
   locations,
@@ -90,6 +93,7 @@ export default function SessionCreateMainFields({
   defaultStartDate,
   draft,
 }: SessionCreateMainFieldsProps): JSX.Element {
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const normalizedDefaultCourseTypeId = useMemo(() => {
     const fromDraft = String(draft?.courseTypeId || "").trim();
     if (fromDraft && courseTypes.some((row) => row.id === fromDraft)) {
@@ -133,19 +137,19 @@ export default function SessionCreateMainFields({
   return (
     <div className="grid cols-4 create-session-grid">
       <label className="span-2">
-        Titre
+        {t("admin.planning.title_label")}
         <input type="text" name="title" defaultValue={titleDefaultValue} required maxLength={255} autoFocus />
       </label>
 
       <label>
-        Type de cours
+        {t("admin.planning.course_type")}
         <select
           name="course_type_id"
           value={selectedCourseTypeId}
           required
           onChange={(event) => setSelectedCourseTypeId(event.target.value)}
         >
-          <option value="">Selectionner</option>
+          <option value="">{t("admin.planning.selection")}</option>
           {courseTypes.map((row) => (
             <option key={row.id} value={row.id}>
               {row.name}
@@ -154,16 +158,16 @@ export default function SessionCreateMainFields({
         </select>
         {selectedCourseType ? (
           <small className="muted">
-            Duree type: {selectedCourseType.durationMinutes} min · Capacite type: {selectedCourseType.defaultCapacity} ·{" "}
-            {selectedCourseType.allowsStudentBookings ? "avec eleves" : "sans eleve"}
+            {t("admin.planning.default_duration", { count: selectedCourseType.durationMinutes })} · {t("admin.planning.default_capacity", { count: selectedCourseType.defaultCapacity })} ·{" "}
+            {selectedCourseType.allowsStudentBookings ? t("admin.planning.with_students") : t("admin.planning.without_students")}
           </small>
         ) : null}
       </label>
 
       <label>
-        Coach
+        {t("admin.planning.coach")}
         <select name="professor_id" defaultValue={professorDefaultValue} required={Boolean(selectedCourseType?.requiresProfessor)}>
-          <option value="">{selectedCourseType?.requiresProfessor ? "Selectionner un professeur" : "Sans professeur"}</option>
+          <option value="">{selectedCourseType?.requiresProfessor ? t("admin.planning.select_teacher") : t("admin.planning.no_teacher")}</option>
           {professors.map((row) => (
             <option key={row.id} value={row.id}>
               {row.firstName} {row.lastName}
@@ -173,7 +177,7 @@ export default function SessionCreateMainFields({
       </label>
 
       <label>
-        Lieu
+        {t("common.location")}
         <select name="location_id" defaultValue={locationDefaultValue} required>
           {locations.map((row) => (
             <option key={row.id} value={row.id}>
@@ -184,7 +188,7 @@ export default function SessionCreateMainFields({
       </label>
 
       <label>
-        Fuseau horaire du creneau
+        {t("admin.planning.filter.session_timezone")}
         <select name="session_timezone" defaultValue={timezoneDefaultValue} required>
           {sessionTimezoneOptions.map((option) => (
             <option key={option.value} value={option.value}>
@@ -195,17 +199,20 @@ export default function SessionCreateMainFields({
       </label>
 
       <label>
-        Jour debut
+        {t("admin.planning.start_day")}
         <input type="date" name="start_date" defaultValue={startDateDefaultValue} required />
       </label>
 
       <label className="checkline create-session-toggle">
         <input type="checkbox" name="is_all_day" defaultChecked={isAllDayDefaultValue} />
-        Creneau sur toute la journee
+        {t("admin.planning.all_day_slot")}
       </label>
 
       <SessionTimeFields
         key={`create-time-${selectedCourseTypeId || "default"}-${defaultDuration}`}
+        startLabel={t("admin.planning.start_time")}
+        endLabel={t("admin.planning.end_time")}
+        durationLabel={t("admin.planning.duration_minutes")}
         labelClassName="create-time-field session-time-field"
         defaultStartTime={startTimeDefault}
         defaultEndTime={endTimeDefault}
@@ -215,20 +222,20 @@ export default function SessionCreateMainFields({
 
       {selectedCourseType?.allowsStudentBookings === false ? (
         <label key={`create-capacity-${selectedCourseTypeId || "default"}-${draftedCapacity ?? capacityDefault}`}>
-          Capacite max
+          {t("admin.planning.capacity_max")}
           <input type="hidden" name="capacity_max" value="0" />
           <input type="number" value={0} min={0} readOnly disabled />
-          <small className="muted">Capacite forcee a 0 pour les creneaux sans eleve.</small>
+          <small className="muted">{t("admin.planning.forced_zero_capacity")}</small>
         </label>
       ) : (
         <label key={`create-capacity-${selectedCourseTypeId || "default"}-${draftedCapacity ?? capacityDefault}`}>
-          Capacite max
+          {t("admin.planning.capacity_max")}
           <input type="number" name="capacity_max" min={0} defaultValue={draftedCapacity ?? capacityDefault} required />
         </label>
       )}
 
       <label className="span-2">
-        Lien Zoom (optionnel)
+        {t("admin.planning.zoom_link_optional")}
         <input type="url" name="zoom_link" defaultValue={zoomLinkDefaultValue} placeholder="https://..." />
       </label>
     </div>
