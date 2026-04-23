@@ -2,19 +2,26 @@
 
 import { useState } from "react";
 
+import { normalizeUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
+
 type EffectiveDateSubmitButtonProps = {
   formId: string;
   defaultDate: string;
   label?: string;
   title?: string;
+  language?: UiLanguage | string;
 };
 
 export default function EffectiveDateSubmitButton({
   formId,
   defaultDate,
-  label = "Enregistrer les taux",
-  title = "Date d'effet des nouveaux taux",
+  label,
+  title,
+  language: languageProp = "fr",
 }: EffectiveDateSubmitButtonProps): JSX.Element {
+  const language = normalizeUiLanguage(languageProp);
+  const localizedLabel = label ?? uiText(language, "effective_date_submit.save_rates");
+  const localizedTitle = title ?? uiText(language, "effective_date_submit.title");
   const [open, setOpen] = useState(false);
   const [effectiveDate, setEffectiveDate] = useState(defaultDate);
   const [errorMessage, setErrorMessage] = useState("");
@@ -26,13 +33,13 @@ export default function EffectiveDateSubmitButton({
 
   const confirm = (): void => {
     if (!effectiveDate) {
-      setErrorMessage("Selectionnez une date d'effet.");
+      setErrorMessage(uiText(language, "effective_date_submit.date_required"));
       return;
     }
 
     const form = document.getElementById(formId);
     if (!(form instanceof HTMLFormElement)) {
-      setErrorMessage("Formulaire introuvable.");
+      setErrorMessage(uiText(language, "common.form_not_found"));
       return;
     }
 
@@ -54,22 +61,22 @@ export default function EffectiveDateSubmitButton({
   return (
     <>
       <button type="button" onClick={() => setOpen(true)}>
-        {label}
+        {localizedLabel}
       </button>
 
       {open ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
-            <button className="modal-close-x" type="button" onClick={close} aria-label="Fermer">
+            <button className="modal-close-x" type="button" onClick={close} aria-label={uiText(language, "common.close")}>
               ×
             </button>
-            <h3 className="modal-title">{title}</h3>
-            <p className="muted">La mise a jour remplacera les taux collaborateur a partir de cette date.</p>
+            <h3 className="modal-title">{localizedTitle}</h3>
+            <p className="muted">{uiText(language, "effective_date_submit.help")}</p>
 
             {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
 
             <label>
-              Date d effet
+              {uiText(language, "effective_date_submit.effective_date")}
               <input
                 type="date"
                 value={effectiveDate}
@@ -82,10 +89,10 @@ export default function EffectiveDateSubmitButton({
 
             <div className="row modal-actions-end">
               <button type="button" className="ghost" onClick={close}>
-                Annuler
+                {uiText(language, "common.cancel")}
               </button>
               <button type="button" onClick={confirm}>
-                Valider
+                {uiText(language, "common.validate")}
               </button>
             </div>
           </article>

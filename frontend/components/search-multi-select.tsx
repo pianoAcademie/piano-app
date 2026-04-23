@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
+
 type Option = {
   id: string;
   label: string;
@@ -25,6 +27,7 @@ type Props = {
   availableOptionsLabel?: string;
   noResultsLabel?: string;
   limitResultsLabel?: string;
+  language?: UiLanguage | string;
   onSelectionChange?: (ids: string[]) => void;
 };
 
@@ -46,24 +49,35 @@ export default function SearchMultiSelect({
   selectedIds,
   placeholder,
   className,
-  emptySelectionLabel = "Aucune selection.",
-  emptySummaryLabel = "Selection vide",
+  emptySelectionLabel,
+  emptySummaryLabel,
   maxSelections,
   requiredSelection = false,
-  requiredSelectionMessage = "Selection obligatoire.",
-  selectedCountLabel = "{count} selection(s)",
-  removeOptionLabel = "Retirer {label}",
-  clearLabel = "Vider",
-  availableOptionsLabel = "{label} disponibles",
-  noResultsLabel = "Aucun resultat.",
-  limitResultsLabel = "Affichage limite a 120 resultats.",
+  requiredSelectionMessage,
+  selectedCountLabel,
+  removeOptionLabel,
+  clearLabel,
+  availableOptionsLabel,
+  noResultsLabel,
+  limitResultsLabel,
+  language: languageProp = "fr",
   onSelectionChange,
 }: Props): JSX.Element {
+  const language = normalizeUiLanguage(languageProp);
+  const localizedEmptySelectionLabel = emptySelectionLabel ?? uiText(language, "search_multi.empty_selection");
+  const localizedEmptySummaryLabel = emptySummaryLabel ?? uiText(language, "search_multi.empty_summary");
+  const localizedRequiredSelectionMessage = requiredSelectionMessage ?? uiText(language, "search_multi.required_selection");
+  const localizedSelectedCountLabel = selectedCountLabel ?? uiText(language, "search_multi.selected_count");
+  const localizedRemoveOptionLabel = removeOptionLabel ?? uiText(language, "search_multi.remove_option");
+  const localizedClearLabel = clearLabel ?? uiText(language, "search_multi.clear");
+  const localizedAvailableOptionsLabel = availableOptionsLabel ?? uiText(language, "search_multi.available_options");
+  const localizedNoResultsLabel = noResultsLabel ?? uiText(language, "search_multi.no_results");
+  const localizedLimitResultsLabel = limitResultsLabel ?? uiText(language, "search_multi.limit_results");
   const rootRef = useRef<HTMLDivElement | null>(null);
   const optionById = useMemo(() => new Map(options.map((option) => [option.id, option])), [options]);
   const sortedOptions = useMemo(
-    () => [...options].sort((a, b) => a.label.localeCompare(b.label, "fr")),
-    [options],
+    () => [...options].sort((a, b) => a.label.localeCompare(b.label, localeForUiLanguage(language))),
+    [language, options],
   );
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string[]>(
@@ -108,11 +122,11 @@ export default function SearchMultiSelect({
         return;
       }
       event.preventDefault();
-      setSelectionError(requiredSelectionMessage);
+      setSelectionError(localizedRequiredSelectionMessage);
     };
     form.addEventListener("submit", onSubmit);
     return () => form.removeEventListener("submit", onSubmit);
-  }, [requiredSelection, requiredSelectionMessage, selected]);
+  }, [localizedRequiredSelectionMessage, requiredSelection, selected]);
 
   useEffect(() => {
     if (selected.length > 0 && selectionError) {
@@ -147,20 +161,20 @@ export default function SearchMultiSelect({
       <div className="planning-multi-search-head">
         <strong>{label}</strong>
         <small className="muted">
-          {selected.length > 0 ? interpolate(selectedCountLabel, { count: selected.length }) : emptySummaryLabel}
+          {selected.length > 0 ? interpolate(localizedSelectedCountLabel, { count: selected.length }) : localizedEmptySummaryLabel}
         </small>
       </div>
 
       <div className="planning-multi-search-selected" aria-live="polite">
         {selectedOptions.length === 0 ? (
-          <small className="muted">{emptySelectionLabel}</small>
+          <small className="muted">{localizedEmptySelectionLabel}</small>
         ) : (
           selectedOptions.map((option) => (
             <span key={option.id} className="badge planning-multi-search-chip">
               {option.label}
               <button
                 type="button"
-                aria-label={interpolate(removeOptionLabel, { label: option.label })}
+                aria-label={interpolate(localizedRemoveOptionLabel, { label: option.label })}
                 onClick={() => setSelected((prev) => prev.filter((id) => id !== option.id))}
               >
                 ×
@@ -190,14 +204,14 @@ export default function SearchMultiSelect({
         />
         {selected.length > 0 ? (
           <button type="button" className="reset-link planning-multi-search-clear" onClick={() => setSelected([])}>
-            {clearLabel}
+            {localizedClearLabel}
           </button>
         ) : null}
       </div>
 
-      <div className="planning-multi-search-options" role="listbox" aria-label={interpolate(availableOptionsLabel, { label })}>
+      <div className="planning-multi-search-options" role="listbox" aria-label={interpolate(localizedAvailableOptionsLabel, { label })}>
         {filteredOptions.length === 0 ? (
-          <small className="muted">{noResultsLabel}</small>
+          <small className="muted">{localizedNoResultsLabel}</small>
         ) : (
           filteredOptions.map((option) => (
             <button
@@ -213,7 +227,7 @@ export default function SearchMultiSelect({
             </button>
           ))
         )}
-        {hasHiddenOptions ? <small className="muted">{limitResultsLabel}</small> : null}
+        {hasHiddenOptions ? <small className="muted">{localizedLimitResultsLabel}</small> : null}
       </div>
 
       {selectionError ? (

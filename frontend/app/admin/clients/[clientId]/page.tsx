@@ -4681,6 +4681,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   rows={12}
                   maxLength={20000}
                   placeholder={t("admin.client_detail.email_body_placeholder")}
+                  language={language}
                 />
               </label>
               <div className="row modal-actions-end">
@@ -6004,6 +6005,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   rows={12}
                   maxLength={20000}
                   placeholder={t("admin.client_detail.email_body_placeholder")}
+                  language={language}
                 />
               </label>
               <div className="row modal-actions-end">

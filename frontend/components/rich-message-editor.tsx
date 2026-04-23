@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { normalizeUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
+
 type MessageBodyFormat = "TEXT" | "HTML";
 type EditorMode = "TEXT" | "WYSIWYG" | "HTML_SOURCE";
 
@@ -35,30 +37,33 @@ type RichMessageEditorProps = {
   placeholder?: string;
   rows?: number;
   maxLength?: number;
+  language?: UiLanguage | string;
   labels?: Partial<RichMessageEditorLabels>;
 };
 
-const DEFAULT_LABELS: RichMessageEditorLabels = {
-  editorModeAria: "Mode de l editeur",
-  wysiwygMode: "Editeur",
-  htmlMode: "HTML",
-  textMode: "Texte",
-  formattingToolsAria: "Outils de mise en forme",
-  unorderedList: "• Liste",
-  orderedList: "1. Liste",
-  fontPlaceholder: "Police",
-  sizePlaceholder: "Taille",
-  textColor: "Texte",
-  highlightColor: "Surligner",
-  insertLink: "Lien",
-  insertImageUrl: "Image URL",
-  insertImageFile: "Image fichier",
-  addFile: "Ajouter fichier",
-  linkPrompt: "URL du lien (https://...)",
-  imagePrompt: "URL de l image (https://...)",
-  defaultFileName: "fichier",
-  defaultImageName: "image",
-};
+function defaultLabels(language: UiLanguage): RichMessageEditorLabels {
+  return {
+    editorModeAria: uiText(language, "rich_editor.mode_aria"),
+    wysiwygMode: uiText(language, "rich_editor.mode_wysiwyg"),
+    htmlMode: uiText(language, "rich_editor.mode_html"),
+    textMode: uiText(language, "rich_editor.mode_text"),
+    formattingToolsAria: uiText(language, "rich_editor.toolbar_aria"),
+    unorderedList: uiText(language, "rich_editor.unordered_list"),
+    orderedList: uiText(language, "rich_editor.ordered_list"),
+    fontPlaceholder: uiText(language, "rich_editor.font_placeholder"),
+    sizePlaceholder: uiText(language, "rich_editor.size_placeholder"),
+    textColor: uiText(language, "rich_editor.text_color"),
+    highlightColor: uiText(language, "rich_editor.highlight_color"),
+    insertLink: uiText(language, "rich_editor.insert_link"),
+    insertImageUrl: uiText(language, "rich_editor.insert_image_url"),
+    insertImageFile: uiText(language, "rich_editor.insert_image_file"),
+    addFile: uiText(language, "rich_editor.add_file"),
+    linkPrompt: uiText(language, "rich_editor.link_prompt"),
+    imagePrompt: uiText(language, "rich_editor.image_prompt"),
+    defaultFileName: uiText(language, "rich_editor.default_file_name"),
+    defaultImageName: uiText(language, "rich_editor.default_image_name"),
+  };
+}
 
 function normalizeFormat(value: string | undefined): MessageBodyFormat {
   return String(value || "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
@@ -127,9 +132,11 @@ export default function RichMessageEditor({
   placeholder,
   rows = 12,
   maxLength,
+  language: languageProp = "fr",
   labels,
 }: RichMessageEditorProps) {
-  const ui = { ...DEFAULT_LABELS, ...labels };
+  const language = normalizeUiLanguage(languageProp);
+  const ui = { ...defaultLabels(language), ...labels };
   const initialFormat = useMemo(() => normalizeFormat(defaultFormat), [defaultFormat]);
   const initialValue = defaultValue ?? "";
   const initialEditorValue = useMemo(() => {

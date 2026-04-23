@@ -188,6 +188,7 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
               formId="collaborators-message-form"
               selectAllLabel={t("admin.professors.selection_all")}
               summaryLabel={t("admin.professors.selection_summary")}
+              language={language}
             />
             <div className="table-wrap">
               <table className="data-table">
@@ -247,6 +248,7 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
                     rows={8}
                     maxLength={12000}
                     placeholder={t("admin.professors.message_placeholder")}
+                    language={language}
                     labels={{
                       editorModeAria: t("admin.professors.editor_mode_aria"),
                       wysiwygMode: t("admin.professors.editor_mode_wysiwyg"),

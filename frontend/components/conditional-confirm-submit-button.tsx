@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { normalizeUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
+
 type ConditionalConfirmSubmitButtonProps = {
   formId: string;
   label: string;
@@ -13,6 +15,7 @@ type ConditionalConfirmSubmitButtonProps = {
   cancelLabel?: string;
   closeAriaLabel?: string;
   missingFormError?: string;
+  language?: UiLanguage | string;
   className?: string;
   disabled?: boolean;
 };
@@ -39,13 +42,19 @@ export default function ConditionalConfirmSubmitButton({
   confirmFieldValue,
   title,
   description = "",
-  confirmLabel = "Confirmer",
-  cancelLabel = "Annuler",
-  closeAriaLabel = "Fermer",
-  missingFormError = "Formulaire introuvable.",
+  confirmLabel,
+  cancelLabel,
+  closeAriaLabel,
+  missingFormError,
+  language: languageProp = "fr",
   className,
   disabled = false,
 }: ConditionalConfirmSubmitButtonProps): JSX.Element {
+  const language = normalizeUiLanguage(languageProp);
+  const localizedConfirmLabel = confirmLabel ?? uiText(language, "common.confirm");
+  const localizedCancelLabel = cancelLabel ?? uiText(language, "common.cancel");
+  const localizedCloseAriaLabel = closeAriaLabel ?? uiText(language, "common.close");
+  const localizedMissingFormError = missingFormError ?? uiText(language, "common.form_not_found");
   const [open, setOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -57,7 +66,7 @@ export default function ConditionalConfirmSubmitButton({
   const getForm = (): HTMLFormElement | null => {
     const form = document.getElementById(formId);
     if (!(form instanceof HTMLFormElement)) {
-      setErrorMessage(missingFormError);
+      setErrorMessage(localizedMissingFormError);
       setOpen(true);
       return null;
     }
@@ -98,7 +107,7 @@ export default function ConditionalConfirmSubmitButton({
       {open ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
-            <button className="modal-close-x" type="button" onClick={close} aria-label={closeAriaLabel}>
+            <button className="modal-close-x" type="button" onClick={close} aria-label={localizedCloseAriaLabel}>
               ×
             </button>
             <h3 className="modal-title">{title}</h3>
@@ -106,7 +115,7 @@ export default function ConditionalConfirmSubmitButton({
             {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
             <div className="row modal-actions-end">
               <button type="button" className="ghost" onClick={close}>
-                {cancelLabel}
+                {localizedCancelLabel}
               </button>
               <button
                 type="button"
@@ -115,7 +124,7 @@ export default function ConditionalConfirmSubmitButton({
                   submitNow();
                 }}
               >
-                {confirmLabel}
+                {localizedConfirmLabel}
               </button>
             </div>
           </article>

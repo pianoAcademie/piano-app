@@ -2,10 +2,13 @@
 
 import { useEffect, useState } from "react";
 
+import { normalizeUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
+
 type Props = {
   formId: string;
   selectAllLabel?: string;
   summaryLabel?: string;
+  language?: UiLanguage | string;
 };
 
 function getForm(formId: string): HTMLFormElement | null {
@@ -26,9 +29,13 @@ function formatSummary(template: string, selectedCount: number, totalCount: numb
 
 export default function CollaboratorSelectionControls({
   formId,
-  selectAllLabel = "Selectionner toute la liste",
-  summaryLabel = "Selection: {selected}/{total}",
+  selectAllLabel,
+  summaryLabel,
+  language: languageProp = "fr",
 }: Props): JSX.Element {
+  const language = normalizeUiLanguage(languageProp);
+  const localizedSelectAllLabel = selectAllLabel ?? uiText(language, "collaborator_selection.select_all");
+  const localizedSummaryLabel = summaryLabel ?? uiText(language, "collaborator_selection.summary");
   const [selectedCount, setSelectedCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
 
@@ -82,10 +89,10 @@ export default function CollaboratorSelectionControls({
     <div className="row spread">
       <label className="checkline">
         <input type="checkbox" data-role="select-all-collaborators" />
-        {selectAllLabel}
+        {localizedSelectAllLabel}
       </label>
       <small className="muted">
-        {formatSummary(summaryLabel, selectedCount, totalCount)}
+        {formatSummary(localizedSummaryLabel, selectedCount, totalCount)}
       </small>
     </div>
   );

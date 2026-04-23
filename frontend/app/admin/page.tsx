@@ -1649,6 +1649,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 selectedIds={selectedActivityIds}
                 placeholder={t("admin.planning.filter.search_activity")}
                 emptySelectionLabel={t("admin.planning.filter.no_activity")}
+                language={language}
               />
 
               <SearchMultiSelect
@@ -1658,6 +1659,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 selectedIds={selectedLocationIds}
                 placeholder={t("admin.planning.filter.search_room")}
                 emptySelectionLabel={t("admin.planning.filter.no_room")}
+                language={language}
               />
 
               <SearchMultiSelect
@@ -1667,6 +1669,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 selectedIds={selectedProfessorIds}
                 placeholder={t("admin.planning.filter.search_teacher")}
                 emptySelectionLabel={t("admin.planning.filter.no_teacher")}
+                language={language}
               />
 
               <SearchMultiSelect
@@ -1677,6 +1680,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 selectedIds={selectedClientIds}
                 placeholder={t("admin.planning.filter.search_student")}
                 emptySelectionLabel={t("admin.planning.filter.no_student")}
+                language={language}
               />
 
               <label>
@@ -1900,6 +1904,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       defaultFormat="HTML"
                       defaultValue={createDraft?.professor_reminder_note || ""}
                       placeholder={t("admin.planning.professor_note_placeholder")}
+                      language={language}
                     />
                   </label>
                 </div>
@@ -2204,6 +2209,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                           emptySelectionLabel={t("admin.planning.enroll_no_student_selected")}
                           maxSelections={1}
                           requiredSelection
+                          language={language}
                         />
 
                         <div className="session-enroll-submit">
@@ -2509,6 +2515,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       defaultEndTime={toTimeInputInTimezone(selectedSession.end_at_utc, selectedSession.timezone, language)}
                       defaultDurationMinutes={sessionDurationMinutes(selectedSession)}
                       requiredStart
+                      language={language}
                     />
                     <p className="muted session-edit-span">
                       {t("admin.planning.edit_schedule_help")}
@@ -2640,6 +2647,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       defaultFormat="HTML"
                       defaultValue={selectedSession.professor_reminder_note ?? ""}
                       placeholder={t("admin.planning.professor_note_placeholder")}
+                      language={language}
                     />
                   ) : (
                     <label className="session-edit-span">
@@ -2935,6 +2943,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       maxLength={12000}
                       placeholder={t("admin.planning.group_note_placeholder")}
                       defaultValue={groupNotePrefill}
+                      language={language}
                     />
                   ) : (
                     <label className="session-edit-span">
@@ -2997,6 +3006,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       selectedIds={sessionRecipientStudentIds}
                       placeholder={t("admin.planning.search_student")}
                       emptySelectionLabel={selectedSessionHasBookings ? t("admin.planning.no_student_selected") : t("admin.planning.no_student_on_slot")}
+                      language={language}
                     />
                   </details>
                   {!selectedSessionHasBookings && isGroupNoteStudentAudience ? (
@@ -3106,6 +3116,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       selectedIds={sessionRecipientStudentIds}
                       placeholder={t("admin.planning.search_student")}
                       emptySelectionLabel={t("admin.planning.no_student_selected")}
+                      language={language}
                     />
                   </details>
                   {!selectedSessionHasBookings ? <p className="muted">{t("admin.planning.no_student_recipient_help")}</p> : null}
@@ -3139,6 +3150,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         date: formatDate(selectedSession.start_at_utc, selectedSession.timezone, language),
                       })}
                       placeholder={t("admin.planning.enter_message")}
+                      language={language}
                     />
                   ) : (
                     <label className="session-edit-span">
@@ -3219,6 +3231,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 selectedIds={sessionRecipientStudentIds}
                 placeholder={t("admin.planning.search_student")}
                 emptySelectionLabel={t("admin.planning.no_student_selected")}
+                language={language}
               />
               {!selectedSessionHasBookings ? <p className="muted">{t("admin.planning.no_student_recipient_help")}</p> : null}
 
@@ -3250,6 +3263,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     date: formatDate(selectedSession.start_at_utc, selectedSession.timezone, language),
                   })}
                   placeholder={t("admin.planning.enter_sms_message")}
+                  language={language}
                 />
               </label>
 
@@ -3408,6 +3422,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         })
                   }
                   placeholder={t("admin.planning.students_message")}
+                  language={language}
                 />
               </label>
 
@@ -3434,6 +3449,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   rows={8}
                   maxLength={12000}
                   placeholder={t("admin.planning.professor_message_distinct")}
+                  language={language}
                 />
               </label>
 

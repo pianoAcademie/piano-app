@@ -841,6 +841,7 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
               cancelLabel={t("common.cancel")}
               closeAriaLabel={t("common.close")}
               missingFormError={t("admin.calendars.form_not_found")}
+              language={language}
             />
             <span className="muted">{t("admin.calendars.bulk_hint")}</span>
           </div>

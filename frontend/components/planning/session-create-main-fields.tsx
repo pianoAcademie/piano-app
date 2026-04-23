@@ -218,6 +218,7 @@ export default function SessionCreateMainFields({
         defaultEndTime={endTimeDefault}
         defaultDurationMinutes={defaultDuration}
         requiredStart
+        language={language}
       />
 
       {selectedCourseType?.allowsStudentBookings === false ? (

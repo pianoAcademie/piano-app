@@ -219,6 +219,7 @@ export default function AdminProspectForm({
                   availableOptionsLabel={t("admin.prospects.available_options")}
                   noResultsLabel={t("admin.prospects.no_results_short")}
                   limitResultsLabel={t("admin.prospects.results_limit")}
+                  language={language}
                 />
                 {selectedParent ? (
                   <>
