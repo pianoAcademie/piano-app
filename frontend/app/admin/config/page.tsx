@@ -432,8 +432,8 @@ function formatMoney(amountRaw: string | null, currency: string | null): string 
   }
 }
 
-function yesNoLabel(value: boolean): string {
-  return value ? "Oui" : "Non";
+function yesNoLabel(language: UiLanguage, value: boolean): string {
+  return uiText(language, value ? "common.yes" : "common.no");
 }
 
 function catalogRequestStatusLabel(status: string): string {
@@ -671,7 +671,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const productCategories = productCategoriesResult.ok
     ? productCategoriesResult.data
     : (() => {
-        loadErrors.push(`Produits: ${productCategoriesResult.message}`);
+        loadErrors.push(t("admin.products.load_legacy_categories_error", { message: productCategoriesResult.message }));
         return { categories: [], updated_at: null } as AdminProductCategoriesOut;
       })();
   const messagingSettings = messagingSettingsResult.ok
@@ -758,13 +758,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const catalogCategories = catalogCategoriesResult.ok
     ? catalogCategoriesResult.data
     : (() => {
-        loadErrors.push(`Catalogue categories: ${catalogCategoriesResult.message}`);
+        loadErrors.push(t("admin.products.load_catalog_categories_error", { message: catalogCategoriesResult.message }));
         return [] as AdminCatalogCategoryOut[];
       })();
   const catalogProducts = catalogProductsResult.ok
     ? catalogProductsResult.data
     : (() => {
-        loadErrors.push(`Catalogue produits: ${catalogProductsResult.message}`);
+        loadErrors.push(t("admin.products.load_catalog_products_error", { message: catalogProductsResult.message }));
         return [] as AdminCatalogProductOut[];
       })();
   const catalogKits = catalogKitsResult.ok
@@ -1634,14 +1634,14 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               </section>
 
               <section className="card">
-                <h3>Produits catalogue</h3>
+                <h3>{t("admin.products.catalog_products_title")}</h3>
                 <form action={createAdminCatalogProductAction} className="grid cols-4 config-form-grid">
                   <label className="span-2">
-                    Titre
-                    <input type="text" name="title" required maxLength={255} placeholder="Partition Niveau 1" />
+                    {t("admin.products.title_label")}
+                    <input type="text" name="title" required maxLength={255} placeholder={t("admin.products.product_title_placeholder")} />
                   </label>
                   <label>
-                    Categorie
+                    {t("admin.products.category_label")}
                     <select name="category_id" defaultValue="">
                       <option value="">-</option>
                       {activeCatalogCategories.map((category) => (
@@ -1652,67 +1652,67 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     </select>
                   </label>
                   <label>
-                    Code-barres
+                    {t("admin.products.barcode")}
                     <input type="text" name="barcode" maxLength={120} />
                   </label>
                   <label>
-                    Tarif HT
+                    {t("admin.products.price_excl_label")}
                     <input type="number" name="price_excl_vat" min="0" step="0.01" defaultValue="0.00" required />
                   </label>
                   <label>
-                    Tarif TTC
+                    {t("admin.products.price_incl_label")}
                     <input type="number" name="price_incl_vat" min="0" step="0.01" defaultValue="0.00" required />
                   </label>
                   <label>
-                    TVA (%)
+                    {t("admin.products.vat_label")}
                     <input type="number" name="vat_rate" min="0" max="100" step="0.001" defaultValue="20.000" required />
                   </label>
                   <label>
-                    Lien web
+                    {t("admin.products.web_link_label")}
                     <input type="url" name="web_link" />
                   </label>
                   <fieldset className="span-2">
-                    <legend>Type de produit</legend>
+                    <legend>{t("admin.products.product_type")}</legend>
                     <label className="checkline">
                       <input type="radio" name="is_virtual" value="false" defaultChecked />
-                      Physique (stock gere)
+                      {t("admin.products.product_physical")}
                     </label>
                     <label className="checkline">
                       <input type="radio" name="is_virtual" value="true" />
-                      Virtuel (pas de stock)
+                      {t("admin.products.product_virtual")}
                     </label>
                   </fieldset>
                   <label className="span-2">
-                    Visuel (URL)
+                    {t("admin.products.image_url_optional")}
                     <input type="url" name="image_url" />
                   </label>
                   <label className="span-2">
-                    Description courte
+                    {t("admin.products.short_description_label")}
                     <input type="text" name="short_description" maxLength={500} />
                   </label>
                   <label className="span-4">
-                    Description longue
+                    {t("admin.products.long_description_label")}
                     <textarea name="long_description" rows={3} maxLength={12000} />
                   </label>
                   <label className="checkline">
                     <input type="checkbox" name="purchasable_online" />
-                    Achetable en ligne
+                    {t("admin.products.purchasable_online")}
                   </label>
                   <label className="checkline">
                     <input type="checkbox" name="is_public" defaultChecked />
-                    Public (visible client)
+                    {t("admin.products.public_visible_client")}
                   </label>
                   <label className="checkline">
                     <input type="checkbox" name="active" defaultChecked />
-                    Actif
+                    {t("common.active")}
                   </label>
                   <div className="row span-4">
-                    <button type="submit">Ajouter produit</button>
+                    <button type="submit">{t("admin.products.add_product")}</button>
                   </div>
                 </form>
 
                 {catalogProducts.length === 0 ? (
-                  <p className="muted">Aucun produit catalogue.</p>
+                  <p className="muted">{t("admin.products.no_catalog_products")}</p>
                 ) : (
                   <div className="list">
                     {catalogProducts.map((product) => (
@@ -1721,27 +1721,40 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           <div>
                             <strong>{product.title}</strong>
                             <p className="muted">
-                              {product.category_name || "Sans categorie"} | TTC {formatMoney(product.price_incl_vat, "EUR")} | Stock global{" "}
-                              {product.is_virtual ? "n/a (virtuel)" : product.stock_global_quantity}
+                              {t("admin.products.catalog_product_summary", {
+                                category: product.category_name || t("admin.products.no_category"),
+                                price: formatMoney(product.price_incl_vat, "EUR"),
+                                stock: product.is_virtual
+                                  ? t("admin.products.stock_virtual_short")
+                                  : product.stock_global_quantity,
+                              })}
                             </p>
                           </div>
                           <div className="row">
-                            <span className="badge">Virtuel: {yesNoLabel(product.is_virtual)}</span>
-                            <span className="badge">Online: {yesNoLabel(product.purchasable_online)}</span>
-                            <span className="badge">Public: {yesNoLabel(product.is_public)}</span>
-                            <span className="badge">Actif: {yesNoLabel(product.active)}</span>
+                            <span className="badge">
+                              {t("admin.products.badge_virtual")}: {yesNoLabel(language, product.is_virtual)}
+                            </span>
+                            <span className="badge">
+                              {t("admin.products.badge_online")}: {yesNoLabel(language, product.purchasable_online)}
+                            </span>
+                            <span className="badge">
+                              {t("admin.products.badge_public")}: {yesNoLabel(language, product.is_public)}
+                            </span>
+                            <span className="badge">
+                              {t("admin.products.badge_active")}: {yesNoLabel(language, product.active)}
+                            </span>
                           </div>
                         </div>
                         <details>
-                          <summary className="mode-link">Modifier le produit</summary>
+                          <summary className="mode-link">{t("admin.products.edit_product_modal_title")}</summary>
                           <form action={updateAdminCatalogProductAction} className="grid cols-4 config-form-grid top-gap-sm">
                             <input type="hidden" name="product_id" value={product.id} />
                             <label className="span-2">
-                              Titre
+                              {t("admin.products.title_label")}
                               <input type="text" name="title" defaultValue={product.title} required maxLength={255} />
                             </label>
                             <label>
-                              Categorie
+                              {t("admin.products.category_label")}
                               <select name="category_id" defaultValue={product.category_id ?? ""}>
                                 <option value="">-</option>
                                 {catalogCategories.map((category) => (
@@ -1752,68 +1765,68 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               </select>
                             </label>
                             <label>
-                              Code-barres
+                              {t("admin.products.barcode")}
                               <input type="text" name="barcode" defaultValue={product.barcode || ""} maxLength={120} />
                             </label>
                             <label>
-                              Tarif HT
+                              {t("admin.products.price_excl_label")}
                               <input type="number" name="price_excl_vat" min="0" step="0.01" defaultValue={product.price_excl_vat} required />
                             </label>
                             <label>
-                              Tarif TTC
+                              {t("admin.products.price_incl_label")}
                               <input type="number" name="price_incl_vat" min="0" step="0.01" defaultValue={product.price_incl_vat} required />
                             </label>
                             <label>
-                              TVA (%)
+                              {t("admin.products.vat_label")}
                               <input type="number" name="vat_rate" min="0" max="100" step="0.001" defaultValue={product.vat_rate} required />
                             </label>
                             <label>
-                              Lien web
+                              {t("admin.products.web_link_label")}
                               <input type="url" name="web_link" defaultValue={product.web_link || ""} />
                             </label>
                             <fieldset className="span-2">
-                              <legend>Type de produit</legend>
+                              <legend>{t("admin.products.product_type")}</legend>
                               <label className="checkline">
                                 <input type="radio" name="is_virtual" value="false" defaultChecked={!product.is_virtual} />
-                                Physique (stock gere)
+                                {t("admin.products.product_physical")}
                               </label>
                               <label className="checkline">
                                 <input type="radio" name="is_virtual" value="true" defaultChecked={product.is_virtual} />
-                                Virtuel (pas de stock)
+                                {t("admin.products.product_virtual")}
                               </label>
                             </fieldset>
                             <label className="span-2">
-                              Visuel (URL)
+                              {t("admin.products.image_url_label")}
                               <input type="url" name="image_url" defaultValue={product.image_url || ""} />
                             </label>
                             <label className="span-2">
-                              Description courte
+                              {t("admin.products.short_description_label")}
                               <input type="text" name="short_description" defaultValue={product.short_description || ""} maxLength={500} />
                             </label>
                             <label className="span-4">
-                              Description longue
+                              {t("admin.products.long_description_label")}
                               <textarea name="long_description" rows={3} maxLength={12000} defaultValue={product.long_description || ""} />
                             </label>
                             <label className="checkline">
                               <input type="checkbox" name="purchasable_online" defaultChecked={product.purchasable_online} />
-                              Achetable en ligne
+                              {t("admin.products.purchasable_online")}
                             </label>
                             <label className="checkline">
                               <input type="checkbox" name="is_public" defaultChecked={product.is_public} />
-                              Public
+                              {t("admin.products.public_visible_client")}
                             </label>
                             <label className="checkline">
                               <input type="checkbox" name="active" defaultChecked={product.active} />
-                              Actif
+                              {t("common.active")}
                             </label>
                             <div className="row span-4">
-                              <button type="submit">Enregistrer</button>
+                              <button type="submit">{t("common.save")}</button>
                             </div>
                           </form>
                           <form action={deleteAdminCatalogProductAction} className="row top-gap-sm">
                             <input type="hidden" name="product_id" value={product.id} />
                             <button type="submit" className="danger">
-                              Supprimer
+                              {t("common.delete")}
                             </button>
                           </form>
                         </details>
@@ -1917,8 +1930,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           </div>
                           <div className="row">
                             <span className="badge">Items: {kit.items.length}</span>
-                            <span className="badge">Public: {yesNoLabel(kit.is_public)}</span>
-                            <span className="badge">Online: {yesNoLabel(kit.purchasable_online)}</span>
+                            <span className="badge">Public: {yesNoLabel(language, kit.is_public)}</span>
+                            <span className="badge">Online: {yesNoLabel(language, kit.purchasable_online)}</span>
                           </div>
                         </div>
                         {kit.items.length > 0 ? (
