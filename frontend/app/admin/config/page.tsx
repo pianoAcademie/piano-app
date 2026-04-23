@@ -136,7 +136,7 @@ const MAIN_NAV_ITEMS: MainNavItem[] = [
   { key: "quotes", label: "Devis", section: "quotes" },
   { key: "calendars", label: "Calendriers scolaires", section: "calendars" },
   { key: "activities", label: "Activites", section: "activities" },
-  { key: "legal-entities", label: "Entites legales", section: "legal-entities" },
+  { key: "legal-entities", label: "", labelKey: "admin.breadcrumb.legal_entities", section: "legal-entities" },
   { key: "promo", label: "Code promo", section: "promo" },
   { key: "payment-rules", label: "Regles de paiement", section: "payment-rules" },
   { key: "integrations", label: "Integration", section: "integrations" },
@@ -725,7 +725,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const legalEntities = legalEntitiesResult.ok
     ? legalEntitiesResult.data
     : (() => {
-        loadErrors.push(`Entites legales: ${legalEntitiesResult.message}`);
+        loadErrors.push(t("admin.legal_entities.load", { message: legalEntitiesResult.message }));
         return [] as AdminLegalEntityOut[];
       })();
   const creditTypes = creditTypesResult.ok
@@ -3186,7 +3186,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                 </p>
                 {activeCreditTypes.length === 0 ? <p className="flash-err">{t("admin.credit_types.no_active_for_activities")}</p> : null}
                 {activeLegalEntities.length === 0 ? (
-                  <p className="flash-err">Aucune entite legale active: ajoutez/activez d abord une entite legale.</p>
+                  <p className="flash-err">{t("admin.legal_entities.no_active_for_activities")}</p>
                 ) : null}
               </section>
 
@@ -3931,32 +3931,30 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               <section className="card">
                 <div className="row between">
                   <div>
-                    <h3>Entites legales</h3>
-                    <p className="muted">
-                      Identites emettrices utilisees pour la facturation (nom, SIREN/SIRET/TVA, prefixe de numerotation).
-                    </p>
+                    <h3>{t("admin.legal_entities.title")}</h3>
+                    <p className="muted">{t("admin.legal_entities.intro")}</p>
                   </div>
                   <Link className="mode-link" href={buildConfigHref("legal-entities", { new_legal_entity: "1" })}>
-                    Ajouter une entite
+                    {t("admin.legal_entities.add")}
                   </Link>
                 </div>
               </section>
 
               <section className="card">
-                <h3>Referentiel entites</h3>
+                <h3>{t("admin.legal_entities.registry_title")}</h3>
                 {legalEntities.length === 0 ? (
-                  <p className="muted">Aucune entite legale.</p>
+                  <p className="muted">{t("admin.legal_entities.empty")}</p>
                 ) : (
                   <div className="table-wrap">
                     <table className="data-table">
                       <thead>
                         <tr>
-                          <th>Entite</th>
-                          <th>Identifiants</th>
-                          <th>PSP defaut</th>
-                          <th>Numerotation</th>
-                          <th>Statut</th>
-                          <th>Actions</th>
+                          <th>{t("admin.legal_entities.entity")}</th>
+                          <th>{t("admin.legal_entities.identifiers")}</th>
+                          <th>{t("admin.legal_entities.default_psp")}</th>
+                          <th>{t("admin.legal_entities.numbering")}</th>
+                          <th>{t("common.status")}</th>
+                          <th>{t("common.actions")}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -3967,7 +3965,12 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                 <strong>{entity.name}</strong>
                                 <small className="muted">{entity.country_code}</small>
                                 <small>
-                                  {[entity.legal_form, entity.share_capital ? `Capital: ${entity.share_capital}` : null]
+                                  {[
+                                    entity.legal_form,
+                                    entity.share_capital
+                                      ? t("admin.legal_entities.share_capital_value", { value: entity.share_capital })
+                                      : null,
+                                  ]
                                     .filter((value): value is string => Boolean(value))
                                     .join(" | ") || "-"}
                                 </small>
@@ -3975,36 +3978,36 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             </td>
                             <td>
                               <div>
-                                <small>SIREN: {entity.siren || "-"}</small>
-                                <small>SIRET: {entity.siret || "-"}</small>
-                                <small>TVA: {entity.vat_number || "-"}</small>
+                                <small>{t("admin.legal_entities.siren_value", { value: entity.siren || "-" })}</small>
+                                <small>{t("admin.legal_entities.siret_value", { value: entity.siret || "-" })}</small>
+                                <small>{t("admin.legal_entities.vat_value", { value: entity.vat_number || "-" })}</small>
                               </div>
                             </td>
                             <td>
                               <span className="badge">{entity.default_payment_provider || "PAYPLUG"}</span>
-                              <small>Compta: {entity.accounting_email || "-"}</small>
-                              <small>Tel: {entity.phone || "-"}</small>
+                              <small>{t("admin.legal_entities.accounting_value", { value: entity.accounting_email || "-" })}</small>
+                              <small>{t("admin.legal_entities.phone_value", { value: entity.phone || "-" })}</small>
                             </td>
                             <td>
                               <div>
-                                <small>Prefixe: {entity.invoice_prefix}</small>
-                                <small>Prochain no: {entity.invoice_next_number}</small>
+                                <small>{t("admin.legal_entities.invoice_prefix_value", { value: entity.invoice_prefix })}</small>
+                                <small>{t("admin.legal_entities.next_number_value", { value: entity.invoice_next_number })}</small>
                               </div>
                             </td>
                             <td>
                               <span className={`status-pill ${entity.is_active ? "status-ok" : "status-warn"}`}>
-                                {entity.is_active ? "Active" : "Inactive"}
+                                {entity.is_active ? t("common.active") : t("common.inactive")}
                               </span>
                             </td>
                             <td>
                               <div className="row gap-xs">
                                 <Link className="small-btn" href={buildConfigHref("legal-entities", { legal_entity_id: entity.id })}>
-                                  Modifier
+                                  {t("common.edit")}
                                 </Link>
                                 <form action={disableAdminLegalEntityAction}>
                                   <input type="hidden" name="legal_entity_id" value={entity.id} />
                                   <button type="submit" className="danger small-btn" disabled={!entity.is_active}>
-                                    Desactiver
+                                    {t("admin.legal_entities.disable")}
                                   </button>
                                 </form>
                               </div>
@@ -4020,32 +4023,38 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               {createLegalEntityModalOpen ? (
                 <section className="modal-overlay">
                   <article className="modal-panel activity-modal-panel">
-                    <Link className="modal-close-x" href={buildConfigHref("legal-entities")} aria-label="Fermer">
+                    <Link className="modal-close-x" href={buildConfigHref("legal-entities")} aria-label={t("common.close")}>
                       ×
                     </Link>
                     <header className="activity-modal-header">
                       <div>
-                        <h3>Nouvelle entite legale</h3>
-                        <p className="muted">Configurer une nouvelle identite emettrice.</p>
+                        <h3>{t("admin.legal_entities.new_title")}</h3>
+                        <p className="muted">{t("admin.legal_entities.new_desc")}</p>
                       </div>
                     </header>
 
                     <section className="card modal-card">
                       <form action={createAdminLegalEntityAction} className="grid cols-4 config-form-grid activity-modal-grid">
                         <label className="span-2">
-                          Nom legal
+                          {t("admin.legal_entities.legal_name")}
                           <input type="text" name="name" required maxLength={255} />
                         </label>
                         <label>
-                          Prefixe facture
-                          <input type="text" name="invoice_prefix" required maxLength={20} placeholder="Ex: PA" />
+                          {t("admin.legal_entities.invoice_prefix")}
+                          <input
+                            type="text"
+                            name="invoice_prefix"
+                            required
+                            maxLength={20}
+                            placeholder={t("admin.legal_entities.invoice_prefix_placeholder")}
+                          />
                         </label>
                         <label>
-                          Prochain numero
+                          {t("admin.billing.next_number")}
                           <input type="number" name="invoice_next_number" min={1} step="1" defaultValue={1} required />
                         </label>
                         <label>
-                          PSP par defaut
+                          {t("admin.legal_entities.default_psp")}
                           <select name="default_payment_provider" defaultValue="PAYPLUG" required>
                             <option value="PAYPLUG">Payplug</option>
                             <option value="MOLLIE">Mollie</option>
@@ -4054,29 +4063,29 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </label>
 
                         <label>
-                          SIREN
+                          {t("admin.legal_entities.siren")}
                           <input type="text" name="siren" maxLength={64} />
                         </label>
                         <label>
-                          SIRET
+                          {t("admin.legal_entities.siret")}
                           <input type="text" name="siret" maxLength={64} />
                         </label>
                         <label>
-                          Numero TVA
+                          {t("admin.legal_entities.vat_number")}
                           <input type="text" name="vat_number" maxLength={64} />
                         </label>
                         <label>
-                          Email comptabilite
+                          {t("admin.legal_entities.accounting_email")}
                           <input type="email" name="accounting_email" maxLength={320} />
                         </label>
                         <label>
-                          Tel
+                          {t("admin.legal_entities.phone")}
                           <input type="tel" name="phone" maxLength={30} />
                         </label>
                         <label>
-                          Forme juridique
+                          {t("admin.legal_entities.legal_form")}
                           <select name="legal_form" defaultValue="">
-                            <option value="">Selectionner</option>
+                            <option value="">{t("common.select")}</option>
                             <option value="SAS">SAS</option>
                             <option value="SA">SA</option>
                             <option value="SARL">SARL</option>
@@ -4084,24 +4093,29 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           </select>
                         </label>
                         <label>
-                          Capital social
-                          <input type="text" name="share_capital" maxLength={120} placeholder="ex: 10 000 EUR" />
+                          {t("admin.legal_entities.share_capital")}
+                          <input
+                            type="text"
+                            name="share_capital"
+                            maxLength={120}
+                            placeholder={t("admin.legal_entities.share_capital_placeholder")}
+                          />
                         </label>
                         <label>
-                          Code pays (ISO2)
+                          {t("admin.legal_entities.country_code")}
                           <input type="text" name="country_code" defaultValue="FR" minLength={2} maxLength={2} required />
                         </label>
                         <label className="checkline">
                           <input type="checkbox" name="is_active" defaultChecked />
-                          Active
+                          {t("common.active")}
                         </label>
 
                         <label className="span-3">
-                          Adresse facture
+                          {t("admin.legal_entities.invoice_address")}
                           <textarea name="address_text" rows={3} />
                         </label>
                         <div className="row">
-                          <button type="submit">Ajouter l entite</button>
+                          <button type="submit">{t("admin.legal_entities.add_submit")}</button>
                         </div>
                       </form>
                     </section>
@@ -4112,13 +4126,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               {selectedLegalEntity ? (
                 <section className="modal-overlay">
                   <article className="modal-panel activity-modal-panel">
-                    <Link className="modal-close-x" href={buildConfigHref("legal-entities")} aria-label="Fermer">
+                    <Link className="modal-close-x" href={buildConfigHref("legal-entities")} aria-label={t("common.close")}>
                       ×
                     </Link>
                     <header className="activity-modal-header">
                       <div>
                         <h3>{selectedLegalEntity.name}</h3>
-                        <p className="muted">Modifier cette entite legale.</p>
+                        <p className="muted">{t("admin.legal_entities.edit_desc")}</p>
                       </div>
                     </header>
 
@@ -4127,15 +4141,15 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <input type="hidden" name="legal_entity_id" value={selectedLegalEntity.id} />
 
                         <label className="span-2">
-                          Nom legal
+                          {t("admin.legal_entities.legal_name")}
                           <input type="text" name="name" defaultValue={selectedLegalEntity.name} required maxLength={255} />
                         </label>
                         <label>
-                          Prefixe facture
+                          {t("admin.legal_entities.invoice_prefix")}
                           <input type="text" name="invoice_prefix" defaultValue={selectedLegalEntity.invoice_prefix} required maxLength={20} />
                         </label>
                         <label>
-                          Prochain numero
+                          {t("admin.billing.next_number")}
                           <input
                             type="number"
                             name="invoice_next_number"
@@ -4146,7 +4160,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           />
                         </label>
                         <label>
-                          PSP par defaut
+                          {t("admin.legal_entities.default_psp")}
                           <select
                             name="default_payment_provider"
                             defaultValue={selectedLegalEntity.default_payment_provider || "PAYPLUG"}
@@ -4159,19 +4173,19 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </label>
 
                         <label>
-                          SIREN
+                          {t("admin.legal_entities.siren")}
                           <input type="text" name="siren" defaultValue={selectedLegalEntity.siren ?? ""} maxLength={64} />
                         </label>
                         <label>
-                          SIRET
+                          {t("admin.legal_entities.siret")}
                           <input type="text" name="siret" defaultValue={selectedLegalEntity.siret ?? ""} maxLength={64} />
                         </label>
                         <label>
-                          Numero TVA
+                          {t("admin.legal_entities.vat_number")}
                           <input type="text" name="vat_number" defaultValue={selectedLegalEntity.vat_number ?? ""} maxLength={64} />
                         </label>
                         <label>
-                          Email comptabilite
+                          {t("admin.legal_entities.accounting_email")}
                           <input
                             type="email"
                             name="accounting_email"
@@ -4180,13 +4194,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           />
                         </label>
                         <label>
-                          Tel
+                          {t("admin.legal_entities.phone")}
                           <input type="tel" name="phone" defaultValue={selectedLegalEntity.phone ?? ""} maxLength={30} />
                         </label>
                         <label>
-                          Forme juridique
+                          {t("admin.legal_entities.legal_form")}
                           <select name="legal_form" defaultValue={selectedLegalEntity.legal_form ?? ""}>
-                            <option value="">Selectionner</option>
+                            <option value="">{t("common.select")}</option>
                             <option value="SAS">SAS</option>
                             <option value="SA">SA</option>
                             <option value="SARL">SARL</option>
@@ -4194,17 +4208,17 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           </select>
                         </label>
                         <label>
-                          Capital social
+                          {t("admin.legal_entities.share_capital")}
                           <input
                             type="text"
                             name="share_capital"
                             defaultValue={selectedLegalEntity.share_capital ?? ""}
                             maxLength={120}
-                            placeholder="ex: 10 000 EUR"
+                            placeholder={t("admin.legal_entities.share_capital_placeholder")}
                           />
                         </label>
                         <label>
-                          Code pays (ISO2)
+                          {t("admin.legal_entities.country_code")}
                           <input
                             type="text"
                             name="country_code"
@@ -4216,15 +4230,15 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </label>
                         <label className="checkline">
                           <input type="checkbox" name="is_active" defaultChecked={selectedLegalEntity.is_active} />
-                          Active
+                          {t("common.active")}
                         </label>
 
                         <label className="span-3">
-                          Adresse facture
+                          {t("admin.legal_entities.invoice_address")}
                           <textarea name="address_text" rows={3} defaultValue={selectedLegalEntity.address_text ?? ""} />
                         </label>
                         <div className="row">
-                          <button type="submit">Enregistrer</button>
+                          <button type="submit">{t("common.save")}</button>
                         </div>
                       </form>
                     </section>
