@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import ConfirmSubmitButton from "./confirm-submit-button";
+import { normalizeUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
 
 type SolfegeLevelRule = {
   id: string;
@@ -25,30 +26,31 @@ type QuoteFollowupSlotFormProps = {
   solfegeRules: SolfegeLevelRule[];
   initialLevelCode: string;
   initialSelectedSlot: Record<string, unknown> | null;
+  language?: UiLanguage | string;
   submitAction: (formData: FormData) => Promise<void>;
 };
 
-function weekdayLabel(weekday: number): string {
-  if (weekday === 0) return "Lundi";
-  if (weekday === 1) return "Mardi";
-  if (weekday === 2) return "Mercredi";
-  if (weekday === 3) return "Jeudi";
-  if (weekday === 4) return "Vendredi";
-  if (weekday === 5) return "Samedi";
-  if (weekday === 6) return "Dimanche";
-  return "Jour";
+function weekdayLabel(weekday: number, language: UiLanguage): string {
+  if (weekday === 0) return uiText(language, "common.weekday_monday");
+  if (weekday === 1) return uiText(language, "common.weekday_tuesday");
+  if (weekday === 2) return uiText(language, "common.weekday_wednesday");
+  if (weekday === 3) return uiText(language, "common.weekday_thursday");
+  if (weekday === 4) return uiText(language, "common.weekday_friday");
+  if (weekday === 5) return uiText(language, "common.weekday_saturday");
+  if (weekday === 6) return uiText(language, "common.weekday_sunday");
+  return uiText(language, "admin.quote_planning.day");
 }
 
-function modalityLabel(value: string | null): string {
+function modalityLabel(value: string | null, language: UiLanguage): string {
   const normalized = String(value || "").trim().toUpperCase();
   if (!normalized || normalized === "AUTO") {
     return "";
   }
   if (normalized === "ONLINE") {
-    return "En ligne";
+    return uiText(language, "admin.quote_planning.modality_online");
   }
   if (normalized === "ONSITE") {
-    return "Presentiel";
+    return uiText(language, "admin.quote_planning.modality_onsite");
   }
   return normalized;
 }
@@ -62,7 +64,7 @@ function slotParts(slot: Record<string, unknown>): { start: string; end: string 
   return { start, end };
 }
 
-function slotOptionsFromRule(rule: SolfegeLevelRule | null): SlotOption[] {
+function slotOptionsFromRule(rule: SolfegeLevelRule | null, language: UiLanguage): SlotOption[] {
   if (!rule) {
     return [];
   }
@@ -83,15 +85,15 @@ function slotOptionsFromRule(rule: SolfegeLevelRule | null): SlotOption[] {
       if (!Number.isFinite(weekday) || weekday < 0 || weekday > 6) {
         continue;
       }
-      const mode = modalityLabel(rule.modality);
-      const label = `${weekdayLabel(weekday)} ${parts.start}-${parts.end}${mode ? ` · ${mode}` : ""}`;
+      const mode = modalityLabel(rule.modality, language);
+      const label = `${weekdayLabel(weekday, language)} ${parts.start}-${parts.end}${mode ? ` · ${mode}` : ""}`;
       options.push({
         key: `${weekday}|${parts.start}|${parts.end}`,
         label,
         payload: {
           level_code: rule.level_code,
           weekday,
-          weekday_label: weekdayLabel(weekday),
+          weekday_label: weekdayLabel(weekday, language),
           start_time: parts.start,
           end_time: parts.end,
           duration_minutes: rule.duration_minutes,
@@ -114,15 +116,15 @@ function slotOptionsFromRule(rule: SolfegeLevelRule | null): SlotOption[] {
       if (!parts) {
         continue;
       }
-      const mode = modalityLabel(rule.modality);
-      const label = `${weekdayLabel(weekday)} ${parts.start}-${parts.end}${mode ? ` · ${mode}` : ""}`;
+      const mode = modalityLabel(rule.modality, language);
+      const label = `${weekdayLabel(weekday, language)} ${parts.start}-${parts.end}${mode ? ` · ${mode}` : ""}`;
       options.push({
         key: `${weekday}|${parts.start}|${parts.end}`,
         label,
         payload: {
           level_code: rule.level_code,
           weekday,
-          weekday_label: weekdayLabel(weekday),
+          weekday_label: weekdayLabel(weekday, language),
           start_time: parts.start,
           end_time: parts.end,
           duration_minutes: rule.duration_minutes,
@@ -155,8 +157,11 @@ export default function QuoteFollowupSlotForm({
   solfegeRules,
   initialLevelCode,
   initialSelectedSlot,
+  language: languageProp = "fr",
   submitAction,
 }: QuoteFollowupSlotFormProps): JSX.Element {
+  const language = normalizeUiLanguage(languageProp);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const formId = `quote-followup-slot-form-${followupId}`;
   const availableLevels = useMemo(
     () => Array.from(new Set(solfegeRules.map((row) => String(row.level_code || "").trim()).filter(Boolean))),
@@ -176,7 +181,7 @@ export default function QuoteFollowupSlotForm({
     [solfegeRules, selectedLevel],
   );
 
-  const slotOptions = useMemo(() => slotOptionsFromRule(selectedRule), [selectedRule]);
+  const slotOptions = useMemo(() => slotOptionsFromRule(selectedRule, language), [selectedRule, language]);
 
   const [selectedSlotKey, setSelectedSlotKey] = useState<string>(() => keyFromSlot(initialSelectedSlot));
 
@@ -201,31 +206,31 @@ export default function QuoteFollowupSlotForm({
 
   return (
     <form id={formId} action={submitAction} className="card quote-followup-form">
-      <h4>Selectionner / modifier le creneau solfege</h4>
+      <h4>{t("admin.quote_followup_slot.title")}</h4>
       <input type="hidden" name="followup_id" value={followupId} />
       <input type="hidden" name="return_to" value={returnTo} />
       <input type="hidden" name="solfege_level_code" value={selectedLevel} />
       <input type="hidden" name="slot_json" value={selectedSlot ? JSON.stringify(selectedSlot.payload) : ""} />
 
       <label>
-        Niveau
+        {t("admin.quote_followup_slot.level")}
         <select
           name="solfege_level_choice"
           value={selectedLevel}
           onChange={(event) => setSelectedLevel(event.target.value)}
           required
         >
-          <option value="">Selectionner</option>
+          <option value="">{t("common.select")}</option>
           {availableLevels.map((levelCode) => (
             <option key={levelCode} value={levelCode}>
-              Niveau {levelCode}
+              {t("admin.quote_followup_slot.level_value", { level: levelCode })}
             </option>
           ))}
         </select>
       </label>
 
       <label>
-        Creneau (referentiel)
+        {t("admin.quote_followup_slot.slot_reference")}
         <select
           name="solfege_slot_choice"
           value={selectedSlotKey}
@@ -233,7 +238,7 @@ export default function QuoteFollowupSlotForm({
           required
           disabled={!selectedLevel || slotOptions.length === 0}
         >
-          <option value="">Selectionner</option>
+          <option value="">{t("common.select")}</option>
           {slotOptions.map((row) => (
             <option key={row.key} value={row.key}>
               {row.label}
@@ -242,17 +247,18 @@ export default function QuoteFollowupSlotForm({
         </select>
       </label>
 
-      {!selectedLevel ? <p className="muted">Selectionnez d'abord un niveau.</p> : null}
+      {!selectedLevel ? <p className="muted">{t("admin.quote_followup_slot.select_level_first")}</p> : null}
       {selectedLevel && slotOptions.length === 0 ? (
-        <p className="muted">Aucun creneau disponible pour ce niveau dans le referentiel.</p>
+        <p className="muted">{t("admin.quote_followup_slot.no_slot_for_level")}</p>
       ) : null}
 
       <ConfirmSubmitButton
         formId={formId}
-        label="Enregistrer creneau"
-        title="Confirmer la mise a jour du creneau de solfege ?"
-        description="Le creneau selectionne sera applique au parcours post-approbation."
-        confirmLabel="Enregistrer"
+        label={t("admin.quote_followup_slot.save_slot")}
+        title={t("admin.quote_followup_slot.confirm_title")}
+        description={t("admin.quote_followup_slot.confirm_description")}
+        confirmLabel={t("common.save")}
+        language={language}
         disabled={!canSubmit}
       />
     </form>

@@ -2953,6 +2953,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             }))}
             initialSnapshot={planningSnapshotForEditor}
             initialMeta={detail.quote.meta || {}}
+            language={language}
             saveAction={updateQuotePlanningAction}
           />
         </div>
@@ -3130,6 +3131,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                       solfegeRules={solfegeRules}
                       initialLevelCode={followupLevelCode}
                       initialSelectedSlot={followupSelectedSlot}
+                      language={language}
                       submitAction={selectQuoteFollowupSlotAction}
                     />
 
