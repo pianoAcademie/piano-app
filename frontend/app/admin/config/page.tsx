@@ -172,12 +172,12 @@ const REMINDER_OFFSET_OPTIONS: Array<{ value: string; labelKey: string }> = [
 ];
 
 const QUOTE_TEMPLATE_USAGE_CONTEXTS = [
-  { value: "QUOTE_SEND", label: "Envoi / renvoi du devis" },
-  { value: "QUOTE_REMINDER", label: "Relance avant expiration" },
-  { value: "QUOTE_CANCEL", label: "Notification d annulation" },
-  { value: "QUOTE_APPROVED", label: "Confirmation d approbation du devis" },
-  { value: "QUOTE_REJECTED", label: "Confirmation de refus du devis" },
-  { value: "QUOTE_CHANGE_REQUESTED", label: "Confirmation de demande de modification" },
+  { value: "QUOTE_SEND", labelKey: "admin.messaging_templates.usage_send" },
+  { value: "QUOTE_REMINDER", labelKey: "admin.messaging_templates.usage_reminder" },
+  { value: "QUOTE_CANCEL", labelKey: "admin.messaging_templates.usage_cancel" },
+  { value: "QUOTE_APPROVED", labelKey: "admin.messaging_templates.usage_approved" },
+  { value: "QUOTE_REJECTED", labelKey: "admin.messaging_templates.usage_rejected" },
+  { value: "QUOTE_CHANGE_REQUESTED", labelKey: "admin.messaging_templates.usage_change_requested" },
 ] as const;
 
 type ActivityModalSectionProps = {
@@ -273,9 +273,9 @@ function ActivityPlanningAssignments({
   );
 }
 
-function quoteUsageContextLabel(value: string): string {
+function quoteUsageContextLabel(language: UiLanguage, value: string): string {
   const match = QUOTE_TEMPLATE_USAGE_CONTEXTS.find((item) => item.value === value);
-  return match?.label || value;
+  return match?.labelKey ? uiText(language, match.labelKey) : value;
 }
 
 function messagingTemplateRef(template: AdminMessagingTemplateOut): string {
@@ -285,9 +285,22 @@ function messagingTemplateRef(template: AdminMessagingTemplateOut): string {
   return `custom:${template.id}`;
 }
 
-function messagingTemplateOptionLabel(template: AdminMessagingTemplateOut): string {
-  const suffix = template.kind === "PREDEFINED" ? "Systeme" : "Personnalise";
+function messagingTemplateOptionLabel(language: UiLanguage, template: AdminMessagingTemplateOut): string {
+  const suffix =
+    template.kind === "PREDEFINED"
+      ? uiText(language, "admin.quote_detail.template_system")
+      : uiText(language, "admin.quote_detail.template_custom");
   return `${template.name} · ${suffix}`;
+}
+
+function messagingChannelLabel(language: UiLanguage, channel: string): string {
+  if (channel === "SMS") {
+    return uiText(language, "admin.messaging_templates.channel_sms");
+  }
+  if (channel === "GROUP_NOTE") {
+    return uiText(language, "admin.messaging_templates.channel_group_note");
+  }
+  return uiText(language, "admin.messaging_templates.channel_email");
 }
 
 function formatQuoteReminderDelay(hours: number): string {
@@ -2281,7 +2294,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <select name="quote_send_template_ref" defaultValue={messagingSettings.quote_send_template_ref}>
                           {quoteSendTemplates.map((template) => (
                             <option key={`send-${template.id}`} value={messagingTemplateRef(template)}>
-                              {messagingTemplateOptionLabel(template)}
+                              {messagingTemplateOptionLabel(language, template)}
                             </option>
                           ))}
                         </select>
@@ -2291,7 +2304,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <select name="quote_send_sms_template_ref" defaultValue={messagingSettings.quote_send_sms_template_ref}>
                           {quoteSendSmsTemplates.map((template) => (
                             <option key={`send-sms-${template.id}`} value={messagingTemplateRef(template)}>
-                              {messagingTemplateOptionLabel(template)}
+                              {messagingTemplateOptionLabel(language, template)}
                             </option>
                           ))}
                         </select>
@@ -2301,7 +2314,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <select name="quote_reminder_template_ref" defaultValue={messagingSettings.quote_reminder_template_ref}>
                           {quoteReminderTemplates.map((template) => (
                             <option key={`reminder-${template.id}`} value={messagingTemplateRef(template)}>
-                              {messagingTemplateOptionLabel(template)}
+                              {messagingTemplateOptionLabel(language, template)}
                             </option>
                           ))}
                         </select>
@@ -2311,7 +2324,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <select name="quote_reminder_sms_template_ref" defaultValue={messagingSettings.quote_reminder_sms_template_ref}>
                           {quoteReminderSmsTemplates.map((template) => (
                             <option key={`reminder-sms-${template.id}`} value={messagingTemplateRef(template)}>
-                              {messagingTemplateOptionLabel(template)}
+                              {messagingTemplateOptionLabel(language, template)}
                             </option>
                           ))}
                         </select>
@@ -2321,7 +2334,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <select name="quote_cancel_template_ref" defaultValue={messagingSettings.quote_cancel_template_ref}>
                           {quoteCancelTemplates.map((template) => (
                             <option key={`cancel-${template.id}`} value={messagingTemplateRef(template)}>
-                              {messagingTemplateOptionLabel(template)}
+                              {messagingTemplateOptionLabel(language, template)}
                             </option>
                           ))}
                         </select>
@@ -2331,7 +2344,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <select name="quote_approved_template_ref" defaultValue={messagingSettings.quote_approved_template_ref}>
                           {quoteApprovedTemplates.map((template) => (
                             <option key={`approved-${template.id}`} value={messagingTemplateRef(template)}>
-                              {messagingTemplateOptionLabel(template)}
+                              {messagingTemplateOptionLabel(language, template)}
                             </option>
                           ))}
                         </select>
@@ -2341,7 +2354,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <select name="quote_rejected_template_ref" defaultValue={messagingSettings.quote_rejected_template_ref}>
                           {quoteRejectedTemplates.map((template) => (
                             <option key={`rejected-${template.id}`} value={messagingTemplateRef(template)}>
-                              {messagingTemplateOptionLabel(template)}
+                              {messagingTemplateOptionLabel(language, template)}
                             </option>
                           ))}
                         </select>
@@ -2354,7 +2367,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         >
                           {quoteChangeRequestedTemplates.map((template) => (
                             <option key={`change-requested-${template.id}`} value={messagingTemplateRef(template)}>
-                              {messagingTemplateOptionLabel(template)}
+                              {messagingTemplateOptionLabel(language, template)}
                             </option>
                           ))}
                         </select>
@@ -2364,7 +2377,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <select name="quote_cancel_sms_template_ref" defaultValue={messagingSettings.quote_cancel_sms_template_ref}>
                           {quoteCancelSmsTemplates.map((template) => (
                             <option key={`cancel-sms-${template.id}`} value={messagingTemplateRef(template)}>
-                              {messagingTemplateOptionLabel(template)}
+                              {messagingTemplateOptionLabel(language, template)}
                             </option>
                           ))}
                         </select>
@@ -2588,19 +2601,19 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
               {messagingTab === "predefined-email" ? (
               <section className="card">
-                <h3>Modeles de courriels predefinis</h3>
+                <h3>{t("admin.messaging_templates.predefined_email_title")}</h3>
                 {emailPredefinedTemplates.length === 0 ? (
-                  <p className="muted">Aucun modele predefini.</p>
+                  <p className="muted">{t("admin.messaging_templates.empty_predefined")}</p>
                 ) : (
                   <div className="table-wrap">
                     <table className="data-table">
                       <thead>
                         <tr>
-                          <th>Nom</th>
-                          <th>Objet</th>
-                          <th>Utilisation</th>
-                          <th>Actif</th>
-                          <th aria-label="Actions" />
+                          <th>{t("common.name")}</th>
+                          <th>{t("common.subject")}</th>
+                          <th>{t("admin.messaging_templates.usage_column")}</th>
+                          <th>{t("common.active")}</th>
+                          <th aria-label={t("common.actions")} />
                         </tr>
                       </thead>
                       <tbody>
@@ -2611,21 +2624,21 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             <td>
                               <div className="row wrap gap-sm">
                                 {template.usage_contexts.length === 0 ? (
-                                  <span className="status-pill status-off">Aucun usage affecte</span>
+                                  <span className="status-pill status-off">{t("admin.messaging_templates.no_usage_assigned")}</span>
                                 ) : (
                                   template.usage_contexts.map((usageContext) => (
                                     <span key={`${template.id}-${usageContext}`} className="badge">
-                                      {quoteUsageContextLabel(usageContext)}
+                                      {quoteUsageContextLabel(language, usageContext)}
                                     </span>
                                   ))
                                 )}
                               </div>
                             </td>
-                            <td>{template.active ? "Oui" : "Non"}</td>
+                            <td>{yesNoLabel(language, template.active)}</td>
                             <td>
                               <Link
                                 className="icon-link"
-                                title="Modifier"
+                                title={t("common.edit")}
                                 href={buildConfigHref("params-messaging", {
                                   messaging_tab: messagingTab,
                                   messaging_modal: "edit",
@@ -2647,19 +2660,19 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
               {messagingTab === "predefined-sms" ? (
               <section className="card">
-                <h3>Modeles de SMS predefinis</h3>
+                <h3>{t("admin.messaging_templates.predefined_sms_title")}</h3>
                 {smsPredefinedTemplates.length === 0 ? (
-                  <p className="muted">Aucun modele predefini.</p>
+                  <p className="muted">{t("admin.messaging_templates.empty_predefined")}</p>
                 ) : (
                   <div className="table-wrap">
                     <table className="data-table">
                       <thead>
                         <tr>
-                          <th>Nom</th>
-                          <th>Contenu</th>
-                          <th>Utilisation</th>
-                          <th>Actif</th>
-                          <th aria-label="Actions" />
+                          <th>{t("common.name")}</th>
+                          <th>{t("admin.messaging_templates.content_column")}</th>
+                          <th>{t("admin.messaging_templates.usage_column")}</th>
+                          <th>{t("common.active")}</th>
+                          <th aria-label={t("common.actions")} />
                         </tr>
                       </thead>
                       <tbody>
@@ -2670,21 +2683,21 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             <td>
                               <div className="row wrap gap-sm">
                                 {template.usage_contexts.length === 0 ? (
-                                  <span className="status-pill status-off">Aucun usage affecte</span>
+                                  <span className="status-pill status-off">{t("admin.messaging_templates.no_usage_assigned")}</span>
                                 ) : (
                                   template.usage_contexts.map((usageContext) => (
                                     <span key={`${template.id}-${usageContext}`} className="badge">
-                                      {quoteUsageContextLabel(usageContext)}
+                                      {quoteUsageContextLabel(language, usageContext)}
                                     </span>
                                   ))
                                 )}
                               </div>
                             </td>
-                            <td>{template.active ? "Oui" : "Non"}</td>
+                            <td>{yesNoLabel(language, template.active)}</td>
                             <td>
                               <Link
                                 className="icon-link"
-                                title="Modifier"
+                                title={t("common.edit")}
                                 href={buildConfigHref("params-messaging", {
                                   messaging_tab: messagingTab,
                                   messaging_modal: "edit",
@@ -2707,7 +2720,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               {messagingTab === "custom-email" ? (
               <section className="card">
                 <div className="row spread">
-                  <h3>Modeles des courriels personnalises</h3>
+                  <h3>{t("admin.messaging_templates.custom_email_title")}</h3>
                   <Link
                     className="mode-link"
                     href={buildConfigHref("params-messaging", {
@@ -2716,21 +2729,21 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       new_template_channel: "EMAIL",
                     })}
                   >
-                    + Ajouter nouveau
+                    + {t("admin.messaging_templates.add_new")}
                   </Link>
                 </div>
                 {customEmailTemplates.length === 0 ? (
-                  <p className="muted">Aucun modele personnalise.</p>
+                  <p className="muted">{t("admin.messaging_templates.empty_custom")}</p>
                 ) : (
                   <div className="table-wrap">
                     <table className="data-table">
                       <thead>
                         <tr>
-                          <th>Nom</th>
-                          <th>Objet</th>
-                          <th>Utilisation</th>
-                          <th>Actif</th>
-                          <th aria-label="Actions" />
+                          <th>{t("common.name")}</th>
+                          <th>{t("common.subject")}</th>
+                          <th>{t("admin.messaging_templates.usage_column")}</th>
+                          <th>{t("common.active")}</th>
+                          <th aria-label={t("common.actions")} />
                         </tr>
                       </thead>
                       <tbody>
@@ -2741,22 +2754,22 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             <td>
                               <div className="row wrap gap-sm">
                                 {template.usage_contexts.length === 0 ? (
-                                  <span className="status-pill status-off">Aucun usage affecte</span>
+                                  <span className="status-pill status-off">{t("admin.messaging_templates.no_usage_assigned")}</span>
                                 ) : (
                                   template.usage_contexts.map((usageContext) => (
                                     <span key={`${template.id}-${usageContext}`} className="badge">
-                                      {quoteUsageContextLabel(usageContext)}
+                                      {quoteUsageContextLabel(language, usageContext)}
                                     </span>
                                   ))
                                 )}
                               </div>
                             </td>
-                            <td>{template.active ? "Oui" : "Non"}</td>
+                            <td>{yesNoLabel(language, template.active)}</td>
                             <td>
                               <div className="row">
                                 <Link
                                   className="icon-link"
-                                  title="Modifier"
+                                  title={t("common.edit")}
                                   href={buildConfigHref("params-messaging", {
                                     messaging_tab: messagingTab,
                                     messaging_modal: "edit",
@@ -2769,7 +2782,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                 <form action={deleteAdminConfigMessagingTemplateAction}>
                                   <input type="hidden" name="template_id" value={template.id} />
                                   <input type="hidden" name="messaging_tab" value={messagingTab} />
-                                  <button type="submit" className="icon-link danger-link" title="Supprimer">
+                                  <button type="submit" className="icon-link danger-link" title={t("common.delete")}>
                                     🗑
                                   </button>
                                 </form>
@@ -2787,7 +2800,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               {messagingTab === "custom-sms" ? (
               <section className="card">
                 <div className="row spread">
-                  <h3>Modeles de SMS personnalises</h3>
+                  <h3>{t("admin.messaging_templates.custom_sms_title")}</h3>
                   <Link
                     className="mode-link"
                     href={buildConfigHref("params-messaging", {
@@ -2796,21 +2809,21 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       new_template_channel: "SMS",
                     })}
                   >
-                    + Ajouter nouveau
+                    + {t("admin.messaging_templates.add_new")}
                   </Link>
                 </div>
                 {customSmsTemplates.length === 0 ? (
-                  <p className="muted">Aucun modele personnalise.</p>
+                  <p className="muted">{t("admin.messaging_templates.empty_custom")}</p>
                 ) : (
                   <div className="table-wrap">
                     <table className="data-table">
                       <thead>
                         <tr>
-                          <th>Nom</th>
-                          <th>Contenu</th>
-                          <th>Utilisation</th>
-                          <th>Actif</th>
-                          <th aria-label="Actions" />
+                          <th>{t("common.name")}</th>
+                          <th>{t("admin.messaging_templates.content_column")}</th>
+                          <th>{t("admin.messaging_templates.usage_column")}</th>
+                          <th>{t("common.active")}</th>
+                          <th aria-label={t("common.actions")} />
                         </tr>
                       </thead>
                       <tbody>
@@ -2824,22 +2837,22 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             <td>
                               <div className="row wrap gap-sm">
                                 {template.usage_contexts.length === 0 ? (
-                                  <span className="status-pill status-off">Aucun usage affecte</span>
+                                  <span className="status-pill status-off">{t("admin.messaging_templates.no_usage_assigned")}</span>
                                 ) : (
                                   template.usage_contexts.map((usageContext) => (
                                     <span key={`${template.id}-${usageContext}`} className="badge">
-                                      {quoteUsageContextLabel(usageContext)}
+                                      {quoteUsageContextLabel(language, usageContext)}
                                     </span>
                                   ))
                                 )}
                               </div>
                             </td>
-                            <td>{template.active ? "Oui" : "Non"}</td>
+                            <td>{yesNoLabel(language, template.active)}</td>
                             <td>
                               <div className="row">
                                 <Link
                                   className="icon-link"
-                                  title="Modifier"
+                                  title={t("common.edit")}
                                   href={buildConfigHref("params-messaging", {
                                     messaging_tab: messagingTab,
                                     messaging_modal: "edit",
@@ -2852,7 +2865,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                 <form action={deleteAdminConfigMessagingTemplateAction}>
                                   <input type="hidden" name="template_id" value={template.id} />
                                   <input type="hidden" name="messaging_tab" value={messagingTab} />
-                                  <button type="submit" className="icon-link danger-link" title="Supprimer">
+                                  <button type="submit" className="icon-link danger-link" title={t("common.delete")}>
                                     🗑
                                   </button>
                                 </form>
@@ -2870,7 +2883,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               {messagingTab === "group-notes" ? (
                 <section className="card">
                   <div className="row spread">
-                    <h3>Modeles de notes de groupe</h3>
+                    <h3>{t("admin.messaging_templates.group_notes_title")}</h3>
                     <Link
                       className="mode-link"
                       href={buildConfigHref("params-messaging", {
@@ -2879,20 +2892,20 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         new_template_channel: "GROUP_NOTE",
                       })}
                     >
-                      + Ajouter nouveau
+                      + {t("admin.messaging_templates.add_new")}
                     </Link>
                   </div>
                   {customGroupNoteTemplates.length === 0 ? (
-                    <p className="muted">Aucun modele personnalise.</p>
+                    <p className="muted">{t("admin.messaging_templates.empty_custom")}</p>
                   ) : (
                     <div className="table-wrap">
                       <table className="data-table">
                         <thead>
                           <tr>
-                            <th>Nom</th>
-                            <th>Contenu</th>
-                            <th>Actif</th>
-                            <th aria-label="Actions" />
+                            <th>{t("common.name")}</th>
+                            <th>{t("admin.messaging_templates.content_column")}</th>
+                            <th>{t("common.active")}</th>
+                            <th aria-label={t("common.actions")} />
                           </tr>
                         </thead>
                         <tbody>
@@ -2903,12 +2916,12 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                 {template.body.slice(0, 90)}
                                 {template.body.length > 90 ? "..." : ""}
                               </td>
-                              <td>{template.active ? "Oui" : "Non"}</td>
+                              <td>{yesNoLabel(language, template.active)}</td>
                               <td>
                                 <div className="row">
                                   <Link
                                     className="icon-link"
-                                    title="Modifier"
+                                    title={t("common.edit")}
                                     href={buildConfigHref("params-messaging", {
                                       messaging_tab: messagingTab,
                                       messaging_modal: "edit",
@@ -2921,7 +2934,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                   <form action={deleteAdminConfigMessagingTemplateAction}>
                                     <input type="hidden" name="template_id" value={template.id} />
                                     <input type="hidden" name="messaging_tab" value={messagingTab} />
-                                    <button type="submit" className="icon-link danger-link" title="Supprimer">
+                                    <button type="submit" className="icon-link danger-link" title={t("common.delete")}>
                                       🗑
                                     </button>
                                   </form>
@@ -2939,30 +2952,28 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               {editingTemplate || createCustomMessagingTemplate ? (
                 <section className="modal-overlay">
                   <article className="modal-panel activity-modal-panel messaging-template-modal">
-                    <Link className="modal-close-x" href={messagingListPath} aria-label="Fermer">
+                    <Link className="modal-close-x" href={messagingListPath} aria-label={t("common.close")}>
                       ×
                     </Link>
                     <header className="activity-modal-header messaging-template-modal-header">
                       <div>
                         <h3 className="messaging-template-modal-title">
                           {editingTemplate?.kind === "PREDEFINED" && editingTemplate.channel === "EMAIL"
-                            ? "Modifier le modele de courriel systeme"
+                            ? t("admin.messaging_templates.edit_system_email_title")
                             : editingTemplate?.kind === "PREDEFINED" && editingTemplate.channel === "SMS"
-                            ? "Modifier le modele de SMS systeme"
+                            ? t("admin.messaging_templates.edit_system_sms_title")
                             : editingTemplate
-                            ? `Modifier le modele personnalise (${editingTemplate.channel})`
-                            : `Nouveau modele personnalise (${
-                                newCustomTemplateChannel === "SMS"
-                                  ? "SMS"
-                                  : newCustomTemplateChannel === "GROUP_NOTE"
-                                  ? "Note de groupe"
-                                  : "Email"
-                              })`}
+                            ? t("admin.messaging_templates.edit_custom_title", {
+                                channel: messagingChannelLabel(language, editingTemplate.channel),
+                              })
+                            : t("admin.messaging_templates.new_custom_title", {
+                                channel: messagingChannelLabel(language, newCustomTemplateChannel),
+                              })}
                         </h3>
                         <p className="muted">
                           {editingTemplate
-                            ? "Mettez a jour l objet et le contenu du modele."
-                            : "Configurez un nouveau modele reutilisable."}
+                            ? t("admin.messaging_templates.edit_desc")
+                            : t("admin.messaging_templates.new_desc")}
                         </p>
                       </div>
                     </header>
@@ -2981,19 +2992,19 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
                             {editingTemplate.kind === "CUSTOM" ? (
                               <label>
-                                Nom
+                                {t("common.name")}
                                 <input type="text" name="name" defaultValue={editingTemplate.name} maxLength={180} required />
                               </label>
                             ) : (
                               <p className="messaging-template-title-line">
-                                <strong>Titre :</strong> {editingTemplate.name}
+                                <strong>{t("admin.messaging_templates.title_label")}</strong> {editingTemplate.name}
                               </p>
                             )}
 
                             {editingTemplate.channel === "EMAIL" ? (
                               <>
                                 <label>
-                                  Objet du courriel (Francais)
+                                  {t("admin.messaging_templates.email_subject_fr")}
                                   <input
                                     type="text"
                                     name="subject_fr"
@@ -3003,7 +3014,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                   />
                                 </label>
                                 <label>
-                                  Subject (English)
+                                  {t("admin.messaging_templates.email_subject_en")}
                                   <input
                                     type="text"
                                     name="subject_en"
@@ -3017,7 +3028,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             {editingTemplate.channel !== "GROUP_NOTE" ? (
                               editingTemplate.kind === "CUSTOM" ? (
                                 <fieldset className="span-2 config-subsection">
-                                  <legend>Usages autorises pour ce template</legend>
+                                  <legend>{t("admin.messaging_templates.allowed_usage")}</legend>
                                   <div className="row wrap gap-sm">
                                     {QUOTE_TEMPLATE_USAGE_CONTEXTS.map((usageContext) => (
                                       <label key={`${editingTemplate.id}-${usageContext.value}`} className="checkline">
@@ -3027,7 +3038,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                           value={usageContext.value}
                                           defaultChecked={editingTemplate.usage_contexts.includes(usageContext.value)}
                                         />
-                                        {usageContext.label}
+                                        {t(usageContext.labelKey)}
                                       </label>
                                     ))}
                                   </div>
@@ -3036,7 +3047,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                 <div className="span-2 row wrap gap-sm">
                                   {editingTemplate.usage_contexts.map((usageContext) => (
                                     <span key={`${editingTemplate.id}-${usageContext}`} className="badge">
-                                      {quoteUsageContextLabel(usageContext)}
+                                      {quoteUsageContextLabel(language, usageContext)}
                                     </span>
                                   ))}
                                 </div>
@@ -3044,7 +3055,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             ) : null}
 
                             <label className="messaging-editor-label">
-                              Message (Francais)
+                              {t("admin.messaging_templates.message_fr")}
                               <RichMessageEditor
                                 name="body_fr"
                                 formatName="body_format"
@@ -3056,7 +3067,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             </label>
 
                             <label className="messaging-editor-label">
-                              Message (English)
+                              {t("admin.messaging_templates.message_en")}
                               <RichMessageEditor
                                 name="body_en"
                                 formatName="body_format_en"
@@ -3069,66 +3080,66 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
                             <label className="checkline">
                               <input type="checkbox" name="active" defaultChecked={editingTemplate.active} />
-                              Modele actif
+                              {t("admin.messaging_templates.template_active")}
                             </label>
                           </>
                         ) : (
                           <>
                             <input type="hidden" name="template_kind" value="CUSTOM" />
                             <label>
-                              Nom
+                              {t("common.name")}
                               <input type="text" name="name" maxLength={180} required />
                             </label>
                             <label>
-                              Canal
+                              {t("admin.messaging_templates.channel")}
                               <select name="template_channel" defaultValue={newCustomTemplateChannel}>
-                                <option value="EMAIL">Email</option>
-                                <option value="SMS">SMS</option>
-                                <option value="GROUP_NOTE">Note de groupe</option>
+                                <option value="EMAIL">{t("admin.messaging_templates.channel_email")}</option>
+                                <option value="SMS">{t("admin.messaging_templates.channel_sms")}</option>
+                                <option value="GROUP_NOTE">{t("admin.messaging_templates.channel_group_note")}</option>
                               </select>
                             </label>
                             <label>
-                              Objet (email uniquement)
+                              {t("admin.messaging_templates.email_subject_optional")}
                               <input type="text" name="subject_fr" maxLength={255} />
                             </label>
                             <label>
-                              Subject (English)
+                              {t("admin.messaging_templates.email_subject_en")}
                               <input type="text" name="subject_en" maxLength={255} />
                             </label>
                             {newCustomTemplateChannel !== "GROUP_NOTE" ? (
                               <fieldset className="span-2 config-subsection">
-                                <legend>Usages autorises pour ce template</legend>
+                                <legend>{t("admin.messaging_templates.allowed_usage")}</legend>
                                 <div className="row wrap gap-sm">
                                   {QUOTE_TEMPLATE_USAGE_CONTEXTS.map((usageContext) => (
                                     <label key={`new-${usageContext.value}`} className="checkline">
                                       <input type="checkbox" name="usage_contexts" value={usageContext.value} />
-                                      {usageContext.label}
+                                      {t(usageContext.labelKey)}
                                     </label>
                                   ))}
                                 </div>
                               </fieldset>
                             ) : null}
                             <label className="messaging-editor-label">
-                              Message (Francais)
+                              {t("admin.messaging_templates.message_fr")}
                               <RichMessageEditor name="body_fr" formatName="body_format" rows={20} maxLength={12000} />
                             </label>
                             <label className="messaging-editor-label">
-                              Message (English)
+                              {t("admin.messaging_templates.message_en")}
                               <RichMessageEditor name="body_en" formatName="body_format_en" rows={20} maxLength={12000} />
                             </label>
                             <label className="checkline">
                               <input type="checkbox" name="active" defaultChecked />
-                              Modele actif
+                              {t("admin.messaging_templates.template_active")}
                             </label>
                           </>
                         )}
 
                         {editingTemplate?.variables_hint ? (
-                          <p className="muted">Variables: {editingTemplate.variables_hint}</p>
+                          <p className="muted">{t("admin.messaging_templates.variables_hint", { value: editingTemplate.variables_hint })}</p>
                         ) : null}
                         {(editingTemplate?.channel !== "GROUP_NOTE" || (createCustomMessagingTemplate && newCustomTemplateChannel !== "GROUP_NOTE")) && quoteTemplateVariables.length > 0 ? (
                           <div className="span-2 item">
-                            <strong>Variables devis disponibles</strong>
+                            <strong>{t("admin.messaging_templates.available_quote_variables")}</strong>
                             <div className="row wrap gap-sm top-gap-sm">
                               {quoteTemplateVariables.map((item) => (
                                 <span key={item.key} className="badge" title={item.description}>
@@ -3143,11 +3154,11 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           <div className="row">
                             {editingTemplate?.kind === "PREDEFINED" && editingTemplate.code ? (
                               <button type="submit" formAction={resetAdminConfigPredefinedMessagingTemplateAction} className="ghost">
-                                Retablir le modele par defaut
+                                {t("admin.messaging_templates.reset_default")}
                               </button>
                             ) : null}
                           </div>
-                          <button type="submit">Sauvegarder</button>
+                          <button type="submit">{t("common.save")}</button>
                         </div>
                       </form>
                     </section>
