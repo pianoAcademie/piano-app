@@ -1534,19 +1534,22 @@ export async function startFormulaPurchaseLinkAction(formData: FormData): Promis
 export async function submitFormulaCheckoutAction(formData: FormData): Promise<void> {
   const purchaseContext = String(formData.get("purchase_context") ?? "").trim();
   const returnTo = safePublicBuyPath(String(formData.get("return_to") ?? ""), "/buy/checkout");
+  const language = publicActionLanguage(returnTo);
   const confirmExistingPackPurchase = String(formData.get("confirm_existing_pack_purchase") ?? "").trim() === "1";
 
   if (!purchaseContext) {
-    redirect(appendQueryMessage(returnTo, "error", "Contexte d achat invalide"));
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "public_formula_checkout.invalid_context_error")));
   }
 
   const token = currentPortalToken();
   if (!token) {
-    redirect(
+    redirect(setQueryParam(
       `/login?mode=login&purchase_context=${encodeURIComponent(purchaseContext)}&error=${encodeURIComponent(
-        "Connectez-vous pour poursuivre le paiement",
+        uiText(language, "public_formula_checkout.login_required"),
       )}`,
-    );
+      "lang",
+      language === "en" ? "en" : null,
+    ));
   }
 
   const contextResult = await backendRequest<PublicFormulaPurchaseContextOut>(
@@ -1570,11 +1573,13 @@ export async function submitFormulaCheckoutAction(formData: FormData): Promise<v
   if (!purchaseResult.ok) {
     if (purchaseResult.status === 401) {
       clearToken();
-      redirect(
+      redirect(setQueryParam(
         `/login?mode=login&purchase_context=${encodeURIComponent(purchaseContext)}&error=${encodeURIComponent(
-          "Session expiree, reconnectez-vous pour poursuivre le paiement",
+          uiText(language, "public_formula_checkout.session_expired"),
         )}`,
-      );
+        "lang",
+        language === "en" ? "en" : null,
+      ));
     }
     const withContext = setQueryParam(returnTo, "purchase_context", purchaseContext);
     if (purchaseResult.status === 409 && purchaseResult.message === "An active pack with remaining credits already exists") {
@@ -1583,7 +1588,7 @@ export async function submitFormulaCheckoutAction(formData: FormData): Promise<v
         setQueryParam(
           warningPath,
           "warning",
-          "Attention : vous avez deja un carnet actif avec des credits restants. Confirmez-vous votre nouvel achat ?",
+          uiText(language, "public_formula_checkout.active_pack_warning"),
         ),
       );
     }
@@ -1595,7 +1600,7 @@ export async function submitFormulaCheckoutAction(formData: FormData): Promise<v
   if (purchaseResult.data.checkout_url) {
     redirect(purchaseResult.data.checkout_url);
   }
-  redirect("/client?tab=finance&ok=Achat%20de%20la%20formule%20confirme");
+  redirect(`/client?tab=finance&ok=${encodeURIComponent(uiText(language, "public_formula_checkout.purchase_confirmed"))}`);
 }
 
 export async function submitPublicSessionCheckoutAction(formData: FormData): Promise<void> {

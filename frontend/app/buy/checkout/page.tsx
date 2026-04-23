@@ -5,6 +5,7 @@ import PortalBrandLockup from "../../../components/portal-brand-lockup";
 import { submitFormulaCheckoutAction } from "../../../lib/actions";
 import { getPortalToken } from "../../../lib/auth-cookies";
 import { backendRequest } from "../../../lib/backend";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 import type { PublicFormulaPurchaseContextOut, UserOut } from "../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -17,16 +18,16 @@ function readParam(params: SearchParams, key: string): string {
   return value ?? "";
 }
 
-function formatMoney(amountRaw: string | null, currency: string): string {
+function formatMoney(amountRaw: string | null, currency: string, language: UiLanguage): string {
   if (!amountRaw) {
-    return "Prix sur devis";
+    return uiText(language, "public_formula_checkout.price_on_request");
   }
   const amount = Number(amountRaw);
   if (!Number.isFinite(amount)) {
     return `${amountRaw} ${currency}`;
   }
   try {
-    return new Intl.NumberFormat("fr-FR", {
+    return new Intl.NumberFormat(localeForUiLanguage(language), {
       style: "currency",
       currency,
       maximumFractionDigits: 2,
@@ -36,7 +37,7 @@ function formatMoney(amountRaw: string | null, currency: string): string {
   }
 }
 
-function buildSessionCheckoutHref(sessionId: string, planningReturnTo: string, bookingUserId: string): string {
+function buildSessionCheckoutHref(sessionId: string, planningReturnTo: string, bookingUserId: string, language: UiLanguage): string {
   const params = new URLSearchParams();
   params.set("session_id", sessionId);
   if (planningReturnTo) {
@@ -45,11 +46,15 @@ function buildSessionCheckoutHref(sessionId: string, planningReturnTo: string, b
   if (bookingUserId) {
     params.set("booking_user_id", bookingUserId);
   }
+  if (language === "en") {
+    params.set("lang", "en");
+  }
   return `/buy/session/checkout?${params.toString()}`;
 }
 
 export default async function BuyCheckoutPage({ searchParams }: { searchParams?: SearchParams }): Promise<JSX.Element> {
   const params = searchParams ?? {};
+  const queryLanguage = normalizeUiLanguage(readParam(params, "lang"));
   const purchaseContext = readParam(params, "purchase_context").trim();
   const okMessage = readParam(params, "ok");
   const errorMessage = readParam(params, "error");
@@ -61,8 +66,8 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
       <main className="page public-buy-page">
         <section className="public-buy-shell">
           <article className="card public-buy-card">
-            <h1>Contexte d achat manquant</h1>
-            <p className="flash-err">Le lien de paiement est invalide. Reprends le lien de formule depuis le debut.</p>
+            <h1>{uiText(queryLanguage, "public_formula_checkout.missing_context_title")}</h1>
+            <p className="flash-err">{uiText(queryLanguage, "public_formula_checkout.missing_context_body")}</p>
           </article>
         </section>
       </main>
@@ -77,7 +82,7 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
       <main className="page public-buy-page">
         <section className="public-buy-shell">
           <article className="card public-buy-card">
-            <h1>Contexte d achat invalide</h1>
+            <h1>{uiText(queryLanguage, "public_formula_checkout.invalid_context_title")}</h1>
             <p className="flash-err">{contextResult.message}</p>
           </article>
         </section>
@@ -88,7 +93,7 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
   const portalToken = getPortalToken();
   if (!portalToken) {
     redirect(
-      `/login?mode=login&email=${encodeURIComponent(contextResult.data.email)}&purchase_context=${encodeURIComponent(purchaseContext)}`,
+      `/login?mode=login&email=${encodeURIComponent(contextResult.data.email)}&purchase_context=${encodeURIComponent(purchaseContext)}${queryLanguage === "en" ? "&lang=en" : ""}`,
     );
   }
   const authResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, portalToken);
@@ -96,12 +101,14 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
     redirect(
       `/login?mode=login&email=${encodeURIComponent(contextResult.data.email)}&purchase_context=${encodeURIComponent(
         purchaseContext,
-      )}&error=${encodeURIComponent("Session expiree, reconnectez-vous pour poursuivre le paiement")}`,
+      )}&error=${encodeURIComponent(uiText(queryLanguage, "public_formula_checkout.session_expired"))}${queryLanguage === "en" ? "&lang=en" : ""}`,
     );
   }
 
+  const language = normalizeUiLanguage(readParam(params, "lang") || authResult.data.preferred_language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const summary = contextResult.data.summary;
-  const returnTo = `/buy/checkout?purchase_context=${encodeURIComponent(purchaseContext)}`;
+  const returnTo = `/buy/checkout?purchase_context=${encodeURIComponent(purchaseContext)}${language === "en" ? "&lang=en" : ""}`;
   const isSessionReservationFlow = Boolean(contextResult.data.session_id);
   const backHref =
     contextResult.data.session_id != null
@@ -109,22 +116,23 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
           String(contextResult.data.session_id),
           contextResult.data.planning_return_to || "",
           contextResult.data.booking_user_id ? String(contextResult.data.booking_user_id) : "",
+          language,
         )
-      : `/buy/formula/${summary.formula_id}`;
-  const backLabel = isSessionReservationFlow ? "Revenir aux choix de reservation" : "Revenir a la formule";
+      : `/buy/formula/${summary.formula_id}${language === "en" ? "?lang=en" : ""}`;
+  const backLabel = isSessionReservationFlow ? t("public_formula_checkout.back_to_booking_options") : t("public_formula_checkout.back_to_formula");
   return (
     <main className="page public-buy-page">
       <section className="public-buy-shell">
         <article className="card public-buy-card">
           <header className="public-buy-header">
             <PortalBrandLockup
-              title="Piano Academie"
-              subtitle="Reservation en ligne"
+              title={t("common.app_name")}
+              subtitle={t("public_formula_checkout.brand_subtitle")}
               eyebrow="Mi-Young Lee"
               className="public-buy-brand-lockup"
             />
-            <h1>Paiement de la formule</h1>
-            <p className="muted">Verifier le recapitulatif, puis continuer vers le paiement securise.</p>
+            <h1>{t("public_formula_checkout.checkout_title")}</h1>
+            <p className="muted">{t("public_formula_checkout.checkout_subtitle")}</p>
           </header>
 
           {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
@@ -133,40 +141,40 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
 
           <section className="public-buy-summary">
             <article className="public-buy-line">
-              <span>Formule</span>
+              <span>{t("public_formula_checkout.formula_label")}</span>
               <strong>{summary.name}</strong>
             </article>
             <article className="public-buy-line">
-              <span>Montant TTC</span>
-              <strong>{formatMoney(summary.price_ttc, summary.currency)}</strong>
+              <span>{t("public_formula_checkout.amount_incl_tax")}</span>
+              <strong>{formatMoney(summary.price_ttc, summary.currency, language)}</strong>
             </article>
             <article className="public-buy-line">
-              <span>Frequence</span>
-              <strong>{summary.frequency_label ?? "Paiement unique"}</strong>
+              <span>{t("public_formula_checkout.frequency_label")}</span>
+              <strong>{summary.frequency_label ?? t("public_formula_checkout.one_time_payment")}</strong>
             </article>
             <article className="public-buy-line">
-              <span>Email</span>
+              <span>{t("common.email")}</span>
               <strong>{contextResult.data.email}</strong>
             </article>
             {!isSessionReservationFlow ? (
               <article className="public-buy-line">
-                <span>Moyens de paiement</span>
+                <span>{t("public_formula_checkout.payment_methods")}</span>
                 <strong>
-                  {summary.payment_methods.length > 0 ? "Selon la configuration de cette formule" : "Selon configuration"}
+                  {summary.payment_methods.length > 0
+                    ? t("public_formula_checkout.payment_methods_formula_config")
+                    : t("public_formula_checkout.payment_methods_default_config")}
                 </strong>
               </article>
             ) : null}
           </section>
 
-          {isSessionReservationFlow ? (
-            <p className="muted">Dans ce tunnel de reservation, le reglement se fait uniquement en ligne.</p>
-          ) : null}
+          {isSessionReservationFlow ? <p className="muted">{t("public_formula_checkout.session_flow_online_only")}</p> : null}
 
           <form action={submitFormulaCheckoutAction} className="grid public-buy-form">
             <input type="hidden" name="purchase_context" value={purchaseContext} />
             <input type="hidden" name="return_to" value={returnTo} />
             {confirmExistingPackPurchase ? <input type="hidden" name="confirm_existing_pack_purchase" value="1" /> : null}
-            <button type="submit">Payer cette formule</button>
+            <button type="submit">{t("public_formula_checkout.pay_formula")}</button>
           </form>
 
           <div className="row">
