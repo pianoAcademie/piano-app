@@ -28,6 +28,7 @@ from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduc
 from app.models.quote import Prospect, Quote, QuoteLine, QuoteTemplate, QuoteTemplateVersion, TermsTemplateVersion
 from app.models.typeform_intake import TypeformIntake
 from app.models.user import User
+from app.services.i18n import normalize_language
 
 
 AUDIENCE_ADMIN_PREVIEW = "admin_preview"
@@ -50,6 +51,417 @@ CSS_VAR_DEFAULTS: dict[str, str] = {
     "--accent": "#c9872a",
     "--accent-ink": "#ffffff",
 }
+
+QUOTE_DOC_TEXT = {
+    "fr": {
+        "schedule_due_invoice": "à réception de votre facture",
+        "schedule_due_validation": "à la validation du devis, avant votre 1er cours",
+        "payment_method_bank": "virement bancaire",
+        "payment_method_check_one": "cheque",
+        "payment_method_check_many": "cheques",
+        "payment_method_card": "reglement par carte bancaire",
+        "payment_method_generic": "reglement",
+        "deposit_bank_line_1": "Afin de bloquer définitivement le créneau, un acompte de {deposit_amount} devra être réglé par virement bancaire dès validation du devis.",
+        "deposit_bank_line_2": "Une facture d’acompte sera émise après validation du devis.",
+        "deposit_bank_line_3": "Le solde de {remaining_amount} devra être réglé par virement bancaire à réception de la facture de solde, avant le démarrage des cours.",
+        "deposit_card_line_1": "Paiement d’un acompte de {deposit_amount} dès validation du devis, afin de bloquer le créneau.",
+        "deposit_card_line_2": "Une facture d’acompte sera envoyée et devra être réglée rapidement après validation en ligne.",
+        "deposit_card_line_3": "Le solde de {remaining_amount} devra être réglé par carte bancaire à réception de la facture correspondante, avant le démarrage des cours.",
+        "payment_balance_bank_invoice": "reglement du solde de {amount} par virement bancaire à réception de votre facture, avant le démarrage des cours",
+        "payment_sentence_generic": "{method_subject} de {amount} à regler {due_label}",
+        "payment_deposit_then": "Paiement de l acompte de {deposit_amount} {currency} dès validation du devis pour bloquer le créneau, puis {remaining_sentence}.",
+        "payment_installments_after_deposit": "Paiement de l acompte de {deposit_amount} {currency} dès validation du devis pour bloquer le créneau, puis echeancier de {count} échéances selon le detail ci-dessous.",
+        "payment_installments": "Echeancier de {count} échéances selon le detail ci-dessous.",
+        "payment_deposit_only": "Paiement de l acompte de {deposit_amount} {currency} dès validation du devis pour bloquer le créneau (solde regle).",
+        "payment_not_scheduled": "Paiement non planifié",
+        "quote_status_approved": "Approuvé le",
+        "quote_status_validity": "Validité",
+        "quote_status_valid_until": "Valable jusqu’au {date}",
+        "calendar_month_1": "Janvier",
+        "calendar_month_2": "Février",
+        "calendar_month_3": "Mars",
+        "calendar_month_4": "Avril",
+        "calendar_month_5": "Mai",
+        "calendar_month_6": "Juin",
+        "calendar_month_7": "Juillet",
+        "calendar_month_8": "Août",
+        "calendar_month_9": "Septembre",
+        "calendar_month_10": "Octobre",
+        "calendar_month_11": "Novembre",
+        "calendar_month_12": "Décembre",
+        "calendar_heading_default": "Cours {index}",
+        "calendar_no_sessions": "Aucune séance planifiée",
+        "calendar_summary": "{session_count} {session_label} pour {activity_count} {activity_label}",
+        "calendar_session_singular": "séance planifiée",
+        "calendar_session_plural": "séances planifiées",
+        "calendar_activity_singular": "activité",
+        "calendar_activity_plural": "activités",
+        "weekday_0": "Lundi",
+        "weekday_1": "Mardi",
+        "weekday_2": "Mercredi",
+        "weekday_3": "Jeudi",
+        "weekday_4": "Vendredi",
+        "weekday_5": "Samedi",
+        "weekday_6": "Dimanche",
+        "modality_default": "Cours",
+        "modality_online": "En ligne",
+        "modality_onsite": "Présentiel",
+        "modality_hybrid": "Hybride",
+        "slot_mode_online": "Mode : cours en ligne",
+        "slot_mode_onsite": "Mode : cours en présentiel",
+        "slot_mode_hybrid": "Mode : cours en présentiel ou en ligne",
+        "planning_type_activity": "Type activité",
+        "planning_activity": "Activité",
+        "planning_location": "Lieu",
+        "planning_day": "Jour",
+        "planning_time": "Horaire",
+        "planning_duration": "Durée",
+        "planning_empty": "Aucun bloc planning.",
+        "schedule_label": "Échéance",
+        "schedule_amount": "Montant",
+        "schedule_when": "Quand",
+        "schedule_type": "Type",
+        "schedule_empty": "Aucun échéancier.",
+        "calendar_date": "Date",
+        "calendar_start": "Début",
+        "calendar_end": "Fin",
+        "calendar_modality": "Modalité",
+        "calendar_empty": "Aucun cours planifié.",
+        "section_courses_options": "Cours et options choisis",
+        "section_services": "Cours inclus dans le devis",
+        "section_adjustments": "Remises appliquées",
+        "section_products": "Matériel pédagogique",
+        "section_kits": "Frais et services inclus dans l’inscription",
+        "section_other_fees": "Autres frais",
+        "section_schedule": "Échéancier de paiement",
+        "section_calendar": "Calendrier prévisionnel des cours",
+        "cover_title": "Votre devis d’inscription",
+        "cover_quote": "Devis",
+        "cover_school_year": "Année scolaire",
+        "cover_student": "Élève",
+        "identity_title": "Informations de l’élève et du responsable",
+        "identity_child": "Élève",
+        "identity_birth_date": "Date de naissance",
+        "identity_adult_contact": "Adulte responsable",
+        "identity_adult_contact_email": "Email adulte responsable",
+        "identity_adult_contact_phone": "Téléphone adulte responsable",
+        "identity_adult_contact_address": "Adresse adulte responsable",
+        "identity_email": "Email",
+        "identity_phone": "Téléphone",
+        "identity_address": "Adresse",
+        "table_quantity": "Quantité",
+        "table_vat": "TVA",
+        "table_unit_price_ttc": "PU TTC",
+        "table_total_ttc": "Montant TTC",
+        "table_material": "Matériel",
+        "table_kit": "Kit",
+        "kit_includes": "Comprend",
+        "table_type": "Type",
+        "table_title": "Intitulé",
+        "table_category": "Catégorie",
+        "empty_activity": "Aucune activité.",
+        "empty_material": "Aucun matériel.",
+        "empty_kit": "Aucun kit.",
+        "empty_adjustment": "Aucune remise ni supplément.",
+        "empty_other_fee": "Aucun autre frais.",
+        "fee_discount": "Remise",
+        "fee_surcharge": "Supplément",
+        "fee_service": "Service",
+        "fee_material": "Matériel",
+        "fee_kit": "Kit",
+        "financial_title": "Montant total du devis",
+        "financial_total_before_adjustment": "Total TTC avant ajustement",
+        "financial_adjustment": "Ajustement",
+        "financial_impact": "Impact",
+        "financial_adjustment_date": "Date ajustement",
+        "financial_total_ht_invoice": "Total HT facture",
+        "financial_vat_invoice": "TVA facture ({rate} %)",
+        "financial_total_ttc_quote": "Total TTC du devis",
+        "financial_total_ht": "Total HT",
+        "financial_vat": "TVA ({rate} %)",
+        "payment_title": "Règlement et échéancier",
+        "payment_method": "Mode de paiement",
+        "options_title": "Vos options",
+        "calendar_title": "Calendrier prévisionnel des cours",
+        "calendar_overview": "Vue d’ensemble du calendrier : {summary}",
+        "calendar_course_place": "Cours / lieu",
+        "calendar_course_count": "Nombre de cours",
+        "calendar_course_count_value": "{count} cours",
+        "semester_1": "1er semestre",
+        "semester_2": "2e semestre",
+        "calendar_course_dates": "Dates de cours",
+        "calendar_no_session_short": "Aucune séance",
+        "terms_title": "Conditions d’inscription 2026–2027",
+        "terms_version_unspecified": "Version non précisée",
+        "payment_method_unspecified": "Paiement non précisé",
+        "compact_notice_one": "1 échéance : {due_label}",
+        "compact_notice_many": "Paiement en {count} échéances. Le détail des échéances est communiqué séparément.",
+        "table_semester": "Semestre",
+        "table_month": "Mois",
+        "terms_empty": "Aucune condition générale.",
+        "terms_snapshot_empty": "Aucune CGV snapshotée.",
+        "quote_recipient": "Destinataire",
+        "prospect_type": "Type de prospect",
+        "prospect_type_child": "Enfant",
+        "prospect_type_adult": "Adulte",
+        "generated_at": "Document généré le",
+        "financial_adjustment_credit": "Avoir",
+        "financial_adjustment_debt": "Dette",
+        "financial_adjustment_none": "Aucun",
+        "financial_adjustment_credit_impact": "Déduit du total facturé",
+        "financial_adjustment_debt_impact": "Ajouté au total facturé",
+        "financial_adjustment_none_html": "Aucun avoir ou dette appliqué.",
+        "financial_label": "Libellé",
+        "financial_deposit": "Acompte préinscription",
+        "financial_remaining_after_deposit": "Reste à payer après acompte",
+        "financial_remaining_ht": "Total HT restant",
+        "financial_remaining_vat": "TVA restante ({rate} %)",
+        "deposit_section_title": "Acompte préinscription",
+        "deposit_balance_bank_due": "Le solde de {amount} sera à régler par virement bancaire à réception de votre facture, avant le démarrage des cours.",
+        "deposit_balance_due": "Le solde de {amount} sera à régler {due_label}.",
+        "deposit_balance_schedule": "Le solde sera à régler selon l’échéancier indiqué ci-dessous.",
+        "deposit_confirm": "Pour confirmer votre inscription et bloquer votre créneau, un acompte est requis dès validation du devis.",
+        "deposit_amount_due": "Acompte à payer pour valider l’inscription",
+        "deposit_none": "Aucun acompte préinscription.",
+        "empty_lines": "Aucune ligne.",
+        "identity_child_title": "Informations de l’élève",
+        "identity_adult_title": "Informations de l’adulte responsable",
+        "payment_instructions": "Consignes",
+        "course_solfege": "Cours de solfège",
+        "course_solfege_online": "Cours de solfège en ligne",
+        "course_solfege_level": "niveau {level}",
+        "course_included_quote": "inclus dans le devis",
+        "to_select": "à sélectionner",
+        "solfege_option_included": "Option solfège : incluse dans le présent devis.",
+        "solfege_estimated_level": "Niveau estimé",
+        "solfege_slot_selected": "Créneau retenu",
+        "solfege_slots_available": "Créneaux disponibles",
+        "solfege_subscribed_summary": "Solfège souscrit - Niveau {level}{duration}{slot}",
+        "solfege_pending_notice": "Le tarif total du présent devis inclut le solfège en ligne. Seul le choix du créneau reste à confirmer.",
+        "masterclass_subscribed": "Masterclass du samedi souscrite.",
+        "masterclass_subscribed_with_slots": "Masterclass du samedi souscrite - {slots}",
+        "masterclass_option_subscribed": "Option Masterclass du samedi : souscrite.",
+        "masterclass_common_text": "Masterclass du samedi (complément aux 2 cours collectifs hebdomadaires) : une session de 3h dédiée à la pratique au piano, avec un focus approfondi sur la musicalité et l’interprétation.",
+        "pass_recup_option_subscribed": "Option Pass Récup : souscrite.",
+        "pass_recup_option_not_subscribed": "Option Pass Récup : non souscrite.",
+        "pass_recup_common_text": "Le Pass Récup’ permet de rattraper un cours collectif manqué, dans la limite de 4 rattrapages par année scolaire. Le rattrapage peut s’effectuer soit sur un cours collectif en présentiel, sous réserve de disponibilité d’un créneau, soit sur un cours collectif en ligne, sur des créneaux dédiés. Le pass est utilisable uniquement en cas d’absence signalée. Il est valable pour l’année scolaire en cours et n’est pas remboursable. Sans souscription à ce pass, aucun rattrapage ne pourra être proposé, quelle que soit la raison de l’absence.",
+        "pass_recup_compact_text": "Ce pass permet de rattraper un cours collectif manqué sur un créneau en présentiel (si une place est disponible), ou à défaut, sur un créneau collectif en ligne dédié.",
+        "pass_recup_compact_limit": "Limité à 4 rattrapages par an",
+    },
+    "en": {
+        "schedule_due_invoice": "upon receipt of your invoice",
+        "schedule_due_validation": "when the quote is approved, before your first lesson",
+        "payment_method_bank": "bank transfer",
+        "payment_method_check_one": "check",
+        "payment_method_check_many": "checks",
+        "payment_method_card": "card payment",
+        "payment_method_generic": "payment",
+        "deposit_bank_line_1": "To secure the slot, a deposit of {deposit_amount} must be paid by bank transfer as soon as the quote is approved.",
+        "deposit_bank_line_2": "A deposit invoice will be issued after the quote is approved.",
+        "deposit_bank_line_3": "The remaining balance of {remaining_amount} must be paid by bank transfer upon receipt of the balance invoice, before lessons begin.",
+        "deposit_card_line_1": "A deposit of {deposit_amount} must be paid when the quote is approved in order to secure the slot.",
+        "deposit_card_line_2": "A deposit invoice will be sent and must be paid shortly after online approval.",
+        "deposit_card_line_3": "The remaining balance of {remaining_amount} must be paid by card upon receipt of the corresponding invoice, before lessons begin.",
+        "payment_balance_bank_invoice": "payment of the remaining balance of {amount} by bank transfer upon receipt of your invoice, before lessons begin",
+        "payment_sentence_generic": "{method_subject} of {amount} due {due_label}",
+        "payment_deposit_then": "Payment of the deposit of {deposit_amount} {currency} upon quote approval to secure the slot, then {remaining_sentence}.",
+        "payment_installments_after_deposit": "Payment of the deposit of {deposit_amount} {currency} upon quote approval to secure the slot, then a schedule of {count} installments as detailed below.",
+        "payment_installments": "Schedule of {count} installments as detailed below.",
+        "payment_deposit_only": "Payment of the deposit of {deposit_amount} {currency} upon quote approval to secure the slot (balance already settled).",
+        "payment_not_scheduled": "Payment schedule not specified",
+        "quote_status_approved": "Approved on",
+        "quote_status_validity": "Validity",
+        "quote_status_valid_until": "Valid until {date}",
+        "calendar_month_1": "January",
+        "calendar_month_2": "February",
+        "calendar_month_3": "March",
+        "calendar_month_4": "April",
+        "calendar_month_5": "May",
+        "calendar_month_6": "June",
+        "calendar_month_7": "July",
+        "calendar_month_8": "August",
+        "calendar_month_9": "September",
+        "calendar_month_10": "October",
+        "calendar_month_11": "November",
+        "calendar_month_12": "December",
+        "calendar_heading_default": "Course {index}",
+        "calendar_no_sessions": "No lessons scheduled",
+        "calendar_summary": "{session_count} {session_label} for {activity_count} {activity_label}",
+        "calendar_session_singular": "scheduled lesson",
+        "calendar_session_plural": "scheduled lessons",
+        "calendar_activity_singular": "activity",
+        "calendar_activity_plural": "activities",
+        "weekday_0": "Monday",
+        "weekday_1": "Tuesday",
+        "weekday_2": "Wednesday",
+        "weekday_3": "Thursday",
+        "weekday_4": "Friday",
+        "weekday_5": "Saturday",
+        "weekday_6": "Sunday",
+        "modality_default": "Course",
+        "modality_online": "Online",
+        "modality_onsite": "On-site",
+        "modality_hybrid": "Hybrid",
+        "slot_mode_online": "Mode: online lesson",
+        "slot_mode_onsite": "Mode: on-site lesson",
+        "slot_mode_hybrid": "Mode: on-site or online lesson",
+        "planning_type_activity": "Activity type",
+        "planning_activity": "Activity",
+        "planning_location": "Location",
+        "planning_day": "Day",
+        "planning_time": "Time",
+        "planning_duration": "Duration",
+        "planning_empty": "No planning blocks.",
+        "schedule_label": "Installment",
+        "schedule_amount": "Amount",
+        "schedule_when": "When",
+        "schedule_type": "Type",
+        "schedule_empty": "No payment schedule.",
+        "calendar_date": "Date",
+        "calendar_start": "Start",
+        "calendar_end": "End",
+        "calendar_modality": "Format",
+        "calendar_empty": "No lessons scheduled.",
+        "section_courses_options": "Selected lessons and options",
+        "section_services": "Lessons included in the quote",
+        "section_adjustments": "Applied discounts",
+        "section_products": "Teaching materials",
+        "section_kits": "Fees and services included in the enrollment",
+        "section_other_fees": "Other fees",
+        "section_schedule": "Payment schedule",
+        "section_calendar": "Provisional lesson calendar",
+        "cover_title": "Your enrollment quote",
+        "cover_quote": "Quote",
+        "cover_school_year": "School year",
+        "cover_student": "Student",
+        "identity_title": "Student and guardian information",
+        "identity_child": "Student",
+        "identity_birth_date": "Date of birth",
+        "identity_adult_contact": "Responsible adult",
+        "identity_adult_contact_email": "Responsible adult email",
+        "identity_adult_contact_phone": "Responsible adult phone",
+        "identity_adult_contact_address": "Responsible adult address",
+        "identity_email": "Email",
+        "identity_phone": "Phone",
+        "identity_address": "Address",
+        "table_quantity": "Quantity",
+        "table_vat": "VAT",
+        "table_unit_price_ttc": "Unit price incl. tax",
+        "table_total_ttc": "Amount incl. tax",
+        "table_material": "Material",
+        "table_kit": "Kit",
+        "kit_includes": "Includes",
+        "table_type": "Type",
+        "table_title": "Title",
+        "table_category": "Category",
+        "empty_activity": "No activities.",
+        "empty_material": "No materials.",
+        "empty_kit": "No kits.",
+        "empty_adjustment": "No discounts or surcharges.",
+        "empty_other_fee": "No other fees.",
+        "fee_discount": "Discount",
+        "fee_surcharge": "Surcharge",
+        "fee_service": "Service",
+        "fee_material": "Material",
+        "fee_kit": "Kit",
+        "financial_title": "Total quote amount",
+        "financial_total_before_adjustment": "Gross total before adjustment",
+        "financial_adjustment": "Adjustment",
+        "financial_impact": "Impact",
+        "financial_adjustment_date": "Adjustment date",
+        "financial_total_ht_invoice": "Net invoice total",
+        "financial_vat_invoice": "Invoice VAT ({rate}%)",
+        "financial_total_ttc_quote": "Gross quote total",
+        "financial_total_ht": "Net total",
+        "financial_vat": "VAT ({rate}%)",
+        "payment_title": "Payment and schedule",
+        "payment_method": "Payment method",
+        "options_title": "Your options",
+        "calendar_title": "Provisional lesson calendar",
+        "calendar_overview": "Calendar overview: {summary}",
+        "calendar_course_place": "Lesson / location",
+        "calendar_course_count": "Number of lessons",
+        "calendar_course_count_value": "{count} lessons",
+        "semester_1": "Semester 1",
+        "semester_2": "Semester 2",
+        "calendar_course_dates": "Lesson dates",
+        "calendar_no_session_short": "No lessons",
+        "terms_title": "Enrollment terms 2026–2027",
+        "terms_version_unspecified": "Version not specified",
+        "payment_method_unspecified": "Payment method not specified",
+        "compact_notice_one": "1 installment: {due_label}",
+        "compact_notice_many": "Payment in {count} installments. The detailed schedule is communicated separately.",
+        "table_semester": "Semester",
+        "table_month": "Month",
+        "terms_empty": "No general terms.",
+        "terms_snapshot_empty": "No terms snapshot available.",
+        "quote_recipient": "Recipient",
+        "prospect_type": "Prospect type",
+        "prospect_type_child": "Child",
+        "prospect_type_adult": "Adult",
+        "generated_at": "Document generated on",
+        "financial_adjustment_credit": "Credit",
+        "financial_adjustment_debt": "Debt",
+        "financial_adjustment_none": "None",
+        "financial_adjustment_credit_impact": "Deducted from the invoiced total",
+        "financial_adjustment_debt_impact": "Added to the invoiced total",
+        "financial_adjustment_none_html": "No credit or debt applied.",
+        "financial_label": "Label",
+        "financial_deposit": "Enrollment deposit",
+        "financial_remaining_after_deposit": "Remaining balance after deposit",
+        "financial_remaining_ht": "Remaining net total",
+        "financial_remaining_vat": "Remaining VAT ({rate}%)",
+        "deposit_section_title": "Enrollment deposit",
+        "deposit_balance_bank_due": "The remaining balance of {amount} must be paid by bank transfer upon receipt of your invoice, before lessons begin.",
+        "deposit_balance_due": "The remaining balance of {amount} must be paid {due_label}.",
+        "deposit_balance_schedule": "The remaining balance will be paid according to the schedule below.",
+        "deposit_confirm": "To confirm your enrollment and secure your slot, a deposit is required as soon as the quote is approved.",
+        "deposit_amount_due": "Deposit due to confirm enrollment",
+        "deposit_none": "No enrollment deposit.",
+        "empty_lines": "No lines.",
+        "identity_child_title": "Student information",
+        "identity_adult_title": "Responsible adult information",
+        "payment_instructions": "Instructions",
+        "course_solfege": "Music theory lesson",
+        "course_solfege_online": "Online music theory lesson",
+        "course_solfege_level": "level {level}",
+        "course_included_quote": "included in the quote",
+        "to_select": "to be selected",
+        "solfege_option_included": "Music theory option: included in this quote.",
+        "solfege_estimated_level": "Estimated level",
+        "solfege_slot_selected": "Selected slot",
+        "solfege_slots_available": "Available slots",
+        "solfege_subscribed_summary": "Music theory included - Level {level}{duration}{slot}",
+        "solfege_pending_notice": "The total amount of this quote includes online music theory. Only the slot selection still needs to be confirmed.",
+        "masterclass_subscribed": "Saturday masterclass selected.",
+        "masterclass_subscribed_with_slots": "Saturday masterclass selected - {slots}",
+        "masterclass_option_subscribed": "Saturday Masterclass option: selected.",
+        "masterclass_common_text": "Saturday masterclass (in addition to the two weekly group lessons): a 3-hour session dedicated to piano practice, with a deeper focus on musicality and interpretation.",
+        "pass_recup_option_subscribed": "Catch-up Pass option: selected.",
+        "pass_recup_option_not_subscribed": "Catch-up Pass option: not selected.",
+        "pass_recup_common_text": "The Catch-up Pass lets you make up for a missed group lesson, up to 4 catch-ups per school year. Catch-up may take place either in an on-site group lesson, subject to slot availability, or in a dedicated online group lesson. The pass can only be used when an absence has been reported. It is valid for the current school year and is non-refundable. Without this pass, no catch-up can be offered, whatever the reason for the absence.",
+        "pass_recup_compact_text": "This pass lets you make up a missed group lesson in an on-site slot (if a place is available), or otherwise in a dedicated online group slot.",
+        "pass_recup_compact_limit": "Limited to 4 catch-ups per year",
+    },
+}
+
+
+def _quote_doc_language(quote: Quote | None = None, language: str | None = None) -> str:
+    if language is not None:
+        return normalize_language(language)
+    if quote is not None:
+        return normalize_language(getattr(quote, "language", None))
+    return normalize_language(None)
+
+
+def _quote_doc_text(key: str, *, quote: Quote | None = None, language: str | None = None, **values: object) -> str:
+    normalized_language = _quote_doc_language(quote=quote, language=language)
+    template = QUOTE_DOC_TEXT.get(normalized_language, QUOTE_DOC_TEXT["fr"]).get(key, key)
+    return template.format(**values)
+
+
+def _quote_doc_month_label(month: int, *, language: str | None = None) -> str:
+    return _quote_doc_text(f"calendar_month_{month}", language=language)
 
 
 def _is_true(value: Any) -> bool:
@@ -226,14 +638,14 @@ def _compact_quantity_label(value: Any) -> str:
     return _decimal_str(quantity)
 
 
-def _schedule_due_label(item: dict[str, Any]) -> str:
+def _schedule_due_label(item: dict[str, Any], *, language: str | None = None) -> str:
     due_type = str(item.get("due_type") or "").strip().lower()
     due_label = str(item.get("due_label") or "").strip()
     normalized = due_label.lower()
     if due_type == "on_registration":
-        return "à réception de votre facture"
+        return _quote_doc_text("schedule_due_invoice", language=language)
     if due_type == "on_quote_validation_before_first_course":
-        return "à la validation du devis, avant votre 1er cours"
+        return _quote_doc_text("schedule_due_validation", language=language)
     if normalized in {
         "a reception",
         "a reception du dossier",
@@ -245,26 +657,26 @@ def _schedule_due_label(item: dict[str, Any]) -> str:
         "à réception du dossier",
         "à réception de votre facture",
     }:
-        return "à réception de votre facture"
+        return _quote_doc_text("schedule_due_invoice", language=language)
     if normalized in {
         "a la validation du devis, avant votre 1er cours",
         "à la validation du devis, avant votre 1er cours",
     }:
-        return "à la validation du devis, avant votre 1er cours"
+        return _quote_doc_text("schedule_due_validation", language=language)
     if due_label:
         return due_label
     return due_type or "-"
 
 
-def _payment_schedule_method_subject(method_label: str, *, count: int) -> str:
+def _payment_schedule_method_subject(method_label: str, *, count: int, language: str | None = None) -> str:
     normalized = str(method_label or "").strip().lower()
     if "virement" in normalized:
-        return "virement bancaire"
+        return _quote_doc_text("payment_method_bank", language=language)
     if "cheque" in normalized or "chèque" in normalized:
-        return "cheque" if count == 1 else "cheques"
+        return _quote_doc_text("payment_method_check_one" if count == 1 else "payment_method_check_many", language=language)
     if "carte" in normalized:
-        return "reglement par carte bancaire"
-    return "reglement"
+        return _quote_doc_text("payment_method_card", language=language)
+    return _quote_doc_text("payment_method_generic", language=language)
 
 
 def _is_bank_transfer_payment_method(method_label: str) -> bool:
@@ -283,6 +695,7 @@ def _bank_transfer_deposit_schedule_lines(
     currency: str,
     payment_method_label: str,
     remaining_ttc_after_deposit: Decimal,
+    language: str | None = None,
 ) -> list[str]:
     if not has_deposit or deposit_amount_ttc <= Decimal("0.00") or remaining_ttc_after_deposit <= Decimal("0.00"):
         return []
@@ -292,14 +705,14 @@ def _bank_transfer_deposit_schedule_lines(
     item_method_label = str(item.get("payment_method") or payment_method_label or "").strip()
     if not _is_bank_transfer_payment_method(item_method_label):
         return []
-    if _schedule_due_label(item) != "à réception de votre facture":
+    if _schedule_due_label(item, language=language) != _quote_doc_text("schedule_due_invoice", language=language):
         return []
     deposit_amount = _money(deposit_amount_ttc, currency)
     remaining_amount = _money(remaining_ttc_after_deposit, currency)
     return [
-        f"Afin de bloquer définitivement le créneau, un acompte de {deposit_amount} devra être réglé par virement bancaire dès validation du devis.",
-        "Une facture d’acompte sera émise après validation du devis.",
-        f"Le solde de {remaining_amount} devra être réglé par virement bancaire à réception de la facture de solde, avant le démarrage des cours.",
+        _quote_doc_text("deposit_bank_line_1", language=language, deposit_amount=deposit_amount),
+        _quote_doc_text("deposit_bank_line_2", language=language),
+        _quote_doc_text("deposit_bank_line_3", language=language, remaining_amount=remaining_amount),
     ]
 
 
@@ -311,6 +724,7 @@ def _card_deposit_schedule_lines(
     currency: str,
     payment_method_label: str,
     remaining_ttc_after_deposit: Decimal,
+    language: str | None = None,
 ) -> list[str]:
     if not has_deposit or deposit_amount_ttc <= Decimal("0.00") or remaining_ttc_after_deposit <= Decimal("0.00"):
         return []
@@ -320,14 +734,14 @@ def _card_deposit_schedule_lines(
     item_method_label = str(item.get("payment_method") or payment_method_label or "").strip()
     if not _is_card_payment_method(item_method_label):
         return []
-    if _schedule_due_label(item) != "à réception de votre facture":
+    if _schedule_due_label(item, language=language) != _quote_doc_text("schedule_due_invoice", language=language):
         return []
     deposit_amount = _money(deposit_amount_ttc, currency)
     remaining_amount = _money(remaining_ttc_after_deposit, currency)
     return [
-        f"Paiement d’un acompte de {deposit_amount} dès validation du devis, afin de bloquer le créneau.",
-        "Une facture d’acompte sera envoyée et devra être réglée rapidement après validation en ligne.",
-        f"Le solde de {remaining_amount} devra être réglé par carte bancaire à réception de la facture correspondante, avant le démarrage des cours.",
+        _quote_doc_text("deposit_card_line_1", language=language, deposit_amount=deposit_amount),
+        _quote_doc_text("deposit_card_line_2", language=language),
+        _quote_doc_text("deposit_card_line_3", language=language, remaining_amount=remaining_amount),
     ]
 
 
@@ -339,6 +753,7 @@ def _payment_schedule_summary_text(
     currency: str,
     payment_method_label: str,
     remaining_ttc_after_deposit: Decimal,
+    language: str | None = None,
 ) -> str:
     if special_lines := _bank_transfer_deposit_schedule_lines(
         schedule=schedule,
@@ -347,6 +762,7 @@ def _payment_schedule_summary_text(
         currency=currency,
         payment_method_label=payment_method_label,
         remaining_ttc_after_deposit=remaining_ttc_after_deposit,
+        language=language,
     ):
         return " ".join(special_lines)
     if special_lines := _card_deposit_schedule_lines(
@@ -356,6 +772,7 @@ def _payment_schedule_summary_text(
         currency=currency,
         payment_method_label=payment_method_label,
         remaining_ttc_after_deposit=remaining_ttc_after_deposit,
+        language=language,
     ):
         return " ".join(special_lines)
 
@@ -367,39 +784,46 @@ def _payment_schedule_summary_text(
                 str(item.get("currency") or currency or "EUR"),
             )
             item_method_label = str(item.get("payment_method") or payment_method_label or "").strip()
-            method_subject = _payment_schedule_method_subject(item_method_label, count=1)
-            due_label = _schedule_due_label(item)
-            if _is_bank_transfer_payment_method(item_method_label) and due_label == "à réception de votre facture":
-                remaining_sentence = (
-                    f"reglement du solde de {amount} par virement bancaire à réception de votre facture, "
-                    "avant le démarrage des cours"
-                )
+            method_subject = _payment_schedule_method_subject(item_method_label, count=1, language=language)
+            due_label = _schedule_due_label(item, language=language)
+            if _is_bank_transfer_payment_method(item_method_label) and due_label == _quote_doc_text("schedule_due_invoice", language=language):
+                remaining_sentence = _quote_doc_text("payment_balance_bank_invoice", language=language, amount=amount)
             else:
-                remaining_sentence = f"{method_subject} de {amount} à regler {due_label}"
+                remaining_sentence = _quote_doc_text(
+                    "payment_sentence_generic",
+                    language=language,
+                    method_subject=method_subject,
+                    amount=amount,
+                    due_label=due_label,
+                )
             if has_deposit:
-                return (
-                    f"Paiement de l acompte de {_decimal_str(deposit_amount_ttc)} {currency} dès validation du devis "
-                    "pour bloquer le créneau, puis "
-                    f"{remaining_sentence}."
+                return _quote_doc_text(
+                    "payment_deposit_then",
+                    language=language,
+                    deposit_amount=_decimal_str(deposit_amount_ttc),
+                    currency=currency,
+                    remaining_sentence=remaining_sentence,
                 )
             return f"{remaining_sentence}."
 
-        unit_label = "échéances"
         if has_deposit:
-            return (
-                f"Paiement de l acompte de {_decimal_str(deposit_amount_ttc)} {currency} dès validation du devis "
-                "pour bloquer le créneau, "
-                f"puis echeancier de {len(schedule)} {unit_label} selon le detail ci-dessous."
+            return _quote_doc_text(
+                "payment_installments_after_deposit",
+                language=language,
+                deposit_amount=_decimal_str(deposit_amount_ttc),
+                currency=currency,
+                count=len(schedule),
             )
-        return f"Echeancier de {len(schedule)} {unit_label} selon le detail ci-dessous."
+        return _quote_doc_text("payment_installments", language=language, count=len(schedule))
 
     if has_deposit and remaining_ttc_after_deposit <= Decimal("0.00"):
-        return (
-            f"Paiement de l acompte de {_decimal_str(deposit_amount_ttc)} {currency} dès validation du devis "
-            "pour bloquer le créneau "
-            "(solde regle)."
+        return _quote_doc_text(
+            "payment_deposit_only",
+            language=language,
+            deposit_amount=_decimal_str(deposit_amount_ttc),
+            currency=currency,
         )
-    return "Paiement non planifié"
+    return _quote_doc_text("payment_not_scheduled", language=language)
 
 
 def _name(first_name: str | None, last_name: str | None, fallback: str = "-") -> str:
@@ -430,12 +854,21 @@ def _paris_datetime_label(value: datetime | None) -> str:
 
 
 def _quote_status_date_display(quote: Quote) -> tuple[str, str, str]:
+    language = _quote_doc_language(quote=quote)
     normalized_status = str(quote.status or "").strip().lower()
     if normalized_status == "approved" and quote.approved_at is not None:
         approval_value = _paris_datetime_label(quote.approved_at)
-        return ("Approuvé le", approval_value, f"Approuvé le {approval_value}")
+        return (
+            _quote_doc_text("quote_status_approved", language=language),
+            approval_value,
+            f"{_quote_doc_text('quote_status_approved', language=language)} {approval_value}",
+        )
     expiry_value = _date_label(quote.expires_at)
-    return ("Validité", expiry_value, f"Valable jusqu’au {expiry_value}")
+    return (
+        _quote_doc_text("quote_status_validity", language=language),
+        expiry_value,
+        _quote_doc_text("quote_status_valid_until", language=language, date=expiry_value),
+    )
 
 
 def _replace_expiration_mentions_for_approved_quote(content: str, quote: Quote) -> str:
@@ -543,22 +976,6 @@ def _brand_logo_html(*, db: Session | None, variant: str = "header") -> str:
     return "<div class='quote-brand-logo'>PIANO<br/>ACADEMIE</div>"
 
 
-MONTH_LABELS_FR = (
-    "Janvier",
-    "Février",
-    "Mars",
-    "Avril",
-    "Mai",
-    "Juin",
-    "Juillet",
-    "Août",
-    "Septembre",
-    "Octobre",
-    "Novembre",
-    "Décembre",
-)
-
-
 def _session_date_parts(value: object) -> tuple[int, int, int] | None:
     raw = str(value or "").strip()
     parsed = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", raw)
@@ -580,7 +997,12 @@ def _session_month_day(value: object) -> tuple[int, int] | None:
     return month, day
 
 
-def _calendar_semester_rows(month_map: dict[tuple[int, int], set[int]], *, semester: int) -> list[tuple[str, str]]:
+def _calendar_semester_rows(
+    month_map: dict[tuple[int, int], set[int]],
+    *,
+    semester: int,
+    language: str | None = None,
+) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
     for year, month in sorted(month_map.keys()):
         if semester == 1 and not (month >= 9 or month <= 1):
@@ -590,33 +1012,46 @@ def _calendar_semester_rows(month_map: dict[tuple[int, int], set[int]], *, semes
         days = sorted(month_map.get((year, month)) or set())
         if not days:
             continue
-        rows.append((f"{MONTH_LABELS_FR[month - 1]} {year}", ", ".join(str(day) for day in days)))
+        rows.append((f"{_quote_doc_month_label(month, language=language)} {year}", ", ".join(str(day) for day in days)))
     return rows
 
 
-def _calendar_group_heading(title: Any, index: int) -> str:
+def _calendar_group_heading(title: Any, index: int, *, language: str | None = None) -> str:
     cleaned = str(title or "").strip()
     if not cleaned or cleaned.lower() in {"activite", "activité", "cours"}:
-        return f"Cours {index}"
+        return _quote_doc_text("calendar_heading_default", language=language, index=index)
     return cleaned
 
 
-def _calendar_summary_text(*, session_count: int, activity_count: int) -> str:
+def _calendar_summary_text(*, session_count: int, activity_count: int, language: str | None = None) -> str:
     if session_count <= 0:
-        return "Aucune séance planifiée"
-    session_label = "séance planifiée" if session_count == 1 else "séances planifiées"
-    activity_label = "activité" if activity_count == 1 else "activités"
-    return f"{session_count} {session_label} pour {activity_count} {activity_label}"
+        return _quote_doc_text("calendar_no_sessions", language=language)
+    session_label = _quote_doc_text(
+        "calendar_session_singular" if session_count == 1 else "calendar_session_plural",
+        language=language,
+    )
+    activity_label = _quote_doc_text(
+        "calendar_activity_singular" if activity_count == 1 else "calendar_activity_plural",
+        language=language,
+    )
+    return _quote_doc_text(
+        "calendar_summary",
+        language=language,
+        session_count=session_count,
+        session_label=session_label,
+        activity_count=activity_count,
+        activity_label=activity_label,
+    )
 
 
-def _calendar_visual_summary(sessions: list[dict[str, Any]]) -> tuple[str, int]:
+def _calendar_visual_summary(sessions: list[dict[str, Any]], *, language: str | None = None) -> tuple[str, int]:
     grouped: dict[str, dict[tuple[int, int], set[int]]] = {}
     for session in sessions:
         parsed = _session_date_parts(session.get("date"))
         if parsed is None:
             continue
         year, month, day = parsed
-        activity_label = str(session.get("activity_label") or "").strip() or "Cours"
+        activity_label = str(session.get("activity_label") or "").strip() or _quote_doc_text("calendar_heading_default", language=language, index=1)
         location_label = str(session.get("location_label") or "").strip()
         title = f"{activity_label} · {location_label}" if location_label else activity_label
         if title not in grouped:
@@ -626,23 +1061,24 @@ def _calendar_visual_summary(sessions: list[dict[str, Any]]) -> tuple[str, int]:
         grouped[title][(year, month)].add(day)
 
     if not grouped:
-        return "<p>Aucune séance planifiée.</p>", 0
+        return f"<p>{escape(_quote_doc_text('calendar_no_sessions', language=language))}</p>", 0
 
     blocks: list[str] = []
     for index, title in enumerate(sorted(grouped.keys()), start=1):
-        heading = _calendar_group_heading(title, index)
+        heading = _calendar_group_heading(title, index, language=language)
         month_map = grouped[title]
         count = sum(len(values) for values in month_map.values())
-        sem1 = _calendar_semester_rows(month_map, semester=1)
-        sem2 = _calendar_semester_rows(month_map, semester=2)
+        sem1 = _calendar_semester_rows(month_map, semester=1, language=language)
+        sem2 = _calendar_semester_rows(month_map, semester=2, language=language)
 
         semester_rows: list[tuple[str, str, str]] = []
         for month_label, days in sem1:
-            semester_rows.append(("1er semestre", month_label, days))
+            semester_rows.append((_quote_doc_text("semester_1", language=language), month_label, days))
         for month_label, days in sem2:
-            semester_rows.append(("2e semestre", month_label, days))
+            semester_rows.append((_quote_doc_text("semester_2", language=language), month_label, days))
         if not semester_rows:
-            semester_rows.append(("-", "-", "Aucune séance"))
+            semester_rows.append(("-", "-", _quote_doc_text("calendar_no_session_short", language=language)))
+        course_count_value = _quote_doc_text("calendar_course_count_value", language=language, count=count)
         semesters_html = "".join(
             "<tr>"
             f"<td valign='middle' style='border:1px solid #d8dee7;padding:10px;vertical-align:middle;'>{escape(semester)}</td>"
@@ -669,11 +1105,11 @@ def _calendar_visual_summary(sessions: list[dict[str, Any]]) -> tuple[str, int]:
             "<tbody>"
             "<tr>"
             "<td bgcolor='#DDE8FA' "
-            "style='background-color:#DDE8FA;color:#111827;border:1px solid #c2ccda;padding:12px 10px;text-align:left;font-weight:700;'>Cours / lieu</td>"
+            f"style='background-color:#DDE8FA;color:#111827;border:1px solid #c2ccda;padding:12px 10px;text-align:left;font-weight:700;'>{escape(_quote_doc_text('calendar_course_place', language=language))}</td>"
             "<td bgcolor='#DDE8FA' align='right' "
-            "style='background-color:#DDE8FA;color:#111827;border:1px solid #c2ccda;padding:12px 10px;text-align:right;font-weight:700;'>Nombre de cours</td>"
+            f"style='background-color:#DDE8FA;color:#111827;border:1px solid #c2ccda;padding:12px 10px;text-align:right;font-weight:700;'>{escape(_quote_doc_text('calendar_course_count', language=language))}</td>"
             "</tr>"
-            f"<tr><td valign='middle' style='border:1px solid #d8dee7;padding:12px 10px;vertical-align:middle;'><strong>{escape(heading)}</strong></td><td align='right' valign='middle' style='border:1px solid #d8dee7;padding:12px 10px;vertical-align:middle;'><strong>{count} cours</strong></td></tr>"
+            f"<tr><td valign='middle' style='border:1px solid #d8dee7;padding:12px 10px;vertical-align:middle;'><strong>{escape(heading)}</strong></td><td align='right' valign='middle' style='border:1px solid #d8dee7;padding:12px 10px;vertical-align:middle;'><strong>{escape(course_count_value)}</strong></td></tr>"
             "</tbody>"
             "</table>"
             "<table class='quote-table' border='1' cellspacing='0' cellpadding='10' width='100%' "
@@ -681,11 +1117,11 @@ def _calendar_visual_summary(sessions: list[dict[str, Any]]) -> tuple[str, int]:
             "<tbody>"
             "<tr>"
             "<td bgcolor='#EEF3FC' width='22%' "
-            "style='background-color:#EEF3FC;color:#111827;border:1px solid #c2ccda;padding:10px;text-align:left;font-weight:700;'>Semestre</td>"
+            f"style='background-color:#EEF3FC;color:#111827;border:1px solid #c2ccda;padding:10px;text-align:left;font-weight:700;'>{escape(_quote_doc_text('table_semester', language=language))}</td>"
             "<td bgcolor='#EEF3FC' width='24%' "
-            "style='background-color:#EEF3FC;color:#111827;border:1px solid #c2ccda;padding:10px;text-align:left;font-weight:700;'>Mois</td>"
+            f"style='background-color:#EEF3FC;color:#111827;border:1px solid #c2ccda;padding:10px;text-align:left;font-weight:700;'>{escape(_quote_doc_text('table_month', language=language))}</td>"
             "<td bgcolor='#EEF3FC' "
-            "style='background-color:#EEF3FC;color:#111827;border:1px solid #c2ccda;padding:10px;text-align:left;font-weight:700;'>Dates de cours</td>"
+            f"style='background-color:#EEF3FC;color:#111827;border:1px solid #c2ccda;padding:10px;text-align:left;font-weight:700;'>{escape(_quote_doc_text('calendar_course_dates', language=language))}</td>"
             "</tr>"
             f"{semesters_html}"
             "</tbody>"
@@ -747,15 +1183,14 @@ def _section_html(title: str, content_html: str, *, level: int = 2) -> str:
     return f"<{tag}>{escape(title)}</{tag}>{content}"
 
 
-def _weekday_label(value: Any) -> str:
-    labels = ("Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche")
+def _weekday_label(value: Any, *, language: str | None = None) -> str:
     try:
         day = int(value)
     except (TypeError, ValueError):
         return "-"
     if day < 0 or day > 6:
         return "-"
-    return labels[day]
+    return _quote_doc_text(f"weekday_{day}", language=language)
 
 
 def _parse_hhmm_to_minutes(value: Any) -> int | None:
@@ -787,32 +1222,32 @@ def _duration_label(*, start_time: Any, end_time: Any, fallback_minutes: Any) ->
     return f"{delta} min"
 
 
-def _modality_label(value: Any) -> str:
+def _modality_label(value: Any, *, language: str | None = None) -> str:
     raw = str(value or "").strip()
     if not raw:
-        return "Cours"
+        return _quote_doc_text("modality_default", language=language)
     mapping = {
-        "ONLINE": "En ligne",
-        "ONSITE": "Présentiel",
-        "HYBRID": "Hybride",
+        "ONLINE": _quote_doc_text("modality_online", language=language),
+        "ONSITE": _quote_doc_text("modality_onsite", language=language),
+        "HYBRID": _quote_doc_text("modality_hybrid", language=language),
     }
     return mapping.get(raw.upper(), raw)
 
 
-def _slot_mode_label(value: Any) -> str:
+def _slot_mode_label(value: Any, *, language: str | None = None) -> str:
     raw = str(value or "").strip()
     if not raw:
         return ""
     mapping = {
-        "ONLINE": "Mode : cours en ligne",
-        "ONSITE": "Mode : cours en présentiel",
-        "HYBRID": "Mode : cours en présentiel ou en ligne",
+        "ONLINE": _quote_doc_text("slot_mode_online", language=language),
+        "ONSITE": _quote_doc_text("slot_mode_onsite", language=language),
+        "HYBRID": _quote_doc_text("slot_mode_hybrid", language=language),
         "ANY": "",
     }
     return mapping.get(raw.upper(), "")
 
 
-def _extract_slot_label_parts(value: Any) -> tuple[str, str]:
+def _extract_slot_label_parts(value: Any, *, language: str | None = None) -> tuple[str, str]:
     raw = str(value or "").strip()
     if not raw:
         return "", ""
@@ -835,7 +1270,7 @@ def _extract_slot_label_parts(value: Any) -> tuple[str, str]:
             "mode : en ligne",
             "mode: en ligne",
         }:
-            mode_label = "Mode : cours en ligne"
+            mode_label = _quote_doc_text("slot_mode_online", language=language)
             continue
         if normalized in {
             "onsite",
@@ -848,7 +1283,7 @@ def _extract_slot_label_parts(value: Any) -> tuple[str, str]:
             "mode: cours en présentiel",
             "mode: cours en presentiel",
         }:
-            mode_label = "Mode : cours en présentiel"
+            mode_label = _quote_doc_text("slot_mode_onsite", language=language)
             continue
         if normalized in {
             "hybrid",
@@ -856,14 +1291,14 @@ def _extract_slot_label_parts(value: Any) -> tuple[str, str]:
             "mode : cours en présentiel ou en ligne",
             "mode: cours en présentiel ou en ligne",
         }:
-            mode_label = "Mode : cours en présentiel ou en ligne"
+            mode_label = _quote_doc_text("slot_mode_hybrid", language=language)
             continue
         cleaned_parts.append(text)
     return " · ".join(cleaned_parts), mode_label
 
 
-def _sanitize_slot_label_text(value: Any) -> str:
-    cleaned_label, mode_label = _extract_slot_label_parts(value)
+def _sanitize_slot_label_text(value: Any, *, language: str | None = None) -> str:
+    cleaned_label, mode_label = _extract_slot_label_parts(value, language=language)
     if cleaned_label and mode_label:
         return f"{cleaned_label} · {mode_label}"
     return cleaned_label or mode_label or str(value or "").strip()
@@ -891,14 +1326,14 @@ def _harmonize_display_text(value: Any) -> str:
     return text
 
 
-def _factorize_slot_labels(labels: list[str]) -> tuple[list[str], str]:
-    sanitized_labels = [_sanitize_slot_label_text(item) for item in labels if str(item or "").strip()]
+def _factorize_slot_labels(labels: list[str], *, language: str | None = None) -> tuple[list[str], str]:
+    sanitized_labels = [_sanitize_slot_label_text(item, language=language) for item in labels if str(item or "").strip()]
     if not sanitized_labels:
         return [], ""
     cleaned_labels: list[str] = []
     mode_labels: list[str] = []
     for item in sanitized_labels:
-        cleaned_label, mode_label = _extract_slot_label_parts(item)
+        cleaned_label, mode_label = _extract_slot_label_parts(item, language=language)
         if cleaned_label:
             cleaned_labels.append(cleaned_label)
         elif item:
@@ -912,15 +1347,15 @@ def _factorize_slot_labels(labels: list[str]) -> tuple[list[str], str]:
     return sanitized_labels, ""
 
 
-def _slot_label(value: dict[str, Any], *, fallback_location_label: str = "") -> str:
-    label = _sanitize_slot_label_text(value.get("label"))
+def _slot_label(value: dict[str, Any], *, fallback_location_label: str = "", language: str | None = None) -> str:
+    label = _sanitize_slot_label_text(value.get("label"), language=language)
     if label:
         return label
-    weekday = str(value.get("weekday_label") or "").strip() or _weekday_label(value.get("weekday"))
+    weekday = str(value.get("weekday_label") or "").strip() or _weekday_label(value.get("weekday"), language=language)
     start = str(value.get("start_time") or value.get("start") or "").strip()
     end = str(value.get("end_time") or value.get("end") or "").strip()
     location_label = str(value.get("location_label") or fallback_location_label or "").strip()
-    modality_label = _slot_mode_label(value.get("modality"))
+    modality_label = _slot_mode_label(value.get("modality"), language=language)
 
     parts: list[str] = []
     if weekday and weekday != "-":
@@ -931,7 +1366,7 @@ def _slot_label(value: dict[str, Any], *, fallback_location_label: str = "") -> 
         parts.append(modality_label)
     if location_label:
         parts.append(location_label)
-    return _sanitize_slot_label_text(" · ".join(part for part in parts if part).strip()) or "-"
+    return _sanitize_slot_label_text(" · ".join(part for part in parts if part).strip(), language=language) or "-"
 
 
 def _is_solfege_planning_block(block: dict[str, Any]) -> bool:
@@ -942,26 +1377,31 @@ def _is_solfege_planning_block(block: dict[str, Any]) -> bool:
     return bool(pending_level) or "solfege" in haystack
 
 
-def _solfege_included_pending_notice_text() -> str:
-    return "Le tarif total du présent devis inclut le solfège en ligne. Seul le choix du créneau reste à confirmer."
+def _solfege_included_pending_notice_text(*, language: str | None = None) -> str:
+    return _quote_doc_text("solfege_pending_notice", language=language)
 
 
-def _pending_planning_block_display(block: dict[str, Any]) -> tuple[str, str, str, str]:
+def _pending_planning_block_display(block: dict[str, Any], *, language: str | None = None) -> tuple[str, str, str, str]:
     if _is_solfege_planning_block(block):
         level_label = str(block.get("pending_solfege_level") or "").strip() or _extract_solfege_level_from_text(
             block.get("activity_label")
         )
-        activity_label = "Cours de solfège"
+        activity_label = _quote_doc_text("course_solfege", language=language)
         if str(block.get("modality") or "").strip().upper() == "ONLINE":
-            activity_label += " en ligne"
+            activity_label = _quote_doc_text("course_solfege_online", language=language)
         if level_label:
-            activity_label += f" – niveau {level_label}"
-        activity_label += " (inclus dans le devis)"
-        return activity_label, "-", "Créneau à sélectionner", "-"
-    return _harmonize_display_text(str(block.get("activity_label") or "-").strip() or "-"), "à sélectionner", "à sélectionner", "-"
+            activity_label += f" - {_quote_doc_text('course_solfege_level', language=language, level=level_label)}"
+        activity_label += f" ({_quote_doc_text('course_included_quote', language=language)})"
+        return activity_label, "-", _quote_doc_text("to_select", language=language), "-"
+    return (
+        _harmonize_display_text(str(block.get("activity_label") or "-").strip() or "-"),
+        _quote_doc_text("to_select", language=language),
+        _quote_doc_text("to_select", language=language),
+        "-",
+    )
 
 
-def _planning_blocks_table_html(snapshot: dict[str, Any]) -> tuple[str, int]:
+def _planning_blocks_table_html(snapshot: dict[str, Any], *, language: str | None = None) -> tuple[str, int]:
     blocks = [item for item in _json_list(snapshot.get("blocks")) if isinstance(item, dict)]
     rows: list[list[str]] = []
     for block in blocks:
@@ -969,11 +1409,11 @@ def _planning_blocks_table_html(snapshot: dict[str, Any]) -> tuple[str, int]:
         for raw_slot in _json_list(block.get("pending_slot_options")):
             if not isinstance(raw_slot, dict):
                 continue
-            label = _slot_label(raw_slot, fallback_location_label=str(block.get("location_label") or "").strip())
+            label = _slot_label(raw_slot, fallback_location_label=str(block.get("location_label") or "").strip(), language=language)
             if label:
                 pending_slot_labels.append(label)
                 continue
-            weekday_text = str(raw_slot.get("weekday_label") or "").strip() or _weekday_label(raw_slot.get("weekday"))
+            weekday_text = str(raw_slot.get("weekday_label") or "").strip() or _weekday_label(raw_slot.get("weekday"), language=language)
             start = str(raw_slot.get("start_time") or raw_slot.get("start") or "").strip()
             end = str(raw_slot.get("end_time") or raw_slot.get("end") or "").strip()
             if weekday_text and start and end:
@@ -987,17 +1427,17 @@ def _planning_blocks_table_html(snapshot: dict[str, Any]) -> tuple[str, int]:
         activity_label = _harmonize_display_text(str(block.get("activity_label") or "-").strip() or "-")
         activity_type = str(block.get("activity_type_label") or "").strip()
         if not activity_type:
-            activity_type = _modality_label(block.get("modality"))
+            activity_type = _modality_label(block.get("modality"), language=language)
         activity_type = _harmonize_display_text(activity_type)
         location_label = str(block.get("location_label") or "-").strip() or "-"
         if selection_pending:
-            activity_label, weekday, time_range, duration = _pending_planning_block_display(block)
+            activity_label, weekday, time_range, duration = _pending_planning_block_display(block, language=language)
             if _is_solfege_planning_block(block):
-                activity_type = "Solfège"
+                activity_type = _quote_doc_text("course_solfege", language=language)
             elif deduped_pending_slots:
-                time_range = "à sélectionner"
+                time_range = _quote_doc_text("to_select", language=language)
         else:
-            weekday = str(block.get("weekday_label") or "").strip() or _weekday_label(block.get("weekday"))
+            weekday = str(block.get("weekday_label") or "").strip() or _weekday_label(block.get("weekday"), language=language)
             start_time = str(block.get("start_time") or "").strip()
             end_time = str(block.get("end_time") or "").strip()
             time_range = f"{start_time} - {end_time}" if start_time and end_time else "-"
@@ -1009,9 +1449,16 @@ def _planning_blocks_table_html(snapshot: dict[str, Any]) -> tuple[str, int]:
         rows.append([activity_type, activity_label, location_label, weekday, time_range, duration])
     return (
         _table_html(
-            ["Type activité", "Activité", "Lieu", "Jour", "Horaire", "Durée"],
+            [
+                _quote_doc_text("planning_type_activity", language=language),
+                _quote_doc_text("planning_activity", language=language),
+                _quote_doc_text("planning_location", language=language),
+                _quote_doc_text("planning_day", language=language),
+                _quote_doc_text("planning_time", language=language),
+                _quote_doc_text("planning_duration", language=language),
+            ],
             rows,
-            empty_label="Aucun bloc planning.",
+            empty_label=_quote_doc_text("planning_empty", language=language),
         ),
         len(rows),
     )
@@ -1116,7 +1563,7 @@ def _kit_long_descriptions_by_id(*, db: Session | None, kits: list[QuoteLine]) -
     return result
 
 
-def _kit_composition_by_id(*, db: Session | None, kits: list[QuoteLine]) -> dict[Any, list[str]]:
+def _kit_composition_by_id(*, db: Session | None, kits: list[QuoteLine], language: str | None = None) -> dict[Any, list[str]]:
     if db is None:
         return {}
     kit_ids = [line.kit_id for line in kits if line.kit_id is not None]
@@ -1131,7 +1578,8 @@ def _kit_composition_by_id(*, db: Session | None, kits: list[QuoteLine]) -> dict
     ).all()
     result: dict[Any, list[str]] = {}
     for kit_id, quantity, product_title in rows:
-        label = str(product_title or "Produit").strip() or "Produit"
+        fallback_label = _quote_doc_text("table_material", language=language)
+        label = str(product_title or fallback_label).strip() or fallback_label
         quantity_value = _decimal_from_any(quantity, Decimal("1"))
         quantity_label = _compact_quantity_label(quantity)
         rendered_label = f"{label} x {quantity_label}" if quantity_value > Decimal("1") else label
@@ -1139,13 +1587,13 @@ def _kit_composition_by_id(*, db: Session | None, kits: list[QuoteLine]) -> dict
     return result
 
 
-def _kit_composition_html(items: list[str]) -> str:
+def _kit_composition_html(items: list[str], *, language: str | None = None) -> str:
     if not items:
         return ""
     rendered_items = "<br/>".join(escape(item) for item in items)
     return (
         "<div style='font-size:10px;line-height:1.35;color:#475467;margin-top:4px;'>"
-        "<strong>Comprend :</strong><br/>"
+        f"<strong>{escape(_quote_doc_text('kit_includes', language=language))} :</strong><br/>"
         f"{rendered_items}"
         "</div>"
     )
@@ -1350,6 +1798,7 @@ def _resolve_schedule_visibility_by_audience(*, quote: Quote) -> dict[str, bool]
 
 
 def _resolve_payment_method_label(*, quote: Quote) -> str:
+    language = _quote_doc_language(quote=quote)
     snapshot = _json_object(quote.payment_terms_snapshot)
     for key in ("payment_method_label", "plan_name", "payment_plan_name", "payment_method"):
         value = str(snapshot.get(key) or "").strip()
@@ -1360,7 +1809,7 @@ def _resolve_payment_method_label(*, quote: Quote) -> str:
         value = str(meta.get(key) or "").strip()
         if value:
             return value
-    return "Paiement non précisé"
+    return _quote_doc_text("payment_method_unspecified", language=language)
 
 
 def _line_matches_pass_recup(line: QuoteLine) -> bool:
@@ -1387,7 +1836,7 @@ def _line_matches_masterclass(line: QuoteLine) -> bool:
     return "masterclass" in haystack or "master class" in haystack
 
 
-def _masterclass_blocks_from_calendar_snapshot(snapshot: dict[str, Any]) -> list[dict[str, str]]:
+def _masterclass_blocks_from_calendar_snapshot(snapshot: dict[str, Any], *, language: str | None = None) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for raw in _json_list(snapshot.get("blocks")):
         if not isinstance(raw, dict):
@@ -1399,13 +1848,13 @@ def _masterclass_blocks_from_calendar_snapshot(snapshot: dict[str, Any]) -> list
             continue
         location_label = str(raw.get("location_label") or "").strip()
         selection_pending = bool(raw.get("selection_pending"))
-        weekday_label = str(raw.get("weekday_label") or "").strip() or _weekday_label(raw.get("weekday"))
+        weekday_label = str(raw.get("weekday_label") or "").strip() or _weekday_label(raw.get("weekday"), language=language)
         start_time = str(raw.get("start_time") or "").strip()
         end_time = str(raw.get("end_time") or "").strip()
         session_label = str(raw.get("session_label") or "").strip()
         if not session_label:
             if selection_pending:
-                session_label = "à sélectionner"
+                session_label = _quote_doc_text("to_select", language=language)
             elif weekday_label and start_time and end_time:
                 session_label = f"{weekday_label} {start_time}-{end_time}"
             elif weekday_label:
@@ -1440,7 +1889,7 @@ def _extract_solfege_level_from_text(value: Any) -> str:
     return ""
 
 
-def _solfege_pending_block_info(snapshot: dict[str, Any]) -> dict[str, Any]:
+def _solfege_pending_block_info(snapshot: dict[str, Any], *, language: str | None = None) -> dict[str, Any]:
     has_pending_selection = False
     level_code = ""
     slot_labels: list[str] = []
@@ -1465,11 +1914,11 @@ def _solfege_pending_block_info(snapshot: dict[str, Any]) -> dict[str, Any]:
         for raw_slot in _json_list(raw.get("pending_slot_options")):
             if not isinstance(raw_slot, dict):
                 continue
-            label = _slot_label(raw_slot, fallback_location_label=str(raw.get("location_label") or "").strip())
+            label = _slot_label(raw_slot, fallback_location_label=str(raw.get("location_label") or "").strip(), language=language)
             if label:
                 slot_labels.append(label)
                 continue
-            weekday_text = str(raw_slot.get("weekday_label") or "").strip() or _weekday_label(raw_slot.get("weekday"))
+            weekday_text = str(raw_slot.get("weekday_label") or "").strip() or _weekday_label(raw_slot.get("weekday"), language=language)
             start = str(raw_slot.get("start_time") or raw_slot.get("start") or "").strip()
             end = str(raw_slot.get("end_time") or raw_slot.get("end") or "").strip()
             if weekday_text and start and end:
@@ -1496,7 +1945,7 @@ def _solfege_pending_block_info(snapshot: dict[str, Any]) -> dict[str, Any]:
                 if part
             )
             if label:
-                slot_labels.append(_sanitize_slot_label_text(label))
+                slot_labels.append(_sanitize_slot_label_text(label, language=language))
 
     return {
         "has_pending_selection": has_pending_selection,
@@ -1523,7 +1972,12 @@ def _extract_document_context(
     lines: list[QuoteLine],
     audience: str,
 ) -> dict[str, Any]:
+    language = _quote_doc_language(quote=quote)
     prospect_data = _resolve_prospect_data(db=db, quote=quote)
+    prospect_data["prospect_type_label"] = _quote_doc_text(
+        "prospect_type_child" if str(prospect_data.get("prospect_type") or "").lower() == "child" else "prospect_type_adult",
+        language=language,
+    )
     client_data = _resolve_client_data(db=db, quote=quote)
 
     payment_snapshot = _json_object(quote.payment_terms_snapshot)
@@ -1559,10 +2013,10 @@ def _extract_document_context(
     if not selected_solfege_slot:
         selected_solfege_slot = solfege_selected_slot
 
-    pending_solfege_info = _solfege_pending_block_info(calendar_snapshot)
+    pending_solfege_info = _solfege_pending_block_info(calendar_snapshot, language=language)
     activity_solfege = [item for item in _json_list(meta.get("activity_solfege")) if isinstance(item, dict)]
     masterclass_blocks_meta = [item for item in _json_list(meta.get("masterclass_blocks")) if isinstance(item, dict)]
-    masterclass_blocks_calendar = _masterclass_blocks_from_calendar_snapshot(calendar_snapshot)
+    masterclass_blocks_calendar = _masterclass_blocks_from_calendar_snapshot(calendar_snapshot, language=language)
     masterclass_blocks = [*masterclass_blocks_meta, *masterclass_blocks_calendar]
     masterclass_blocks_deduped: list[dict[str, Any]] = []
     seen_masterclass: set[tuple[str, str, str]] = set()
@@ -1599,10 +2053,16 @@ def _extract_document_context(
     payment_schedule_compact_notice = ""
     if schedule and not show_schedule_detailed:
         if len(schedule) == 1:
-            payment_schedule_compact_notice = f"1 échéance : {_schedule_due_label(schedule[0])}"
+            payment_schedule_compact_notice = _quote_doc_text(
+                "compact_notice_one",
+                language=language,
+                due_label=_schedule_due_label(schedule[0], language=language),
+            )
         else:
-            payment_schedule_compact_notice = (
-                f"Paiement en {len(schedule)} échéances. Le détail des échéances est communiqué séparément."
+            payment_schedule_compact_notice = _quote_doc_text(
+                "compact_notice_many",
+                language=language,
+                count=len(schedule),
             )
     payment_instruction = str(_json_object(quote.payment_terms_snapshot).get("payment_instruction") or "").strip()
 
@@ -1893,7 +2353,7 @@ def _enforce_family_page_break(content: str) -> str:
 def _ensure_full_html_document(content: str) -> str:
     candidate = (content or "").strip()
     if not candidate:
-        return "<html><body><p>Devis</p></body></html>"
+        return "<html><body><p>Quote</p></body></html>"
     if "<html" in candidate.lower():
         return candidate
     return f"<html><body>{candidate}</body></html>"
@@ -2057,10 +2517,10 @@ def _normalize_tables_for_pdf(content: str) -> str:
     return normalized
 
 
-def _simplify_rich_text_to_pdf_paragraphs(content: str, *, values: dict[str, str]) -> str:
+def _simplify_rich_text_to_pdf_paragraphs(content: str, *, values: dict[str, str], language: str | None = None) -> str:
     normalized = _normalize_template_source(content or "")
     if not normalized:
-        return "<p>Aucune condition générale.</p>"
+        return f"<p>{escape(_quote_doc_text('terms_empty', language=language))}</p>"
     substituted = _apply_template(normalized, values=values, html_keys=set(), html_output=False)
     raw = str(substituted or "")
     raw = re.sub(r"(?is)<(style|script)[^>]*>.*?</\1>", "", raw)
@@ -2074,7 +2534,7 @@ def _simplify_rich_text_to_pdf_paragraphs(content: str, *, values: dict[str, str
     raw = re.sub(r"\n{3,}", "\n\n", raw)
     lines = [line.strip() for line in raw.split("\n") if line.strip()]
     if not lines:
-        return "<p>Aucune condition générale.</p>"
+        return f"<p>{escape(_quote_doc_text('terms_empty', language=language))}</p>"
     return "".join(f"<p>{escape(line)}</p>" for line in lines)
 
 
@@ -2087,21 +2547,22 @@ def _build_quote_pdf_blocks_html(
 ) -> str:
     values, html_keys, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     cgv_label, cgv_content = _load_terms_template_content(db=db, quote=quote)
-    terms_html = _simplify_rich_text_to_pdf_paragraphs(cgv_content, values=values)
+    language = _quote_doc_language(quote=quote)
+    terms_html = _simplify_rich_text_to_pdf_paragraphs(cgv_content, values=values, language=language)
 
     template = (
         "<section class='quote-block'>"
-        "<h1>Votre devis d’inscription</h1>"
-        "<p><strong>Devis :</strong> {quote_number}</p>"
-        "<p><strong>Année scolaire :</strong> {school_year_label}</p>"
+        "<h1>{cover_title}</h1>"
+        "<p><strong>{cover_quote} :</strong> {quote_number}</p>"
+        "<p><strong>{cover_school_year} :</strong> {school_year_label}</p>"
         "<p><strong>{quote_status_date_label} :</strong> {quote_status_date_value}</p>"
-        "<p><strong>Élève :</strong> {child_full_name}</p>"
+        "<p><strong>{cover_student} :</strong> {child_full_name}</p>"
         "</section>"
         "{page_break_html}"
-        "<h2>Informations de l’élève et du responsable</h2>"
+        "<h2>{identity_title}</h2>"
         "<div class='quote-block'>{prospect_identity_block_html}</div>"
         "{page_break_html}"
-        "<h2>Cours et options choisis</h2>"
+        "<h2>{section_courses_options}</h2>"
         "{activities_planning_table_html}"
         "{services_section_html}"
         "{adjustments_section_html}"
@@ -2109,24 +2570,24 @@ def _build_quote_pdf_blocks_html(
         "{kits_section_html}"
         "{other_fees_section_html}"
         "{financial_recap_block_html}"
-        "<h2>Règlement et échéancier</h2>"
+        "<h2>{payment_title}</h2>"
         "{payment_method_block_html}"
         "<p>{payment_schedule_summary}</p>"
         "{payment_schedule_table_html}"
         "{options_section_html}"
         "{page_break_html}"
-        "<h2>Calendrier prévisionnel des cours</h2>"
-        "<p><strong>Vue d’ensemble du calendrier :</strong> {calendar_summary}</p>"
+        "<h2>{calendar_title}</h2>"
+        "<p><strong>{calendar_overview_label} :</strong> {calendar_summary}</p>"
         "{calendar_activity_semesters_html}"
         "{page_break_html}"
-        "<h2>Conditions d’inscription 2026–2027</h2>"
+        "<h2>{terms_title}</h2>"
         "<div class='quote-block'>"
         "<p><strong>{cgv_version}</strong></p>"
         "{terms_plain_pdf_html}"
         "</div>"
     )
     block_values = dict(values)
-    block_values["cgv_version"] = cgv_label or values.get("cgv_version", "-")
+    block_values["cgv_version"] = cgv_label or values.get("cgv_version", _quote_doc_text("terms_version_unspecified", language=language))
     block_values["terms_plain_pdf_html"] = terms_html
     local_html_keys = set(html_keys)
     local_html_keys.add("terms_plain_pdf_html")
@@ -2187,6 +2648,7 @@ def _build_template_values(
     lines: list[QuoteLine],
     audience: str = DEFAULT_AUDIENCE,
 ) -> tuple[dict[str, str], set[str], dict[str, Any]]:
+    language = _quote_doc_language(quote=quote)
     currency = (quote.currency or "EUR").upper()
     services, products, kits, adjustments, other_fees = _line_groups(lines)
     document_context = build_quote_document_context(db=db, quote=quote, lines=lines, audience=audience)
@@ -2246,12 +2708,16 @@ def _build_template_values(
     adjustment_effective_date = _birth_date_label(str(adjustment_data.get("effective_date") or ""))
     adjustment_label = str(adjustment_data.get("label") or "").strip()
     adjustment_type_label = (
-        "Avoir" if adjustment_type == "credit" else "Dette" if adjustment_type == "debt" else "Aucun"
+        _quote_doc_text("financial_adjustment_credit", language=language)
+        if adjustment_type == "credit"
+        else _quote_doc_text("financial_adjustment_debt", language=language)
+        if adjustment_type == "debt"
+        else _quote_doc_text("financial_adjustment_none", language=language)
     )
     adjustment_impact_label = (
-        "Deduit du total facture"
+        _quote_doc_text("financial_adjustment_credit_impact", language=language)
         if adjustment_type == "credit"
-        else "Ajoute au total facture"
+        else _quote_doc_text("financial_adjustment_debt_impact", language=language)
         if adjustment_type == "debt"
         else ""
     )
@@ -2278,15 +2744,15 @@ def _build_template_values(
     if adjustment_type == "none":
         financial_adjustment_block_html = ""
         financial_adjustment_section_html = ""
-        financial_adjustment_none_html = "<p>Aucun avoir ou dette applique.</p>"
+        financial_adjustment_none_html = f"<p>{escape(_quote_doc_text('financial_adjustment_none_html', language=language))}</p>"
         total_ttc_before_adjustment_html = ""
     else:
         adjustment_parts = [
             f"<p><strong>{escape(adjustment_display_title)}</strong> : {escape(_money(adjustment_amount, currency))}</p>",
-            f"<p><strong>Impact:</strong> {escape(adjustment_impact_label)}</p>",
+            f"<p><strong>{escape(_quote_doc_text('financial_impact', language=language))}:</strong> {escape(adjustment_impact_label)}</p>",
         ]
         if adjustment_effective_date and adjustment_effective_date != "-":
-            adjustment_parts.append(f"<p><strong>Date:</strong> {escape(adjustment_effective_date)}</p>")
+            adjustment_parts.append(f"<p><strong>{escape(_quote_doc_text('financial_adjustment_date', language=language))}:</strong> {escape(adjustment_effective_date)}</p>")
         normalized_adjustment_label = adjustment_label.strip().lower()
         normalized_type_label = adjustment_type_label.strip().lower()
         if (
@@ -2294,42 +2760,42 @@ def _build_template_values(
             and normalized_adjustment_label not in {"avoir", "dette"}
             and normalized_adjustment_label != normalized_type_label
         ):
-            adjustment_parts.append(f"<p><strong>Libelle:</strong> {escape(adjustment_label)}</p>")
+            adjustment_parts.append(f"<p><strong>{escape(_quote_doc_text('financial_label', language=language))}:</strong> {escape(adjustment_label)}</p>")
         financial_adjustment_block_html = "".join(adjustment_parts)
         # Keep this block content-only (no heading) so it can be safely inserted in WYSIWYG flows.
         financial_adjustment_section_html = financial_adjustment_block_html
         financial_adjustment_none_html = ""
         total_ttc_before_adjustment_html = (
-            f"<p><strong>Total TTC avant ajustement :</strong> {_decimal_str(total_before_adjustment)} {escape(currency)}</p>"
+            f"<p><strong>{escape(_quote_doc_text('financial_total_before_adjustment', language=language))} :</strong> {_decimal_str(total_before_adjustment)} {escape(currency)}</p>"
         )
     if adjustment_type == "none":
         financial_recap_rows: list[tuple[str, str]] = [
-            ("Total HT", f"{_decimal_str(total_ht_after_adjustment)} {currency}"),
-            (f"TVA ({_decimal_str(vat_rate)} %)", f"{_decimal_str(vat_amount_after_adjustment)} {currency}"),
-            ("Total TTC du devis", f"{_decimal_str(total_after_adjustment)} {currency}"),
+            (_quote_doc_text("financial_total_ht", language=language), f"{_decimal_str(total_ht_after_adjustment)} {currency}"),
+            (_quote_doc_text("financial_vat", language=language, rate=_decimal_str(vat_rate)), f"{_decimal_str(vat_amount_after_adjustment)} {currency}"),
+            (_quote_doc_text("financial_total_ttc_quote", language=language), f"{_decimal_str(total_after_adjustment)} {currency}"),
         ]
     else:
         financial_recap_rows = [
-            ("Total TTC avant ajustement", f"{_decimal_str(total_before_adjustment)} {currency}"),
+            (_quote_doc_text("financial_total_before_adjustment", language=language), f"{_decimal_str(total_before_adjustment)} {currency}"),
             (adjustment_display_title, f"{_decimal_str(adjustment_amount)} {currency}"),
-            ("Impact", adjustment_impact_label),
+            (_quote_doc_text("financial_impact", language=language), adjustment_impact_label),
         ]
         if adjustment_effective_date and adjustment_effective_date != "-":
-            financial_recap_rows.append(("Date ajustement", adjustment_effective_date))
+            financial_recap_rows.append((_quote_doc_text("financial_adjustment_date", language=language), adjustment_effective_date))
         financial_recap_rows.extend(
             [
-                ("Total HT facture", f"{_decimal_str(total_ht_after_adjustment)} {currency}"),
-                (f"TVA facture ({_decimal_str(vat_rate)} %)", f"{_decimal_str(vat_amount_after_adjustment)} {currency}"),
-                ("Total TTC du devis", f"{_decimal_str(total_after_adjustment)} {currency}"),
+                (_quote_doc_text("financial_total_ht_invoice", language=language), f"{_decimal_str(total_ht_after_adjustment)} {currency}"),
+                (_quote_doc_text("financial_vat_invoice", language=language, rate=_decimal_str(vat_rate)), f"{_decimal_str(vat_amount_after_adjustment)} {currency}"),
+                (_quote_doc_text("financial_total_ttc_quote", language=language), f"{_decimal_str(total_after_adjustment)} {currency}"),
             ]
         )
     if has_deposit:
         financial_recap_rows.extend(
             [
-                ("Acompte preinscription", f"{_decimal_str(deposit_amount_ttc)} {currency}"),
-                ("Reste a payer apres acompte", f"{_decimal_str(remaining_ttc_after_deposit)} {currency}"),
-                ("Total HT restant", f"{_decimal_str(remaining_ht_after_deposit)} {currency}"),
-                (f"TVA restante ({_decimal_str(vat_rate)} %)", f"{_decimal_str(remaining_vat_after_deposit)} {currency}"),
+                (_quote_doc_text("financial_deposit", language=language), f"{_decimal_str(deposit_amount_ttc)} {currency}"),
+                (_quote_doc_text("financial_remaining_after_deposit", language=language), f"{_decimal_str(remaining_ttc_after_deposit)} {currency}"),
+                (_quote_doc_text("financial_remaining_ht", language=language), f"{_decimal_str(remaining_ht_after_deposit)} {currency}"),
+                (_quote_doc_text("financial_remaining_vat", language=language, rate=_decimal_str(vat_rate)), f"{_decimal_str(remaining_vat_after_deposit)} {currency}"),
             ]
         )
 
@@ -2341,39 +2807,42 @@ def _build_template_values(
     )
     financial_recap_block_html = (
         "<div class='quote-block'>"
-        "<h2>Montant total du devis</h2>"
+        f"<h2>{escape(_quote_doc_text('financial_title', language=language))}</h2>"
         f"{financial_recap_lines_html}"
         "</div>"
     )
     if has_deposit:
         balance_due_text = ""
         if schedule and len(schedule) == 1 and remaining_ttc_after_deposit > Decimal("0.00"):
-            due_label = _schedule_due_label(schedule[0])
+            due_label = _schedule_due_label(schedule[0], language=language)
             item_method_label = str(schedule[0].get("payment_method") or document_context.get("payment_method_label") or "").strip()
-            if _is_bank_transfer_payment_method(item_method_label) and due_label == "à réception de votre facture":
-                balance_due_text = (
-                    f"Le solde de {_decimal_str(remaining_ttc_after_deposit)} {escape(currency)} sera à régler par virement bancaire "
-                    "à réception de votre facture, avant le démarrage des cours."
-                )
+            amount = f"{_decimal_str(remaining_ttc_after_deposit)} {currency}"
+            if _is_bank_transfer_payment_method(item_method_label) and due_label == _quote_doc_text("schedule_due_invoice", language=language):
+                balance_due_text = _quote_doc_text("deposit_balance_bank_due", language=language, amount=amount)
             else:
-                balance_due_text = (
-                    f"Le solde de {_decimal_str(remaining_ttc_after_deposit)} {escape(currency)} sera à régler {escape(due_label)}."
-                )
+                balance_due_text = _quote_doc_text("deposit_balance_due", language=language, amount=amount, due_label=due_label)
         elif remaining_ttc_after_deposit > Decimal("0.00"):
-            balance_due_text = "Le solde sera à régler selon l échéancier indiqué ci-dessous."
+            balance_due_text = _quote_doc_text("deposit_balance_schedule", language=language)
         deposit_block_html = (
-            "<p>Pour confirmer votre inscription et bloquer votre creneau, un acompte est requis dès validation du devis.</p>"
-            + (f"<p>{balance_due_text}</p>" if balance_due_text else "")
+            f"<p>{escape(_quote_doc_text('deposit_confirm', language=language))}</p>"
+            + (f"<p>{escape(balance_due_text)}</p>" if balance_due_text else "")
             +
-            f"<p><strong>Acompte a payer pour valider l inscription :</strong> {_decimal_str(deposit_amount_ttc)} {escape(currency)}</p>"
+            f"<p><strong>{escape(_quote_doc_text('deposit_amount_due', language=language))} :</strong> {_decimal_str(deposit_amount_ttc)} {escape(currency)}</p>"
         )
     else:
         deposit_block_html = ""
-    deposit_section_html = _section_html("Acompte preinscription", deposit_block_html)
-    deposit_none_html = "" if has_deposit else "<p>Aucun acompte preinscription.</p>"
+    deposit_section_html = _section_html(_quote_doc_text("deposit_section_title", language=language), deposit_block_html)
+    deposit_none_html = "" if has_deposit else f"<p>{escape(_quote_doc_text('deposit_none', language=language))}</p>"
 
     services_table_html = _table_html(
-        ["Activité", "Quantité", "Durée", "TVA", "PU TTC", "Montant TTC"],
+        [
+            _quote_doc_text("planning_activity", language=language),
+            _quote_doc_text("table_quantity", language=language),
+            _quote_doc_text("planning_duration", language=language),
+            _quote_doc_text("table_vat", language=language),
+            _quote_doc_text("table_unit_price_ttc", language=language),
+            _quote_doc_text("table_total_ttc", language=language),
+        ],
         [
             [
                 _harmonize_display_text(line.title or "-"),
@@ -2385,11 +2854,17 @@ def _build_template_values(
             ]
             for line in services
         ],
-        empty_label="Aucune activité.",
+        empty_label=_quote_doc_text("empty_activity", language=language),
     )
     product_long_descriptions = _product_long_descriptions_by_id(db=db, products=products)
     products_table_html = _table_html(
-        ["Matériel", "Quantité", "TVA", "PU TTC", "Montant TTC"],
+        [
+            _quote_doc_text("table_material", language=language),
+            _quote_doc_text("table_quantity", language=language),
+            _quote_doc_text("table_vat", language=language),
+            _quote_doc_text("table_unit_price_ttc", language=language),
+            _quote_doc_text("table_total_ttc", language=language),
+        ],
         [
             [
                 {
@@ -2412,12 +2887,18 @@ def _build_template_values(
             ]
             for line in products
         ],
-        empty_label="Aucun matériel.",
+        empty_label=_quote_doc_text("empty_material", language=language),
     )
     kit_long_descriptions = _kit_long_descriptions_by_id(db=db, kits=kits)
-    kit_composition = _kit_composition_by_id(db=db, kits=kits)
+    kit_composition = _kit_composition_by_id(db=db, kits=kits, language=language)
     kits_table_html = _table_html(
-        ["Kit", "Quantité", "TVA", "PU TTC", "Montant TTC"],
+        [
+            _quote_doc_text("table_kit", language=language),
+            _quote_doc_text("table_quantity", language=language),
+            _quote_doc_text("table_vat", language=language),
+            _quote_doc_text("table_unit_price_ttc", language=language),
+            _quote_doc_text("table_total_ttc", language=language),
+        ],
         [
             [
                 {
@@ -2431,7 +2912,7 @@ def _build_template_values(
                                 )
                             )
                         )
-                        + _kit_composition_html(kit_composition.get(line.kit_id, []))
+                        + _kit_composition_html(kit_composition.get(line.kit_id, []), language=language)
                     )
                 },
                 _compact_quantity_label(line.quantity),
@@ -2441,20 +2922,27 @@ def _build_template_values(
             ]
             for line in kits
         ],
-        empty_label="Aucun kit.",
+        empty_label=_quote_doc_text("empty_kit", language=language),
     )
     adjustments_table_html = _table_html(
-        ["Type", "Intitulé", "Quantité", "TVA", "PU TTC", "Montant TTC"],
+        [
+            _quote_doc_text("table_type", language=language),
+            _quote_doc_text("table_title", language=language),
+            _quote_doc_text("table_quantity", language=language),
+            _quote_doc_text("table_vat", language=language),
+            _quote_doc_text("table_unit_price_ttc", language=language),
+            _quote_doc_text("table_total_ttc", language=language),
+        ],
         [
             [
-                "Remise"
+                _quote_doc_text("fee_discount", language=language)
                 if (line.line_type or "").strip().lower() == "discount"
-                else "Supplément"
+                else _quote_doc_text("fee_surcharge", language=language)
                 if (line.line_type or "").strip().lower() == "surcharge"
                 else (
-                    "Remise"
+                    _quote_doc_text("fee_discount", language=language)
                     if (line.master_item_type or "").strip().lower() == "discount_rule"
-                    else "Supplément"
+                    else _quote_doc_text("fee_surcharge", language=language)
                 ),
                 _harmonize_display_text(line.title or "-"),
                 _compact_quantity_label(line.quantity),
@@ -2464,10 +2952,16 @@ def _build_template_values(
             ]
             for line in adjustments
         ],
-        empty_label="Aucune remise ni supplément.",
+        empty_label=_quote_doc_text("empty_adjustment", language=language),
     )
     other_fees_table_html = _table_html(
-        ["Intitulé", "Quantité", "TVA", "PU TTC", "Montant TTC"],
+        [
+            _quote_doc_text("table_title", language=language),
+            _quote_doc_text("table_quantity", language=language),
+            _quote_doc_text("table_vat", language=language),
+            _quote_doc_text("table_unit_price_ttc", language=language),
+            _quote_doc_text("table_total_ttc", language=language),
+        ],
         [
             [
                 _harmonize_display_text(line.title or "-"),
@@ -2478,17 +2972,28 @@ def _build_template_values(
             ]
             for line in other_fees
         ],
-        empty_label="Aucun autre frais.",
+        empty_label=_quote_doc_text("empty_other_fee", language=language),
     )
     lines_table_html = _table_html(
-        ["Catégorie", "Intitulé", "Quantité", "TVA", "PU TTC", "Montant TTC"],
+        [
+            _quote_doc_text("table_category", language=language),
+            _quote_doc_text("table_title", language=language),
+            _quote_doc_text("table_quantity", language=language),
+            _quote_doc_text("table_vat", language=language),
+            _quote_doc_text("table_unit_price_ttc", language=language),
+            _quote_doc_text("table_total_ttc", language=language),
+        ],
         [
             [
-                "Remise"
+                _quote_doc_text("fee_discount", language=language)
                 if (line.line_type or "").strip().lower() == "discount"
-                else "Supplément"
+                else _quote_doc_text("fee_surcharge", language=language)
                 if (line.line_type or "").strip().lower() == "surcharge"
-                else ("Service" if (line.line_category or "").lower() == "service" else ("Kit" if line.kit_id else "Matériel")),
+                else (
+                    _quote_doc_text("fee_service", language=language)
+                    if (line.line_category or "").lower() == "service"
+                    else (_quote_doc_text("fee_kit", language=language) if line.kit_id else _quote_doc_text("fee_material", language=language))
+                ),
                 _harmonize_display_text(line.title or "-"),
                 _compact_quantity_label(line.quantity),
                 f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
@@ -2497,7 +3002,7 @@ def _build_template_values(
             ]
             for line in lines
         ],
-        empty_label="Aucune ligne.",
+        empty_label=_quote_doc_text("empty_lines", language=language),
     )
 
     schedule = document_context["schedule"]
@@ -2508,6 +3013,7 @@ def _build_template_values(
         currency=currency,
         payment_method_label=str(document_context.get("payment_method_label") or _resolve_payment_method_label(quote=quote)),
         remaining_ttc_after_deposit=remaining_ttc_after_deposit,
+        language=language,
     )
     special_card_deposit_lines = _card_deposit_schedule_lines(
         schedule=schedule,
@@ -2516,21 +3022,27 @@ def _build_template_values(
         currency=currency,
         payment_method_label=str(document_context.get("payment_method_label") or _resolve_payment_method_label(quote=quote)),
         remaining_ttc_after_deposit=remaining_ttc_after_deposit,
+        language=language,
     )
     special_deposit_lines = special_bank_transfer_deposit_lines or special_card_deposit_lines
     payment_schedule_rows = [
         [
             str(item.get("label") or "-"),
             f"{item.get('amount_ttc', '-')}" + (f" {item.get('currency')}" if item.get("currency") else ""),
-            _schedule_due_label(item),
+            _schedule_due_label(item, language=language),
             str(item.get("payment_method") or "-"),
         ]
         for item in schedule
     ]
     payment_schedule_table_html = _table_html(
-        ["Échéance", "Montant", "Quand", "Type"],
+        [
+            _quote_doc_text("schedule_label", language=language),
+            _quote_doc_text("schedule_amount", language=language),
+            _quote_doc_text("schedule_when", language=language),
+            _quote_doc_text("schedule_type", language=language),
+        ],
         payment_schedule_rows,
-        empty_label="Aucun échéancier.",
+        empty_label=_quote_doc_text("schedule_empty", language=language),
     )
     if special_deposit_lines:
         payment_schedule_table_html = ""
@@ -2541,30 +3053,37 @@ def _build_template_values(
         elif compact_notice:
             payment_schedule_table_html = f"<p>{escape(compact_notice)}</p>"
         elif not schedule:
-            payment_schedule_table_html = "<p>Aucun échéancier.</p>"
+            payment_schedule_table_html = f"<p>{escape(_quote_doc_text('schedule_empty', language=language))}</p>"
         else:
             payment_schedule_table_html = ""
 
     sessions = [item for item in _json_list(_json_object(quote.calendar_snapshot).get("sessions")) if isinstance(item, dict)]
-    planning_blocks_table_html, _ = _planning_blocks_table_html(_json_object(quote.calendar_snapshot))
+    planning_blocks_table_html, _ = _planning_blocks_table_html(_json_object(quote.calendar_snapshot), language=language)
     calendar_sessions_table_html = _table_html(
-        ["Date", "Début", "Fin", "Durée", "Modalité"],
+        [
+            _quote_doc_text("calendar_date", language=language),
+            _quote_doc_text("calendar_start", language=language),
+            _quote_doc_text("calendar_end", language=language),
+            _quote_doc_text("planning_duration", language=language),
+            _quote_doc_text("calendar_modality", language=language),
+        ],
         [
             [
                 str(item.get("date") or "-"),
                 str(item.get("start_time") or item.get("start_at") or "-"),
                 str(item.get("end_time") or item.get("end_at") or "-"),
                 f"{item.get('duration_minutes')} min" if item.get("duration_minutes") is not None else "-",
-                str(item.get("modality") or "-"),
+                _modality_label(item.get("modality"), language=language) if str(item.get("modality") or "").strip() else "-",
             ]
             for item in sessions
         ],
-        empty_label="Aucun cours planifié.",
+        empty_label=_quote_doc_text("calendar_empty", language=language),
     )
-    calendar_table_html, calendar_activities_count = _calendar_visual_summary(sessions)
+    calendar_table_html, calendar_activities_count = _calendar_visual_summary(sessions, language=language)
     calendar_summary = _calendar_summary_text(
         session_count=len(sessions),
         activity_count=calendar_activities_count,
+        language=language,
     )
     special_bank_transfer_deposit_lines = _bank_transfer_deposit_schedule_lines(
         schedule=schedule,
@@ -2573,6 +3092,7 @@ def _build_template_values(
         currency=currency,
         payment_method_label=str(document_context.get("payment_method_label") or _resolve_payment_method_label(quote=quote)),
         remaining_ttc_after_deposit=remaining_ttc_after_deposit,
+        language=language,
     )
     payment_schedule_summary = (
         ""
@@ -2584,20 +3104,21 @@ def _build_template_values(
             currency=currency,
             payment_method_label=str(document_context.get("payment_method_label") or _resolve_payment_method_label(quote=quote)),
             remaining_ttc_after_deposit=remaining_ttc_after_deposit,
+            language=language,
         )
     )
 
     activities_planning_section_html = _section_html(
-        "Cours et options choisis",
+        _quote_doc_text("section_courses_options", language=language),
         planning_blocks_table_html,
     )
-    services_section_html = _section_html("Cours inclus dans le devis", services_table_html)
-    adjustments_section_html = _section_html("Remises appliquées", adjustments_table_html)
-    products_section_html = _section_html("Matériel pédagogique", products_table_html)
-    kits_section_html = _section_html("Frais et services inclus dans l’inscription", kits_table_html)
-    other_fees_section_html = _section_html("Autres frais", other_fees_table_html)
-    payment_schedule_section_html = _section_html("Échéancier de paiement", payment_schedule_table_html)
-    calendar_section_html = _section_html("Calendrier prévisionnel des cours", calendar_table_html)
+    services_section_html = _section_html(_quote_doc_text("section_services", language=language), services_table_html)
+    adjustments_section_html = _section_html(_quote_doc_text("section_adjustments", language=language), adjustments_table_html)
+    products_section_html = _section_html(_quote_doc_text("section_products", language=language), products_table_html)
+    kits_section_html = _section_html(_quote_doc_text("section_kits", language=language), kits_table_html)
+    other_fees_section_html = _section_html(_quote_doc_text("section_other_fees", language=language), other_fees_table_html)
+    payment_schedule_section_html = _section_html(_quote_doc_text("section_schedule", language=language), payment_schedule_table_html)
+    calendar_section_html = _section_html(_quote_doc_text("section_calendar", language=language), calendar_table_html)
 
     cgv_label, _ = _load_terms_template_content(db=db, quote=quote)
     prospect_data = document_context["prospect_data"]
@@ -2614,26 +3135,28 @@ def _build_template_values(
         or client_data.get("client_email")
         or "-"
     )
-    payment_method_label = str(document_context["payment_method_label"] or "Paiement non précisé")
+    payment_method_label = str(document_context["payment_method_label"] or _quote_doc_text("payment_method_unspecified", language=language))
     solfege_slot = _json_object(document_context.get("solfege_selected_slot"))
-    solfege_slot_label = _slot_label(solfege_slot) if solfege_slot else ""
+    solfege_slot_label = _slot_label(solfege_slot, language=language) if solfege_slot else ""
     solfege_duration = document_context.get("solfege_duration_minutes")
     solfege_duration_label = f" ({solfege_duration} min)" if solfege_duration else ""
     solfege_slot_suffix = f" · {solfege_slot_label}" if solfege_slot_label else ""
     solfege_available_slots = [
-        _sanitize_slot_label_text(item)
+        _sanitize_slot_label_text(item, language=language)
         for item in _json_list(document_context.get("solfege_available_slots"))
         if str(item).strip()
     ]
-    solfege_display_slots, solfege_mode_label = _factorize_slot_labels(solfege_available_slots)
-    solfege_full = (
-        f"Solfege souscrit - Niveau {document_context.get('solfege_level') or '-'}"
-        f"{solfege_duration_label}"
-        f"{solfege_slot_suffix}"
+    solfege_display_slots, solfege_mode_label = _factorize_slot_labels(solfege_available_slots, language=language)
+    solfege_full = _quote_doc_text(
+        "solfege_subscribed_summary",
+        language=language,
+        level=document_context.get("solfege_level") or "-",
+        duration=solfege_duration_label,
+        slot=solfege_slot_suffix,
     )
     show_solfege_pending_notice = bool(document_context.get("solfege_pending_selection")) and not solfege_slot_label
     masterclass_blocks = _json_list(document_context.get("masterclass_blocks"))
-    masterclass_full = "Masterclass du samedi souscrite."
+    masterclass_full = _quote_doc_text("masterclass_subscribed", language=language)
     if masterclass_blocks:
         labels: list[str] = []
         for block in masterclass_blocks[:3]:
@@ -2645,7 +3168,7 @@ def _build_template_values(
             if label:
                 labels.append(label)
         if labels:
-            masterclass_full = f"Masterclass du samedi souscrite - {'; '.join(labels)}"
+            masterclass_full = _quote_doc_text("masterclass_subscribed_with_slots", language=language, slots="; ".join(labels))
 
     def _identity_row_cells(label: str, value: str) -> str:
         normalized = str(value or "").strip()
@@ -2695,32 +3218,32 @@ def _build_template_values(
     responsible_address_value = str(parent_address_value or adult_address_value or "").strip()
 
     child_identity_card_html = _identity_card(
-        "Informations de l’élève",
+        _quote_doc_text("identity_child_title", language=language),
         [
-            _identity_row_cells("Élève", str(prospect_data.get("child_full_name") or "-")),
-            _identity_row_cells("Date de naissance", child_birth_date_value),
+            _identity_row_cells(_quote_doc_text("identity_child", language=language), str(prospect_data.get("child_full_name") or "-")),
+            _identity_row_cells(_quote_doc_text("identity_birth_date", language=language), child_birth_date_value),
         ],
-        "Élève",
+        _quote_doc_text("identity_child", language=language),
     )
     responsible_identity_card_html = _identity_card(
-        "Informations de l’adulte responsable",
+        _quote_doc_text("identity_adult_title", language=language),
         [
-            _identity_row_cells("Adulte responsable", responsible_name_value),
-            _identity_row_cells("Email", responsible_email_value),
-            _identity_row_cells("Téléphone", responsible_phone_value),
-            _identity_row_cells("Adresse", responsible_address_value),
+            _identity_row_cells(_quote_doc_text("identity_adult_contact", language=language), responsible_name_value),
+            _identity_row_cells(_quote_doc_text("identity_email", language=language), responsible_email_value),
+            _identity_row_cells(_quote_doc_text("identity_phone", language=language), responsible_phone_value),
+            _identity_row_cells(_quote_doc_text("identity_address", language=language), responsible_address_value),
         ],
-        "Adulte responsable",
+        _quote_doc_text("identity_adult_contact", language=language),
     )
     adult_identity_card_html = _identity_card(
-        "Informations de l’adulte responsable",
+        _quote_doc_text("identity_adult_title", language=language),
         [
-            _identity_row_cells("Adulte responsable", str(prospect_data.get("adult_full_name") or recipient_name or "-")),
-            _identity_row_cells("Email", str(adult_email_value or "")),
-            _identity_row_cells("Téléphone", adult_phone_value),
-            _identity_row_cells("Adresse", adult_address_value),
+            _identity_row_cells(_quote_doc_text("identity_adult_contact", language=language), str(prospect_data.get("adult_full_name") or recipient_name or "-")),
+            _identity_row_cells(_quote_doc_text("identity_email", language=language), str(adult_email_value or "")),
+            _identity_row_cells(_quote_doc_text("identity_phone", language=language), adult_phone_value),
+            _identity_row_cells(_quote_doc_text("identity_address", language=language), adult_address_value),
         ],
-        "Adulte responsable",
+        _quote_doc_text("identity_adult_contact", language=language),
     )
     prospect_identity_block_html = (
         "<div class='quote-identity-grid'>"
@@ -2731,56 +3254,45 @@ def _build_template_values(
     solfege_block_html = ""
     if show_solfege_pending_notice:
         solfege_lines = [
-            "<strong>Option solfège : incluse dans le présent devis.</strong>",
-            f"Niveau estimé : {escape(str(document_context.get('solfege_level') or '-'))}{escape(solfege_duration_label)}",
-            "Créneau retenu : à sélectionner",
+            f"<strong>{escape(_quote_doc_text('solfege_option_included', language=language))}</strong>",
+            f"{escape(_quote_doc_text('solfege_estimated_level', language=language))} : {escape(str(document_context.get('solfege_level') or '-'))}{escape(solfege_duration_label)}",
+            f"{escape(_quote_doc_text('solfege_slot_selected', language=language))} : {escape(_quote_doc_text('to_select', language=language))}",
         ]
         if solfege_display_slots:
-            solfege_lines.append(f"Créneaux disponibles : {escape(' ; '.join(solfege_display_slots))}")
+            solfege_lines.append(f"{escape(_quote_doc_text('solfege_slots_available', language=language))} : {escape(' ; '.join(solfege_display_slots))}")
         if solfege_mode_label:
             solfege_lines.append(escape(solfege_mode_label))
-        solfege_lines.append(escape(_solfege_included_pending_notice_text()))
+        solfege_lines.append(escape(_solfege_included_pending_notice_text(language=language)))
         solfege_block_html = "<p>" + "<br/>".join(solfege_lines) + "</p>"
     elif display_flags["showSolfegeSection"]:
-        solfege_block_html = f"<p><strong>Option solfège : incluse dans le présent devis.</strong><br/>{escape(solfege_full)}</p>"
-    masterclass_common_text = (
-        "Masterclass du samedi (complément aux 2 cours collectifs hebdomadaires) : une session de 3h dédiée à la "
-        "pratique au piano, avec un focus approfondi sur la musicalité et l’interprétation."
-    )
+        solfege_block_html = f"<p><strong>{escape(_quote_doc_text('solfege_option_included', language=language))}</strong><br/>{escape(solfege_full)}</p>"
+    masterclass_common_text = _quote_doc_text("masterclass_common_text", language=language)
     masterclass_detail_text = escape(masterclass_full) if masterclass_full else ""
     masterclass_block_html = (
-        "<p><strong>Option Masterclass du samedi : souscrite.</strong><br/>"
+        f"<p><strong>{escape(_quote_doc_text('masterclass_option_subscribed', language=language))}</strong><br/>"
         f"<i>{masterclass_detail_text}</i><br/>"
         f"<i>{escape(masterclass_common_text)}</i></p>"
         if display_flags["showMasterclassSection"]
         else ""
     )
-    pass_recup_common_text = (
-        "Le Pass Récup’ permet de rattraper un cours collectif manqué, dans la limite de 4 rattrapages par année "
-        "scolaire. Le rattrapage peut s’effectuer soit sur un cours collectif en présentiel, sous réserve de "
-        "disponibilité d’un créneau, soit sur un cours collectif en ligne, sur des créneaux dédiés. Le pass est "
-        "utilisable uniquement en cas d’absence signalée. Il est valable pour l’année scolaire en cours et n’est "
-        "pas remboursable. Sans souscription à ce pass, aucun rattrapage ne pourra être proposé, quelle que soit la "
-        "raison de l’absence."
-    )
+    pass_recup_common_text = _quote_doc_text("pass_recup_common_text", language=language)
     pass_recup_block_html = (
-        "<p><strong>Option Pass Récup : souscrite.</strong><br/>"
+        f"<p><strong>{escape(_quote_doc_text('pass_recup_option_subscribed', language=language))}</strong><br/>"
         f"<i>{escape(pass_recup_common_text)}</i></p>"
         if display_flags["showPassRecupSection"]
         else ""
     )
     pass_recup_compact_notice_html = (
-        "<p><strong>Option Pass Récup : non souscrite.</strong>"
+        f"<p><strong>{escape(_quote_doc_text('pass_recup_option_not_subscribed', language=language))}</strong>"
         "<br/><font size='10' color='#6b7280'><i>"
-        "Ce pass permet de rattraper un cours collectif manqué sur un créneau en présentiel "
-        "(si une place est disponible), ou à défaut, sur un créneau collectif en ligne dédié."
-        "<br/>&bull; Limité à 4 rattrapages par an"
+        f"{escape(_quote_doc_text('pass_recup_compact_text', language=language))}"
+        f"<br/>&bull; {escape(_quote_doc_text('pass_recup_compact_limit', language=language))}"
         "</i></font></p>"
         if display_flags["showPassRecupCompactNotice"]
         else ""
     )
     options_section_html = _section_html(
-        "Vos options",
+        _quote_doc_text("options_title", language=language),
         "".join(
             fragment
             for fragment in (solfege_block_html, masterclass_block_html, pass_recup_block_html, pass_recup_compact_notice_html)
@@ -2789,12 +3301,12 @@ def _build_template_values(
     )
     payment_instruction = str(document_context.get("payment_instruction") or "").strip()
     payment_method_display_label = payment_method_label.lower() if special_bank_transfer_deposit_lines else payment_method_label
-    payment_method_block_html = f"<p><strong>Mode de paiement :</strong> {escape(payment_method_display_label)}</p>"
+    payment_method_block_html = f"<p><strong>{escape(_quote_doc_text('payment_method', language=language))} :</strong> {escape(payment_method_display_label)}</p>"
     if special_deposit_lines:
         payment_method_block_html += "".join(f"<p>{escape(line)}</p>" for line in special_deposit_lines)
     if payment_instruction:
         payment_method_block_html = (
-            f"{payment_method_block_html}<p><strong>Consignes :</strong> {escape(payment_instruction)}</p>"
+            f"{payment_method_block_html}<p><strong>{escape(_quote_doc_text('payment_instructions', language=language))} :</strong> {escape(payment_instruction)}</p>"
         )
     quote_status_date_label, quote_status_date_value, quote_status_cover_line = _quote_status_date_display(quote)
 
@@ -2807,7 +3319,7 @@ def _build_template_values(
         "<span style='font-size:11px;font-weight:700;color:#111827;'>PIANO ACADEMIE</span>"
         "</td>"
         "<td width='32%' align='right' valign='middle' style='font-size:10px;color:#334155;'>"
-        f"<strong>Devis {escape(quote.quote_number or '-')}</strong>"
+        f"<strong>{escape(_quote_doc_text('cover_quote', language=language))} {escape(quote.quote_number or '-')}</strong>"
         "</td>"
         "</tr>"
         "</table>"
@@ -2815,12 +3327,12 @@ def _build_template_values(
     cover_page_standard_html = (
         "<section class='quote-cover'>"
         f"{cover_logo_html}"
-        "<h1 class='quote-cover-title'>Votre devis d’inscription</h1>"
-        f"<p class='quote-cover-subtitle'>Année scolaire {escape(quote.school_year_label or '-')}</p>"
+        f"<h1 class='quote-cover-title'>{escape(_quote_doc_text('cover_title', language=language))}</h1>"
+        f"<p class='quote-cover-subtitle'>{escape(_quote_doc_text('cover_school_year', language=language))} {escape(quote.school_year_label or '-')}</p>"
         f"<p class='quote-cover-name'>{escape(prospect_data.get('child_full_name') or recipient_name)}</p>"
         "<div class='quote-cover-meta'>"
-        f"<p>Type de prospect: {escape(str(prospect_data.get('prospect_type_label') or '-'))}</p>"
-        f"<p>Document généré le {escape(_datetime_label(_utcnow()))}</p>"
+        f"<p>{escape(_quote_doc_text('prospect_type', language=language))}: {escape(_quote_doc_text('prospect_type_child' if str(prospect_data.get('prospect_type') or '').lower() == 'child' else 'prospect_type_adult', language=language))}</p>"
+        f"<p>{escape(_quote_doc_text('generated_at', language=language))} {escape(_datetime_label(_utcnow()))}</p>"
         f"<p>{escape(quote_status_cover_line)}</p>"
         "</div>"
         "</section>"
@@ -2828,6 +3340,17 @@ def _build_template_values(
     )
 
     values: dict[str, str] = {
+        "cover_title": _quote_doc_text("cover_title", language=language),
+        "cover_quote": _quote_doc_text("cover_quote", language=language),
+        "cover_school_year": _quote_doc_text("cover_school_year", language=language),
+        "cover_student": _quote_doc_text("cover_student", language=language),
+        "quote_recipient": _quote_doc_text("quote_recipient", language=language),
+        "identity_title": _quote_doc_text("identity_title", language=language),
+        "section_courses_options": _quote_doc_text("section_courses_options", language=language),
+        "payment_title": _quote_doc_text("payment_title", language=language),
+        "calendar_title": _quote_doc_text("calendar_title", language=language),
+        "calendar_overview_label": _quote_doc_text("calendar_overview", language=language, summary="").split(":", 1)[0].strip(),
+        "terms_title": _quote_doc_text("terms_title", language=language),
         "quote_number": quote.quote_number or "-",
         "recipient_name": recipient_name,
         "recipient_email": recipient_email,
@@ -2904,7 +3427,7 @@ def _build_template_values(
             "</tr>"
             "</table>"
         ),
-        "cgv_version": cgv_label or "-",
+        "cgv_version": cgv_label or _quote_doc_text("terms_version_unspecified", language=language),
         "services_count": str(len(services)),
         "products_count": str(len(products)),
         "kits_count": str(len(kits)),
@@ -2945,6 +3468,10 @@ def _build_template_values(
         "show_payment_schedule_detailed": "true" if display_flags["showPaymentScheduleDetailed"] else "false",
     }
     values.update(prospect_data)
+    values["prospect_type_label"] = _quote_doc_text(
+        "prospect_type_child" if str(prospect_data.get("prospect_type") or "").lower() == "child" else "prospect_type_adult",
+        language=language,
+    )
     values.update(client_data)
 
     html_keys = {
@@ -3008,12 +3535,12 @@ def _default_quote_body_template() -> str:
         "{document_style_html}"
         "{cover_page_standard_html}"
         "{header_standard_html}"
-        "<h1>Devis {quote_number}</h1>"
-        "<p><strong>Destinataire:</strong> {recipient_name}</p>"
-        "<p><strong>Année scolaire:</strong> {school_year_label}</p>"
+        "<h1>{cover_quote} {quote_number}</h1>"
+        "<p><strong>{quote_recipient}:</strong> {recipient_name}</p>"
+        "<p><strong>{cover_school_year}:</strong> {school_year_label}</p>"
         "<p><strong>{quote_status_date_label}:</strong> {quote_status_date_value}</p>"
         "{page_break_html}"
-        "<h2>Informations de l’élève et du responsable</h2>"
+        "<h2>{identity_title}</h2>"
         "<div class='quote-block'>"
         "{prospect_identity_block_html}"
         "</div>"
@@ -3025,14 +3552,14 @@ def _default_quote_body_template() -> str:
         "{other_fees_section_html}"
         "{deposit_section_html}"
         "{financial_recap_block_html}"
-        "<h2>Règlement et échéancier</h2>"
+        "<h2>{payment_title}</h2>"
         "{payment_method_block_html}"
         "<p>{payment_schedule_summary}</p>"
         "{payment_schedule_table_html}"
         "{financial_adjustment_section_html}"
         "{options_section_html}"
-        "<h2>Calendrier prévisionnel des cours</h2>"
-        "<p><strong>Vue d’ensemble du calendrier :</strong> {calendar_summary}</p>"
+        "<h2>{calendar_title}</h2>"
+        "<p><strong>{calendar_overview_label} :</strong> {calendar_summary}</p>"
         "{calendar_activity_semesters_html}"
         "{footer_standard_html}"
     )
@@ -3141,7 +3668,7 @@ def _render_quote_body_html(
         )
     if not str(values.get("options_section_html") or "").strip():
         rendered = re.sub(
-            r"<h[1-6]\b[^>]*>\s*Vos\s+options\s*</h[1-6]>\s*",
+            r"<h[1-6]\b[^>]*>\s*(?:Vos\s+options|Your\s+options)\s*</h[1-6]>\s*",
             "",
             rendered,
             flags=re.IGNORECASE,
@@ -3162,6 +3689,7 @@ def _render_quote_terms_html(
     audience: str = DEFAULT_AUDIENCE,
 ) -> str:
     cgv_label, cgv_content = _load_terms_template_content(db=db, quote=quote)
+    language = _quote_doc_language(quote=quote)
     values, html_keys, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     rendered_terms = _render_terms_content_html(content=cgv_content, values=values, html_keys=html_keys)
     header_html = values.get("header_standard_html", "")
@@ -3169,10 +3697,10 @@ def _render_quote_terms_html(
     return (
         "<section>"
         f"{header_html}"
-        "<h2 class='quote-terms-title'>Conditions d’inscription 2026–2027</h2>"
+        f"<h2 class='quote-terms-title'>{escape(_quote_doc_text('terms_title', language=language))}</h2>"
         "<div class='quote-block'>"
-        f"<p><strong>{escape(cgv_label or 'Version non précisée')}</strong></p>"
-        f"{_as_html_fragment(rendered_terms or 'Aucune CGV snapshotée.')}"
+        f"<p><strong>{escape(cgv_label or _quote_doc_text('terms_version_unspecified', language=language))}</strong></p>"
+        f"{_as_html_fragment(rendered_terms or _quote_doc_text('terms_snapshot_empty', language=language))}"
         "</div>"
         f"{footer_html}"
         "</section>"
@@ -3462,10 +3990,10 @@ def _table_for_pdf(
     return table
 
 
-def _terms_lines_for_pdf(content: str, *, values: dict[str, str]) -> list[str]:
+def _terms_lines_for_pdf(content: str, *, values: dict[str, str], language: str | None = None) -> list[str]:
     normalized = _normalize_template_source(content or "")
     if not normalized:
-        return ["Aucune condition générale."]
+        return [_quote_doc_text("terms_empty", language=language)]
     substituted = _apply_template(normalized, values=values, html_keys=set(), html_output=False)
     raw = str(substituted or "")
     raw = re.sub(r"(?is)<(style|script)[^>]*>.*?</\1>", "", raw)
@@ -3478,7 +4006,7 @@ def _terms_lines_for_pdf(content: str, *, values: dict[str, str]) -> list[str]:
     raw = raw.replace("\r", "")
     raw = re.sub(r"\n{3,}", "\n\n", raw)
     lines = [line.strip() for line in raw.split("\n") if line.strip()]
-    return lines or ["Aucune condition générale."]
+    return lines or [_quote_doc_text("terms_empty", language=language)]
 
 
 _TERMS_RENDER_BLOCK_KEYS = {
@@ -3768,14 +4296,15 @@ def _terms_flowables_for_pdf(
     values: dict[str, str],
     html_keys: set[str],
     styles: dict[str, ParagraphStyle],
+    language: str | None = None,
 ) -> list[Paragraph]:
     rendered_terms = _render_terms_content_html(content=content, values=values, html_keys=html_keys)
     if not rendered_terms:
-        return [Paragraph("Aucune condition générale.", styles["text"])]
+        return [Paragraph(escape(_quote_doc_text("terms_empty", language=language)), styles["text"])]
     parser = _ReportLabTermsParser()
     parser.feed(rendered_terms)
     parser.close()
-    blocks = parser.blocks or [("text", "Aucune condition générale.")]
+    blocks = parser.blocks or [("text", escape(_quote_doc_text("terms_empty", language=language)))]
     return [Paragraph(markup, styles.get(style_name, styles["text"])) for style_name, markup in blocks]
 
 
@@ -3784,6 +4313,7 @@ def _draw_quote_pdf_header_footer(
     doc: SimpleDocTemplate,
     *,
     quote_number: str,
+    quote_label: str,
     logo_reader: ImageReader | None,
 ) -> None:
     canvas_obj.saveState()
@@ -3818,7 +4348,7 @@ def _draw_quote_pdf_header_footer(
     canvas_obj.setFillColor(colors.HexColor("#0f172a"))
     if logo_reader is None:
         canvas_obj.drawString(left_x, title_baseline_y, "PIANO ACADEMIE")
-    canvas_obj.drawRightString(right_x, title_baseline_y, f"Devis {quote_number or '-'}")
+    canvas_obj.drawRightString(right_x, title_baseline_y, f"{quote_label} {quote_number or '-'}")
     canvas_obj.setStrokeColor(colors.HexColor("#cfd8e6"))
     canvas_obj.setLineWidth(0.8)
     canvas_obj.line(left_x, header_rule_y, right_x, header_rule_y)
@@ -3845,6 +4375,7 @@ def _render_quote_pdf_blocks(
     lines: list[QuoteLine],
     audience: str,
 ) -> bytes:
+    language = _quote_doc_language(quote=quote)
     values, html_keys, context = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     prospect_data = context.get("prospect_data", {})
     calendar_snapshot = _json_object(quote.calendar_snapshot)
@@ -3853,11 +4384,11 @@ def _render_quote_pdf_blocks(
     services, products, kits, adjustments, other_fees = _line_groups(lines)
     product_long_descriptions = _product_long_descriptions_by_id(db=db, products=products)
     kit_long_descriptions = _kit_long_descriptions_by_id(db=db, kits=kits)
-    kit_composition = _kit_composition_by_id(db=db, kits=kits)
+    kit_composition = _kit_composition_by_id(db=db, kits=kits, language=language)
     cgv_label, cgv_content = _load_terms_template_content(db=db, quote=quote)
     schedule = [item for item in _json_list(context.get("schedule")) if isinstance(item, dict)]
     styles = _quote_pdf_styles()
-    terms_flowables = _terms_flowables_for_pdf(cgv_content, values=values, html_keys=html_keys, styles=styles)
+    terms_flowables = _terms_flowables_for_pdf(cgv_content, values=values, html_keys=html_keys, styles=styles, language=language)
     logo_reader = _safe_logo_reader(_account_logo_data_url(db=db))
 
     buffer = io.BytesIO()
@@ -3868,50 +4399,50 @@ def _render_quote_pdf_blocks(
         rightMargin=18 * mm,
         topMargin=30 * mm,
         bottomMargin=24 * mm,
-        title=f"Devis {quote.quote_number or '-'}",
+        title=f"{_quote_doc_text('cover_quote', language=language)} {quote.quote_number or '-'}",
         author="Piano Academie",
     )
     content_width = A4[0] - doc.leftMargin - doc.rightMargin
     story: list[Any] = []
 
     story.append(Spacer(1, 18 * mm))
-    story.append(Paragraph("Votre devis d’inscription", styles["cover_title"]))
-    story.append(Paragraph(f"Devis : {escape(values.get('quote_number', '-'))}", styles["cover_subtitle"]))
-    story.append(Paragraph(f"Année scolaire : {escape(values.get('school_year_label', '-'))}", styles["cover_subtitle"]))
+    story.append(Paragraph(_quote_doc_text("cover_title", language=language), styles["cover_title"]))
+    story.append(Paragraph(f"{_quote_doc_text('cover_quote', language=language)} : {escape(values.get('quote_number', '-'))}", styles["cover_subtitle"]))
+    story.append(Paragraph(f"{_quote_doc_text('cover_school_year', language=language)} : {escape(values.get('school_year_label', '-'))}", styles["cover_subtitle"]))
     story.append(
         Paragraph(
-            f"{escape(values.get('quote_status_date_label', 'Validité'))} : {escape(values.get('quote_status_date_value', values.get('expires_at', '-')))}",
+            f"{escape(values.get('quote_status_date_label', _quote_doc_text('quote_status_validity', language=language)))} : {escape(values.get('quote_status_date_value', values.get('expires_at', '-')))}",
             styles["cover_subtitle"],
         )
     )
     story.append(
         Paragraph(
-            f"Élève : {escape(prospect_data.get('child_full_name') or values.get('recipient_name', '-'))}",
+            f"{_quote_doc_text('cover_student', language=language)} : {escape(prospect_data.get('child_full_name') or values.get('recipient_name', '-'))}",
             styles["cover_subtitle"],
         )
     )
     story.append(PageBreak())
 
-    story.append(Paragraph("Informations de l’élève et du responsable", styles["h1"]))
+    story.append(Paragraph(_quote_doc_text("identity_title", language=language), styles["h1"]))
     identity_rows: list[list[str]] = []
     if str(prospect_data.get("prospect_type") or "").lower() == "child":
         identity_rows.extend(
             [
-                ["Élève", str(prospect_data.get("child_full_name") or "-")],
-                ["Date de naissance", _birth_date_label(str(prospect_data.get("child_birth_date") or ""))],
-                ["Adulte responsable", str(prospect_data.get("parent_full_name") or "-")],
-                ["Email adulte responsable", str(prospect_data.get("parent_email") or values.get("recipient_email") or "-")],
-                ["Téléphone adulte responsable", str(prospect_data.get("parent_phone") or "-")],
-                ["Adresse adulte responsable", str(prospect_data.get("parent_address") or "-")],
+                [_quote_doc_text("identity_child", language=language), str(prospect_data.get("child_full_name") or "-")],
+                [_quote_doc_text("identity_birth_date", language=language), _birth_date_label(str(prospect_data.get("child_birth_date") or ""))],
+                [_quote_doc_text("identity_adult_contact", language=language), str(prospect_data.get("parent_full_name") or "-")],
+                [_quote_doc_text("identity_adult_contact_email", language=language), str(prospect_data.get("parent_email") or values.get("recipient_email") or "-")],
+                [_quote_doc_text("identity_adult_contact_phone", language=language), str(prospect_data.get("parent_phone") or "-")],
+                [_quote_doc_text("identity_adult_contact_address", language=language), str(prospect_data.get("parent_address") or "-")],
             ]
         )
     else:
         identity_rows.extend(
             [
-                ["Adulte responsable", str(prospect_data.get("adult_full_name") or values.get("recipient_name") or "-")],
-                ["Email", str(prospect_data.get("adult_email") or values.get("recipient_email") or "-")],
-                ["Téléphone", str(prospect_data.get("adult_phone") or "-")],
-                ["Adresse", str(prospect_data.get("adult_address") or "-")],
+                [_quote_doc_text("identity_adult_contact", language=language), str(prospect_data.get("adult_full_name") or values.get("recipient_name") or "-")],
+                [_quote_doc_text("identity_email", language=language), str(prospect_data.get("adult_email") or values.get("recipient_email") or "-")],
+                [_quote_doc_text("identity_phone", language=language), str(prospect_data.get("adult_phone") or "-")],
+                [_quote_doc_text("identity_address", language=language), str(prospect_data.get("adult_address") or "-")],
             ]
         )
     story.append(
@@ -3926,12 +4457,12 @@ def _render_quote_pdf_blocks(
     story.append(Spacer(1, 5))
     story.append(PageBreak())
 
-    story.append(Paragraph("Cours et options choisis", styles["h1"]))
+    story.append(Paragraph(_quote_doc_text("section_courses_options", language=language), styles["h1"]))
     planning_rows: list[list[str]] = []
     for block in planning_blocks:
         activity = _harmonize_display_text(str(block.get("activity_label") or "-"))
         location = str(block.get("location_label") or "-")
-        day = str(block.get("weekday_label") or _weekday_label(block.get("weekday")) or "-")
+        day = str(block.get("weekday_label") or _weekday_label(block.get("weekday"), language=language) or "-")
         start = str(block.get("start_time") or "").strip()
         end = str(block.get("end_time") or "").strip()
         time_range = f"{start} - {end}" if start and end else "-"
@@ -3946,11 +4477,17 @@ def _render_quote_pdf_blocks(
             weekday_value = -99
         selection_pending = bool(block.get("selection_pending")) or weekday_value == -1
         if selection_pending:
-            activity, day, time_range, duration = _pending_planning_block_display(block)
+            activity, day, time_range, duration = _pending_planning_block_display(block, language=language)
         planning_rows.append([activity, location, day, time_range, duration])
     story.append(
         _table_for_pdf(
-            ["Activité", "Lieu", "Jour", "Horaire", "Durée"],
+            [
+                _quote_doc_text("planning_activity", language=language),
+                _quote_doc_text("planning_location", language=language),
+                _quote_doc_text("planning_day", language=language),
+                _quote_doc_text("planning_time", language=language),
+                _quote_doc_text("planning_duration", language=language),
+            ],
             planning_rows,
             width=content_width,
             styles=styles,
@@ -3959,7 +4496,7 @@ def _render_quote_pdf_blocks(
     )
 
     story.append(Spacer(1, 6))
-    story.append(Paragraph("Cours inclus dans le devis", styles["h2"]))
+    story.append(Paragraph(_quote_doc_text("section_services", language=language), styles["h2"]))
     service_rows = [
         [
             _harmonize_display_text(line.title or "-"),
@@ -3973,7 +4510,14 @@ def _render_quote_pdf_blocks(
     ]
     story.append(
         _table_for_pdf(
-            ["Activité", "Quantité", "Durée", "TVA", "PU TTC", "Montant TTC"],
+            [
+                _quote_doc_text("planning_activity", language=language),
+                _quote_doc_text("table_quantity", language=language),
+                _quote_doc_text("planning_duration", language=language),
+                _quote_doc_text("table_vat", language=language),
+                _quote_doc_text("table_unit_price_ttc", language=language),
+                _quote_doc_text("table_total_ttc", language=language),
+            ],
             service_rows,
             width=content_width,
             styles=styles,
@@ -3983,14 +4527,14 @@ def _render_quote_pdf_blocks(
 
     adjustment_rows = [
         [
-            "Remise"
+            _quote_doc_text("fee_discount", language=language)
             if (line.line_type or "").strip().lower() == "discount"
-            else "Supplément"
+            else _quote_doc_text("fee_surcharge", language=language)
             if (line.line_type or "").strip().lower() == "surcharge"
             else (
-                "Remise"
+                _quote_doc_text("fee_discount", language=language)
                 if (line.master_item_type or "").strip().lower() == "discount_rule"
-                else "Supplément"
+                else _quote_doc_text("fee_surcharge", language=language)
             ),
             _harmonize_display_text(line.title or "-"),
             _compact_quantity_label(line.quantity),
@@ -4002,10 +4546,17 @@ def _render_quote_pdf_blocks(
     ]
     if adjustment_rows:
         story.append(Spacer(1, 6))
-        story.append(Paragraph("Remises appliquées", styles["h2"]))
+        story.append(Paragraph(_quote_doc_text("section_adjustments", language=language), styles["h2"]))
         story.append(
             _table_for_pdf(
-                ["Type", "Intitulé", "Quantité", "TVA", "PU TTC", "Montant TTC"],
+                [
+                    _quote_doc_text("table_type", language=language),
+                    _quote_doc_text("table_title", language=language),
+                    _quote_doc_text("table_quantity", language=language),
+                    _quote_doc_text("table_vat", language=language),
+                    _quote_doc_text("table_unit_price_ttc", language=language),
+                    _quote_doc_text("table_total_ttc", language=language),
+                ],
                 adjustment_rows,
                 width=content_width,
                 styles=styles,
@@ -4037,10 +4588,16 @@ def _render_quote_pdf_blocks(
     ]
     if product_rows:
         story.append(Spacer(1, 6))
-        story.append(Paragraph("Matériel pédagogique", styles["h2"]))
+        story.append(Paragraph(_quote_doc_text("section_products", language=language), styles["h2"]))
         story.append(
             _table_for_pdf(
-                ["Matériel", "Quantité", "TVA", "PU TTC", "Montant TTC"],
+                [
+                    _quote_doc_text("table_material", language=language),
+                    _quote_doc_text("table_quantity", language=language),
+                    _quote_doc_text("table_vat", language=language),
+                    _quote_doc_text("table_unit_price_ttc", language=language),
+                    _quote_doc_text("table_total_ttc", language=language),
+                ],
                 product_rows,
                 width=content_width,
                 styles=styles,
@@ -4061,7 +4618,7 @@ def _render_quote_pdf_blocks(
                             else ""
                         ),
                         (
-                            "Comprend :\n" + "\n".join(kit_composition.get(line.kit_id, []))
+                            f"{_quote_doc_text('kit_includes', language=language)} :\n" + "\n".join(kit_composition.get(line.kit_id, []))
                             if line.kit_id is not None and kit_composition.get(line.kit_id)
                             else ""
                         ),
@@ -4077,10 +4634,16 @@ def _render_quote_pdf_blocks(
     ]
     if kit_rows:
         story.append(Spacer(1, 6))
-        story.append(Paragraph("Frais et services inclus dans l’inscription", styles["h2"]))
+        story.append(Paragraph(_quote_doc_text("section_kits", language=language), styles["h2"]))
         story.append(
             _table_for_pdf(
-                ["Kit", "Quantité", "TVA", "PU TTC", "Montant TTC"],
+                [
+                    _quote_doc_text("table_kit", language=language),
+                    _quote_doc_text("table_quantity", language=language),
+                    _quote_doc_text("table_vat", language=language),
+                    _quote_doc_text("table_unit_price_ttc", language=language),
+                    _quote_doc_text("table_total_ttc", language=language),
+                ],
                 kit_rows,
                 width=content_width,
                 styles=styles,
@@ -4100,10 +4663,16 @@ def _render_quote_pdf_blocks(
     ]
     if other_fee_rows:
         story.append(Spacer(1, 6))
-        story.append(Paragraph("Autres frais", styles["h2"]))
+        story.append(Paragraph(_quote_doc_text("section_other_fees", language=language), styles["h2"]))
         story.append(
             _table_for_pdf(
-                ["Intitulé", "Quantité", "TVA", "PU TTC", "Montant TTC"],
+                [
+                    _quote_doc_text("table_title", language=language),
+                    _quote_doc_text("table_quantity", language=language),
+                    _quote_doc_text("table_vat", language=language),
+                    _quote_doc_text("table_unit_price_ttc", language=language),
+                    _quote_doc_text("table_total_ttc", language=language),
+                ],
                 other_fee_rows,
                 width=content_width,
                 styles=styles,
@@ -4112,22 +4681,22 @@ def _render_quote_pdf_blocks(
         )
 
     story.append(PageBreak())
-    story.append(Paragraph("Montant total du devis", styles["h2"]))
+    story.append(Paragraph(_quote_doc_text("financial_title", language=language), styles["h2"]))
     financial_rows: list[list[str]] = []
     if values.get("has_financial_adjustment") == "true":
-        financial_rows.append(["Total TTC avant ajustement", f"{values.get('total_ttc_before_adjustment', '0,00')} {values.get('currency', 'EUR')}"])
-        financial_rows.append([values.get("financial_adjustment_type_label", "Ajustement"), f"{values.get('financial_adjustment_amount_ttc', '0,00')} {values.get('currency', 'EUR')}"])
-        financial_rows.append(["Impact", values.get("financial_adjustment_impact_label", "-")])
+        financial_rows.append([_quote_doc_text("financial_total_before_adjustment", language=language), f"{values.get('total_ttc_before_adjustment', '0,00')} {values.get('currency', 'EUR')}"])
+        financial_rows.append([values.get("financial_adjustment_type_label", _quote_doc_text("financial_adjustment", language=language)), f"{values.get('financial_adjustment_amount_ttc', '0,00')} {values.get('currency', 'EUR')}"])
+        financial_rows.append([_quote_doc_text("financial_impact", language=language), values.get("financial_adjustment_impact_label", "-")])
         effective_date = values.get("financial_adjustment_effective_date", "")
         if effective_date and effective_date != "-":
-            financial_rows.append(["Date ajustement", effective_date])
-        financial_rows.append(["Total HT facture", f"{values.get('total_ht_after_adjustment', values.get('total_ht', '0,00'))} {values.get('currency', 'EUR')}"])
-        financial_rows.append([f"TVA facture ({values.get('vat_rate', '0,00')} %)", f"{values.get('vat_amount_after_adjustment', values.get('vat_amount', '0,00'))} {values.get('currency', 'EUR')}"])
-        financial_rows.append(["Total TTC du devis", f"{values.get('total_ttc_after_adjustment', values.get('total_ttc', '0,00'))} {values.get('currency', 'EUR')}"])
+            financial_rows.append([_quote_doc_text("financial_adjustment_date", language=language), effective_date])
+        financial_rows.append([_quote_doc_text("financial_total_ht_invoice", language=language), f"{values.get('total_ht_after_adjustment', values.get('total_ht', '0,00'))} {values.get('currency', 'EUR')}"])
+        financial_rows.append([_quote_doc_text("financial_vat_invoice", language=language, rate=values.get('vat_rate', '0,00')), f"{values.get('vat_amount_after_adjustment', values.get('vat_amount', '0,00'))} {values.get('currency', 'EUR')}"])
+        financial_rows.append([_quote_doc_text("financial_total_ttc_quote", language=language), f"{values.get('total_ttc_after_adjustment', values.get('total_ttc', '0,00'))} {values.get('currency', 'EUR')}"])
     else:
-        financial_rows.append(["Total HT", f"{values.get('total_ht', '0,00')} {values.get('currency', 'EUR')}"])
-        financial_rows.append([f"TVA ({values.get('vat_rate', '0,00')} %)", f"{values.get('vat_amount', '0,00')} {values.get('currency', 'EUR')}"])
-        financial_rows.append(["Total TTC du devis", f"{values.get('total_ttc', '0,00')} {values.get('currency', 'EUR')}"])
+        financial_rows.append([_quote_doc_text("financial_total_ht", language=language), f"{values.get('total_ht', '0,00')} {values.get('currency', 'EUR')}"])
+        financial_rows.append([_quote_doc_text("financial_vat", language=language, rate=values.get('vat_rate', '0,00')), f"{values.get('vat_amount', '0,00')} {values.get('currency', 'EUR')}"])
+        financial_rows.append([_quote_doc_text("financial_total_ttc_quote", language=language), f"{values.get('total_ttc', '0,00')} {values.get('currency', 'EUR')}"])
     story.append(
         _table_for_pdf(
             ["", ""],
@@ -4139,7 +4708,7 @@ def _render_quote_pdf_blocks(
     )
 
     story.append(Spacer(1, 8))
-    story.append(Paragraph("Règlement et échéancier", styles["h1"]))
+    story.append(Paragraph(_quote_doc_text("payment_title", language=language), styles["h1"]))
     special_bank_transfer_deposit_lines = _bank_transfer_deposit_schedule_lines(
         schedule=schedule,
         has_deposit=bool(context.get("deposit_enabled")),
@@ -4147,6 +4716,7 @@ def _render_quote_pdf_blocks(
         currency=str(values.get("currency") or "EUR"),
         payment_method_label=str(values.get("payment_method_label") or "-"),
         remaining_ttc_after_deposit=_decimal_from_any(context.get("remaining_ttc_after_deposit"), Decimal("0.00")),
+        language=language,
     )
     special_card_deposit_lines = _card_deposit_schedule_lines(
         schedule=schedule,
@@ -4155,6 +4725,7 @@ def _render_quote_pdf_blocks(
         currency=str(values.get("currency") or "EUR"),
         payment_method_label=str(values.get("payment_method_label") or "-"),
         remaining_ttc_after_deposit=_decimal_from_any(context.get("remaining_ttc_after_deposit"), Decimal("0.00")),
+        language=language,
     )
     special_deposit_lines = special_bank_transfer_deposit_lines or special_card_deposit_lines
     payment_method_display_label = (
@@ -4162,25 +4733,30 @@ def _render_quote_pdf_blocks(
         if special_bank_transfer_deposit_lines
         else str(values.get("payment_method_label", "-"))
     )
-    story.append(Paragraph(f"Mode de paiement : {escape(payment_method_display_label)}", styles["text"]))
+    story.append(Paragraph(f"{_quote_doc_text('payment_method', language=language)} : {escape(payment_method_display_label)}", styles["text"]))
     if special_deposit_lines:
         for line in special_deposit_lines:
             story.append(Paragraph(escape(line), styles["text"]))
     else:
-        story.append(Paragraph(escape(values.get("payment_schedule_summary", "Paiement non planifié")), styles["text"]))
+        story.append(Paragraph(escape(values.get("payment_schedule_summary", _quote_doc_text("payment_not_scheduled", language=language))), styles["text"]))
     if not special_deposit_lines and len(schedule) > 1:
         schedule_rows = [
             [
                 str(item.get("label") or "-"),
                 f"{item.get('amount_ttc', '-')}" + (f" {item.get('currency')}" if item.get("currency") else ""),
-                _schedule_due_label(item),
+                _schedule_due_label(item, language=language),
                 str(item.get("payment_method") or "-"),
             ]
             for item in schedule
         ]
         story.append(
             _table_for_pdf(
-                ["Échéance", "Montant", "Quand", "Type"],
+                [
+                    _quote_doc_text("schedule_label", language=language),
+                    _quote_doc_text("schedule_amount", language=language),
+                    _quote_doc_text("schedule_when", language=language),
+                    _quote_doc_text("schedule_type", language=language),
+                ],
                 schedule_rows,
                 width=content_width,
                 styles=styles,
@@ -4196,48 +4772,55 @@ def _render_quote_pdf_blocks(
     option_blocks = [block.strip() for block in option_blocks if str(block or "").strip()]
     if option_blocks:
         story.append(Spacer(1, 6))
-        story.append(Paragraph("Vos options", styles["h2"]))
+        story.append(Paragraph(_quote_doc_text("options_title", language=language), styles["h2"]))
         for block_html in option_blocks:
             story.append(Paragraph(block_html, styles["text"]))
 
     story.append(PageBreak())
-    story.append(Paragraph("Calendrier prévisionnel des cours", styles["h1"]))
-    story.append(Paragraph(f"Vue d’ensemble du calendrier : {escape(values.get('calendar_summary', '-'))}", styles["text"]))
+    story.append(Paragraph(_quote_doc_text("calendar_title", language=language), styles["h1"]))
+    story.append(Paragraph(_quote_doc_text("calendar_overview", language=language, summary=escape(values.get('calendar_summary', '-'))), styles["text"]))
     grouped: dict[str, dict[tuple[int, int], set[int]]] = {}
     for session in sessions:
         parsed = _session_date_parts(session.get("date"))
         if parsed is None:
             continue
         year, month, day = parsed
-        activity_label = str(session.get("activity_label") or "").strip() or "Cours"
+        activity_label = str(session.get("activity_label") or "").strip() or _quote_doc_text("calendar_heading_default", language=language, index=1)
         location_label = str(session.get("location_label") or "").strip()
         title = f"{activity_label} · {location_label}" if location_label else activity_label
         grouped.setdefault(title, {}).setdefault((year, month), set()).add(day)
     for idx, title in enumerate(sorted(grouped.keys()), start=1):
-        heading = _calendar_group_heading(title, idx)
+        heading = _calendar_group_heading(title, idx, language=language)
         month_map = grouped[title]
         count = sum(len(days) for days in month_map.values())
         story.append(Spacer(1, 5))
         story.append(Paragraph(heading, styles["h3"]))
         story.append(
             _table_for_pdf(
-                ["Cours / lieu", "Nombre de cours"],
-                [[heading, f"{count} cours"]],
+                [
+                    _quote_doc_text("calendar_course_place", language=language),
+                    _quote_doc_text("calendar_course_count", language=language),
+                ],
+                [[heading, _quote_doc_text("calendar_course_count_value", language=language, count=count)]],
                 width=content_width,
                 styles=styles,
                 col_widths=[0.70, 0.30],
             )
         )
         sem_rows: list[list[str]] = []
-        for month_label, days in _calendar_semester_rows(month_map, semester=1):
-            sem_rows.append(["1er semestre", month_label, days])
-        for month_label, days in _calendar_semester_rows(month_map, semester=2):
-            sem_rows.append(["2e semestre", month_label, days])
+        for month_label, days in _calendar_semester_rows(month_map, semester=1, language=language):
+            sem_rows.append([_quote_doc_text("semester_1", language=language), month_label, days])
+        for month_label, days in _calendar_semester_rows(month_map, semester=2, language=language):
+            sem_rows.append([_quote_doc_text("semester_2", language=language), month_label, days])
         if not sem_rows:
-            sem_rows.append(["-", "-", "Aucune séance"])
+            sem_rows.append(["-", "-", _quote_doc_text("calendar_no_session_short", language=language)])
         story.append(
             _table_for_pdf(
-                ["Semestre", "Mois", "Dates de cours"],
+                [
+                    _quote_doc_text("table_semester", language=language),
+                    _quote_doc_text("table_month", language=language),
+                    _quote_doc_text("calendar_course_dates", language=language),
+                ],
                 sem_rows,
                 width=content_width,
                 styles=styles,
@@ -4246,8 +4829,8 @@ def _render_quote_pdf_blocks(
         )
 
     story.append(PageBreak())
-    story.append(Paragraph("Conditions d’inscription 2026–2027", styles["h1"]))
-    story.append(Paragraph(escape(cgv_label or "Version non précisée"), styles["h3"]))
+    story.append(Paragraph(_quote_doc_text("terms_title", language=language), styles["h1"]))
+    story.append(Paragraph(escape(cgv_label or _quote_doc_text("terms_version_unspecified", language=language)), styles["h3"]))
     story.extend(terms_flowables)
 
     def _on_page(canvas_obj: Any, document: SimpleDocTemplate) -> None:
@@ -4255,6 +4838,7 @@ def _render_quote_pdf_blocks(
             canvas_obj,
             document,
             quote_number=quote.quote_number or "-",
+            quote_label=_quote_doc_text("cover_quote", language=language),
             logo_reader=logo_reader,
         )
 
