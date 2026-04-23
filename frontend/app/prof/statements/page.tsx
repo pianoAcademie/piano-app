@@ -147,6 +147,8 @@ function flattenServices(statements: TeacherStatementOut[], language: UiLanguage
           const totalTtc = safeMoney(record.amount_ttc ?? line.amount_ttc);
           const vat = (safeNumber(totalTtc) - safeNumber(amountHt)).toFixed(2);
           const rowId = `${statement.payor_legal_entity_id}:${String(record.session_id ?? "line")}:${index}`;
+          const rawModality = String(record.modality ?? "").trim();
+          const localizedModality = rawModality ? modeLabel(rawModality, language) : "";
           out.push({
             rowId,
             payorName: statement.payor_legal_entity_name,
@@ -154,7 +156,7 @@ function flattenServices(statements: TeacherStatementOut[], language: UiLanguage
             dateLabel,
             timeLabel,
             studentOrGroup: String(record.student_or_group ?? "").trim() || "-",
-            locationOrMode: `${String(record.location_name ?? "-")}` + (record.modality ? ` / ${String(record.modality)}` : ""),
+            locationOrMode: `${String(record.location_name ?? "-")}` + (localizedModality ? ` / ${localizedModality}` : ""),
             durationMinutes: Math.max(1, safeNumber(record.duration_minutes, Math.round(safeNumber(line.hours, 0) * 60))),
             rateHt: safeMoney(record.unit_rate_ht ?? line.unit_rate_ht),
             amountHt,

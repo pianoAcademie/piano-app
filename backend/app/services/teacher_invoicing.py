@@ -12,7 +12,39 @@ from sqlalchemy.orm import Session
 
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
 from app.models.ops import LegalEntity
+from app.services.i18n import normalize_language
 from app.services.payouts import resolve_hourly_rate_for_session
+
+_MONTH_LABELS = {
+    "fr": (
+        "janvier",
+        "fevrier",
+        "mars",
+        "avril",
+        "mai",
+        "juin",
+        "juillet",
+        "aout",
+        "septembre",
+        "octobre",
+        "novembre",
+        "decembre",
+    ),
+    "en": (
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ),
+}
 
 
 def _utcnow() -> datetime:
@@ -179,7 +211,7 @@ def compute_teacher_monthly_statements(
                 "end_at_utc": session_obj.end_at_utc.isoformat(),
                 "student_or_group": (session_obj.title or "").strip() or None,
                 "location_name": (location.name or "").strip() or "-",
-                "modality": "En ligne" if bool(location.is_online) else "Presentiel",
+                "modality": "ONLINE" if bool(location.is_online) else "ONSITE",
                 "duration_minutes": duration_minutes,
                 "unit_rate_ht": f"{unit_rate_ht}",
                 "amount_ht": f"{amount_ht}",
@@ -279,5 +311,7 @@ def statement_to_snapshot_payload(statement: ComputedStatement) -> dict[str, Any
     }
 
 
-def invoice_period_label(*, year: int, month: int) -> str:
-    return date(year, month, 1).strftime("%B %Y")
+def invoice_period_label(*, year: int, month: int, language: str | None = None) -> str:
+    normalized_language = normalize_language(language)
+    labels = _MONTH_LABELS.get(normalized_language, _MONTH_LABELS["fr"])
+    return f"{labels[month - 1]} {year}"

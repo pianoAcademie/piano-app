@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from xhtml2pdf import pisa
 
 from app.models.teacher_invoicing import DocumentTemplate
+from app.services.i18n import normalize_language
 from app.services.invoice_documents import _SimplePdfDocument, _wrap_text
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,8 @@ TEACHER_INVOICE_TEMPLATE_VARIABLES: tuple[str, ...] = (
     "comptability_email",
 )
 
-DEFAULT_TEACHER_INVOICE_TEMPLATE = """\
+DEFAULT_TEACHER_INVOICE_TEMPLATES = {
+    "fr": """\
 <h1>Facture professeur</h1>
 <p><strong>Numero:</strong> {{invoice_number_display}}</p>
 <p><strong>Date:</strong> {{invoice_date}} | <strong>Echeance:</strong> {{due_date}}</p>
@@ -61,7 +63,26 @@ DEFAULT_TEACHER_INVOICE_TEMPLATE = """\
 <p>{{payment_instructions}}</p>
 <p>{{late_payment_penalty_text}}</p>
 <p>Compta: {{comptability_email}}</p>
-"""
+""",
+    "en": """\
+<h1>Teacher invoice</h1>
+<p><strong>Number:</strong> {{invoice_number_display}}</p>
+<p><strong>Date:</strong> {{invoice_date}} | <strong>Due date:</strong> {{due_date}}</p>
+<p><strong>Period:</strong> {{invoice_period_label}}</p>
+<hr />
+<h2>Issuer (teacher)</h2>
+<p>{{teacher_full_name}}<br/>{{teacher_company_name}}<br/>{{teacher_company_address}}<br/>SIRET: {{teacher_siret_display}}<br/>IBAN: {{teacher_iban}}</p>
+<h2>Payor</h2>
+<p>{{payor_company_name}}<br/>{{payor_company_address}}<br/>SIRET: {{payor_company_siret}}<br/>VAT: {{payor_company_vat}}</p>
+<h2>Lines</h2>
+<p>{{lines_by_course_type}}</p>
+<h2>Totals</h2>
+<p>Net: {{totals_ht}} | VAT: {{totals_vat}} | Gross: {{totals_ttc}}</p>
+<p>{{payment_instructions}}</p>
+<p>{{late_payment_penalty_text}}</p>
+<p>Accounting: {{comptability_email}}</p>
+""",
+}
 
 MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_\.]*)\s*\}\}")
 MUSTACHE_EACH_BLOCK_RE = re.compile(
@@ -86,6 +107,11 @@ CSS_VAR_DEFAULTS: dict[str, str] = {
     "--accent": "#c9872a",
     "--accent-ink": "#ffffff",
 }
+
+
+def default_teacher_invoice_template(*, language: str | None = None) -> str:
+    normalized_language = normalize_language(language)
+    return DEFAULT_TEACHER_INVOICE_TEMPLATES.get(normalized_language, DEFAULT_TEACHER_INVOICE_TEMPLATES["fr"])
 
 
 def _format_decimal_like(value: Any) -> str:
@@ -192,16 +218,16 @@ def _render_template(template: str, context: dict[str, Any]) -> str:
     return rendered
 
 
-def get_teacher_invoice_template(db: Session) -> tuple[str, int, Any]:
+def get_teacher_invoice_template(db: Session, *, language: str | None = None) -> tuple[str, int, Any]:
     row = db.scalar(select(DocumentTemplate).where(DocumentTemplate.key == TEACHER_INVOICE_TEMPLATE_KEY))
     if row is None:
-        return DEFAULT_TEACHER_INVOICE_TEMPLATE, 1, None
-    body = (row.html_template or "").strip() or DEFAULT_TEACHER_INVOICE_TEMPLATE
+        return default_teacher_invoice_template(language=language), 1, None
+    body = (row.html_template or "").strip() or default_teacher_invoice_template(language=language)
     return body, int(row.version or 1), row.updated_at
 
 
 def save_teacher_invoice_template(db: Session, *, html_template: str) -> tuple[str, int, Any]:
-    normalized = (html_template or "").strip() or DEFAULT_TEACHER_INVOICE_TEMPLATE
+    normalized = (html_template or "").strip() or default_teacher_invoice_template()
     row = db.scalar(
         select(DocumentTemplate).where(DocumentTemplate.key == TEACHER_INVOICE_TEMPLATE_KEY).with_for_update()
     )
@@ -221,14 +247,15 @@ def save_teacher_invoice_template(db: Session, *, html_template: str) -> tuple[s
     return row.html_template, int(row.version or 1), row.updated_at
 
 
-def default_teacher_invoice_context() -> dict[str, Any]:
+def default_teacher_invoice_context(*, language: str | None = None) -> dict[str, Any]:
+    normalized_language = normalize_language(language)
     return {
-        "teacher_full_name": "Demo Professeur",
-        "teacher_company_name": "Demo Professeur EI",
+        "teacher_full_name": "Demo Teacher" if normalized_language == "en" else "Demo Professeur",
+        "teacher_company_name": "Demo Teacher Sole Trader" if normalized_language == "en" else "Demo Professeur EI",
         "teacher_company_address": "1 rue de la Musique, 75001 Paris",
         "teacher_email": "prof@example.com",
         "teacher_phone": "+33100000000",
-        "teacher_siret_display": "en cours d'immatriculation",
+        "teacher_siret_display": "registration pending" if normalized_language == "en" else "en cours d'immatriculation",
         "teacher_iban": "FR76 XXXX XXXX XXXX XXXX XXXX XXX",
         "payor_company_name": "PIANO ACADEMIE SERVICES",
         "payor_company_address": "40 rue de Richelieu, 75001 Paris",
@@ -237,11 +264,11 @@ def default_teacher_invoice_context() -> dict[str, Any]:
         "invoice_number_display": "PROF-DEMO-42",
         "invoice_date": "2026-03-03",
         "due_date": "2026-04-02",
-        "invoice_period_label": "Mars 2026",
+        "invoice_period_label": "March 2026" if normalized_language == "en" else "Mars 2026",
         "lines_by_course_type": [
             {
                 "ref": "CC",
-                "label": "Cours collectif",
+                "label": "Group course" if normalized_language == "en" else "Cours collectif",
                 "unit_price_ht": "35.00",
                 "quantity": "4.00",
                 "total_ht": "140.00",
@@ -250,8 +277,8 @@ def default_teacher_invoice_context() -> dict[str, Any]:
         "totals_ht": f"{Decimal('140.00')}",
         "totals_vat": f"{Decimal('28.00')}",
         "totals_ttc": f"{Decimal('168.00')}",
-        "payment_instructions": "Paiement par virement sous 30 jours.",
-        "late_payment_penalty_text": "Penalites de retard conformement aux CGV.",
+        "payment_instructions": "Payment by bank transfer within 30 days." if normalized_language == "en" else "Paiement par virement sous 30 jours.",
+        "late_payment_penalty_text": "Late-payment penalties apply according to the terms and conditions." if normalized_language == "en" else "Penalites de retard conformement aux CGV.",
         "comptability_email": "comptabilite@piano-academie.com",
     }
 

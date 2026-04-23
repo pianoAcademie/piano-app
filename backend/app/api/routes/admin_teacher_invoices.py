@@ -12,6 +12,7 @@ from app.schemas.admin import (
     AdminTeacherInvoiceTemplatePreviewRequest,
     AdminTeacherInvoiceTemplateUpdateRequest,
 )
+from app.services.i18n import normalize_language
 from app.services.teacher_invoice_documents import (
     TEACHER_INVOICE_TEMPLATE_KEY,
     TEACHER_INVOICE_TEMPLATE_VARIABLES,
@@ -32,9 +33,10 @@ def _utcnow() -> datetime:
 @router.get("/teacher-invoice-template", response_model=AdminTeacherInvoiceTemplateOut)
 def get_admin_teacher_invoice_template(
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminTeacherInvoiceTemplateOut:
-    html_template, version, updated_at = get_teacher_invoice_template(db)
+    language = normalize_language(current_user.preferred_language)
+    html_template, version, updated_at = get_teacher_invoice_template(db, language=language)
     return AdminTeacherInvoiceTemplateOut(
         key=TEACHER_INVOICE_TEMPLATE_KEY,
         html_template=html_template,
@@ -65,13 +67,14 @@ def update_admin_teacher_invoice_template(
 def preview_admin_teacher_invoice_template(
     payload: AdminTeacherInvoiceTemplatePreviewRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> Response:
-    stored_template, _, _ = get_teacher_invoice_template(db)
+    language = normalize_language(current_user.preferred_language)
+    stored_template, _, _ = get_teacher_invoice_template(db, language=language)
     html_template = (payload.html_template or "").strip() or stored_template
     rendered_html = render_teacher_invoice_html(
         html_template=html_template,
-        context=default_teacher_invoice_context(),
+        context=default_teacher_invoice_context(language=language),
     )
     pdf_content = render_teacher_invoice_pdf_from_html(rendered_html)
     return Response(

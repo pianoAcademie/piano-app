@@ -34,6 +34,7 @@ from app.schemas.professor import (
     TeacherStatementOut,
 )
 from app.services.email_delivery import send_email
+from app.services.i18n import normalize_language
 from app.services.messaging_templates import resolve_sender_profile
 from app.services.teacher_invoice_documents import (
     get_teacher_invoice_template,
@@ -50,6 +51,137 @@ from app.services.payouts import resolve_hourly_rate_for_missing_service
 
 router = APIRouter(prefix="/teacher")
 
+TEACHER_I18N = {
+    "fr": {
+        "delivery_online": "En ligne",
+        "delivery_onsite": "Presentiel",
+        "delivery_any": "Tous modes",
+        "professor_not_found": "Profil professeur introuvable",
+        "siret_pending": "en cours d'immatriculation",
+        "payment_instructions": "Paiement par virement bancaire sous 30 jours.",
+        "late_payment_penalty_text": "Penalites de retard conformement aux CGV.",
+        "dispute_subject": "Litige releve professeur {name} - {period}",
+        "attendance_incomplete": "Presences incompletes. Completez les seances manquantes avant validation.",
+        "statement_blocked": "Le releve est bloque par un litige ouvert ou un signalement de prestation manquante.",
+        "statement_not_approved": "Releve non approuve: validez d abord le releve avant generation de facture.",
+        "company_fallback": "Societe",
+        "entity_fallback": "Entite",
+        "statement_not_found_period": "Aucun releve trouve pour cette periode",
+        "selected_lines_none": "- (aucune ligne precisee)",
+        "selected_lines_issue": "Probleme sur prestations selectionnees\nLignes:\n{selected_lines}\n\nCommentaire professeur:\n{comment}",
+        "service_type_not_found": "Type de prestation introuvable",
+        "location_not_found": "Lieu introuvable",
+        "service_type_required": "Type de prestation et duree obligatoires",
+        "service_fallback": "Prestation",
+        "missing_service_message": "Signalement prestation manquante\nDate: {service_date}\nPrestation: {service_label}\nEleve/Groupe: {student_or_group}\nDuree (min): {duration_minutes}\nModalite/Lieu: {modality_label}\nEleves presents: {attendee_count}\nTaux estime HT: {estimated_rate}\n\nCommentaire professeur:\n{comment}",
+        "external_invoice_must_be_approved": "Le releve doit etre approuve avant envoi d une facture externe",
+        "payor_invalid": "Entite payeur invalide",
+        "statement_not_found_payor": "Releve introuvable pour l entite payeur selectionnee",
+        "external_invoice_default_name": "facture.pdf",
+        "file_must_be_pdf": "Le fichier doit etre un PDF",
+        "file_empty": "Fichier PDF vide",
+        "file_too_large": "Fichier PDF trop volumineux (max 10 Mo)",
+        "external_invoice_subject": "Facture externe professeur - {period}",
+        "external_invoice_body": "Facture externe transmise par {teacher_name}\nPeriode: {period}\nEntite payeur: {payor_name}\nTotal TTC releve: {total_ttc} {currency}\nNote: {note}",
+        "csv_file_name": "releve_prestations_{year}_{month}.csv",
+        "csv_header_entity": "entite",
+        "csv_header_period": "periode",
+        "csv_header_service": "prestation",
+        "csv_header_date": "date",
+        "csv_header_time": "horaire",
+        "csv_header_student_group": "eleve_ou_groupe",
+        "csv_header_location_mode": "lieu_modalite",
+        "csv_header_duration": "duree_minutes",
+        "csv_header_rate_ht": "taux_ht",
+        "csv_header_amount_ht": "montant_ht",
+        "csv_header_vat": "tva",
+        "csv_header_total_ttc": "total_ttc",
+        "csv_header_currency": "devise",
+        "teacher_invoice_not_found": "Facture professeur introuvable",
+        "teacher_invoice_subject": "Facture professeur {invoice_number}",
+        "teacher_invoice_body": "Facture professeur {invoice_number}\nPeriode: {period}\nTotal TTC: {total_ttc}\nProfesseur: {teacher_name}",
+    },
+    "en": {
+        "delivery_online": "Online",
+        "delivery_onsite": "On-site",
+        "delivery_any": "All modes",
+        "professor_not_found": "Professor profile not found",
+        "siret_pending": "registration pending",
+        "payment_instructions": "Payment by bank transfer within 30 days.",
+        "late_payment_penalty_text": "Late-payment penalties apply according to the terms and conditions.",
+        "dispute_subject": "Teacher statement dispute {name} - {period}",
+        "attendance_incomplete": "Attendance is incomplete. Complete missing sessions before approval.",
+        "statement_blocked": "The statement is blocked by an open dispute or a missing-service report.",
+        "statement_not_approved": "Statement not approved: validate the statement before generating an invoice.",
+        "company_fallback": "Company",
+        "entity_fallback": "Entity",
+        "statement_not_found_period": "No statement found for this period",
+        "selected_lines_none": "- (no lines selected)",
+        "selected_lines_issue": "Issue on selected services\nLines:\n{selected_lines}\n\nTeacher comment:\n{comment}",
+        "service_type_not_found": "Service type not found",
+        "location_not_found": "Location not found",
+        "service_type_required": "Service type and duration are required",
+        "service_fallback": "Service",
+        "missing_service_message": "Missing service report\nDate: {service_date}\nService: {service_label}\nStudent/Group: {student_or_group}\nDuration (min): {duration_minutes}\nMode/Location: {modality_label}\nStudents present: {attendee_count}\nEstimated net rate: {estimated_rate}\n\nTeacher comment:\n{comment}",
+        "external_invoice_must_be_approved": "The statement must be approved before sending an external invoice",
+        "payor_invalid": "Invalid payor legal entity",
+        "statement_not_found_payor": "Statement not found for the selected payor",
+        "external_invoice_default_name": "invoice.pdf",
+        "file_must_be_pdf": "The file must be a PDF",
+        "file_empty": "Empty PDF file",
+        "file_too_large": "PDF file is too large (max 10 MB)",
+        "external_invoice_subject": "Teacher external invoice - {period}",
+        "external_invoice_body": "External invoice sent by {teacher_name}\nPeriod: {period}\nPayor entity: {payor_name}\nStatement gross total: {total_ttc} {currency}\nNote: {note}",
+        "csv_file_name": "teacher_statement_{year}_{month}.csv",
+        "csv_header_entity": "entity",
+        "csv_header_period": "period",
+        "csv_header_service": "service",
+        "csv_header_date": "date",
+        "csv_header_time": "time",
+        "csv_header_student_group": "student_or_group",
+        "csv_header_location_mode": "location_mode",
+        "csv_header_duration": "duration_minutes",
+        "csv_header_rate_ht": "net_rate",
+        "csv_header_amount_ht": "net_amount",
+        "csv_header_vat": "vat",
+        "csv_header_total_ttc": "gross_total",
+        "csv_header_currency": "currency",
+        "teacher_invoice_not_found": "Teacher invoice not found",
+        "teacher_invoice_subject": "Teacher invoice {invoice_number}",
+        "teacher_invoice_body": "Teacher invoice {invoice_number}\nPeriod: {period}\nGross total: {total_ttc}\nTeacher: {teacher_name}",
+    },
+}
+
+
+def _teacher_language(current_user: User | None = None, *, language: str | None = None) -> str:
+    if language is not None:
+        return normalize_language(language)
+    return normalize_language(current_user.preferred_language if current_user is not None else None)
+
+
+def _teacher_text(key: str, *, language: str | None = None, current_user: User | None = None, **values: object) -> str:
+    normalized_language = _teacher_language(current_user, language=language)
+    template = TEACHER_I18N.get(normalized_language, TEACHER_I18N["fr"]).get(key, key)
+    return template.format(**values)
+
+
+def _teacher_csv_headers(language: str | None) -> list[str]:
+    return [
+        _teacher_text("csv_header_entity", language=language),
+        _teacher_text("csv_header_period", language=language),
+        _teacher_text("csv_header_service", language=language),
+        _teacher_text("csv_header_date", language=language),
+        _teacher_text("csv_header_time", language=language),
+        _teacher_text("csv_header_student_group", language=language),
+        _teacher_text("csv_header_location_mode", language=language),
+        _teacher_text("csv_header_duration", language=language),
+        _teacher_text("csv_header_rate_ht", language=language),
+        _teacher_text("csv_header_amount_ht", language=language),
+        _teacher_text("csv_header_vat", language=language),
+        _teacher_text("csv_header_total_ttc", language=language),
+        _teacher_text("csv_header_currency", language=language),
+    ]
+
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
@@ -63,12 +195,12 @@ def _format_money(value: Decimal | None) -> str:
     return f"{_quantize(value or Decimal('0'))}"
 
 
-def _delivery_mode_label(mode: DeliveryMode) -> str:
+def _delivery_mode_label(mode: DeliveryMode, *, language: str | None = None) -> str:
     if mode == DeliveryMode.ONLINE:
-        return "En ligne"
+        return _teacher_text("delivery_online", language=language)
     if mode == DeliveryMode.ONSITE:
-        return "Presentiel"
-    return "Tous modes"
+        return _teacher_text("delivery_onsite", language=language)
+    return _teacher_text("delivery_any", language=language)
 
 
 def _teacher_invoice_lines_payload(lines: list[TeacherInvoiceLine]) -> list[dict[str, str]]:
@@ -92,7 +224,7 @@ def _teacher_invoice_lines_payload(lines: list[TeacherInvoiceLine]) -> list[dict
 def _resolve_professor_profile(db: Session, *, current_user: User) -> Professor:
     professor = db.scalar(select(Professor).where(Professor.email == current_user.email))
     if professor is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Professor profile not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_teacher_text("professor_not_found", current_user=current_user))
     return professor
 
 
@@ -283,14 +415,22 @@ def _log_audit(
     )
 
 
-def _invoice_pdf_bytes(db: Session, *, invoice: TeacherInvoice, payor: LegalEntity, professor: Professor) -> bytes:
+def _invoice_pdf_bytes(
+    db: Session,
+    *,
+    invoice: TeacherInvoice,
+    payor: LegalEntity,
+    professor: Professor,
+    language: str | None = None,
+) -> bytes:
     if invoice.pdf_storage_key:
         try:
             return base64.b64decode(invoice.pdf_storage_key.encode("ascii"))
         except Exception:
             pass
 
-    html_template, _, _ = get_teacher_invoice_template(db)
+    normalized_language = _teacher_language(language=language)
+    html_template, _, _ = get_teacher_invoice_template(db, language=normalized_language)
     invoice_lines = db.scalars(
         select(TeacherInvoiceLine)
         .where(TeacherInvoiceLine.invoice_id == invoice.id)
@@ -304,7 +444,7 @@ def _invoice_pdf_bytes(db: Session, *, invoice: TeacherInvoice, payor: LegalEnti
             "teacher_company_address": (professor.teacher_company_address or "").strip() or "-",
             "teacher_email": professor.email,
             "teacher_phone": (professor.phone or "").strip() or "-",
-            "teacher_siret_display": (invoice.teacher_siret_display or "").strip() or "en cours d'immatriculation",
+            "teacher_siret_display": (invoice.teacher_siret_display or "").strip() or _teacher_text("siret_pending", language=normalized_language),
             "teacher_iban": (invoice.teacher_iban or "").strip() or "-",
             "payor_company_name": (payor.name or "").strip() or "-",
             "payor_company_address": (payor.address_text or "").strip() or "-",
@@ -313,13 +453,13 @@ def _invoice_pdf_bytes(db: Session, *, invoice: TeacherInvoice, payor: LegalEnti
             "invoice_number_display": invoice.invoice_number,
             "invoice_date": invoice.invoice_date.isoformat(),
             "due_date": invoice.due_date.isoformat(),
-            "invoice_period_label": invoice_period_label(year=invoice.invoice_date.year, month=invoice.invoice_date.month),
+            "invoice_period_label": invoice_period_label(year=invoice.invoice_date.year, month=invoice.invoice_date.month, language=normalized_language),
             "lines_by_course_type": _teacher_invoice_lines_payload(invoice_lines),
             "totals_ht": _format_money(invoice.totals_ht),
             "totals_vat": _format_money(invoice.totals_vat),
             "totals_ttc": _format_money(invoice.totals_ttc),
-            "payment_instructions": "Paiement par virement bancaire sous 30 jours.",
-            "late_payment_penalty_text": "Penalites de retard conformement aux CGV.",
+            "payment_instructions": _teacher_text("payment_instructions", language=normalized_language),
+            "late_payment_penalty_text": _teacher_text("late_payment_penalty_text", language=normalized_language),
             "comptability_email": "-",
         },
     )
@@ -346,6 +486,7 @@ def _send_statement_dispute_email(
     month: int,
     message: str,
 ) -> None:
+    language = _teacher_language(current_user)
     payor_entity = db.scalar(select(LegalEntity).where(LegalEntity.id == rows[0][1].payor_legal_entity_id))
     if payor_entity is None:
         return
@@ -354,7 +495,12 @@ def _send_statement_dispute_email(
     try:
         send_email(
             to_email=to_email,
-            subject=f"Litige releve professeur {professor.first_name} {professor.last_name} - {month:02d}/{year}",
+            subject=_teacher_text(
+                "dispute_subject",
+                language=language,
+                name=f"{professor.first_name} {professor.last_name}".strip(),
+                period=invoice_period_label(year=year, month=month, language=language),
+            ),
             body=message,
             context="TEACHER_STATEMENT_DISPUTE",
             from_email=sender.from_email,
@@ -415,27 +561,26 @@ def _mark_statements_with_message(
     db.commit()
     return [_statement_out(statement, computed) for statement, computed in rows]
 
-
-def _assert_no_missing_sessions(rows: list[tuple[TeacherMonthlyStatement, ComputedStatement]]) -> None:
+def _assert_no_missing_sessions(rows: list[tuple[TeacherMonthlyStatement, ComputedStatement]], *, language: str | None = None) -> None:
     missing_sessions = _missing_sessions_from_computed(rows)
     if missing_sessions:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
-                "message": "Attendance incomplete. Complete missing sessions before approval.",
+                "message": _teacher_text("attendance_incomplete", language=language),
                 "missing_sessions": [row.model_dump(mode="json") for row in missing_sessions],
             },
         )
 
 
-def _assert_statements_approvable(rows: list[tuple[TeacherMonthlyStatement, ComputedStatement]]) -> None:
+def _assert_statements_approvable(rows: list[tuple[TeacherMonthlyStatement, ComputedStatement]], *, language: str | None = None) -> None:
     blocked_statuses = {"in_dispute", "awaiting_admin_feedback"}
     blocked = [statement.status for statement, _ in rows if statement.status in blocked_statuses]
     if blocked:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
-                "message": "Statement blocked by an open dispute or missing-service report.",
+                "message": _teacher_text("statement_blocked", language=language),
                 "blocked_statuses": sorted(set(blocked)),
             },
         )
@@ -451,11 +596,12 @@ def _generate_invoices_for_period(
     month: int,
     require_validated_status: bool,
 ) -> TeacherApproveStatementsOut:
-    _assert_no_missing_sessions(rows)
+    language = _teacher_language(current_user)
+    _assert_no_missing_sessions(rows, language=language)
 
     locked_professor = db.scalar(select(Professor).where(Professor.id == professor.id).with_for_update())
     if locked_professor is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Professor profile not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_teacher_text("professor_not_found", language=language))
     counter = max(1, int(locked_professor.teacher_invoice_counter or 1))
     now = _utcnow()
     invoice_date = now.date()
@@ -475,17 +621,17 @@ def _generate_invoices_for_period(
         if require_validated_status and statement.status not in {"validated", "invoice_generated", "approved"}:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Releve non approuve: validez d abord le releve avant generation de facture.",
+                detail=_teacher_text("statement_not_approved", language=language),
             )
 
         payor = db.scalar(select(LegalEntity).where(LegalEntity.id == computed.payor_legal_entity_id))
         if payor is None:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Payor legal entity not found")
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=_teacher_text("payor_invalid", language=language))
 
         invoice_number = f"PROF-{str(locked_professor.id).split('-')[0].upper()}-{counter:06d}"
         counter += 1
         due_date = invoice_date + timedelta(days=30)
-        teacher_siret_display = (locked_professor.teacher_siret or "").strip() or "en cours d'immatriculation"
+        teacher_siret_display = (locked_professor.teacher_siret or "").strip() or _teacher_text("siret_pending", language=language)
         teacher_iban = (
             (locked_professor.teacher_iban or "").strip()
             or (locked_professor.iban or "").strip()
@@ -504,7 +650,7 @@ def _generate_invoices_for_period(
             totals_ht=_quantize(computed.totals_ht),
             totals_vat=_quantize(computed.totals_vat),
             totals_ttc=_quantize(computed.totals_ttc),
-            recipient_company_name=(payor.name or "").strip() or "Societe",
+            recipient_company_name=(payor.name or "").strip() or _teacher_text("company_fallback", language=language),
             recipient_company_address=(payor.address_text or "").strip() or "-",
             recipient_company_siret=(payor.siret or "").strip() or None,
             recipient_company_vat=(payor.vat_number or "").strip() or None,
@@ -536,7 +682,7 @@ def _generate_invoices_for_period(
             .order_by(TeacherInvoiceLine.created_at.asc(), TeacherInvoiceLine.id.asc())
         ).all()
 
-        html_template, _, _ = get_teacher_invoice_template(db)
+        html_template, _, _ = get_teacher_invoice_template(db, language=language)
         rendered_html = render_teacher_invoice_html(
             html_template=html_template,
             context={
@@ -554,13 +700,13 @@ def _generate_invoices_for_period(
                 "invoice_number_display": invoice_number,
                 "invoice_date": invoice_date.isoformat(),
                 "due_date": due_date.isoformat(),
-                "invoice_period_label": invoice_period_label(year=year, month=month),
+                "invoice_period_label": invoice_period_label(year=year, month=month, language=language),
                 "lines_by_course_type": _teacher_invoice_lines_payload(invoice_lines),
                 "totals_ht": _format_money(computed.totals_ht),
                 "totals_vat": _format_money(computed.totals_vat),
                 "totals_ttc": _format_money(computed.totals_ttc),
-                "payment_instructions": "Paiement par virement bancaire sous 30 jours.",
-                "late_payment_penalty_text": "Penalites de retard conformement aux CGV.",
+                "payment_instructions": _teacher_text("payment_instructions", language=language),
+                "late_payment_penalty_text": _teacher_text("late_payment_penalty_text", language=language),
                 "comptability_email": _resolve_accounting_email(db, payor=payor),
             },
         )
@@ -599,7 +745,11 @@ def _generate_invoices_for_period(
         generated_invoices=[
             _invoice_out(
                 invoice,
-                payor_name=(payor_by_id.get(invoice.payor_legal_entity_id).name if payor_by_id.get(invoice.payor_legal_entity_id) else "Entite"),
+                payor_name=(
+                    payor_by_id.get(invoice.payor_legal_entity_id).name
+                    if payor_by_id.get(invoice.payor_legal_entity_id)
+                    else _teacher_text("entity_fallback", language=language)
+                ),
                 lines=lines_by_invoice_id.get(invoice.id, []),
             )
             for invoice in generated
@@ -648,7 +798,7 @@ def dispute_teacher_statement_month(
     professor = _resolve_professor_profile(db, current_user=current_user)
     rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
     if not rows:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_teacher_text("statement_not_found_period", current_user=current_user))
     message = payload.message.strip()
     out = _mark_statements_with_message(
         db,
@@ -691,13 +841,15 @@ def dispute_teacher_statement_selected_lines(
     professor = _resolve_professor_profile(db, current_user=current_user)
     rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
     if not rows:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_teacher_text("statement_not_found_period", current_user=current_user))
     selected_lines = [row.strip() for row in payload.selected_lines if row.strip()]
-    selected_lines_text = "\n".join(f"- {label}" for label in selected_lines) if selected_lines else "- (aucune ligne precisee)"
-    message = (
-        "Probleme sur prestations selectionnees\n"
-        f"Lignes:\n{selected_lines_text}\n\n"
-        f"Commentaire professeur:\n{payload.message.strip()}"
+    language = _teacher_language(current_user)
+    selected_lines_text = "\n".join(f"- {label}" for label in selected_lines) if selected_lines else _teacher_text("selected_lines_none", language=language)
+    message = _teacher_text(
+        "selected_lines_issue",
+        language=language,
+        selected_lines=selected_lines_text,
+        comment=payload.message.strip(),
     )
     out = _mark_statements_with_message(
         db,
@@ -741,7 +893,8 @@ def report_teacher_statement_missing_service(
     professor = _resolve_professor_profile(db, current_user=current_user)
     rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
     if not rows:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_teacher_text("statement_not_found_period", current_user=current_user))
+    language = _teacher_language(current_user)
     attendee_count = int(payload.attendee_count or 0)
     service_label: str
     duration_minutes: int
@@ -755,14 +908,14 @@ def report_teacher_statement_missing_service(
     if payload.course_type_id is not None and payload.location_id is not None:
         course_type = db.scalar(select(CourseType).where(CourseType.id == payload.course_type_id))
         if course_type is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Type de prestation introuvable")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_teacher_text("service_type_not_found", language=language))
         location = db.scalar(select(Location).where(Location.id == payload.location_id))
         if location is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lieu introuvable")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_teacher_text("location_not_found", language=language))
 
-        service_label = (course_type.name or "").strip() or "Prestation"
+        service_label = (course_type.name or "").strip() or _teacher_text("service_fallback", language=language)
         duration_minutes = int(course_type.duration_minutes or 0) or int(payload.duration_minutes or 60)
-        modality_label = f"{location.name} / {_delivery_mode_label(course_type.mode)}"
+        modality_label = f"{location.name} / {_delivery_mode_label(course_type.mode, language=language)}"
         resolved_rate = resolve_hourly_rate_for_missing_service(
             db,
             professor_id=professor.id,
@@ -780,23 +933,24 @@ def report_teacher_statement_missing_service(
         if payload.service_label is None or payload.duration_minutes is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Type de prestation et duree obligatoires",
+                detail=_teacher_text("service_type_required", language=language),
             )
         service_label = payload.service_label.strip()
         duration_minutes = int(payload.duration_minutes)
         modality_label = (payload.modality or "-").strip()
         estimated_rate_text = "-" if payload.estimated_rate_ht is None else f"{_quantize(payload.estimated_rate_ht)}"
 
-    message = (
-        "Signalement prestation manquante\n"
-        f"Date: {payload.service_date.isoformat()}\n"
-        f"Prestation: {service_label}\n"
-        f"Eleve/Groupe: {(payload.student_or_group or '-').strip()}\n"
-        f"Duree (min): {duration_minutes}\n"
-        f"Modalite/Lieu: {modality_label}\n"
-        f"Eleves presents: {attendee_count}\n"
-        f"Taux estime HT: {estimated_rate_text}{f' {estimated_rate_currency}' if estimated_rate_currency else ''}\n\n"
-        f"Commentaire professeur:\n{payload.comment.strip()}"
+    message = _teacher_text(
+        "missing_service_message",
+        language=language,
+        service_date=payload.service_date.isoformat(),
+        service_label=service_label,
+        student_or_group=(payload.student_or_group or "-").strip(),
+        duration_minutes=duration_minutes,
+        modality_label=modality_label,
+        attendee_count=attendee_count,
+        estimated_rate=f"{estimated_rate_text}{f' {estimated_rate_currency}' if estimated_rate_currency else ''}",
+        comment=payload.comment.strip(),
     )
     out = _mark_statements_with_message(
         db,
@@ -865,49 +1019,57 @@ async def send_teacher_external_invoice(
     professor = _resolve_professor_profile(db, current_user=current_user)
     rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
     if not rows:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_teacher_text("statement_not_found_period", current_user=current_user))
+    language = _teacher_language(current_user)
 
     try:
         payor_id = UUID(payor_legal_entity_id)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Payor legal entity invalid") from exc
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=_teacher_text("payor_invalid", language=language)) from exc
 
     statement_row = next((item for item in rows if item[0].payor_legal_entity_id == payor_id), None)
     if statement_row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Statement not found for selected payor")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_teacher_text("statement_not_found_payor", language=language))
     statement, computed = statement_row
     if statement.status not in {"validated", "approved", "exported", "invoice_generated", "closed"}:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Le releve doit etre approuve avant envoi d une facture externe",
+            detail=_teacher_text("external_invoice_must_be_approved", language=language),
         )
 
-    file_name = (invoice_file.filename or "facture.pdf").strip()
+    file_name = (invoice_file.filename or _teacher_text("external_invoice_default_name", language=language)).strip()
     if not file_name.lower().endswith(".pdf"):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Le fichier doit etre un PDF")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=_teacher_text("file_must_be_pdf", language=language))
     file_content = await invoice_file.read()
     if not file_content:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Fichier PDF vide")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=_teacher_text("file_empty", language=language))
     max_size = 10 * 1024 * 1024
     if len(file_content) > max_size:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Fichier PDF trop volumineux (max 10 Mo)")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=_teacher_text("file_too_large", language=language))
 
     payor = db.scalar(select(LegalEntity).where(LegalEntity.id == computed.payor_legal_entity_id))
     if payor is None:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Payor legal entity not found")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=_teacher_text("payor_invalid", language=language))
 
     destination_email = _resolve_accounting_email(db, payor=payor)
     sender = resolve_sender_profile(db, sender_kind="TEACHER")
     note_text = (note or "").strip()
     send_email(
         to_email=destination_email,
-        subject=f"Facture externe professeur - {invoice_period_label(year=year, month=month)}",
-        body=(
-            f"Facture externe transmise par {professor.first_name} {professor.last_name}\n"
-            f"Periode: {invoice_period_label(year=year, month=month)}\n"
-            f"Entite payeur: {computed.payor_legal_entity_name}\n"
-            f"Total TTC releve: {computed.totals_ttc} {computed.currency}\n"
-            f"Note: {note_text or '-'}"
+        subject=_teacher_text(
+            "external_invoice_subject",
+            language=language,
+            period=invoice_period_label(year=year, month=month, language=language),
+        ),
+        body=_teacher_text(
+            "external_invoice_body",
+            language=language,
+            teacher_name=f"{professor.first_name} {professor.last_name}".strip(),
+            period=invoice_period_label(year=year, month=month, language=language),
+            payor_name=computed.payor_legal_entity_name,
+            total_ttc=computed.totals_ttc,
+            currency=computed.currency,
+            note=note_text or "-",
         ),
         context="TEACHER_EXTERNAL_INVOICE_TO_ACCOUNTING",
         from_email=sender.from_email,
@@ -952,9 +1114,10 @@ def approve_teacher_statement_month_only(
     professor = _resolve_professor_profile(db, current_user=current_user)
     rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
     if not rows:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
-    _assert_no_missing_sessions(rows)
-    _assert_statements_approvable(rows)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_teacher_text("statement_not_found_period", current_user=current_user))
+    language = _teacher_language(current_user)
+    _assert_no_missing_sessions(rows, language=language)
+    _assert_statements_approvable(rows, language=language)
     now = _utcnow()
     for statement, _ in rows:
         if statement.status not in {"invoice_generated", "closed"}:
@@ -982,8 +1145,8 @@ def generate_teacher_statement_invoices(
     professor = _resolve_professor_profile(db, current_user=current_user)
     rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
     if not rows:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
-    _assert_statements_approvable(rows)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_teacher_text("statement_not_found_period", current_user=current_user))
+    _assert_statements_approvable(rows, language=_teacher_language(current_user))
     return _generate_invoices_for_period(
         db,
         current_user=current_user,
@@ -1005,8 +1168,8 @@ def approve_teacher_statement_month(
     professor = _resolve_professor_profile(db, current_user=current_user)
     rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
     if not rows:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
-    _assert_statements_approvable(rows)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_teacher_text("statement_not_found_period", current_user=current_user))
+    _assert_statements_approvable(rows, language=_teacher_language(current_user))
     return _generate_invoices_for_period(
         db,
         current_user=current_user,
@@ -1028,29 +1191,14 @@ def export_teacher_statement_month_csv(
     professor = _resolve_professor_profile(db, current_user=current_user)
     rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
     if not rows:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No statement found for this period")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_teacher_text("statement_not_found_period", current_user=current_user))
+    language = _teacher_language(current_user)
 
     output = StringIO()
     writer = csv.writer(output, delimiter=";")
-    writer.writerow(
-        [
-            "entite",
-            "periode",
-            "prestation",
-            "date",
-            "horaire",
-            "eleve_ou_groupe",
-            "lieu_modalite",
-            "duree_minutes",
-            "taux_ht",
-            "montant_ht",
-            "tva",
-            "total_ttc",
-            "devise",
-        ]
-    )
+    writer.writerow(_teacher_csv_headers(language))
 
-    period_label = invoice_period_label(year=year, month=month)
+    period_label = invoice_period_label(year=year, month=month, language=language)
     now = _utcnow()
     for statement, computed in rows:
         for line in computed.lines:
@@ -1072,7 +1220,10 @@ def export_teacher_statement_month_csv(
                             str(item.get("date") or ""),
                             horaire,
                             str(item.get("student_or_group") or ""),
-                            f"{item.get('location_name') or '-'} / {item.get('modality') or '-'}",
+                            (
+                                f"{item.get('location_name') or '-'} / "
+                                f"{_teacher_text('delivery_online', language=language) if str(item.get('modality') or '').strip().upper() in {'EN_LIGNE', 'ONLINE'} else _teacher_text('delivery_onsite', language=language) if str(item.get('modality') or '').strip().upper() in {'PRESENTIEL', 'ONSITE'} else (item.get('modality') or '-')}"
+                            ),
                             str(item.get("duration_minutes") or ""),
                             str(item.get("unit_rate_ht") or line.unit_rate_ht),
                             str(item.get("amount_ht") or line.amount_ht),
@@ -1114,7 +1265,7 @@ def export_teacher_statement_month_csv(
             )
 
     db.commit()
-    file_name = f"releve_prestations_{year}_{month:02d}.csv"
+    file_name = _teacher_text("csv_file_name", language=language, year=year, month=f"{month:02d}")
     return Response(
         content=output.getvalue(),
         media_type="text/csv; charset=utf-8",
@@ -1138,23 +1289,35 @@ def list_teacher_invoices(
     invoices = db.scalars(stmt).all()
     lines_by_invoice_id = _invoice_lines_for_invoice_ids(db, invoice_ids=[row.id for row in invoices])
     payor_by_id = {row.id: row for row in db.scalars(select(LegalEntity).where(LegalEntity.id.in_([inv.payor_legal_entity_id for inv in invoices]))).all()}
+    language = _teacher_language(current_user)
     return [
         _invoice_out(
             invoice,
-            payor_name=(payor_by_id.get(invoice.payor_legal_entity_id).name if payor_by_id.get(invoice.payor_legal_entity_id) else "Entite"),
+            payor_name=(
+                payor_by_id.get(invoice.payor_legal_entity_id).name
+                if payor_by_id.get(invoice.payor_legal_entity_id)
+                else _teacher_text("entity_fallback", language=language)
+            ),
             lines=lines_by_invoice_id.get(invoice.id, []),
         )
         for invoice in invoices
     ]
 
 
-def _load_teacher_invoice_or_404(db: Session, *, invoice_id: UUID, teacher_id: UUID, lock: bool = False) -> TeacherInvoice:
+def _load_teacher_invoice_or_404(
+    db: Session,
+    *,
+    invoice_id: UUID,
+    teacher_id: UUID,
+    lock: bool = False,
+    language: str | None = None,
+) -> TeacherInvoice:
     stmt = select(TeacherInvoice).where(TeacherInvoice.id == invoice_id, TeacherInvoice.teacher_id == teacher_id)
     if lock:
         stmt = stmt.with_for_update()
     invoice = db.scalar(stmt)
     if invoice is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Teacher invoice not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_teacher_text("teacher_invoice_not_found", language=language))
     return invoice
 
 
@@ -1165,12 +1328,13 @@ def get_teacher_invoice(
     current_user: User = Depends(require_roles(UserRole.PROF)),
 ) -> TeacherInvoiceOut:
     professor = _resolve_professor_profile(db, current_user=current_user)
-    invoice = _load_teacher_invoice_or_404(db, invoice_id=invoice_id, teacher_id=professor.id)
+    language = _teacher_language(current_user)
+    invoice = _load_teacher_invoice_or_404(db, invoice_id=invoice_id, teacher_id=professor.id, language=language)
     payor = db.scalar(select(LegalEntity).where(LegalEntity.id == invoice.payor_legal_entity_id))
     lines = db.scalars(select(TeacherInvoiceLine).where(TeacherInvoiceLine.invoice_id == invoice.id).order_by(TeacherInvoiceLine.created_at.asc())).all()
     return _invoice_out(
         invoice,
-        payor_name=(payor.name if payor is not None else "Entite"),
+        payor_name=(payor.name if payor is not None else _teacher_text("entity_fallback", language=language)),
         lines=lines,
     )
 
@@ -1182,11 +1346,12 @@ def download_teacher_invoice_pdf(
     current_user: User = Depends(require_roles(UserRole.PROF)),
 ) -> Response:
     professor = _resolve_professor_profile(db, current_user=current_user)
-    invoice = _load_teacher_invoice_or_404(db, invoice_id=invoice_id, teacher_id=professor.id)
+    language = _teacher_language(current_user)
+    invoice = _load_teacher_invoice_or_404(db, invoice_id=invoice_id, teacher_id=professor.id, language=language)
     payor = db.scalar(select(LegalEntity).where(LegalEntity.id == invoice.payor_legal_entity_id))
     if payor is None:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Payor legal entity not found")
-    pdf_content = _invoice_pdf_bytes(db, invoice=invoice, payor=payor, professor=professor)
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=_teacher_text("payor_invalid", language=language))
+    pdf_content = _invoice_pdf_bytes(db, invoice=invoice, payor=payor, professor=professor, language=language)
     file_name = f"{invoice.invoice_number}.pdf".replace('"', "")
     return Response(
         content=pdf_content,
@@ -1207,7 +1372,8 @@ def _update_invoice_status(
     cancel: bool,
 ) -> TeacherInvoiceOut:
     professor = _resolve_professor_profile(db, current_user=current_user)
-    invoice = _load_teacher_invoice_or_404(db, invoice_id=invoice_id, teacher_id=professor.id, lock=True)
+    language = _teacher_language(current_user)
+    invoice = _load_teacher_invoice_or_404(db, invoice_id=invoice_id, teacher_id=professor.id, lock=True, language=language)
     now = _utcnow()
     invoice.status = target_status
     invoice.cancelled_at = now if cancel else None
@@ -1224,7 +1390,7 @@ def _update_invoice_status(
     db.commit()
     payor = db.scalar(select(LegalEntity).where(LegalEntity.id == invoice.payor_legal_entity_id))
     lines = db.scalars(select(TeacherInvoiceLine).where(TeacherInvoiceLine.invoice_id == invoice.id).order_by(TeacherInvoiceLine.created_at.asc())).all()
-    return _invoice_out(invoice, payor_name=(payor.name if payor is not None else "Entite"), lines=lines)
+    return _invoice_out(invoice, payor_name=(payor.name if payor is not None else _teacher_text("entity_fallback", language=language)), lines=lines)
 
 
 @router.post("/invoices/{invoice_id}/cancel", response_model=TeacherInvoiceOut)
@@ -1264,21 +1430,24 @@ def send_teacher_invoice_to_accounting(
     current_user: User = Depends(require_roles(UserRole.PROF)),
 ) -> TeacherInvoiceOut:
     professor = _resolve_professor_profile(db, current_user=current_user)
-    invoice = _load_teacher_invoice_or_404(db, invoice_id=invoice_id, teacher_id=professor.id, lock=True)
+    language = _teacher_language(current_user)
+    invoice = _load_teacher_invoice_or_404(db, invoice_id=invoice_id, teacher_id=professor.id, lock=True, language=language)
     payor = db.scalar(select(LegalEntity).where(LegalEntity.id == invoice.payor_legal_entity_id))
     if payor is None:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Payor legal entity not found")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=_teacher_text("payor_invalid", language=language))
     destination_email = _resolve_accounting_email(db, payor=payor)
-    pdf_content = _invoice_pdf_bytes(db, invoice=invoice, payor=payor, professor=professor)
+    pdf_content = _invoice_pdf_bytes(db, invoice=invoice, payor=payor, professor=professor, language=language)
     sender = resolve_sender_profile(db, sender_kind="TEACHER")
     send_email(
         to_email=destination_email,
-        subject=f"Facture professeur {invoice.invoice_number}",
-        body=(
-            f"Facture professeur {invoice.invoice_number}\n"
-            f"Periode: {invoice_period_label(year=invoice.invoice_date.year, month=invoice.invoice_date.month)}\n"
-            f"Total TTC: {invoice.totals_ttc}\n"
-            f"Professeur: {professor.first_name} {professor.last_name}"
+        subject=_teacher_text("teacher_invoice_subject", language=language, invoice_number=invoice.invoice_number),
+        body=_teacher_text(
+            "teacher_invoice_body",
+            language=language,
+            invoice_number=invoice.invoice_number,
+            period=invoice_period_label(year=invoice.invoice_date.year, month=invoice.invoice_date.month, language=language),
+            total_ttc=invoice.totals_ttc,
+            teacher_name=f"{professor.first_name} {professor.last_name}".strip(),
         ),
         context="TEACHER_INVOICE_TO_ACCOUNTING",
         from_email=sender.from_email,
@@ -1305,4 +1474,4 @@ def send_teacher_invoice_to_accounting(
     )
     db.commit()
     lines = db.scalars(select(TeacherInvoiceLine).where(TeacherInvoiceLine.invoice_id == invoice.id).order_by(TeacherInvoiceLine.created_at.asc())).all()
-    return _invoice_out(invoice, payor_name=payor.name, lines=lines)
+    return _invoice_out(invoice, payor_name=payor.name or _teacher_text("entity_fallback", language=language), lines=lines)
