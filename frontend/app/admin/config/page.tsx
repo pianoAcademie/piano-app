@@ -770,7 +770,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const catalogKits = catalogKitsResult.ok
     ? catalogKitsResult.data
     : (() => {
-        loadErrors.push(`Catalogue kits: ${catalogKitsResult.message}`);
+        loadErrors.push(t("admin.catalog.load_kits_error", { message: catalogKitsResult.message }));
         return [] as AdminCatalogKitOut[];
       })();
   const activeCatalogCategories = catalogCategories.filter((row) => row.active);
@@ -1837,18 +1837,16 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               </section>
 
               <section className="card">
-                <h3>Kits</h3>
-                <p className="muted">
-                  Un kit assemble plusieurs produits. Le prix calcule est derive des composants (prix TTC des produits * quantites).
-                </p>
+                <h3>{t("admin.catalog.kits_title")}</h3>
+                <p className="muted">{t("admin.catalog.kits_subtitle")}</p>
 
                 <form action={createAdminCatalogKitAction} className="grid cols-4 config-form-grid">
                   <label className="span-2">
-                    Titre
+                    {t("admin.products.title_label")}
                     <input type="text" name="title" required maxLength={255} />
                   </label>
                   <label>
-                    Categorie
+                    {t("admin.products.category_label")}
                     <select name="category_id" defaultValue="">
                       <option value="">-</option>
                       {activeCatalogCategories.map((category) => (
@@ -1859,44 +1857,44 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     </select>
                   </label>
                   <label>
-                    Tarif TTC
+                    {t("admin.products.price_incl_label")}
                     <input type="number" name="price_incl_vat" min="0" step="0.01" defaultValue="0.00" required />
                   </label>
                   <label>
-                    TVA (%)
+                    {t("admin.products.vat_label")}
                     <input type="number" name="vat_rate" min="0" max="100" step="0.001" defaultValue="20.000" required />
                   </label>
                   <label>
-                    Visuel (URL)
+                    {t("admin.products.image_url_optional")}
                     <input type="url" name="image_url" />
                   </label>
                   <label className="span-2">
-                    Description courte
+                    {t("admin.products.short_description_label")}
                     <input type="text" name="short_description" maxLength={500} />
                   </label>
                   <label className="span-4">
-                    Description longue
+                    {t("admin.products.long_description_label")}
                     <textarea name="long_description" rows={3} />
                   </label>
                   <label className="checkline">
                     <input type="checkbox" name="purchasable_online" />
-                    Achetable en ligne
+                    {t("admin.catalog.purchasable_online")}
                   </label>
                   <label className="checkline">
                     <input type="checkbox" name="is_public" defaultChecked />
-                    Public
+                    {t("admin.products.badge_public")}
                   </label>
                   <label className="checkline">
                     <input type="checkbox" name="active" defaultChecked />
-                    Actif
+                    {t("common.active")}
                   </label>
                   <div className="span-4">
-                    <strong>Composants du kit</strong>
+                    <strong>{t("admin.catalog.composition_title")}</strong>
                     <div className="catalog-kit-grid">
                       {Array.from({ length: 6 }).map((_, index) => (
                         <div key={`new-kit-item-${index}`} className="catalog-kit-grid-row">
                           <select name={`item_product_id_${index}`} defaultValue="">
-                            <option value="">Produit #{index + 1}</option>
+                            <option value="">{t("admin.catalog.product_option", { number: index + 1 })}</option>
                             {activeCatalogProducts.map((product) => (
                               <option key={product.id} value={product.id}>
                                 {product.title}
@@ -1910,12 +1908,12 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     </div>
                   </div>
                   <div className="row span-4">
-                    <button type="submit">Ajouter kit</button>
+                    <button type="submit">{t("admin.catalog.add_kit")}</button>
                   </div>
                 </form>
 
                 {catalogKits.length === 0 ? (
-                  <p className="muted">Aucun kit configure.</p>
+                  <p className="muted">{t("admin.catalog.no_configured_kits")}</p>
                 ) : (
                   <div className="list">
                     {catalogKits.map((kit) => (
@@ -1924,14 +1922,21 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           <div>
                             <strong>{kit.title}</strong>
                             <p className="muted">
-                              Categorie: {kit.category_name || "-"} | Prix saisi {formatMoney(kit.price_incl_vat, "EUR")} | Prix calcule{" "}
-                              {formatMoney(kit.computed_price_incl_vat, "EUR")}
+                              {t("admin.catalog.kit_summary", {
+                                category: kit.category_name || "-",
+                                billed: formatMoney(kit.price_incl_vat, "EUR"),
+                                computed: formatMoney(kit.computed_price_incl_vat, "EUR"),
+                              })}
                             </p>
                           </div>
                           <div className="row">
-                            <span className="badge">Items: {kit.items.length}</span>
-                            <span className="badge">Public: {yesNoLabel(language, kit.is_public)}</span>
-                            <span className="badge">Online: {yesNoLabel(language, kit.purchasable_online)}</span>
+                            <span className="badge">{t("admin.catalog.items_count_badge", { count: kit.items.length })}</span>
+                            <span className="badge">
+                              {t("admin.products.badge_public")}: {yesNoLabel(language, kit.is_public)}
+                            </span>
+                            <span className="badge">
+                              {t("admin.products.badge_online")}: {yesNoLabel(language, kit.purchasable_online)}
+                            </span>
                           </div>
                         </div>
                         {kit.items.length > 0 ? (
@@ -1939,10 +1944,10 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             <table className="data-table">
                               <thead>
                                 <tr>
-                                  <th>Produit</th>
-                                  <th>Qt</th>
-                                  <th>PU TTC</th>
-                                  <th>Total TTC</th>
+                                  <th>{t("admin.catalog.product_column")}</th>
+                                  <th>{t("admin.products.quantity_short_header")}</th>
+                                  <th>{t("admin.catalog.unit_price_ttc")}</th>
+                                  <th>{t("admin.catalog.total_price_ttc")}</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -1960,15 +1965,15 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         ) : null}
 
                         <details>
-                          <summary className="mode-link">Modifier le kit</summary>
+                          <summary className="mode-link">{t("admin.catalog.edit_kit_title")}</summary>
                           <form action={updateAdminCatalogKitAction} className="grid cols-4 config-form-grid top-gap-sm">
                             <input type="hidden" name="kit_id" value={kit.id} />
                             <label className="span-2">
-                              Titre
+                              {t("admin.products.title_label")}
                               <input type="text" name="title" defaultValue={kit.title} required maxLength={255} />
                             </label>
                             <label>
-                              Categorie
+                              {t("admin.products.category_label")}
                               <select name="category_id" defaultValue={kit.category_id ?? ""}>
                                 <option value="">-</option>
                                 {catalogCategories.map((category) => (
@@ -1979,46 +1984,46 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               </select>
                             </label>
                             <label>
-                              Tarif TTC
+                              {t("admin.products.price_incl_label")}
                               <input type="number" name="price_incl_vat" min="0" step="0.01" defaultValue={kit.price_incl_vat} required />
                             </label>
                             <label>
-                              TVA (%)
+                              {t("admin.products.vat_label")}
                               <input type="number" name="vat_rate" min="0" max="100" step="0.001" defaultValue={kit.vat_rate} required />
                             </label>
                             <label>
-                              Visuel (URL)
+                              {t("admin.products.image_url_label")}
                               <input type="url" name="image_url" defaultValue={kit.image_url || ""} />
                             </label>
                             <label className="span-2">
-                              Description courte
+                              {t("admin.products.short_description_label")}
                               <input type="text" name="short_description" maxLength={500} defaultValue={kit.short_description || ""} />
                             </label>
                             <label className="span-4">
-                              Description longue
+                              {t("admin.products.long_description_label")}
                               <textarea name="long_description" rows={3} defaultValue={kit.long_description || ""} />
                             </label>
                             <label className="checkline">
                               <input type="checkbox" name="purchasable_online" defaultChecked={kit.purchasable_online} />
-                              Achetable en ligne
+                              {t("admin.catalog.purchasable_online")}
                             </label>
                             <label className="checkline">
                               <input type="checkbox" name="is_public" defaultChecked={kit.is_public} />
-                              Public
+                              {t("admin.products.badge_public")}
                             </label>
                             <label className="checkline">
                               <input type="checkbox" name="active" defaultChecked={kit.active} />
-                              Actif
+                              {t("common.active")}
                             </label>
                             <div className="span-4">
-                              <strong>Composants du kit</strong>
+                              <strong>{t("admin.catalog.composition_title")}</strong>
                               <div className="catalog-kit-grid">
                                 {Array.from({ length: 6 }).map((_, index) => {
                                   const item = kit.items[index];
                                   return (
                                     <div key={`${kit.id}-item-${index}`} className="catalog-kit-grid-row">
                                       <select name={`item_product_id_${index}`} defaultValue={item?.product_id ?? ""}>
-                                        <option value="">Produit #{index + 1}</option>
+                                        <option value="">{t("admin.catalog.product_option", { number: index + 1 })}</option>
                                         {catalogProducts.map((product) => (
                                           <option key={product.id} value={product.id}>
                                             {product.title}
@@ -2045,13 +2050,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                               </div>
                             </div>
                             <div className="row span-4">
-                              <button type="submit">Enregistrer</button>
+                              <button type="submit">{t("common.save")}</button>
                             </div>
                           </form>
                           <form action={deleteAdminCatalogKitAction} className="row top-gap-sm">
                             <input type="hidden" name="kit_id" value={kit.id} />
                             <button type="submit" className="danger">
-                              Supprimer
+                              {t("common.delete")}
                             </button>
                           </form>
                         </details>
