@@ -14,6 +14,7 @@ import type {
   AdminPaymentMethodOptionOut,
   CourseTypeOut,
 } from "../lib/types";
+import { normalizeUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
 
 type FormulaEditorMode = "create" | "edit";
 
@@ -28,6 +29,7 @@ type AdminFormulaEditorProps = {
   backHref: string;
   okMessage?: string;
   errorMessage?: string;
+  language?: UiLanguage | string;
 };
 
 type CreditGrantRow = {
@@ -43,16 +45,29 @@ type RestrictionRow = {
   courseTypeIds: string[];
 };
 
-const RESTRICTION_PERIOD_OPTIONS: Array<{ value: AdminFormulaRestrictionPeriod; label: string }> = [
-  { value: "DAY", label: "par jour" },
-  { value: "WEEK", label: "par semaine" },
-  { value: "MONTH", label: "par mois" },
-  { value: "ROLLING_MONTH", label: "par mois glissant" },
-  { value: "SEMESTER", label: "par semestre" },
+const RESTRICTION_PERIOD_OPTIONS: Array<{ value: AdminFormulaRestrictionPeriod; labelKey: string }> = [
+  { value: "DAY", labelKey: "admin.formulas.restriction_day" },
+  { value: "WEEK", labelKey: "admin.formulas.restriction_week" },
+  { value: "MONTH", labelKey: "admin.formulas.restriction_month" },
+  { value: "ROLLING_MONTH", labelKey: "admin.formulas.restriction_rolling_month" },
+  { value: "SEMESTER", labelKey: "admin.formulas.restriction_semester" },
 ];
 
 function newRowKey(prefix: string, index: number): string {
   return `${prefix}-${index}`;
+}
+
+function paymentMethodLabel(method: AdminPaymentMethodOptionOut, language: UiLanguage): string {
+  const normalized = method.code.trim().toUpperCase();
+  if (normalized === "CARD_ONLINE") return uiText(language, "admin.client_detail.billing.card_online");
+  if (normalized === "SEPA_DEBIT") return uiText(language, "admin.client_detail.billing.sepa_debit");
+  if (normalized === "CARD_TERMINAL") return uiText(language, "admin.client_detail.billing.card_terminal");
+  if (normalized === "BANK_TRANSFER") return uiText(language, "admin.client_detail.billing.bank_transfer");
+  if (normalized === "CASH") return uiText(language, "admin.client_detail.billing.cash");
+  if (normalized === "CHECK") return uiText(language, "admin.client_detail.billing.check");
+  if (normalized === "PAYPAL") return "PayPal";
+  if (normalized === "FACTURATION_AUTO") return uiText(language, "admin.client_detail.billing.invoice");
+  return method.label;
 }
 
 export default function AdminFormulaEditor({
@@ -66,9 +81,12 @@ export default function AdminFormulaEditor({
   backHref,
   okMessage,
   errorMessage,
+  language: languageProp = "fr",
 }: AdminFormulaEditorProps): JSX.Element {
+  const language = normalizeUiLanguage(languageProp);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const action = mode === "create" ? createAdminFormulaAction : updateAdminFormulaAction;
-  const title = mode === "create" ? "Nouvelle formule" : formula?.name || "Edition formule";
+  const title = mode === "create" ? t("admin.formulas.editor_new_title") : formula?.name || t("admin.formulas.editor_edit_title");
 
   const activeCreditTypes = useMemo(() => creditTypes.filter((creditType) => creditType.active), [creditTypes]);
   const availableCurrencies = useMemo(() => {
@@ -151,9 +169,9 @@ export default function AdminFormulaEditor({
   }, 0);
 
   const isForfait = kind === "FORFAIT";
-  const priceLabel = priceTaxMode === "TTC" ? "Tarif TTC" : "Tarif HT";
-  const signupLabel = priceTaxMode === "TTC" ? "Frais de dossier TTC" : "Frais de dossier HT";
-  const priceLabelWithOptional = isForfait ? `${priceLabel} (optionnel)` : priceLabel;
+  const priceLabel = priceTaxMode === "TTC" ? t("admin.formulas.editor_price_ttc") : t("admin.formulas.editor_price_ht");
+  const signupLabel = priceTaxMode === "TTC" ? t("admin.formulas.editor_signup_ttc") : t("admin.formulas.editor_signup_ht");
+  const priceLabelWithOptional = isForfait ? t("admin.formulas.editor_optional_parenthetical", { label: priceLabel }) : priceLabel;
   const defaultPriceValue = formula?.monthly_price_value ?? formula?.monthly_price_excl_vat ?? "";
   const defaultSignupValue = formula?.signup_fee_value ?? formula?.signup_fee_excl_vat ?? "0";
   const defaultForfaitStartDate = formula?.forfait_start_date ?? "";
@@ -169,7 +187,7 @@ export default function AdminFormulaEditor({
 
           <div className="row">
             <Link className="reset-link" href={backHref}>
-              Retour aux formules
+              {t("admin.formulas.editor_back")}
             </Link>
           </div>
         </div>
@@ -184,46 +202,46 @@ export default function AdminFormulaEditor({
 
         <section className="formula-editor-grid">
           <article className="card formula-editor-main">
-            <h3>Parametres de la formule</h3>
+            <h3>{t("admin.formulas.editor_settings_title")}</h3>
             <div className="grid cols-2 config-form-grid">
               <label className="checkline">
                 <input type="checkbox" name="active" defaultChecked={formula ? formula.active : true} />
-                Active
+                {t("common.active")}
               </label>
 
               <label className="checkline">
                 <input type="checkbox" name="is_private" defaultChecked={formula ? formula.is_private : false} />
-                Privee
+                {t("common.private")}
               </label>
 
               <label>
-                Type
+                {t("common.type")}
                 <select name="kind" value={kind} onChange={(event) => setKind(event.currentTarget.value as "PACK" | "SUBSCRIPTION" | "FORFAIT")}>
-                  <option value="PACK">Carnet (credits)</option>
-                  <option value="SUBSCRIPTION">Abonnement</option>
-                  <option value="FORFAIT">Forfait (facturation au reel)</option>
+                  <option value="PACK">{t("admin.formulas.editor_kind_pack")}</option>
+                  <option value="SUBSCRIPTION">{t("admin.formulas.kind_subscription")}</option>
+                  <option value="FORFAIT">{t("admin.formulas.editor_kind_forfait")}</option>
                 </select>
               </label>
 
               <label>
-                Nom
+                {t("common.name")}
                 <input type="text" name="name" defaultValue={formula?.name ?? ""} required maxLength={255} />
               </label>
 
               <label className="span-2">
-                Description
+                {t("common.description")}
                 <textarea name="description" defaultValue={formula?.description ?? ""} rows={3} />
               </label>
 
               <label>
-                Mode tarifaire
+                {t("admin.formulas.editor_price_tax_mode")}
                 <select
                   name="price_tax_mode"
                   value={priceTaxMode}
                   onChange={(event) => setPriceTaxMode(event.currentTarget.value as AdminFormulaPriceTaxMode)}
                 >
-                  <option value="HT">Saisie en HT</option>
-                  <option value="TTC">Saisie en TTC</option>
+                  <option value="HT">{t("admin.formulas.editor_tax_ht")}</option>
+                  <option value="TTC">{t("admin.formulas.editor_tax_ttc")}</option>
                 </select>
               </label>
 
@@ -240,7 +258,7 @@ export default function AdminFormulaEditor({
               </label>
 
               <label>
-                Devise
+                {t("admin.formulas.editor_currency")}
                 <select name="currency_code" defaultValue={formula?.currency_code ?? availableCurrencies[0]} required>
                   {availableCurrencies.map((currencyCode) => (
                     <option key={`formula-currency-${currencyCode}`} value={currencyCode}>
@@ -262,17 +280,17 @@ export default function AdminFormulaEditor({
               </label>
 
               <label className="span-2">
-                Option(s) (csv)
+                {t("admin.formulas.editor_options_csv")}
                 <input
                   type="text"
                   name="options_csv"
                   defaultValue={formula?.options.join(", ") ?? ""}
-                  placeholder="ex: engagement 1 mois, acces studio"
+                  placeholder={t("admin.formulas.editor_options_placeholder")}
                 />
               </label>
 
               <label className="span-2">
-                Activites accessibles
+                {t("admin.formulas.editor_entitlements")}
                 <select
                   name="entitlement_course_type_ids"
                   multiple
@@ -285,13 +303,13 @@ export default function AdminFormulaEditor({
                     </option>
                   ))}
                 </select>
-                <small className="muted">Maintenez Ctrl/Cmd pour selectionner plusieurs activites.</small>
+                <small className="muted">{t("admin.formulas.editor_multi_select_help")}</small>
               </label>
 
               {kind === "PACK" ? (
                 <section className="span-2 config-dynamic-section">
                   <div className="row spread">
-                    <h4>Credits associes</h4>
+                    <h4>{t("admin.formulas.editor_credit_section")}</h4>
                     <button
                       type="button"
                       className="ghost small-btn"
@@ -308,12 +326,12 @@ export default function AdminFormulaEditor({
                       }}
                       disabled={activeCreditTypes.length === 0}
                     >
-                      <span aria-hidden="true">＋</span> Ajouter
+                      <span aria-hidden="true">＋</span> {t("admin.formulas.editor_add")}
                     </button>
                   </div>
 
                   <label>
-                    Duree de validite (mois)
+                    {t("admin.formulas.editor_pack_validity_months")}
                     <input
                       type="number"
                       name="pack_validity_months"
@@ -325,26 +343,24 @@ export default function AdminFormulaEditor({
                     />
                   </label>
 
-                  <p className="muted">Associez un type de credit et un nombre de credits pour ce carnet.</p>
+                  <p className="muted">{t("admin.formulas.editor_credit_help")}</p>
                   <p className="muted">
-                    Total credits: <strong>{totalCredits}</strong>
+                    {t("admin.formulas.editor_total_credits")} <strong>{totalCredits}</strong>
                   </p>
                   {creditRows.length > 1 ? (
                     <>
                       <label>
-                        Relation entre les lignes de credit
+                        {t("admin.formulas.editor_credit_relation")}
                         <select
                           name="credit_grants_relation"
                           value={creditGrantsRelation}
                           onChange={(event) => setCreditGrantsRelation(event.currentTarget.value as AdminFormulaCreditGrantsRelation)}
                         >
-                          <option value="OR">OU (un type de credit suffit)</option>
-                          <option value="AND">ET (tous les types de credit sont requis)</option>
+                          <option value="OR">{t("admin.formulas.editor_credit_relation_or")}</option>
+                          <option value="AND">{t("admin.formulas.editor_credit_relation_and")}</option>
                         </select>
                       </label>
-                      <small className="muted">
-                        Exemple: Presentiel ET En ligne oblige les deux credits. Presentiel OU En ligne accepte l’un des deux.
-                      </small>
+                      <small className="muted">{t("admin.formulas.editor_credit_relation_help")}</small>
                     </>
                   ) : (
                     <input type="hidden" name="credit_grants_relation" value={creditGrantsRelation} />
@@ -356,7 +372,7 @@ export default function AdminFormulaEditor({
                         <input type="hidden" name="credit_grant_row_key" value={row.key} />
 
                         <label>
-                          Type de credit
+                          {t("admin.formulas.editor_credit_type")}
                           <select
                             name={`credit_grant_credit_type_id_${row.key}`}
                             value={row.creditTypeId}
@@ -367,7 +383,7 @@ export default function AdminFormulaEditor({
                               );
                             }}
                           >
-                            <option value="">Selectionner</option>
+                            <option value="">{t("common.select")}</option>
                             {activeCreditTypes.map((creditType) => (
                               <option key={`grant-credit-type-${creditType.id}`} value={creditType.id}>
                                 {creditType.name}
@@ -377,7 +393,7 @@ export default function AdminFormulaEditor({
                         </label>
 
                         <label>
-                          Nombre de credits
+                          {t("admin.formulas.editor_credit_count")}
                           <input
                             type="number"
                             name={`credit_grant_credits_count_${row.key}`}
@@ -399,14 +415,14 @@ export default function AdminFormulaEditor({
                             className="danger small-btn formula-row-delete-btn"
                             onClick={() => setCreditRows((prev) => prev.filter((item) => item.key !== row.key))}
                             disabled={creditRows.length === 1}
-                            title="Supprimer cette ligne de credit"
+                            title={t("admin.formulas.editor_delete_credit_line")}
                           >
                             <span className="formula-row-delete-icon" aria-hidden="true">
                               🗑
                             </span>
-                            <span>Supprimer</span>
+                            <span>{t("common.delete")}</span>
                           </button>
-                          <small className="muted">Ligne {index + 1}</small>
+                          <small className="muted">{t("admin.formulas.editor_line", { index: index + 1 })}</small>
                         </div>
                       </div>
                     ))}
@@ -416,25 +432,23 @@ export default function AdminFormulaEditor({
                 <section className="span-2 config-dynamic-section">
                   <div className="grid cols-2 config-form-grid">
                     <label>
-                      Date de debut de la formule
+                      {t("admin.formulas.editor_forfait_start")}
                       <input type="date" name="forfait_start_date" defaultValue={defaultForfaitStartDate} required />
                     </label>
                     <label>
-                      Date de fin de la formule
+                      {t("admin.formulas.editor_forfait_end")}
                       <input type="date" name="forfait_end_date" defaultValue={defaultForfaitEndDate} required />
                     </label>
                   </div>
-                  <p className="muted">
-                    Le forfait n&apos;a pas de credits. Les transactions seront calculees depuis les cours reserves.
-                  </p>
+                  <p className="muted">{t("admin.formulas.editor_forfait_help")}</p>
                 </section>
               ) : null}
             </div>
           </article>
 
           <article className="card formula-editor-side">
-            <h3>Paiement(s)</h3>
-            <p className="muted">Selectionnez un ou plusieurs moyens de paiement autorises pour cette formule.</p>
+            <h3>{t("admin.formulas.editor_payment_title")}</h3>
+            <p className="muted">{t("admin.formulas.editor_payment_help")}</p>
             <div className="config-payment-grid">
               {paymentMethods.map((method) => (
                 <label key={method.code} className="checkline config-payment-line">
@@ -444,7 +458,7 @@ export default function AdminFormulaEditor({
                     value={method.code}
                     defaultChecked={selectedPaymentCodes.includes(method.code)}
                   />
-                  <span>{method.label}</span>
+                  <span>{paymentMethodLabel(method, language)}</span>
                 </label>
               ))}
             </div>
@@ -452,9 +466,9 @@ export default function AdminFormulaEditor({
         </section>
 
         <section className="card">
-          <h3>Restriction d'acces</h3>
+          <h3>{t("admin.formulas.editor_restriction_title")}</h3>
           <div className="row spread">
-            <p className="muted">Ajoutez autant de restrictions que necessaire puis configurez periode + activites.</p>
+            <p className="muted">{t("admin.formulas.editor_restriction_help")}</p>
             <button
               type="button"
               className="ghost small-btn"
@@ -471,7 +485,7 @@ export default function AdminFormulaEditor({
                 setRestrictionRowIndex((value) => value + 1);
               }}
             >
-              <span aria-hidden="true">＋</span> Ajouter
+              <span aria-hidden="true">＋</span> {t("admin.formulas.editor_add")}
             </button>
           </div>
 
@@ -481,25 +495,25 @@ export default function AdminFormulaEditor({
                 <input type="hidden" name="restriction_row_key" value={row.key} />
                 <div className="row spread">
                   <h4>
-                    <span aria-hidden="true">✎</span> Restriction {index + 1}
+                    <span aria-hidden="true">✎</span> {t("admin.formulas.editor_restriction_item", { index: index + 1 })}
                   </h4>
                   <button
                     type="button"
                     className="danger small-btn formula-row-delete-btn"
                     onClick={() => setRestrictionRows((prev) => prev.filter((item) => item.key !== row.key))}
                     disabled={restrictionRows.length === 1}
-                    title="Supprimer cette restriction"
+                    title={t("admin.formulas.editor_delete_restriction")}
                   >
                     <span className="formula-row-delete-icon" aria-hidden="true">
                       🗑
                     </span>
-                    <span>Supprimer</span>
+                    <span>{t("common.delete")}</span>
                   </button>
                 </div>
 
                 <div className="config-restriction-form-grid">
                   <label>
-                    Type
+                    {t("common.type")}
                     <select
                       name={`restriction_period_${row.key}`}
                       value={row.period}
@@ -510,17 +524,17 @@ export default function AdminFormulaEditor({
                         );
                       }}
                     >
-                      <option value="">Aucune</option>
+                      <option value="">{t("admin.formulas.no_activity")}</option>
                       {RESTRICTION_PERIOD_OPTIONS.map((option) => (
                         <option key={`restriction-period-option-${option.value}`} value={option.value}>
-                          {option.label}
+                          {t(option.labelKey)}
                         </option>
                       ))}
                     </select>
                   </label>
 
                   <label>
-                    NB cours max
+                    {t("admin.formulas.editor_max_courses")}
                     <input
                       type="number"
                       name={`restriction_max_${row.key}`}
@@ -537,7 +551,7 @@ export default function AdminFormulaEditor({
                   </label>
 
                   <label className="span-2">
-                    Activites
+                    {t("admin.formulas.activities_label")}
                     <select
                       name={`restriction_course_type_ids_${row.key}`}
                       multiple
@@ -556,7 +570,7 @@ export default function AdminFormulaEditor({
                         </option>
                       ))}
                     </select>
-                    <small className="muted">Laissez vide pour appliquer la restriction a toutes les activites.</small>
+                    <small className="muted">{t("admin.formulas.editor_restriction_empty_help")}</small>
                   </label>
                 </div>
               </article>
@@ -566,9 +580,9 @@ export default function AdminFormulaEditor({
 
         <section className="card formula-editor-footer">
           <div className="row">
-            <button type="submit">{mode === "create" ? "Creer" : "Enregistrer"}</button>
+            <button type="submit">{mode === "create" ? t("common.create") : t("common.save")}</button>
             <Link className="reset-link" href={backHref}>
-              Annuler
+              {t("common.cancel")}
             </Link>
           </div>
         </section>
@@ -581,7 +595,7 @@ export default function AdminFormulaEditor({
               <input type="hidden" name="formula_id" value={formula.id} />
               <input type="hidden" name="return_to" value={returnTo} />
               <button className="ghost" type="submit">
-                Dupliquer
+                {t("common.duplicate")}
               </button>
             </form>
 
@@ -589,7 +603,7 @@ export default function AdminFormulaEditor({
               <input type="hidden" name="formula_id" value={formula.id} />
               <input type="hidden" name="return_to" value={returnTo} />
               <button className="danger" type="submit" disabled={!formula.active}>
-                Desactiver
+                {t("admin.formulas.disable")}
               </button>
             </form>
           </div>

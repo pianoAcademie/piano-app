@@ -3,7 +3,8 @@ import { redirect } from "next/navigation";
 
 import AdminFormulaEditor from "../../../../../components/admin-formula-editor";
 import { backendRequest } from "../../../../../lib/backend";
-import type { AdminConfigAccountOut, AdminCreditTypeOut, AdminPaymentMethodsOut, CourseTypeOut } from "../../../../../lib/types";
+import type { AdminConfigAccountOut, AdminCreditTypeOut, AdminPaymentMethodsOut, CourseTypeOut, UserOut } from "../../../../../lib/types";
+import { normalizeUiLanguage, uiText } from "../../../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -34,12 +35,16 @@ export default async function AdminFormulaCreatePage({ searchParams }: { searchP
   const errorMessage = readParam(params, "error");
   const backHref = safeAdminHref(readParam(params, "back"), "/admin/config/formulas");
 
-  const [paymentMethodsResult, courseTypesResult, creditTypesResult, accountResult] = await Promise.all([
+  const [meResult, paymentMethodsResult, courseTypesResult, creditTypesResult, accountResult] = await Promise.all([
+    backendRequest<UserOut>("/api/v1/auth/me", {}, token),
     backendRequest<AdminPaymentMethodsOut>("/api/v1/admin/config/payment-methods", {}, token),
     backendRequest<CourseTypeOut[]>("/api/v1/course-types", {}, token),
     backendRequest<AdminCreditTypeOut[]>("/api/v1/admin/credit-types", {}, token),
     backendRequest<AdminConfigAccountOut>("/api/v1/admin/config/account", {}, token),
   ]);
+
+  const language = meResult.ok ? normalizeUiLanguage(meResult.data.preferred_language) : "fr";
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const paymentMethods = paymentMethodsResult.ok ? paymentMethodsResult.data.methods : [];
   const courseTypes = courseTypesResult.ok ? courseTypesResult.data.filter((row) => row.active) : [];
@@ -49,16 +54,16 @@ export default async function AdminFormulaCreatePage({ searchParams }: { searchP
   if (!paymentMethodsResult.ok || !courseTypesResult.ok || !creditTypesResult.ok || !accountResult.ok) {
     const messages: string[] = [];
     if (!paymentMethodsResult.ok) {
-      messages.push(`Moyens de paiement: ${paymentMethodsResult.message}`);
+      messages.push(t("admin.formulas.load_payment_methods", { message: paymentMethodsResult.message }));
     }
     if (!courseTypesResult.ok) {
-      messages.push(`Types de cours: ${courseTypesResult.message}`);
+      messages.push(t("admin.formulas.load_course_types", { message: courseTypesResult.message }));
     }
     if (!creditTypesResult.ok) {
-      messages.push(`Types de credit: ${creditTypesResult.message}`);
+      messages.push(t("admin.formulas.load_credit_types", { message: creditTypesResult.message }));
     }
     if (!accountResult.ok) {
-      messages.push(`Configuration compte: ${accountResult.message}`);
+      messages.push(t("admin.formulas.load_account_config", { message: accountResult.message }));
     }
 
     return (
@@ -80,6 +85,7 @@ export default async function AdminFormulaCreatePage({ searchParams }: { searchP
       backHref={backHref}
       okMessage={okMessage}
       errorMessage={errorMessage}
+      language={language}
     />
   );
 }
