@@ -327,6 +327,23 @@ function billingMethodLabel(code: string | null, language: UiLanguage = "fr"): s
   return code || uiText(language, "admin.client_detail.not_defined");
 }
 
+function paymentMethodOptionLabel(method: { code: string; label: string }, language: UiLanguage = "fr"): string {
+  const normalized = (method.code || "").trim().toUpperCase();
+  if (
+    normalized === "CARD_ONLINE" ||
+    normalized === "SEPA_DEBIT" ||
+    normalized === "CARD_TERMINAL" ||
+    normalized === "BANK_TRANSFER" ||
+    normalized === "CASH" ||
+    normalized === "CHECK" ||
+    normalized === "PAYPAL" ||
+    normalized === "FACTURATION_AUTO"
+  ) {
+    return billingMethodLabel(normalized, language);
+  }
+  return method.label;
+}
+
 function paymentSourceLabel(source: string, language: UiLanguage = "fr"): string {
   const normalized = source.trim().toUpperCase();
   if (normalized === "PLAN_PURCHASE") {
@@ -1003,6 +1020,7 @@ function messagesHref(clientId: string, params: Record<string, string>): string 
 
 const MANUAL_TRANSACTION_MODAL_TYPES = ["payment", "refund", "charge", "discount", "fees"] as const;
 type ManualTransactionModalType = (typeof MANUAL_TRANSACTION_MODAL_TYPES)[number];
+const CLIENT_STATUS_OPTIONS = ["ACTIVE", "RESPONSABLE", "TRIAL", "PENDING", "INACTIVE", "ARCHIVED"] as const;
 
 const DEFAULT_PAYMENT_METHOD_OPTIONS: Array<{
   code: string;
@@ -1650,7 +1668,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       redirectSearch.set("tab", "factures");
       redirect(`/admin/clients/${family.billing_recipient_adult_id}?${redirectSearch.toString()}`);
     }
-    redirect(`/admin/clients/${client.id}?tab=famille&error=Definir%20un%20destinataire%20de%20facture%20pour%20cet%20enfant`);
+    redirect(
+      `/admin/clients/${client.id}?tab=famille&error=${encodeURIComponent(t("admin.client_detail.family_missing_billing_recipient"))}`,
+    );
   }
 
   const allClients = allClientsResult.ok
@@ -3185,18 +3205,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       {currentTab === "fiche" && selectedSubscriptionForModal && subscriptionModalAction === "billing" ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label="Fermer">
+            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label={t("common.close")}>
               ×
             </Link>
             <h3 className="modal-title">
-              {selectedSubscriptionForModal.plan.kind === "FORFAIT" ? "Modifier le mode de paiement" : "Configurer le prelevement"}
+              {selectedSubscriptionForModal.plan.kind === "FORFAIT"
+                ? t("admin.client_detail.subscription_billing_title_forfait")
+                : t("admin.client_detail.subscription_billing_title_subscription")}
             </h3>
             <p className="muted">{selectedSubscriptionForModal.plan.name}</p>
             <form action={setupAdminClientSubscriptionBillingAction} className="grid cols-2 top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="subscription_id" value={selectedSubscriptionForModal.id} />
               <label>
-                Methode de paiement
+                {t("admin.client_detail.field_billing_method")}
                 <select
                   name="billing_method_code"
                   defaultValue={
@@ -3207,20 +3229,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   {enabledPaymentMethods.length > 0 ? (
                     enabledPaymentMethods.map((method) => (
                       <option key={method.code} value={method.code}>
-                        {method.label}
+                        {paymentMethodOptionLabel(method, language)}
                       </option>
                     ))
                   ) : (
                     DEFAULT_PAYMENT_METHOD_OPTIONS.map((method) => (
                       <option key={method.code} value={method.code}>
-                        {method.label}
+                        {paymentMethodOptionLabel(method, language)}
                       </option>
                     ))
                   )}
                 </select>
               </label>
               <label>
-                Ref abonnement PSP
+                {t("admin.client_detail.psp_subscription_ref")}
                 <input
                   type="text"
                   name="payment_provider_subscription_ref"
@@ -3228,7 +3250,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 />
               </label>
               <label>
-                Ref client PSP
+                {t("admin.client_detail.psp_customer_ref")}
                 <input
                   type="text"
                   name="payment_provider_customer_ref"
@@ -3236,15 +3258,17 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 />
               </label>
               <label>
-                Ref mandat PSP
+                {t("admin.client_detail.psp_mandate_ref")}
                 <input type="text" name="payment_provider_mandate_ref" defaultValue={selectedSubscriptionForModal.payment_provider_mandate_ref ?? ""} />
               </label>
               <div className="row span-2 modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, "fiche")}>
-                  Annuler
+                  {t("common.cancel")}
                 </Link>
                 <button type="submit">
-                  {selectedSubscriptionForModal.plan.kind === "FORFAIT" ? "Enregistrer le mode de paiement" : "Enregistrer"}
+                  {selectedSubscriptionForModal.plan.kind === "FORFAIT"
+                    ? t("admin.client_detail.subscription_billing_save_forfait")
+                    : t("common.save")}
                 </button>
               </div>
             </form>
@@ -3255,18 +3279,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       {currentTab === "fiche" && selectedSubscriptionForModal && subscriptionModalAction === "expiry" ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label="Fermer">
+            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label={t("common.close")}>
               ×
             </Link>
             <h3 className="modal-title">
-              {selectedSubscriptionForModal.plan.kind === "PACK" ? "Modifier l expiration du carnet" : "Modifier l expiration du forfait"}
+              {selectedSubscriptionForModal.plan.kind === "PACK"
+                ? t("admin.client_detail.expiry_title_pack")
+                : t("admin.client_detail.expiry_title_forfait")}
             </h3>
             <p className="muted">{selectedSubscriptionForModal.plan.name}</p>
             <form action={updateAdminClientSubscriptionExpiryAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="subscription_id" value={selectedSubscriptionForModal.id} />
               <label>
-                Date d expiration
+                {t("admin.client_detail.expiry_date_label")}
                 <input
                   type="date"
                   name="ends_at"
@@ -3274,15 +3300,12 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   required
                 />
               </label>
-              <p className="muted">
-                Si la date est deja passee, le produit est automatiquement marque comme termine et les credits du carnet deviennent
-                inutilisables.
-              </p>
+              <p className="muted">{t("admin.client_detail.expiry_help")}</p>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, "fiche")}>
-                  Annuler
+                  {t("common.cancel")}
                 </Link>
-                <button type="submit">Enregistrer</button>
+                <button type="submit">{t("common.save")}</button>
               </div>
             </form>
           </article>
@@ -3295,17 +3318,17 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       selectedSubscriptionForModal.plan.kind === "FORFAIT" ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label="Fermer">
+            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label={t("common.close")}>
               ×
             </Link>
-            <h3 className="modal-title">Tarification client (forfait)</h3>
+            <h3 className="modal-title">{t("admin.client_detail.forfait_pricing_title")}</h3>
             <p className="muted">{selectedSubscriptionForModal.plan.name}</p>
-            <p className="muted">Etape optionnelle: laissez vide pour conserver 0 sur chaque activite.</p>
+            <p className="muted">{t("admin.client_detail.forfait_pricing_optional_help")}</p>
             <form action={updateAdminClientForfaitPricingAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="subscription_id" value={selectedSubscriptionForModal.id} />
               {selectedSubscriptionForModal.forfait_activity_pricing.length === 0 ? (
-                <p className="muted">Aucune activite associee a cette formule forfait.</p>
+                <p className="muted">{t("admin.client_detail.forfait_pricing_empty")}</p>
               ) : (
                 selectedSubscriptionForModal.forfait_activity_pricing.map((row) => (
                   <article key={row.course_type_id} className="card modal-card">
@@ -3313,22 +3336,26 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     <input type="hidden" name={`forfait_course_type_id_${row.course_type_id}`} value={row.course_type_id} />
                     <h4>{row.course_type_name}</h4>
                     <p className="muted">
-                      Tarif activite:{" "}
-                      {row.base_hourly_rate_ttc
-                        ? `${formatMoney(row.base_hourly_rate_ttc, selectedSubscriptionForModal.estimated_currency || client.preferred_currency)}/h`
-                        : "n/a"}{" "}
-                      |
-                      Apres surcouche max:{" "}
-                      {row.effective_hourly_rate_ttc
-                        ? `${formatMoney(
-                            row.effective_hourly_rate_ttc,
-                            selectedSubscriptionForModal.estimated_currency || client.preferred_currency,
-                          )}/h`
-                        : "n/a"}
+                      {t("admin.client_detail.forfait_pricing_rate_summary", {
+                        base: row.base_hourly_rate_ttc
+                          ? `${formatMoney(
+                              row.base_hourly_rate_ttc,
+                              selectedSubscriptionForModal.estimated_currency || client.preferred_currency,
+                              language,
+                            )}/h`
+                          : t("admin.client_detail.not_available"),
+                        effective: row.effective_hourly_rate_ttc
+                          ? `${formatMoney(
+                              row.effective_hourly_rate_ttc,
+                              selectedSubscriptionForModal.estimated_currency || client.preferred_currency,
+                              language,
+                            )}/h`
+                          : t("admin.client_detail.not_available"),
+                      })}
                     </p>
                     <div className="grid cols-4 config-form-grid">
                       <label>
-                        Remise fidelite / h TTC
+                        {t("admin.client_detail.forfait_loyalty_discount")}
                         <input
                           type="text"
                           name={`forfait_loyalty_discount_per_hour_ttc_${row.course_type_id}`}
@@ -3336,7 +3363,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         />
                       </label>
                       <label>
-                        Remise famille / h TTC
+                        {t("admin.client_detail.forfait_family_discount")}
                         <input
                           type="text"
                           name={`forfait_family_discount_per_hour_ttc_${row.course_type_id}`}
@@ -3344,7 +3371,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         />
                       </label>
                       <label>
-                        Supplement sans engagement / h TTC
+                        {t("admin.client_detail.forfait_short_commitment_supplement")}
                         <input
                           type="text"
                           name={`forfait_short_commitment_supplement_per_hour_ttc_${row.course_type_id}`}
@@ -3352,7 +3379,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         />
                       </label>
                       <label>
-                        Remise 2e cours semaine / h TTC
+                        {t("admin.client_detail.forfait_second_course_discount")}
                         <input
                           type="text"
                           name={`forfait_second_course_weekly_discount_per_hour_ttc_${row.course_type_id}`}
@@ -3363,14 +3390,12 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </article>
                 ))
               )}
-              <p className="muted">
-                Cette surcouche s applique uniquement aux reservations facturees dans la periode active du forfait.
-              </p>
+              <p className="muted">{t("admin.client_detail.forfait_pricing_scope_help")}</p>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, "fiche")}>
-                  Annuler
+                  {t("common.cancel")}
                 </Link>
-                <button type="submit">Enregistrer</button>
+                <button type="submit">{t("common.save")}</button>
               </div>
             </form>
           </article>
@@ -3380,16 +3405,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       {currentTab === "fiche" && selectedSubscriptionForModal && subscriptionModalAction === "suspend" ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label="Fermer">
+            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label={t("common.close")}>
               ×
             </Link>
-            <h3 className="modal-title">Suspendre l abonnement</h3>
+            <h3 className="modal-title">{t("admin.client_detail.suspend_subscription_title")}</h3>
             <p className="muted">{selectedSubscriptionForModal.plan.name}</p>
             <form action={suspendAdminClientSubscriptionAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="subscription_id" value={selectedSubscriptionForModal.id} />
               <label>
-                Debut suspension
+                {t("admin.client_detail.suspension_start")}
                 <input
                   type="date"
                   name="suspension_starts_at"
@@ -3398,7 +3423,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 />
               </label>
               <label>
-                Duree
+                {t("admin.client_detail.suspension_duration")}
                 <input
                   type="number"
                   name="duration_value"
@@ -3409,18 +3434,18 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 />
               </label>
               <label>
-                Unite
+                {t("admin.client_detail.suspension_unit")}
                 <select name="duration_unit" defaultValue={selectedSubscriptionForModal.suspension_duration_unit ?? "DAY"}>
-                  <option value="DAY">Jours (1-30)</option>
-                  <option value="MONTH">Mois (1-12)</option>
+                  <option value="DAY">{t("admin.client_detail.suspension_unit_days")}</option>
+                  <option value="MONTH">{t("admin.client_detail.suspension_unit_months")}</option>
                 </select>
               </label>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, "fiche")}>
-                  Annuler
+                  {t("common.cancel")}
                 </Link>
                 <button type="submit" className="ghost">
-                  Suspendre
+                  {t("admin.client_detail.suspend_subscription")}
                 </button>
               </div>
             </form>
@@ -3431,28 +3456,33 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       {currentTab === "fiche" && selectedSubscriptionForModal && subscriptionModalAction === "cancel" ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label="Fermer">
+            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label={t("common.close")}>
               ×
             </Link>
-            <h3 className="modal-title">Resilier a fin de periode</h3>
+            <h3 className="modal-title">{t("admin.client_detail.cancel_end_of_period_title")}</h3>
             <p className="muted">{selectedSubscriptionForModal.plan.name}</p>
             <form action={cancelAdminClientSubscriptionAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="subscription_id" value={selectedSubscriptionForModal.id} />
               {hasBlockingFutureBookingsForCancellation ? (
                 <p className="muted">
-                  <strong>Annulation impossible.</strong> {blockingFutureBookingsForCancellation.length} reservation(s) future(s) sont deja
-                  rattachee(s) a cet abonnement apres la date effective de fin. Supprimez-les d abord.
-                  {cancellationConflictPreview ? ` Exemples: ${cancellationConflictPreview}.` : ""}
+                  <strong>{t("admin.client_detail.cancellation_impossible_title")}</strong>{" "}
+                  {t("admin.client_detail.cancellation_blocked_help", {
+                    count: blockingFutureBookingsForCancellation.length,
+                  })}
+                  {cancellationConflictPreview
+                    ? ` ${t("admin.client_detail.examples_label")}: ${cancellationConflictPreview}.`
+                    : ""}
                 </p>
               ) : null}
               {cancelConflictAlert ? (
                 <p className="muted">
-                  <strong>Annulation refusee.</strong> Des reservations futures liees a ce produit existent encore apres la date de fin.
+                  <strong>{t("admin.client_detail.cancellation_refused_title")}</strong>{" "}
+                  {t("admin.client_detail.cancellation_refused_help")}
                 </p>
               ) : null}
               <label>
-                Date de resiliation
+                {t("admin.client_detail.cancellation_date")}
                 <input
                   type="date"
                   name="cancellation_requested_at"
@@ -3462,10 +3492,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               </label>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, "fiche")}>
-                  Annuler
+                  {t("common.cancel")}
                 </Link>
                 <button type="submit" className="danger" disabled={hasBlockingFutureBookingsForCancellation}>
-                  Confirmer la resiliation
+                  {t("admin.client_detail.confirm_cancellation")}
                 </button>
               </div>
             </form>
@@ -3476,22 +3506,22 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       {currentTab === "fiche" && selectedSubscriptionForModal && subscriptionModalAction === "cancel_now" ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label="Fermer">
+            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label={t("common.close")}>
               ×
             </Link>
             <h3 className="modal-title">
               {selectedSubscriptionForModal.plan.kind === "PACK"
-                ? "Annulation immediate du carnet"
+                ? t("admin.client_detail.cancel_now_title_pack")
                 : selectedSubscriptionForModal.plan.kind === "FORFAIT"
-                  ? "Cloture immediate du forfait"
-                  : "Resiliation immediate"}
+                  ? t("admin.client_detail.cancel_now_title_forfait")
+                  : t("admin.client_detail.cancel_now_title_subscription")}
             </h3>
             <p className="muted">
               {selectedSubscriptionForModal.plan.kind === "PACK"
-                ? `${selectedSubscriptionForModal.plan.name} - cette action cloture le carnet maintenant et annule les credits restants.`
+                ? t("admin.client_detail.cancel_now_help_pack", { name: selectedSubscriptionForModal.plan.name })
                 : selectedSubscriptionForModal.plan.kind === "FORFAIT"
-                  ? `${selectedSubscriptionForModal.plan.name} - cette action cloture le forfait maintenant et arrete toute facturation future.`
-                  : `${selectedSubscriptionForModal.plan.name} - cette action coupe l abonnement maintenant et desactive tout prochain prelevement.`}
+                  ? t("admin.client_detail.cancel_now_help_forfait", { name: selectedSubscriptionForModal.plan.name })
+                  : t("admin.client_detail.cancel_now_help_subscription", { name: selectedSubscriptionForModal.plan.name })}
             </p>
             <form action={cancelAdminClientSubscriptionAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
@@ -3499,18 +3529,23 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <input type="hidden" name="immediate_cancel" value="on" />
               {hasBlockingFutureBookingsForCancellation ? (
                 <p className="muted">
-                  <strong>Annulation impossible.</strong> {blockingFutureBookingsForCancellation.length} reservation(s) future(s) sont deja
-                  rattachee(s) a ce produit apres la date effective de fin. Supprimez-les d abord.
-                  {cancellationConflictPreview ? ` Exemples: ${cancellationConflictPreview}.` : ""}
+                  <strong>{t("admin.client_detail.cancellation_impossible_title")}</strong>{" "}
+                  {t("admin.client_detail.cancellation_blocked_help", {
+                    count: blockingFutureBookingsForCancellation.length,
+                  })}
+                  {cancellationConflictPreview
+                    ? ` ${t("admin.client_detail.examples_label")}: ${cancellationConflictPreview}.`
+                    : ""}
                 </p>
               ) : null}
               {cancelConflictAlert ? (
                 <p className="muted">
-                  <strong>Annulation refusee.</strong> Des reservations futures liees a ce produit existent encore apres la date de fin.
+                  <strong>{t("admin.client_detail.cancellation_refused_title")}</strong>{" "}
+                  {t("admin.client_detail.cancellation_refused_help")}
                 </p>
               ) : null}
               <label>
-                Date de demande
+                {t("admin.client_detail.cancellation_request_date")}
                 <input
                   type="date"
                   name="cancellation_requested_at"
@@ -3521,21 +3556,21 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <label className="checkline">
                 <input type="checkbox" name="confirm_immediate" required />
                 {selectedSubscriptionForModal.plan.kind === "PACK"
-                  ? "Je confirme l annulation immediate et irreversible du carnet."
+                  ? t("admin.client_detail.confirm_immediate_pack")
                   : selectedSubscriptionForModal.plan.kind === "FORFAIT"
-                    ? "Je confirme la cloture immediate et irreversible du forfait."
-                    : "Je confirme la resiliation immediate et irreversible."}
+                    ? t("admin.client_detail.confirm_immediate_forfait")
+                    : t("admin.client_detail.confirm_immediate_subscription")}
               </label>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, "fiche")}>
-                  Annuler
+                  {t("common.cancel")}
                 </Link>
                 <button type="submit" className="danger" disabled={hasBlockingFutureBookingsForCancellation}>
                   {selectedSubscriptionForModal.plan.kind === "PACK"
-                    ? "Annuler immediatement"
+                    ? t("admin.client_detail.cancel_now_submit_pack")
                     : selectedSubscriptionForModal.plan.kind === "FORFAIT"
-                      ? "Cloturer immediatement"
-                      : "Resilier immediatement"}
+                      ? t("admin.client_detail.cancel_now_submit_forfait")
+                      : t("admin.client_detail.cancel_now_submit_subscription")}
                 </button>
               </div>
             </form>
@@ -3546,23 +3581,23 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       {currentTab === "fiche" && selectedCreditForModal ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label="Fermer">
+            <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label={t("common.close")}>
               ×
             </Link>
-            <h3 className="modal-title">Modifier le credit manuel</h3>
+            <h3 className="modal-title">{t("admin.client_detail.manual_credit_edit_title")}</h3>
             <p className="muted">{selectedCreditForModal.credit_type_name ?? selectedCreditForModal.credit_type_code}</p>
             <form action={updateAdminClientManualCreditAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="credit_type_id" value={selectedCreditForModal.credit_type_id} />
               <label>
-                Nombre de credits
+                {t("admin.client_detail.manual_credit_count")}
                 <input type="number" name="credits_count" min={0} max={100000} defaultValue={selectedCreditForModal.credits_count} required />
               </label>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, "fiche")}>
-                  Annuler
+                  {t("common.cancel")}
                 </Link>
-                <button type="submit">Enregistrer</button>
+                <button type="submit">{t("common.save")}</button>
               </div>
             </form>
           </article>
@@ -3976,27 +4011,31 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       {currentTab === "famille" ? (
         <section className="grid cols-2">
           <article className="card">
-            <h3>Liens familiaux</h3>
+            <h3>{t("admin.client_detail.family_links_title")}</h3>
             {client.client_kind === "ADULT" ? (
               linkedChildren.length === 0 ? (
-                <p className="muted">Aucun enfant rattache a cet adulte.</p>
+                <p className="muted">{t("admin.client_detail.no_child_linked")}</p>
               ) : (
                 <div className="list">
                   {linkedChildren.map((link) => (
                     <article key={link.id} className="item">
                       <div className="row spread">
                         <strong>
-                          Enfant:{" "}
+                          {t("admin.client_detail.kind_child")}:{" "}
                           <Link className="client-name-link" href={tabHref(link.child.id, "fiche")}>
                             {([link.child.first_name, link.child.last_name].filter(Boolean).join(" ") || link.child.email)}
                           </Link>
                         </strong>
-                      <span className={`status-pill ${link.is_billing_recipient ? "status-ok" : "status-off"}`}>
-                          {link.is_billing_recipient ? "Facture envoyee a cet adulte" : "Facture envoyee a un autre adulte"}
-                      </span>
+                        <span className={`status-pill ${link.is_billing_recipient ? "status-ok" : "status-off"}`}>
+                          {link.is_billing_recipient
+                            ? t("admin.client_detail.billing_sent_to_this_adult")
+                            : t("admin.client_detail.billing_sent_to_other_adult")}
+                        </span>
                       </div>
                       <p className="muted">
-                        {link.child.email} | Mobile 1: {link.child.mobile_phone_1 ?? "-"} | Relation: {link.relationship_label ?? "non precisee"}
+                        {link.child.email} | {t("admin.client_detail.mobile_1_short")}: {link.child.mobile_phone_1 ?? "-"} |{" "}
+                        {uiText(language, "admin.clients.relationship_label")}:{" "}
+                        {link.relationship_label ?? t("admin.client_detail.relationship_not_specified")}
                       </p>
                       <div className="row">
                         {!link.is_billing_recipient ? (
@@ -4004,7 +4043,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                             <input type="hidden" name="link_id" value={link.id} />
                             <input type="hidden" name="return_client_id" value={client.id} />
                             <button className="ghost" type="submit">
-                              Definir destinataire facture
+                              {t("admin.client_detail.set_billing_recipient")}
                             </button>
                           </form>
                         ) : null}
@@ -4012,7 +4051,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                           <input type="hidden" name="link_id" value={link.id} />
                           <input type="hidden" name="return_client_id" value={client.id} />
                           <button className="danger" type="submit">
-                            Retirer le lien
+                            {t("admin.client_detail.remove_link")}
                           </button>
                         </form>
                       </div>
@@ -4021,24 +4060,25 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 </div>
               )
             ) : linkedAdults.length === 0 ? (
-              <p className="muted">Aucun adulte rattache a cet enfant.</p>
+              <p className="muted">{t("admin.client_detail.no_adult_linked")}</p>
             ) : (
               <div className="list">
                 {linkedAdults.map((link) => (
                   <article key={link.id} className="item">
                     <div className="row spread">
                       <strong>
-                        Adulte:{" "}
+                        {t("admin.client_detail.kind_adult")}:{" "}
                         <Link className="client-name-link" href={tabHref(link.adult.id, "fiche")}>
                           {([link.adult.first_name, link.adult.last_name].filter(Boolean).join(" ") || link.adult.email)}
                         </Link>
                       </strong>
                       <span className={`status-pill ${link.is_billing_recipient ? "status-ok" : "status-off"}`}>
-                        {link.is_billing_recipient ? "Adulte destinataire facture" : "Coparent"}
+                        {link.is_billing_recipient ? t("admin.client_detail.adult_billing_recipient") : t("admin.client_detail.coparent")}
                       </span>
                     </div>
                     <p className="muted">
-                      {link.adult.email} | Mobile 1: {link.adult.mobile_phone_1 ?? "-"} | Adresse: {link.adult.address_line ?? "-"}
+                      {link.adult.email} | {t("admin.client_detail.mobile_1_short")}: {link.adult.mobile_phone_1 ?? "-"} |{" "}
+                      {t("admin.client_detail.address")}: {link.adult.address_line ?? "-"}
                     </p>
                     <div className="row">
                       {!link.is_billing_recipient ? (
@@ -4046,7 +4086,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                           <input type="hidden" name="link_id" value={link.id} />
                           <input type="hidden" name="return_client_id" value={client.id} />
                           <button className="ghost" type="submit">
-                            Definir destinataire facture
+                            {t("admin.client_detail.set_billing_recipient")}
                           </button>
                         </form>
                       ) : null}
@@ -4054,7 +4094,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         <input type="hidden" name="link_id" value={link.id} />
                         <input type="hidden" name="return_client_id" value={client.id} />
                         <button className="danger" type="submit">
-                          Retirer le lien
+                          {t("admin.client_detail.remove_link")}
                         </button>
                       </form>
                     </div>
@@ -4065,19 +4105,19 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           </article>
 
           <article className="card">
-            <h3>Rattacher un compte existant</h3>
+            <h3>{t("admin.client_detail.attach_existing_account_title")}</h3>
             {client.client_kind === "ADULT" ? (
               candidateChildren.length === 0 ? (
-                <p className="muted">Aucun profil enfant disponible a rattacher.</p>
+                <p className="muted">{t("admin.client_detail.no_child_candidate")}</p>
               ) : (
                 <form action={linkExistingFamilyMembersAction} className="grid">
                   <input type="hidden" name="adult_client_id" value={client.id} />
                   <input type="hidden" name="return_client_id" value={client.id} />
                   <label>
-                    Enfant a rattacher
+                    {t("admin.client_detail.child_to_attach")}
                     <select name="child_client_id" required defaultValue="">
                       <option value="" disabled>
-                        Selectionner un enfant
+                        {t("admin.client_detail.select_child")}
                       </option>
                       {candidateChildren.map((candidate) => (
                         <option key={candidate.id} value={candidate.id}>
@@ -4087,27 +4127,32 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     </select>
                   </label>
                   <label>
-                    Lien de relation
-                    <input name="relationship_label" type="text" maxLength={80} placeholder="ex: parent, pere, mere..." />
+                    {uiText(language, "admin.clients.relationship_label")}
+                    <input
+                      name="relationship_label"
+                      type="text"
+                      maxLength={80}
+                      placeholder={uiText(language, "admin.clients.relationship_placeholder")}
+                    />
                   </label>
                   <label className="checkline">
                     <input name="is_billing_recipient" type="checkbox" defaultChecked />
-                    Destinataire des factures pour cet enfant
+                    {t("admin.client_detail.billing_recipient_child_checkbox")}
                   </label>
-                  <button type="submit">Rattacher enfant existant</button>
+                  <button type="submit">{t("admin.client_detail.attach_existing_child")}</button>
                 </form>
               )
             ) : candidateAdults.length === 0 ? (
-              <p className="muted">Aucun profil adulte disponible a rattacher.</p>
+              <p className="muted">{t("admin.client_detail.no_adult_candidate")}</p>
             ) : (
               <form action={linkExistingFamilyMembersAction} className="grid">
                 <input type="hidden" name="child_client_id" value={client.id} />
                 <input type="hidden" name="return_client_id" value={client.id} />
                 <label>
-                  Adulte a rattacher
+                  {t("admin.client_detail.adult_to_attach")}
                   <select name="adult_client_id" required defaultValue="">
                     <option value="" disabled>
-                      Selectionner un adulte
+                      {t("admin.client_detail.select_adult")}
                     </option>
                     {candidateAdults.map((candidate) => (
                       <option key={candidate.id} value={candidate.id}>
@@ -4117,64 +4162,67 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </select>
                 </label>
                 <label>
-                  Lien de relation
-                  <input name="relationship_label" type="text" maxLength={80} placeholder="ex: parent, pere, mere..." />
+                  {uiText(language, "admin.clients.relationship_label")}
+                  <input
+                    name="relationship_label"
+                    type="text"
+                    maxLength={80}
+                    placeholder={uiText(language, "admin.clients.relationship_placeholder")}
+                  />
                 </label>
                 <label className="checkline">
                   <input name="is_billing_recipient" type="checkbox" />
-                  Definir cet adulte comme destinataire facture
+                  {t("admin.client_detail.billing_recipient_adult_checkbox")}
                 </label>
-                <button type="submit">Rattacher adulte existant</button>
+                <button type="submit">{t("admin.client_detail.attach_existing_adult")}</button>
               </form>
             )}
           </article>
 
           {client.client_kind === "ADULT" ? (
             <article className="card span-2">
-              <h3>Creer un enfant et le rattacher</h3>
-              <p className="muted">
-                Utiliser ce formulaire pour creer un compte enfant (avec ses informations) et le relier directement a cet adulte.
-              </p>
+              <h3>{t("admin.client_detail.create_child_and_link_title")}</h3>
+              <p className="muted">{t("admin.client_detail.create_child_and_link_help")}</p>
               <form action={createChildForAdultAction} className="grid cols-3">
                 <input type="hidden" name="adult_client_id" value={client.id} />
                 <label>
-                  Email (optionnel)
+                  {uiText(language, "admin.clients.email_optional")}
                   <input type="email" name="child_email" />
                 </label>
                 <label>
-                  Prenom <span className="required-star">*</span>
+                  {t("admin.client_detail.first_name")} <span className="required-star">*</span>
                   <input type="text" name="child_first_name" maxLength={100} required />
                 </label>
                 <label>
-                  Nom <span className="required-star">*</span>
+                  {t("admin.client_detail.last_name")} <span className="required-star">*</span>
                   <input type="text" name="child_last_name" maxLength={100} required />
                 </label>
                 <label>
-                  Tel mob 1
+                  {t("admin.client_detail.mobile_1_short")}
                   <input type="text" name="child_mobile_phone_1" maxLength={30} />
                 </label>
                 <label>
-                  Tel mob 2
+                  {t("admin.client_detail.mobile_2_short")}
                   <input type="text" name="child_mobile_phone_2" maxLength={30} />
                 </label>
                 <label>
-                  Tel domicile
+                  {t("admin.client_detail.home_phone")}
                   <input type="text" name="child_home_phone" maxLength={30} />
                 </label>
                 <label className="span-2">
-                  Adresse
+                  {t("admin.client_detail.address")}
                   <input type="text" name="child_address_line" maxLength={255} />
                 </label>
                 <label>
-                  Code postal
+                  {t("admin.client_detail.postal_code")}
                   <input type="text" name="child_postal_code" maxLength={20} />
                 </label>
                 <label>
-                  Ville
+                  {t("admin.client_detail.city")}
                   <input type="text" name="child_city" maxLength={120} />
                 </label>
                 <label>
-                  Pays adresse
+                  {t("admin.clients.address_country")}
                   <select name="child_address_country" defaultValue={DEFAULT_COUNTRY}>
                     {COUNTRY_OPTIONS.map((country) => (
                       <option key={country.value} value={country.value}>
@@ -4184,7 +4232,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </select>
                 </label>
                 <label>
-                  Pays residence
+                  {t("admin.client_detail.country_residence")}
                   <select name="child_residence_country" defaultValue={DEFAULT_COUNTRY}>
                     {COUNTRY_OPTIONS.map((country) => (
                       <option key={country.value} value={country.value}>
@@ -4194,7 +4242,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </select>
                 </label>
                 <label>
-                  Devise
+                  {t("admin.client_detail.currency")}
                   <select name="child_preferred_currency" defaultValue={DEFAULT_CURRENCY}>
                     {CURRENCY_OPTIONS.map((currency) => (
                       <option key={currency.value} value={currency.value}>
@@ -4204,14 +4252,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </select>
                 </label>
                 <label>
-                  Langue
+                  {t("admin.client_detail.language")}
                   <select name="child_preferred_language" defaultValue="fr">
-                    <option value="fr">Francais</option>
-                    <option value="en">English</option>
+                    <option value="fr">{uiText(language, "common.french")}</option>
+                    <option value="en">{uiText(language, "common.english")}</option>
                   </select>
                 </label>
                 <label>
-                  Fuseau
+                  {t("admin.client_detail.timezone")}
                   <select name="child_timezone" defaultValue={DEFAULT_TIMEZONE}>
                     {TIMEZONE_OPTIONS.map((item) => (
                       <option key={item.value} value={item.value}>
@@ -4221,83 +4269,80 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </select>
                 </label>
                 <label>
-                  Date de naissance
+                  {t("admin.client_detail.birth_date")}
                   <input type="date" name="child_birth_date" />
                 </label>
                 <label>
-                  Lien de relation
-                  <input type="text" name="relationship_label" maxLength={80} placeholder="ex: parent" />
+                  {uiText(language, "admin.clients.relationship_label")}
+                  <input type="text" name="relationship_label" maxLength={80} placeholder={t("admin.client_detail.relationship_placeholder_short")} />
                 </label>
                 <label className="span-2">
-                  Informations a connaitre
+                  {t("admin.client_detail.important_info_label")}
                   <textarea name="child_important_info" rows={3} maxLength={1000} />
                 </label>
                 <label>
-                  Statut
+                  {t("admin.client_detail.status")}
                   <select name="child_client_status" defaultValue="ACTIVE">
-                    <option value="ACTIVE">ACTIF</option>
-                    <option value="RESPONSABLE">RESPONSABLE</option>
-                    <option value="TRIAL">ESSAI</option>
-                    <option value="PENDING">EN ATTENTE</option>
-                    <option value="INACTIVE">INACTIF</option>
-                    <option value="ARCHIVED">ARCHIVE</option>
+                    {CLIENT_STATUS_OPTIONS.map((status) => (
+                      <option key={status} value={status}>
+                        {clientStatusLabel(status, language)}
+                      </option>
+                    ))}
                   </select>
                 </label>
                 <label className="checkline">
                   <input name="is_billing_recipient" type="checkbox" defaultChecked />
-                  Cet adulte recoit les factures
+                  {t("admin.client_detail.adult_receives_invoices")}
                 </label>
                 <div className="row span-2">
-                  <button type="submit">Creer et rattacher</button>
+                  <button type="submit">{t("admin.client_detail.create_and_link")}</button>
                 </div>
               </form>
             </article>
           ) : (
             <article className="card span-2">
-              <h3>Creer un adulte et le rattacher</h3>
-              <p className="muted">
-                Permet de creer un compte adulte (parent/representant) depuis la fiche enfant puis de choisir le destinataire des factures.
-              </p>
+              <h3>{t("admin.client_detail.create_adult_and_link_title")}</h3>
+              <p className="muted">{t("admin.client_detail.create_adult_and_link_help")}</p>
               <form action={createAdultForChildAction} className="grid cols-3">
                 <input type="hidden" name="child_client_id" value={client.id} />
                 <label>
-                  Email (optionnel)
+                  {uiText(language, "admin.clients.email_optional")}
                   <input type="email" name="adult_email" />
                 </label>
                 <label>
-                  Prenom <span className="required-star">*</span>
+                  {t("admin.client_detail.first_name")} <span className="required-star">*</span>
                   <input type="text" name="adult_first_name" maxLength={100} required />
                 </label>
                 <label>
-                  Nom <span className="required-star">*</span>
+                  {t("admin.client_detail.last_name")} <span className="required-star">*</span>
                   <input type="text" name="adult_last_name" maxLength={100} required />
                 </label>
                 <label>
-                  Tel mob 1
+                  {t("admin.client_detail.mobile_1_short")}
                   <input type="text" name="adult_mobile_phone_1" maxLength={30} />
                 </label>
                 <label>
-                  Tel mob 2
+                  {t("admin.client_detail.mobile_2_short")}
                   <input type="text" name="adult_mobile_phone_2" maxLength={30} />
                 </label>
                 <label>
-                  Tel domicile
+                  {t("admin.client_detail.home_phone")}
                   <input type="text" name="adult_home_phone" maxLength={30} />
                 </label>
                 <label className="span-2">
-                  Adresse
+                  {t("admin.client_detail.address")}
                   <input type="text" name="adult_address_line" maxLength={255} />
                 </label>
                 <label>
-                  Code postal
+                  {t("admin.client_detail.postal_code")}
                   <input type="text" name="adult_postal_code" maxLength={20} />
                 </label>
                 <label>
-                  Ville
+                  {t("admin.client_detail.city")}
                   <input type="text" name="adult_city" maxLength={120} />
                 </label>
                 <label>
-                  Pays adresse
+                  {t("admin.clients.address_country")}
                   <select name="adult_address_country" defaultValue={DEFAULT_COUNTRY}>
                     {COUNTRY_OPTIONS.map((country) => (
                       <option key={country.value} value={country.value}>
@@ -4307,7 +4352,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </select>
                 </label>
                 <label>
-                  Pays residence
+                  {t("admin.client_detail.country_residence")}
                   <select name="adult_residence_country" defaultValue={DEFAULT_COUNTRY}>
                     {COUNTRY_OPTIONS.map((country) => (
                       <option key={country.value} value={country.value}>
@@ -4317,7 +4362,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </select>
                 </label>
                 <label>
-                  Devise
+                  {t("admin.client_detail.currency")}
                   <select name="adult_preferred_currency" defaultValue={DEFAULT_CURRENCY}>
                     {CURRENCY_OPTIONS.map((currency) => (
                       <option key={currency.value} value={currency.value}>
@@ -4327,14 +4372,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </select>
                 </label>
                 <label>
-                  Langue
+                  {t("admin.client_detail.language")}
                   <select name="adult_preferred_language" defaultValue="fr">
-                    <option value="fr">Francais</option>
-                    <option value="en">English</option>
+                    <option value="fr">{uiText(language, "common.french")}</option>
+                    <option value="en">{uiText(language, "common.english")}</option>
                   </select>
                 </label>
                 <label>
-                  Fuseau
+                  {t("admin.client_detail.timezone")}
                   <select name="adult_timezone" defaultValue={DEFAULT_TIMEZONE}>
                     {TIMEZONE_OPTIONS.map((item) => (
                       <option key={item.value} value={item.value}>
@@ -4344,26 +4389,30 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </select>
                 </label>
                 <label>
-                  Lien de relation
-                  <input type="text" name="relationship_label" maxLength={80} placeholder="ex: mere, pere..." />
+                  {uiText(language, "admin.clients.relationship_label")}
+                  <input
+                    type="text"
+                    name="relationship_label"
+                    maxLength={80}
+                    placeholder={uiText(language, "admin.clients.relationship_placeholder")}
+                  />
                 </label>
                 <label>
-                  Statut
+                  {t("admin.client_detail.status")}
                   <select name="adult_client_status" defaultValue="ACTIVE">
-                    <option value="ACTIVE">ACTIF</option>
-                    <option value="RESPONSABLE">RESPONSABLE</option>
-                    <option value="TRIAL">ESSAI</option>
-                    <option value="PENDING">EN ATTENTE</option>
-                    <option value="INACTIVE">INACTIF</option>
-                    <option value="ARCHIVED">ARCHIVE</option>
+                    {CLIENT_STATUS_OPTIONS.map((status) => (
+                      <option key={status} value={status}>
+                        {clientStatusLabel(status, language)}
+                      </option>
+                    ))}
                   </select>
                 </label>
                 <label className="checkline">
                   <input name="is_billing_recipient" type="checkbox" defaultChecked />
-                  Cet adulte recoit les factures
+                  {t("admin.client_detail.adult_receives_invoices")}
                 </label>
                 <div className="row span-2">
-                  <button type="submit">Creer adulte et rattacher</button>
+                  <button type="submit">{t("admin.client_detail.create_adult_and_link_button")}</button>
                 </div>
               </form>
             </article>
