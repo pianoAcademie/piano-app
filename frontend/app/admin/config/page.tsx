@@ -3128,9 +3128,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   Catalogue e-learning synchronise: <strong>{externalContentCourses.length}</strong> cours WordPress / LearnDash disponibles
                   pour rattacher du contenu aux activites eleves.
                 </p>
-                {activeCreditTypes.length === 0 ? (
-                  <p className="flash-err">Aucun type de credit actif: ajoutez/activez d abord un type de credit.</p>
-                ) : null}
+                {activeCreditTypes.length === 0 ? <p className="flash-err">{t("admin.credit_types.no_active_for_activities")}</p> : null}
                 {activeLegalEntities.length === 0 ? (
                   <p className="flash-err">Aucune entite legale active: ajoutez/activez d abord une entite legale.</p>
                 ) : null}
@@ -4186,34 +4184,32 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                 <div className="row between">
                   <div>
                     <h3>{t("admin.breadcrumb.credit_types")}</h3>
-                    <p className="muted">
-                      Mapping strict backend entre type de credit et activites. Les carnets debitent uniquement les credits du type associe.
-                    </p>
+                    <p className="muted">{t("admin.credit_types.intro")}</p>
                   </div>
                   <Link className="mode-link" href={buildConfigHref("credit-types", { new_credit_type: "1" })}>
-                    Ajouter un type de credit
+                    {t("admin.credit_types.add")}
                   </Link>
                 </div>
               </section>
 
               <section className="card">
-                <h3>Referentiel credits</h3>
+                <h3>{t("admin.credit_types.registry_title")}</h3>
                 <div className="table-wrap">
                   <table className="data-table">
                     <thead>
                       <tr>
-                        <th>Code</th>
-                        <th>Type de credit</th>
-                        <th>Activites associees</th>
-                        <th>Statut</th>
-                        <th>Actions</th>
+                        <th>{t("common.code")}</th>
+                        <th>{t("admin.credit_types.credit_type")}</th>
+                        <th>{t("admin.credit_types.linked_activities")}</th>
+                        <th>{t("common.status")}</th>
+                        <th>{t("common.actions")}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {creditTypes.length === 0 ? (
                         <tr>
                           <td colSpan={5} className="muted">
-                            Aucun type de credit charge.
+                            {t("admin.credit_types.empty")}
                           </td>
                         </tr>
                       ) : null}
@@ -4228,7 +4224,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           </td>
                           <td>
                             {creditType.activity_names.length === 0 ? (
-                              <span className="muted">Aucune activite associee</span>
+                              <span className="muted">{t("admin.credit_types.no_linked_activity")}</span>
                             ) : (
                               <div className="formula-tag-row">
                                 {creditType.activity_names.map((activityName) => (
@@ -4241,26 +4237,28 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           </td>
                           <td>
                             <span className={`status-pill ${creditType.active ? "status-ok" : "status-warn"}`}>
-                              {creditType.active ? "Actif" : "Inactif"}
+                              {creditType.active ? t("common.active") : t("common.inactive")}
                             </span>
                             <span className={`status-pill ${creditType.activity_count > 0 ? "status-ok" : "status-warn"}`}>
-                              {creditType.activity_count > 0 ? `${creditType.activity_count} activite(s)` : "A configurer"}
+                              {creditType.activity_count > 0
+                                ? t("admin.credit_types.activity_count", { count: creditType.activity_count })
+                                : t("admin.credit_types.to_configure")}
                             </span>
                           </td>
                           <td>
                             <div className="formula-actions-cell">
                               <Link className="mode-link" href={buildConfigHref("credit-types", { credit_type_id: creditType.id })}>
-                                Modifier
+                                {t("common.edit")}
                               </Link>
                               <form action={deleteAdminCreditTypeAction}>
                                 <input type="hidden" name="credit_type_id" value={creditType.id} />
                                 <button type="submit" className="danger small-btn" disabled={creditType.activity_count > 0}>
-                                  Supprimer
+                                  {t("common.delete")}
                                 </button>
                               </form>
                             </div>
                             {creditType.activity_count > 0 ? (
-                              <small className="muted">Supprimer indisponible: type utilise par des activites.</small>
+                              <small className="muted">{t("admin.credit_types.delete_unavailable")}</small>
                             ) : null}
                           </td>
                         </tr>
@@ -4273,38 +4271,38 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               {createCreditTypeModalOpen ? (
                 <section className="modal-overlay">
                   <article className="modal-panel activity-modal-panel">
-                    <Link className="modal-close-x" href={buildConfigHref("credit-types")} aria-label="Fermer">
+                    <Link className="modal-close-x" href={buildConfigHref("credit-types")} aria-label={t("common.close")}>
                       ×
                     </Link>
                     <header className="activity-modal-header">
                       <div>
-                        <h3>Nouveau type de credit</h3>
-                        <p className="muted">Ajouter un type de credit utilisable dans les formules et activites.</p>
+                        <h3>{t("admin.credit_types.new_title")}</h3>
+                        <p className="muted">{t("admin.credit_types.new_desc")}</p>
                       </div>
                     </header>
 
                     <section className="card modal-card">
                       <form action={createAdminCreditTypeAction} className="grid cols-2 config-form-grid">
                         <label>
-                          Nom du type de credit
+                          {t("admin.credit_types.name_label")}
                           <input type="text" name="name" required maxLength={255} />
                         </label>
                         <label>
-                          Code (optionnel)
-                          <input type="text" name="code" maxLength={80} placeholder="auto-genere si vide" />
+                          {t("admin.credit_types.code_optional")}
+                          <input type="text" name="code" maxLength={80} placeholder={t("admin.credit_types.code_auto_placeholder")} />
                         </label>
 
                         <label className="span-2">
-                          Description
+                          {t("common.description")}
                           <textarea name="description" rows={3} />
                         </label>
                         <label className="checkline">
                           <input type="checkbox" name="active" defaultChecked />
-                          Active
+                          {t("common.active")}
                         </label>
 
                         <div className="row span-2">
-                          <button type="submit">Ajouter le type de credit</button>
+                          <button type="submit">{t("admin.credit_types.add_submit")}</button>
                         </div>
                       </form>
                     </section>
@@ -4315,13 +4313,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               {selectedCreditType ? (
                 <section className="modal-overlay">
                   <article className="modal-panel activity-modal-panel">
-                    <Link className="modal-close-x" href={buildConfigHref("credit-types")} aria-label="Fermer">
+                    <Link className="modal-close-x" href={buildConfigHref("credit-types")} aria-label={t("common.close")}>
                       ×
                     </Link>
                     <header className="activity-modal-header">
                       <div>
                         <h3>{selectedCreditType.name}</h3>
-                        <p className="muted">Modifier les informations du type de credit.</p>
+                        <p className="muted">{t("admin.credit_types.edit_desc")}</p>
                       </div>
                     </header>
 
@@ -4330,25 +4328,25 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <input type="hidden" name="credit_type_id" value={selectedCreditType.id} />
 
                         <label>
-                          Nom du type de credit
+                          {t("admin.credit_types.name_label")}
                           <input type="text" name="name" defaultValue={selectedCreditType.name} required maxLength={255} />
                         </label>
                         <label>
-                          Code
+                          {t("common.code")}
                           <input type="text" name="code" defaultValue={selectedCreditType.code} maxLength={80} />
                         </label>
 
                         <label className="span-2">
-                          Description
+                          {t("common.description")}
                           <textarea name="description" rows={3} defaultValue={selectedCreditType.description ?? ""} />
                         </label>
                         <label className="checkline">
                           <input type="checkbox" name="active" defaultChecked={selectedCreditType.active} />
-                          Active
+                          {t("common.active")}
                         </label>
 
                         <div className="row span-2">
-                          <button type="submit">Enregistrer</button>
+                          <button type="submit">{t("common.save")}</button>
                         </div>
                       </form>
 
@@ -4361,18 +4359,18 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             disabled={selectedCreditType.activity_count > 0}
                             title={
                               selectedCreditType.activity_count > 0
-                                ? "Supprimez ou remappez les activites associees avant suppression"
+                                ? t("admin.credit_types.delete_disabled_title")
                                 : undefined
                             }
                           >
-                            Supprimer ce type de credit
+                            {t("admin.credit_types.delete_submit")}
                           </button>
                         </form>
                       </div>
 
                       {selectedCreditType.activity_count > 0 ? (
                         <p className="muted top-gap-sm">
-                          Suppression bloquee: {selectedCreditType.activity_count} activite(s) sont encore associees a ce type de credit.
+                          {t("admin.credit_types.delete_blocked", { count: selectedCreditType.activity_count })}
                         </p>
                       ) : null}
                     </section>
