@@ -1253,13 +1253,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
           {section === "params-payments" ? (
             <>
               <section className="card">
-                <h3>PSP et cles API</h3>
+                <h3>{t("admin.payments.psp_title")}</h3>
                 {!paymentProvider ? (
-                  <p className="muted">Impossible de charger la configuration PSP.</p>
+                  <p className="muted">{t("admin.payments.psp_load_error")}</p>
                 ) : (
                   <form action={updateAdminConfigPaymentProviderAction} className="grid cols-2 config-form-grid">
                     <label>
-                      Prestataire de paiement
+                      {t("admin.payments.provider")}
                       <select name="provider" defaultValue={paymentProvider.provider}>
                         <option value="PAYPLUG">Payplug</option>
                         <option value="MOLLIE">Mollie</option>
@@ -1267,81 +1267,130 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       </select>
                     </label>
                     <label>
-                      Environnement
+                      {t("admin.payments.environment")}
                       <select name="mode" defaultValue={paymentProvider.mode}>
-                        <option value="TEST">Test</option>
-                        <option value="LIVE">Production</option>
+                        <option value="TEST">{t("admin.payments.environment_test")}</option>
+                        <option value="LIVE">{t("admin.payments.environment_live")}</option>
                       </select>
                     </label>
 
                     <label className="span-2">
-                      Payplug - cle test (sk_test_...)
-                      <input type="password" name="payplug_test_secret" placeholder="Laisser vide pour conserver l'existante" autoComplete="new-password" />
+                      {t("admin.payments.payplug_test_secret")}
+                      <input
+                        type="password"
+                        name="payplug_test_secret"
+                        placeholder={t("admin.payments.keep_existing_f")}
+                        autoComplete="new-password"
+                      />
                       <small className="muted">
-                        Actuelle: {paymentProvider.payplug_test_secret_masked || "Non configuree"}
+                        {t("admin.payments.current_f", {
+                          value: paymentProvider.payplug_test_secret_masked || t("admin.payments.not_configured_f"),
+                        })}
                       </small>
                     </label>
 
                     <label className="span-2">
-                      Payplug - cle live (sk_live_...)
-                      <input type="password" name="payplug_live_secret" placeholder="Laisser vide pour conserver l'existante" autoComplete="new-password" />
+                      {t("admin.payments.payplug_live_secret")}
+                      <input
+                        type="password"
+                        name="payplug_live_secret"
+                        placeholder={t("admin.payments.keep_existing_f")}
+                        autoComplete="new-password"
+                      />
                       <small className="muted">
-                        Actuelle: {paymentProvider.payplug_live_secret_masked || "Non configuree"}
+                        {t("admin.payments.current_f", {
+                          value: paymentProvider.payplug_live_secret_masked || t("admin.payments.not_configured_f"),
+                        })}
                       </small>
                     </label>
 
                     <label className="span-2">
-                      Mollie - cle test (test_...)
-                      <input type="password" name="mollie_test_api_key" placeholder="Laisser vide pour conserver l'existante" autoComplete="new-password" />
+                      {t("admin.payments.mollie_test_api_key")}
+                      <input
+                        type="password"
+                        name="mollie_test_api_key"
+                        placeholder={t("admin.payments.keep_existing_f")}
+                        autoComplete="new-password"
+                      />
                       <small className="muted">
-                        Actuelle: {paymentProvider.mollie_test_api_key_masked || "Non configuree"}
+                        {t("admin.payments.current_f", {
+                          value: paymentProvider.mollie_test_api_key_masked || t("admin.payments.not_configured_f"),
+                        })}
                       </small>
                     </label>
 
                     <label className="span-2">
-                      Mollie - cle live (live_...)
-                      <input type="password" name="mollie_live_api_key" placeholder="Laisser vide pour conserver l'existante" autoComplete="new-password" />
+                      {t("admin.payments.mollie_live_api_key")}
+                      <input
+                        type="password"
+                        name="mollie_live_api_key"
+                        placeholder={t("admin.payments.keep_existing_f")}
+                        autoComplete="new-password"
+                      />
                       <small className="muted">
-                        Actuelle: {paymentProvider.mollie_live_api_key_masked || "Non configuree"}
+                        {t("admin.payments.current_f", {
+                          value: paymentProvider.mollie_live_api_key_masked || t("admin.payments.not_configured_f"),
+                        })}
                       </small>
                     </label>
 
                     <label className="span-2">
-                      Stripe - cle test (sk_test_...)
-                      <input type="password" name="stripe_test_secret" placeholder="Laisser vide pour conserver l'existante" autoComplete="new-password" />
+                      {t("admin.payments.stripe_test_secret")}
+                      <input
+                        type="password"
+                        name="stripe_test_secret"
+                        placeholder={t("admin.payments.keep_existing_f")}
+                        autoComplete="new-password"
+                      />
                       <small className="muted">
-                        Actuelle: {paymentProvider.stripe_test_secret_masked || "Non configuree"}
+                        {t("admin.payments.current_f", {
+                          value: paymentProvider.stripe_test_secret_masked || t("admin.payments.not_configured_f"),
+                        })}
                       </small>
                     </label>
 
                     <label className="span-2">
-                      Stripe - cle live (sk_live_...)
-                      <input type="password" name="stripe_live_secret" placeholder="Laisser vide pour conserver l'existante" autoComplete="new-password" />
+                      {t("admin.payments.stripe_live_secret")}
+                      <input
+                        type="password"
+                        name="stripe_live_secret"
+                        placeholder={t("admin.payments.keep_existing_f")}
+                        autoComplete="new-password"
+                      />
                       <small className="muted">
-                        Actuelle: {paymentProvider.stripe_live_secret_masked || "Non configuree"}
+                        {t("admin.payments.current_f", {
+                          value: paymentProvider.stripe_live_secret_masked || t("admin.payments.not_configured_f"),
+                        })}
                       </small>
                     </label>
 
                     <label className="span-2">
-                      Secret webhook paiement (optionnel)
-                      <input type="password" name="webhook_secret" placeholder="Laisser vide pour conserver l'existant" autoComplete="new-password" />
+                      {t("admin.payments.webhook_secret")}
+                      <input
+                        type="password"
+                        name="webhook_secret"
+                        placeholder={t("admin.payments.keep_existing_m")}
+                        autoComplete="new-password"
+                      />
                       <small className="muted">
-                        Actuel: {paymentProvider.webhook_secret_masked || "Non configure"}
+                        {t("admin.payments.current_m", {
+                          value: paymentProvider.webhook_secret_masked || t("admin.payments.not_configured_m"),
+                        })}
                       </small>
                     </label>
 
                     <p className="muted span-2">
-                      Capacites abonnement:{" "}
+                      {t("admin.payments.subscription_capabilities")}{" "}
                       {paymentProvider.subscriptions_supported
                         ? paymentProvider.subscriptions_managed_by_psp
-                          ? "gerees nativement par le PSP"
-                          : "paiement recurrent possible, echeancier gere par l'application"
-                        : "non pris en charge"}
+                          ? t("admin.payments.subscription_native")
+                          : t("admin.payments.subscription_app_schedule")
+                        : t("admin.payments.subscription_unsupported")}
                       . {paymentProvider.recommendation}
                     </p>
 
                     <div className="row span-2">
-                      <button type="submit">Enregistrer la configuration PSP</button>
+                      <button type="submit">{t("admin.payments.save_psp")}</button>
                     </div>
                   </form>
                 )}
@@ -1350,7 +1399,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               <section className="card">
                 <h3>{t("admin.breadcrumb.payment_methods")}</h3>
                 {!paymentMethodsResult.ok ? (
-                  <p className="muted">Impossible de charger les moyens de paiement.</p>
+                  <p className="muted">{t("admin.payments.methods_load_error")}</p>
                 ) : (
                   <form action={updateAdminConfigPaymentMethodsAction} className="grid config-payment-grid">
                     {paymentMethods.map((method) => (
@@ -1364,9 +1413,9 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </label>
                         {method.code === "BANK_TRANSFER" || method.code === "CHECK" || method.code === "CASH" ? (
                           <label>
-                            Entite legale par defaut
+                            {t("admin.payments.default_legal_entity")}
                             <select name={`legal_entity_for_${method.code}`} defaultValue={method.default_legal_entity_id ?? ""}>
-                              <option value="">(Aucune)</option>
+                              <option value="">{t("admin.payments.no_legal_entity")}</option>
                               {activeLegalEntities.map((entity) => (
                                 <option key={`${method.code}-${entity.id}`} value={entity.id}>
                                   {entity.name}
@@ -1379,7 +1428,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     ))}
 
                     <div className="row">
-                      <button type="submit">Enregistrer</button>
+                      <button type="submit">{t("common.save")}</button>
                     </div>
                   </form>
                 )}
