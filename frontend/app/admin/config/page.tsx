@@ -128,6 +128,7 @@ type MessagingTab =
 type MessagingTabItem = {
   key: MessagingTab;
   label: string;
+  labelKey?: string;
 };
 
 const MAIN_NAV_ITEMS: MainNavItem[] = [
@@ -152,12 +153,12 @@ const PARAMS_SUBNAV_ITEMS: SubNavItem[] = [
 ];
 
 const MESSAGING_TAB_ITEMS: MessagingTabItem[] = [
-  { key: "settings", label: "Parametres messagerie" },
-  { key: "predefined-email", label: "Modeles email predefinis" },
-  { key: "predefined-sms", label: "Modeles SMS predefinis" },
-  { key: "custom-email", label: "Modeles email personnalises" },
-  { key: "custom-sms", label: "Modeles SMS personnalises" },
-  { key: "group-notes", label: "Modeles notes de groupe" },
+  { key: "settings", label: "", labelKey: "admin.messaging_settings.tab.settings" },
+  { key: "predefined-email", label: "", labelKey: "admin.messaging_settings.tab.predefined_email" },
+  { key: "predefined-sms", label: "", labelKey: "admin.messaging_settings.tab.predefined_sms" },
+  { key: "custom-email", label: "", labelKey: "admin.messaging_settings.tab.custom_email" },
+  { key: "custom-sms", label: "", labelKey: "admin.messaging_settings.tab.custom_sms" },
+  { key: "group-notes", label: "", labelKey: "admin.messaging_settings.tab.group_notes" },
 ];
 
 const REMINDER_OFFSET_OPTIONS: Array<{ value: string; labelKey: string }> = [
@@ -676,7 +677,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const messagingSettings = messagingSettingsResult.ok
     ? messagingSettingsResult.data
     : (() => {
-        loadErrors.push(`Messagerie: ${messagingSettingsResult.message}`);
+        loadErrors.push(t("admin.messaging_settings.load_settings", { message: messagingSettingsResult.message }));
         return null;
       })();
   const invoiceTemplate = invoiceTemplateResult.ok
@@ -694,25 +695,25 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const emailPredefinedTemplates = emailPredefinedTemplatesResult.ok
     ? emailPredefinedTemplatesResult.data
     : (() => {
-        loadErrors.push(`Modeles email predefinis: ${emailPredefinedTemplatesResult.message}`);
+        loadErrors.push(t("admin.messaging_settings.load_predefined_email", { message: emailPredefinedTemplatesResult.message }));
         return [] as AdminMessagingTemplateOut[];
       })();
   const smsPredefinedTemplates = smsPredefinedTemplatesResult.ok
     ? smsPredefinedTemplatesResult.data
     : (() => {
-        loadErrors.push(`Modeles SMS predefinis: ${smsPredefinedTemplatesResult.message}`);
+        loadErrors.push(t("admin.messaging_settings.load_predefined_sms", { message: smsPredefinedTemplatesResult.message }));
         return [] as AdminMessagingTemplateOut[];
       })();
   const customTemplates = customTemplatesResult.ok
     ? customTemplatesResult.data
     : (() => {
-        loadErrors.push(`Modeles personnalises: ${customTemplatesResult.message}`);
+        loadErrors.push(t("admin.messaging_settings.load_custom_templates", { message: customTemplatesResult.message }));
         return [] as AdminMessagingTemplateOut[];
       })();
   const quoteTemplateVariables = quoteTemplateVariablesResult.ok
     ? quoteTemplateVariablesResult.data
     : (() => {
-        loadErrors.push(`Variables devis: ${quoteTemplateVariablesResult.message}`);
+        loadErrors.push(t("admin.messaging_settings.load_quote_variables", { message: quoteTemplateVariablesResult.message }));
         return [] as QuoteTemplateVariableOut[];
       })();
 
@@ -2054,7 +2055,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       className={`config-sub-link ${messagingTab === item.key ? "active" : ""}`}
                       href={buildConfigHref("params-messaging", { messaging_tab: item.key })}
                     >
-                      {item.label}
+                      {configNavLabel(item.label, item.labelKey)}
                     </Link>
                   ))}
                 </nav>
@@ -2062,21 +2063,21 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
               {messagingTab === "settings" ? (
               <section className="card">
-                <h3>Parametres de messagerie</h3>
+                <h3>{t("admin.messaging_settings.title")}</h3>
                 {!messagingSettings ? (
-                  <p className="muted">Impossible de charger les parametres de messagerie.</p>
+                  <p className="muted">{t("admin.messaging_settings.settings_load_error")}</p>
                 ) : (
                   <form action={updateAdminConfigMessagingSettingsAction} className="grid cols-2 config-form-grid">
                     <input type="hidden" name="messaging_tab" value={messagingTab} />
                     <fieldset className="span-2 config-subsection">
-                      <legend>Profil expediteur</legend>
+                      <legend>{t("admin.messaging_settings.sender_profile")}</legend>
                       <label className="span-2">
-                        Courriel du studio
+                        {t("admin.messaging_settings.studio_email")}
                         <input type="email" name="studio_email" defaultValue={messagingSettings.studio_email} maxLength={255} />
                       </label>
 
                       <label>
-                        Expediteur studio (nom affiche)
+                        {t("admin.messaging_settings.studio_sender_name")}
                         <input
                           type="text"
                           name="studio_sender_name"
@@ -2085,7 +2086,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         />
                       </label>
                       <label>
-                        Expediteur enseignant (nom affiche)
+                        {t("admin.messaging_settings.teacher_sender_name")}
                         <input
                           type="text"
                           name="teacher_sender_name"
@@ -2100,7 +2101,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           name="use_studio_name_as_default_sender"
                           defaultChecked={messagingSettings.use_studio_name_as_default_sender}
                         />
-                        Utiliser le nom du studio comme expediteur par defaut
+                        {t("admin.messaging_settings.use_studio_name_as_default_sender")}
                       </label>
                       <label className="checkline span-2">
                         <input
@@ -2108,7 +2109,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           name="use_studio_email_for_reminders"
                           defaultChecked={messagingSettings.use_studio_email_for_reminders}
                         />
-                        Utiliser le courriel du studio pour les rappels
+                        {t("admin.messaging_settings.use_studio_email_for_reminders")}
                       </label>
                       <label className="checkline span-2">
                         <input
@@ -2116,26 +2117,26 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           name="use_studio_email_for_lesson_notes"
                           defaultChecked={messagingSettings.use_studio_email_for_lesson_notes}
                         />
-                        Utiliser le courriel du studio pour les notes de lecons
+                        {t("admin.messaging_settings.use_studio_email_for_lesson_notes")}
                       </label>
                       <label className="checkline span-2">
                         <input type="checkbox" name="send_birthday_emails" defaultChecked={messagingSettings.send_birthday_emails} />
-                        Envoyer les courriels d anniversaire automatiques
+                        {t("admin.messaging_settings.send_birthday_emails")}
                       </label>
                     </fieldset>
 
                     <fieldset className="span-2 config-subsection">
-                      <legend>Transport email</legend>
+                      <legend>{t("admin.messaging_settings.email_transport")}</legend>
                       <label>
-                        Fournisseur
+                        {t("admin.messaging_settings.provider")}
                         <select name="email_provider" defaultValue={messagingSettings.email_provider}>
-                          <option value="LOG">Journal uniquement (pas d envoi reel)</option>
-                          <option value="SMTP">SMTP generique</option>
-                          <option value="BREVO">Brevo SMTP</option>
+                          <option value="LOG">{t("admin.messaging_settings.provider_log")}</option>
+                          <option value="SMTP">{t("admin.messaging_settings.provider_smtp")}</option>
+                          <option value="BREVO">{t("admin.messaging_settings.provider_brevo")}</option>
                         </select>
                       </label>
                       <label>
-                        Reply-To
+                        {t("admin.messaging_settings.reply_to")}
                         <input
                           type="email"
                           name="email_reply_to"
@@ -2144,7 +2145,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         />
                       </label>
                       <label>
-                        Prefixe de sujet
+                        {t("admin.messaging_settings.subject_prefix")}
                         <input
                           type="text"
                           name="email_subject_prefix"
@@ -2153,7 +2154,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         />
                       </label>
                       <label>
-                        URL publique frontend
+                        {t("admin.messaging_settings.frontend_base_url")}
                         <input
                           type="url"
                           name="frontend_base_url"
@@ -2162,15 +2163,15 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         />
                       </label>
                       <label>
-                        SMTP host
+                        {t("admin.messaging_settings.smtp_host")}
                         <input type="text" name="smtp_host" defaultValue={messagingSettings.smtp_host} maxLength={255} />
                       </label>
                       <label>
-                        SMTP port
+                        {t("admin.messaging_settings.smtp_port")}
                         <input type="number" name="smtp_port" defaultValue={messagingSettings.smtp_port} min={1} max={65535} />
                       </label>
                       <label>
-                        SMTP username
+                        {t("admin.messaging_settings.smtp_username")}
                         <input
                           type="text"
                           name="smtp_username"
@@ -2180,16 +2181,18 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         />
                       </label>
                       <label>
-                        SMTP password
+                        {t("admin.messaging_settings.smtp_password")}
                         <input type="password" name="smtp_password" defaultValue="" maxLength={255} autoComplete="new-password" />
                         <span className="muted">
                           {messagingSettings.smtp_password_configured
-                            ? `Mot de passe configure (${messagingSettings.smtp_password_masked || "masque"}). Laisser vide pour le conserver.`
-                            : "Aucun mot de passe configure. Laisser vide conserve le fallback serveur s il existe."}
+                            ? t("admin.messaging_settings.smtp_password_configured", {
+                                value: messagingSettings.smtp_password_masked || t("admin.messaging_settings.masked_fallback"),
+                              })
+                            : t("admin.messaging_settings.smtp_password_missing")}
                         </span>
                       </label>
                       <label>
-                        Timeout SMTP (s)
+                        {t("admin.messaging_settings.smtp_timeout_seconds")}
                         <input
                           type="number"
                           name="smtp_timeout_seconds"
@@ -2201,48 +2204,49 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       <div className="span-2 row" style={{ gap: 16, alignItems: "center" }}>
                         <label className="checkline" style={{ margin: 0 }}>
                           <input type="checkbox" name="smtp_use_tls" defaultChecked={messagingSettings.smtp_use_tls} />
-                          Utiliser STARTTLS
+                          {t("admin.messaging_settings.smtp_use_tls")}
                         </label>
                         <label className="checkline" style={{ margin: 0 }}>
                           <input type="checkbox" name="smtp_use_ssl" defaultChecked={messagingSettings.smtp_use_ssl} />
-                          Utiliser SSL direct
+                          {t("admin.messaging_settings.smtp_use_ssl")}
                         </label>
                       </div>
                     </fieldset>
 
                     <fieldset className="span-2 config-subsection">
-                      <legend>Transport SMS</legend>
+                      <legend>{t("admin.messaging_settings.sms_transport")}</legend>
                       <label>
-                        Fournisseur SMS
+                        {t("admin.messaging_settings.sms_provider")}
                         <select name="sms_provider" defaultValue={messagingSettings.sms_provider}>
-                          <option value="LOG">Journal uniquement (pas d envoi reel)</option>
-                          <option value="BREVO">Brevo SMS</option>
+                          <option value="LOG">{t("admin.messaging_settings.provider_log")}</option>
+                          <option value="BREVO">{t("admin.messaging_settings.provider_brevo_sms")}</option>
                         </select>
                       </label>
                       <label>
-                        Expediteur SMS
+                        {t("admin.messaging_settings.sms_sender")}
                         <input type="text" name="sms_sender" defaultValue={messagingSettings.sms_sender} maxLength={32} />
-                        <span className="muted">11 caracteres max en general selon l operateur.</span>
+                        <span className="muted">{t("admin.messaging_settings.sms_sender_hint")}</span>
                       </label>
                       <label className="span-2">
-                        Cle API SMS Brevo
+                        {t("admin.messaging_settings.brevo_sms_api_key")}
                         <input type="password" name="brevo_sms_api_key" defaultValue="" maxLength={255} autoComplete="new-password" />
                         <span className="muted">
                           {messagingSettings.brevo_sms_api_key_configured
-                            ? `Cle configuree (${messagingSettings.brevo_sms_api_key_masked || "masquee"}). Laisser vide pour la conserver.`
-                            : "Aucune cle SMS configuree."}
+                            ? t("admin.messaging_settings.brevo_sms_api_key_configured", {
+                                value: messagingSettings.brevo_sms_api_key_masked || t("admin.messaging_settings.masked_fallback_f"),
+                              })
+                            : t("admin.messaging_settings.brevo_sms_api_key_missing")}
                         </span>
                       </label>
                     </fieldset>
 
                     <fieldset className="span-2 config-subsection">
-                      <legend>Cycle de vie des devis</legend>
+                      <legend>{t("admin.messaging_settings.quote_lifecycle")}</legend>
                       <p className="muted">
-                        Ces reglages pilotent les emails manuels, les relances d expiration et l annulation automatique.
-                        L editeur de templates ci-dessous accepte les variables de devis en syntaxe <strong>{"{{variable}}"}</strong>.
+                        {t("admin.messaging_settings.quote_lifecycle_note", { syntax: "{{variable}}" })}
                       </p>
                       <label>
-                        Template par defaut pour l envoi / renvoi
+                        {t("admin.messaging_settings.quote_send_template")}
                         <select name="quote_send_template_ref" defaultValue={messagingSettings.quote_send_template_ref}>
                           {quoteSendTemplates.map((template) => (
                             <option key={`send-${template.id}`} value={messagingTemplateRef(template)}>
@@ -2252,7 +2256,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </select>
                       </label>
                       <label>
-                        Template SMS pour l envoi / renvoi
+                        {t("admin.messaging_settings.quote_send_sms_template")}
                         <select name="quote_send_sms_template_ref" defaultValue={messagingSettings.quote_send_sms_template_ref}>
                           {quoteSendSmsTemplates.map((template) => (
                             <option key={`send-sms-${template.id}`} value={messagingTemplateRef(template)}>
@@ -2262,7 +2266,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </select>
                       </label>
                       <label>
-                        Template de relance avant expiration
+                        {t("admin.messaging_settings.quote_reminder_template")}
                         <select name="quote_reminder_template_ref" defaultValue={messagingSettings.quote_reminder_template_ref}>
                           {quoteReminderTemplates.map((template) => (
                             <option key={`reminder-${template.id}`} value={messagingTemplateRef(template)}>
@@ -2272,7 +2276,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </select>
                       </label>
                       <label>
-                        Template SMS de relance avant expiration
+                        {t("admin.messaging_settings.quote_reminder_sms_template")}
                         <select name="quote_reminder_sms_template_ref" defaultValue={messagingSettings.quote_reminder_sms_template_ref}>
                           {quoteReminderSmsTemplates.map((template) => (
                             <option key={`reminder-sms-${template.id}`} value={messagingTemplateRef(template)}>
@@ -2282,7 +2286,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </select>
                       </label>
                       <label>
-                        Template de notification d annulation
+                        {t("admin.messaging_settings.quote_cancel_template")}
                         <select name="quote_cancel_template_ref" defaultValue={messagingSettings.quote_cancel_template_ref}>
                           {quoteCancelTemplates.map((template) => (
                             <option key={`cancel-${template.id}`} value={messagingTemplateRef(template)}>
@@ -2292,7 +2296,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </select>
                       </label>
                       <label>
-                        Template de confirmation d approbation
+                        {t("admin.messaging_settings.quote_approved_template")}
                         <select name="quote_approved_template_ref" defaultValue={messagingSettings.quote_approved_template_ref}>
                           {quoteApprovedTemplates.map((template) => (
                             <option key={`approved-${template.id}`} value={messagingTemplateRef(template)}>
@@ -2302,7 +2306,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </select>
                       </label>
                       <label>
-                        Template de confirmation de refus
+                        {t("admin.messaging_settings.quote_rejected_template")}
                         <select name="quote_rejected_template_ref" defaultValue={messagingSettings.quote_rejected_template_ref}>
                           {quoteRejectedTemplates.map((template) => (
                             <option key={`rejected-${template.id}`} value={messagingTemplateRef(template)}>
@@ -2312,7 +2316,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </select>
                       </label>
                       <label className="span-2">
-                        Template de confirmation de demande de modification
+                        {t("admin.messaging_settings.quote_change_requested_template")}
                         <select
                           name="quote_change_requested_template_ref"
                           defaultValue={messagingSettings.quote_change_requested_template_ref}
@@ -2325,7 +2329,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </select>
                       </label>
                       <label>
-                        Template SMS d annulation
+                        {t("admin.messaging_settings.quote_cancel_sms_template")}
                         <select name="quote_cancel_sms_template_ref" defaultValue={messagingSettings.quote_cancel_sms_template_ref}>
                           {quoteCancelSmsTemplates.map((template) => (
                             <option key={`cancel-sms-${template.id}`} value={messagingTemplateRef(template)}>
@@ -2335,15 +2339,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </select>
                       </label>
                       <label>
-                        Heure locale d execution quotidienne
+                        {t("admin.messaging_settings.quote_daily_job_local_time")}
                         <input
                           type="time"
                           name="quote_daily_job_local_time"
                           defaultValue={messagingSettings.quote_daily_job_local_time || "07:00"}
                         />
-                        <span className="muted">
-                          Le worker tourne en continu et traite chaque devis dans son fuseau local a cette heure.
-                        </span>
+                        <span className="muted">{t("admin.messaging_settings.quote_daily_job_hint")}</span>
                       </label>
                       <label className="checkline span-2">
                         <input
@@ -2351,7 +2353,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           name="quote_reminder_enabled"
                           defaultChecked={messagingSettings.quote_reminder_enabled}
                         />
-                        Envoyer un rappel avant expiration
+                        {t("admin.messaging_settings.quote_reminder_enabled")}
                       </label>
                       <label className="checkline span-2">
                         <input
@@ -2359,20 +2361,18 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           name="quote_reminder_sms_enabled"
                           defaultChecked={messagingSettings.quote_reminder_sms_enabled}
                         />
-                        Envoyer aussi un SMS de rappel avant expiration
+                        {t("admin.messaging_settings.quote_reminder_sms_enabled")}
                       </label>
                       <label>
-                        Delais de relance avant expiration
+                        {t("admin.messaging_settings.quote_reminder_lead_hours")}
                         <input
                           type="text"
                           name="quote_reminder_lead_hours_csv"
                           defaultValue={messagingSettings.quote_reminder_lead_hours_csv || String(messagingSettings.quote_reminder_lead_hours)}
-                          placeholder="120,24"
+                          placeholder={t("admin.messaging_settings.quote_reminder_lead_hours_placeholder")}
                         />
                         <input type="hidden" name="quote_reminder_lead_hours" value={messagingSettings.quote_reminder_lead_hours} />
-                        <span className="muted">
-                          Exemple: <strong>120,24</strong> pour des relances a J-5 puis J-1.
-                        </span>
+                        <span className="muted">{t("admin.messaging_settings.quote_reminder_lead_hours_hint", { example: "120,24" })}</span>
                       </label>
                       <label className="checkline">
                         <input
@@ -2380,10 +2380,10 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           name="quote_auto_cancel_enabled"
                           defaultChecked={messagingSettings.quote_auto_cancel_enabled}
                         />
-                        Annuler automatiquement les devis expires
+                        {t("admin.messaging_settings.quote_auto_cancel_enabled")}
                       </label>
                       <label>
-                        Delai avant annulation automatique (heures)
+                        {t("admin.messaging_settings.quote_auto_cancel_delay_hours")}
                         <input
                           type="number"
                           name="quote_auto_cancel_delay_hours"
@@ -2391,9 +2391,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           max={720}
                           defaultValue={messagingSettings.quote_auto_cancel_delay_hours}
                         />
-                        <span className="muted">
-                          Exemple: <strong>24</strong> pour annuler le lendemain de l expiration.
-                        </span>
+                        <span className="muted">{t("admin.messaging_settings.quote_auto_cancel_delay_hours_hint", { example: 24 })}</span>
                       </label>
                       <label className="checkline span-2">
                         <input
@@ -2401,7 +2399,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           name="quote_cancel_notification_enabled"
                           defaultChecked={messagingSettings.quote_cancel_notification_enabled}
                         />
-                        Notifier le destinataire quand un devis est annule automatiquement
+                        {t("admin.messaging_settings.quote_cancel_notification_enabled")}
                       </label>
                       <label className="checkline span-2">
                         <input
@@ -2409,83 +2407,121 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           name="quote_cancel_sms_notification_enabled"
                           defaultChecked={messagingSettings.quote_cancel_sms_notification_enabled}
                         />
-                        Envoyer aussi un SMS quand un devis est annule automatiquement
+                        {t("admin.messaging_settings.quote_cancel_sms_notification_enabled")}
                       </label>
                     </fieldset>
 
                     <div className="span-2 config-note-box">
-                      <strong>Etat technique</strong>
+                      <strong>{t("admin.messaging_settings.technical_state")}</strong>
                       <p className="muted">
                         {messagingSettings.delivery_enabled
-                          ? `Envoi email actif via ${messagingSettings.email_provider}.`
-                          : messagingSettings.delivery_error_message || "Envoi email indisponible."}
+                          ? t("admin.messaging_settings.email_delivery_active", { provider: messagingSettings.email_provider })
+                          : messagingSettings.delivery_error_message || t("admin.messaging_settings.email_delivery_unavailable")}
                       </p>
                       <p className="muted">
                         {messagingSettings.sms_delivery_enabled
-                          ? `Envoi SMS actif via ${messagingSettings.sms_provider}.`
-                          : messagingSettings.sms_delivery_error_message || "Envoi SMS indisponible."}
+                          ? t("admin.messaging_settings.sms_delivery_active", { provider: messagingSettings.sms_provider })
+                          : messagingSettings.sms_delivery_error_message || t("admin.messaging_settings.sms_delivery_unavailable")}
                       </p>
                       <p className="muted">
-                        De: <strong>{messagingSettings.studio_sender_name || "Studio"}</strong> &lt;{messagingSettings.studio_email}&gt;
-                      </p>
-                      <p className="muted">
-                        De (enseignant): <strong>{messagingSettings.teacher_sender_name || "Enseignant"}</strong> &lt;
+                        {t("admin.messaging_settings.from_studio")}{" "}
+                        <strong>{messagingSettings.studio_sender_name || t("admin.messaging_settings.studio_fallback")}</strong> &lt;
                         {messagingSettings.studio_email}&gt;
                       </p>
                       <p className="muted">
-                        Liens publics / emails: <strong>{messagingSettings.frontend_base_url}</strong>
+                        {t("admin.messaging_settings.from_teacher")}{" "}
+                        <strong>{messagingSettings.teacher_sender_name || t("admin.messaging_settings.teacher_fallback")}</strong> &lt;
+                        {messagingSettings.studio_email}&gt;
                       </p>
                       <p className="muted">
-                        Expediteur SMS: <strong>{messagingSettings.sms_sender || "-"}</strong>
+                        {t("admin.messaging_settings.public_links")} <strong>{messagingSettings.frontend_base_url}</strong>
                       </p>
                       <p className="muted">
-                        Job devis quotidien: <strong>{messagingSettings.quote_daily_job_local_time}</strong> dans le fuseau du devis.
-                        Rappel {messagingSettings.quote_reminder_enabled ? "actif" : "desactive"} ({formatQuoteReminderDelayList(messagingSettings.quote_reminder_lead_hours_values, messagingSettings.quote_reminder_lead_hours)} avant) ·
-                        rappel SMS {messagingSettings.quote_reminder_sms_enabled ? "actif" : "desactive"} ·
-                        auto-annulation {messagingSettings.quote_auto_cancel_enabled ? "active" : "desactive"} ({messagingSettings.quote_auto_cancel_delay_hours} h apres expiration) ·
-                        annulation SMS {messagingSettings.quote_cancel_sms_notification_enabled ? "active" : "desactive"}.
+                        {t("admin.messaging_settings.sms_sender_value")} <strong>{messagingSettings.sms_sender || "-"}</strong>
+                      </p>
+                      <p className="muted">
+                        {t("admin.messaging_settings.quote_daily_job_prefix")}{" "}
+                        <strong>{messagingSettings.quote_daily_job_local_time}</strong> {t("admin.messaging_settings.quote_daily_job_timezone")}
+                        {" "}
+                        {t(
+                          messagingSettings.quote_reminder_enabled
+                            ? "admin.messaging_settings.quote_reminder_summary_active"
+                            : "admin.messaging_settings.quote_reminder_summary_disabled",
+                          {
+                            delay: formatQuoteReminderDelayList(
+                              messagingSettings.quote_reminder_lead_hours_values,
+                              messagingSettings.quote_reminder_lead_hours,
+                            ),
+                          },
+                        )}
+                        {" · "}
+                        {t(
+                          messagingSettings.quote_reminder_sms_enabled
+                            ? "admin.messaging_settings.quote_reminder_sms_summary_active"
+                            : "admin.messaging_settings.quote_reminder_sms_summary_disabled",
+                        )}
+                        {" · "}
+                        {t(
+                          messagingSettings.quote_auto_cancel_enabled
+                            ? "admin.messaging_settings.quote_auto_cancel_summary_active"
+                            : "admin.messaging_settings.quote_auto_cancel_summary_disabled",
+                          {
+                            delay: messagingSettings.quote_auto_cancel_delay_hours,
+                          },
+                        )}
+                        {" · "}
+                        {t(
+                          messagingSettings.quote_cancel_sms_notification_enabled
+                            ? "admin.messaging_settings.quote_cancel_sms_summary_active"
+                            : "admin.messaging_settings.quote_cancel_sms_summary_disabled",
+                        )}
                       </p>
                       {messagingSettings.email_provider === "BREVO" ? (
                         <>
                           <p className="muted">
-                            Webhook Brevo transactionnel a configurer: <strong>{messagingSettings.brevo_email_webhook_url}</strong>
+                            {t("admin.messaging_settings.brevo_email_webhook_hint")}{" "}
+                            <strong>{messagingSettings.brevo_email_webhook_url}</strong>
                           </p>
                           <label className="stack-sm top-gap-sm">
-                            URL webhook Brevo
+                            {t("admin.messaging_settings.brevo_email_webhook_label")}
                             <input type="text" value={messagingSettings.brevo_email_webhook_url} readOnly />
                           </label>
                           <p className="muted">
-                            Dans Brevo, activez au minimum les evenements <strong>delivered</strong>, <strong>hardBounce</strong> et{" "}
-                            <strong>softBounce</strong> pour mettre a jour l etat de livraison.
+                            {t("admin.messaging_settings.brevo_email_webhook_events")}
                           </p>
                           <p className="muted">
-                            Webhook Brevo SMS a configurer: <strong>{messagingSettings.brevo_sms_webhook_url}</strong>
+                            {t("admin.messaging_settings.brevo_sms_webhook_hint")}{" "}
+                            <strong>{messagingSettings.brevo_sms_webhook_url}</strong>
                           </p>
                           <label className="stack-sm top-gap-sm">
-                            URL webhook Brevo SMS
+                            {t("admin.messaging_settings.brevo_sms_webhook_label")}
                             <input type="text" value={messagingSettings.brevo_sms_webhook_url} readOnly />
                           </label>
                         </>
                       ) : null}
                       <p className="muted">
-                        SPF/DKIM se valident chez Brevo ou votre relais SMTP. Ici, vous pilotez les adresses, le transport et les
-                        liens publics utilises par l application.
+                        {t("admin.messaging_settings.spf_dkim_note")}
                       </p>
                       {messagingSettings.updated_at ? (
                         <p className="muted">
-                          Derniere mise a jour: {new Date(messagingSettings.updated_at).toLocaleString("fr-FR")}
+                          {t("admin.billing.updated_at", {
+                            value: new Date(messagingSettings.updated_at).toLocaleString(locale),
+                          })}
                         </p>
                       ) : null}
                     </div>
 
                     <div className="span-2 config-note-box">
-                      <strong>Variables disponibles dans les templates devis</strong>
+                      <strong>{t("admin.messaging_settings.quote_variables_title")}</strong>
                       <p className="muted">
-                        Utilisez ces variables dans l objet ou le contenu HTML/Texte, par exemple{" "}
-                        <code>{"{{quote_number}}"}</code>, <code>{"{{recipient_email}}"}</code> ou <code>{"{{expires_at_local}}"}</code>.
+                        {t("admin.messaging_settings.quote_variables_note", {
+                          quoteNumber: "{{quote_number}}",
+                          recipientEmail: "{{recipient_email}}",
+                          expiresAt: "{{expires_at_local}}",
+                        })}
                       </p>
                       {Object.entries(quoteTemplateVariablesByCategory).length === 0 ? (
-                        <p className="muted">Aucune variable chargee.</p>
+                        <p className="muted">{t("admin.messaging_settings.no_quote_variables")}</p>
                       ) : (
                         <div className="grid cols-2 top-gap-sm" style={{ alignItems: "start" }}>
                           {Object.entries(quoteTemplateVariablesByCategory).map(([category, items]) => (
@@ -2500,7 +2536,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                     </div>
                                     <small className="muted">
                                       {item.description}
-                                      {item.example ? ` · Ex: ${item.example}` : ""}
+                                      {item.example ? ` · ${t("admin.messaging_settings.example", { value: item.example })}` : ""}
                                     </small>
                                   </div>
                                 ))}
@@ -2512,7 +2548,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     </div>
 
                     <div className="row span-2">
-                      <button type="submit">Sauvegarder les modifications</button>
+                      <button type="submit">{t("admin.messaging_settings.save_changes")}</button>
                     </div>
                   </form>
                 )}
