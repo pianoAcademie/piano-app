@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
+
 type ManualNonCashFlowProductOption = {
   id: string;
   title: string;
@@ -18,18 +20,20 @@ type ManualTransactionNonCashFlowFieldsProps = {
   products: ManualNonCashFlowProductOption[];
   initialAmountInclVat?: string;
   initialVatRate?: string;
+  currencyCode?: string;
+  language?: UiLanguage | string;
 };
 
-function normalizeCategory(value: string): string {
-  return value.trim().toLocaleLowerCase("fr-FR");
+function normalizeCategory(value: string, locale: string): string {
+  return value.trim().toLocaleLowerCase(locale);
 }
 
-function formatAmountLabel(value: string): string {
+function formatAmountLabel(value: string, locale: string): string {
   const amount = Number(value);
   if (!Number.isFinite(amount)) {
     return value;
   }
-  return new Intl.NumberFormat("fr-FR", {
+  return new Intl.NumberFormat(locale, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(amount);
@@ -43,7 +47,12 @@ export default function ManualTransactionNonCashFlowFields({
   products,
   initialAmountInclVat = "",
   initialVatRate = "",
+  currencyCode = "EUR",
+  language: languageProp = "fr",
 }: ManualTransactionNonCashFlowFieldsProps): JSX.Element {
+  const language = normalizeUiLanguage(languageProp);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const locale = localeForUiLanguage(language);
   const [selectedCategory, setSelectedCategory] = useState<string>("");
   const [selectedProductId, setSelectedProductId] = useState<string>("");
   const [amountInclVat, setAmountInclVat] = useState<string>(initialAmountInclVat);
@@ -53,11 +62,11 @@ export default function ManualTransactionNonCashFlowFields({
     if (transactionType !== "CHARGE" || !selectedCategory) {
       return [] as ManualNonCashFlowProductOption[];
     }
-    const selectedCategoryKey = normalizeCategory(selectedCategory);
+    const selectedCategoryKey = normalizeCategory(selectedCategory, locale);
     return products
-      .filter((product) => normalizeCategory(product.categoryName || "") === selectedCategoryKey)
-      .sort((a, b) => a.title.localeCompare(b.title, "fr-FR"));
-  }, [products, selectedCategory, transactionType]);
+      .filter((product) => normalizeCategory(product.categoryName || "", locale) === selectedCategoryKey)
+      .sort((a, b) => a.title.localeCompare(b.title, locale));
+  }, [locale, products, selectedCategory, transactionType]);
 
   return (
     <>
@@ -75,7 +84,7 @@ export default function ManualTransactionNonCashFlowFields({
         />
       </label>
       <label>
-        TVA (%)
+        {t("common.vat")} (%)
         <input
           type="number"
           name="vat_rate"
@@ -89,7 +98,7 @@ export default function ManualTransactionNonCashFlowFields({
         />
       </label>
       <label>
-        Categorie (optionnel)
+        {t("admin.client_detail.manual_category_optional")}
         <select
           name="category"
           value={selectedCategory}
@@ -103,7 +112,7 @@ export default function ManualTransactionNonCashFlowFields({
             }
           }}
         >
-          <option value="">Selectionner...</option>
+          <option value="">{t("admin.client_detail.manual_select_placeholder")}</option>
           {categories.map((category) => (
             <option key={category} value={category}>
               {category}
@@ -114,7 +123,7 @@ export default function ManualTransactionNonCashFlowFields({
       {transactionType === "CHARGE" ? (
         <>
           <label>
-            Produit / kit du catalogue (optionnel)
+            {t("admin.client_detail.manual_catalog_product_optional")}
             <select
               name="catalog_product_id"
               value={selectedProductId}
@@ -132,19 +141,19 @@ export default function ManualTransactionNonCashFlowFields({
               }}
               disabled={!selectedCategory || availableProducts.length === 0}
             >
-              <option value="">Selectionner...</option>
+              <option value="">{t("admin.client_detail.manual_select_placeholder")}</option>
               {availableProducts.map((product) => (
                 <option key={product.id} value={product.id}>
-                  {product.title} ({formatAmountLabel(product.priceInclVat)} EUR TTC)
+                  {product.title} ({formatAmountLabel(product.priceInclVat, locale)} {currencyCode} {t("common.ttc")})
                 </option>
               ))}
             </select>
           </label>
           <p className="muted span-2">
-            Si un produit/kit est selectionne, le montant TTC et la TVA sont auto-renseignes a partir du catalogue.
+            {t("admin.client_detail.manual_catalog_autofill_help")}
           </p>
           {selectedCategory && availableProducts.length === 0 ? (
-            <p className="muted span-2">Aucun produit actif disponible dans cette categorie.</p>
+            <p className="muted span-2">{t("admin.client_detail.manual_no_catalog_product")}</p>
           ) : null}
         </>
       ) : null}

@@ -5353,6 +5353,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   initialVatRate={manualVatInputValue}
                   categories={manualChargeCategories}
                   products={manualChargeProductOptions}
+                  currencyCode={client.preferred_currency || "EUR"}
+                  language={language}
                 />
               ) : null}
               <label>
