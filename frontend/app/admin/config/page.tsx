@@ -65,7 +65,7 @@ import type {
   UserOut,
   QuoteTemplateVariableOut,
 } from "../../../lib/types";
-import { normalizeUiLanguage } from "../../../lib/ui-i18n";
+import { normalizeUiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -158,14 +158,14 @@ const MESSAGING_TAB_ITEMS: MessagingTabItem[] = [
   { key: "group-notes", label: "Modeles notes de groupe" },
 ];
 
-const REMINDER_OFFSET_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "global", label: "Parametrage global (defaut systeme)" },
-  { value: "0", label: "Aucun rappel" },
-  { value: "1", label: "1 heure avant" },
-  { value: "2", label: "2 heures avant" },
-  { value: "3", label: "3 heures avant" },
-  { value: "24", label: "1 jour avant" },
-  { value: "48", label: "2 jours avant" },
+const REMINDER_OFFSET_OPTIONS: Array<{ value: string; labelKey: string }> = [
+  { value: "global", labelKey: "admin.activity_modal.reminder_global" },
+  { value: "0", labelKey: "admin.activity_modal.reminder_none" },
+  { value: "1", labelKey: "admin.activity_modal.reminder_1_hour" },
+  { value: "2", labelKey: "admin.activity_modal.reminder_2_hours" },
+  { value: "3", labelKey: "admin.activity_modal.reminder_3_hours" },
+  { value: "24", labelKey: "admin.activity_modal.reminder_1_day" },
+  { value: "48", labelKey: "admin.activity_modal.reminder_2_days" },
 ];
 
 const QUOTE_TEMPLATE_USAGE_CONTEXTS = [
@@ -603,6 +603,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   ]);
 
   const language = meResult.ok ? normalizeUiLanguage(meResult.data.preferred_language) : "fr";
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const loadErrors: string[] = [];
 
   let planningLocations: LocationOut[] = [];
@@ -3268,23 +3269,23 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
                               <div className="grid cols-2 activity-modal-zone-grid">
                                 <ActivityModalSection
-                                  title="Usage du creneau"
-                                  description="Definir comment ce type de creneau doit vivre dans le planning et dans les creations recurrentes."
+                                  title={t("admin.activity_modal.usage_title")}
+                                  description={t("admin.activity_modal.usage_desc")}
                                   accent
                                 >
                                   <div className="grid cols-2 config-form-grid">
                                     <label>
-                                      Mode
+                                      {t("admin.professor_detail.mode")}
                                       <select name="mode" defaultValue="ANY">
-                                        <option value="ANY">Tous</option>
-                                        <option value="ONSITE">Presentiel</option>
-                                        <option value="ONLINE">En ligne</option>
+                                        <option value="ANY">{t("admin.professor_detail.mode_all")}</option>
+                                        <option value="ONSITE">{t("admin.professor_detail.mode_onsite")}</option>
+                                        <option value="ONLINE">{t("admin.professor_detail.mode_online")}</option>
                                       </select>
                                     </label>
                                     <label>
-                                      Type de credit
+                                      {t("admin.formulas.editor_credit_type")}
                                       <select name="credit_type_id" defaultValue="">
-                                        <option value="">Aucun type de credit</option>
+                                        <option value="">{t("admin.activity_modal.no_credit_type")}</option>
                                         {activeCreditTypes.map((creditType) => (
                                           <option key={creditType.id} value={creditType.id}>
                                             {creditType.name}
@@ -3296,48 +3297,45 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                   <div className="activity-toggle-grid">
                                     <ActivityToggleCard
                                       name="without_students"
-                                      label="Creneau sans eleve"
-                                      description="Bloque toute inscription eleve, force la capacite a 0 et rend le professeur optionnel."
+                                      label={t("admin.activity_modal.without_students")}
+                                      description={t("admin.activity_modal.without_students_desc")}
                                       emphasized
                                     />
                                     <ActivityToggleCard
                                       name="requires_professor"
-                                      label="Professeur requis"
-                                      description="Affiche une alerte si aucun professeur n est affecte a ce type de creneau."
+                                      label={t("admin.activity_modal.requires_professor")}
+                                      description={t("admin.activity_modal.requires_professor_desc")}
                                       defaultChecked
                                     />
                                     <ActivityToggleCard
                                       name="exclude_holidays_in_recurrence"
-                                      label="Exclure les jours feries"
-                                      description="Ignore les jours feries lors de la creation recurrente de seances."
+                                      label={t("admin.activity_modal.exclude_holidays")}
+                                      description={t("admin.activity_modal.exclude_holidays_desc")}
                                       defaultChecked
                                     />
                                     <ActivityToggleCard
                                       name="exclude_school_vacations_in_recurrence"
-                                      label="Exclure les vacances scolaires"
-                                      description="Ignore les periodes de vacances scolaires lors de la creation recurrente."
+                                      label={t("admin.activity_modal.exclude_vacations")}
+                                      description={t("admin.activity_modal.exclude_vacations_desc")}
                                       defaultChecked
                                     />
                                     <ActivityToggleCard
                                       name="active"
-                                      label="Activite active"
-                                      description="Disponible dans l administration et exploitable pour creer de nouveaux creneaux."
+                                      label={t("admin.activity_modal.active")}
+                                      description={t("admin.activity_modal.active_desc")}
                                       defaultChecked
                                     />
                                   </div>
-                                  <p className="activity-modal-note">
-                                    Utilisez "Creneau sans eleve" pour les vacances, fermetures, blocages planning et autres
-                                    occurrences purement administratives.
-                                  </p>
+                                  <p className="activity-modal-note">{t("admin.activity_modal.without_students_note_create")}</p>
                                 </ActivityModalSection>
 
                                 <ActivityModalSection
-                                  title="Parametres du creneau"
-                                  description="Regles structurelles appliquees a chaque occurrence creee a partir de cette activite."
+                                  title={t("admin.activity_modal.slot_settings_title")}
+                                  description={t("admin.activity_modal.slot_settings_desc")}
                                 >
                                   <div className="grid cols-2 config-form-grid">
                                     <label>
-                                      Duree (minutes)
+                                      {t("admin.activity_modal.duration_minutes")}
                                       <input
                                         type="number"
                                         name="duration_minutes"
@@ -3348,11 +3346,9 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                       />
                                     </label>
                                     <label>
-                                      Capacite maximum
+                                      {t("admin.activity_modal.max_capacity")}
                                       <input type="number" name="default_capacity" min={0} max={500} defaultValue={8} required />
-                                      <small className="muted">
-                                        Si le creneau est sans eleve, la capacite sera forcee a 0 automatiquement.
-                                      </small>
+                                      <small className="muted">{t("admin.activity_modal.capacity_auto_zero")}</small>
                                     </label>
                                   </div>
                                 </ActivityModalSection>
@@ -3360,80 +3356,80 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
                               <div className="grid cols-2 activity-modal-zone-grid">
                                 <ActivityModalSection
-                                  title="Reservations et rappels"
-                                  description="Delais minimums, auto-annulations et rappels envoyes aux familles."
+                                  title={t("admin.activity_modal.reminders_title")}
+                                  description={t("admin.activity_modal.reminders_desc")}
                                 >
                                   <div className="grid cols-2 config-form-grid">
                                     <label>
-                                      Rappels par courriel
+                                      {t("admin.activity_modal.email_reminders")}
                                       <select name="email_reminder_hours_before_start" defaultValue="global">
                                         {REMINDER_OFFSET_OPTIONS.map((option) => (
                                           <option key={`activity-email-reminder-create-${option.value}`} value={option.value}>
-                                            {option.label}
+                                            {t(option.labelKey)}
                                           </option>
                                         ))}
                                       </select>
                                     </label>
                                     <label>
-                                      Rappels SMS
+                                      {t("admin.activity_modal.sms_reminders")}
                                       <select name="sms_reminder_hours_before_start" defaultValue="global">
                                         {REMINDER_OFFSET_OPTIONS.map((option) => (
                                           <option key={`activity-sms-reminder-create-${option.value}`} value={option.value}>
-                                            {option.label}
+                                            {t(option.labelKey)}
                                           </option>
                                         ))}
                                       </select>
                                     </label>
                                     <label>
-                                      Delai minimum reservation (h)
+                                      {t("admin.activity_modal.min_booking_notice")}
                                       <input
                                         type="number"
                                         name="min_booking_notice_hours_override"
                                         min={0}
                                         step="1"
-                                        placeholder="vide = planning"
+                                        placeholder={t("admin.activity_modal.planning_placeholder")}
                                       />
                                     </label>
                                     <label>
-                                      Delai autorise pour annulation (h)
+                                      {t("admin.activity_modal.cancellation_deadline")}
                                       <input
                                         type="number"
                                         name="cancellation_deadline_hours_override"
                                         min={0}
                                         step="1"
-                                        placeholder="vide = planning"
+                                        placeholder={t("admin.activity_modal.planning_placeholder")}
                                       />
                                     </label>
                                     <label>
-                                      Auto-annulation si inscrits {"<"}
+                                      {t("admin.activity_modal.auto_cancel_less_than")} {"<"}
                                       <input
                                         type="number"
                                         name="auto_cancel_if_booked_less_than_override"
                                         min={0}
                                         step="1"
-                                        placeholder="vide = planning"
+                                        placeholder={t("admin.activity_modal.planning_placeholder")}
                                       />
                                     </label>
                                     <label>
-                                      Auto-annulation X heures avant debut
+                                      {t("admin.activity_modal.auto_cancel_before_start")}
                                       <input
                                         type="number"
                                         name="auto_cancel_hours_before_start_override"
                                         min={0}
                                         step="1"
-                                        placeholder="vide = planning"
+                                        placeholder={t("admin.activity_modal.planning_placeholder")}
                                       />
                                     </label>
                                   </div>
                                 </ActivityModalSection>
 
                                 <ActivityModalSection
-                                  title="Tarification et apparence"
-                                  description="Tarifs par defaut, couleur d affichage et informations utiles pour la lecture du planning."
+                                  title={t("admin.activity_modal.pricing_title")}
+                                  description={t("admin.activity_modal.pricing_desc")}
                                 >
                                   <div className="grid cols-2 config-form-grid">
                                     <label>
-                                      Tarif horaire TTC
+                                      {t("admin.activity_modal.hourly_rate_ttc")}
                                       <input
                                         type="number"
                                         name="default_hourly_rate"
@@ -3443,7 +3439,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                       />
                                     </label>
                                     <label>
-                                      Tarif par cours TTC
+                                      {t("admin.activity_modal.course_rate_ttc")}
                                       <input
                                         type="number"
                                         name="default_course_rate_ttc"
@@ -3453,7 +3449,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                       />
                                     </label>
                                     <label className="span-2">
-                                      Couleur
+                                      {t("admin.activity_modal.color")}
                                       <ColorHexInput name="color_hex" defaultValue="#94C973" />
                                     </label>
                                   </div>
@@ -3596,17 +3592,17 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                 >
                                   <div className="grid cols-2 config-form-grid">
                                     <label>
-                                      Mode
+                                      {t("admin.professor_detail.mode")}
                                       <select name="mode" defaultValue={selectedActivity.mode}>
-                                        <option value="ANY">Tous</option>
-                                        <option value="ONSITE">Presentiel</option>
-                                        <option value="ONLINE">En ligne</option>
+                                        <option value="ANY">{t("admin.professor_detail.mode_all")}</option>
+                                        <option value="ONSITE">{t("admin.professor_detail.mode_onsite")}</option>
+                                        <option value="ONLINE">{t("admin.professor_detail.mode_online")}</option>
                                       </select>
                                     </label>
                                     <label>
-                                      Type de credit
+                                      {t("admin.formulas.editor_credit_type")}
                                       <select name="credit_type_id" defaultValue={selectedActivity.credit_type_id ?? ""}>
-                                        <option value="">Aucun type de credit</option>
+                                        <option value="">{t("admin.activity_modal.no_credit_type")}</option>
                                         {activeCreditTypes.map((creditType) => (
                                           <option key={creditType.id} value={creditType.id}>
                                             {creditType.name}
@@ -3618,50 +3614,50 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                   <div className="activity-toggle-grid">
                                     <ActivityToggleCard
                                       name="without_students"
-                                      label="Creneau sans eleve"
-                                      description="Bloque toute inscription eleve, force la capacite a 0 et rend le professeur optionnel."
+                                      label={t("admin.activity_modal.without_students")}
+                                      description={t("admin.activity_modal.without_students_desc")}
                                       defaultChecked={selectedActivityIsStudentless}
                                       emphasized={selectedActivityIsStudentless}
                                     />
                                     <ActivityToggleCard
                                       name="requires_professor"
-                                      label="Professeur requis"
-                                      description="Affiche une alerte si aucun professeur n est affecte a ce type de creneau."
+                                      label={t("admin.activity_modal.requires_professor")}
+                                      description={t("admin.activity_modal.requires_professor_desc")}
                                       defaultChecked={selectedActivity.requires_professor}
                                     />
                                     <ActivityToggleCard
                                       name="exclude_holidays_in_recurrence"
-                                      label="Exclure les jours feries"
-                                      description="Ignore les jours feries lors de la creation recurrente de seances."
+                                      label={t("admin.activity_modal.exclude_holidays")}
+                                      description={t("admin.activity_modal.exclude_holidays_desc")}
                                       defaultChecked={selectedActivity.exclude_holidays_in_recurrence}
                                     />
                                     <ActivityToggleCard
                                       name="exclude_school_vacations_in_recurrence"
-                                      label="Exclure les vacances scolaires"
-                                      description="Ignore les periodes de vacances scolaires lors de la creation recurrente."
+                                      label={t("admin.activity_modal.exclude_vacations")}
+                                      description={t("admin.activity_modal.exclude_vacations_desc")}
                                       defaultChecked={selectedActivity.exclude_school_vacations_in_recurrence}
                                     />
                                     <ActivityToggleCard
                                       name="active"
-                                      label="Activite active"
-                                      description="Disponible dans l administration et exploitable pour creer de nouveaux creneaux."
+                                      label={t("admin.activity_modal.active")}
+                                      description={t("admin.activity_modal.active_desc")}
                                       defaultChecked={selectedActivity.active}
                                     />
                                   </div>
                                   <p className="activity-modal-note">
                                     {selectedActivityIsStudentless
-                                      ? "Cette activite est actuellement configuree comme un creneau sans eleve. Les inscriptions sont bloquees et la capacite reste a 0."
-                                      : 'Cochez "Creneau sans eleve" pour les vacances, fermetures, blocages planning et autres occurrences purement administratives.'}
+                                      ? t("admin.activity_modal.without_students_note_active")
+                                      : t("admin.activity_modal.without_students_note_edit")}
                                   </p>
                                 </ActivityModalSection>
 
                                 <ActivityModalSection
-                                  title="Parametres du creneau"
-                                  description="Regles structurelles appliquees a chaque occurrence creee a partir de cette activite."
+                                  title={t("admin.activity_modal.slot_settings_title")}
+                                  description={t("admin.activity_modal.slot_settings_desc")}
                                 >
                                   <div className="grid cols-2 config-form-grid">
                                     <label>
-                                      Duree (minutes)
+                                      {t("admin.activity_modal.duration_minutes")}
                                       <input
                                         type="number"
                                         name="duration_minutes"
@@ -3673,13 +3669,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                     </label>
                                     {selectedActivityIsStudentless ? (
                                       <label>
-                                        Capacite maximum
+                                        {t("admin.activity_modal.max_capacity")}
                                         <input type="number" value={0} disabled readOnly />
-                                        <small className="muted">Capacite fixee a 0 pour les creneaux sans eleve.</small>
+                                        <small className="muted">{t("admin.activity_modal.capacity_forced_zero")}</small>
                                       </label>
                                     ) : (
                                       <label>
-                                        Capacite maximum
+                                        {t("admin.activity_modal.max_capacity")}
                                         <input
                                           type="number"
                                           name="default_capacity"
@@ -3688,9 +3684,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                           defaultValue={selectedActivity.default_capacity}
                                           required
                                         />
-                                        <small className="muted">
-                                          Si le creneau est sans eleve, la capacite sera forcee a 0 automatiquement.
-                                        </small>
+                                        <small className="muted">{t("admin.activity_modal.capacity_auto_zero")}</small>
                                       </label>
                                     )}
                                   </div>
@@ -3699,12 +3693,12 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
                               <div className="grid cols-2 activity-modal-zone-grid">
                                 <ActivityModalSection
-                                  title="Reservations et rappels"
-                                  description="Delais minimums, auto-annulations et rappels envoyes aux familles."
+                                  title={t("admin.activity_modal.reminders_title")}
+                                  description={t("admin.activity_modal.reminders_desc")}
                                 >
                                   <div className="grid cols-2 config-form-grid">
                                     <label>
-                                      Rappels par courriel
+                                      {t("admin.activity_modal.email_reminders")}
                                       <select
                                         name="email_reminder_hours_before_start"
                                         defaultValue={
@@ -3718,18 +3712,20 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                           (option) => option.value === String(selectedActivity.email_reminder_hours_before_start),
                                         ) ? (
                                           <option value={String(selectedActivity.email_reminder_hours_before_start)}>
-                                            {selectedActivity.email_reminder_hours_before_start} heures avant (personnalise)
+                                            {t("admin.activity_modal.custom_hours_before", {
+                                              count: selectedActivity.email_reminder_hours_before_start,
+                                            })}
                                           </option>
                                         ) : null}
                                         {REMINDER_OFFSET_OPTIONS.map((option) => (
                                           <option key={`activity-email-reminder-update-${option.value}`} value={option.value}>
-                                            {option.label}
+                                            {t(option.labelKey)}
                                           </option>
                                         ))}
                                       </select>
                                     </label>
                                     <label>
-                                      Rappels SMS
+                                      {t("admin.activity_modal.sms_reminders")}
                                       <select
                                         name="sms_reminder_hours_before_start"
                                         defaultValue={
@@ -3743,70 +3739,72 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                           (option) => option.value === String(selectedActivity.sms_reminder_hours_before_start),
                                         ) ? (
                                           <option value={String(selectedActivity.sms_reminder_hours_before_start)}>
-                                            {selectedActivity.sms_reminder_hours_before_start} heures avant (personnalise)
+                                            {t("admin.activity_modal.custom_hours_before", {
+                                              count: selectedActivity.sms_reminder_hours_before_start,
+                                            })}
                                           </option>
                                         ) : null}
                                         {REMINDER_OFFSET_OPTIONS.map((option) => (
                                           <option key={`activity-sms-reminder-update-${option.value}`} value={option.value}>
-                                            {option.label}
+                                            {t(option.labelKey)}
                                           </option>
                                         ))}
                                       </select>
                                     </label>
                                     <label>
-                                      Delai minimum reservation (h)
+                                      {t("admin.activity_modal.min_booking_notice")}
                                       <input
                                         type="number"
                                         name="min_booking_notice_hours_override"
                                         min={0}
                                         step="1"
                                         defaultValue={selectedActivity.min_booking_notice_hours_override ?? ""}
-                                        placeholder="vide = planning"
+                                        placeholder={t("admin.activity_modal.planning_placeholder")}
                                       />
                                     </label>
                                     <label>
-                                      Delai autorise pour annulation (h)
+                                      {t("admin.activity_modal.cancellation_deadline")}
                                       <input
                                         type="number"
                                         name="cancellation_deadline_hours_override"
                                         min={0}
                                         step="1"
                                         defaultValue={selectedActivity.cancellation_deadline_hours_override ?? ""}
-                                        placeholder="vide = planning"
+                                        placeholder={t("admin.activity_modal.planning_placeholder")}
                                       />
                                     </label>
                                     <label>
-                                      Auto-annulation si inscrits {"<"}
+                                      {t("admin.activity_modal.auto_cancel_less_than")} {"<"}
                                       <input
                                         type="number"
                                         name="auto_cancel_if_booked_less_than_override"
                                         min={0}
                                         step="1"
                                         defaultValue={selectedActivity.auto_cancel_if_booked_less_than_override ?? ""}
-                                        placeholder="vide = planning"
+                                        placeholder={t("admin.activity_modal.planning_placeholder")}
                                       />
                                     </label>
                                     <label>
-                                      Auto-annulation X heures avant debut
+                                      {t("admin.activity_modal.auto_cancel_before_start")}
                                       <input
                                         type="number"
                                         name="auto_cancel_hours_before_start_override"
                                         min={0}
                                         step="1"
                                         defaultValue={selectedActivity.auto_cancel_hours_before_start_override ?? ""}
-                                        placeholder="vide = planning"
+                                        placeholder={t("admin.activity_modal.planning_placeholder")}
                                       />
                                     </label>
                                   </div>
                                 </ActivityModalSection>
 
                                 <ActivityModalSection
-                                  title="Tarification et apparence"
-                                  description="Tarifs par defaut, couleur d affichage et informations utiles pour la lecture du planning."
+                                  title={t("admin.activity_modal.pricing_title")}
+                                  description={t("admin.activity_modal.pricing_desc")}
                                 >
                                   <div className="grid cols-2 config-form-grid">
                                     <label>
-                                      Tarif horaire TTC
+                                      {t("admin.activity_modal.hourly_rate_ttc")}
                                       <input
                                         type="number"
                                         name="default_hourly_rate"
@@ -3817,7 +3815,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                       />
                                     </label>
                                     <label>
-                                      Tarif par cours TTC
+                                      {t("admin.activity_modal.course_rate_ttc")}
                                       <input
                                         type="number"
                                         name="default_course_rate_ttc"
@@ -3828,7 +3826,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                       />
                                     </label>
                                     <label className="span-2">
-                                      Couleur
+                                      {t("admin.activity_modal.color")}
                                       <ColorHexInput name="color_hex" defaultValue={selectedActivity.color_hex} />
                                     </label>
                                   </div>
