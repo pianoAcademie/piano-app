@@ -971,13 +971,6 @@ function initials(client: AdminClientOut): string {
   return client.email.slice(0, 2).toUpperCase();
 }
 
-function clientPhotoAlt(client: AdminClientOut, fullName: string): string {
-  if (fullName) {
-    return `Photo de ${fullName}`;
-  }
-  return "Photo client";
-}
-
 function visibleClientEmail(email: string | null | undefined): string | null {
   const normalized = String(email ?? "").trim().toLowerCase();
   if (!normalized) {
@@ -1028,14 +1021,14 @@ const DEFAULT_PAYMENT_METHOD_OPTIONS: Array<{
   default_legal_entity_id: string | null;
   default_legal_entity_name: string | null;
 }> = [
-  { code: "CARD_ONLINE", label: "CB en ligne (Mollie / Payplug)" },
-  { code: "CARD_TERMINAL", label: "CB sur place (TPE)" },
-  { code: "CHECK", label: "Cheque" },
-  { code: "CASH", label: "Especes" },
+  { code: "CARD_ONLINE", label: "Online card (Mollie / Payplug)" },
+  { code: "CARD_TERMINAL", label: "Card terminal" },
+  { code: "CHECK", label: "Check" },
+  { code: "CASH", label: "Cash" },
   { code: "PAYPAL", label: "PayPal" },
-  { code: "SEPA_DEBIT", label: "Prelevement SEPA" },
-  { code: "BANK_TRANSFER", label: "Virement bancaire" },
-  { code: "FACTURATION_AUTO", label: "Paiement sur facture" },
+  { code: "SEPA_DEBIT", label: "SEPA direct debit" },
+  { code: "BANK_TRANSFER", label: "Bank transfer" },
+  { code: "FACTURATION_AUTO", label: "Invoice billing" },
 ].map((row) => ({ ...row, default_legal_entity_id: null, default_legal_entity_name: null }));
 
 function statusClass(status: string): string {
@@ -2161,7 +2154,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const manualTransactionLegalEntities = legalEntities.map((row) => ({ id: row.id, name: row.name }));
   const manualTransactionPaymentMethods = enabledPaymentMethods.map((row) => ({
     code: row.code,
-    label: row.label,
+    label: paymentMethodOptionLabel(row, language),
     defaultLegalEntityId: row.default_legal_entity_id,
     defaultLegalEntityName: row.default_legal_entity_name,
   }));
@@ -2234,22 +2227,22 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     const endDateForValidation = invoiceEndDateRaw.trim();
     const dueDateForValidation = invoiceDueDateRaw.trim();
     if (!isDateInput(issuedDateForValidation)) {
-      invoiceStepValidationErrors.issued_date = "Date d emission obligatoire.";
+      invoiceStepValidationErrors.issued_date = t("admin.client_detail.invoice_error_issued_date_required");
     }
     if (!isDateInput(startDateForValidation)) {
-      invoiceStepValidationErrors.start_date = "Date de debut obligatoire.";
+      invoiceStepValidationErrors.start_date = t("admin.client_detail.invoice_error_start_date_required");
     }
     if (!isDateInput(endDateForValidation)) {
-      invoiceStepValidationErrors.end_date = "Date de fin obligatoire.";
+      invoiceStepValidationErrors.end_date = t("admin.client_detail.invoice_error_end_date_required");
     }
     if (!invoiceNoDueDate && !isDateInput(dueDateForValidation)) {
-      invoiceStepValidationErrors.due_date = "Date d echeance obligatoire.";
+      invoiceStepValidationErrors.due_date = t("admin.client_detail.invoice_error_due_date_required");
     }
     if (isDateInput(startDateForValidation) && isDateInput(endDateForValidation)) {
       const startMs = Date.parse(`${startDateForValidation}T00:00:00.000Z`);
       const endMs = Date.parse(`${endDateForValidation}T00:00:00.000Z`);
       if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs < startMs) {
-        invoiceStepValidationErrors.end_date = "La date de fin doit etre apres la date de debut.";
+        invoiceStepValidationErrors.end_date = t("admin.client_detail.invoice_error_end_before_start");
       }
     }
     const dueInputForCheck = invoiceNoDueDate ? issuedDateForValidation : dueDateForValidation;
@@ -2257,7 +2250,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       const issuedMs = Date.parse(`${issuedDateForValidation}T00:00:00.000Z`);
       const dueMs = Date.parse(`${dueInputForCheck}T00:00:00.000Z`);
       if (Number.isFinite(issuedMs) && Number.isFinite(dueMs) && dueMs < issuedMs) {
-        invoiceStepValidationErrors.due_date = "La date d echeance doit etre apres la date d emission.";
+        invoiceStepValidationErrors.due_date = t("admin.client_detail.invoice_error_due_before_issued");
       }
     }
   }
@@ -2267,7 +2260,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const invoiceModalGlobalError =
     invoiceErrorGlobal ||
     invoiceLegacyGlobalError ||
-    (hasInvoiceStepValidationErrors ? "Veuillez corriger les champs en erreur." : "");
+    (hasInvoiceStepValidationErrors ? t("admin.client_detail.invoice_fix_errors") : "");
   const pageLevelErrorMessage = openInvoiceRangeWizard ? "" : errorMessage;
   const invoiceErrorFields = Object.keys(invoiceErrorFieldMap);
   const invoiceFirstInvalidField = invoiceErrorFields.length > 0 ? invoiceErrorFields[0] : null;
@@ -4437,12 +4430,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               </Link>
               <form action={adminClientActionPlaceholder}>
                 <input type="hidden" name="client_id" value={client.id} />
-                <input type="hidden" name="action_name" value="Envoi SMS" />
+                <input type="hidden" name="language" value={language} />
+                <input type="hidden" name="action_name" value={t("admin.client_detail.send_sms")} />
                 <button type="submit">{t("admin.client_detail.send_sms")}</button>
               </form>
               <form action={adminClientActionPlaceholder}>
                 <input type="hidden" name="client_id" value={client.id} />
-                <input type="hidden" name="action_name" value="Envoi push" />
+                <input type="hidden" name="language" value={language} />
+                <input type="hidden" name="action_name" value={t("admin.client_detail.send_push")} />
                 <button className="ghost" type="submit">
                   {t("admin.client_detail.send_push")}
                 </button>
@@ -5378,9 +5373,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   paymentMethodRequired
                   reconcilableInvoices={manualReconcilableInvoices}
                   showReconciliation
+                  language={language}
                 />
               ) : (
-                <ManualTransactionLegalEntityFields legalEntities={manualTransactionLegalEntities} />
+                <ManualTransactionLegalEntityFields legalEntities={manualTransactionLegalEntities} language={language} />
               )}
               <small className="muted span-2">
                 {t("admin.client_detail.legal_entity_help")}
@@ -5486,11 +5482,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     paymentMethodRequired
                     initialPaymentMethodCode={selectedManualTransactionForEdit.payment_method_code ?? ""}
                     initialLegalEntityId={selectedManualTransactionForEdit.seller_legal_entity_id}
+                    language={language}
                   />
                 ) : (
                   <ManualTransactionLegalEntityFields
                     legalEntities={manualTransactionLegalEntities}
                     initialLegalEntityId={selectedManualTransactionForEdit.seller_legal_entity_id}
+                    language={language}
                   />
                 )}
                 <label>
@@ -6122,7 +6120,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
               <form action={adminClientActionPlaceholder} className="grid">
                 <input type="hidden" name="client_id" value={client.id} />
-                <input type="hidden" name="action_name" value="Rattachement de cours" />
+                <input type="hidden" name="language" value={language} />
+                <input type="hidden" name="action_name" value={t("admin.client_detail.attach_course")} />
                 <button type="submit">{t("admin.client_detail.attach_course")}</button>
               </form>
             </article>

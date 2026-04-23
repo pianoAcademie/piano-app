@@ -2297,7 +2297,8 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     redirect("/login?error=Session%20expiree");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin?create=1");
 
   const course_type_id = String(formData.get("course_type_id") ?? "").trim();
@@ -3523,7 +3524,9 @@ export async function adminClientActionPlaceholder(formData: FormData): Promise<
     redirect("/login?error=Session%20expiree");
   }
 
-  await ensureAdmin(token);
+  const adminLanguage = await ensureAdminAndGetLanguage(token);
+  const formLanguage = String(formData.get("language") ?? "").trim();
+  const language = formLanguage ? normalizeUiLanguage(formLanguage) : adminLanguage;
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const actionName = String(formData.get("action_name") ?? "Action").trim();
@@ -3532,7 +3535,7 @@ export async function adminClientActionPlaceholder(formData: FormData): Promise<
     redirect("/admin/clients?error=Client%20invalide");
   }
 
-  redirect(`/admin/clients/${clientId}?ok=${encodeURIComponent(actionName + " en preparation")}`);
+  redirect(`/admin/clients/${clientId}?ok=${encodeURIComponent(uiText(language, "admin.client_detail.action_in_preparation", { action: actionName }))}`);
 }
 
 export async function sendAdminClientMessageAction(formData: FormData): Promise<void> {
@@ -3789,7 +3792,8 @@ export async function adminOpenClientPurchaseTermsAction(formData: FormData): Pr
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const offerId = String(formData.get("plan_id") ?? "").trim();
@@ -4490,7 +4494,8 @@ export async function createAdminClientRangeInvoiceAction(formData: FormData): P
   if (!token) {
     redirect("/login?error=Session%20expiree");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const returnTabRaw = String(formData.get("return_tab") ?? "").trim().toLowerCase();
@@ -4593,19 +4598,19 @@ export async function createAdminClientRangeInvoiceAction(formData: FormData): P
   if (generationMode === "AUTO") {
     const fieldErrors: Record<string, string> = {};
     if (!autoCycleStartDate || !parseDate(autoCycleStartDate)) {
-      fieldErrors.auto_cycle_start_date = "Date de debut du cycle obligatoire.";
+      fieldErrors.auto_cycle_start_date = t("admin.client_detail.invoice_error_cycle_start_required");
     }
     if (!autoLegalEntityId) {
-      fieldErrors.auto_legal_entity_id = "Entite legale obligatoire.";
+      fieldErrors.auto_legal_entity_id = t("admin.client_detail.invoice_error_legal_entity_required");
     }
     const autoDueDateDaysOffsetParsed = Number.parseInt(autoDueDateDaysOffsetRaw, 10);
     if (autoDueDateRuleType === "X_DAYS_AFTER_ISSUE") {
       if (!Number.isFinite(autoDueDateDaysOffsetParsed) || autoDueDateDaysOffsetParsed < 0) {
-        fieldErrors.auto_due_date_days_offset = "Nombre de jours invalide.";
+        fieldErrors.auto_due_date_days_offset = t("admin.client_detail.invoice_error_due_days_invalid");
       }
     }
     if (Object.keys(fieldErrors).length > 0) {
-      redirectInvoiceWizardError("Veuillez corriger les champs en erreur.", fieldErrors, "1");
+      redirectInvoiceWizardError(t("admin.client_detail.invoice_fix_errors"), fieldErrors, "1");
     }
 
     const ruleResult = await backendRequest<AdminClientAutoInvoiceRuleOut>(
@@ -4630,15 +4635,15 @@ export async function createAdminClientRangeInvoiceAction(formData: FormData): P
       const autoFieldErrors: Record<string, string> = {};
       const normalizedRuleError = (ruleResult.message || "").toLowerCase();
       if (normalizedRuleError.includes("due_date_days_offset")) {
-        autoFieldErrors.auto_due_date_days_offset = "Nombre de jours obligatoire pour la regle X jours.";
+        autoFieldErrors.auto_due_date_days_offset = t("admin.client_detail.invoice_error_due_days_required");
       }
       if (normalizedRuleError.includes("legal entity")) {
-        autoFieldErrors.auto_legal_entity_id = "Entite legale invalide.";
+        autoFieldErrors.auto_legal_entity_id = t("admin.client_detail.invoice_error_legal_entity_invalid");
       }
-      redirectInvoiceWizardError(ruleResult.message || "Impossible de sauvegarder la regle automatique.", autoFieldErrors, "1");
+      redirectInvoiceWizardError(ruleResult.message || t("admin.client_detail.invoice_error_auto_save_failed"), autoFieldErrors, "1");
     }
     revalidatePath(`/admin/clients/${clientId}`);
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Regle%20de%20facturation%20automatique%20enregistree`);
+    redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=${encodeURIComponent(t("admin.client_detail.invoice_auto_rule_saved"))}`);
   }
 
   const manualFieldErrors: Record<string, string> = {};
@@ -4647,26 +4652,26 @@ export async function createAdminClientRangeInvoiceAction(formData: FormData): P
   const endAt = parseDate(manualEndDate);
   const dueAt = parseDate(manualDueDate);
   if (!issuedAt) {
-    manualFieldErrors.issued_date = "Date d emission obligatoire.";
+    manualFieldErrors.issued_date = t("admin.client_detail.invoice_error_issued_date_required");
   }
   if (!startAt) {
-    manualFieldErrors.start_date = "Date de debut obligatoire.";
+    manualFieldErrors.start_date = t("admin.client_detail.invoice_error_start_date_required");
   }
   if (!endAt) {
-    manualFieldErrors.end_date = "Date de fin obligatoire.";
+    manualFieldErrors.end_date = t("admin.client_detail.invoice_error_end_date_required");
   }
   if (!manualNoDueDate && !dueAt) {
-    manualFieldErrors.due_date = "Date d echeance obligatoire.";
+    manualFieldErrors.due_date = t("admin.client_detail.invoice_error_due_date_required");
   }
   if (startAt && endAt && endAt.getTime() < startAt.getTime()) {
-    manualFieldErrors.end_date = "La date de fin doit etre apres la date de debut.";
+    manualFieldErrors.end_date = t("admin.client_detail.invoice_error_end_before_start");
   }
   const resolvedDueAt = manualNoDueDate ? issuedAt : dueAt;
   if (issuedAt && resolvedDueAt && resolvedDueAt.getTime() < issuedAt.getTime()) {
-    manualFieldErrors.due_date = "La date d echeance doit etre apres la date d emission.";
+    manualFieldErrors.due_date = t("admin.client_detail.invoice_error_due_before_issued");
   }
   if (Object.keys(manualFieldErrors).length > 0) {
-    redirectInvoiceWizardError("Veuillez corriger les champs en erreur.", manualFieldErrors, invoiceStep);
+    redirectInvoiceWizardError(t("admin.client_detail.invoice_fix_errors"), manualFieldErrors, invoiceStep);
   }
 
   const result = await backendRequest<AdminRangeInvoiceOut>(
@@ -4707,12 +4712,12 @@ export async function createAdminClientRangeInvoiceAction(formData: FormData): P
     const manualBackendFieldErrors: Record<string, string> = {};
     const normalizedManualError = (result.message || "").toLowerCase();
     if (normalizedManualError.includes("invalid date range")) {
-      manualBackendFieldErrors.end_date = "La date de fin doit etre apres la date de debut.";
+      manualBackendFieldErrors.end_date = t("admin.client_detail.invoice_error_end_before_start");
     }
     if (normalizedManualError.includes("due date must")) {
-      manualBackendFieldErrors.due_date = "La date d echeance doit etre apres la date d emission.";
+      manualBackendFieldErrors.due_date = t("admin.client_detail.invoice_error_due_before_issued");
     }
-    redirectInvoiceWizardError(result.message || "Impossible de creer la facture.", manualBackendFieldErrors, "2");
+    redirectInvoiceWizardError(result.message || t("admin.client_detail.invoice_error_create_failed"), manualBackendFieldErrors, "2");
   }
   const invoiceData = result.ok ? result.data : null;
   if (!invoiceData) {
@@ -4767,7 +4772,7 @@ export async function createAdminClientRangeInvoiceAction(formData: FormData): P
   }).catch(() => undefined);
 
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Facture%20cree%20et%20ajoutee%20a%20la%20liste`);
+  redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=${encodeURIComponent(t("admin.client_detail.invoice_created_added"))}`);
 }
 
 export async function updateAdminClientRangeInvoiceStatusAction(formData: FormData): Promise<void> {
