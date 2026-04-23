@@ -3,6 +3,8 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
+
 type ActivityOption = {
   id: string;
   name: string;
@@ -75,6 +77,7 @@ type QuoteLinesEditorProps = {
   kitCatalogPriceByKitId?: Record<string, string>;
   planningByActivityId?: Record<string, { plannedQuantity: number; pendingSelection: boolean }>;
   defaultVatRate?: string;
+  language?: UiLanguage | string;
   saveAction: (formData: FormData) => Promise<void>;
 };
 
@@ -154,23 +157,23 @@ function lineAmountVat(line: EditableLine): number {
   return lineUnitVat(line) * Number(line.quantity || "0");
 }
 
-function toMoney(value: number, currency = "EUR"): string {
+function toMoney(value: number, currency = "EUR", language: UiLanguage = "fr"): string {
   if (!Number.isFinite(value)) {
     return `0,00 ${(currency || "EUR").toUpperCase()}`;
   }
   try {
-    return new Intl.NumberFormat("fr-FR", { style: "currency", currency: (currency || "EUR").toUpperCase() }).format(value);
+    return new Intl.NumberFormat(localeForUiLanguage(language), { style: "currency", currency: (currency || "EUR").toUpperCase() }).format(value);
   } catch {
     return `${value.toFixed(2)} ${(currency || "EUR").toUpperCase()}`;
   }
 }
 
-function formatPercentDisplay(value: string | null | undefined): string {
+function formatPercentDisplay(value: string | null | undefined, language: UiLanguage = "fr"): string {
   const parsed = Number(String(value ?? "").trim());
   if (!Number.isFinite(parsed)) {
     return "0,00%";
   }
-  return `${new Intl.NumberFormat("fr-FR", {
+  return `${new Intl.NumberFormat(localeForUiLanguage(language), {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(parsed)}%`;
@@ -208,7 +211,7 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
       line_category: "product",
       line_type: "discount",
       master_item_type: "discount_rule",
-      title: line.title || "Remise",
+      title: line.title || "Discount",
       quantity: normalizeQuantityInput(line.quantity),
       vat_rate: line.vatRate || "0",
       unit_price_ttc: String(Math.abs(Number(line.unitPrice || "0"))),
@@ -221,7 +224,7 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
       line_category: "product",
       line_type: "surcharge",
       master_item_type: "surcharge_rule",
-      title: line.title || "Supplement",
+      title: line.title || "Surcharge",
       quantity: normalizeQuantityInput(line.quantity),
       vat_rate: line.vatRate || "0",
       unit_price_ttc: String(Math.abs(Number(line.unitPrice || "0"))),
@@ -235,7 +238,7 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
       line_type: "item",
       master_item_type: "activity",
       activity_id: line.refId || null,
-      title: line.title || "Activite",
+      title: line.title || "Activity",
       quantity: normalizeQuantityInput(line.quantity),
       vat_rate: line.vatRate || "0",
       unit_price_ttc: line.unitPrice || "0",
@@ -262,7 +265,7 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
     line_type: "item",
     master_item_type: "product",
     product_id: line.refId || null,
-    title: line.title || "Produit",
+    title: line.title || "Product",
     quantity: normalizeQuantityInput(line.quantity),
     vat_rate: line.vatRate || "0",
     unit_price_ttc: line.unitPrice || "0",
@@ -372,20 +375,21 @@ function resolvedSourceUnitPrice(
   activityCatalogPriceByActivityId: Record<string, string>,
   productCatalogPriceByProductId: Record<string, string>,
   kitCatalogPriceByKitId: Record<string, string>,
+  language: UiLanguage,
 ): ResolvedUnitPrice | null {
   if (line.kind === "activity") {
     const activity = activities.find((item) => item.id === line.refId);
     const catalogPrice = activityCatalogPriceByActivityId[line.refId];
     if (catalogPrice && catalogPrice !== "") {
-      return { unitPrice: catalogPrice, sourceLabel: "tarif catalogue" };
+      return { unitPrice: catalogPrice, sourceLabel: uiText(language, "admin.quote_lines.source_catalog") };
     }
     const direct = parsePositive(activity?.default_course_rate_ttc);
     if (direct !== null) {
-      return { unitPrice: direct.toFixed(2), sourceLabel: "tarif par cours activite" };
+      return { unitPrice: direct.toFixed(2), sourceLabel: uiText(language, "admin.quote_lines.source_activity_course") };
     }
     const fallbackPrice = computeActivityFallbackPrice(activity);
     if (fallbackPrice && fallbackPrice !== "") {
-      return { unitPrice: fallbackPrice, sourceLabel: "tarif horaire activite" };
+      return { unitPrice: fallbackPrice, sourceLabel: uiText(language, "admin.quote_lines.source_activity_hourly") };
     }
     return null;
   }
@@ -393,10 +397,10 @@ function resolvedSourceUnitPrice(
     const product = products.find((item) => item.id === line.refId);
     const catalogPrice = productCatalogPriceByProductId[line.refId];
     if (catalogPrice && catalogPrice !== "") {
-      return { unitPrice: catalogPrice, sourceLabel: "tarif catalogue" };
+      return { unitPrice: catalogPrice, sourceLabel: uiText(language, "admin.quote_lines.source_catalog") };
     }
     if (product?.price_incl_vat) {
-      return { unitPrice: product.price_incl_vat, sourceLabel: "prix produit" };
+      return { unitPrice: product.price_incl_vat, sourceLabel: uiText(language, "admin.quote_lines.source_product_price") };
     }
     return null;
   }
@@ -404,10 +408,10 @@ function resolvedSourceUnitPrice(
     const kit = kits.find((item) => item.id === line.refId);
     const catalogPrice = kitCatalogPriceByKitId[line.refId];
     if (catalogPrice && catalogPrice !== "") {
-      return { unitPrice: catalogPrice, sourceLabel: "tarif catalogue" };
+      return { unitPrice: catalogPrice, sourceLabel: uiText(language, "admin.quote_lines.source_catalog") };
     }
     if (kit?.effective_price_ttc) {
-      return { unitPrice: kit.effective_price_ttc, sourceLabel: "prix kit" };
+      return { unitPrice: kit.effective_price_ttc, sourceLabel: uiText(language, "admin.quote_lines.source_kit_price") };
     }
     return null;
   }
@@ -447,12 +451,13 @@ function planningSummaryForLine(
 
 function formatPlannedQuantityDisplay(
   summary: { plannedQuantity: number; pendingSelection: boolean } | null,
+  language: UiLanguage = "fr",
 ): string {
   if (!summary) {
     return "-";
   }
   if (summary.pendingSelection && summary.plannedQuantity <= 0) {
-    return "0 (a confirmer)";
+    return uiText(language, "admin.quote_lines.quantity_to_confirm");
   }
   return String(summary.plannedQuantity);
 }
@@ -528,8 +533,11 @@ export default function QuoteLinesEditor({
   kitCatalogPriceByKitId = {},
   planningByActivityId = {},
   defaultVatRate = "0",
+  language: languageProp = "fr",
   saveAction,
 }: QuoteLinesEditorProps): JSX.Element {
+  const language = normalizeUiLanguage(languageProp);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -573,13 +581,14 @@ export default function QuoteLinesEditor({
     handledSuccessTokenRef.current = successToken;
     setLines((prev) => prev.map((line) => ({ ...line, saved: true, dirty: false })));
     setEditorState(null);
-    setSaveConfirmationMessage(okMessage);
-    window.alert(okMessage);
+    const localizedOkMessage = uiText(language, "admin.quote_lines.saved_success");
+    setSaveConfirmationMessage(localizedOkMessage);
+    window.alert(localizedOkMessage);
     const nextParams = new URLSearchParams(searchParams?.toString() ?? "");
     nextParams.delete("ok");
     const nextQuery = nextParams.toString();
     router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
-  }, [pathname, router, searchParams]);
+  }, [language, pathname, router, searchParams]);
 
   const linesJson = useMemo(() => JSON.stringify(lines.map((line, index) => buildLinePayload(line, index))), [lines]);
   const total = useMemo(() => lines.reduce((sum, line) => sum + lineAmount(line), 0), [lines]);
@@ -660,7 +669,7 @@ export default function QuoteLinesEditor({
           line: {
             ...line,
             refId,
-            title: activity?.name ?? "Activite",
+            title: activity?.name ?? t("admin.quote_lines.kind_activity"),
             vatRate: shouldPrefillVat ? (defaultVatRate || "0") : line.vatRate,
             unitPrice: resolvedUnitPrice && resolvedUnitPrice !== "" ? resolvedUnitPrice : "0",
             manualUnitPriceOverride: false,
@@ -677,7 +686,7 @@ export default function QuoteLinesEditor({
           line: {
             ...line,
             refId,
-            title: product?.title ?? "Produit",
+            title: product?.title ?? t("admin.quote_lines.kind_product"),
             vatRate: resolvedVatRate && resolvedVatRate !== "" ? resolvedVatRate : "0",
             unitPrice: resolvedUnitPrice && resolvedUnitPrice !== "" ? resolvedUnitPrice : "0",
             manualUnitPriceOverride: false,
@@ -733,12 +742,12 @@ export default function QuoteLinesEditor({
 
   function lineStatusLabel(line: EditableLine): string {
     if (!line.saved) {
-      return "Nouveau non enregistre";
+      return t("admin.quote_lines.status_new");
     }
     if (line.dirty) {
-      return "Modification en cours";
+      return t("admin.quote_lines.status_dirty");
     }
-    return "Enregistre";
+    return t("admin.quote_lines.status_saved");
   }
 
   function lineStatusClass(line: EditableLine): string {
@@ -748,11 +757,11 @@ export default function QuoteLinesEditor({
   }
 
   function lineTypeLabel(kind: LineKind): string {
-    if (kind === "activity") return "Activite";
-    if (kind === "product") return "Produit";
-    if (kind === "kit") return "Kit";
-    if (kind === "discount") return "Remise";
-    return "Supplement";
+    if (kind === "activity") return t("admin.quote_lines.kind_activity");
+    if (kind === "product") return t("admin.quote_lines.kind_product");
+    if (kind === "kit") return t("admin.quote_lines.kind_kit");
+    if (kind === "discount") return t("admin.quote_lines.kind_discount");
+    return t("admin.quote_lines.kind_surcharge");
   }
 
   const editorLine = editorState?.line ?? null;
@@ -774,6 +783,7 @@ export default function QuoteLinesEditor({
       activityCatalogPriceByActivityId,
       productCatalogPriceByProductId,
       kitCatalogPriceByKitId,
+      language,
     )
     : null;
   const editorPlannedQuantity = editorPlanningSummary?.plannedQuantity ?? 0;
@@ -794,41 +804,41 @@ export default function QuoteLinesEditor({
 
       <div className="quote-editor-toolbar row spread wrap gap-sm">
         <div className="quote-editor-toolbar-main">
-          <strong>Lignes facturees</strong>
+          <strong>{t("admin.quote_lines.title_main")}</strong>
           <span className="quote-editor-count">
-            {savedCount} enregistree(s), {modifiedCount + newCount} brouillon(s)
+            {t("admin.quote_lines.counts", { saved: savedCount, draft: modifiedCount + newCount })}
           </span>
         </div>
         <div className="row wrap gap-sm">
           <button type="button" className="ghost quote-add-button" onClick={() => openCreateModal("activity")} disabled={!editable}>
             <PlusIcon />
-            <span>Activite</span>
+            <span>{t("admin.quote_lines.kind_activity")}</span>
           </button>
           <button type="button" className="ghost quote-add-button" onClick={() => openCreateModal("product")} disabled={!editable}>
             <PlusIcon />
-            <span>Produit</span>
+            <span>{t("admin.quote_lines.kind_product")}</span>
           </button>
           <button type="button" className="ghost quote-add-button" onClick={() => openCreateModal("kit")} disabled={!editable}>
             <PlusIcon />
-            <span>Kit</span>
+            <span>{t("admin.quote_lines.kind_kit")}</span>
           </button>
           <button type="button" className="ghost quote-add-button" onClick={() => openCreateModal("discount")} disabled={!editable}>
             <PlusIcon />
-            <span>Remise</span>
+            <span>{t("admin.quote_lines.kind_discount")}</span>
           </button>
           <button type="button" className="ghost quote-add-button" onClick={() => openCreateModal("surcharge")} disabled={!editable}>
             <PlusIcon />
-            <span>Supplement</span>
+            <span>{t("admin.quote_lines.kind_surcharge")}</span>
           </button>
           <span className={`quote-status-chip ${pendingSaveCount > 0 ? "quote-status-chip-pending" : "quote-status-chip-saved"}`}>
-            {pendingSaveCount > 0 ? "A enregistrer" : "Enregistre"}
+            {pendingSaveCount > 0 ? t("admin.quote_lines.pending_save") : t("admin.quote_lines.status_saved")}
           </span>
         </div>
       </div>
 
       <section className="quote-editor-pane quote-editor-pane-saved top-gap-sm">
         {lines.length === 0 ? (
-          <p className="quote-editor-empty">Aucune ligne enregistree pour ce devis.</p>
+          <p className="quote-editor-empty">{t("admin.quote_lines.empty")}</p>
         ) : (
           <div className="quote-saved-list">
             {lines.map((line) => {
@@ -858,8 +868,8 @@ export default function QuoteLinesEditor({
                         className="quote-icon-button"
                         onClick={() => openEditModal(line.uid)}
                         disabled={!editable}
-                        aria-label={`Modifier ${line.title || "la ligne"}`}
-                        title="Modifier"
+                        aria-label={t("admin.quote_lines.edit_aria", { title: line.title || t("admin.quote_lines.line_fallback") })}
+                        title={t("common.edit")}
                       >
                         <PencilIcon />
                       </button>
@@ -868,8 +878,8 @@ export default function QuoteLinesEditor({
                         className="quote-icon-button quote-icon-button-danger"
                         onClick={() => removeLine(line.uid)}
                         disabled={!editable}
-                        aria-label={`Supprimer ${line.title || "la ligne"}`}
-                        title="Supprimer"
+                        aria-label={t("admin.quote_lines.delete_aria", { title: line.title || t("admin.quote_lines.line_fallback") })}
+                        title={t("common.delete")}
                       >
                         <TrashIcon />
                       </button>
@@ -877,25 +887,25 @@ export default function QuoteLinesEditor({
                   </div>
                   <div className="quote-saved-card-metrics">
                     <div>
-                      <span>Qt facturee</span>
+                      <span>{t("admin.quote_lines.billed_quantity")}</span>
                       <strong>{formatQuantityDisplay(line.quantity)}</strong>
                     </div>
                     <div className={planningMismatch ? "quote-saved-card-metric-warning" : ""}>
-                      <span>Qt planifiee</span>
-                      <strong>{formatPlannedQuantityDisplay(planningSummary)}</strong>
+                      <span>{t("admin.quote_lines.planned_quantity")}</span>
+                      <strong>{formatPlannedQuantityDisplay(planningSummary, language)}</strong>
                     </div>
                     <div>
-                      <span>PU TTC</span>
-                      <strong>{toMoney(Number(line.unitPrice || "0"), currency)}</strong>
+                      <span>{t("admin.quote_lines.unit_price_ttc_short")}</span>
+                      <strong>{toMoney(Number(line.unitPrice || "0"), currency, language)}</strong>
                     </div>
                     <div>
-                      <span>Total TTC</span>
-                      <strong>{toMoney(lineAmount(line), currency)}</strong>
+                      <span>{t("admin.quote_lines.total_ttc")}</span>
+                      <strong>{toMoney(lineAmount(line), currency, language)}</strong>
                     </div>
                   </div>
                   <div className="quote-saved-card-footer">
-                    <span>TVA {formatPercentDisplay(line.vatRate)}</span>
-                    {planningMismatch ? <span>Le planning et la facturation ne sont pas alignes.</span> : null}
+                    <span>{t("common.vat")} {formatPercentDisplay(line.vatRate, language)}</span>
+                    {planningMismatch ? <span>{t("admin.quote_lines.planning_mismatch")}</span> : null}
                   </div>
                 </article>
               );
@@ -905,22 +915,22 @@ export default function QuoteLinesEditor({
       </section>
 
       {editorLine ? (
-        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label="Modifier une ligne de devis">
+        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label={t("admin.quote_lines.modal_aria")}>
           <article className="modal-panel quote-line-editor-modal" onClick={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close-x" onClick={closeEditor} aria-label="Fermer">
+            <button type="button" className="modal-close-x" onClick={closeEditor} aria-label={t("common.close")}>
               ×
             </button>
             <div className="quote-line-editor-modal-head">
               <div>
                 <p className="quote-line-editor-kicker">
-                  {editorState?.originalUid ? "Edition de ligne" : "Nouvelle ligne"}
+                  {editorState?.originalUid ? t("admin.quote_lines.editing_kicker") : t("admin.quote_lines.new_kicker")}
                 </p>
                 <h3 className="modal-title">
-                  {editorState?.originalUid ? "Modifier la ligne" : `Ajouter ${lineTypeLabel(editorLine.kind).toLowerCase()}`}
+                  {editorState?.originalUid ? t("admin.quote_lines.edit_line") : t("admin.quote_lines.add_line", { kind: lineTypeLabel(editorLine.kind).toLowerCase() })}
                 </h3>
               </div>
               <span className={`quote-status-chip ${editorLine.saved ? "quote-status-chip-editing" : "quote-status-chip-new"}`}>
-                {editorLine.saved ? "Brouillon modifie" : "Ajout au brouillon"}
+                {editorLine.saved ? t("admin.quote_lines.draft_modified") : t("admin.quote_lines.draft_added")}
               </span>
             </div>
 
@@ -937,20 +947,20 @@ export default function QuoteLinesEditor({
                     }}
                     disabled={!editable}
                   >
-                    Supprimer
+                    {t("common.delete")}
                   </button>
                 ) : null}
               </div>
               {(editorLine.kind === "activity" || editorLine.kind === "product" || editorLine.kind === "kit") ? (
                 <>
                   <label className="top-gap-sm">
-                    Element
+                    {t("admin.quote_lines.element")}
                     <select
                       value={editorLine.refId}
                       onChange={(event) => applyRefToEditor(editorLine.kind, event.target.value)}
                       disabled={!editable}
                     >
-                      <option value="">Selectionner</option>
+                      <option value="">{t("common.choose")}</option>
                       {selectableOptions(editorLine.kind, activities, products, kits).map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.label}
@@ -967,7 +977,7 @@ export default function QuoteLinesEditor({
               ) : null}
               <div className="grid cols-4 top-gap-sm">
                 <label className="cols-span-4">
-                  Intitule
+                  {t("admin.quote_lines.line_title")}
                   <input
                     type="text"
                     value={editorLine.title}
@@ -978,7 +988,7 @@ export default function QuoteLinesEditor({
                   />
                 </label>
                 <label>
-                  Quantite
+                  {t("common.quantity")}
                   <input
                     type="number"
                     min={1}
@@ -991,25 +1001,25 @@ export default function QuoteLinesEditor({
                 </label>
                 {editorCanAlignQuantity ? (
                   <div className="quote-line-planning-summary cols-span-4">
-                    <span>Le planning prevoit {editorPlannedQuantity} seance(s) pour cette activite.</span>
+                    <span>{t("admin.quote_lines.planning_expected", { count: editorPlannedQuantity })}</span>
                     <button
                       type="button"
                       className="ghost small-btn"
                       onClick={() => updateEditor({ quantity: String(editorPlannedQuantity) })}
                       disabled={!editable}
                     >
-                      Aligner la quantite sur le planning
+                      {t("admin.quote_lines.align_quantity")}
                     </button>
                   </div>
                 ) : null}
                 {editorLine.kind === "activity" ? (
                   <div className={`quote-line-planning-summary cols-span-4${editorPlanningMismatch ? " is-warning" : ""}`}>
-                    <span>Quantite facturee : {formatQuantityDisplay(editorLine.quantity)}</span>
-                    <span>Quantite planifiee : {formatPlannedQuantityDisplay(editorPlanningSummary)}</span>
+                    <span>{t("admin.quote_lines.billed_quantity_value", { value: formatQuantityDisplay(editorLine.quantity) })}</span>
+                    <span>{t("admin.quote_lines.planned_quantity_value", { value: formatPlannedQuantityDisplay(editorPlanningSummary, language) })}</span>
                   </div>
                 ) : null}
                 <label>
-                  TVA (%)
+                  {t("admin.quote_lines.vat_percent")}
                   <input
                     type="number"
                     min={0}
@@ -1022,7 +1032,7 @@ export default function QuoteLinesEditor({
                   />
                 </label>
                 <label className="quote-price-field">
-                  Prix unitaire TTC
+                  {t("admin.quote_lines.unit_price_ttc")}
                   <input
                     type="number"
                     step="0.01"
@@ -1035,7 +1045,7 @@ export default function QuoteLinesEditor({
                 {editorResolvedSourcePrice ? (
                   <div className={`quote-line-planning-summary cols-span-4${editorHasSourcePriceGap ? " is-warning" : ""}`}>
                     <span>
-                      Tarif source actuel : {toMoney(Number(editorResolvedSourcePrice.unitPrice || "0"), currency)}
+                      {t("admin.quote_lines.current_source_price", { amount: toMoney(Number(editorResolvedSourcePrice.unitPrice || "0"), currency, language) })}
                       {" · "}
                       {editorResolvedSourcePrice.sourceLabel}
                     </span>
@@ -1046,39 +1056,39 @@ export default function QuoteLinesEditor({
                         onClick={() => updateEditor({ unitPrice: editorResolvedSourcePrice.unitPrice, manualUnitPriceOverride: false })}
                         disabled={!editable}
                       >
-                        Reappliquer ce tarif
+                        {t("admin.quote_lines.reapply_price")}
                       </button>
                     ) : null}
                   </div>
                 ) : null}
                 <div className="quote-line-amounts-row">
                   <div className="quote-line-amount">
-                    <span>Total ligne TTC</span>
-                    <strong>{toMoney(lineAmount(editorLine), currency)}</strong>
+                    <span>{t("admin.quote_lines.line_total_ttc")}</span>
+                    <strong>{toMoney(lineAmount(editorLine), currency, language)}</strong>
                   </div>
                   <div className="quote-line-amount">
-                    <span>Montant HT</span>
-                    <strong>{toMoney(lineAmountHt(editorLine), currency)}</strong>
+                    <span>{t("admin.quote_lines.amount_ht")}</span>
+                    <strong>{toMoney(lineAmountHt(editorLine), currency, language)}</strong>
                   </div>
                   <div className="quote-line-amount">
-                    <span>Montant TVA</span>
-                    <strong>{toMoney(lineAmountVat(editorLine), currency)}</strong>
+                    <span>{t("admin.quote_lines.amount_vat")}</span>
+                    <strong>{toMoney(lineAmountVat(editorLine), currency, language)}</strong>
                   </div>
                 </div>
               </div>
               {isCatalogKind(editorLine.kind) ? (
                 <small className="muted">
-                  Le total de ligne se recalcule automatiquement depuis la quantite et le prix unitaire. Vous pouvez reappliquer le tarif source actuel si necessaire.
+                  {t("admin.quote_lines.recalculation_hint")}
                 </small>
               ) : null}
             </article>
 
             <div className="row modal-actions-end top-gap-sm">
               <button type="button" className="ghost" onClick={closeEditor}>
-                Annuler
+                {t("common.cancel")}
               </button>
               <button type="button" onClick={commitEditor} disabled={!editable}>
-                Appliquer au brouillon
+                {t("admin.quote_lines.apply_draft")}
               </button>
             </div>
           </article>
@@ -1088,13 +1098,17 @@ export default function QuoteLinesEditor({
       <div className="row spread wrap top-gap-sm">
         <div>
           <p className="quote-total">
-            Total estime TTC: {toMoney(total, currency)} · HT: {toMoney(totalHt, currency)} · TVA: {toMoney(totalVat, currency)}
+            {t("admin.quote_lines.estimated_total", {
+              total: toMoney(total, currency, language),
+              ht: toMoney(totalHt, currency, language),
+              vat: toMoney(totalVat, currency, language),
+            })}
           </p>
           {saveConfirmationMessage ? <p className="flash-ok top-gap-sm">{saveConfirmationMessage}</p> : null}
         </div>
-        <button type="submit" disabled={!editable}>Enregistrer les lignes</button>
+        <button type="submit" disabled={!editable}>{t("admin.quote_lines.save_lines")}</button>
       </div>
-      {!editable ? <p className="muted top-gap-sm">Le devis est immuable apres envoi.</p> : null}
+      {!editable ? <p className="muted top-gap-sm">{t("admin.quote_lines.immutable_after_send")}</p> : null}
     </form>
   );
 }

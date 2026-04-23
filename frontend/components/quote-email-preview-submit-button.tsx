@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { normalizeUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
+
 type QuoteEmailPreviewPayload = {
   recipient_email: string;
   template_ref: string;
@@ -20,19 +22,27 @@ type QuoteEmailPreviewSubmitButtonProps = {
   cancelLabel?: string;
   className?: string;
   disabled?: boolean;
+  language?: UiLanguage | string;
 };
 
 export default function QuoteEmailPreviewSubmitButton({
   formId,
   previewUrl,
   label,
-  title = "Verifier l'email avant envoi",
-  description = "Controlez le destinataire, le sujet et le message avant de confirmer l'envoi.",
-  confirmLabel = "Confirmer l'envoi",
-  cancelLabel = "Annuler",
+  title,
+  description,
+  confirmLabel,
+  cancelLabel,
   className,
   disabled = false,
+  language: languageProp = "fr",
 }: QuoteEmailPreviewSubmitButtonProps): JSX.Element {
+  const language = normalizeUiLanguage(languageProp);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const resolvedTitle = title ?? t("admin.quote_email_preview.default_title");
+  const resolvedDescription = description ?? t("admin.quote_email_preview.default_description");
+  const resolvedConfirmLabel = confirmLabel ?? t("admin.quote_email_preview.default_confirm");
+  const resolvedCancelLabel = cancelLabel ?? t("common.cancel");
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -50,7 +60,7 @@ export default function QuoteEmailPreviewSubmitButton({
     }
     const form = document.getElementById(formId);
     if (!(form instanceof HTMLFormElement)) {
-      setErrorMessage("Formulaire introuvable.");
+      setErrorMessage(t("common.form_not_found"));
       return;
     }
 
@@ -58,7 +68,7 @@ export default function QuoteEmailPreviewSubmitButton({
     const recipientEmail = String(formData.get("recipient_email") ?? "").trim();
     const templateRefRaw = String(formData.get("template_ref") ?? "").trim();
     if (!recipientEmail) {
-      setErrorMessage("Adresse email destinataire requise.");
+      setErrorMessage(t("admin.quote_email_preview.recipient_required"));
       return;
     }
 
@@ -81,17 +91,17 @@ export default function QuoteEmailPreviewSubmitButton({
       const text = await response.text();
       const parsed = text ? safeJsonParse(text) : null;
       if (!response.ok) {
-        setErrorMessage(extractErrorMessage(parsed, `Previsualisation indisponible (${response.status})`));
+        setErrorMessage(extractErrorMessage(parsed, t("admin.quote_email_preview.preview_unavailable", { status: response.status })));
         return;
       }
       if (!isQuoteEmailPreviewPayload(parsed)) {
-        setErrorMessage("Previsualisation email invalide.");
+        setErrorMessage(t("admin.quote_email_preview.invalid_preview"));
         return;
       }
       setPreview(parsed);
       setOpen(true);
     } catch {
-      setErrorMessage("Impossible de charger la previsualisation de l'email.");
+      setErrorMessage(t("admin.quote_email_preview.load_failed"));
     } finally {
       setLoading(false);
     }
@@ -100,7 +110,7 @@ export default function QuoteEmailPreviewSubmitButton({
   const confirm = (): void => {
     const form = document.getElementById(formId);
     if (!(form instanceof HTMLFormElement)) {
-      setErrorMessage("Formulaire introuvable.");
+      setErrorMessage(t("common.form_not_found"));
       return;
     }
     close();
@@ -117,7 +127,7 @@ export default function QuoteEmailPreviewSubmitButton({
           void loadPreview();
         }}
       >
-        {loading ? "Chargement..." : label}
+        {loading ? t("admin.quote_email_preview.loading") : label}
       </button>
 
       {errorMessage ? <section className="flash-err top-gap-sm">{errorMessage}</section> : null}
@@ -125,26 +135,26 @@ export default function QuoteEmailPreviewSubmitButton({
       {open && preview ? (
         <section className="modal-overlay">
           <article className="modal-panel quote-email-preview-modal">
-            <button className="modal-close-x" type="button" onClick={close} aria-label="Fermer">
+            <button className="modal-close-x" type="button" onClick={close} aria-label={t("common.close")}>
               ×
             </button>
-            <h3 className="modal-title">{title}</h3>
-            {description ? (
+            <h3 className="modal-title">{resolvedTitle}</h3>
+            {resolvedDescription ? (
               <p className="muted" style={{ whiteSpace: "pre-line" }}>
-                {description}
+                {resolvedDescription}
               </p>
             ) : null}
             <div className="quote-email-preview-grid">
               <div className="quote-email-preview-field">
-                <strong>Destinataire</strong>
+                <strong>{t("admin.quote_email_preview.recipient")}</strong>
                 <div className="quote-email-preview-value">{preview.recipient_email}</div>
               </div>
               <div className="quote-email-preview-field">
-                <strong>Sujet</strong>
+                <strong>{t("admin.quote_email_preview.subject")}</strong>
                 <div className="quote-email-preview-value">{preview.subject || "-"}</div>
               </div>
               <div className="quote-email-preview-field">
-                <strong>Message</strong>
+                <strong>{t("common.message")}</strong>
                 {preview.body_format.trim().toUpperCase() === "HTML" ? (
                   <div className="quote-email-preview-body" dangerouslySetInnerHTML={{ __html: preview.body || "<p>-</p>" }} />
                 ) : (
@@ -154,10 +164,10 @@ export default function QuoteEmailPreviewSubmitButton({
             </div>
             <div className="row modal-actions-end">
               <button type="button" className="ghost" onClick={close}>
-                {cancelLabel}
+                {resolvedCancelLabel}
               </button>
               <button type="button" onClick={confirm}>
-                {confirmLabel}
+                {resolvedConfirmLabel}
               </button>
             </div>
           </article>
