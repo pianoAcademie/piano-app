@@ -65,7 +65,7 @@ import type {
   UserOut,
   QuoteTemplateVariableOut,
 } from "../../../lib/types";
-import { normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -607,6 +607,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
   const language = meResult.ok ? normalizeUiLanguage(meResult.data.preferred_language) : "fr";
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const locale = localeForUiLanguage(language);
   const configNavLabel = (fallback: string, labelKey?: string): string => (labelKey ? t(labelKey) : fallback);
   const loadErrors: string[] = [];
 
@@ -681,13 +682,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const invoiceTemplate = invoiceTemplateResult.ok
     ? invoiceTemplateResult.data
     : (() => {
-        loadErrors.push(`Modele facture: ${invoiceTemplateResult.message}`);
+        loadErrors.push(t("admin.billing.load_invoice_template", { message: invoiceTemplateResult.message }));
         return null;
       })();
   const invoiceNumbering = invoiceNumberingResult.ok
     ? invoiceNumberingResult.data
     : (() => {
-        loadErrors.push(`Numero facture: ${invoiceNumberingResult.message}`);
+        loadErrors.push(t("admin.billing.load_invoice_numbering", { message: invoiceNumberingResult.message }));
         return null;
       })();
   const emailPredefinedTemplates = emailPredefinedTemplatesResult.ok
@@ -1435,14 +1436,14 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               </section>
 
               <section className="card">
-                <h3>Parametres de facturation</h3>
+                <h3>{t("admin.billing.title")}</h3>
                 {!invoiceNumbering ? (
-                  <p className="muted">Impossible de charger la numerotation des factures.</p>
+                  <p className="muted">{t("admin.billing.numbering_load_error")}</p>
                 ) : (
                   <form action={updateAdminConfigInvoiceNumberingAction} className="grid config-form-grid">
-                    <h4>Numero de facture</h4>
+                    <h4>{t("admin.billing.invoice_number_title")}</h4>
                     <label>
-                      Format du numero
+                      {t("admin.billing.number_format")}
                       <input
                         type="text"
                         name="format_pattern"
@@ -1451,9 +1452,9 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         required
                       />
                     </label>
-                    <p className="muted">Variables: %YYYY% %YY% %MM% %DD% %NNNN% (ou %NNNNNN% pour plus de digits)</p>
+                    <p className="muted">{t("admin.billing.number_variables")}</p>
                     <label>
-                      Prochain numero
+                      {t("admin.billing.next_number")}
                       <input
                         type="number"
                         name="next_number"
@@ -1463,32 +1464,38 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         required
                       />
                     </label>
-                    <p className="muted">Apercu: {invoiceNumbering.preview}</p>
+                    <p className="muted">{t("admin.billing.preview", { value: invoiceNumbering.preview })}</p>
                     {invoiceNumbering.updated_at ? (
                       <p className="muted">
-                        Derniere mise a jour: {new Date(invoiceNumbering.updated_at).toLocaleString("fr-FR")}
+                        {t("admin.billing.updated_at", {
+                          value: new Date(invoiceNumbering.updated_at).toLocaleString(locale),
+                        })}
                       </p>
                     ) : null}
                     <div className="row">
-                      <button type="submit">Enregistrer la numerotation</button>
+                      <button type="submit">{t("admin.billing.save_numbering")}</button>
                     </div>
                   </form>
                 )}
                 <hr />
                 {!invoiceTemplate ? (
-                  <p className="muted">Impossible de charger le modele de facture.</p>
+                  <p className="muted">{t("admin.billing.template_load_error")}</p>
                 ) : (
                   <form action={updateAdminConfigInvoiceTemplateAction} className="grid config-form-grid">
-                    <p className="muted">Variables disponibles: {invoiceTemplate.variables_hint}</p>
+                    <p className="muted">{t("admin.billing.available_variables", { value: invoiceTemplate.variables_hint })}</p>
                     <label>
-                      Corps de facture
+                      {t("admin.billing.invoice_body")}
                       <textarea name="body" defaultValue={invoiceTemplate.body} rows={14} required />
                     </label>
                     {invoiceTemplate.updated_at ? (
-                      <p className="muted">Derniere mise a jour: {new Date(invoiceTemplate.updated_at).toLocaleString("fr-FR")}</p>
+                      <p className="muted">
+                        {t("admin.billing.updated_at", {
+                          value: new Date(invoiceTemplate.updated_at).toLocaleString(locale),
+                        })}
+                      </p>
                     ) : null}
                     <div className="row">
-                      <button type="submit">Enregistrer le modele de facture</button>
+                      <button type="submit">{t("admin.billing.save_template")}</button>
                     </div>
                   </form>
                 )}
