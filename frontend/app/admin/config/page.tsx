@@ -412,15 +412,15 @@ function parseMessagingTab(raw: string): MessagingTab {
   return "settings";
 }
 
-function activityModeLabel(mode: string): string {
-  const normalized = mode.toUpperCase();
+function activityModeLabel(mode: string, language: UiLanguage): string {
+  const normalized = mode.trim().toUpperCase();
   if (normalized === "ONLINE") {
-    return "En ligne";
+    return uiText(language, "admin.professor_detail.mode_online");
   }
   if (normalized === "ONSITE") {
-    return "Presentiel";
+    return uiText(language, "admin.professor_detail.mode_onsite");
   }
-  return "Tous";
+  return uiText(language, "admin.professor_detail.mode_all");
 }
 
 function formatMoney(amountRaw: string | null, currency: string | null): string {
@@ -3172,46 +3172,45 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
             <>
               <section className="card">
                 <div className="row between">
-                  <h3>Connexion WordPress / LearnDash</h3>
+                  <h3>{t("admin.activities.wordpress_title")}</h3>
                   <small className="muted">
-                    {externalContentSettings.bearer_token_configured ? "Token configure" : "Token non configure"}
+                    {externalContentSettings.bearer_token_configured
+                      ? t("admin.activities.token_configured")
+                      : t("admin.activities.token_not_configured")}
                   </small>
                 </div>
-                <p className="muted">
-                  Renseignez ici l URL de votre site WordPress et, si besoin, un token bearer pour permettre la
-                  synchronisation du catalogue e-learning.
-                </p>
+                <p className="muted">{t("admin.activities.wordpress_help")}</p>
                 <form action={updateAdminConfigExternalContentSettingsAction} className="grid cols-2 config-form-grid">
                   <label>
-                    URL du site WordPress
+                    {t("admin.activities.wordpress_site_url")}
                     <input
                       type="url"
                       name="base_url"
                       defaultValue={externalContentSettings.base_url}
-                      placeholder="https://votre-site.fr"
+                      placeholder={t("admin.activities.wordpress_site_placeholder")}
                     />
                   </label>
                   <label>
-                    Endpoint cours (optionnel)
+                    {t("admin.activities.courses_endpoint")}
                     <input
                       type="url"
                       name="courses_endpoint"
                       defaultValue={externalContentSettings.courses_endpoint}
-                      placeholder="https://votre-site.fr/wp-json/piano/v1/courses"
+                      placeholder={t("admin.activities.courses_endpoint_placeholder")}
                     />
-                    <small className="muted">Laissez vide pour utiliser /wp-json/piano/v1/courses a partir de l URL du site.</small>
+                    <small className="muted">{t("admin.activities.endpoint_fallback_help")}</small>
                   </label>
                   <label>
-                    Token API bearer (optionnel)
-                    <input type="password" name="bearer_token" placeholder="Laissez vide pour conserver le token actuel" />
+                    {t("admin.activities.bearer_token")}
+                    <input type="password" name="bearer_token" placeholder={t("admin.activities.bearer_token_placeholder")} />
                     <small className="muted">
                       {externalContentSettings.bearer_token_configured
-                        ? `Token actuel: ${externalContentSettings.bearer_token_masked}`
-                        : "Aucun token configure pour le moment."}
+                        ? t("admin.activities.current_token", { token: externalContentSettings.bearer_token_masked })
+                        : t("admin.activities.no_token")}
                     </small>
                   </label>
                   <label>
-                    Delai d appel (secondes)
+                    {t("admin.activities.timeout_seconds")}
                     <input
                       type="number"
                       name="timeout_seconds"
@@ -3223,44 +3222,38 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   </label>
                   <label className="row center gap-sm">
                     <input type="checkbox" name="clear_bearer_token" />
-                    <span>Supprimer le token actuel</span>
+                    <span>{t("admin.activities.clear_token")}</span>
                   </label>
                   <div className="item">
-                    <strong>Endpoint utilise</strong>
-                    <p className="muted top-gap-sm">
-                      {externalContentSettings.resolved_endpoint_url ?? "Renseignez l URL du site ou l endpoint explicite pour activer la synchro."}
-                    </p>
+                    <strong>{t("admin.activities.endpoint_used")}</strong>
+                    <p className="muted top-gap-sm">{externalContentSettings.resolved_endpoint_url ?? t("admin.activities.endpoint_missing")}</p>
                     <p className="muted">
-                      Plugin a installer sur WordPress: <code>wordpress/plugins/piano-academie-learndash-bridge</code>
+                      {t("admin.activities.wordpress_plugin")} <code>wordpress/plugins/piano-academie-learndash-bridge</code>
                     </p>
                   </div>
                   <div className="span-2 row end">
-                    <button type="submit">Sauvegarder la connexion</button>
+                    <button type="submit">{t("admin.activities.save_connection")}</button>
                   </div>
                 </form>
               </section>
 
               <section className="card">
                 <div className="row between">
-                  <h3>Referentiel des activites</h3>
+                  <h3>{t("admin.activities.catalog_title")}</h3>
                   <div className="row wrap gap-sm">
                     <form action={syncAdminExternalContentCatalogAction}>
                       <button type="submit" className="ghost">
-                        Synchroniser LearnDash
+                        {t("admin.activities.sync_learndash")}
                       </button>
                     </form>
                     <Link className="mode-link" href={buildConfigHref("activities", { new_activity: "1" })}>
-                      Ajouter une activite
+                      {t("admin.activity_modal.add_activity")}
                     </Link>
                   </div>
                 </div>
+                <p className="muted">{t("admin.activities.catalog_help")}</p>
                 <p className="muted">
-                  Une activite definit le titre, la description, la duree, la couleur, la capacite maximum et le tarif
-                  (horaire TTC ou par cours TTC).
-                </p>
-                <p className="muted">
-                  Catalogue e-learning synchronise: <strong>{externalContentCourses.length}</strong> cours WordPress / LearnDash disponibles
-                  pour rattacher du contenu aux activites eleves.
+                  <strong>{externalContentCourses.length}</strong> {t("admin.activities.synced_catalog_suffix")}
                 </p>
                 {activeCreditTypes.length === 0 ? <p className="flash-err">{t("admin.credit_types.no_active_for_activities")}</p> : null}
                 {activeLegalEntities.length === 0 ? (
@@ -3270,12 +3263,12 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
               <section className="card">
                 <div className="row between">
-                  <h3>Activites existantes</h3>
-                  <small className="muted">{activities.length} activite(s)</small>
+                  <h3>{t("admin.activities.existing_title")}</h3>
+                  <small className="muted">{t("admin.credit_types.activity_count", { count: activities.length })}</small>
                 </div>
-                <p className="muted">La liste affiche uniquement les informations essentielles. Ouvrez Modifier pour voir tous les parametres.</p>
+                <p className="muted">{t("admin.activities.list_help")}</p>
                 {activities.length === 0 ? (
-                  <p className="muted">Aucune activite dans le referentiel.</p>
+                  <p className="muted">{t("admin.activities.empty")}</p>
                 ) : (
                   <div className="list activity-list">
                     {activities.map((activity) => (
@@ -3288,42 +3281,69 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <div className="activity-row-main">
                           <strong>{activity.name}</strong>
                           <small className="muted">
-                            {activity.credit_type_name ?? "Type credit non mappe"} · {activityModeLabel(activity.mode)} · {activity.duration_minutes} min
+                            {activity.credit_type_name ?? t("admin.activities.unmapped_credit_type")} ·{" "}
+                            {activityModeLabel(activity.mode, language)} · {activity.duration_minutes} min
                           </small>
                           <small className="muted">
-                            Professeur: {activity.requires_professor ? "Requis" : "Non requis"} ·{" "}
-                            {activity.allows_student_bookings ? "Avec eleves" : "Sans eleve"}
+                            {t("admin.planning.teacher_badge", {
+                              value: activity.requires_professor
+                                ? t("admin.activities.teacher_required_short")
+                                : t("admin.planning.no_teacher_required"),
+                            })}{" "}
+                            · {activity.allows_student_bookings ? t("admin.planning.with_students") : t("admin.planning.without_students")}
                           </small>
                           <small className="muted">
-                            Recurrence: feries {activity.exclude_holidays_in_recurrence ? "exclus" : "inclus"} · vacances{" "}
-                            {activity.exclude_school_vacations_in_recurrence ? "exclues" : "incluses"}
+                            {t("admin.activities.recurrence_badge", {
+                              holidays: activity.exclude_holidays_in_recurrence
+                                ? t("admin.activities.holidays_excluded")
+                                : t("admin.activities.holidays_included"),
+                              vacations: activity.exclude_school_vacations_in_recurrence
+                                ? t("admin.activities.vacations_excluded")
+                                : t("admin.activities.vacations_included"),
+                            })}
                           </small>
                           <small className="muted">
-                            Entite: {activity.seller_legal_entity_name ?? "Non definie"}
+                            {t("admin.activities.legal_entity_badge", {
+                              value: activity.seller_legal_entity_name ?? t("admin.activities.not_defined"),
+                            })}
                           </small>
                           <small className="muted">
-                            Contenu eleve: {activity.content_course_titles.length > 0 ? activity.content_course_titles.join(", ") : "Aucun rattachement"}
+                            {t("admin.activities.student_content_badge", {
+                              value:
+                                activity.content_course_titles.length > 0
+                                  ? activity.content_course_titles.join(", ")
+                                  : t("admin.activities.no_content_attachment"),
+                            })}
                           </small>
                           {activityPlanningLocations.length > 0 ? (
                             <small className="muted">
-                              Plannings: {activityPlanningCountById.get(activity.id) ?? 0}/{activityPlanningLocations.length}
+                              {t("admin.activities.plannings_badge", {
+                                assigned: activityPlanningCountById.get(activity.id) ?? 0,
+                                total: activityPlanningLocations.length,
+                              })}
                             </small>
                           ) : null}
-                          <small className="muted">{activity.description || "Sans description"}</small>
+                          <small className="muted">{activity.description || t("admin.activities.no_description")}</small>
                         </div>
                         <div className="activity-row-meta">
                           <span className="status-pill status-warn">
                             {activity.default_course_rate_ttc
-                              ? `${activity.default_course_rate_ttc} ${accountDefaultCurrency}/cours TTC`
+                              ? t("admin.activities.course_rate_badge", {
+                                  amount: activity.default_course_rate_ttc,
+                                  currency: accountDefaultCurrency,
+                                })
                               : activity.default_hourly_rate
-                                ? `${activity.default_hourly_rate} ${accountDefaultCurrency}/h TTC`
-                                : "Tarif TTC non defini"}
+                                ? t("admin.activities.hourly_rate_badge", {
+                                    amount: activity.default_hourly_rate,
+                                    currency: accountDefaultCurrency,
+                                  })
+                                : t("admin.activities.rate_not_defined")}
                           </span>
                           <span className={`status-pill ${activity.active ? "status-ok" : "status-warn"}`}>
-                            {activity.active ? "Active" : "Inactive"}
+                            {activity.active ? t("admin.activities.status_active") : t("admin.activities.status_inactive")}
                           </span>
                         </div>
-                        <span className="mode-link">Modifier</span>
+                        <span className="mode-link">{t("common.edit")}</span>
                       </Link>
                     ))}
                   </div>
