@@ -449,33 +449,33 @@ function yesNoLabel(language: UiLanguage, value: boolean): string {
   return uiText(language, value ? "common.yes" : "common.no");
 }
 
-function catalogRequestStatusLabel(status: string): string {
+function catalogRequestStatusLabel(status: string, language: UiLanguage): string {
   const normalized = status.trim().toUpperCase();
   if (normalized === "PROCESSING") {
-    return "En cours";
+    return uiText(language, "admin.products.request_status_processing");
   }
   if (normalized === "REJECTED") {
-    return "Refusee";
+    return uiText(language, "admin.products.request_status_rejected");
   }
   if (normalized === "INVOICE_TO_SEND") {
-    return "Facture a envoyer";
+    return uiText(language, "admin.products.request_status_invoice_to_send");
   }
   if (normalized === "TO_DELIVER") {
-    return "A remettre";
+    return uiText(language, "admin.products.request_status_to_deliver");
   }
   if (normalized === "DELIVERED") {
-    return "Remis";
+    return uiText(language, "admin.products.request_status_delivered");
   }
   return normalized || "-";
 }
 
-function catalogRequestSourceLabel(source: string): string {
+function catalogRequestSourceLabel(source: string, language: UiLanguage): string {
   const normalized = source.trim().toUpperCase();
   if (normalized === "PROFESSOR") {
-    return "Professeur";
+    return uiText(language, "admin.products.request_source_professor");
   }
   if (normalized === "ADMIN") {
-    return "Administration";
+    return uiText(language, "admin.products.request_source_admin");
   }
   return normalized || "-";
 }
@@ -869,7 +869,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const quoteReminderSmsTemplates = activeSmsTemplates.filter((template) => template.usage_contexts.includes("QUOTE_REMINDER"));
   const quoteCancelSmsTemplates = activeSmsTemplates.filter((template) => template.usage_contexts.includes("QUOTE_CANCEL"));
   const quoteTemplateVariablesByCategory = quoteTemplateVariables.reduce<Record<string, QuoteTemplateVariableOut[]>>((acc, item) => {
-    const key = item.category || "Autres";
+    const key = item.category || t("admin.messaging_settings.variables_other");
     if (!acc[key]) {
       acc[key] = [];
     }
@@ -2082,10 +2082,9 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               </section>
 
               <section className="card">
-                <h3>Gestion operationnelle des produits</h3>
+                <h3>{t("admin.products.operations_title")}</h3>
                 <p className="muted">
-                  Les stocks par local et les demandes produits eleves sont desormais geres dans le menu dedie{" "}
-                  <Link href="/admin/products">Produits</Link>.
+                  {t("admin.products.operations_note_prefix")} <Link href="/admin/products">{t("admin.breadcrumb.products")}</Link>.
                 </p>
               </section>
             </>
