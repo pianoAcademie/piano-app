@@ -132,24 +132,24 @@ type MessagingTabItem = {
 };
 
 const MAIN_NAV_ITEMS: MainNavItem[] = [
-  { key: "params", label: "Parametres", section: "params-account" },
-  { key: "formulas", label: "Les formules", section: "formulas" },
-  { key: "quotes", label: "Devis", section: "quotes" },
-  { key: "calendars", label: "Calendriers scolaires", section: "calendars" },
-  { key: "activities", label: "Activites", section: "activities" },
+  { key: "params", label: "", labelKey: "admin.config.main.params", section: "params-account" },
+  { key: "formulas", label: "", labelKey: "admin.breadcrumb.formulas", section: "formulas" },
+  { key: "quotes", label: "", labelKey: "admin.breadcrumb.quotes", section: "quotes" },
+  { key: "calendars", label: "", labelKey: "admin.breadcrumb.school_calendars", section: "calendars" },
+  { key: "activities", label: "", labelKey: "admin.breadcrumb.activities", section: "activities" },
   { key: "legal-entities", label: "", labelKey: "admin.breadcrumb.legal_entities", section: "legal-entities" },
-  { key: "promo", label: "Code promo", section: "promo" },
-  { key: "payment-rules", label: "Regles de paiement", section: "payment-rules" },
-  { key: "integrations", label: "Integration", section: "integrations" },
-  { key: "purchase-link", label: "Creer un lien d'achat", section: "purchase-link" },
+  { key: "promo", label: "", labelKey: "admin.breadcrumb.promo", section: "promo" },
+  { key: "payment-rules", label: "", labelKey: "admin.breadcrumb.payment_rules", section: "payment-rules" },
+  { key: "integrations", label: "", labelKey: "admin.breadcrumb.integrations", section: "integrations" },
+  { key: "purchase-link", label: "", labelKey: "admin.breadcrumb.purchase_link", section: "purchase-link" },
   { key: "credit-types", label: "", labelKey: "admin.breadcrumb.credit_types", section: "credit-types" },
 ];
 
 const PARAMS_SUBNAV_ITEMS: SubNavItem[] = [
-  { key: "params-account", label: "Informations du compte" },
-  { key: "params-subscriptions", label: "Parametrage des abonnements" },
+  { key: "params-account", label: "", labelKey: "admin.breadcrumb.account_info" },
+  { key: "params-subscriptions", label: "", labelKey: "admin.breadcrumb.subscription_settings" },
   { key: "params-payments", label: "", labelKey: "admin.breadcrumb.payment_methods" },
-  { key: "params-messaging", label: "Messagerie" },
+  { key: "params-messaging", label: "", labelKey: "admin.config.messaging" },
 ];
 
 const MESSAGING_TAB_ITEMS: MessagingTabItem[] = [
@@ -646,25 +646,25 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
             planningActivitiesByLocationId.set(location.id, result.data);
             return;
           }
-          loadErrors.push(`Activites planning ${location.name}: ${result.message}`);
+          loadErrors.push(t("admin.config.load_planning_activities", { name: location.name, message: result.message }));
         });
       }
     } else {
-      loadErrors.push(`Locaux: ${locationsResult.message}`);
+      loadErrors.push(t("admin.config.load_locations", { message: locationsResult.message }));
     }
   }
 
   const account = accountResult.ok
     ? accountResult.data
     : (() => {
-        loadErrors.push(`Informations du compte: ${accountResult.message}`);
+        loadErrors.push(t("admin.config.load_account_info", { message: accountResult.message }));
         return null;
       })();
 
   const subscriptions = subscriptionsResult.ok
     ? subscriptionsResult.data
     : (() => {
-        loadErrors.push(`Parametrage des abonnements: ${subscriptionsResult.message}`);
+        loadErrors.push(t("admin.config.load_subscription_settings", { message: subscriptionsResult.message }));
         return null;
       })();
 
@@ -678,7 +678,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const paymentProvider = paymentProviderResult.ok
     ? paymentProviderResult.data
     : (() => {
-        loadErrors.push(`PSP: ${paymentProviderResult.message}`);
+        loadErrors.push(t("admin.config.load_payment_provider", { message: paymentProviderResult.message }));
         return null;
       })();
   const productCategories = productCategoriesResult.ok
@@ -733,7 +733,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const activities = activitiesResult.ok
     ? activitiesResult.data
     : (() => {
-        loadErrors.push(`Activites: ${activitiesResult.message}`);
+        loadErrors.push(t("admin.config.load_activities", { message: activitiesResult.message }));
         return [] as AdminActivityOut[];
       })();
   const legalEntities = legalEntitiesResult.ok
@@ -751,7 +751,9 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const externalContentSettings = externalContentSettingsResult.ok
     ? externalContentSettingsResult.data
     : (() => {
-        loadErrors.push(`Connexion WordPress/LearnDash: ${externalContentSettingsResult.message}`);
+        loadErrors.push(
+          t("admin.config.load_external_content_settings", { message: externalContentSettingsResult.message }),
+        );
         return {
           base_url: "",
           courses_endpoint: "",
@@ -765,7 +767,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const externalContentCourses = externalContentCoursesResult.ok
     ? externalContentCoursesResult.data
     : (() => {
-        loadErrors.push(`Contenu WordPress/LearnDash: ${externalContentCoursesResult.message}`);
+        loadErrors.push(t("admin.config.load_external_content_courses", { message: externalContentCoursesResult.message }));
         return [] as AdminExternalContentCourseOut[];
       })();
   const catalogCategories = catalogCategoriesResult.ok
@@ -885,7 +887,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
   const messagingListPath = buildConfigHref("params-messaging", { messaging_tab: messagingTab });
 
-  const placeholderTitleBySection: Record<
+  const placeholderTitleKeyBySection: Record<
     Exclude<
       ConfigSection,
       | "params-account"
@@ -901,25 +903,25 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     >,
     string
   > = {
-    promo: "Code promo",
-    products: "Les produits",
-    "payment-rules": "Regles de paiement",
-    integrations: "Integration",
-    "purchase-link": "Creer un lien d'achat",
+    promo: "admin.breadcrumb.promo",
+    products: "admin.breadcrumb.products",
+    "payment-rules": "admin.breadcrumb.payment_rules",
+    integrations: "admin.breadcrumb.integrations",
+    "purchase-link": "admin.breadcrumb.purchase_link",
   };
 
   return (
     <section className="admin-page-grid">
       <section className="card">
-        <h2>Configuration</h2>
-        <p className="muted">Parametres compte, abonnements, paiements et formules commerciales.</p>
+        <h2>{t("admin.nav.config")}</h2>
+        <p className="muted">{t("admin.config.page_subtitle")}</p>
       </section>
 
       {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
       {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
       {loadErrors.length > 0 ? (
         <section className="card">
-          <h3>Erreurs de chargement</h3>
+          <h3>{t("admin.config.loading_errors")}</h3>
           <ul className="config-error-list">
             {loadErrors.map((message) => (
               <li key={message} className="flash-err">
@@ -973,97 +975,97 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
         <div className="config-main-content">
           {section === "params-account" ? (
             <section className="card">
-              <h3>Informations du compte</h3>
+              <h3>{t("admin.breadcrumb.account_info")}</h3>
               {!account ? (
-                <p className="muted">Impossible de charger les informations du compte.</p>
+                <p className="muted">{t("admin.config.account.load_error")}</p>
               ) : (
                 <form action={updateAdminConfigAccountAction} className="grid cols-2 config-form-grid" encType="multipart/form-data">
                   <label>
-                    Prenom
+                    {t("admin.config.account.contact_first_name")}
                     <input type="text" name="contact_first_name" defaultValue={account.contact_first_name} maxLength={100} />
                   </label>
                   <label>
-                    Nom
+                    {t("admin.config.account.contact_last_name")}
                     <input type="text" name="contact_last_name" defaultValue={account.contact_last_name} maxLength={100} />
                   </label>
 
                   <label>
-                    Email
+                    {t("common.email")}
                     <input type="email" name="contact_email" defaultValue={account.contact_email} maxLength={255} />
                   </label>
                   <label>
-                    Telephone
+                    {t("admin.config.account.contact_phone")}
                     <input type="text" name="contact_phone" defaultValue={account.contact_phone} maxLength={40} />
                   </label>
 
                   <label>
-                    Societe
+                    {t("admin.config.account.company_name")}
                     <input type="text" name="company_name" defaultValue={account.company_name} maxLength={255} />
                   </label>
                   <label>
-                    Nom du club
+                    {t("admin.config.account.club_name")}
                     <input type="text" name="club_name" defaultValue={account.club_name} maxLength={255} />
                   </label>
 
                   <label>
-                    SIRET
+                    {t("admin.config.account.siret")}
                     <input type="text" name="siret" defaultValue={account.siret} maxLength={30} />
                   </label>
                   <label>
-                    TVA intracommunautaire
+                    {t("admin.config.account.vat_number")}
                     <input type="text" name="vat_number" defaultValue={account.vat_number} maxLength={50} />
                   </label>
 
                   <label>
-                    Taux TVA par defaut
+                    {t("admin.config.account.vat_default_rate")}
                     <input type="text" name="vat_default_rate" defaultValue={account.vat_default_rate} maxLength={20} />
                   </label>
                   <label>
-                    Site web
+                    {t("admin.config.account.website")}
                     <input type="text" name="website" defaultValue={account.website} maxLength={255} />
                   </label>
 
                   <input type="hidden" name="logo_data_url" value={account.logo_data_url || ""} />
                   <label className="span-2">
-                    Logo societe (JPEG, max 1 Mo)
+                    {t("admin.config.account.logo_label")}
                     <input type="file" name="logo_file" accept="image/jpeg,image/jpg" />
                     {account.logo_data_url ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={account.logo_data_url}
-                        alt="Logo societe"
+                        alt={t("admin.config.account.logo_alt")}
                         style={{ marginTop: 10, maxHeight: 64, width: "auto", border: "1px solid #d8c8ab", borderRadius: 8, padding: 6, background: "#fff" }}
                       />
                     ) : (
-                      <small className="muted">Aucun logo configure.</small>
+                      <small className="muted">{t("admin.config.account.logo_empty")}</small>
                     )}
                   </label>
                   <label className="checkline span-2">
                     <input type="checkbox" name="clear_logo" value="on" />
-                    Supprimer le logo actuel
+                    {t("admin.config.account.clear_logo")}
                   </label>
 
                   <label className="span-2">
-                    Adresse
+                    {t("admin.config.account.address")}
                     <input type="text" name="address_line" defaultValue={account.address_line} maxLength={255} />
                   </label>
 
                   <label>
-                    Code postal
+                    {t("admin.config.account.postal_code")}
                     <input type="text" name="postal_code" defaultValue={account.postal_code} maxLength={20} />
                   </label>
                   <label>
-                    Ville
+                    {t("admin.config.account.city")}
                     <input type="text" name="city" defaultValue={account.city} maxLength={120} />
                   </label>
 
                   <label className="span-2">
-                    Pays
+                    {t("admin.config.account.country")}
                     <input type="text" name="country" defaultValue={account.country} maxLength={120} />
                   </label>
 
                   <fieldset className="span-2 config-currency-fieldset">
-                    <legend>Devises autorisees</legend>
+                    <legend>{t("admin.config.account.allowed_currencies")}</legend>
                     <div className="row config-currency-checks">
                       {(["EUR", "USD"] as const).map((code) => (
                         <label key={code} className="checkline">
@@ -1079,7 +1081,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     </div>
 
                     <label>
-                      Devise par defaut
+                      {t("admin.config.account.default_currency")}
                       <select name="default_currency" defaultValue={accountDefaultCurrency}>
                         {accountAllowedCurrencies.map((code) => (
                           <option key={code} value={code}>
@@ -1091,12 +1093,12 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   </fieldset>
 
                   <label className="span-2">
-                    Conditions generales de vente
+                    {t("admin.config.account.legal_terms")}
                     <textarea name="legal_terms" defaultValue={account.legal_terms} rows={8} />
                   </label>
 
                   <div className="row span-2">
-                    <button type="submit">Enregistrer</button>
+                    <button type="submit">{t("common.save")}</button>
                   </div>
                 </form>
               )}
@@ -1105,13 +1107,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
           {section === "params-subscriptions" ? (
             <section className="card">
-              <h3>Parametrage des abonnements</h3>
+              <h3>{t("admin.breadcrumb.subscription_settings")}</h3>
               {!subscriptions ? (
-                <p className="muted">Impossible de charger ce parametrage.</p>
+                <p className="muted">{t("admin.config.subscriptions.load_error")}</p>
               ) : (
                 <form action={updateAdminConfigSubscriptionsAction} className="grid cols-2 config-form-grid">
                   <label>
-                    Date de prelevement autorisee (1-28)
+                    {t("admin.config.subscriptions.direct_debit_day")}
                     <input
                       type="number"
                       name="direct_debit_day"
@@ -1121,7 +1123,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     />
                   </label>
                   <label>
-                    Delai avant 1ere relance auto (jours)
+                    {t("admin.config.subscriptions.retry_first_delay_days")}
                     <input
                       type="number"
                       name="retry_first_delay_days"
@@ -1131,7 +1133,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     />
                   </label>
                   <label>
-                    Nombre max de tentatives auto
+                    {t("admin.config.subscriptions.retry_max_auto_attempts")}
                     <input
                       type="number"
                       name="retry_max_auto_attempts"
@@ -1141,7 +1143,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     />
                   </label>
                   <label>
-                    Passage en pre-resiliation apres echec #
+                    {t("admin.config.subscriptions.pre_termination_after_failed_attempts")}
                     <input
                       type="number"
                       name="retry_move_to_pre_termination_after_failed_attempts"
@@ -1152,17 +1154,17 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   </label>
 
                   <div className="config-note-box">
-                    <strong>Note</strong>
-                    <p className="muted">Ces options impactent le comportement global des abonnements.</p>
+                    <strong>{t("admin.config.subscriptions.note_title")}</strong>
+                    <p className="muted">{t("admin.config.subscriptions.note_help")}</p>
                   </div>
 
                   <label className="checkline span-2">
                     <input type="checkbox" name="allow_card_subscriptions" defaultChecked={subscriptions.allow_card_subscriptions} />
-                    Autoriser les abonnements par carte bancaire
+                    {t("admin.config.subscriptions.allow_card_subscriptions")}
                   </label>
                   <label className="checkline span-2">
                     <input type="checkbox" name="add_contract_signature" defaultChecked={subscriptions.add_contract_signature} />
-                    Ajouter la signature du contrat
+                    {t("admin.config.subscriptions.add_contract_signature")}
                   </label>
                   <label className="checkline span-2">
                     <input
@@ -1170,7 +1172,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       name="close_expired_subscriptions"
                       defaultChecked={subscriptions.close_expired_subscriptions}
                     />
-                    Fermer les abonnements expires automatiquement
+                    {t("admin.config.subscriptions.close_expired_subscriptions")}
                   </label>
                   <label className="checkline span-2">
                     <input
@@ -1178,15 +1180,15 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       name="allow_promotional_start_period"
                       defaultChecked={subscriptions.allow_promotional_start_period}
                     />
-                    Autoriser une periode promotionnelle en debut d'abonnement
+                    {t("admin.config.subscriptions.allow_promotional_start_period")}
                   </label>
                   <label className="checkline span-2">
                     <input type="checkbox" name="allow_prorata_card" defaultChecked={subscriptions.allow_prorata_card} />
-                    Autoriser le prorata sur CB
+                    {t("admin.config.subscriptions.allow_prorata_card")}
                   </label>
                   <label className="checkline span-2">
                     <input type="checkbox" name="allow_prorata_sepa" defaultChecked={subscriptions.allow_prorata_sepa} />
-                    Autoriser le prorata sur SEPA
+                    {t("admin.config.subscriptions.allow_prorata_sepa")}
                   </label>
                   <label className="checkline span-2">
                     <input
@@ -1194,7 +1196,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       name="online_resiliation_enabled"
                       defaultChecked={subscriptions.online_resiliation_enabled}
                     />
-                    Resiliation en ligne active
+                    {t("admin.config.subscriptions.online_resiliation_enabled")}
                   </label>
                   <label className="checkline span-2">
                     <input
@@ -1202,18 +1204,18 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       name="allow_booking_during_payment_alert"
                       defaultChecked={subscriptions.allow_booking_during_payment_alert}
                     />
-                    Autoriser les reservations pendant le statut payment_alert
+                    {t("admin.config.subscriptions.allow_booking_during_payment_alert")}
                   </label>
 
                   <fieldset className="span-2 config-subsection">
-                    <legend>Notifications abonnement</legend>
+                    <legend>{t("admin.config.subscriptions.notifications_fieldset")}</legend>
                     <label className="checkline">
                       <input
                         type="checkbox"
                         name="notify_success_customer_enabled"
                         defaultChecked={subscriptions.notify_success_customer_enabled}
                       />
-                      Succes paiement: mail client
+                      {t("admin.config.subscriptions.notify_success_customer")}
                     </label>
                     <label className="checkline">
                       <input
@@ -1221,7 +1223,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         name="notify_success_admin_enabled"
                         defaultChecked={subscriptions.notify_success_admin_enabled}
                       />
-                      Succes paiement: mail admin
+                      {t("admin.config.subscriptions.notify_success_admin")}
                     </label>
                     <label className="checkline">
                       <input
@@ -1229,7 +1231,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         name="notify_first_failure_customer_enabled"
                         defaultChecked={subscriptions.notify_first_failure_customer_enabled}
                       />
-                      1er echec: mail client
+                      {t("admin.config.subscriptions.notify_first_failure_customer")}
                     </label>
                     <label className="checkline">
                       <input
@@ -1237,7 +1239,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         name="notify_first_failure_admin_enabled"
                         defaultChecked={subscriptions.notify_first_failure_admin_enabled}
                       />
-                      1er echec: mail admin
+                      {t("admin.config.subscriptions.notify_first_failure_admin")}
                     </label>
                     <label className="checkline">
                       <input
@@ -1245,7 +1247,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         name="notify_final_failure_customer_enabled"
                         defaultChecked={subscriptions.notify_final_failure_customer_enabled}
                       />
-                      Echec final: mail client
+                      {t("admin.config.subscriptions.notify_final_failure_customer")}
                     </label>
                     <label className="checkline">
                       <input
@@ -1253,12 +1255,12 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         name="notify_final_failure_admin_enabled"
                         defaultChecked={subscriptions.notify_final_failure_admin_enabled}
                       />
-                      Echec final: mail admin
+                      {t("admin.config.subscriptions.notify_final_failure_admin")}
                     </label>
                   </fieldset>
 
                   <div className="row span-2">
-                    <button type="submit">Enregistrer</button>
+                    <button type="submit">{t("common.save")}</button>
                   </div>
                 </form>
               )}
@@ -4569,9 +4571,9 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
           section !== "credit-types" &&
           section !== "integrations" ? (
             <section className="card config-placeholder-card">
-              <h3>{placeholderTitleBySection[section]}</h3>
-              <p className="muted">Cette section est reservee pour un prochain ticket (V2), avec ecran detaille.</p>
-              <p className="muted">Decision V1: la navigation est en place pour stabiliser l'ergonomie et preparer les sous-menus.</p>
+              <h3>{t(placeholderTitleKeyBySection[section])}</h3>
+              <p className="muted">{t("admin.config.placeholder_pending")}</p>
+              <p className="muted">{t("admin.config.placeholder_v1_note")}</p>
             </section>
           ) : null}
         </div>
