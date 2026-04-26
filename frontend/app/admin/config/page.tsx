@@ -423,7 +423,7 @@ function activityModeLabel(mode: string, language: UiLanguage): string {
   return uiText(language, "admin.professor_detail.mode_all");
 }
 
-function formatMoney(amountRaw: string | null, currency: string | null): string {
+function formatMoney(amountRaw: string | null, currency: string | null, locale: string): string {
   if (!amountRaw) {
     return "-";
   }
@@ -435,7 +435,7 @@ function formatMoney(amountRaw: string | null, currency: string | null): string 
   }
 
   try {
-    return new Intl.NumberFormat("fr-FR", {
+    return new Intl.NumberFormat(locale, {
       style: "currency",
       currency: normalizedCurrency,
       maximumFractionDigits: 2,
@@ -1738,7 +1738,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             <p className="muted">
                               {t("admin.products.catalog_product_summary", {
                                 category: product.category_name || t("admin.products.no_category"),
-                                price: formatMoney(product.price_incl_vat, "EUR"),
+                                price: formatMoney(product.price_incl_vat, "EUR", locale),
                                 stock: product.is_virtual
                                   ? t("admin.products.stock_virtual_short")
                                   : product.stock_global_quantity,
@@ -1939,8 +1939,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                             <p className="muted">
                               {t("admin.catalog.kit_summary", {
                                 category: kit.category_name || "-",
-                                billed: formatMoney(kit.price_incl_vat, "EUR"),
-                                computed: formatMoney(kit.computed_price_incl_vat, "EUR"),
+                                billed: formatMoney(kit.price_incl_vat, "EUR", locale),
+                                computed: formatMoney(kit.computed_price_incl_vat, "EUR", locale),
                               })}
                             </p>
                           </div>
@@ -1970,8 +1970,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                   <tr key={`${kit.id}-${item.product_id}`}>
                                     <td>{item.product_title}</td>
                                     <td>{item.quantity}</td>
-                                    <td>{formatMoney(item.unit_price_incl_vat, "EUR")}</td>
-                                    <td>{formatMoney(item.line_total_incl_vat, "EUR")}</td>
+                                    <td>{formatMoney(item.unit_price_incl_vat, "EUR", locale)}</td>
+                                    <td>{formatMoney(item.line_total_incl_vat, "EUR", locale)}</td>
                                   </tr>
                                 ))}
                               </tbody>
