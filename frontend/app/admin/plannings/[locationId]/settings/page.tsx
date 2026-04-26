@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 
 import { updatePlanningActivitiesAction, updatePlanningSettingsAction } from "../../../../../lib/actions";
 import { backendRequest } from "../../../../../lib/backend";
-import type { AdminPlanningActivitiesOut, AdminPlanningSettingsOut } from "../../../../../lib/types";
+import type { AdminPlanningActivitiesOut, AdminPlanningSettingsOut, UserOut } from "../../../../../lib/types";
+import { normalizeUiLanguage, type UiLanguage, uiText } from "../../../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -14,6 +15,17 @@ function readParam(params: SearchParams, key: string): string {
     return value[0] ?? "";
   }
   return value ?? "";
+}
+
+function activityModeLabel(mode: string, language: UiLanguage): string {
+  const normalized = mode.trim().toUpperCase();
+  if (normalized === "ONLINE") {
+    return uiText(language, "admin.professor_detail.mode_online");
+  }
+  if (normalized === "ONSITE") {
+    return uiText(language, "admin.professor_detail.mode_onsite");
+  }
+  return uiText(language, "admin.professor_detail.mode_all");
 }
 
 export default async function AdminPlanningSettingsPage({
@@ -28,7 +40,7 @@ export default async function AdminPlanningSettingsPage({
     redirect("/login?error=Session%20expiree");
   }
 
-  const [settingsResult, planningActivitiesResult] = await Promise.all([
+  const [settingsResult, planningActivitiesResult, meResult] = await Promise.all([
     backendRequest<AdminPlanningSettingsOut>(
       `/api/v1/admin/plannings/${params.locationId}/settings`,
       {},
@@ -39,15 +51,19 @@ export default async function AdminPlanningSettingsPage({
       {},
       token,
     ),
+    backendRequest<UserOut>("/api/v1/users/me", {}, token),
   ]);
+
+  const language = meResult.ok ? normalizeUiLanguage(meResult.data.preferred_language) : "fr";
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   if (!settingsResult.ok) {
     return (
       <section className="admin-page-grid">
-        <section className="flash-err">Erreur chargement planning: {settingsResult.message}</section>
+        <section className="flash-err">{t("admin.planning_settings.load_error", { message: settingsResult.message })}</section>
         <section className="card">
           <Link className="reset-link" href="/admin">
-            Retour au planning
+            {t("admin.planning_settings.back_to_planning")}
           </Link>
         </section>
       </section>
@@ -66,12 +82,12 @@ export default async function AdminPlanningSettingsPage({
 
       <section className="card">
         <div className="row spread">
-          <h2>Parametres du planning - {settings.location_name}</h2>
+          <h2>{t("admin.planning_settings.page_title", { name: settings.location_name })}</h2>
           <Link className="reset-link" href={`/admin?location_id=${settings.location_id}&edit=1`}>
-            Retour au planning
+            {t("admin.planning_settings.back_to_planning")}
           </Link>
         </div>
-        <p className="muted">Regles de reservation/annulation et options d affichage pour ce lieu.</p>
+        <p className="muted">{t("admin.planning_settings.page_subtitle")}</p>
       </section>
 
       <section className="card">
@@ -79,37 +95,37 @@ export default async function AdminPlanningSettingsPage({
           <input type="hidden" name="location_id" value={settings.location_id} />
 
           <label>
-            Description
+            {t("common.description")}
             <input type="text" name="description" defaultValue={settings.description ?? ""} />
           </label>
 
           <label>
-            Delai minimum de reservation (heures)
+            {t("admin.planning_settings.min_booking_notice")}
             <input type="number" min={0} name="min_booking_notice_hours" defaultValue={settings.min_booking_notice_hours} required />
           </label>
 
           <label>
-            Delai maximum de reservation (mois)
+            {t("admin.planning_settings.max_booking_horizon")}
             <input type="number" min={1} name="max_booking_horizon_months" defaultValue={settings.max_booking_horizon_months} required />
           </label>
 
           <label>
-            Delai autorise pour annulation (heures)
+            {t("admin.planning_settings.cancellation_deadline")}
             <input type="number" min={0} name="cancellation_deadline_hours" defaultValue={settings.cancellation_deadline_hours} required />
           </label>
 
           <label>
-            Nombre de reservations max par client (optionnel)
+            {t("admin.planning_settings.max_bookings_per_client")}
             <input type="number" min={1} name="max_bookings_per_client" defaultValue={settings.max_bookings_per_client ?? ""} />
           </label>
 
           <label>
-            Taille de liste d attente
+            {t("admin.planning_settings.waitlist_capacity")}
             <input type="number" min={0} name="waitlist_capacity" defaultValue={settings.waitlist_capacity} required />
           </label>
 
           <label>
-            Auto-annulation si inscrits &lt; a
+            {t("admin.planning_settings.auto_cancel_if_booked_less_than")}
             <input
               type="number"
               min={0}
@@ -120,65 +136,65 @@ export default async function AdminPlanningSettingsPage({
           </label>
 
           <label>
-            Auto-annulation X heures avant debut
+            {t("admin.planning_settings.auto_cancel_hours_before_start")}
             <input type="number" min={0} name="auto_cancel_hours_before_start" defaultValue={settings.auto_cancel_hours_before_start} required />
           </label>
 
           <label className="checkline">
             <input type="checkbox" name="is_private" defaultChecked={settings.is_private} />
-            Planning prive
+            {t("admin.planning_settings.is_private")}
           </label>
 
           <label className="checkline">
             <input type="checkbox" name="allow_force_booking" defaultChecked={settings.allow_force_booking} />
-            Autoriser inscription forcee
+            {t("admin.planning_settings.allow_force_booking")}
           </label>
 
           <label className="checkline">
             <input type="checkbox" name="allow_multi_booking" defaultChecked={settings.allow_multi_booking} />
-            Autoriser multi-reservations
+            {t("admin.planning_settings.allow_multi_booking")}
           </label>
 
           <label className="checkline">
             <input type="checkbox" name="allow_negative_credits" defaultChecked={settings.allow_negative_credits} />
-            Credits negatifs autorises
+            {t("admin.planning_settings.allow_negative_credits")}
           </label>
 
           <label className="checkline">
             <input type="checkbox" name="notify_coach" defaultChecked={settings.notify_coach} />
-            Envoyer mail au coach
+            {t("admin.planning_settings.notify_coach")}
           </label>
 
           <label className="checkline">
             <input type="checkbox" name="notify_admins" defaultChecked={settings.notify_admins} />
-            Envoyer mail aux admins
+            {t("admin.planning_settings.notify_admins")}
           </label>
 
           <label className="checkline">
             <input type="checkbox" name="hide_booking_count" defaultChecked={settings.hide_booking_count} />
-            Cacher le nombre d inscrits
+            {t("admin.planning_settings.hide_booking_count")}
           </label>
 
           <label className="checkline">
             <input type="checkbox" name="block_client_cancellation" defaultChecked={settings.block_client_cancellation} />
-            Bloquer annulation cote client
+            {t("admin.planning_settings.block_client_cancellation")}
           </label>
 
           <div className="row">
-            <button type="submit">Valider les parametres</button>
+            <button type="submit">{t("admin.planning_settings.save_settings")}</button>
           </div>
         </form>
       </section>
 
       <section className="card">
         <div className="row spread">
-          <h3>Activites autorisees sur ce planning</h3>
+          <h3>{t("admin.planning_settings.allowed_activities_title")}</h3>
           <Link className="reset-link" href="/admin/config?section=activities">
-            Referentiel activites
+            {t("admin.planning_settings.activities_catalog")}
           </Link>
         </div>
         {!planningActivitiesResult.ok ? (
-          <p className="flash-err">Erreur chargement activites: {planningActivitiesResult.message}</p>
+          <p className="flash-err">{t("admin.planning_settings.activities_load_error", { message: planningActivitiesResult.message })}</p>
         ) : (
           <form action={updatePlanningActivitiesAction} className="grid">
             <input type="hidden" name="location_id" value={settings.location_id} />
@@ -209,8 +225,8 @@ export default async function AdminPlanningSettingsPage({
                       <strong>{activity.name}</strong>
                       <small className="muted">
                         {" "}
-                        | {activity.duration_minutes} min | {activity.mode}
-                        {!activity.active ? " | Inactive" : ""}
+                        | {activity.duration_minutes} min | {activityModeLabel(activity.mode, language)}
+                        {!activity.active ? ` | ${t("common.inactive")}` : ""}
                       </small>
                       {activity.description ? <small className="muted"> - {activity.description}</small> : null}
                     </span>
@@ -220,7 +236,7 @@ export default async function AdminPlanningSettingsPage({
             </div>
 
             <div className="row">
-              <button type="submit">Valider les activites du planning</button>
+              <button type="submit">{t("admin.planning_settings.save_activities")}</button>
             </div>
           </form>
         )}
