@@ -7228,7 +7228,9 @@ export async function createAdminCreditTypeAction(formData: FormData): Promise<v
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const returnTo = "/admin/config?section=credit-types";
 
   const name = String(formData.get("name") ?? "").trim();
   const code = String(formData.get("code") ?? "").trim();
@@ -7236,7 +7238,7 @@ export async function createAdminCreditTypeAction(formData: FormData): Promise<v
   const active = checkboxField(formData, "active");
 
   if (!name) {
-    redirect("/admin/config?section=credit-types&error=Nom%20type%20de%20credit%20obligatoire");
+    redirect(appendQueryMessage(returnTo, "error", t("admin.credit_type_action.name_required")));
   }
 
   const payload: Record<string, unknown> = {
@@ -7258,12 +7260,12 @@ export async function createAdminCreditTypeAction(formData: FormData): Promise<v
   );
 
   if (!result.ok) {
-    redirect(`/admin/config?section=credit-types&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(returnTo, "error", result.message));
   }
 
   revalidatePath("/admin/config");
   revalidatePath("/admin");
-  redirect("/admin/config?section=credit-types&ok=Type%20de%20credit%20cree");
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.credit_type_action.created")));
 }
 
 export async function updateAdminCreditTypeAction(formData: FormData): Promise<void> {
@@ -7272,11 +7274,13 @@ export async function updateAdminCreditTypeAction(formData: FormData): Promise<v
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const returnTo = "/admin/config?section=credit-types";
 
   const creditTypeId = String(formData.get("credit_type_id") ?? "").trim();
   if (!creditTypeId) {
-    redirect("/admin/config?section=credit-types&error=Type%20de%20credit%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", t("admin.credit_type_action.invalid_credit_type")));
   }
 
   const name = String(formData.get("name") ?? "").trim();
@@ -7285,7 +7289,7 @@ export async function updateAdminCreditTypeAction(formData: FormData): Promise<v
   const active = checkboxField(formData, "active");
 
   if (!name) {
-    redirect("/admin/config?section=credit-types&error=Nom%20type%20de%20credit%20obligatoire");
+    redirect(appendQueryMessage(returnTo, "error", t("admin.credit_type_action.name_required")));
   }
 
   const payload: Record<string, unknown> = {
@@ -7307,12 +7311,12 @@ export async function updateAdminCreditTypeAction(formData: FormData): Promise<v
   );
 
   if (!result.ok) {
-    redirect(`/admin/config?section=credit-types&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(returnTo, "error", result.message));
   }
 
   revalidatePath("/admin/config");
   revalidatePath("/admin");
-  redirect("/admin/config?section=credit-types&ok=Type%20de%20credit%20mis%20a%20jour");
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.credit_type_action.updated")));
 }
 
 export async function deleteAdminCreditTypeAction(formData: FormData): Promise<void> {
@@ -7321,11 +7325,13 @@ export async function deleteAdminCreditTypeAction(formData: FormData): Promise<v
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const returnTo = "/admin/config?section=credit-types";
 
   const creditTypeId = String(formData.get("credit_type_id") ?? "").trim();
   if (!creditTypeId) {
-    redirect("/admin/config?section=credit-types&error=Type%20de%20credit%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", t("admin.credit_type_action.invalid_credit_type")));
   }
 
   const result = await backendRequest<Record<string, never>>(
@@ -7337,12 +7343,12 @@ export async function deleteAdminCreditTypeAction(formData: FormData): Promise<v
   );
 
   if (!result.ok) {
-    redirect(`/admin/config?section=credit-types&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(returnTo, "error", result.message));
   }
 
   revalidatePath("/admin/config");
   revalidatePath("/admin");
-  redirect("/admin/config?section=credit-types&ok=Type%20de%20credit%20supprime");
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.credit_type_action.deleted")));
 }
 
 export async function createAdminLegalEntityAction(formData: FormData): Promise<void> {
@@ -7351,7 +7357,9 @@ export async function createAdminLegalEntityAction(formData: FormData): Promise<
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const returnTo = "/admin/config?section=legal-entities";
 
   const name = String(formData.get("name") ?? "").trim();
   const invoicePrefix = String(formData.get("invoice_prefix") ?? "").trim().toUpperCase();
@@ -7361,19 +7369,19 @@ export async function createAdminLegalEntityAction(formData: FormData): Promise<
   const invoiceNextNumber = parsePositiveInt(invoiceNextNumberRaw);
 
   if (!name) {
-    redirect("/admin/config?section=legal-entities&error=Nom%20entite%20obligatoire");
+    redirect(appendQueryMessage(returnTo, "error", t("admin.legal_entity_action.name_required")));
   }
   if (!invoicePrefix) {
-    redirect("/admin/config?section=legal-entities&error=Prefixe%20facture%20obligatoire");
+    redirect(appendQueryMessage(returnTo, "error", t("admin.legal_entity_action.invoice_prefix_required")));
   }
   if (countryCode.length !== 2) {
-    redirect("/admin/config?section=legal-entities&error=Code%20pays%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", t("admin.legal_entity_action.invalid_country_code")));
   }
   if (invoiceNextNumber === null || invoiceNextNumber < 1) {
-    redirect("/admin/config?section=legal-entities&error=Compteur%20facture%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", t("admin.legal_entity_action.invalid_invoice_counter")));
   }
   if (!defaultPaymentProvider) {
-    redirect("/admin/config?section=legal-entities&error=PSP%20par%20defaut%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", t("admin.legal_entity_action.invalid_default_psp")));
   }
 
   const payload = {
@@ -7403,12 +7411,12 @@ export async function createAdminLegalEntityAction(formData: FormData): Promise<
   );
 
   if (!result.ok) {
-    redirect(`/admin/config?section=legal-entities&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(returnTo, "error", result.message));
   }
 
   revalidatePath("/admin/config");
   revalidatePath("/admin");
-  redirect("/admin/config?section=legal-entities&ok=Entite%20legale%20cree");
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.legal_entity_action.created")));
 }
 
 export async function updateAdminLegalEntityAction(formData: FormData): Promise<void> {
@@ -7417,11 +7425,15 @@ export async function updateAdminLegalEntityAction(formData: FormData): Promise<
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const legalEntityId = String(formData.get("legal_entity_id") ?? "").trim();
+  const returnTo = legalEntityId
+    ? `/admin/config?section=legal-entities&legal_entity_id=${encodeURIComponent(legalEntityId)}`
+    : "/admin/config?section=legal-entities";
   if (!legalEntityId) {
-    redirect("/admin/config?section=legal-entities&error=Entite%20legale%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", t("admin.legal_entity_action.invalid_legal_entity")));
   }
 
   const name = String(formData.get("name") ?? "").trim();
@@ -7432,25 +7444,19 @@ export async function updateAdminLegalEntityAction(formData: FormData): Promise<
   const invoiceNextNumber = parsePositiveInt(invoiceNextNumberRaw);
 
   if (!name) {
-    redirect(`/admin/config?section=legal-entities&legal_entity_id=${encodeURIComponent(legalEntityId)}&error=Nom%20entite%20obligatoire`);
+    redirect(appendQueryMessage(returnTo, "error", t("admin.legal_entity_action.name_required")));
   }
   if (!invoicePrefix) {
-    redirect(
-      `/admin/config?section=legal-entities&legal_entity_id=${encodeURIComponent(legalEntityId)}&error=Prefixe%20facture%20obligatoire`,
-    );
+    redirect(appendQueryMessage(returnTo, "error", t("admin.legal_entity_action.invoice_prefix_required")));
   }
   if (countryCode.length !== 2) {
-    redirect(`/admin/config?section=legal-entities&legal_entity_id=${encodeURIComponent(legalEntityId)}&error=Code%20pays%20invalide`);
+    redirect(appendQueryMessage(returnTo, "error", t("admin.legal_entity_action.invalid_country_code")));
   }
   if (invoiceNextNumber === null || invoiceNextNumber < 1) {
-    redirect(
-      `/admin/config?section=legal-entities&legal_entity_id=${encodeURIComponent(legalEntityId)}&error=Compteur%20facture%20invalide`,
-    );
+    redirect(appendQueryMessage(returnTo, "error", t("admin.legal_entity_action.invalid_invoice_counter")));
   }
   if (!defaultPaymentProvider) {
-    redirect(
-      `/admin/config?section=legal-entities&legal_entity_id=${encodeURIComponent(legalEntityId)}&error=PSP%20par%20defaut%20invalide`,
-    );
+    redirect(appendQueryMessage(returnTo, "error", t("admin.legal_entity_action.invalid_default_psp")));
   }
 
   const payload = {
@@ -7480,12 +7486,12 @@ export async function updateAdminLegalEntityAction(formData: FormData): Promise<
   );
 
   if (!result.ok) {
-    redirect(`/admin/config?section=legal-entities&legal_entity_id=${encodeURIComponent(legalEntityId)}&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(returnTo, "error", result.message));
   }
 
   revalidatePath("/admin/config");
   revalidatePath("/admin");
-  redirect(`/admin/config?section=legal-entities&legal_entity_id=${encodeURIComponent(legalEntityId)}&ok=Entite%20legale%20mise%20a%20jour`);
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.legal_entity_action.updated")));
 }
 
 export async function disableAdminLegalEntityAction(formData: FormData): Promise<void> {
@@ -7494,11 +7500,13 @@ export async function disableAdminLegalEntityAction(formData: FormData): Promise
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const returnTo = "/admin/config?section=legal-entities";
 
   const legalEntityId = String(formData.get("legal_entity_id") ?? "").trim();
   if (!legalEntityId) {
-    redirect("/admin/config?section=legal-entities&error=Entite%20legale%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", t("admin.legal_entity_action.invalid_legal_entity")));
   }
 
   const result = await backendRequest<AdminLegalEntityOut>(
@@ -7510,12 +7518,12 @@ export async function disableAdminLegalEntityAction(formData: FormData): Promise
   );
 
   if (!result.ok) {
-    redirect(`/admin/config?section=legal-entities&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(returnTo, "error", result.message));
   }
 
   revalidatePath("/admin/config");
   revalidatePath("/admin");
-  redirect("/admin/config?section=legal-entities&ok=Entite%20legale%20desactivee");
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.legal_entity_action.disabled")));
 }
 
 export async function updateAdminConfigAccountAction(formData: FormData): Promise<void> {
@@ -7524,7 +7532,9 @@ export async function updateAdminConfigAccountAction(formData: FormData): Promis
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const returnTo = "/admin/config?section=params-account";
 
   let logoDataUrl = String(formData.get("logo_data_url") ?? "").trim();
   const clearLogo = checkboxField(formData, "clear_logo");
@@ -7534,10 +7544,10 @@ export async function updateAdminConfigAccountAction(formData: FormData): Promis
   } else if (rawLogoFile instanceof File && rawLogoFile.size > 0) {
     const contentType = String(rawLogoFile.type || "").trim().toLowerCase();
     if (contentType !== "image/jpeg" && contentType !== "image/jpg") {
-      redirect("/admin/config?section=params-account&error=Le%20logo%20doit%20etre%20au%20format%20JPEG");
+      redirect(appendQueryMessage(returnTo, "error", t("admin.account_action.logo_must_be_jpeg")));
     }
     if (rawLogoFile.size > 1024 * 1024) {
-      redirect("/admin/config?section=params-account&error=Le%20logo%20depasse%201%20Mo");
+      redirect(appendQueryMessage(returnTo, "error", t("admin.account_action.logo_too_large")));
     }
     const buffer = Buffer.from(await rawLogoFile.arrayBuffer());
     logoDataUrl = `data:image/jpeg;base64,${buffer.toString("base64")}`;
@@ -7574,11 +7584,11 @@ export async function updateAdminConfigAccountAction(formData: FormData): Promis
   );
 
   if (!result.ok) {
-    redirect(`/admin/config?section=params-account&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(returnTo, "error", result.message));
   }
 
   revalidatePath("/admin/config");
-  redirect("/admin/config?section=params-account&ok=Informations%20compte%20mises%20a%20jour");
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.account_action.updated")));
 }
 
 export async function updateAdminConfigSubscriptionsAction(formData: FormData): Promise<void> {
@@ -7587,11 +7597,13 @@ export async function updateAdminConfigSubscriptionsAction(formData: FormData): 
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const returnTo = "/admin/config?section=params-subscriptions";
 
   const directDebitDay = parsePositiveInt(String(formData.get("direct_debit_day") ?? ""));
   if (directDebitDay !== null && (directDebitDay < 1 || directDebitDay > 28)) {
-    redirect("/admin/config?section=params-subscriptions&error=Jour%20de%20prelevement%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", t("admin.subscription_action.invalid_direct_debit_day")));
   }
   const retryFirstDelayDays = parsePositiveInt(String(formData.get("retry_first_delay_days") ?? ""));
   const retryMaxAutoAttempts = parsePositiveInt(String(formData.get("retry_max_auto_attempts") ?? ""));
@@ -7609,12 +7621,10 @@ export async function updateAdminConfigSubscriptionsAction(formData: FormData): 
     retryMoveToPreTerminationAfterFailedAttempts < 1 ||
     retryMoveToPreTerminationAfterFailedAttempts > 10
   ) {
-    redirect("/admin/config?section=params-subscriptions&error=Parametres%20de%20retry%20invalides");
+    redirect(appendQueryMessage(returnTo, "error", t("admin.subscription_action.invalid_retry_settings")));
   }
   if (retryMoveToPreTerminationAfterFailedAttempts > retryMaxAutoAttempts) {
-    redirect(
-      "/admin/config?section=params-subscriptions&error=Le%20seuil%20de%20pre-resiliation%20ne%20peut%20pas%20depasser%20le%20max%20de%20tentatives",
-    );
+    redirect(appendQueryMessage(returnTo, "error", t("admin.subscription_action.invalid_pretermination_threshold")));
   }
 
   const payload = {
@@ -7648,11 +7658,11 @@ export async function updateAdminConfigSubscriptionsAction(formData: FormData): 
   );
 
   if (!result.ok) {
-    redirect(`/admin/config?section=params-subscriptions&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(returnTo, "error", result.message));
   }
 
   revalidatePath("/admin/config");
-  redirect("/admin/config?section=params-subscriptions&ok=Parametres%20abonnements%20mis%20a%20jour");
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.subscription_action.updated")));
 }
 
 export async function updateAdminConfigProfessorDefaultGridAction(formData: FormData): Promise<void> {
@@ -8037,7 +8047,9 @@ export async function updateAdminConfigPaymentMethodsAction(formData: FormData):
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const returnTo = "/admin/config?section=params-payments";
   const enabledCodes = parseStringList(formData.getAll("enabled_codes")).map((code) => code.toUpperCase());
   const legalEntityByMethodCode: Record<string, string | null> = {};
   for (const methodCode of ["BANK_TRANSFER", "CHECK", "CASH"]) {
@@ -8055,11 +8067,11 @@ export async function updateAdminConfigPaymentMethodsAction(formData: FormData):
   );
 
   if (!result.ok) {
-    redirect(`/admin/config?section=params-payments&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(returnTo, "error", result.message));
   }
 
   revalidatePath("/admin/config");
-  redirect("/admin/config?section=params-payments&ok=Moyens%20de%20paiement%20mis%20a%20jour");
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.payment_action.methods_updated")));
 }
 
 export async function updateAdminConfigProductCategoriesAction(formData: FormData): Promise<void> {
@@ -9245,7 +9257,9 @@ export async function updateAdminConfigPaymentProviderAction(formData: FormData)
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const returnTo = "/admin/config?section=params-payments";
 
   const payload = {
     provider: String(formData.get("provider") ?? "PAYPLUG").trim().toUpperCase(),
@@ -9269,11 +9283,11 @@ export async function updateAdminConfigPaymentProviderAction(formData: FormData)
   );
 
   if (!result.ok) {
-    redirect(`/admin/config?section=params-payments&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(returnTo, "error", result.message));
   }
 
   revalidatePath("/admin/config");
-  redirect("/admin/config?section=params-payments&ok=Configuration%20PSP%20mise%20a%20jour");
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.payment_action.provider_updated")));
 }
 
 export async function updateAdminConfigExternalContentSettingsAction(formData: FormData): Promise<void> {
@@ -9415,11 +9429,13 @@ export async function updateAdminConfigInvoiceTemplateAction(formData: FormData)
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const returnTo = "/admin/config?section=params-messaging";
 
   const body = String(formData.get("body") ?? "").trim();
   if (!body) {
-    redirect("/admin/config?section=params-messaging&error=Modele%20de%20facture%20obligatoire");
+    redirect(appendQueryMessage(returnTo, "error", t("admin.billing_action.invoice_template_required")));
   }
 
   const result = await backendRequest<AdminInvoiceTemplateOut>(
@@ -9432,12 +9448,12 @@ export async function updateAdminConfigInvoiceTemplateAction(formData: FormData)
   );
 
   if (!result.ok) {
-    redirect(`/admin/config?section=params-messaging&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(returnTo, "error", result.message));
   }
 
   revalidatePath("/admin/config");
   revalidatePath("/admin/clients");
-  redirect("/admin/config?section=params-messaging&ok=Modele%20de%20facture%20mis%20a%20jour");
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.billing_action.invoice_template_updated")));
 }
 
 export async function updateAdminConfigInvoiceNumberingAction(formData: FormData): Promise<void> {
@@ -9446,17 +9462,19 @@ export async function updateAdminConfigInvoiceNumberingAction(formData: FormData
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const returnTo = "/admin/config?section=params-messaging";
 
   const formatPattern = String(formData.get("format_pattern") ?? "").trim();
   const nextNumberRaw = String(formData.get("next_number") ?? "").trim();
   const nextNumber = Number.parseInt(nextNumberRaw, 10);
 
   if (!formatPattern) {
-    redirect("/admin/config?section=params-messaging&error=Format%20numero%20de%20facture%20obligatoire");
+    redirect(appendQueryMessage(returnTo, "error", t("admin.billing_action.invoice_number_format_required")));
   }
   if (!Number.isFinite(nextNumber) || nextNumber < 1) {
-    redirect("/admin/config?section=params-messaging&error=Prochain%20numero%20de%20facture%20invalide");
+    redirect(appendQueryMessage(returnTo, "error", t("admin.billing_action.invalid_next_invoice_number")));
   }
 
   const result = await backendRequest<AdminInvoiceNumberingOut>(
@@ -9472,12 +9490,12 @@ export async function updateAdminConfigInvoiceNumberingAction(formData: FormData
   );
 
   if (!result.ok) {
-    redirect(`/admin/config?section=params-messaging&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(returnTo, "error", result.message));
   }
 
   revalidatePath("/admin/config");
   revalidatePath("/admin/clients");
-  redirect("/admin/config?section=params-messaging&ok=Numero%20de%20facture%20mis%20a%20jour");
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.billing_action.invoice_numbering_updated")));
 }
 
 export async function updateAdminTeacherInvoiceTemplateAction(formData: FormData): Promise<void> {
@@ -9485,11 +9503,13 @@ export async function updateAdminTeacherInvoiceTemplateAction(formData: FormData
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const returnTo = "/admin/teacher-invoicing/template";
 
   const htmlTemplate = String(formData.get("html_template") ?? "").trim();
   if (!htmlTemplate) {
-    redirect("/admin/teacher-invoicing/template?error=Template%20HTML%20obligatoire");
+    redirect(appendQueryMessage(returnTo, "error", t("admin.teacher_invoice_action.html_template_required")));
   }
 
   const result = await backendRequest<AdminTeacherInvoiceTemplateOut>(
@@ -9501,10 +9521,10 @@ export async function updateAdminTeacherInvoiceTemplateAction(formData: FormData
     token,
   );
   if (!result.ok) {
-    redirect(`/admin/teacher-invoicing/template?error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/admin/teacher-invoicing/template");
-  redirect("/admin/teacher-invoicing/template?ok=Modele%20facture%20professeur%20mis%20a%20jour");
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.teacher_invoice_action.template_updated")));
 }
 
 export async function saveAdminConfigMessagingTemplateAction(formData: FormData): Promise<void> {
