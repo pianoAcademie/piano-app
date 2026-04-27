@@ -64,12 +64,32 @@ function resolveLoginErrorMessage(rawError: string, errorCode: string, language:
   if (normalizedCode === "client_access_required") {
     return uiText(language, "auth.error_client_access_required");
   }
+  if (normalizedCode === "reset_link_invalid") {
+    return uiText(language, "auth.error_reset_link_invalid");
+  }
+  if (normalizedCode === "reset_password_too_short") {
+    return uiText(language, "auth.error_reset_password_too_short");
+  }
+  if (normalizedCode === "reset_password_mismatch") {
+    return uiText(language, "auth.error_reset_password_mismatch");
+  }
+  return "";
+}
+
+function resolveLoginOkMessage(rawOk: string, okCode: string, language: UiLanguage): string {
+  if (rawOk) {
+    return rawOk;
+  }
+  const normalizedCode = okCode.trim().toLowerCase();
+  if (normalizedCode === "logged_out") {
+    return uiText(language, "auth.ok_logged_out");
+  }
   return "";
 }
 
 export default function LoginPage({ searchParams }: { searchParams: SearchParams }): JSX.Element {
   const language = resolveUiLanguage(readParam(searchParams, "lang"), headers().get("accept-language") ?? "");
-  const okMessage = readParam(searchParams, "ok");
+  const okMessage = resolveLoginOkMessage(readParam(searchParams, "ok"), readParam(searchParams, "ok_code"), language);
   const errorMessage = resolveLoginErrorMessage(readParam(searchParams, "error"), readParam(searchParams, "error_code"), language);
   const resetToken = readParam(searchParams, "reset_token");
   const emailHint = readParam(searchParams, "email");

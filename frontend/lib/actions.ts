@@ -1340,13 +1340,13 @@ export async function resetPasswordAction(formData: FormData): Promise<void> {
   const passwordConfirm = String(formData.get("password_confirm") ?? "");
 
   if (!token) {
-    redirect("/login?error=Lien%20de%20reinitialisation%20invalide");
+    redirect("/login?error_code=reset_link_invalid");
   }
   if (password.length < 8) {
-    redirect(`/login?mode=forgot&reset_token=${encodeURIComponent(token)}&error=Mot%20de%20passe%20trop%20court`);
+    redirect(`/login?mode=forgot&reset_token=${encodeURIComponent(token)}&error_code=reset_password_too_short`);
   }
   if (password !== passwordConfirm) {
-    redirect(`/login?mode=forgot&reset_token=${encodeURIComponent(token)}&error=Les%20mots%20de%20passe%20ne%20correspondent%20pas`);
+    redirect(`/login?mode=forgot&reset_token=${encodeURIComponent(token)}&error_code=reset_password_mismatch`);
   }
 
   const result = await backendRequest<{ message: string }>("/api/v1/auth/reset-password", {
@@ -1363,7 +1363,7 @@ export async function resetPasswordAction(formData: FormData): Promise<void> {
 
 export async function logoutAction(): Promise<void> {
   clearToken();
-  redirect("/login?ok=Deconnexion%20effectuee");
+  redirect("/login?ok_code=logged_out");
 }
 
 export async function updateProfileAction(formData: FormData): Promise<void> {
