@@ -4130,7 +4130,8 @@ export async function suspendAdminClientSubscriptionAction(formData: FormData): 
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const subscriptionId = String(formData.get("subscription_id") ?? "").trim();
@@ -4138,14 +4139,14 @@ export async function suspendAdminClientSubscriptionAction(formData: FormData): 
   const durationUnit = String(formData.get("duration_unit") ?? "DAY").trim().toUpperCase();
   const durationValue = parsePositiveInt(String(formData.get("duration_value") ?? ""));
   if (!clientId || !subscriptionId) {
-    redirect("/admin/clients?error=Abonnement%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_subscription")));
   }
   const startsAt = parseUtcStartOfDate(startRaw);
   if (!startsAt) {
-    redirect(`/admin/clients/${clientId}?tab=fiche&error=Date%20de%20debut%20de%20suspension%20invalide`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "error", t("admin.client_action.invalid_suspension_start_date")));
   }
   if (!durationValue) {
-    redirect(`/admin/clients/${clientId}?tab=fiche&error=Duree%20de%20suspension%20invalide`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "error", t("admin.client_action.invalid_suspension_duration")));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -4162,11 +4163,11 @@ export async function suspendAdminClientSubscriptionAction(formData: FormData): 
   );
 
   if (!result.ok) {
-    redirect(`/admin/clients/${clientId}?tab=fiche&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "error", result.message));
   }
 
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(`/admin/clients/${clientId}?tab=fiche&ok=Suspension%20enregistree`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "ok", t("admin.client_action.subscription_suspended")));
 }
 
 export async function updateAdminClientSubscriptionExpiryAction(formData: FormData): Promise<void> {
@@ -4174,17 +4175,18 @@ export async function updateAdminClientSubscriptionExpiryAction(formData: FormDa
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const subscriptionId = String(formData.get("subscription_id") ?? "").trim();
   const endsAtRaw = String(formData.get("ends_at") ?? "").trim();
   if (!clientId || !subscriptionId) {
-    redirect("/admin/clients?error=Produit%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_product")));
   }
   const endsAt = parseUtcStartOfDate(endsAtRaw);
   if (!endsAt) {
-    redirect(`/admin/clients/${clientId}?tab=fiche&error=Date%20d%27expiration%20invalide`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "error", t("admin.client_action.invalid_expiry_date")));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -4199,11 +4201,11 @@ export async function updateAdminClientSubscriptionExpiryAction(formData: FormDa
   );
 
   if (!result.ok) {
-    redirect(`/admin/clients/${clientId}?tab=fiche&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "error", result.message));
   }
 
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(`/admin/clients/${clientId}?tab=fiche&ok=Date%20d%27expiration%20mise%20a%20jour`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "ok", t("admin.client_action.expiry_date_updated")));
 }
 
 export async function updateAdminClientForfaitPricingAction(formData: FormData): Promise<void> {
@@ -4211,12 +4213,13 @@ export async function updateAdminClientForfaitPricingAction(formData: FormData):
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const subscriptionId = String(formData.get("subscription_id") ?? "").trim();
   if (!clientId || !subscriptionId) {
-    redirect("/admin/clients?error=Forfait%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_package")));
   }
 
   const rowKeys = parseStringList(formData.getAll("forfait_activity_row_key"));
@@ -4239,7 +4242,11 @@ export async function updateAdminClientForfaitPricingAction(formData: FormData):
     const secondCourseWeekly = secondCourseWeeklyRaw ? parseNonNegativeDecimal(secondCourseWeeklyRaw.replace(",", ".")) : 0;
     if (!courseTypeId || loyalty === null || family === null || shortCommitment === null || secondCourseWeekly === null) {
       redirect(
-        `/admin/clients/${clientId}?tab=fiche&subscription_modal=forfait_pricing&subscription_id=${subscriptionId}&error=Valeurs%20tarifaires%20invalides`,
+        appendQueryMessage(
+          `/admin/clients/${clientId}?tab=fiche&subscription_modal=forfait_pricing&subscription_id=${subscriptionId}`,
+          "error",
+          t("admin.client_action.invalid_forfait_pricing_values"),
+        ),
       );
     }
     activities.push({
@@ -4263,11 +4270,11 @@ export async function updateAdminClientForfaitPricingAction(formData: FormData):
   );
 
   if (!result.ok) {
-    redirect(`/admin/clients/${clientId}?tab=fiche&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "error", result.message));
   }
 
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(`/admin/clients/${clientId}?tab=fiche&ok=Tarification%20forfait%20mise%20a%20jour`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "ok", t("admin.client_action.forfait_pricing_updated")));
 }
 
 export async function cancelAdminClientSubscriptionAction(formData: FormData): Promise<void> {
@@ -4275,7 +4282,8 @@ export async function cancelAdminClientSubscriptionAction(formData: FormData): P
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const subscriptionId = String(formData.get("subscription_id") ?? "").trim();
@@ -4283,18 +4291,26 @@ export async function cancelAdminClientSubscriptionAction(formData: FormData): P
   const immediateCancel = checkboxField(formData, "immediate_cancel");
   const confirmImmediate = checkboxField(formData, "confirm_immediate");
   if (!clientId || !subscriptionId) {
-    redirect("/admin/clients?error=Abonnement%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_subscription")));
   }
   const requestedAt = parseUtcStartOfDate(requestedRaw);
   const modalName = immediateCancel ? "cancel_now" : "cancel";
   if (!requestedAt) {
     redirect(
-      `/admin/clients/${clientId}?tab=fiche&subscription_modal=${modalName}&subscription_id=${subscriptionId}&error=Date%20de%20resiliation%20invalide`,
+      appendQueryMessage(
+        `/admin/clients/${clientId}?tab=fiche&subscription_modal=${modalName}&subscription_id=${subscriptionId}`,
+        "error",
+        t("admin.client_action.invalid_cancellation_date"),
+      ),
     );
   }
   if (immediateCancel && !confirmImmediate) {
     redirect(
-      `/admin/clients/${clientId}?tab=fiche&subscription_modal=${modalName}&subscription_id=${subscriptionId}&error=Confirmation%20obligatoire%20pour%20une%20resiliation%20immediate`,
+      appendQueryMessage(
+        `/admin/clients/${clientId}?tab=fiche&subscription_modal=${modalName}&subscription_id=${subscriptionId}`,
+        "error",
+        t("admin.client_action.immediate_cancellation_confirmation_required"),
+      ),
     );
   }
 
@@ -4314,18 +4330,20 @@ export async function cancelAdminClientSubscriptionAction(formData: FormData): P
   if (!result.ok) {
     const conflictFlag = result.status === 409 ? "&cancel_conflict=1" : "";
     redirect(
-      `/admin/clients/${clientId}?tab=fiche&subscription_modal=${modalName}&subscription_id=${subscriptionId}${conflictFlag}&error=${encodeURIComponent(
+      appendQueryMessage(
+        `/admin/clients/${clientId}?tab=fiche&subscription_modal=${modalName}&subscription_id=${subscriptionId}${conflictFlag}`,
+        "error",
         result.message,
-      )}`,
+      ),
     );
   }
 
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(
-    `/admin/clients/${clientId}?tab=fiche&ok=${
-      immediateCancel ? "Resiliation%20immediate%20enregistree" : "Resiliation%20enregistree"
-    }`,
-  );
+  redirect(appendQueryMessage(
+    `/admin/clients/${clientId}?tab=fiche`,
+    "ok",
+    immediateCancel ? t("admin.client_action.immediate_cancellation_saved") : t("admin.client_action.cancellation_saved"),
+  ));
 }
 
 export async function setupAdminClientSubscriptionBillingAction(formData: FormData): Promise<void> {
@@ -4333,12 +4351,13 @@ export async function setupAdminClientSubscriptionBillingAction(formData: FormDa
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const subscriptionId = String(formData.get("subscription_id") ?? "").trim();
   if (!clientId || !subscriptionId) {
-    redirect("/admin/clients?error=Abonnement%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_subscription")));
   }
 
   const billingMethodCode = optionalField(formData, "billing_method_code");
@@ -4361,11 +4380,11 @@ export async function setupAdminClientSubscriptionBillingAction(formData: FormDa
   );
 
   if (!result.ok) {
-    redirect(`/admin/clients/${clientId}?tab=fiche&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "error", result.message));
   }
 
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(`/admin/clients/${clientId}?tab=fiche&ok=Parametres%20de%20prelevement%20mis%20a%20jour`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "ok", t("admin.client_action.billing_setup_updated")));
 }
 
 export async function updateAdminClientManualCreditAction(formData: FormData): Promise<void> {
@@ -4373,7 +4392,8 @@ export async function updateAdminClientManualCreditAction(formData: FormData): P
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const creditTypeId = String(formData.get("credit_type_id") ?? "").trim();
@@ -4381,10 +4401,10 @@ export async function updateAdminClientManualCreditAction(formData: FormData): P
   const creditsCount = parseNonNegativeInt(creditsCountRaw);
 
   if (!clientId || !creditTypeId) {
-    redirect("/admin/clients?error=Type%20de%20credit%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_credit_type")));
   }
   if (creditsCount === null) {
-    redirect(`/admin/clients/${clientId}?tab=fiche&error=Nombre%20de%20credits%20invalide`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "error", t("admin.client_action.invalid_manual_credit_count")));
   }
 
   const result = await backendRequest<{ credit_type_id: string; credits_count: number }>(
@@ -4399,11 +4419,11 @@ export async function updateAdminClientManualCreditAction(formData: FormData): P
   );
 
   if (!result.ok) {
-    redirect(`/admin/clients/${clientId}?tab=fiche&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "error", result.message));
   }
 
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(`/admin/clients/${clientId}?tab=fiche&ok=Credits%20manuels%20mis%20a%20jour`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "ok", t("admin.client_action.manual_credits_updated")));
 }
 
 export async function createAdminClientNoteAction(formData: FormData): Promise<void> {
@@ -4411,15 +4431,16 @@ export async function createAdminClientNoteAction(formData: FormData): Promise<v
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const message = String(formData.get("message") ?? "").trim();
   if (!clientId) {
-    redirect("/admin/clients?error=Client%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_client")));
   }
   if (!message) {
-    redirect(`/admin/clients/${clientId}?tab=fiche&error=Note%20vide`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "error", t("admin.client_action.empty_note")));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -4434,11 +4455,11 @@ export async function createAdminClientNoteAction(formData: FormData): Promise<v
   );
 
   if (!result.ok) {
-    redirect(`/admin/clients/${clientId}?tab=fiche&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "error", result.message));
   }
 
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(`/admin/clients/${clientId}?tab=fiche&ok=Note%20ajoutee`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "ok", t("admin.client_action.note_added")));
 }
 
 export async function refundAdminClientPaymentAction(formData: FormData): Promise<void> {
@@ -5196,7 +5217,8 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const returnTo = safeAdminReturnPath(formData, "/admin/clients");
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
@@ -5215,13 +5237,7 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
   const city = optionalField(formData, "city");
 
   if (!firstName || !lastName || !address_country) {
-    redirect(
-      appendQueryMessage(
-        returnTo,
-        "error",
-        "Prenom, nom et pays de taxation sont obligatoires",
-      ),
-    );
+    redirect(appendQueryMessage(returnTo, "error", t("admin.client_action.required_identity_country")));
   }
 
   const isChildClient = client_kind === "CHILD";
@@ -5292,7 +5308,7 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
 
     if (newAdultEmail || newAdultFirstName || newAdultLastName) {
       if (!newAdultFirstName || !newAdultLastName) {
-        redirect(`/admin/clients/${createdClientId}?tab=famille&error=Prenom%20et%20nom%20adulte%20obligatoires`);
+        redirect(appendQueryMessage(`/admin/clients/${createdClientId}?tab=famille`, "error", t("admin.client_action.adult_first_last_name_required")));
       }
       const newAdultAddressLine = optionalField(formData, "adult_address_line");
       const newAdultCity = optionalField(formData, "adult_city");
@@ -5326,7 +5342,7 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
       );
 
       if (!createAdultResult.ok) {
-        redirect(`/admin/clients/${createdClientId}?tab=famille&error=${encodeURIComponent(createAdultResult.message)}`);
+        redirect(appendQueryMessage(`/admin/clients/${createdClientId}?tab=famille`, "error", createAdultResult.message));
       }
 
       createdAdultId = createAdultResult.data.id;
@@ -5359,14 +5375,20 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
         token,
       );
       if (!linkResult.ok) {
-        redirect(`/admin/clients/${createdClientId}?tab=famille&error=${encodeURIComponent(linkResult.message)}`);
+        redirect(appendQueryMessage(`/admin/clients/${createdClientId}?tab=famille`, "error", linkResult.message));
       }
     }
   }
 
   revalidatePath("/admin/clients");
   revalidatePath(`/admin/clients/${createdClientId}`);
-  redirect(`/admin/clients/${createdClientId}?tab=famille&ok=Compte%20client%20cree%20%28mot%20de%20passe%20a%20envoyer%20depuis%20la%20fiche%29`);
+  redirect(
+    appendQueryMessage(
+      `/admin/clients/${createdClientId}?tab=famille`,
+      "ok",
+      t("admin.client_action.client_account_created_password_pending"),
+    ),
+  );
 }
 
 export async function createChildForAdultAction(formData: FormData): Promise<void> {
@@ -5374,11 +5396,12 @@ export async function createChildForAdultAction(formData: FormData): Promise<voi
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const adultClientId = String(formData.get("adult_client_id") ?? "").trim();
   if (!adultClientId) {
-    redirect("/admin/clients?error=Adulte%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_adult")));
   }
 
   const email = String(formData.get("child_email") ?? "").trim().toLowerCase();
@@ -5395,7 +5418,7 @@ export async function createChildForAdultAction(formData: FormData): Promise<voi
   const childStatus = String(formData.get("child_client_status") ?? "").trim().toUpperCase() || "ACTIVE";
 
   if (!firstName || !lastName || !residence_country || !preferred_currency || !timezone || !address_country) {
-    redirect(`/admin/clients/${adultClientId}?tab=famille&error=Informations%20enfant%20incompletes`);
+    redirect(appendQueryMessage(`/admin/clients/${adultClientId}?tab=famille`, "error", t("admin.client_action.incomplete_child_info")));
   }
 
   const createResult = await backendRequest<{ id: string }>(
@@ -5434,7 +5457,7 @@ export async function createChildForAdultAction(formData: FormData): Promise<voi
   );
 
   if (!createResult.ok) {
-    redirect(`/admin/clients/${adultClientId}?tab=famille&error=${encodeURIComponent(createResult.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${adultClientId}?tab=famille`, "error", createResult.message));
   }
 
   const childClientId = createResult.data.id;
@@ -5454,18 +5477,22 @@ export async function createChildForAdultAction(formData: FormData): Promise<voi
 
   if (!linkResult.ok) {
     redirect(
-      `/admin/clients/${adultClientId}?tab=famille&error=${encodeURIComponent(
-        `Enfant cree mais rattachement impossible: ${linkResult.message}`,
-      )}`,
+      appendQueryMessage(
+        `/admin/clients/${adultClientId}?tab=famille`,
+        "error",
+        t("admin.client_action.child_created_link_failed", { message: linkResult.message }),
+      ),
     );
   }
 
   revalidatePath("/admin/clients");
   revalidatePath(`/admin/clients/${adultClientId}`);
   revalidatePath(`/admin/clients/${childClientId}`);
-  redirect(
-    `/admin/clients/${adultClientId}?tab=famille&ok=Enfant%20cree%20et%20rattache%20%28mot%20de%20passe%20a%20envoyer%20depuis%20la%20fiche%29`,
-  );
+  redirect(appendQueryMessage(
+    `/admin/clients/${adultClientId}?tab=famille`,
+    "ok",
+    t("admin.client_action.child_created_and_linked_password_pending"),
+  ));
 }
 
 export async function createAdultForChildAction(formData: FormData): Promise<void> {
@@ -5473,11 +5500,12 @@ export async function createAdultForChildAction(formData: FormData): Promise<voi
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const childClientId = String(formData.get("child_client_id") ?? "").trim();
   if (!childClientId) {
-    redirect("/admin/clients?error=Enfant%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_child")));
   }
 
   const email = String(formData.get("adult_email") ?? "").trim().toLowerCase();
@@ -5494,7 +5522,7 @@ export async function createAdultForChildAction(formData: FormData): Promise<voi
   const adultCity = optionalField(formData, "adult_city");
 
   if (!firstName || !lastName || !address_country) {
-    redirect(`/admin/clients/${childClientId}?tab=famille&error=Informations%20adulte%20incompletes`);
+    redirect(appendQueryMessage(`/admin/clients/${childClientId}?tab=famille`, "error", t("admin.client_action.incomplete_adult_info")));
   }
 
   const createResult = await backendRequest<{ id: string }>(
@@ -5526,7 +5554,7 @@ export async function createAdultForChildAction(formData: FormData): Promise<voi
   );
 
   if (!createResult.ok) {
-    redirect(`/admin/clients/${childClientId}?tab=famille&error=${encodeURIComponent(createResult.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${childClientId}?tab=famille`, "error", createResult.message));
   }
 
   const adultClientId = createResult.data.id;
@@ -5546,18 +5574,22 @@ export async function createAdultForChildAction(formData: FormData): Promise<voi
 
   if (!linkResult.ok) {
     redirect(
-      `/admin/clients/${childClientId}?tab=famille&error=${encodeURIComponent(
-        `Adulte cree mais rattachement impossible: ${linkResult.message}`,
-      )}`,
+      appendQueryMessage(
+        `/admin/clients/${childClientId}?tab=famille`,
+        "error",
+        t("admin.client_action.adult_created_link_failed", { message: linkResult.message }),
+      ),
     );
   }
 
   revalidatePath("/admin/clients");
   revalidatePath(`/admin/clients/${childClientId}`);
   revalidatePath(`/admin/clients/${adultClientId}`);
-  redirect(
-    `/admin/clients/${childClientId}?tab=famille&ok=Adulte%20cree%20et%20rattache%20%28mot%20de%20passe%20a%20envoyer%20depuis%20la%20fiche%29`,
-  );
+  redirect(appendQueryMessage(
+    `/admin/clients/${childClientId}?tab=famille`,
+    "ok",
+    t("admin.client_action.adult_created_and_linked_password_pending"),
+  ));
 }
 
 export async function linkExistingFamilyMembersAction(formData: FormData): Promise<void> {
