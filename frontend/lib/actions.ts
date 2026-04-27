@@ -8068,7 +8068,9 @@ export async function updateAdminConfigProductCategoriesAction(formData: FormDat
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const locale = localeForUiLanguage(language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
 
   const raw = String(formData.get("categories") ?? "");
@@ -8080,7 +8082,7 @@ export async function updateAdminConfigProductCategoriesAction(formData: FormDat
   const deduplicated: string[] = [];
   const seen = new Set<string>();
   for (const category of categories) {
-    const key = category.toLocaleLowerCase("fr-FR");
+    const key = category.toLocaleLowerCase(locale);
     if (seen.has(key)) {
       continue;
     }
@@ -8105,7 +8107,11 @@ export async function updateAdminConfigProductCategoriesAction(formData: FormDat
   revalidatePath("/admin/products");
   revalidatePath("/admin/clients");
   redirect(
-    appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Categories produits mises a jour"),
+    appendQueryMessage(
+      removeQueryParam(removeQueryParam(returnTo, "ok"), "error"),
+      "ok",
+      t("admin.catalog_action.product_categories_updated"),
+    ),
   );
 }
 
@@ -8114,7 +8120,8 @@ export async function createAdminCatalogCategoryAction(formData: FormData): Prom
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
 
   const name = String(formData.get("name") ?? "").trim();
@@ -8125,7 +8132,7 @@ export async function createAdminCatalogCategoryAction(formData: FormData): Prom
   const active = statusValue ? statusValue === "active" : checkboxFieldWithDefault(formData, "active", true);
   const canBeRequestedByProfessor = checkboxFieldWithDefault(formData, "can_be_requested_by_professor", true);
   if (!name) {
-    redirect(appendQueryMessage(returnTo, "error", "Nom categorie obligatoire"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.category_name_required")));
   }
 
   const result = await backendRequest<AdminCatalogCategoryOut>(
@@ -8151,7 +8158,7 @@ export async function createAdminCatalogCategoryAction(formData: FormData): Prom
   revalidatePath("/admin/config/catalog");
   revalidatePath("/admin/products");
   revalidatePath("/admin/clients");
-  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Categorie cree"));
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.category_created")));
 }
 
 export async function updateAdminCatalogCategoryAction(formData: FormData): Promise<void> {
@@ -8159,7 +8166,8 @@ export async function updateAdminCatalogCategoryAction(formData: FormData): Prom
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
 
   const categoryId = parseUuid(String(formData.get("category_id") ?? ""));
@@ -8171,7 +8179,7 @@ export async function updateAdminCatalogCategoryAction(formData: FormData): Prom
   const active = statusValue ? statusValue === "active" : checkboxFieldWithDefault(formData, "active", true);
   const canBeRequestedByProfessor = checkboxFieldWithDefault(formData, "can_be_requested_by_professor", true);
   if (!categoryId || !name) {
-    redirect(appendQueryMessage(returnTo, "error", "Categorie invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_category")));
   }
 
   const result = await backendRequest<AdminCatalogCategoryOut>(
@@ -8196,7 +8204,7 @@ export async function updateAdminCatalogCategoryAction(formData: FormData): Prom
   revalidatePath("/admin/config/catalog");
   revalidatePath("/admin/products");
   revalidatePath("/admin/clients");
-  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Categorie mise a jour"));
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.category_updated")));
 }
 
 export async function deleteAdminCatalogCategoryAction(formData: FormData): Promise<void> {
@@ -8204,11 +8212,12 @@ export async function deleteAdminCatalogCategoryAction(formData: FormData): Prom
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
   const categoryId = parseUuid(String(formData.get("category_id") ?? ""));
   if (!categoryId) {
-    redirect(appendQueryMessage(returnTo, "error", "Categorie invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_category")));
   }
 
   const result = await backendRequest<void>(
@@ -8225,7 +8234,7 @@ export async function deleteAdminCatalogCategoryAction(formData: FormData): Prom
   revalidatePath("/admin/config/catalog");
   revalidatePath("/admin/products");
   revalidatePath("/admin/clients");
-  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Categorie supprimee"));
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.category_deleted")));
 }
 
 export async function toggleAdminCatalogCategoryArchiveAction(formData: FormData): Promise<void> {
@@ -8233,13 +8242,14 @@ export async function toggleAdminCatalogCategoryArchiveAction(formData: FormData
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/config/catalog");
   const categoryId = parseUuid(String(formData.get("category_id") ?? ""));
   const archiveValue = String(formData.get("archive") ?? "").trim().toLowerCase();
   const shouldArchive = archiveValue === "1" || archiveValue === "true" || archiveValue === "yes" || archiveValue === "on";
   if (!categoryId) {
-    redirect(appendQueryMessage(returnTo, "error", "Categorie invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_category")));
   }
 
   const categoriesResult = await backendRequest<AdminCatalogCategoryOut[]>(
@@ -8252,7 +8262,7 @@ export async function toggleAdminCatalogCategoryArchiveAction(formData: FormData
   }
   const current = categoriesResult.data.find((row) => row.id === categoryId);
   if (!current) {
-    redirect(appendQueryMessage(returnTo, "error", "Categorie introuvable"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.category_not_found")));
   }
 
   const updateResult = await backendRequest<AdminCatalogCategoryOut>(
@@ -8282,7 +8292,7 @@ export async function toggleAdminCatalogCategoryArchiveAction(formData: FormData
     appendQueryMessage(
       removeQueryParam(removeQueryParam(returnTo, "ok"), "error"),
       "ok",
-      shouldArchive ? "Categorie archivee" : "Categorie desarchivee",
+      shouldArchive ? t("admin.catalog_action.category_archived") : t("admin.catalog_action.category_unarchived"),
     ),
   );
 }
@@ -8292,7 +8302,8 @@ export async function createAdminCatalogProductAction(formData: FormData): Promi
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
 
   const title = String(formData.get("title") ?? "").trim();
@@ -8312,20 +8323,20 @@ export async function createAdminCatalogProductAction(formData: FormData): Promi
   const reorderStatus = String(formData.get("reorder_status") ?? "NORMAL").trim().toUpperCase();
   const isVirtual = String(formData.get("is_virtual") ?? "false").trim().toLowerCase() === "true";
   if (!title || !categoryId || priceInclVat === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Titre, categorie et prix TTC obligatoires"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.product_required_fields")));
   }
   if (imageFile) {
     const allowedImageTypes = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
     if (imageFile.size > 5 * 1024 * 1024) {
-      redirect(appendQueryMessage(returnTo, "error", "Fichier image trop lourd (max 5 MB)"));
+      redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.image_too_large")));
     }
     if (!allowedImageTypes.has((imageFile.type || "").toLowerCase())) {
-      redirect(appendQueryMessage(returnTo, "error", "Formats image autorises: JPG, PNG, WEBP"));
+      redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_image_format")));
     }
   }
   const divisor = 1 + vatRate / 100;
   if (!Number.isFinite(divisor) || divisor <= 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Taux TVA invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_vat_rate")));
   }
   const computedPriceExclVat = Math.round((priceInclVat / divisor) * 100) / 100;
   const priceExclVat = priceExclVatInput ?? computedPriceExclVat;
@@ -8361,7 +8372,7 @@ export async function createAdminCatalogProductAction(formData: FormData): Promi
   if (!result.ok) {
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
-  let successMessage = "Produit cree";
+  let successMessage = t("admin.catalog_action.product_created");
   if (imageFile) {
     const uploadPayload = new FormData();
     uploadPayload.set("file", imageFile, imageFile.name || "image");
@@ -8374,7 +8385,7 @@ export async function createAdminCatalogProductAction(formData: FormData): Promi
       token,
     );
     if (!uploadResult.ok) {
-      successMessage = "Produit cree, mais import image en echec";
+      successMessage = t("admin.catalog_action.product_created_image_failed");
     }
   }
   revalidatePath("/admin/config");
@@ -8389,7 +8400,8 @@ export async function updateAdminCatalogProductAction(formData: FormData): Promi
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
 
   const productId = parseUuid(String(formData.get("product_id") ?? ""));
@@ -8403,7 +8415,7 @@ export async function updateAdminCatalogProductAction(formData: FormData): Promi
   const reorderStatus = String(formData.get("reorder_status") ?? "NORMAL").trim().toUpperCase();
   const isVirtual = String(formData.get("is_virtual") ?? "false").trim().toLowerCase() === "true";
   if (!productId || !title || priceExclVat === null || priceInclVat === null || vatRate === null || reserveStock === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Produit invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_product")));
   }
 
   const payload = {
@@ -8439,7 +8451,7 @@ export async function updateAdminCatalogProductAction(formData: FormData): Promi
   }
   revalidatePath("/admin/config");
   revalidatePath("/admin/products");
-  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Produit mis a jour"));
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.product_updated")));
 }
 
 export async function deleteAdminCatalogProductAction(formData: FormData): Promise<void> {
@@ -8447,11 +8459,12 @@ export async function deleteAdminCatalogProductAction(formData: FormData): Promi
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
   const productId = parseUuid(String(formData.get("product_id") ?? ""));
   if (!productId) {
-    redirect(appendQueryMessage(returnTo, "error", "Produit invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_product")));
   }
   const result = await backendRequest<void>(
     `/api/v1/admin/config/catalog/products/${productId}`,
@@ -8465,7 +8478,7 @@ export async function deleteAdminCatalogProductAction(formData: FormData): Promi
   }
   revalidatePath("/admin/config");
   revalidatePath("/admin/products");
-  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Produit supprime"));
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.product_deleted")));
 }
 
 export async function createAdminCatalogKitAction(formData: FormData): Promise<void> {
@@ -8473,7 +8486,8 @@ export async function createAdminCatalogKitAction(formData: FormData): Promise<v
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
 
   const title = String(formData.get("title") ?? "").trim();
@@ -8493,7 +8507,7 @@ export async function createAdminCatalogKitAction(formData: FormData): Promise<v
   const purchasableOnline = parseCheckboxFlag(formData, "purchasable_online", false);
   const items = parseCatalogKitItemsFromFormData(formData);
   if (!title || vatRate === null || items === null || (priceMode === "forced" && effectiveForcedPrice === null)) {
-    redirect(appendQueryMessage(returnTo, "error", "Kit invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_kit")));
   }
 
   const payload = {
@@ -8530,7 +8544,7 @@ export async function createAdminCatalogKitAction(formData: FormData): Promise<v
   revalidatePath("/admin/config");
   revalidatePath("/admin/config/catalog");
   revalidatePath("/admin/products");
-  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Kit cree"));
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.kit_created")));
 }
 
 export async function updateAdminCatalogKitAction(formData: FormData): Promise<void> {
@@ -8538,7 +8552,8 @@ export async function updateAdminCatalogKitAction(formData: FormData): Promise<v
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
   const kitId = parseUuid(String(formData.get("kit_id") ?? ""));
   const title = String(formData.get("title") ?? "").trim();
@@ -8558,7 +8573,7 @@ export async function updateAdminCatalogKitAction(formData: FormData): Promise<v
   const purchasableOnline = parseCheckboxFlag(formData, "purchasable_online", false);
   const items = parseCatalogKitItemsFromFormData(formData);
   if (!kitId || !title || vatRate === null || items === null || (priceMode === "forced" && effectiveForcedPrice === null)) {
-    redirect(appendQueryMessage(returnTo, "error", "Kit invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_kit")));
   }
 
   const payload = {
@@ -8595,7 +8610,7 @@ export async function updateAdminCatalogKitAction(formData: FormData): Promise<v
   revalidatePath("/admin/config");
   revalidatePath("/admin/config/catalog");
   revalidatePath("/admin/products");
-  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Kit mis a jour"));
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.kit_updated")));
 }
 
 export async function deleteAdminCatalogKitAction(formData: FormData): Promise<void> {
@@ -8603,11 +8618,12 @@ export async function deleteAdminCatalogKitAction(formData: FormData): Promise<v
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
   const kitId = parseUuid(String(formData.get("kit_id") ?? ""));
   if (!kitId) {
-    redirect(appendQueryMessage(returnTo, "error", "Kit invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_kit")));
   }
   const result = await backendRequest<void>(
     `/api/v1/admin/config/catalog/kits/${kitId}`,
@@ -8622,7 +8638,7 @@ export async function deleteAdminCatalogKitAction(formData: FormData): Promise<v
   revalidatePath("/admin/config");
   revalidatePath("/admin/config/catalog");
   revalidatePath("/admin/products");
-  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Kit supprime"));
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.kit_deleted")));
 }
 
 export async function duplicateAdminCatalogKitAction(formData: FormData): Promise<void> {
@@ -8630,11 +8646,13 @@ export async function duplicateAdminCatalogKitAction(formData: FormData): Promis
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const locale = localeForUiLanguage(language);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/config/catalog");
   const kitId = parseUuid(String(formData.get("kit_id") ?? ""));
   if (!kitId) {
-    redirect(appendQueryMessage(returnTo, "error", "Kit invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_kit")));
   }
 
   const kitsResult = await backendRequest<AdminCatalogKitOut[]>("/api/v1/admin/config/catalog/kits?include_inactive=true", {}, token);
@@ -8643,19 +8661,19 @@ export async function duplicateAdminCatalogKitAction(formData: FormData): Promis
   }
   const sourceKit = kitsResult.data.find((row) => row.id === kitId);
   if (!sourceKit) {
-    redirect(appendQueryMessage(returnTo, "error", "Kit introuvable"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.kit_not_found")));
   }
 
-  const existingTitles = new Set(kitsResult.data.map((row) => row.title.trim().toLocaleLowerCase("fr-FR")));
+  const existingTitles = new Set(kitsResult.data.map((row) => row.title.trim().toLocaleLowerCase(locale)));
   const existingCodes = new Set(
     kitsResult.data
       .map((row) => (row.code || "").trim().toUpperCase())
       .filter((value) => value.length > 0),
   );
-  const baseTitle = `${sourceKit.title} (copie)`;
+  const baseTitle = `${sourceKit.title} ${t("admin.catalog_action.copy_suffix")}`;
   let titleCandidate = baseTitle;
   let titleIndex = 2;
-  while (existingTitles.has(titleCandidate.toLocaleLowerCase("fr-FR"))) {
+  while (existingTitles.has(titleCandidate.toLocaleLowerCase(locale))) {
     titleCandidate = `${baseTitle} ${titleIndex}`;
     titleIndex += 1;
   }
@@ -8710,7 +8728,7 @@ export async function duplicateAdminCatalogKitAction(formData: FormData): Promis
   revalidatePath("/admin/config");
   revalidatePath("/admin/config/catalog");
   revalidatePath("/admin/products");
-  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Kit duplique"));
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.kit_duplicated")));
 }
 
 export async function toggleAdminCatalogKitArchiveAction(formData: FormData): Promise<void> {
@@ -8718,13 +8736,14 @@ export async function toggleAdminCatalogKitArchiveAction(formData: FormData): Pr
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/config/catalog");
   const kitId = parseUuid(String(formData.get("kit_id") ?? ""));
   const archiveValue = String(formData.get("archive") ?? "").trim().toLowerCase();
   const shouldArchive = archiveValue === "1" || archiveValue === "true" || archiveValue === "yes" || archiveValue === "on";
   if (!kitId) {
-    redirect(appendQueryMessage(returnTo, "error", "Kit invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_kit")));
   }
 
   const kitsResult = await backendRequest<AdminCatalogKitOut[]>("/api/v1/admin/config/catalog/kits?include_inactive=true", {}, token);
@@ -8733,7 +8752,7 @@ export async function toggleAdminCatalogKitArchiveAction(formData: FormData): Pr
   }
   const current = kitsResult.data.find((row) => row.id === kitId);
   if (!current) {
-    redirect(appendQueryMessage(returnTo, "error", "Kit introuvable"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.kit_not_found")));
   }
   const items = current.items.map((item) => ({
     product_id: item.product_id,
@@ -8778,7 +8797,7 @@ export async function toggleAdminCatalogKitArchiveAction(formData: FormData): Pr
     appendQueryMessage(
       removeQueryParam(removeQueryParam(returnTo, "ok"), "error"),
       "ok",
-      shouldArchive ? "Kit archive" : "Kit desarchive",
+      shouldArchive ? t("admin.catalog_action.kit_archived") : t("admin.catalog_action.kit_unarchived"),
     ),
   );
 }
@@ -8788,14 +8807,15 @@ export async function updateAdminCatalogInventoryAction(formData: FormData): Pro
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
   const productId = parseUuid(String(formData.get("product_id") ?? ""));
   const locationId = parseUuid(String(formData.get("location_id") ?? ""));
   const inventoryQuantity = parseNonNegativeInt(String(formData.get("inventory_quantity") ?? ""));
   const inventoryDate = parseDateOnly(String(formData.get("inventory_date") ?? ""));
   if (!productId || !locationId || inventoryQuantity === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Stock inventaire invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_inventory")));
   }
 
   const result = await backendRequest<AdminCatalogStockOut>(
@@ -8815,7 +8835,7 @@ export async function updateAdminCatalogInventoryAction(formData: FormData): Pro
   revalidatePath("/admin/config");
   revalidatePath("/admin/products");
   redirect(
-    appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Stock inventaire mis a jour"),
+    appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.inventory_updated")),
   );
 }
 
@@ -8824,12 +8844,13 @@ export async function updateAdminCatalogReorderStatusAction(formData: FormData):
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/products");
   const productId = parseUuid(String(formData.get("product_id") ?? ""));
   const reorderStatus = String(formData.get("reorder_status") ?? "").trim().toUpperCase();
   if (!productId || !reorderStatus) {
-    redirect(appendQueryMessage(returnTo, "error", "Mise a jour statut commande invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_reorder_status_update")));
   }
 
   const result = await backendRequest<AdminCatalogReorderProductOut>(
@@ -8844,7 +8865,7 @@ export async function updateAdminCatalogReorderStatusAction(formData: FormData):
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/admin/products");
-  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Statut commande mis a jour"));
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.reorder_status_updated")));
 }
 
 export async function createAdminCatalogTransferAction(formData: FormData): Promise<void> {
@@ -8852,7 +8873,8 @@ export async function createAdminCatalogTransferAction(formData: FormData): Prom
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/products");
   const productId = parseUuid(String(formData.get("product_id") ?? ""));
   const sourceLocationId = parseUuid(String(formData.get("source_location_id") ?? ""));
@@ -8862,7 +8884,7 @@ export async function createAdminCatalogTransferAction(formData: FormData): Prom
   const assignedToUserId = parseUuid(String(formData.get("assigned_to_user_id") ?? ""));
   const note = optionalField(formData, "note");
   if (!productId || !sourceLocationId || !targetLocationId || quantity === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Demande de transfert invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_transfer_request")));
   }
   const result = await backendRequest<AdminCatalogStockTransferOut>(
     "/api/v1/admin/config/catalog/transfers",
@@ -8884,7 +8906,7 @@ export async function createAdminCatalogTransferAction(formData: FormData): Prom
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/admin/products");
-  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Transfert cree"));
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.transfer_created")));
 }
 
 export async function completeAdminCatalogTransferAction(formData: FormData): Promise<void> {
@@ -8892,13 +8914,14 @@ export async function completeAdminCatalogTransferAction(formData: FormData): Pr
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/products");
   const transferId = parseUuid(String(formData.get("transfer_id") ?? ""));
   const completedTransferDate = parseDateOnly(String(formData.get("completed_transfer_date") ?? ""));
   const note = optionalField(formData, "note");
   if (!transferId) {
-    redirect(appendQueryMessage(returnTo, "error", "Transfert invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_transfer")));
   }
   const result = await backendRequest<AdminCatalogStockTransferOut>(
     `/api/v1/admin/config/catalog/transfers/${transferId}/complete`,
@@ -8915,7 +8938,7 @@ export async function completeAdminCatalogTransferAction(formData: FormData): Pr
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/admin/products");
-  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Transfert marque fait"));
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.transfer_completed")));
 }
 
 export async function cancelAdminCatalogTransferAction(formData: FormData): Promise<void> {
@@ -8923,12 +8946,13 @@ export async function cancelAdminCatalogTransferAction(formData: FormData): Prom
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/products");
   const transferId = parseUuid(String(formData.get("transfer_id") ?? ""));
   const note = optionalField(formData, "note");
   if (!transferId) {
-    redirect(appendQueryMessage(returnTo, "error", "Transfert invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_transfer")));
   }
   const result = await backendRequest<AdminCatalogStockTransferOut>(
     `/api/v1/admin/config/catalog/transfers/${transferId}/cancel`,
@@ -8942,7 +8966,7 @@ export async function cancelAdminCatalogTransferAction(formData: FormData): Prom
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/admin/products");
-  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Transfert annule"));
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.transfer_cancelled")));
 }
 
 export async function createAdminStockEntryAction(formData: FormData): Promise<void> {
@@ -8950,7 +8974,8 @@ export async function createAdminStockEntryAction(formData: FormData): Promise<v
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/products?view=entries");
   const productId = parseUuid(String(formData.get("product_id") ?? ""));
   const locationId = parseUuid(String(formData.get("location_id") ?? ""));
@@ -8958,7 +8983,7 @@ export async function createAdminStockEntryAction(formData: FormData): Promise<v
   const occurredAtDate = parseDateOnly(String(formData.get("occurred_at") ?? ""));
   const sourceType = String(formData.get("source_type") ?? "other").trim().toLowerCase();
   if (!productId || !locationId || quantity === null || quantity <= 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Entree stock invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_stock_entry")));
   }
   const payload = {
     product_id: productId,
@@ -8984,7 +9009,7 @@ export async function createAdminStockEntryAction(formData: FormData): Promise<v
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/admin/products");
-  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Entree stock enregistree"));
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.stock_entry_created")));
 }
 
 export async function createAdminStockAdjustmentAction(formData: FormData): Promise<void> {
@@ -8992,7 +9017,8 @@ export async function createAdminStockAdjustmentAction(formData: FormData): Prom
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/products?view=entries");
   const productId = parseUuid(String(formData.get("adjust_product_id") ?? ""));
   const locationId = parseUuid(String(formData.get("adjust_location_id") ?? ""));
@@ -9000,7 +9026,7 @@ export async function createAdminStockAdjustmentAction(formData: FormData): Prom
   const occurredAtDate = parseDateOnly(String(formData.get("adjust_occurred_at") ?? ""));
   const sourceType = String(formData.get("adjust_source_type") ?? "correction").trim().toLowerCase();
   if (!productId || !locationId || quantity === null || quantity === 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Correction inventaire invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_stock_adjustment")));
   }
   const payload = {
     product_id: productId,
@@ -9026,7 +9052,7 @@ export async function createAdminStockAdjustmentAction(formData: FormData): Prom
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/admin/products");
-  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Correction inventaire enregistree"));
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.stock_adjustment_created")));
 }
 
 export async function createAdminCatalogRequestAction(formData: FormData): Promise<void> {
@@ -9034,7 +9060,8 @@ export async function createAdminCatalogRequestAction(formData: FormData): Promi
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
 
   const studentUserId = parseUuid(String(formData.get("student_user_id") ?? ""));
@@ -9044,7 +9071,7 @@ export async function createAdminCatalogRequestAction(formData: FormData): Promi
   const shouldBill = checkboxField(formData, "should_bill");
   const note = optionalField(formData, "note");
   if (!studentUserId || !productId || !locationId) {
-    redirect(appendQueryMessage(returnTo, "error", "Demande produit invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_product_request")));
   }
 
   const result = await backendRequest<AdminCatalogRequestOut>(
@@ -9068,7 +9095,7 @@ export async function createAdminCatalogRequestAction(formData: FormData): Promi
   revalidatePath("/admin/config");
   revalidatePath("/admin/products");
   revalidatePath("/admin/clients");
-  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Demande produit ajoutee"));
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.product_request_created")));
 }
 
 export async function reviewAdminCatalogRequestAction(formData: FormData): Promise<void> {
@@ -9076,14 +9103,15 @@ export async function reviewAdminCatalogRequestAction(formData: FormData): Promi
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
   const requestId = parseUuid(String(formData.get("request_id") ?? ""));
   const decision = String(formData.get("decision") ?? "").trim().toUpperCase();
   const shouldBill = checkboxField(formData, "should_bill");
   const note = optionalField(formData, "note");
   if (!requestId || (decision !== "ACCEPT" && decision !== "REJECT")) {
-    redirect(appendQueryMessage(returnTo, "error", "Revue demande invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_request_review")));
   }
 
   const result = await backendRequest<AdminCatalogRequestOut>(
@@ -9104,7 +9132,7 @@ export async function reviewAdminCatalogRequestAction(formData: FormData): Promi
   revalidatePath("/admin/config");
   revalidatePath("/admin/products");
   revalidatePath("/admin/clients");
-  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Demande mise a jour"));
+  redirect(appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.request_updated")));
 }
 
 export async function deliverAdminCatalogRequestAction(formData: FormData): Promise<void> {
@@ -9112,13 +9140,14 @@ export async function deliverAdminCatalogRequestAction(formData: FormData): Prom
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
   const requestId = parseUuid(String(formData.get("request_id") ?? ""));
   const deliveredByUserId = parseUuid(String(formData.get("delivered_by_user_id") ?? ""));
   const note = optionalField(formData, "note");
   if (!requestId) {
-    redirect(appendQueryMessage(returnTo, "error", "Demande invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_request")));
   }
 
   const result = await backendRequest<AdminCatalogRequestOut>(
@@ -9139,7 +9168,7 @@ export async function deliverAdminCatalogRequestAction(formData: FormData): Prom
   revalidatePath("/admin/products");
   revalidatePath("/admin/clients");
   redirect(
-    appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", "Produit remis a l eleve"),
+    appendQueryMessage(removeQueryParam(removeQueryParam(returnTo, "ok"), "error"), "ok", t("admin.catalog_action.product_delivered_to_student")),
   );
 }
 
@@ -9148,6 +9177,8 @@ export async function professorCreateCatalogRequestAction(formData: FormData): P
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
+  const language = await ensureProfessorAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeProfessorReturnPath(formData, "/prof?tab=catalog");
   const studentUserId = parseUuid(String(formData.get("student_user_id") ?? ""));
   const productId = parseUuid(String(formData.get("product_id") ?? ""));
@@ -9155,7 +9186,7 @@ export async function professorCreateCatalogRequestAction(formData: FormData): P
   const quantity = parsePositiveInt(String(formData.get("quantity") ?? "1")) ?? 1;
   const note = optionalField(formData, "note");
   if (!studentUserId || !productId || !locationId) {
-    redirect(appendQueryMessage(returnTo, "error", "Demande produit invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.catalog_action.invalid_product_request")));
   }
 
   const result = await backendRequest<AdminCatalogRequestOut>(
@@ -9176,7 +9207,7 @@ export async function professorCreateCatalogRequestAction(formData: FormData): P
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/prof");
-  redirect(appendQueryMessage(returnTo, "ok", "Demande produit envoyee"));
+  redirect(appendQueryMessage(returnTo, "ok", t("teacher.catalog_action.product_request_sent")));
 }
 
 export async function professorDeliverCatalogRequestAction(formData: FormData): Promise<void> {
@@ -9184,11 +9215,13 @@ export async function professorDeliverCatalogRequestAction(formData: FormData): 
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
+  const language = await ensureProfessorAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeProfessorReturnPath(formData, "/prof?tab=catalog");
   const requestId = parseUuid(String(formData.get("request_id") ?? ""));
   const note = optionalField(formData, "note");
   if (!requestId) {
-    redirect(appendQueryMessage(returnTo, "error", "Demande invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.catalog_action.invalid_request")));
   }
 
   const result = await backendRequest<AdminCatalogRequestOut>(
@@ -9203,7 +9236,7 @@ export async function professorDeliverCatalogRequestAction(formData: FormData): 
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/prof");
-  redirect(appendQueryMessage(returnTo, "ok", "Produit remis confirme"));
+  redirect(appendQueryMessage(returnTo, "ok", t("teacher.catalog_action.product_delivery_confirmed")));
 }
 
 export async function updateAdminConfigPaymentProviderAction(formData: FormData): Promise<void> {
@@ -9311,7 +9344,8 @@ export async function updateAdminConfigMessagingSettingsAction(formData: FormDat
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const messagingTab = normalizeMessagingConfigTab(String(formData.get("messaging_tab") ?? ""), "settings");
   const smtpPort = Number.parseInt(String(formData.get("smtp_port") ?? "").trim() || "587", 10);
   const smtpTimeoutSeconds = Number.parseInt(String(formData.get("smtp_timeout_seconds") ?? "").trim() || "15", 10);
@@ -9372,7 +9406,7 @@ export async function updateAdminConfigMessagingSettingsAction(formData: FormDat
   }
 
   revalidatePath("/admin/config");
-  redirect(buildMessagingConfigPath(messagingTab, { ok: "Parametres messagerie mis a jour" }));
+  redirect(buildMessagingConfigPath(messagingTab, { ok: t("admin.messaging_action.settings_updated") }));
 }
 
 export async function updateAdminConfigInvoiceTemplateAction(formData: FormData): Promise<void> {
