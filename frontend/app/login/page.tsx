@@ -55,6 +55,12 @@ function resolveLoginErrorMessage(rawError: string, errorCode: string, language:
   if (normalizedCode === "session_expired") {
     return uiText(language, "auth.error_session_expired");
   }
+  if (normalizedCode === "invalid_session") {
+    return uiText(language, "auth.error_invalid_session");
+  }
+  if (normalizedCode === "admin_access_required") {
+    return uiText(language, "auth.error_admin_access_required");
+  }
   if (normalizedCode === "client_access_required") {
     return uiText(language, "auth.error_client_access_required");
   }

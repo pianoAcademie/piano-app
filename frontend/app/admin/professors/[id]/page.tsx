@@ -371,11 +371,11 @@ const PERMISSION_SECTIONS: Array<{ titleKey: string; keys: Array<{ key: string; 
 export default async function AdminCollaboratorDetailPage({ params, searchParams }: PageProps): Promise<JSX.Element> {
   const token = getAdminToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
   if (!meResult.ok || meResult.data.role !== "admin") {
-    redirect("/login?error=Acces%20admin%20requis");
+    redirect("/login?error_code=admin_access_required");
   }
   const language = normalizeUiLanguage(meResult.data.preferred_language);
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);

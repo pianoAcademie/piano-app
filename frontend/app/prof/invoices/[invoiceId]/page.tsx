@@ -55,7 +55,7 @@ export default async function TeacherInvoiceDetailPage({
 }): Promise<JSX.Element> {
   const token = getPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const impersonationClaims = readPortalImpersonationClaims();
   const isImpersonating = Boolean(impersonationClaims?.imp);

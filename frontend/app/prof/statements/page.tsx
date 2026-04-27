@@ -248,7 +248,7 @@ export default async function TeacherStatementsPage({
 }): Promise<JSX.Element> {
   const token = getPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   const now = new Date();

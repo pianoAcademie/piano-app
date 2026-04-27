@@ -37,7 +37,7 @@ export default async function AdminPlanningSettingsPage({
 }): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   const [settingsResult, planningActivitiesResult, meResult] = await Promise.all([

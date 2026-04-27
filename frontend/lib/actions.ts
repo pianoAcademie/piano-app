@@ -1074,14 +1074,14 @@ async function fetchCurrentUser(token: string): Promise<UserOut | null> {
 async function ensureAdmin(token: string): Promise<void> {
   const me = await fetchCurrentUser(token);
   if (!me || me.role !== "admin") {
-    redirect("/login?error=Acces%20admin%20requis");
+    redirect("/login?error_code=admin_access_required");
   }
 }
 
 async function ensureAdminAndGetLanguage(token: string): Promise<UiLanguage> {
   const me = await fetchCurrentUser(token);
   if (!me || me.role !== "admin") {
-    redirect("/login?error=Acces%20admin%20requis");
+    redirect("/login?error_code=admin_access_required");
   }
   return normalizeUiLanguage(me.preferred_language);
 }
@@ -1137,7 +1137,7 @@ export async function loginAction(formData: FormData): Promise<void> {
 
   const me = await fetchCurrentUser(result.data.access_token);
   if (!me) {
-    redirect("/login?error=Session%20invalide");
+    redirect("/login?error_code=invalid_session");
   }
 
   if (me.role === "admin") {
@@ -1369,7 +1369,7 @@ export async function logoutAction(): Promise<void> {
 export async function updateProfileAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   const residence_country = String(formData.get("residence_country") ?? "").trim().toUpperCase();
@@ -1425,7 +1425,7 @@ export async function updateProfileAction(formData: FormData): Promise<void> {
 export async function purchasePlanAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   const planId = String(formData.get("plan_id") ?? "");
@@ -1686,7 +1686,7 @@ export async function submitPublicSessionCheckoutAction(formData: FormData): Pro
 export async function openClientPaymentCheckoutAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   const returnTo = safeClientReturnPath(formData, "/client?tab=finance&finance_view=transactions");
@@ -1723,7 +1723,7 @@ export async function openClientPaymentCheckoutAction(formData: FormData): Promi
 export async function bookSessionAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const returnTo = safeClientReturnPath(formData, "/client?tab=planning");
   const inSessionContext = returnTo.includes("session_id=");
@@ -1834,7 +1834,7 @@ export async function reservePublicPlanningSessionAction(formData: FormData): Pr
 export async function cancelBookingAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const returnTo = safeClientReturnPath(formData, "/client?tab=reservations");
 
@@ -1861,7 +1861,7 @@ export async function cancelBookingAction(formData: FormData): Promise<void> {
 export async function professorUpdateAttendanceAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   const returnTo = safeProfessorReturnPath(formData, "/prof?tab=planning");
@@ -1892,7 +1892,7 @@ export async function professorUpdateAttendanceAction(formData: FormData): Promi
 export async function professorSendSessionMessageAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   const returnTo = safeProfessorReturnPath(formData, "/prof?tab=planning");
@@ -1934,7 +1934,7 @@ export async function professorSendSessionMessageAction(formData: FormData): Pro
 export async function professorMarkSessionAbsentAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   const returnTo = safeProfessorReturnPath(formData, "/prof?tab=planning");
@@ -1977,7 +1977,7 @@ export async function professorMarkSessionAbsentAction(formData: FormData): Prom
 export async function teacherApproveStatementsAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
@@ -2005,7 +2005,7 @@ export async function teacherApproveStatementsAction(formData: FormData): Promis
 export async function teacherApproveStatementsOnlyAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
@@ -2033,7 +2033,7 @@ export async function teacherApproveStatementsOnlyAction(formData: FormData): Pr
 export async function teacherGenerateStatementsInvoiceAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
@@ -2061,7 +2061,7 @@ export async function teacherGenerateStatementsInvoiceAction(formData: FormData)
 export async function teacherDisputeStatementsAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
@@ -2089,7 +2089,7 @@ export async function teacherDisputeStatementsAction(formData: FormData): Promis
 export async function teacherDisputeSelectedLinesAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
@@ -2129,7 +2129,7 @@ export async function teacherDisputeSelectedLinesAction(formData: FormData): Pro
 export async function teacherReportMissingServiceAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
@@ -2183,7 +2183,7 @@ export async function teacherReportMissingServiceAction(formData: FormData): Pro
 export async function teacherCancelInvoiceAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const invoiceId = String(formData.get("invoice_id") ?? "").trim();
@@ -2208,7 +2208,7 @@ export async function teacherCancelInvoiceAction(formData: FormData): Promise<vo
 export async function teacherUncancelInvoiceAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const invoiceId = String(formData.get("invoice_id") ?? "").trim();
@@ -2233,7 +2233,7 @@ export async function teacherUncancelInvoiceAction(formData: FormData): Promise<
 export async function teacherSendInvoiceToAccountingAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const invoiceId = String(formData.get("invoice_id") ?? "").trim();
@@ -2258,7 +2258,7 @@ export async function teacherSendInvoiceToAccountingAction(formData: FormData): 
 export async function teacherSendExternalInvoiceAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
@@ -2299,7 +2299,7 @@ export async function teacherSendExternalInvoiceAction(formData: FormData): Prom
 export async function createAdminSessionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   const language = await ensureAdminAndGetLanguage(token);
@@ -2495,7 +2495,7 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
 export async function updateAdminSessionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -2672,7 +2672,7 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
 export async function shiftAdminSessionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -2727,7 +2727,7 @@ export async function shiftAdminSessionAction(formData: FormData): Promise<void>
 export async function duplicateAdminSessionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -2777,7 +2777,7 @@ export async function duplicateAdminSessionAction(formData: FormData): Promise<v
 export async function cancelAdminSessionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -2844,7 +2844,7 @@ export async function cancelAdminSessionAction(formData: FormData): Promise<void
 export async function deleteAdminSessionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -2916,7 +2916,7 @@ export async function deleteAdminSessionAction(formData: FormData): Promise<void
 export async function adminAddClientToSessionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -2980,7 +2980,7 @@ export async function adminAddClientToSessionAction(formData: FormData): Promise
 export async function adminRemoveClientFromSessionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -3012,7 +3012,7 @@ export async function adminRemoveClientFromSessionAction(formData: FormData): Pr
 export async function adminUpdateSessionAttendanceAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -3046,7 +3046,7 @@ export async function adminUpdateSessionAttendanceAction(formData: FormData): Pr
 export async function adminUpdateSessionGroupNoteAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -3139,7 +3139,7 @@ export async function adminUpdateSessionGroupNoteAction(formData: FormData): Pro
 export async function adminUpdateSessionBookingNoteAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -3212,7 +3212,7 @@ export async function adminUpdateSessionBookingNoteAction(formData: FormData): P
 export async function adminSendSessionBroadcastAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -3296,7 +3296,7 @@ export async function adminSendSessionBroadcastAction(formData: FormData): Promi
 export async function updatePlanningSettingsAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -3372,7 +3372,7 @@ export async function updatePlanningSettingsAction(formData: FormData): Promise<
 export async function updateAdminClientAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -3452,7 +3452,7 @@ export async function updateAdminClientAction(formData: FormData): Promise<void>
 export async function updateAdminClientGroupsAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -3488,7 +3488,7 @@ export async function updateAdminClientGroupsAction(formData: FormData): Promise
 export async function reactivateAdminClientDeliveryAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -3526,7 +3526,7 @@ export async function reactivateAdminClientDeliveryAction(formData: FormData): P
 export async function adminClientActionPlaceholder(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   const adminLanguage = await ensureAdminAndGetLanguage(token);
@@ -3546,7 +3546,7 @@ export async function adminClientActionPlaceholder(formData: FormData): Promise<
 export async function sendAdminClientMessageAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -3633,7 +3633,7 @@ export async function sendAdminClientMessageAction(formData: FormData): Promise<
 export async function sendAdminClientPasswordAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -3667,7 +3667,7 @@ export async function sendAdminClientPasswordAction(formData: FormData): Promise
 export async function adminViewClientPortalAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -3703,7 +3703,7 @@ export async function adminViewClientPortalAction(formData: FormData): Promise<v
 export async function adminViewTeacherPortalAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -3758,7 +3758,7 @@ export async function endPortalImpersonationAction(formData: FormData): Promise<
 export async function adminPurchasePlanForClientAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -3795,7 +3795,7 @@ export async function adminPurchasePlanForClientAction(formData: FormData): Prom
 export async function adminOpenClientPurchaseTermsAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
@@ -3876,7 +3876,7 @@ export async function adminOpenClientPurchaseTermsAction(formData: FormData): Pr
 export async function adminFinalizeClientPurchaseAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -4072,7 +4072,7 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
 export async function suspendAdminClientSubscriptionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -4116,7 +4116,7 @@ export async function suspendAdminClientSubscriptionAction(formData: FormData): 
 export async function updateAdminClientSubscriptionExpiryAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -4153,7 +4153,7 @@ export async function updateAdminClientSubscriptionExpiryAction(formData: FormDa
 export async function updateAdminClientForfaitPricingAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -4217,7 +4217,7 @@ export async function updateAdminClientForfaitPricingAction(formData: FormData):
 export async function cancelAdminClientSubscriptionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -4275,7 +4275,7 @@ export async function cancelAdminClientSubscriptionAction(formData: FormData): P
 export async function setupAdminClientSubscriptionBillingAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -4315,7 +4315,7 @@ export async function setupAdminClientSubscriptionBillingAction(formData: FormDa
 export async function updateAdminClientManualCreditAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -4353,7 +4353,7 @@ export async function updateAdminClientManualCreditAction(formData: FormData): P
 export async function createAdminClientNoteAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -4388,7 +4388,7 @@ export async function createAdminClientNoteAction(formData: FormData): Promise<v
 export async function refundAdminClientPaymentAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -4425,7 +4425,7 @@ export async function refundAdminClientPaymentAction(formData: FormData): Promis
 export async function refundAdminClientPaymentReceiptAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -4461,7 +4461,7 @@ export async function refundAdminClientPaymentReceiptAction(formData: FormData):
 export async function cancelAdminClientInvoiceAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -4497,7 +4497,7 @@ export async function cancelAdminClientInvoiceAction(formData: FormData): Promis
 export async function createAdminClientRangeInvoiceAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
@@ -4783,7 +4783,7 @@ export async function createAdminClientRangeInvoiceAction(formData: FormData): P
 export async function updateAdminClientRangeInvoiceStatusAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -4822,7 +4822,7 @@ export async function updateAdminClientRangeInvoiceStatusAction(formData: FormDa
 export async function sendAdminClientRangeInvoiceEmailAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -4876,7 +4876,7 @@ export async function sendAdminClientRangeInvoiceEmailAction(formData: FormData)
 export async function sendAdminClientPaymentReceiptAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -4905,7 +4905,7 @@ export async function sendAdminClientPaymentReceiptAction(formData: FormData): P
 export async function generateAdminClientBookingFinalInvoiceAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -4934,7 +4934,7 @@ export async function generateAdminClientBookingFinalInvoiceAction(formData: For
 export async function createAdminClientManualTransactionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -5028,7 +5028,7 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
 export async function updateAdminClientManualTransactionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -5097,7 +5097,7 @@ export async function updateAdminClientManualTransactionAction(formData: FormDat
 export async function deleteAdminClientManualTransactionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -5126,7 +5126,7 @@ export async function deleteAdminClientManualTransactionAction(formData: FormDat
 export async function createAdminClientAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -5304,7 +5304,7 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
 export async function createChildForAdultAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -5403,7 +5403,7 @@ export async function createChildForAdultAction(formData: FormData): Promise<voi
 export async function createAdultForChildAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -5495,7 +5495,7 @@ export async function createAdultForChildAction(formData: FormData): Promise<voi
 export async function linkExistingFamilyMembersAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -5536,7 +5536,7 @@ export async function linkExistingFamilyMembersAction(formData: FormData): Promi
 export async function setFamilyBillingRecipientAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -5568,7 +5568,7 @@ export async function setFamilyBillingRecipientAction(formData: FormData): Promi
 export async function unlinkFamilyMembersAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -5597,7 +5597,7 @@ export async function unlinkFamilyMembersAction(formData: FormData): Promise<voi
 export async function bulkAdminClientsAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -5696,7 +5696,7 @@ export async function bulkAdminClientsAction(formData: FormData): Promise<void> 
 export async function createAdminClientGroupAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -5733,7 +5733,7 @@ export async function createAdminClientGroupAction(formData: FormData): Promise<
 export async function createAdminCollaboratorAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -5801,7 +5801,7 @@ export async function createAdminCollaboratorAction(formData: FormData): Promise
 export async function uploadAdminCollaboratorContractAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -5847,7 +5847,7 @@ export async function uploadAdminCollaboratorContractAction(formData: FormData):
 export async function deleteAdminCollaboratorContractAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -5881,7 +5881,7 @@ export async function deleteAdminCollaboratorContractAction(formData: FormData):
 export async function sendAdminCollaboratorsMessageAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -5945,7 +5945,7 @@ function parseMoneyInput(raw: string): string | null {
 export async function createAdminCollaboratorSalaryPaymentAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -5991,7 +5991,7 @@ export async function createAdminCollaboratorSalaryPaymentAction(formData: FormD
 export async function updateAdminCollaboratorProfileAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -6063,7 +6063,7 @@ export async function updateAdminCollaboratorProfileAction(formData: FormData): 
 export async function sendAdminCollaboratorPasswordLinkAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -6097,7 +6097,7 @@ export async function sendAdminCollaboratorPasswordLinkAction(formData: FormData
 export async function updateAdminCollaboratorPermissionsAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -6131,7 +6131,7 @@ export async function updateAdminCollaboratorPermissionsAction(formData: FormDat
 export async function updateAdminCollaboratorRatesAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -6397,7 +6397,7 @@ export async function updateAdminCollaboratorRatesAction(formData: FormData): Pr
 export async function upsertAdminCollaboratorContractGridAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -6646,7 +6646,7 @@ function parseFormulaPayload(formData: FormData): Record<string, unknown> {
 export async function createAdminActivityAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -6812,7 +6812,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
 export async function updateAdminActivityAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -6980,7 +6980,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
 export async function createAdminCreditTypeAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -7024,7 +7024,7 @@ export async function createAdminCreditTypeAction(formData: FormData): Promise<v
 export async function updateAdminCreditTypeAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -7073,7 +7073,7 @@ export async function updateAdminCreditTypeAction(formData: FormData): Promise<v
 export async function deleteAdminCreditTypeAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -7103,7 +7103,7 @@ export async function deleteAdminCreditTypeAction(formData: FormData): Promise<v
 export async function createAdminLegalEntityAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -7169,7 +7169,7 @@ export async function createAdminLegalEntityAction(formData: FormData): Promise<
 export async function updateAdminLegalEntityAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -7246,7 +7246,7 @@ export async function updateAdminLegalEntityAction(formData: FormData): Promise<
 export async function disableAdminLegalEntityAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -7276,7 +7276,7 @@ export async function disableAdminLegalEntityAction(formData: FormData): Promise
 export async function updateAdminConfigAccountAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -7339,7 +7339,7 @@ export async function updateAdminConfigAccountAction(formData: FormData): Promis
 export async function updateAdminConfigSubscriptionsAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -7413,7 +7413,7 @@ export async function updateAdminConfigSubscriptionsAction(formData: FormData): 
 export async function updateAdminConfigProfessorDefaultGridAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -7546,7 +7546,7 @@ export async function updateAdminConfigProfessorDefaultGridAction(formData: Form
 export async function createAdminConfigProfessorDefaultGridPeriodAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnToBase = safeAdminReturnPath(formData, "/admin/config?section=params-professor-default-grid");
@@ -7592,7 +7592,7 @@ export async function createAdminConfigProfessorDefaultGridPeriodAction(formData
 export async function updateAdminConfigProfessorDefaultGridPeriodAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -7641,7 +7641,7 @@ export async function updateAdminConfigProfessorDefaultGridPeriodAction(formData
 export async function archiveAdminConfigProfessorDefaultGridPeriodAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -7670,7 +7670,7 @@ export async function archiveAdminConfigProfessorDefaultGridPeriodAction(formDat
 export async function updateAdminConfigProfessorDefaultGridPeriodRulesAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -7782,7 +7782,7 @@ export async function updateAdminConfigProfessorDefaultGridPeriodRulesAction(for
 export async function updateAdminConfigPaymentMethodsAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -7813,7 +7813,7 @@ export async function updateAdminConfigPaymentMethodsAction(formData: FormData):
 export async function updateAdminConfigProductCategoriesAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -7860,7 +7860,7 @@ export async function updateAdminConfigProductCategoriesAction(formData: FormDat
 export async function createAdminCatalogCategoryAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
@@ -7905,7 +7905,7 @@ export async function createAdminCatalogCategoryAction(formData: FormData): Prom
 export async function updateAdminCatalogCategoryAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
@@ -7950,7 +7950,7 @@ export async function updateAdminCatalogCategoryAction(formData: FormData): Prom
 export async function deleteAdminCatalogCategoryAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
@@ -7979,7 +7979,7 @@ export async function deleteAdminCatalogCategoryAction(formData: FormData): Prom
 export async function toggleAdminCatalogCategoryArchiveAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/config/catalog");
@@ -8038,7 +8038,7 @@ export async function toggleAdminCatalogCategoryArchiveAction(formData: FormData
 export async function createAdminCatalogProductAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
@@ -8135,7 +8135,7 @@ export async function createAdminCatalogProductAction(formData: FormData): Promi
 export async function updateAdminCatalogProductAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
@@ -8193,7 +8193,7 @@ export async function updateAdminCatalogProductAction(formData: FormData): Promi
 export async function deleteAdminCatalogProductAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
@@ -8219,7 +8219,7 @@ export async function deleteAdminCatalogProductAction(formData: FormData): Promi
 export async function createAdminCatalogKitAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
@@ -8284,7 +8284,7 @@ export async function createAdminCatalogKitAction(formData: FormData): Promise<v
 export async function updateAdminCatalogKitAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
@@ -8349,7 +8349,7 @@ export async function updateAdminCatalogKitAction(formData: FormData): Promise<v
 export async function deleteAdminCatalogKitAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
@@ -8376,7 +8376,7 @@ export async function deleteAdminCatalogKitAction(formData: FormData): Promise<v
 export async function duplicateAdminCatalogKitAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/config/catalog");
@@ -8464,7 +8464,7 @@ export async function duplicateAdminCatalogKitAction(formData: FormData): Promis
 export async function toggleAdminCatalogKitArchiveAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/config/catalog");
@@ -8534,7 +8534,7 @@ export async function toggleAdminCatalogKitArchiveAction(formData: FormData): Pr
 export async function updateAdminCatalogInventoryAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
@@ -8570,7 +8570,7 @@ export async function updateAdminCatalogInventoryAction(formData: FormData): Pro
 export async function updateAdminCatalogReorderStatusAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/products");
@@ -8598,7 +8598,7 @@ export async function updateAdminCatalogReorderStatusAction(formData: FormData):
 export async function createAdminCatalogTransferAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/products");
@@ -8638,7 +8638,7 @@ export async function createAdminCatalogTransferAction(formData: FormData): Prom
 export async function completeAdminCatalogTransferAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/products");
@@ -8669,7 +8669,7 @@ export async function completeAdminCatalogTransferAction(formData: FormData): Pr
 export async function cancelAdminCatalogTransferAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/products");
@@ -8696,7 +8696,7 @@ export async function cancelAdminCatalogTransferAction(formData: FormData): Prom
 export async function createAdminStockEntryAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/products?view=entries");
@@ -8738,7 +8738,7 @@ export async function createAdminStockEntryAction(formData: FormData): Promise<v
 export async function createAdminStockAdjustmentAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/products?view=entries");
@@ -8780,7 +8780,7 @@ export async function createAdminStockAdjustmentAction(formData: FormData): Prom
 export async function createAdminCatalogRequestAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
@@ -8822,7 +8822,7 @@ export async function createAdminCatalogRequestAction(formData: FormData): Promi
 export async function reviewAdminCatalogRequestAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
@@ -8858,7 +8858,7 @@ export async function reviewAdminCatalogRequestAction(formData: FormData): Promi
 export async function deliverAdminCatalogRequestAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/config?section=products");
@@ -8894,7 +8894,7 @@ export async function deliverAdminCatalogRequestAction(formData: FormData): Prom
 export async function professorCreateCatalogRequestAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const returnTo = safeProfessorReturnPath(formData, "/prof?tab=catalog");
   const studentUserId = parseUuid(String(formData.get("student_user_id") ?? ""));
@@ -8930,7 +8930,7 @@ export async function professorCreateCatalogRequestAction(formData: FormData): P
 export async function professorDeliverCatalogRequestAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const returnTo = safeProfessorReturnPath(formData, "/prof?tab=catalog");
   const requestId = parseUuid(String(formData.get("request_id") ?? ""));
@@ -8957,7 +8957,7 @@ export async function professorDeliverCatalogRequestAction(formData: FormData): 
 export async function updateAdminConfigPaymentProviderAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -8994,7 +8994,7 @@ export async function updateAdminConfigPaymentProviderAction(formData: FormData)
 export async function updateAdminConfigExternalContentSettingsAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -9056,7 +9056,7 @@ function buildMessagingConfigPath(tab: string, params: Record<string, string> = 
 export async function updateAdminConfigMessagingSettingsAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -9126,7 +9126,7 @@ export async function updateAdminConfigMessagingSettingsAction(formData: FormDat
 export async function updateAdminConfigInvoiceTemplateAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -9157,7 +9157,7 @@ export async function updateAdminConfigInvoiceTemplateAction(formData: FormData)
 export async function updateAdminConfigInvoiceNumberingAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -9197,7 +9197,7 @@ export async function updateAdminConfigInvoiceNumberingAction(formData: FormData
 export async function updateAdminTeacherInvoiceTemplateAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -9224,7 +9224,7 @@ export async function updateAdminTeacherInvoiceTemplateAction(formData: FormData
 export async function saveAdminConfigMessagingTemplateAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -9338,7 +9338,7 @@ export async function saveAdminConfigMessagingTemplateAction(formData: FormData)
 export async function resetAdminConfigPredefinedMessagingTemplateAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -9368,7 +9368,7 @@ export async function resetAdminConfigPredefinedMessagingTemplateAction(formData
 export async function deleteAdminConfigMessagingTemplateAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -9396,7 +9396,7 @@ export async function deleteAdminConfigMessagingTemplateAction(formData: FormDat
 export async function updateAdminClientPasswordEmailTemplateAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -9428,7 +9428,7 @@ export async function updateAdminClientPasswordEmailTemplateAction(formData: For
 export async function createAdminFormulaAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
   const returnTo = safeAdminReturnPath(formData, "/admin/config/formulas/new");
@@ -9468,7 +9468,7 @@ export async function createAdminFormulaAction(formData: FormData): Promise<void
 export async function updateAdminFormulaAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -9507,7 +9507,7 @@ export async function updateAdminFormulaAction(formData: FormData): Promise<void
 export async function duplicateAdminFormulaAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -9543,7 +9543,7 @@ export async function duplicateAdminFormulaAction(formData: FormData): Promise<v
 export async function disableAdminFormulaAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -9573,7 +9573,7 @@ export async function disableAdminFormulaAction(formData: FormData): Promise<voi
 export async function updatePlanningActivitiesAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -9700,7 +9700,7 @@ async function syncActivityContentMappings(params: {
 export async function syncAdminExternalContentCatalogAction(): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   await ensureAdmin(token);
@@ -9786,7 +9786,7 @@ function collectTypeformSelectedSessionIds(formData: FormData): Record<string, s
 export async function saveTypeformIntakeResolutionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -9862,7 +9862,7 @@ export async function saveTypeformIntakeResolutionAction(formData: FormData): Pr
 export async function reanalyzeTypeformIntakeAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -9899,7 +9899,7 @@ export async function reanalyzeTypeformIntakeAction(formData: FormData): Promise
 export async function saveTypeformIntakeNormalizedDataAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -9964,7 +9964,7 @@ export async function saveTypeformIntakeNormalizedDataAction(formData: FormData)
 export async function ignoreTypeformIntakeAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -9995,7 +9995,7 @@ export async function ignoreTypeformIntakeAction(formData: FormData): Promise<vo
 export async function restoreTypeformIntakeAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -10026,7 +10026,7 @@ export async function restoreTypeformIntakeAction(formData: FormData): Promise<v
 export async function deleteTypeformIntakeAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -10056,7 +10056,7 @@ export async function deleteTypeformIntakeAction(formData: FormData): Promise<vo
 export async function generateTypeformDraftQuoteAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -10086,7 +10086,7 @@ export async function generateTypeformDraftQuoteAction(formData: FormData): Prom
 export async function seedTypeformDemoAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -10192,7 +10192,7 @@ function parseQuoteWizardLines(raw: string): QuoteWizardLinePayload[] {
 export async function createQuoteProspectAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -10231,7 +10231,7 @@ export async function createQuoteProspectAction(formData: FormData): Promise<voi
 export async function createQuoteDraftAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -10417,7 +10417,7 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
 export async function sendQuoteAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -10454,7 +10454,7 @@ export async function sendQuoteAction(formData: FormData): Promise<void> {
 export async function resendQuoteAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -10492,7 +10492,7 @@ export async function resendQuoteAction(formData: FormData): Promise<void> {
 export async function cancelQuoteAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -10531,7 +10531,7 @@ export async function cancelQuoteAction(formData: FormData): Promise<void> {
 export async function restoreQuotePublicResponseAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -10561,7 +10561,7 @@ export async function restoreQuotePublicResponseAction(formData: FormData): Prom
 export async function resendCommunicationAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -10594,7 +10594,7 @@ export async function resendCommunicationAction(formData: FormData): Promise<voi
 export async function regenerateQuoteDocumentAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -10622,7 +10622,7 @@ export async function regenerateQuoteDocumentAction(formData: FormData): Promise
 export async function duplicateQuoteAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -10648,7 +10648,7 @@ export async function duplicateQuoteAction(formData: FormData): Promise<void> {
 export async function updateQuoteSettingsAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -10778,7 +10778,7 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
 export async function updateQuoteLinesAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -11203,7 +11203,7 @@ async function buildCalendarSnapshotFromBlocks({
 export async function updateQuotePlanningAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -11402,7 +11402,7 @@ function buildProspectPayloadFromForm(formData: FormData): ProspectPayload | nul
 export async function createAdminProspectAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -11432,7 +11432,7 @@ export async function createAdminProspectAction(formData: FormData): Promise<voi
 export async function updateAdminProspectAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   await ensureAdmin(token);
 
@@ -11872,7 +11872,7 @@ function parseCalendarVacationPeriods(formData: FormData): QuoteCalendarPeriodPa
 export async function createAdminQuoteTypeConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -11917,7 +11917,7 @@ export async function createAdminQuoteTypeConfigAction(formData: FormData): Prom
 export async function updateAdminQuoteTypeConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -11962,7 +11962,7 @@ export async function updateAdminQuoteTypeConfigAction(formData: FormData): Prom
 export async function deleteAdminQuoteTypeConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -11988,7 +11988,7 @@ export async function deleteAdminQuoteTypeConfigAction(formData: FormData): Prom
 export async function createAdminPricingCatalogConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -12036,7 +12036,7 @@ export async function createAdminPricingCatalogConfigAction(formData: FormData):
 export async function updateAdminPricingCatalogConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -12085,7 +12085,7 @@ export async function updateAdminPricingCatalogConfigAction(formData: FormData):
 export async function deleteAdminPricingCatalogConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -12111,7 +12111,7 @@ export async function deleteAdminPricingCatalogConfigAction(formData: FormData):
 export async function createAdminPaymentPlanConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -12185,7 +12185,7 @@ export async function createAdminPaymentPlanConfigAction(formData: FormData): Pr
 export async function updateAdminPaymentPlanConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -12261,7 +12261,7 @@ export async function updateAdminPaymentPlanConfigAction(formData: FormData): Pr
 export async function deleteAdminPaymentPlanConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -12287,7 +12287,7 @@ export async function deleteAdminPaymentPlanConfigAction(formData: FormData): Pr
 export async function upsertAdminSolfegeLevelRuleConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -12341,7 +12341,7 @@ export async function upsertAdminSolfegeLevelRuleConfigAction(formData: FormData
 export async function deleteAdminSolfegeLevelRuleConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -12367,7 +12367,7 @@ export async function deleteAdminSolfegeLevelRuleConfigAction(formData: FormData
 export async function createAdminQuoteSchoolCalendarConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -12436,7 +12436,7 @@ export async function createAdminQuoteSchoolCalendarConfigAction(formData: FormD
 export async function updateAdminQuoteSchoolCalendarConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -12530,7 +12530,7 @@ function parseCalendarGroupEntries(formData: FormData): Array<{ calendarId: stri
 export async function updateAdminQuoteSchoolCalendarGroupAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -12645,7 +12645,7 @@ export async function updateAdminQuoteSchoolCalendarGroupAction(formData: FormDa
 export async function deleteAdminQuoteSchoolCalendarConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -12682,7 +12682,7 @@ export async function deleteAdminQuoteSchoolCalendarConfigAction(formData: FormD
 export async function previewAdminQuoteSchoolCalendarDeploymentAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -12729,7 +12729,7 @@ export async function previewAdminQuoteSchoolCalendarDeploymentAction(formData: 
 export async function deployAdminQuoteSchoolCalendarAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -12755,7 +12755,7 @@ export async function deployAdminQuoteSchoolCalendarAction(formData: FormData): 
 export async function syncAdminQuoteSchoolCalendarDeploymentAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -12781,7 +12781,7 @@ export async function syncAdminQuoteSchoolCalendarDeploymentAction(formData: For
 export async function removeAdminQuoteSchoolCalendarDeploymentAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -12828,7 +12828,7 @@ function parseCalendarBulkAction(raw: string): CalendarBulkAction | null {
 export async function bulkAdminQuoteSchoolCalendarsAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -12917,7 +12917,7 @@ export async function bulkAdminQuoteSchoolCalendarsAction(formData: FormData): P
 export async function previewAdminQuoteSchoolCalendarGroupDeploymentAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -12973,7 +12973,7 @@ export async function previewAdminQuoteSchoolCalendarGroupDeploymentAction(formD
 export async function deployAdminQuoteSchoolCalendarGroupAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -13003,7 +13003,7 @@ export async function deployAdminQuoteSchoolCalendarGroupAction(formData: FormDa
 export async function syncAdminQuoteSchoolCalendarGroupAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -13033,7 +13033,7 @@ export async function syncAdminQuoteSchoolCalendarGroupAction(formData: FormData
 export async function removeAdminQuoteSchoolCalendarGroupDeploymentAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -13063,7 +13063,7 @@ export async function removeAdminQuoteSchoolCalendarGroupDeploymentAction(formDa
 export async function createAdminQuoteTemplateV2ConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const adminLanguage = await ensureAdminAndGetLanguage(token);
 
@@ -13120,7 +13120,7 @@ export async function createAdminQuoteTemplateV2ConfigAction(formData: FormData)
 export async function updateAdminQuoteTemplateV2ConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const adminLanguage = await ensureAdminAndGetLanguage(token);
 
@@ -13179,7 +13179,7 @@ export async function updateAdminQuoteTemplateV2ConfigAction(formData: FormData)
 export async function deleteAdminQuoteTemplateV2ConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const adminLanguage = await ensureAdminAndGetLanguage(token);
 
@@ -13205,7 +13205,7 @@ export async function deleteAdminQuoteTemplateV2ConfigAction(formData: FormData)
 export async function hardDeleteAdminQuoteTemplateV2ConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const adminLanguage = await ensureAdminAndGetLanguage(token);
 
@@ -13235,7 +13235,7 @@ export async function hardDeleteAdminQuoteTemplateV2ConfigAction(formData: FormD
 export async function createAdminTermsTemplateConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const adminLanguage = await ensureAdminAndGetLanguage(token);
 
@@ -13289,7 +13289,7 @@ export async function createAdminTermsTemplateConfigAction(formData: FormData): 
 export async function updateAdminTermsTemplateConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const adminLanguage = await ensureAdminAndGetLanguage(token);
 
@@ -13345,7 +13345,7 @@ export async function updateAdminTermsTemplateConfigAction(formData: FormData): 
 export async function deleteAdminTermsTemplateConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const adminLanguage = await ensureAdminAndGetLanguage(token);
 
@@ -13371,7 +13371,7 @@ export async function deleteAdminTermsTemplateConfigAction(formData: FormData): 
 export async function hardDeleteAdminTermsTemplateConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const adminLanguage = await ensureAdminAndGetLanguage(token);
 
@@ -13401,7 +13401,7 @@ export async function hardDeleteAdminTermsTemplateConfigAction(formData: FormDat
 export async function createAdminQuoteDocumentBindingConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const adminLanguage = await ensureAdminAndGetLanguage(token);
 
@@ -13455,7 +13455,7 @@ export async function createAdminQuoteDocumentBindingConfigAction(formData: Form
 export async function updateAdminQuoteDocumentBindingConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const adminLanguage = await ensureAdminAndGetLanguage(token);
 
@@ -13513,7 +13513,7 @@ export async function updateAdminQuoteDocumentBindingConfigAction(formData: Form
 export async function deleteAdminQuoteDocumentBindingConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const adminLanguage = await ensureAdminAndGetLanguage(token);
 
@@ -13635,7 +13635,7 @@ export async function changeRequestPublicQuoteAction(formData: FormData): Promis
 export async function selectQuoteFollowupSlotAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
   const followupId = String(formData.get("followup_id") ?? "").trim();
@@ -13698,7 +13698,7 @@ export async function selectQuoteFollowupSlotAction(formData: FormData): Promise
 export async function changeQuoteFollowupPaymentMethodAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
   const followupId = String(formData.get("followup_id") ?? "").trim();
@@ -13730,7 +13730,7 @@ export async function changeQuoteFollowupPaymentMethodAction(formData: FormData)
 export async function finalizeQuoteFollowupAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
   const followupId = String(formData.get("followup_id") ?? "").trim();
@@ -13754,7 +13754,7 @@ export async function finalizeQuoteFollowupAction(formData: FormData): Promise<v
 export async function rollbackQuoteTransformationAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -14076,7 +14076,7 @@ async function loadQuoteQuickTransformAnalysis(
 export async function saveQuoteTransformationDraftAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -14131,7 +14131,7 @@ export async function saveQuoteTransformationDraftAction(formData: FormData): Pr
 export async function finalizeQuoteTransformationAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 
@@ -14220,7 +14220,7 @@ export async function finalizeQuoteTransformationAction(formData: FormData): Pro
 export async function quickTransformQuoteAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
   const language = await ensureAdminAndGetLanguage(token);
 

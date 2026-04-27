@@ -13,12 +13,12 @@ import { normalizeUiLanguage, uiText } from "../../lib/ui-i18n";
 export default async function AdminLayout({ children }: { children: React.ReactNode }): Promise<JSX.Element> {
   const token = getAdminToken();
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
   if (!meResult.ok || meResult.data.role !== "admin") {
-    redirect("/login?error=Acces%20admin%20requis");
+    redirect("/login?error_code=admin_access_required");
   }
 
   const displayName = [meResult.data.first_name, meResult.data.last_name].filter(Boolean).join(" ") || meResult.data.email;

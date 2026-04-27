@@ -1377,7 +1377,7 @@ function optInLabel(value: boolean, language: UiLanguage): string {
 export default async function AdminClientDetailPage({ params, searchParams }: PageProps): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   const currentTab = parseTab(readParam(searchParams, "tab"));

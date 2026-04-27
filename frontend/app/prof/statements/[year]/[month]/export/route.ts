@@ -13,7 +13,7 @@ type RouteParams = {
 export async function GET(request: NextRequest, { params }: RouteParams): Promise<Response> {
   const token = getPortalToken();
   if (!token) {
-    const loginUrl = new URL("/login?error=Session%20expiree", request.url);
+    const loginUrl = new URL("/login?error_code=session_expired", request.url);
     return NextResponse.redirect(loginUrl, 302);
   }
 

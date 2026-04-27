@@ -6,7 +6,7 @@ import { backendUrl } from "../../../../lib/backend";
 export async function GET(request: NextRequest): Promise<Response> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
-    const loginUrl = new URL("/login?error=Session%20expiree", request.url);
+    const loginUrl = new URL("/login?error_code=session_expired", request.url);
     return NextResponse.redirect(loginUrl, 302);
   }
 

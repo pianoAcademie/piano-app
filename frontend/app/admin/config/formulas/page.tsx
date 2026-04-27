@@ -151,12 +151,12 @@ function buildPublicBaseUrl(): string {
 export default async function AdminFormulasPage({ searchParams }: { searchParams?: SearchParams }): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
   if (!meResult.ok || meResult.data.role !== "admin") {
-    redirect("/login?error=Acces%20admin%20requis");
+    redirect("/login?error_code=admin_access_required");
   }
   const language = normalizeUiLanguage(meResult.data.preferred_language);
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
@@ -171,7 +171,7 @@ export default async function AdminFormulasPage({ searchParams }: { searchParams
 
   const formulasResult = await backendRequest<AdminFormulaOut[]>("/api/v1/admin/formulas?include_inactive=true", {}, token);
   if (!formulasResult.ok && formulasResult.status === 401) {
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   const formulas = formulasResult.ok ? formulasResult.data : [];
