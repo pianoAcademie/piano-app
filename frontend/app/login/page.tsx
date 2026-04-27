@@ -1,10 +1,11 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 
 import { forgotPasswordAction, loginAction, registerAction, resetPasswordAction } from "../../lib/actions";
 import AuthSignupFields from "../../components/auth-signup-fields";
 import PortalBrandLockup from "../../components/portal-brand-lockup";
 import { COUNTRY_OPTIONS, DEFAULT_COUNTRY } from "../../lib/reference-data";
-import { normalizeUiLanguage, uiText } from "../../lib/ui-i18n";
+import { type UiLanguage, uiText } from "../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type AuthMode = "login" | "signup" | "forgot";
@@ -30,10 +31,40 @@ function resolveMode(rawMode: string, resetToken: string): AuthMode {
   return "login";
 }
 
+function resolveUiLanguage(rawLanguage: string, acceptLanguage: string): UiLanguage {
+  for (const candidate of [rawLanguage, acceptLanguage]) {
+    const normalized = candidate.trim().toLowerCase();
+    if (!normalized) {
+      continue;
+    }
+    if (normalized === "en" || normalized.startsWith("en-")) {
+      return "en";
+    }
+    if (normalized === "fr" || normalized.startsWith("fr-")) {
+      return "fr";
+    }
+  }
+  return "fr";
+}
+
+function resolveLoginErrorMessage(rawError: string, errorCode: string, language: UiLanguage): string {
+  if (rawError) {
+    return rawError;
+  }
+  const normalizedCode = errorCode.trim().toLowerCase();
+  if (normalizedCode === "session_expired") {
+    return uiText(language, "auth.error_session_expired");
+  }
+  if (normalizedCode === "client_access_required") {
+    return uiText(language, "auth.error_client_access_required");
+  }
+  return "";
+}
+
 export default function LoginPage({ searchParams }: { searchParams: SearchParams }): JSX.Element {
-  const language = normalizeUiLanguage(readParam(searchParams, "lang"));
+  const language = resolveUiLanguage(readParam(searchParams, "lang"), headers().get("accept-language") ?? "");
   const okMessage = readParam(searchParams, "ok");
-  const errorMessage = readParam(searchParams, "error");
+  const errorMessage = resolveLoginErrorMessage(readParam(searchParams, "error"), readParam(searchParams, "error_code"), language);
   const resetToken = readParam(searchParams, "reset_token");
   const emailHint = readParam(searchParams, "email");
   const purchaseContext = readParam(searchParams, "purchase_context");

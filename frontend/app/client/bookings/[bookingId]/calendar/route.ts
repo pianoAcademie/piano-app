@@ -9,10 +9,18 @@ type RouteParams = {
   };
 };
 
+function planningErrorRedirect(status?: number): URLSearchParams {
+  const params = new URLSearchParams({ tab: "planning", error_code: "calendar_unavailable" });
+  if (typeof status === "number" && Number.isFinite(status) && status > 0) {
+    params.set("error_status", String(status));
+  }
+  return params;
+}
+
 export async function GET(request: NextRequest, { params }: RouteParams): Promise<Response> {
   const token = getPortalToken();
   if (!token) {
-    const loginUrl = new URL("/login?error=Session%20expiree", request.url);
+    const loginUrl = new URL("/login?error_code=session_expired", request.url);
     return NextResponse.redirect(loginUrl, 302);
   }
 
@@ -27,10 +35,7 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
   });
 
   if (!response.ok) {
-    const fallback = new URL(
-      `/client?tab=planning&error=${encodeURIComponent(`Agenda indisponible (${response.status})`)}`,
-      request.url,
-    );
+    const fallback = new URL(`/client?${planningErrorRedirect(response.status).toString()}`, request.url);
     return NextResponse.redirect(fallback, 302);
   }
 

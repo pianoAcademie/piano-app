@@ -78,7 +78,7 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
 
   const token = getPortalToken();
   if (!token) {
-    return redirectTo("/login?error=Session%20expiree");
+    return redirectTo("/login?error_code=session_expired");
   }
 
   const url = `${backendUrl()}/api/v1/clients/me/invoices/${invoiceId}/download`;

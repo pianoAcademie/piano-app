@@ -917,14 +917,21 @@ function resolvePortalErrorMessage(
   if (rawError) {
     return rawError;
   }
-  if (errorCode.trim().toLowerCase() !== "invoice_unavailable") {
-    return "";
-  }
+  const normalizedCode = errorCode.trim().toLowerCase();
   const status = Number.parseInt(errorStatus, 10);
-  if (Number.isFinite(status) && status > 0) {
-    return t("client.error_invoice_unavailable_with_status", { status });
+  if (normalizedCode === "invoice_unavailable") {
+    if (Number.isFinite(status) && status > 0) {
+      return t("client.error_invoice_unavailable_with_status", { status });
+    }
+    return t("client.error_invoice_unavailable");
   }
-  return t("client.error_invoice_unavailable");
+  if (normalizedCode === "calendar_unavailable") {
+    if (Number.isFinite(status) && status > 0) {
+      return t("client.error_calendar_unavailable_with_status", { status });
+    }
+    return t("client.error_calendar_unavailable");
+  }
+  return "";
 }
 
 function clientInvoiceHref(invoiceId: string, options?: { inline?: boolean }): string {
@@ -950,12 +957,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     if (getAdminToken()) {
       redirect("/admin?error=Ouvrir%20la%20vue%20client%20depuis%20la%20fiche%20client");
     }
-    redirect("/login?error=Session%20expiree");
+    redirect("/login?error_code=session_expired");
   }
 
   const meResult = await backendRequest<UserOut>("/api/v1/clients/me", {}, token);
   if (!meResult.ok) {
-    redirect(`/login?error=${encodeURIComponent("Session invalide ou role non client")}`);
+    redirect("/login?error_code=client_access_required");
   }
 
   const me = meResult.data;
