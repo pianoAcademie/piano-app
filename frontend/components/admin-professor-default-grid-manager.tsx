@@ -266,9 +266,9 @@ export default function AdminProfessorDefaultGridManager({
               <label>
                 {t("common.status")}
                 <select name="status" defaultValue={selectedPeriod.status}>
-                  <option value="ACTIVE">ACTIVE</option>
-                  <option value="FUTURE">FUTURE</option>
-                  <option value="ARCHIVED">ARCHIVED</option>
+                  <option value="ACTIVE">{t("common.active")}</option>
+                  <option value="FUTURE">{t("admin.professor_default_grid.future")}</option>
+                  <option value="ARCHIVED">{t("common.archived")}</option>
                 </select>
               </label>
               <label>

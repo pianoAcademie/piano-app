@@ -1,17 +1,18 @@
 import type { ReactNode } from "react";
 
 type UrgentPayCardProps = {
+  titleLabel: ReactNode;
   amountLabel: ReactNode;
   countLabel?: ReactNode;
   children: ReactNode;
 };
 
-export default function UrgentPayCard({ amountLabel, countLabel, children }: UrgentPayCardProps): JSX.Element {
+export default function UrgentPayCard({ titleLabel, amountLabel, countLabel, children }: UrgentPayCardProps): JSX.Element {
   return (
     <section className="client-urgent-pay-card">
       <header className="client-urgent-pay-head">
         <div>
-          <h2>À régler</h2>
+          <h2>{titleLabel}</h2>
           <p className="client-urgent-pay-amount">{amountLabel}</p>
         </div>
         {countLabel ? <span className="badge">{countLabel}</span> : null}

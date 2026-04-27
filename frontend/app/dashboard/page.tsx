@@ -2553,7 +2553,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               <section className="client-home-layout">
                 <div className="client-home-main">
                   {homeDueTotal > 0 ? (
-                    <UrgentPayCard amountLabel={toMoney(String(homeDueTotal), me.preferred_currency)} countLabel={t("client.invoice_count", { count: homeDueInvoices.length })}>
+                    <UrgentPayCard
+                      titleLabel={t("client.amount_due")}
+                      amountLabel={toMoney(String(homeDueTotal), me.preferred_currency)}
+                      countLabel={t("client.invoice_count", { count: homeDueInvoices.length })}
+                    >
                       <div className="client-home-due-list">
                         {homeDueInvoicePreview.map((invoice) => {
                           const linkedPayment = paymentByInvoiceId.get(invoice.id);
