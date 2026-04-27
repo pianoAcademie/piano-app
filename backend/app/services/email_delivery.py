@@ -110,7 +110,7 @@ def send_email(
     professor_id: UUID | None = None,
     recipient_user_id: UUID | None = None,
     communication_type: str | None = None,
-) -> str:
+) -> str | None:
     message_id = f"mail-{uuid4()}"
     delivery_config = resolve_messaging_delivery_config()
     provider = delivery_config.provider
@@ -156,7 +156,7 @@ def send_email(
             provider=provider,
             provider_message_id=message_id,
         )
-        return message_id
+        return None
 
     host, port = _smtp_host_port(delivery_config)
     username = delivery_config.smtp_username.strip()
@@ -188,7 +188,7 @@ def send_email(
             provider_message_id=message_id,
             error_message="Missing SMTP host",
         )
-        return message_id
+        return None
 
     if not username or not password:
         logger.error(
@@ -216,7 +216,7 @@ def send_email(
             provider_message_id=message_id,
             error_message="Missing SMTP credentials",
         )
-        return message_id
+        return None
 
     message = _build_message(
         to_email=to_email,
@@ -277,7 +277,7 @@ def send_email(
             provider_message_id=message_id,
             error_message="SMTP send exception",
         )
-        return message_id
+        return None
 
     logger.info(
         "Email delivered | id=%s | provider=%s | to=%s | context=%s | subject=%s",

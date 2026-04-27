@@ -3721,6 +3721,12 @@ def _send_quote_email(
     out.updated_at = now
     db.add(out)
 
+    if not provider_message_id:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Quote email delivery failed",
+        )
+
     db.add(
         QuoteEvent(
             quote_id=quote.id,
