@@ -29,7 +29,7 @@ import {
   type QuoteTransformQuote,
   type QuoteTransformSession,
 } from "./quote-transformation";
-import { normalizeUiLanguage, type UiLanguage, uiText } from "./ui-i18n";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "./ui-i18n";
 import type {
   AdminActivityOut,
   AdminActivityContentMappingOut,
@@ -5815,7 +5815,8 @@ export async function createAdminCollaboratorAction(formData: FormData): Promise
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const first_name = String(formData.get("first_name") ?? "").trim();
@@ -5825,7 +5826,7 @@ export async function createAdminCollaboratorAction(formData: FormData): Promise
   const payout_currency = String(formData.get("payout_currency") ?? "EUR").trim().toUpperCase();
 
   if (!email || !first_name || !last_name) {
-    redirect("/admin/professors?error=Email%2C%20prenom%20et%20nom%20sont%20obligatoires");
+    redirect(appendQueryMessage("/admin/professors", "error", t("admin.professor_action.email_first_last_required")));
   }
 
   const permissions = parseProfessorPermissions(formData);
@@ -5874,7 +5875,7 @@ export async function createAdminCollaboratorAction(formData: FormData): Promise
   const created = result.data.professor;
   revalidatePath("/admin/professors");
   revalidatePath(`/admin/professors/${created.id}`);
-  redirect("/admin/professors?ok=Collaborateur%20cree%20et%20email%20de%20creation%20acces%20envoye");
+  redirect(appendQueryMessage("/admin/professors", "ok", t("admin.professor_action.created_access_email_sent")));
 }
 
 export async function uploadAdminCollaboratorContractAction(formData: FormData): Promise<void> {
@@ -5883,23 +5884,24 @@ export async function uploadAdminCollaboratorContractAction(formData: FormData):
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const professorId = String(formData.get("professor_id") ?? "").trim();
   const returnTabRaw = String(formData.get("return_tab") ?? "profil").trim();
   const returnTab = returnTabRaw === "droits" || returnTabRaw === "tarifs" || returnTabRaw === "planning" ? returnTabRaw : "profil";
 
   if (!professorId) {
-    redirect("/admin/professors?error=Collaborateur%20invalide");
+    redirect(appendQueryMessage("/admin/professors", "error", t("admin.professor_action.invalid_collaborator")));
   }
 
   const returnTo = `/admin/professors/${professorId}?tab=${returnTab}`;
   const rawFile = formData.get("contract_file");
   if (!(rawFile instanceof File) || rawFile.size <= 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Selectionnez un PDF a importer"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.professor_action.select_contract_pdf")));
   }
   if (!rawFile.name.toLowerCase().endsWith(".pdf")) {
-    redirect(appendQueryMessage(returnTo, "error", "Le contrat doit etre un fichier PDF"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.professor_action.contract_pdf_required")));
   }
 
   const uploadPayload = new FormData();
@@ -5920,7 +5922,7 @@ export async function uploadAdminCollaboratorContractAction(formData: FormData):
 
   revalidatePath("/admin/professors");
   revalidatePath(`/admin/professors/${professorId}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Contrat collaborateur importe"));
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.professor_action.contract_uploaded")));
 }
 
 export async function deleteAdminCollaboratorContractAction(formData: FormData): Promise<void> {
@@ -5929,14 +5931,15 @@ export async function deleteAdminCollaboratorContractAction(formData: FormData):
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const professorId = String(formData.get("professor_id") ?? "").trim();
   const returnTabRaw = String(formData.get("return_tab") ?? "profil").trim();
   const returnTab = returnTabRaw === "droits" || returnTabRaw === "tarifs" || returnTabRaw === "planning" ? returnTabRaw : "profil";
 
   if (!professorId) {
-    redirect("/admin/professors?error=Collaborateur%20invalide");
+    redirect(appendQueryMessage("/admin/professors", "error", t("admin.professor_action.invalid_collaborator")));
   }
 
   const returnTo = `/admin/professors/${professorId}?tab=${returnTab}`;
@@ -5954,7 +5957,7 @@ export async function deleteAdminCollaboratorContractAction(formData: FormData):
 
   revalidatePath("/admin/professors");
   revalidatePath(`/admin/professors/${professorId}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Contrat collaborateur supprime"));
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.professor_action.contract_deleted")));
 }
 
 export async function sendAdminCollaboratorsMessageAction(formData: FormData): Promise<void> {
@@ -5962,7 +5965,8 @@ export async function sendAdminCollaboratorsMessageAction(formData: FormData): P
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const returnTo = safeAdminReturnPath(formData, "/admin/professors");
   const collaboratorIds = parseStringList(formData.getAll("collaborator_ids"));
@@ -5972,13 +5976,13 @@ export async function sendAdminCollaboratorsMessageAction(formData: FormData): P
   const body = String(formData.get("body") ?? "").trim();
   const bodyFormatRaw = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase();
   const bodyFormat = bodyFormatRaw === "HTML" ? "HTML" : "TEXT";
-  const subject = channel === "SMS" ? subjectRaw || "SMS collaborateurs" : subjectRaw;
+  const subject = channel === "SMS" ? subjectRaw || t("admin.professor_action.default_sms_subject") : subjectRaw;
 
   if (collaboratorIds.length === 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Selectionnez au moins un collaborateur"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.professor_action.select_at_least_one_collaborator")));
   }
   if (!body || (channel === "EMAIL" && !subject)) {
-    redirect(appendQueryMessage(returnTo, "error", "Sujet et message obligatoires"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.professor_action.subject_message_required")));
   }
 
   const result = await backendRequest<{ channel: "EMAIL" | "SMS"; requested_count: number; sent_count: number; skipped_count: number }>(
@@ -6005,7 +6009,15 @@ export async function sendAdminCollaboratorsMessageAction(formData: FormData): P
     appendQueryMessage(
       returnTo,
       "ok",
-      `${result.data.channel === "SMS" ? "SMS journalise" : "Message envoye"}: ${result.data.sent_count}/${result.data.requested_count} collaborateurs`,
+      result.data.channel === "SMS"
+        ? t("admin.professor_action.sms_logged_summary", {
+            sent_count: result.data.sent_count,
+            requested_count: result.data.requested_count,
+          })
+        : t("admin.professor_action.message_sent_summary", {
+            sent_count: result.data.sent_count,
+            requested_count: result.data.requested_count,
+          }),
     ),
   );
 }
@@ -6026,7 +6038,8 @@ export async function createAdminCollaboratorSalaryPaymentAction(formData: FormD
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const returnTo = safeAdminReturnPath(formData, "/admin/salary-payments");
   const professorId = String(formData.get("professor_id") ?? "").trim();
@@ -6039,7 +6052,7 @@ export async function createAdminCollaboratorSalaryPaymentAction(formData: FormD
   const amountInclVat = parseMoneyInput(String(formData.get("amount_incl_vat") ?? ""));
 
   if (!professorId || !referenceDate || !paymentDate || !invoiceNumber || !amountExclVat || !amountInclVat) {
-    redirect(appendQueryMessage(returnTo, "error", "Numero facture, montants HT/TTC, dates et collaborateur obligatoires"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.professor_action.salary_required_fields")));
   }
 
   const result = await backendRequest<AdminProfessorSalaryPaymentOut>(
@@ -6064,7 +6077,7 @@ export async function createAdminCollaboratorSalaryPaymentAction(formData: FormD
 
   revalidatePath("/admin/professors");
   revalidatePath("/admin/salary-payments");
-  redirect(appendQueryMessage(returnTo, "ok", "Paiement collaborateur enregistre"));
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.professor_action.salary_recorded")));
 }
 
 export async function updateAdminCollaboratorProfileAction(formData: FormData): Promise<void> {
@@ -6073,12 +6086,13 @@ export async function updateAdminCollaboratorProfileAction(formData: FormData): 
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const professorId = String(formData.get("professor_id") ?? "").trim();
   const returnTab = String(formData.get("return_tab") ?? "profil").trim() || "profil";
   if (!professorId) {
-    redirect("/admin/professors?error=Collaborateur%20invalide");
+    redirect(appendQueryMessage("/admin/professors", "error", t("admin.professor_action.invalid_collaborator")));
   }
 
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
@@ -6086,7 +6100,7 @@ export async function updateAdminCollaboratorProfileAction(formData: FormData): 
   const last_name = String(formData.get("last_name") ?? "").trim();
 
   if (!email || !first_name || !last_name) {
-    redirect(`/admin/professors/${professorId}?tab=${returnTab}&error=Email%2C%20prenom%20et%20nom%20sont%20obligatoires`);
+    redirect(appendQueryMessage(`/admin/professors/${professorId}?tab=${returnTab}`, "error", t("admin.professor_action.email_first_last_required")));
   }
 
   const activeRaw = String(formData.get("active") ?? "").trim();
@@ -6129,14 +6143,17 @@ export async function updateAdminCollaboratorProfileAction(formData: FormData): 
   revalidatePath(`/admin/professors/${professorId}`);
 
   if (result.data.activation_email_sent) {
+    const activationMessageId = result.data.activation_email_message_id ?? "n/a";
     redirect(
-      `/admin/professors/${professorId}?tab=${returnTab}&ok=${encodeURIComponent(
-        `Collaborateur active. Email d'activation envoye (${result.data.activation_email_message_id ?? "id n/a"})`,
-      )}`,
+      appendQueryMessage(
+        `/admin/professors/${professorId}?tab=${returnTab}`,
+        "ok",
+        t("admin.professor_action.activation_email_sent", { message_id: activationMessageId }),
+      ),
     );
   }
 
-  redirect(`/admin/professors/${professorId}?tab=${returnTab}&ok=Fiche%20collaborateur%20mise%20a%20jour`);
+  redirect(appendQueryMessage(`/admin/professors/${professorId}?tab=${returnTab}`, "ok", t("admin.professor_action.profile_updated")));
 }
 
 export async function sendAdminCollaboratorPasswordLinkAction(formData: FormData): Promise<void> {
@@ -6145,12 +6162,13 @@ export async function sendAdminCollaboratorPasswordLinkAction(formData: FormData
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const professorId = String(formData.get("professor_id") ?? "").trim();
   const returnTab = String(formData.get("return_tab") ?? "profil").trim() || "profil";
   if (!professorId) {
-    redirect("/admin/professors?error=Collaborateur%20invalide");
+    redirect(appendQueryMessage("/admin/professors", "error", t("admin.professor_action.invalid_collaborator")));
   }
 
   const result = await backendRequest<AdminCollaboratorSendPasswordOut>(
@@ -6166,11 +6184,8 @@ export async function sendAdminCollaboratorPasswordLinkAction(formData: FormData
 
   revalidatePath("/admin/professors");
   revalidatePath(`/admin/professors/${professorId}`);
-  redirect(
-    `/admin/professors/${professorId}?tab=${returnTab}&ok=${encodeURIComponent(
-      `Lien de reinitialisation envoye (expiration: ${new Date(result.data.expires_at).toLocaleString("fr-FR")})`,
-    )}`,
-  );
+  const expiresAtLabel = new Date(result.data.expires_at).toLocaleString(localeForUiLanguage(language));
+  redirect(appendQueryMessage(`/admin/professors/${professorId}?tab=${returnTab}`, "ok", t("admin.professor_action.password_link_sent", { expires_at: expiresAtLabel })));
 }
 
 export async function updateAdminCollaboratorPermissionsAction(formData: FormData): Promise<void> {
@@ -6179,11 +6194,12 @@ export async function updateAdminCollaboratorPermissionsAction(formData: FormDat
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const professorId = String(formData.get("professor_id") ?? "").trim();
   if (!professorId) {
-    redirect("/admin/professors?error=Collaborateur%20invalide");
+    redirect(appendQueryMessage("/admin/professors", "error", t("admin.professor_action.invalid_collaborator")));
   }
 
   const payload = parseProfessorPermissions(formData);
@@ -6204,7 +6220,7 @@ export async function updateAdminCollaboratorPermissionsAction(formData: FormDat
 
   revalidatePath("/admin/professors");
   revalidatePath(`/admin/professors/${professorId}`);
-  redirect(`/admin/professors/${professorId}?tab=droits&ok=Droits%20mis%20a%20jour`);
+  redirect(appendQueryMessage(`/admin/professors/${professorId}?tab=droits`, "ok", t("admin.professor_action.permissions_updated")));
 }
 
 export async function updateAdminCollaboratorRatesAction(formData: FormData): Promise<void> {
