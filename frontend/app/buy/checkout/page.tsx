@@ -5,7 +5,7 @@ import PortalBrandLockup from "../../../components/portal-brand-lockup";
 import { submitFormulaCheckoutAction } from "../../../lib/actions";
 import { getPortalToken } from "../../../lib/auth-cookies";
 import { backendRequest } from "../../../lib/backend";
-import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
+import { localeForUiLanguage, normalizeUiLanguage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 import type { PublicFormulaPurchaseContextOut, UserOut } from "../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -56,7 +56,7 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
   const params = searchParams ?? {};
   const queryLanguage = normalizeUiLanguage(readParam(params, "lang"));
   const purchaseContext = readParam(params, "purchase_context").trim();
-  const okMessage = readParam(params, "ok");
+  const okMessage = resolveAuthOkMessage(readParam(params, "ok"), readParam(params, "ok_code"), queryLanguage);
   const errorMessage = readParam(params, "error");
   const warningMessage = readParam(params, "warning");
   const confirmExistingPackPurchase = readParam(params, "confirm_existing_pack_purchase") === "1";

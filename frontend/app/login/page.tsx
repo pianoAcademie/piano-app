@@ -5,7 +5,7 @@ import { forgotPasswordAction, loginAction, registerAction, resetPasswordAction 
 import AuthSignupFields from "../../components/auth-signup-fields";
 import PortalBrandLockup from "../../components/portal-brand-lockup";
 import { COUNTRY_OPTIONS, DEFAULT_COUNTRY } from "../../lib/reference-data";
-import { type UiLanguage, uiText } from "../../lib/ui-i18n";
+import { resolveAuthErrorMessage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type AuthMode = "login" | "signup" | "forgot";
@@ -47,50 +47,10 @@ function resolveUiLanguage(rawLanguage: string, acceptLanguage: string): UiLangu
   return "fr";
 }
 
-function resolveLoginErrorMessage(rawError: string, errorCode: string, language: UiLanguage): string {
-  if (rawError) {
-    return rawError;
-  }
-  const normalizedCode = errorCode.trim().toLowerCase();
-  if (normalizedCode === "session_expired") {
-    return uiText(language, "auth.error_session_expired");
-  }
-  if (normalizedCode === "invalid_session") {
-    return uiText(language, "auth.error_invalid_session");
-  }
-  if (normalizedCode === "admin_access_required") {
-    return uiText(language, "auth.error_admin_access_required");
-  }
-  if (normalizedCode === "client_access_required") {
-    return uiText(language, "auth.error_client_access_required");
-  }
-  if (normalizedCode === "reset_link_invalid") {
-    return uiText(language, "auth.error_reset_link_invalid");
-  }
-  if (normalizedCode === "reset_password_too_short") {
-    return uiText(language, "auth.error_reset_password_too_short");
-  }
-  if (normalizedCode === "reset_password_mismatch") {
-    return uiText(language, "auth.error_reset_password_mismatch");
-  }
-  return "";
-}
-
-function resolveLoginOkMessage(rawOk: string, okCode: string, language: UiLanguage): string {
-  if (rawOk) {
-    return rawOk;
-  }
-  const normalizedCode = okCode.trim().toLowerCase();
-  if (normalizedCode === "logged_out") {
-    return uiText(language, "auth.ok_logged_out");
-  }
-  return "";
-}
-
 export default function LoginPage({ searchParams }: { searchParams: SearchParams }): JSX.Element {
   const language = resolveUiLanguage(readParam(searchParams, "lang"), headers().get("accept-language") ?? "");
-  const okMessage = resolveLoginOkMessage(readParam(searchParams, "ok"), readParam(searchParams, "ok_code"), language);
-  const errorMessage = resolveLoginErrorMessage(readParam(searchParams, "error"), readParam(searchParams, "error_code"), language);
+  const okMessage = resolveAuthOkMessage(readParam(searchParams, "ok"), readParam(searchParams, "ok_code"), language);
+  const errorMessage = resolveAuthErrorMessage(readParam(searchParams, "error"), readParam(searchParams, "error_code"), language);
   const resetToken = readParam(searchParams, "reset_token");
   const emailHint = readParam(searchParams, "email");
   const purchaseContext = readParam(searchParams, "purchase_context");

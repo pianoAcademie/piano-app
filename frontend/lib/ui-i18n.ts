@@ -2,6 +2,40 @@ export type UiLanguage = "fr" | "en";
 
 type TranslationValues = Record<string, string | number>;
 
+const AUTH_ERROR_MESSAGE_KEYS: Record<string, string> = {
+  session_expired: "auth.error_session_expired",
+  invalid_session: "auth.error_invalid_session",
+  admin_access_required: "auth.error_admin_access_required",
+  client_access_required: "auth.error_client_access_required",
+  reset_link_invalid: "auth.error_reset_link_invalid",
+  reset_password_too_short: "auth.error_reset_password_too_short",
+  reset_password_mismatch: "auth.error_reset_password_mismatch",
+  signup_first_name_required: "auth.error_signup_first_name_required",
+  signup_last_name_required: "auth.error_signup_last_name_required",
+  signup_child_first_name_required: "auth.error_signup_child_first_name_required",
+  signup_child_last_name_required: "auth.error_signup_child_last_name_required",
+  signup_child_birth_date_required: "auth.error_signup_child_birth_date_required",
+  signup_valid_email_required: "auth.error_signup_valid_email_required",
+  signup_phone_required: "auth.error_signup_phone_required",
+  signup_address_required: "auth.error_signup_address_required",
+  signup_postal_code_required: "auth.error_signup_postal_code_required",
+  signup_city_required: "auth.error_signup_city_required",
+  signup_address_country_required: "auth.error_signup_address_country_required",
+  signup_residence_country_required: "auth.error_signup_residence_country_required",
+  signup_password_too_short: "auth.error_signup_password_too_short",
+  signup_confirm_accuracy_required: "auth.error_signup_confirm_accuracy_required",
+  signup_accept_terms_required: "auth.error_signup_accept_terms_required",
+  forgot_email_required: "auth.error_forgot_email_required",
+};
+
+const AUTH_OK_MESSAGE_KEYS: Record<string, string> = {
+  logged_out: "auth.ok_logged_out",
+  login_admin_success: "auth.ok_login_admin_success",
+  login_success: "auth.ok_login_success",
+  login_teacher_success: "auth.ok_login_teacher_success",
+  signup_success: "auth.ok_signup_success",
+};
+
 const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
   fr: {
     "common.app_name": "Piano Academie",
@@ -546,7 +580,27 @@ const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
 	    "auth.error_reset_link_invalid": "Lien de reinitialisation invalide.",
 	    "auth.error_reset_password_too_short": "Mot de passe trop court.",
 	    "auth.error_reset_password_mismatch": "Les mots de passe ne correspondent pas.",
+	    "auth.error_signup_first_name_required": "Veuillez renseigner votre prenom.",
+	    "auth.error_signup_last_name_required": "Veuillez renseigner votre nom.",
+	    "auth.error_signup_child_first_name_required": "Veuillez renseigner le prenom de l enfant.",
+	    "auth.error_signup_child_last_name_required": "Veuillez renseigner le nom de l enfant.",
+	    "auth.error_signup_child_birth_date_required": "Veuillez renseigner la date de naissance de l enfant.",
+	    "auth.error_signup_valid_email_required": "Veuillez saisir une adresse email valide.",
+	    "auth.error_signup_phone_required": "Veuillez renseigner votre telephone.",
+	    "auth.error_signup_address_required": "Veuillez renseigner votre adresse.",
+	    "auth.error_signup_postal_code_required": "Veuillez renseigner votre code postal.",
+	    "auth.error_signup_city_required": "Veuillez renseigner votre ville.",
+	    "auth.error_signup_address_country_required": "Veuillez selectionner le pays de votre adresse.",
+	    "auth.error_signup_residence_country_required": "Veuillez selectionner votre pays de residence.",
+	    "auth.error_signup_password_too_short": "Veuillez choisir un mot de passe de 8 caracteres minimum.",
+	    "auth.error_signup_confirm_accuracy_required": "Veuillez confirmer l exactitude des informations.",
+	    "auth.error_signup_accept_terms_required": "Veuillez accepter les conditions de creation de compte.",
+	    "auth.error_forgot_email_required": "Email obligatoire.",
 	    "auth.ok_logged_out": "Deconnexion effectuee.",
+	    "auth.ok_login_admin_success": "Connexion administrateur reussie.",
+	    "auth.ok_login_success": "Connexion reussie.",
+	    "auth.ok_login_teacher_success": "Connexion professeur reussie.",
+	    "auth.ok_signup_success": "Compte cree.",
 	    "auth.forgot_link": "Mot de passe oublie ?",
     "auth.create_account_link": "Creer un compte",
     "auth.reset_title": "Reinitialiser votre mot de passe",
@@ -5821,7 +5875,27 @@ const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
 	    "auth.error_reset_link_invalid": "Invalid reset link.",
 	    "auth.error_reset_password_too_short": "Password is too short.",
 	    "auth.error_reset_password_mismatch": "Passwords do not match.",
+	    "auth.error_signup_first_name_required": "Please enter your first name.",
+	    "auth.error_signup_last_name_required": "Please enter your last name.",
+	    "auth.error_signup_child_first_name_required": "Please enter the child s first name.",
+	    "auth.error_signup_child_last_name_required": "Please enter the child s last name.",
+	    "auth.error_signup_child_birth_date_required": "Please enter the child s birth date.",
+	    "auth.error_signup_valid_email_required": "Please enter a valid email address.",
+	    "auth.error_signup_phone_required": "Please enter your phone number.",
+	    "auth.error_signup_address_required": "Please enter your address.",
+	    "auth.error_signup_postal_code_required": "Please enter your postal code.",
+	    "auth.error_signup_city_required": "Please enter your city.",
+	    "auth.error_signup_address_country_required": "Please select your address country.",
+	    "auth.error_signup_residence_country_required": "Please select your residence country.",
+	    "auth.error_signup_password_too_short": "Please choose a password with at least 8 characters.",
+	    "auth.error_signup_confirm_accuracy_required": "Please confirm the information is accurate.",
+	    "auth.error_signup_accept_terms_required": "Please accept the account creation terms.",
+	    "auth.error_forgot_email_required": "Email is required.",
 	    "auth.ok_logged_out": "Signed out successfully.",
+	    "auth.ok_login_admin_success": "Administrator signed in successfully.",
+	    "auth.ok_login_success": "Signed in successfully.",
+	    "auth.ok_login_teacher_success": "Teacher signed in successfully.",
+	    "auth.ok_signup_success": "Account created successfully.",
 	    "auth.forgot_link": "Forgot password?",
     "auth.create_account_link": "Create account",
     "auth.reset_title": "Reset your password",
@@ -10570,4 +10644,20 @@ export function uiText(language: UiLanguage, key: string, values?: TranslationVa
     return template;
   }
   return template.replace(/\{(\w+)\}/g, (_match, token) => String(values[token] ?? ""));
+}
+
+export function resolveAuthErrorMessage(rawError: string, errorCode: string, language: UiLanguage): string {
+  if (rawError) {
+    return rawError;
+  }
+  const messageKey = AUTH_ERROR_MESSAGE_KEYS[errorCode.trim().toLowerCase()];
+  return messageKey ? uiText(language, messageKey) : "";
+}
+
+export function resolveAuthOkMessage(rawOk: string, okCode: string, language: UiLanguage): string {
+  if (rawOk) {
+    return rawOk;
+  }
+  const messageKey = AUTH_OK_MESSAGE_KEYS[okCode.trim().toLowerCase()];
+  return messageKey ? uiText(language, messageKey) : "";
 }

@@ -40,7 +40,7 @@ import type {
   ProfessorSessionOut,
   UserOut,
 } from "../../lib/types";
-import { normalizeUiLanguage, type UiLanguage, uiText } from "../../lib/ui-i18n";
+import { normalizeUiLanguage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type Tab = "overview" | "planning" | "finance" | "messages" | "catalog" | "profile";
@@ -563,7 +563,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   const profile = profileResult.data;
   const fullName = `${profile.first_name} ${profile.last_name}`.trim();
   const impersonationDisplayName = impersonationNameHint || fullName || profile.email;
-  const okMessage = readParam(searchParams, "ok");
+  const okMessage = resolveAuthOkMessage(readParam(searchParams, "ok"), readParam(searchParams, "ok_code"), language);
   const errorMessage = readParam(searchParams, "error");
 
   const sessions = sessionsResult.ok ? sessionsResult.data : [];

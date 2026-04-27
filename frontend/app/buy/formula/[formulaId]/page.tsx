@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { startFormulaPurchaseLinkAction } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
-import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
+import { localeForUiLanguage, normalizeUiLanguage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 import type { PublicFormulaPurchaseSummaryOut } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -55,7 +55,7 @@ export default async function FormulaPurchaseLandingPage({
   const query = searchParams ?? {};
   const language = normalizeUiLanguage(readParam(query, "lang"));
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
-  const okMessage = readParam(query, "ok");
+  const okMessage = resolveAuthOkMessage(readParam(query, "ok"), readParam(query, "ok_code"), language);
   const errorMessage = readParam(query, "error");
   const emailHint = readParam(query, "email");
   const landingHref = `/buy/formula/${params.formulaId}${language === "en" ? "?lang=en" : ""}`;

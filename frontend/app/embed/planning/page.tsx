@@ -4,7 +4,7 @@ import { reservePublicPlanningSessionAction } from "../../../lib/actions";
 import PortalBrandLockup from "../../../components/portal-brand-lockup";
 import { getPortalToken } from "../../../lib/auth-cookies";
 import { backendRequest } from "../../../lib/backend";
-import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
+import { localeForUiLanguage, normalizeUiLanguage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 import type { ClientBookingOut, CourseTypeOut, LocationOut, SessionOut } from "../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -212,7 +212,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const courseTypeId = readParam(searchParams, "course_type_id").trim();
   const locationId = readParam(searchParams, "location_id").trim();
   const selectedSessionId = readParam(searchParams, "session_id").trim();
-  const okMessage = readParam(searchParams, "ok");
+  const okMessage = resolveAuthOkMessage(readParam(searchParams, "ok"), readParam(searchParams, "ok_code"), language);
   const errorMessage = readParam(searchParams, "error");
   const sessionOkMessage = readParam(searchParams, "session_ok");
   const sessionErrorMessage = readParam(searchParams, "session_error");

@@ -1118,13 +1118,14 @@ export async function loginAction(formData: FormData): Promise<void> {
   const mode = String(formData.get("auth_mode") ?? "login").trim().toLowerCase() || "login";
   const purchaseContext = String(formData.get("purchase_context") ?? "").trim();
   const publicReturnTo = safePublicReturnPath(String(formData.get("return_to") ?? "").trim(), "");
+  const language = normalizeUiLanguage(String(formData.get("lang") ?? ""));
   const registrationSubjectTypeRaw = String(formData.get("registration_subject_type") ?? "self").trim().toLowerCase();
   const registrationSubjectType = registrationSubjectTypeRaw === "child" ? "child" : "self";
   const loginPathBase = `/login?mode=${encodeURIComponent(mode)}${email ? `&email=${encodeURIComponent(email)}` : ""}${
     purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
   }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}&registration_subject_type=${encodeURIComponent(
     registrationSubjectType,
-  )}`;
+  )}${language === "en" ? "&lang=en" : ""}`;
 
   const result = await backendRequest<AuthLoginResponse>("/api/v1/auth/login", {
     method: "POST",
@@ -1149,21 +1150,27 @@ export async function loginAction(formData: FormData): Promise<void> {
   }
 
   if (me.role === "admin") {
-    redirect("/admin?ok=Connexion%20admin%20reussie");
+    redirect("/admin?ok_code=login_admin_success");
   }
 
   if (me.role === "client") {
     if (purchaseContext) {
-      redirect(`/buy/checkout?purchase_context=${encodeURIComponent(purchaseContext)}&ok=Connexion%20reussie`);
+      redirect(
+        appendQueryMessage(
+          setQueryParam(`/buy/checkout?purchase_context=${encodeURIComponent(purchaseContext)}`, "lang", language === "en" ? "en" : null),
+          "ok_code",
+          "login_success",
+        ),
+      );
     }
     if (publicReturnTo) {
       const resolvedReturnTo = await resolveChildBookingReturnTo(result.data.access_token, publicReturnTo, registrationSubjectType);
-      redirect(appendQueryMessage(resolvedReturnTo, "ok", "Connexion reussie"));
+      redirect(appendQueryMessage(resolvedReturnTo, "ok_code", "login_success"));
     }
-    redirect("/client?tab=home&ok=Connexion%20reussie");
+    redirect("/client?tab=home&ok_code=login_success");
   }
 
-  redirect("/prof?ok=Connexion%20prof%20reussie");
+  redirect("/prof?ok_code=login_teacher_success");
 }
 
 export async function registerAction(formData: FormData): Promise<void> {
@@ -1171,6 +1178,7 @@ export async function registerAction(formData: FormData): Promise<void> {
   const password = String(formData.get("password") ?? "");
   const purchaseContext = String(formData.get("purchase_context") ?? "").trim();
   const publicReturnTo = safePublicReturnPath(String(formData.get("return_to") ?? "").trim(), "");
+  const language = normalizeUiLanguage(String(formData.get("lang") ?? ""));
   const first_name = String(formData.get("first_name") ?? "").trim();
   const last_name = String(formData.get("last_name") ?? "").trim();
   const phone = String(formData.get("phone") ?? "").trim();
@@ -1199,54 +1207,54 @@ export async function registerAction(formData: FormData): Promise<void> {
     purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
   }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}&registration_subject_type=${encodeURIComponent(
     registration_subject_type,
-  )}`;
+  )}${language === "en" ? "&lang=en" : ""}`;
   const trialSessionContext = sessionCheckoutContext(publicReturnTo);
   const trialSessionId = trialSessionContext.isSessionCheckout ? trialSessionContext.sessionId : "";
 
   if (!first_name) {
-    redirect(`${signupPathBase}&error=Veuillez%20renseigner%20votre%20prenom.`);
+    redirect(`${signupPathBase}&error_code=signup_first_name_required`);
   }
   if (!last_name) {
-    redirect(`${signupPathBase}&error=Veuillez%20renseigner%20votre%20nom.`);
+    redirect(`${signupPathBase}&error_code=signup_last_name_required`);
   }
   if (registration_subject_type === "child" && !child_first_name) {
-    redirect(`${signupPathBase}&error=Veuillez%20renseigner%20le%20prenom%20de%20l%27enfant.`);
+    redirect(`${signupPathBase}&error_code=signup_child_first_name_required`);
   }
   if (registration_subject_type === "child" && !child_last_name) {
-    redirect(`${signupPathBase}&error=Veuillez%20renseigner%20le%20nom%20de%20l%27enfant.`);
+    redirect(`${signupPathBase}&error_code=signup_child_last_name_required`);
   }
   if (registration_subject_type === "child" && !child_birth_date) {
-    redirect(`${signupPathBase}&error=Veuillez%20renseigner%20la%20date%20de%20naissance%20de%20l%27enfant.`);
+    redirect(`${signupPathBase}&error_code=signup_child_birth_date_required`);
   }
   if (!email.includes("@")) {
-    redirect(`${signupPathBase}&error=Veuillez%20saisir%20une%20adresse%20email%20valide.`);
+    redirect(`${signupPathBase}&error_code=signup_valid_email_required`);
   }
   if (!phone) {
-    redirect(`${signupPathBase}&error=Veuillez%20renseigner%20votre%20telephone.`);
+    redirect(`${signupPathBase}&error_code=signup_phone_required`);
   }
   if (!address_line) {
-    redirect(`${signupPathBase}&error=Veuillez%20renseigner%20votre%20adresse.`);
+    redirect(`${signupPathBase}&error_code=signup_address_required`);
   }
   if (!postal_code) {
-    redirect(`${signupPathBase}&error=Veuillez%20renseigner%20votre%20code%20postal.`);
+    redirect(`${signupPathBase}&error_code=signup_postal_code_required`);
   }
   if (!city) {
-    redirect(`${signupPathBase}&error=Veuillez%20renseigner%20votre%20ville.`);
+    redirect(`${signupPathBase}&error_code=signup_city_required`);
   }
   if (!address_country || address_country.length !== 2) {
-    redirect(`${signupPathBase}&error=Veuillez%20selectionner%20le%20pays%20de%20votre%20adresse.`);
+    redirect(`${signupPathBase}&error_code=signup_address_country_required`);
   }
   if (!residence_country || residence_country.length !== 2) {
-    redirect(`${signupPathBase}&error=Veuillez%20selectionner%20votre%20pays%20de%20residence.`);
+    redirect(`${signupPathBase}&error_code=signup_residence_country_required`);
   }
   if (password.length < 8) {
-    redirect(`${signupPathBase}&error=Veuillez%20choisir%20un%20mot%20de%20passe%20de%208%20caracteres%20minimum.`);
+    redirect(`${signupPathBase}&error_code=signup_password_too_short`);
   }
   if (!confirmAccuracy) {
-    redirect(`${signupPathBase}&error=Veuillez%20confirmer%20l%27exactitude%20des%20informations.`);
+    redirect(`${signupPathBase}&error_code=signup_confirm_accuracy_required`);
   }
   if (!acceptAccountTerms) {
-    redirect(`${signupPathBase}&error=Veuillez%20accepter%20les%20conditions%20de%20creation%20de%20compte.`);
+    redirect(`${signupPathBase}&error_code=signup_accept_terms_required`);
   }
 
   const registerResult = await backendRequest<{ id: string }>("/api/v1/auth/register", {
@@ -1291,14 +1299,20 @@ export async function registerAction(formData: FormData): Promise<void> {
     redirect(
       `/login?mode=login${email ? `&email=${encodeURIComponent(email)}` : ""}${
         purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
-      }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}&error=${encodeURIComponent(loginResult.message)}`,
+      }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}${language === "en" ? "&lang=en" : ""}&error=${encodeURIComponent(loginResult.message)}`,
     );
   }
 
   clearAllAuthTokens();
   setPortalSessionToken(loginResult.data.access_token);
   if (purchaseContext) {
-    redirect(`/buy/checkout?purchase_context=${encodeURIComponent(purchaseContext)}&ok=Compte%20cree`);
+    redirect(
+      appendQueryMessage(
+        setQueryParam(`/buy/checkout?purchase_context=${encodeURIComponent(purchaseContext)}`, "lang", language === "en" ? "en" : null),
+        "ok_code",
+        "signup_success",
+      ),
+    );
   }
   if (publicReturnTo) {
     const resolvedReturnTo = await resolveChildBookingReturnTo(
@@ -1306,20 +1320,21 @@ export async function registerAction(formData: FormData): Promise<void> {
       publicReturnTo,
       registration_subject_type,
     );
-    redirect(appendQueryMessage(resolvedReturnTo, "ok", "Compte cree"));
+    redirect(appendQueryMessage(resolvedReturnTo, "ok_code", "signup_success"));
   }
-  redirect("/client?tab=home&ok=Compte%20cree");
+  redirect("/client?tab=home&ok_code=signup_success");
 }
 
 export async function forgotPasswordAction(formData: FormData): Promise<void> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const purchaseContext = String(formData.get("purchase_context") ?? "").trim();
   const publicReturnTo = safePublicReturnPath(String(formData.get("return_to") ?? "").trim(), "");
+  const language = normalizeUiLanguage(String(formData.get("lang") ?? ""));
   const forgotPathBase = `/login?mode=forgot${email ? `&email=${encodeURIComponent(email)}` : ""}${
     purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
-  }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}`;
+  }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}${language === "en" ? "&lang=en" : ""}`;
   if (!email) {
-    redirect(`${forgotPathBase}&error=Email%20obligatoire`);
+    redirect(`${forgotPathBase}&error_code=forgot_email_required`);
   }
 
   const result = await backendRequest<{ message: string }>("/api/v1/auth/forgot-password", {

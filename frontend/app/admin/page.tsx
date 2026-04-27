@@ -28,7 +28,7 @@ import DayEventsDrawer from "../../components/planning/day-events-drawer";
 import MonthDayCard from "../../components/planning/month-day-card";
 import SessionEditModalBridge from "../../components/planning/session-edit-modal-bridge";
 import SessionCreateMainFields from "../../components/planning/session-create-main-fields";
-import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../lib/ui-i18n";
+import { localeForUiLanguage, normalizeUiLanguage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
 import type {
   AdminClientOut,
   AdminMessagingTemplateOut,
@@ -1312,7 +1312,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const sessionRecipientStudentNames = sessionRecipientStudents.map((item) => item.label.split(" <")[0] || item.label);
   const sessionRecipientSummary = compactList(sessionRecipientStudentNames, 2);
 
-  const okMessage = readParam(searchParams, "ok");
+  const okMessage = resolveAuthOkMessage(readParam(searchParams, "ok"), readParam(searchParams, "ok_code"), language);
   const errorMessage = readParam(searchParams, "error");
 
   const modalHref = selectedSession ? withSessionInHref(baseHref, selectedSession.id) : baseHref;

@@ -63,7 +63,7 @@ import SectionCard from "../../components/ui-client/section-card";
 import TransactionRow from "../../components/ui-client/transaction-row";
 import UpcomingLessonRow from "../../components/ui-client/upcoming-lesson-row";
 import UrgentPayCard from "../../components/ui-client/urgent-pay-card";
-import { normalizeUiLanguage, type UiLanguage, uiText } from "../../lib/ui-i18n";
+import { normalizeUiLanguage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type AgendaView = "agenda" | "week" | "day";
@@ -2365,7 +2365,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
   const displayName = memberDisplayName({ first_name: me.first_name, last_name: me.last_name, email: me.email }, language);
   const impersonationDisplayName = impersonationNameHint || displayName;
-  const okMessage = readParam(searchParams, "ok");
+  const okMessage = resolveAuthOkMessage(readParam(searchParams, "ok"), readParam(searchParams, "ok_code"), language);
   const errorMessage = readParam(searchParams, "error");
   const errorCode = readParam(searchParams, "error_code");
   const errorStatus = readParam(searchParams, "error_status");

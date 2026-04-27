@@ -5,7 +5,7 @@ import PortalBrandLockup from "../../../../components/portal-brand-lockup";
 import { startFormulaPurchaseLinkAction, submitPublicSessionCheckoutAction } from "../../../../lib/actions";
 import { getPortalToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
-import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
+import { localeForUiLanguage, normalizeUiLanguage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 import type {
   ClientSessionPurchaseCatalogOut,
   ClientSessionReservationMemberOptionOut,
@@ -142,7 +142,7 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
   const sessionId = readParam(params, "session_id").trim();
   const planningReturnTo = readParam(params, "planning_return_to").trim();
   const bookingUserId = readParam(params, "booking_user_id").trim();
-  const okMessage = readParam(params, "ok");
+  const okMessage = resolveAuthOkMessage(readParam(params, "ok"), readParam(params, "ok_code"), queryLanguage);
   const errorMessage = readParam(params, "error");
   const checkoutReturnTo = sessionId ? buildCheckoutHref(sessionId, planningReturnTo, bookingUserId, queryLanguage) : `/buy/session/checkout${queryLanguage === "en" ? "?lang=en" : ""}`;
 
