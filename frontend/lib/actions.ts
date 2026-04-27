@@ -2458,50 +2458,50 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   };
 
   if (!course_type_id || !location_id || !title || !start_at_utc) {
-    redirect(createSessionErrorPath(returnTo, createDraftPayload, "Champs obligatoires manquants"));
+    redirect(createSessionErrorPath(returnTo, createDraftPayload, t("admin.planning_action.required_fields_missing")));
   }
 
   if (!is_all_day && !start_time.trim()) {
-    redirect(createSessionErrorPath(returnTo, createDraftPayload, "Heure de debut obligatoire"));
+    redirect(createSessionErrorPath(returnTo, createDraftPayload, t("admin.planning_action.start_time_required")));
   }
 
   if (!is_all_day && end_time.trim() && !parsed_end_at_utc) {
-    redirect(createSessionErrorPath(returnTo, createDraftPayload, "Heure de fin invalide"));
+    redirect(createSessionErrorPath(returnTo, createDraftPayload, t("admin.planning_action.end_time_invalid")));
   }
 
   if (!is_all_day && duration_minutes_raw && duration_minutes === null) {
-    redirect(createSessionErrorPath(returnTo, createDraftPayload, "Duree invalide"));
+    redirect(createSessionErrorPath(returnTo, createDraftPayload, t("admin.planning_action.duration_invalid")));
   }
 
   if (!is_all_day && !parsed_end_at_utc && duration_minutes === null) {
-    redirect(createSessionErrorPath(returnTo, createDraftPayload, "Heure de fin ou duree obligatoire"));
+    redirect(createSessionErrorPath(returnTo, createDraftPayload, t("admin.planning_action.end_time_or_duration_required")));
   }
 
   if (!is_all_day && start_at_utc && end_at_utc) {
     const startMs = Date.parse(start_at_utc);
     const endMs = Date.parse(end_at_utc);
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
-      redirect(createSessionErrorPath(returnTo, createDraftPayload, "Heure de fin invalide"));
+      redirect(createSessionErrorPath(returnTo, createDraftPayload, t("admin.planning_action.end_time_invalid")));
     }
   }
 
   if (!capacity_raw.trim() || parsed_capacity_max === null || capacity_max < 0) {
-    redirect(createSessionErrorPath(returnTo, createDraftPayload, "Capacite max obligatoire (>= 0; vacances = 0)"));
+    redirect(createSessionErrorPath(returnTo, createDraftPayload, t("admin.planning_action.capacity_required")));
   }
   if (externalBookingPriceRaw && externalBookingPrice === null) {
-    redirect(createSessionErrorPath(returnTo, createDraftPayload, "Tarif externe invalide"));
+    redirect(createSessionErrorPath(returnTo, createDraftPayload, t("admin.planning_action.external_price_invalid")));
   }
 
   const recurrenceEnabled = recurrence_mode === "RECURRING";
   if (recurrenceEnabled) {
     if (!(recurrence_frequency === "DAILY" || recurrence_frequency === "WEEKLY" || recurrence_frequency === "MONTHLY")) {
-      redirect(createSessionErrorPath(returnTo, createDraftPayload, "Frequence de recurrence invalide"));
+      redirect(createSessionErrorPath(returnTo, createDraftPayload, t("admin.planning_action.recurrence_frequency_invalid")));
     }
     if (recurrence_interval === null || recurrence_interval < 1) {
-      redirect(createSessionErrorPath(returnTo, createDraftPayload, "Intervalle de recurrence invalide"));
+      redirect(createSessionErrorPath(returnTo, createDraftPayload, t("admin.planning_action.recurrence_interval_invalid")));
     }
     if (!recurrence_until_date) {
-      redirect(createSessionErrorPath(returnTo, createDraftPayload, "Choisir une date de fin de recurrence"));
+      redirect(createSessionErrorPath(returnTo, createDraftPayload, t("admin.planning_action.recurrence_until_required")));
     }
   }
 
@@ -2564,7 +2564,7 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
 
   revalidatePath("/admin");
   const successPath = removeQueryParam(returnTo, "create_draft");
-  redirect(appendQueryMessage(successPath, "ok", "Creneau cree"));
+  redirect(appendQueryMessage(successPath, "ok", t("admin.planning_action.slot_created")));
 }
 
 export async function updateAdminSessionAction(formData: FormData): Promise<void> {
@@ -2626,55 +2626,55 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const capacity_max = parseNonNegativeInt(capacity_raw);
 
   if (!session_id || !title || !start_at_utc || !course_type_id || !location_id) {
-    redirect(appendQueryMessage(returnTo, "error", "Champs de modification invalides"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.update_fields_invalid")));
   }
   if (!is_all_day && !start_time.trim()) {
-    redirect(appendQueryMessage(returnTo, "error", "Heure de debut obligatoire"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.start_time_required")));
   }
 
   if (!is_all_day && end_time.trim() && !parsed_end_at_utc) {
-    redirect(appendQueryMessage(returnTo, "error", "Heure de fin invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.end_time_invalid")));
   }
 
   if (!is_all_day && duration_minutes_raw && duration_minutes === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Duree invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.duration_invalid")));
   }
 
   if (!is_all_day && !parsed_end_at_utc && duration_minutes === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Heure de fin ou duree obligatoire"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.end_time_or_duration_required")));
   }
 
   if (!is_all_day && start_at_utc && end_at_utc) {
     const startMs = Date.parse(start_at_utc);
     const endMs = Date.parse(end_at_utc);
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
-      redirect(appendQueryMessage(returnTo, "error", "Heure de fin invalide"));
+      redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.end_time_invalid")));
     }
   }
 
   if (capacity_raw.trim() && capacity_max === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Capacite max invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.capacity_invalid")));
   }
   if (externalBookingPriceRaw && externalBookingPrice === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Tarif externe invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.external_price_invalid")));
   }
 
   const recurrenceEnabled = recurrence_mode === "RECURRING";
   if (recurrenceEnabled) {
     if (has_recurrence_group && apply_scope === "ONE") {
-      redirect(appendQueryMessage(returnTo, "error", "Modification recurrence: choisir Serie future ou Toute la serie"));
+      redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.recurrence_scope_future_or_all_required")));
     }
     if (!has_recurrence_group && apply_scope !== "ONE") {
-      redirect(appendQueryMessage(returnTo, "error", "Conversion en recurrence: portee 'Ce creneau' requise"));
+      redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.recurrence_conversion_scope_one_required")));
     }
     if (!(recurrence_frequency === "DAILY" || recurrence_frequency === "WEEKLY" || recurrence_frequency === "MONTHLY")) {
-      redirect(appendQueryMessage(returnTo, "error", "Frequence de recurrence invalide"));
+      redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.recurrence_frequency_invalid")));
     }
     if (recurrence_interval === null || recurrence_interval < 1) {
-      redirect(appendQueryMessage(returnTo, "error", "Intervalle de recurrence invalide"));
+      redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.recurrence_interval_invalid")));
     }
     if (!recurrence_until_date) {
-      redirect(appendQueryMessage(returnTo, "error", "Choisir une date de fin de recurrence"));
+      redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.recurrence_until_required")));
     }
   }
 
@@ -2742,7 +2742,7 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
 
   revalidatePath("/admin");
   const successPath = removeQueryParam(returnTo, "session_id");
-  redirect(appendQueryMessage(successPath, "ok", "Creneau modifie"));
+  redirect(appendQueryMessage(successPath, "ok", t("admin.planning_action.slot_updated")));
 }
 
 export async function shiftAdminSessionAction(formData: FormData): Promise<void> {
@@ -2763,19 +2763,19 @@ export async function shiftAdminSessionAction(formData: FormData): Promise<void>
 
   const minutes_delta = Number.parseInt(minutes_delta_raw, 10);
   if (!session_id || !Number.isFinite(minutes_delta)) {
-    redirect(appendQueryMessage(returnTo, "error", "Deplacement rapide invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.quick_shift_invalid")));
   }
 
   const start_at_utc = parseUtcFromLocalInput(current_start_raw);
   const end_at_utc = parseUtcFromLocalInput(current_end_raw);
   if (!start_at_utc || !end_at_utc) {
-    redirect(appendQueryMessage(returnTo, "error", "Date de deplacement invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.shift_date_invalid")));
   }
 
   const start_ms = Date.parse(start_at_utc);
   const end_ms = Date.parse(end_at_utc);
   if (!Number.isFinite(start_ms) || !Number.isFinite(end_ms)) {
-    redirect(appendQueryMessage(returnTo, "error", "Date de deplacement invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.shift_date_invalid")));
   }
 
   const shifted_start = new Date(start_ms + minutes_delta * 60_000).toISOString();
@@ -2798,7 +2798,7 @@ export async function shiftAdminSessionAction(formData: FormData): Promise<void>
   }
 
   revalidatePath("/admin");
-  redirect(appendQueryMessage(returnTo, "ok", "Creneau decale"));
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.planning_action.slot_shifted")));
 }
 
 export async function duplicateAdminSessionAction(formData: FormData): Promise<void> {
@@ -2820,7 +2820,7 @@ export async function duplicateAdminSessionAction(formData: FormData): Promise<v
   const target_start_at_utc = parseUtcFromDateAndTimeInTimezone(target_date, target_time, session_timezone);
 
   if (!session_id || !target_start_at_utc) {
-    redirect(appendQueryMessage(returnTo, "error", "Duplication invalide (date/heure cible)"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.duplicate_invalid_target")));
   }
 
   const result = await backendRequest<{
@@ -2847,7 +2847,10 @@ export async function duplicateAdminSessionAction(formData: FormData): Promise<v
     appendQueryMessage(
       successPath,
       "ok",
-      `Creneau duplique (${result.data.processed_sessions} creneau(x), ${result.data.duplicated_bookings} eleve(s))`,
+      t("admin.planning_action.slot_duplicated_summary", {
+        session_count: result.data.processed_sessions,
+        student_count: result.data.duplicated_bookings,
+      }),
     ),
   );
 }
@@ -2874,7 +2877,7 @@ export async function cancelAdminSessionAction(formData: FormData): Promise<void
   const professor_message = optionalField(formData, "professor_message");
   const professor_format = String(formData.get("professor_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
   if (!session_id) {
-    redirect(appendQueryMessage(returnTo, "error", "Session invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.invalid_session")));
   }
 
   const payload: Record<string, unknown> = {
@@ -2915,9 +2918,12 @@ export async function cancelAdminSessionAction(formData: FormData): Promise<void
   const successPath = removeQueryParam(returnTo, "confirm_action");
   const details =
     result.data.notified_students > 0 || result.data.notified_professors > 0
-      ? ` (${result.data.notified_students} eleve(s), ${result.data.notified_professors} professeur(s) notifie(s))`
+      ? t("admin.planning_action.notification_details", {
+          student_count: result.data.notified_students,
+          professor_count: result.data.notified_professors,
+        })
       : "";
-  redirect(appendQueryMessage(successPath, "ok", `Cours annule${details}`));
+  redirect(appendQueryMessage(successPath, "ok", `${t("admin.planning_action.slot_cancelled")}${details}`));
 }
 
 export async function deleteAdminSessionAction(formData: FormData): Promise<void> {
@@ -2948,7 +2954,7 @@ export async function deleteAdminSessionAction(formData: FormData): Promise<void
   const professor_message = optionalField(formData, "professor_message");
   const professor_format = String(formData.get("professor_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
   if (!session_id) {
-    redirect(appendQueryMessage(returnTo, "error", "Session invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.invalid_session")));
   }
 
   const payload: Record<string, unknown> = {};
@@ -2988,9 +2994,12 @@ export async function deleteAdminSessionAction(formData: FormData): Promise<void
   successPath = removeQueryParam(successPath, "confirm_action");
   const details =
     result.data.notified_students > 0 || result.data.notified_professors > 0
-      ? ` (${result.data.notified_students} eleve(s), ${result.data.notified_professors} professeur(s) notifie(s))`
+      ? t("admin.planning_action.notification_details", {
+          student_count: result.data.notified_students,
+          professor_count: result.data.notified_professors,
+        })
       : "";
-  redirect(appendQueryMessage(successPath, "ok", `Creneau supprime${details}`));
+  redirect(appendQueryMessage(successPath, "ok", `${t("admin.planning_action.slot_deleted")}${details}`));
 }
 
 export async function adminAddClientToSessionAction(formData: FormData): Promise<void> {
@@ -2999,7 +3008,8 @@ export async function adminAddClientToSessionAction(formData: FormData): Promise
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin?edit=1");
 
   const sessionId = String(formData.get("session_id") ?? "").trim();
@@ -3012,10 +3022,10 @@ export async function adminAddClientToSessionAction(formData: FormData): Promise
   const shouldApplyFuture = scope === "SERIES_FUTURE" || recurrenceChecked;
 
   if (!sessionId || !clientId) {
-    redirect(appendQueryMessage(returnTo, "error", "Session ou client invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.invalid_session_or_client")));
   }
   if (shouldApplyFuture && recurrenceChecked && !recurrenceEndDate) {
-    redirect(appendQueryMessage(returnTo, "error", "Date de fin de recurrence requise"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.recurrence_end_required")));
   }
 
   const payload: Record<string, unknown> = {
@@ -3049,11 +3059,16 @@ export async function adminAddClientToSessionAction(formData: FormData): Promise
 
   revalidatePath("/admin");
   if (result.data.processed_count === 0) {
-    const detail = result.data.details?.[0] ?? "Inscription impossible pour ce creneau";
+    const detail = result.data.details?.[0] ?? t("admin.planning_action.enrollment_impossible_slot");
     redirect(appendQueryMessage(returnTo, "error", detail));
   }
-  const scopeLabel = shouldApplyFuture ? "Serie future" : "Cette seance";
-  const summary = `${scopeLabel}: +${result.data.booked_count} reserve(s), ${result.data.waitlisted_count} en attente, ${result.data.skipped_count} ignore(s)`;
+  const scopeLabel = shouldApplyFuture ? t("admin.planning.future_series") : t("admin.planning.this_session");
+  const summary = t("admin.planning_action.enrollment_summary", {
+    scope: scopeLabel,
+    booked_count: result.data.booked_count,
+    waitlisted_count: result.data.waitlisted_count,
+    skipped_count: result.data.skipped_count,
+  });
   redirect(appendQueryMessage(returnTo, "ok", summary));
 }
 
@@ -3063,14 +3078,15 @@ export async function adminRemoveClientFromSessionAction(formData: FormData): Pr
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin?edit=1");
 
   const sessionId = String(formData.get("session_id") ?? "").trim();
   const bookingId = String(formData.get("booking_id") ?? "").trim();
   const scope = parseBookingScope(String(formData.get("scope") ?? "").trim());
   if (!sessionId || !bookingId) {
-    redirect(appendQueryMessage(returnTo, "error", "Reservation invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.invalid_booking")));
   }
 
   const result = await backendRequest<Record<string, never>>(
@@ -3086,7 +3102,7 @@ export async function adminRemoveClientFromSessionAction(formData: FormData): Pr
   }
 
   revalidatePath("/admin");
-  redirect(appendQueryMessage(returnTo, "ok", "Eleve retire du creneau"));
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.planning_action.student_removed_from_slot")));
 }
 
 export async function adminUpdateSessionAttendanceAction(formData: FormData): Promise<void> {
@@ -3095,7 +3111,8 @@ export async function adminUpdateSessionAttendanceAction(formData: FormData): Pr
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin?edit=1");
 
   const sessionId = String(formData.get("session_id") ?? "").trim();
@@ -3103,7 +3120,7 @@ export async function adminUpdateSessionAttendanceAction(formData: FormData): Pr
   const attendanceStatus = String(formData.get("attendance_status") ?? "").trim().toUpperCase();
 
   if (!sessionId || !bookingId || !["BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"].includes(attendanceStatus)) {
-    redirect(appendQueryMessage(returnTo, "error", "Saisie de presence invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.invalid_attendance_entry")));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -3120,7 +3137,7 @@ export async function adminUpdateSessionAttendanceAction(formData: FormData): Pr
   }
 
   revalidatePath("/admin");
-  redirect(appendQueryMessage(returnTo, "ok", "Presence mise a jour"));
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.planning_action.attendance_updated")));
 }
 
 export async function adminUpdateSessionGroupNoteAction(formData: FormData): Promise<void> {
@@ -3129,7 +3146,8 @@ export async function adminUpdateSessionGroupNoteAction(formData: FormData): Pro
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin?edit=1");
 
   const sessionId = String(formData.get("session_id") ?? "").trim();
@@ -3150,9 +3168,9 @@ export async function adminUpdateSessionGroupNoteAction(formData: FormData): Pro
   const groupNoteFormat = String(formData.get("group_note_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
   const includedStudentIds = parseStringList(formData.getAll("included_student_ids"));
   const sendToSelf = checkboxField(formData, "send_to_self");
-  const subject = optionalField(formData, "subject") ?? `Note de groupe - ${sessionTitle || "Creneau"}`;
+  const subject = optionalField(formData, "subject") ?? t("admin.planning_action.group_note_subject", { title: sessionTitle || t("admin.planning_action.slot_fallback") });
   if (!sessionId) {
-    redirect(appendQueryMessage(returnTo, "error", "Session invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.invalid_session")));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -3170,13 +3188,13 @@ export async function adminUpdateSessionGroupNoteAction(formData: FormData): Pro
 
   if (noteAction === "SEND_EMAIL" && noteDestination !== "PRIVATE") {
     if (!groupNote) {
-      redirect(appendQueryMessage(returnTo, "error", "Note de groupe obligatoire pour l envoi"));
+      redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.group_note_required_for_send")));
     }
     if (
       (noteDestination === "STUDENTS" || noteDestination === "PARENTS" || noteDestination === "STUDENTS_AND_PARENTS") &&
       includedStudentIds.length === 0
     ) {
-      redirect(appendQueryMessage(returnTo, "error", "Selectionnez au moins un eleve"));
+      redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.select_at_least_one_student")));
     }
 
     const broadcastResult = await backendRequest<{
@@ -3205,15 +3223,15 @@ export async function adminUpdateSessionGroupNoteAction(formData: FormData): Pro
     );
 
     if (!broadcastResult.ok) {
-      redirect(appendQueryMessage(returnTo, "error", `Note enregistree, envoi impossible: ${broadcastResult.message}`));
+      redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.group_note_saved_send_failed", { message: broadcastResult.message })));
     }
 
     revalidatePath("/admin");
-    redirect(appendQueryMessage(returnTo, "ok", `Note enregistree et envoyee (${broadcastResult.data.recipient_count})`));
+    redirect(appendQueryMessage(returnTo, "ok", t("admin.planning_action.group_note_saved_sent", { count: broadcastResult.data.recipient_count })));
   }
 
   revalidatePath("/admin");
-  redirect(appendQueryMessage(returnTo, "ok", "Note de groupe enregistree"));
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.planning_action.group_note_saved")));
 }
 
 export async function adminUpdateSessionBookingNoteAction(formData: FormData): Promise<void> {
@@ -3222,7 +3240,8 @@ export async function adminUpdateSessionBookingNoteAction(formData: FormData): P
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin?edit=1");
 
   const sessionId = String(formData.get("session_id") ?? "").trim();
@@ -3234,7 +3253,7 @@ export async function adminUpdateSessionBookingNoteAction(formData: FormData): P
   const studentNote = optionalField(formData, "student_note");
   const studentNoteFormat = String(formData.get("student_note_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
   if (!sessionId || !bookingId) {
-    redirect(appendQueryMessage(returnTo, "error", "Reservation invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.invalid_booking")));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -3252,9 +3271,12 @@ export async function adminUpdateSessionBookingNoteAction(formData: FormData): P
 
   if (noteAction === "SEND_PARENTS") {
     if (!studentId || !studentNote) {
-      redirect(appendQueryMessage(returnTo, "error", "Note eleve et destinataire parent obligatoires"));
+      redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.student_note_parent_required")));
     }
-    const subject = `Note eleve - ${studentDisplayName || "Eleve"} (${sessionTitle || "Creneau"})`;
+    const subject = t("admin.planning_action.student_note_subject", {
+      student: studentDisplayName || t("admin.planning_action.student_fallback"),
+      title: sessionTitle || t("admin.planning_action.slot_fallback"),
+    });
     const broadcastResult = await backendRequest<{
       channel: "EMAIL";
       recipient_count: number;
@@ -3279,14 +3301,14 @@ export async function adminUpdateSessionBookingNoteAction(formData: FormData): P
       token,
     );
     if (!broadcastResult.ok) {
-      redirect(appendQueryMessage(returnTo, "error", `Note enregistree, envoi parents impossible: ${broadcastResult.message}`));
+      redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.student_note_saved_send_failed", { message: broadcastResult.message })));
     }
     revalidatePath("/admin");
-    redirect(appendQueryMessage(returnTo, "ok", `Note envoyee aux parents (${broadcastResult.data.recipient_count})`));
+    redirect(appendQueryMessage(returnTo, "ok", t("admin.planning_action.student_note_sent_to_parents", { count: broadcastResult.data.recipient_count })));
   }
 
   revalidatePath("/admin");
-  redirect(appendQueryMessage(returnTo, "ok", "Note interne enregistree"));
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.planning_action.internal_note_saved")));
 }
 
 export async function adminSendSessionBroadcastAction(formData: FormData): Promise<void> {
@@ -3295,7 +3317,8 @@ export async function adminSendSessionBroadcastAction(formData: FormData): Promi
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin");
 
   const sessionId = String(formData.get("session_id") ?? "").trim();
@@ -3321,13 +3344,13 @@ export async function adminSendSessionBroadcastAction(formData: FormData): Promi
   const isStudentBasedAudience = audience === "STUDENTS" || audience === "PARENTS" || audience === "STUDENTS_AND_PARENTS";
 
   if (!sessionId || !body) {
-    redirect(appendQueryMessage(returnTo, "error", "Session, sujet/message invalides"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.invalid_session_or_message")));
   }
   if (isStudentBasedAudience && includedStudentIds.length === 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Selectionnez au moins un eleve"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.select_at_least_one_student")));
   }
   if (channel === "EMAIL" && !subject) {
-    redirect(appendQueryMessage(returnTo, "error", "Sujet obligatoire pour un email"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.email_subject_required")));
   }
 
   const result = await backendRequest<{
@@ -3361,14 +3384,19 @@ export async function adminSendSessionBroadcastAction(formData: FormData): Promi
 
   revalidatePath("/admin");
   const successPath = removeQueryParam(returnTo, "message");
-  const channelLabel = result.data.channel === "SMS" ? "SMS" : "Email";
-  const copied = result.data.cc_count > 0 ? ` + ${result.data.cc_count} copie(s)` : "";
-  const skipped = result.data.skipped_count > 0 ? ` (${result.data.skipped_count} ignore(s))` : "";
+  const channelLabel = result.data.channel === "SMS" ? t("admin.planning_action.broadcast_channel_sms") : t("admin.planning_action.broadcast_channel_email");
+  const copied = result.data.cc_count > 0 ? t("admin.planning_action.broadcast_copies_suffix", { count: result.data.cc_count }) : "";
+  const skipped = result.data.skipped_count > 0 ? t("admin.planning_action.broadcast_skipped_suffix", { count: result.data.skipped_count }) : "";
   redirect(
     appendQueryMessage(
       successPath,
       "ok",
-      `${channelLabel} envoye: ${result.data.recipient_count} destinataire(s)${copied}${skipped}`,
+      t("admin.planning_action.broadcast_sent_summary", {
+        channel: channelLabel,
+        count: result.data.recipient_count,
+        copied,
+        skipped,
+      }),
     ),
   );
 }
@@ -3379,11 +3407,12 @@ export async function updatePlanningSettingsAction(formData: FormData): Promise<
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const locationId = String(formData.get("location_id") ?? "").trim();
   if (!locationId) {
-    redirect("/admin?error=Planning%20invalide");
+    redirect(appendQueryMessage("/admin", "error", t("admin.planning_action.invalid_planning")));
   }
 
   const min_booking_notice_hours_raw = String(formData.get("min_booking_notice_hours") ?? "").trim();
@@ -3403,13 +3432,13 @@ export async function updatePlanningSettingsAction(formData: FormData): Promise<
   const auto_cancel_hours_before_start = parseNonNegativeInt(auto_cancel_hours_before_start_raw);
 
   if (min_booking_notice_hours === null || max_booking_horizon_months === null || cancellation_deadline_hours === null) {
-    redirect(`/admin/plannings/${locationId}/settings?error=Delais%20planning%20invalides`);
+    redirect(appendQueryMessage(`/admin/plannings/${locationId}/settings`, "error", t("admin.planning_action.invalid_planning_delays")));
   }
   if (waitlist_capacity === null || auto_cancel_if_booked_less_than === null || auto_cancel_hours_before_start === null) {
-    redirect(`/admin/plannings/${locationId}/settings?error=Parametres%20de%20capacite%20invalides`);
+    redirect(appendQueryMessage(`/admin/plannings/${locationId}/settings`, "error", t("admin.planning_action.invalid_capacity_settings")));
   }
   if (max_bookings_per_client_raw && max_bookings_per_client === null) {
-    redirect(`/admin/plannings/${locationId}/settings?error=Nombre%20max%20de%20reservations%20invalide`);
+    redirect(appendQueryMessage(`/admin/plannings/${locationId}/settings`, "error", t("admin.planning_action.invalid_max_bookings_per_client")));
   }
 
   const payload: Record<string, unknown> = {
@@ -3441,12 +3470,12 @@ export async function updatePlanningSettingsAction(formData: FormData): Promise<
   );
 
   if (!result.ok) {
-    redirect(`/admin/plannings/${locationId}/settings?error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/plannings/${locationId}/settings`, "error", result.message));
   }
 
   revalidatePath("/admin");
   revalidatePath(`/admin/plannings/${locationId}/settings`);
-  redirect(`/admin/plannings/${locationId}/settings?ok=Parametres%20planning%20mis%20a%20jour`);
+  redirect(appendQueryMessage(`/admin/plannings/${locationId}/settings`, "ok", t("admin.planning_action.settings_updated")));
 }
 
 export async function updateAdminClientAction(formData: FormData): Promise<void> {
@@ -9792,16 +9821,17 @@ export async function updatePlanningActivitiesAction(formData: FormData): Promis
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const locationId = String(formData.get("location_id") ?? "").trim();
   if (!locationId) {
-    redirect("/admin?error=Planning%20invalide");
+    redirect(appendQueryMessage("/admin", "error", t("admin.planning_action.invalid_planning")));
   }
 
   const activityIds = parseStringList(formData.getAll("activity_ids"));
   if (activityIds.length === 0) {
-    redirect(`/admin/plannings/${locationId}/settings?error=Selectionnez%20au%20moins%20une%20activite`);
+    redirect(appendQueryMessage(`/admin/plannings/${locationId}/settings`, "error", t("admin.planning_action.select_at_least_one_activity")));
   }
 
   const result = await backendRequest<AdminPlanningActivitiesOut>(
@@ -9814,12 +9844,12 @@ export async function updatePlanningActivitiesAction(formData: FormData): Promis
   );
 
   if (!result.ok) {
-    redirect(`/admin/plannings/${locationId}/settings?error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/plannings/${locationId}/settings`, "error", result.message));
   }
 
   revalidatePath("/admin");
   revalidatePath(`/admin/plannings/${locationId}/settings`);
-  redirect(`/admin/plannings/${locationId}/settings?ok=Activites%20du%20planning%20mises%20a%20jour`);
+  redirect(appendQueryMessage(`/admin/plannings/${locationId}/settings`, "ok", t("admin.planning_action.planning_activities_updated")));
 }
 
 async function syncActivityPlanningAssignments(params: {
