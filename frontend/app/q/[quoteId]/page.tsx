@@ -73,6 +73,43 @@ function readParam(params: SearchParams, key: string): string {
   return value ?? "";
 }
 
+function resolveQuotePublicOkMessage(rawOk: string, okCode: string, language: UiLanguage): string {
+  if (rawOk) {
+    return rawOk;
+  }
+  const normalized = okCode.trim().toLowerCase();
+  if (normalized === "quote_public_approved") {
+    return uiText(language, "quote_public.approved_flash");
+  }
+  if (normalized === "quote_public_rejected") {
+    return uiText(language, "quote_public.rejected_flash");
+  }
+  if (normalized === "quote_public_change_request_sent") {
+    return uiText(language, "quote_public.change_request_sent");
+  }
+  return "";
+}
+
+function resolveQuotePublicErrorMessage(rawError: string, errorCode: string, errorStatus: string, language: UiLanguage): string {
+  if (rawError) {
+    return rawError;
+  }
+  const normalized = errorCode.trim().toLowerCase();
+  if (normalized === "quote_public_invalid_link") {
+    return uiText(language, "quote_public.invalid_link");
+  }
+  if (normalized === "quote_public_change_request_required") {
+    return uiText(language, "quote_public.change_request_required");
+  }
+  if (normalized === "quote_pdf_token_invalid") {
+    return uiText(language, "quote_public.invalid_pdf_link");
+  }
+  if (normalized === "quote_pdf_unavailable") {
+    return uiText(language, "quote_public.pdf_unavailable", { status: errorStatus || "?" });
+  }
+  return "";
+}
+
 function formatDate(value: string | null, language: UiLanguage): string {
   if (!value) {
     return "-";
@@ -132,15 +169,15 @@ function readObject(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function buildSelfPath(quoteId: string, token: string): string {
-  return `/q/${quoteId}?t=${encodeURIComponent(token)}`;
+function buildSelfPath(quoteId: string, token: string, language: UiLanguage): string {
+  const suffix = language === "en" ? "&lang=en" : "";
+  return `/q/${quoteId}?t=${encodeURIComponent(token)}${suffix}`;
 }
 
 export default async function PublicQuotePage({ params, searchParams }: RouteParams): Promise<JSX.Element> {
   const quoteId = String(params.quoteId || "").trim();
   const token = readParam(searchParams, "t").trim();
-  const ok = readParam(searchParams, "ok").trim();
-  const error = readParam(searchParams, "error").trim();
+  const queryLanguage = normalizeUiLanguage(readParam(searchParams, "lang"));
 
   const invalidLink = !quoteId || !token;
   const quoteResult = invalidLink
@@ -154,11 +191,18 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
         );
   const payload = quoteResult && quoteResult.ok ? quoteResult.data : null;
   const documentPayload = documentResult && documentResult.ok ? documentResult.data : null;
-  const language = normalizeUiLanguage(payload?.quote.language);
+  const language = normalizeUiLanguage(payload?.quote.language || queryLanguage);
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const ok = resolveQuotePublicOkMessage(readParam(searchParams, "ok").trim(), readParam(searchParams, "ok_code"), language);
+  const error = resolveQuotePublicErrorMessage(
+    readParam(searchParams, "error").trim(),
+    readParam(searchParams, "error_code"),
+    readParam(searchParams, "error_status"),
+    language,
+  );
 
   const canAct = payload ? ["sent", "change_requested"].includes(payload.quote.status) : false;
-  const selfPath = buildSelfPath(quoteId, token);
+  const selfPath = buildSelfPath(quoteId, token, language);
 
   return (
     <main className="quote-public-page">
@@ -219,7 +263,11 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
           <article className="card quote-public-sticky-card">
             <h3>{t("quote_public.actions_title")}</h3>
             {payload?.quote.pdf_token ? (
-              <Link className="ghost quote-public-action" href={`/q/${payload.quote.id}/pdf?t=${encodeURIComponent(payload.quote.pdf_token)}`} target="_blank">
+              <Link
+                className="ghost quote-public-action"
+                href={`/q/${payload.quote.id}/pdf?t=${encodeURIComponent(payload.quote.pdf_token)}${language === "en" ? "&lang=en" : ""}`}
+                target="_blank"
+              >
                 {t("quote_public.download_pdf")}
               </Link>
             ) : null}

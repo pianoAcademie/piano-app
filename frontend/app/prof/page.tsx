@@ -61,6 +61,20 @@ function readParam(params: SearchParams, key: string): string {
   return value ?? "";
 }
 
+function resolveProfessorErrorMessage(rawError: string, errorCode: string, errorStatus: string, language: UiLanguage): string {
+  if (rawError) {
+    return rawError;
+  }
+  const normalized = errorCode.trim().toLowerCase();
+  if (normalized === "prof_statement_period_invalid") {
+    return uiText(language, "teacher.statement_export_invalid_period");
+  }
+  if (normalized === "prof_statement_export_failed") {
+    return uiText(language, "teacher.statement_export_failed", { status: errorStatus || "?" });
+  }
+  return "";
+}
+
 function parseTab(value: string): Tab {
   if (value === "planning" || value === "finance" || value === "messages" || value === "catalog" || value === "profile") {
     return value;
@@ -564,7 +578,12 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   const fullName = `${profile.first_name} ${profile.last_name}`.trim();
   const impersonationDisplayName = impersonationNameHint || fullName || profile.email;
   const okMessage = resolveAuthOkMessage(readParam(searchParams, "ok"), readParam(searchParams, "ok_code"), language);
-  const errorMessage = readParam(searchParams, "error");
+  const errorMessage = resolveProfessorErrorMessage(
+    readParam(searchParams, "error"),
+    readParam(searchParams, "error_code"),
+    readParam(searchParams, "error_status"),
+    language,
+  );
 
   const sessions = sessionsResult.ok ? sessionsResult.data : [];
   const sessionsByDay = new Map<string, ProfessorSessionOut[]>();

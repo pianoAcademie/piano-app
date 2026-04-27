@@ -20,7 +20,7 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
   const year = String(params.year || "").trim();
   const month = String(params.month || "").trim();
   if (!year || !month) {
-    const fallback = new URL("/prof/statements?error=Periode%20invalide", request.url);
+    const fallback = new URL("/prof/statements?error_code=prof_statement_period_invalid", request.url);
     return NextResponse.redirect(fallback, 302);
   }
 
@@ -33,7 +33,7 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
   });
 
   if (!upstream.ok) {
-    const fallback = new URL(`/prof/statements/${year}/${month}?error=${encodeURIComponent(`Export impossible (${upstream.status})`)}`, request.url);
+    const fallback = new URL(`/prof/statements/${year}/${month}?error_code=prof_statement_export_failed&error_status=${encodeURIComponent(String(upstream.status))}`, request.url);
     return NextResponse.redirect(fallback, 302);
   }
 

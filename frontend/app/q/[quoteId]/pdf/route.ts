@@ -11,8 +11,10 @@ type RouteParams = {
 export async function GET(request: NextRequest, { params }: RouteParams): Promise<Response> {
   const quoteId = String(params.quoteId || "").trim();
   const token = request.nextUrl.searchParams.get("t")?.trim() ?? "";
+  const language = request.nextUrl.searchParams.get("lang")?.trim().toLowerCase() === "en" ? "en" : "";
+  const langSuffix = language ? `&lang=${encodeURIComponent(language)}` : "";
   if (!quoteId || !token) {
-    const fallback = new URL(`/q/${encodeURIComponent(quoteId)}?error=Token%20PDF%20invalide`, request.url);
+    const fallback = new URL(`/q/${encodeURIComponent(quoteId)}?error_code=quote_pdf_token_invalid${langSuffix}`, request.url);
     return NextResponse.redirect(fallback, 302);
   }
 
@@ -22,7 +24,12 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
   });
 
   if (!upstream.ok) {
-    const fallback = new URL(`/q/${encodeURIComponent(quoteId)}?t=${encodeURIComponent(token)}&error=${encodeURIComponent(`PDF indisponible (${upstream.status})`)}`, request.url);
+    const fallback = new URL(
+      `/q/${encodeURIComponent(quoteId)}?t=${encodeURIComponent(token)}&error_code=quote_pdf_unavailable&error_status=${encodeURIComponent(
+        String(upstream.status),
+      )}${langSuffix}`,
+      request.url,
+    );
     return NextResponse.redirect(fallback, 302);
   }
 

@@ -1086,10 +1086,6 @@ async function ensureAdminAndGetLanguage(token: string): Promise<UiLanguage> {
   return normalizeUiLanguage(me.preferred_language);
 }
 
-function publicQuoteActionLanguage(formData: FormData): UiLanguage {
-  return normalizeUiLanguage(String(formData.get("language") ?? ""));
-}
-
 function publicActionLanguage(...paths: string[]): UiLanguage {
   for (const path of paths) {
     const value = String(path ?? "").trim();
@@ -13608,12 +13604,11 @@ function safeQuotePublicPath(path: string, fallback: string): string {
 }
 
 export async function approvePublicQuoteAction(formData: FormData): Promise<void> {
-  const language = publicQuoteActionLanguage(formData);
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const token = String(formData.get("public_token") ?? "").trim();
   const returnTo = safeQuotePublicPath(String(formData.get("return_to") ?? `/q/${quoteId}?t=${encodeURIComponent(token)}`), `/q/${quoteId}?t=${encodeURIComponent(token)}`);
   if (!quoteId || !token) {
-    redirect(appendQueryMessage(returnTo, "error", uiText(language, "quote_public.invalid_link")));
+    redirect(setQueryParam(returnTo, "error_code", "quote_public_invalid_link"));
   }
   const result = await runPublicQuoteAction({
     action: "approve",
@@ -13624,16 +13619,15 @@ export async function approvePublicQuoteAction(formData: FormData): Promise<void
   if (!result.ok) {
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
-  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "quote_public.approved_flash")));
+  redirect(setQueryParam(returnTo, "ok_code", "quote_public_approved"));
 }
 
 export async function rejectPublicQuoteAction(formData: FormData): Promise<void> {
-  const language = publicQuoteActionLanguage(formData);
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const token = String(formData.get("public_token") ?? "").trim();
   const returnTo = safeQuotePublicPath(String(formData.get("return_to") ?? `/q/${quoteId}?t=${encodeURIComponent(token)}`), `/q/${quoteId}?t=${encodeURIComponent(token)}`);
   if (!quoteId || !token) {
-    redirect(appendQueryMessage(returnTo, "error", uiText(language, "quote_public.invalid_link")));
+    redirect(setQueryParam(returnTo, "error_code", "quote_public_invalid_link"));
   }
   const result = await runPublicQuoteAction({
     action: "reject",
@@ -13644,20 +13638,19 @@ export async function rejectPublicQuoteAction(formData: FormData): Promise<void>
   if (!result.ok) {
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
-  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "quote_public.rejected_flash")));
+  redirect(setQueryParam(returnTo, "ok_code", "quote_public_rejected"));
 }
 
 export async function changeRequestPublicQuoteAction(formData: FormData): Promise<void> {
-  const language = publicQuoteActionLanguage(formData);
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const token = String(formData.get("public_token") ?? "").trim();
   const message = String(formData.get("change_message") ?? "").trim();
   const returnTo = safeQuotePublicPath(String(formData.get("return_to") ?? `/q/${quoteId}?t=${encodeURIComponent(token)}`), `/q/${quoteId}?t=${encodeURIComponent(token)}`);
   if (!quoteId || !token) {
-    redirect(appendQueryMessage(returnTo, "error", uiText(language, "quote_public.invalid_link")));
+    redirect(setQueryParam(returnTo, "error_code", "quote_public_invalid_link"));
   }
   if (!message) {
-    redirect(appendQueryMessage(returnTo, "error", uiText(language, "quote_public.change_request_required")));
+    redirect(setQueryParam(returnTo, "error_code", "quote_public_change_request_required"));
   }
   const result = await runPublicQuoteAction({
     action: "change-request",
@@ -13668,7 +13661,7 @@ export async function changeRequestPublicQuoteAction(formData: FormData): Promis
   if (!result.ok) {
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
-  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "quote_public.change_request_sent")));
+  redirect(setQueryParam(returnTo, "ok_code", "quote_public_change_request_sent"));
 }
 
 export async function selectQuoteFollowupSlotAction(formData: FormData): Promise<void> {
