@@ -99,15 +99,23 @@ type PlanningQuery = {
   dayDetails: string;
 };
 
-const PLANNING_TIMEZONES: Array<{ value: string; label: string }> = [
-  { value: "Europe/Paris", label: "France (Europe/Paris)" },
-  { value: "Europe/Brussels", label: "Belgique (Europe/Brussels)" },
-  { value: "Europe/Zurich", label: "Suisse (Europe/Zurich)" },
-  { value: "Europe/London", label: "Royaume-Uni (Europe/London)" },
-  { value: "Europe/Madrid", label: "Espagne (Europe/Madrid)" },
-  { value: "America/New_York", label: "Etats-Unis Est (America/New_York)" },
-  { value: "America/Los_Angeles", label: "Etats-Unis Ouest (America/Los_Angeles)" },
+const PLANNING_TIMEZONES: Array<{ value: string; labelKey: string }> = [
+  { value: "Europe/Paris", labelKey: "admin.planning.timezone.europe_paris" },
+  { value: "Europe/Brussels", labelKey: "admin.planning.timezone.europe_brussels" },
+  { value: "Europe/Zurich", labelKey: "admin.planning.timezone.europe_zurich" },
+  { value: "Europe/London", labelKey: "admin.planning.timezone.europe_london" },
+  { value: "Europe/Madrid", labelKey: "admin.planning.timezone.europe_madrid" },
+  { value: "America/New_York", labelKey: "admin.planning.timezone.america_new_york" },
+  { value: "America/Los_Angeles", labelKey: "admin.planning.timezone.america_los_angeles" },
 ];
+
+function planningTimezoneLabel(value: string, language: UiLanguage): string {
+  const known = PLANNING_TIMEZONES.find((option) => option.value === value);
+  if (known) {
+    return uiText(language, known.labelKey);
+  }
+  return uiText(language, "admin.planning.timezone.custom", { value });
+}
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -1440,9 +1448,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     ? `${formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)} · ${sessionTimeRangeLabel(selectedSession, language)} · ${selectedSession.timezone} · ${t("admin.planning.teacher_short")}: ${selectedEffectiveProfessorLabel || t("admin.planning.no_teacher_required")}`
     : "";
   const timezoneOptionValues = new Set(PLANNING_TIMEZONES.map((option) => option.value));
+  const translatedPlanningTimezones = PLANNING_TIMEZONES.map((option) => ({
+    value: option.value,
+    label: planningTimezoneLabel(option.value, language),
+  }));
   const timezoneOptions = timezoneOptionValues.has(timezone)
-    ? PLANNING_TIMEZONES
-    : [{ value: timezone, label: `${timezone} (personnalise)` }, ...PLANNING_TIMEZONES];
+    ? translatedPlanningTimezones
+    : [{ value: timezone, label: planningTimezoneLabel(timezone, language) }, ...translatedPlanningTimezones];
   const sessionTimezoneValues = new Set<string>([
     ...PLANNING_TIMEZONES.map((option) => option.value),
     ...locations.map((row) => row.timezone),
@@ -1451,10 +1463,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const sessionTimezoneOptions = Array.from(sessionTimezoneValues)
     .filter((value) => value && value.trim().length > 0)
     .sort((a, b) => a.localeCompare(b, localeForUiLanguage(language)))
-    .map((value) => {
-      const known = PLANNING_TIMEZONES.find((option) => option.value === value);
-      return { value, label: known?.label ?? value };
-    });
+    .map((value) => ({ value, label: planningTimezoneLabel(value, language) }));
   const createDraftCourseTypeId = createDraft?.course_type_id || selectedCourseType;
   const createAllowsStudentBookings = createDraftCourseTypeId
     ? courseTypeById.get(createDraftCourseTypeId)?.allows_student_bookings !== false
@@ -1698,9 +1707,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 {t("admin.planning.filter.lesson_status")}
                 <select name="status" defaultValue={selectedStatus}>
                   <option value="ALL">{t("common.all")}</option>
-                  <option value="SCHEDULED">SCHEDULED</option>
-                  <option value="CANCELLED">CANCELLED</option>
-                  <option value="COMPLETED">COMPLETED</option>
+                  <option value="SCHEDULED">{t("admin.planning.status.scheduled")}</option>
+                  <option value="CANCELLED">{t("admin.planning.status.cancelled")}</option>
+                  <option value="COMPLETED">{t("admin.planning.status.completed")}</option>
                 </select>
               </label>
 
@@ -1708,12 +1717,12 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 {t("admin.planning.filter.member_status")}
                 <select name="client_status" defaultValue={selectedClientStatus}>
                   <option value="ALL">{t("common.all")}</option>
-                  <option value="ACTIVE">ACTIVE</option>
-                  <option value="RESPONSABLE">RESPONSABLE</option>
-                  <option value="TRIAL">TRIAL</option>
-                  <option value="PENDING">PENDING</option>
-                  <option value="INACTIVE">INACTIVE</option>
-                  <option value="ARCHIVED">ARCHIVED</option>
+                  <option value="ACTIVE">{t("admin.clients.status_active")}</option>
+                  <option value="RESPONSABLE">{t("admin.clients.status_responsable")}</option>
+                  <option value="TRIAL">{t("admin.clients.status_trial")}</option>
+                  <option value="PENDING">{t("admin.clients.status_pending")}</option>
+                  <option value="INACTIVE">{t("admin.clients.status_inactive")}</option>
+                  <option value="ARCHIVED">{t("admin.clients.status_archived")}</option>
                 </select>
               </label>
 

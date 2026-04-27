@@ -25,7 +25,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const language = normalizeUiLanguage(meResult.data.preferred_language);
 
   return (
-    <div className="admin-shell">
+    <div className="admin-shell" data-ui-language={language}>
       <AdminSidebar
         displayName={displayName}
         email={meResult.data.email}

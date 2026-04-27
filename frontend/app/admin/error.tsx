@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+
+import { normalizeUiLanguage, type UiLanguage, uiText } from "../../lib/ui-i18n";
 
 export default function AdminError({
   error,
@@ -9,6 +11,17 @@ export default function AdminError({
   error: Error & { digest?: string };
   reset: () => void;
 }): JSX.Element {
+  const [language, setLanguage] = useState<UiLanguage>("fr");
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+
+  useEffect(() => {
+    const languageHint =
+      document.querySelector("[data-ui-language]")?.getAttribute("data-ui-language")
+      || document.documentElement.getAttribute("lang")
+      || navigator.language;
+    setLanguage(normalizeUiLanguage(languageHint));
+  }, []);
+
   useEffect(() => {
     const message = String(error?.message ?? "");
     const isChunkLoadError =
@@ -31,17 +44,17 @@ export default function AdminError({
 
   return (
     <section className="card">
-      <h2>Erreur d affichage admin</h2>
+      <h2>{t("admin.error.title")}</h2>
       <p className="muted">
-        Une erreur JavaScript est survenue dans l interface admin. Rechargez la page puis reessayez.
+        {t("admin.error.subtitle")}
       </p>
-      {error?.message ? <p className="muted">Detail: {error.message}</p> : null}
+      {error?.message ? <p className="muted">{t("admin.error.detail_prefix", { message: error.message })}</p> : null}
       <div className="row">
         <button type="button" onClick={() => reset()}>
-          Reessayer
+          {t("admin.error.retry")}
         </button>
         <button type="button" className="ghost" onClick={() => window.location.reload()}>
-          Recharger la page
+          {t("admin.error.reload_page")}
         </button>
       </div>
     </section>
