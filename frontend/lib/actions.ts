@@ -94,6 +94,7 @@ import type {
 type ApplyScope = "ONE" | "SERIES_FUTURE" | "SERIES_ALL";
 type BookingScope = "OCCURRENCE" | "SERIES_FUTURE";
 type SessionAudienceScope = "EXTERNAL" | "SUBSCRIPTION" | "FORFAIT" | "PRIVATE";
+type UiTextResolver = (key: string, values?: Record<string, string | number>) => string;
 
 function currentToken(): string | null {
   const referer = headers().get("referer") ?? "";
@@ -6797,7 +6798,7 @@ function parseFormulaCreditGrants(formData: FormData): Array<{ credit_type_id: s
   return grants;
 }
 
-function parseFormulaPayload(formData: FormData): Record<string, unknown> {
+function parseFormulaPayload(formData: FormData, t: UiTextResolver): Record<string, unknown> {
   const name = String(formData.get("name") ?? "").trim();
   const kindRaw = String(formData.get("kind") ?? "PACK").trim().toUpperCase();
   const kind = kindRaw === "SUBSCRIPTION" ? "SUBSCRIPTION" : kindRaw === "FORFAIT" ? "FORFAIT" : "PACK";
@@ -6824,36 +6825,36 @@ function parseFormulaPayload(formData: FormData): Record<string, unknown> {
   const restrictions = parseFormulaRestrictions(formData);
 
   if (!name) {
-    throw new Error("Nom de formule obligatoire");
+    throw new Error(t("admin.formula_action.name_required"));
   }
   if (price === null && kind !== "FORFAIT") {
-    throw new Error("Tarif formule obligatoire (TTC ou HT)");
+    throw new Error(t("admin.formula_action.price_required"));
   }
   if (!currency) {
-    throw new Error("Devise obligatoire");
+    throw new Error(t("admin.formula_action.currency_required"));
   }
   if (kind === "PACK" && creditGrants.length === 0) {
-    throw new Error("Ajoutez au moins un type de credit et son nombre de credits");
+    throw new Error(t("admin.formula_action.credit_type_required"));
   }
   if (kind === "PACK" && creditsCount <= 0) {
-    throw new Error("Nombre de credits total invalide pour un carnet");
+    throw new Error(t("admin.formula_action.invalid_total_credits"));
   }
   if (kind === "PACK" && (packValidityMonths === null || packValidityMonths < 1 || packValidityMonths > 12)) {
-    throw new Error("La duree de validite du carnet doit etre comprise entre 1 et 12 mois");
+    throw new Error(t("admin.formula_action.invalid_pack_validity"));
   }
   if (kind === "FORFAIT") {
     if (!forfaitStartDateRaw || !forfaitEndDateRaw) {
-      throw new Error("Dates de debut et de fin obligatoires pour une formule forfait");
+      throw new Error(t("admin.formula_action.forfait_dates_required"));
     }
     if (!parseUtcStartOfDate(forfaitStartDateRaw) || !parseUtcStartOfDate(forfaitEndDateRaw)) {
-      throw new Error("Dates forfait invalides");
+      throw new Error(t("admin.formula_action.invalid_forfait_dates"));
     }
     if (forfaitEndDateRaw <= forfaitStartDateRaw) {
-      throw new Error("La date de fin du forfait doit etre apres la date de debut");
+      throw new Error(t("admin.formula_action.invalid_forfait_date_order"));
     }
   }
   if (entitlementIds.length === 0) {
-    throw new Error("Selectionnez au moins un type de cours");
+    throw new Error(t("admin.formula_action.course_type_required"));
   }
 
   return {
@@ -6887,7 +6888,8 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const returnTo = "/admin/config?section=activities&new_activity=1";
 
@@ -6929,43 +6931,43 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   const contentCourseIds = parseStringList(formData.getAll("content_course_ids"));
 
   if (!name) {
-    redirect(appendQueryMessage(returnTo, "error", "Nom activite obligatoire"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.name_required")));
   }
   if (!durationMinutes || durationMinutes < 5) {
-    redirect(appendQueryMessage(returnTo, "error", "Duree activite invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_duration")));
   }
   if (isVacationActivity && (durationMinutes < 600 || durationMinutes > 1440)) {
-    redirect(appendQueryMessage(returnTo, "error", "Duree VACATION invalide (600-1440)"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_vacation_duration")));
   }
   if (allowsStudentBookings && (defaultCapacity === null || defaultCapacity < 1)) {
-    redirect(appendQueryMessage(returnTo, "error", "Capacite par defaut invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_default_capacity")));
   }
   if (!sellerLegalEntityId) {
-    redirect(appendQueryMessage(returnTo, "error", "Entite legale obligatoire"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.legal_entity_required")));
   }
   if (defaultHourlyRateRaw && defaultHourlyRate === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Taux horaire par defaut invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_default_hourly_rate")));
   }
   if (defaultCourseRateRaw && defaultCourseRate === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Tarif par cours invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_default_course_rate")));
   }
   if (emailReminderHours === "INVALID") {
-    redirect(appendQueryMessage(returnTo, "error", "Rappel email invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_email_reminder")));
   }
   if (smsReminderHours === "INVALID") {
-    redirect(appendQueryMessage(returnTo, "error", "Rappel SMS invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_sms_reminder")));
   }
   if (minBookingNoticeHoursOverride === "INVALID") {
-    redirect(appendQueryMessage(returnTo, "error", "Delai minimum reservation invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_min_booking_notice")));
   }
   if (cancellationDeadlineHoursOverride === "INVALID") {
-    redirect(appendQueryMessage(returnTo, "error", "Delai annulation invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_cancellation_deadline")));
   }
   if (autoCancelIfBookedLessThanOverride === "INVALID") {
-    redirect(appendQueryMessage(returnTo, "error", "Regle auto-annulation inscrits invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_auto_cancel_booked_less_than")));
   }
   if (autoCancelHoursBeforeStartOverride === "INVALID") {
-    redirect(appendQueryMessage(returnTo, "error", "Regle auto-annulation heures invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_auto_cancel_hours_before_start")));
   }
 
   const payload: Record<string, unknown> = {
@@ -7014,13 +7016,14 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
     token,
     activityId: result.data.id,
     contentCourseIds,
+    t,
   });
   if (!contentSyncResult.ok) {
     redirect(
       appendQueryMessage(
         `/admin/config?section=activities&activity_id=${encodeURIComponent(result.data.id)}`,
         "error",
-        `Activite creee, mais liaison contenu impossible: ${contentSyncResult.message}`,
+        t("admin.activity_action.created_content_link_failed", { message: contentSyncResult.message }),
       ),
     );
   }
@@ -7030,6 +7033,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
     activityId: result.data.id,
     selectedLocationIds: planningLocationIds,
     scopeLocationIds: planningScopeLocationIds,
+    t,
   });
 
   revalidatePath("/admin/config");
@@ -7039,12 +7043,12 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
       appendQueryMessage(
         `/admin/config?section=activities&activity_id=${encodeURIComponent(result.data.id)}`,
         "error",
-        `Activite creee, mais synchronisation des plannings incomplete: ${syncResult.message}`,
+        t("admin.activity_action.created_planning_sync_failed", { message: syncResult.message }),
       ),
     );
   }
 
-  redirect(appendQueryMessage("/admin/config?section=activities", "ok", "Activite creee"));
+  redirect(appendQueryMessage("/admin/config?section=activities", "ok", t("admin.activity_action.created")));
 }
 
 export async function updateAdminActivityAction(formData: FormData): Promise<void> {
@@ -7053,11 +7057,12 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const activityId = String(formData.get("activity_id") ?? "").trim();
   if (!activityId) {
-    redirect("/admin/config?section=activities&error=Activite%20invalide");
+    redirect(appendQueryMessage("/admin/config?section=activities", "error", t("admin.activity_action.invalid_activity")));
   }
   const returnTo = `/admin/config?section=activities&activity_id=${encodeURIComponent(activityId)}`;
 
@@ -7099,43 +7104,43 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   const contentCourseIds = parseStringList(formData.getAll("content_course_ids"));
 
   if (!name) {
-    redirect(appendQueryMessage(returnTo, "error", "Nom activite obligatoire"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.name_required")));
   }
   if (!durationMinutes || durationMinutes < 5) {
-    redirect(appendQueryMessage(returnTo, "error", "Duree activite invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_duration")));
   }
   if (isVacationActivity && (durationMinutes < 600 || durationMinutes > 1440)) {
-    redirect(appendQueryMessage(returnTo, "error", "Duree VACATION invalide (600-1440)"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_vacation_duration")));
   }
   if (allowsStudentBookings && (defaultCapacity === null || defaultCapacity < 1)) {
-    redirect(appendQueryMessage(returnTo, "error", "Capacite par defaut invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_default_capacity")));
   }
   if (!sellerLegalEntityId) {
-    redirect(appendQueryMessage(returnTo, "error", "Entite legale obligatoire"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.legal_entity_required")));
   }
   if (defaultHourlyRateRaw && defaultHourlyRate === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Taux horaire par defaut invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_default_hourly_rate")));
   }
   if (defaultCourseRateRaw && defaultCourseRate === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Tarif par cours invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_default_course_rate")));
   }
   if (emailReminderHours === "INVALID") {
-    redirect(appendQueryMessage(returnTo, "error", "Rappel email invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_email_reminder")));
   }
   if (smsReminderHours === "INVALID") {
-    redirect(appendQueryMessage(returnTo, "error", "Rappel SMS invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_sms_reminder")));
   }
   if (minBookingNoticeHoursOverride === "INVALID") {
-    redirect(appendQueryMessage(returnTo, "error", "Delai minimum reservation invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_min_booking_notice")));
   }
   if (cancellationDeadlineHoursOverride === "INVALID") {
-    redirect(appendQueryMessage(returnTo, "error", "Delai annulation invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_cancellation_deadline")));
   }
   if (autoCancelIfBookedLessThanOverride === "INVALID") {
-    redirect(appendQueryMessage(returnTo, "error", "Regle auto-annulation inscrits invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_auto_cancel_booked_less_than")));
   }
   if (autoCancelHoursBeforeStartOverride === "INVALID") {
-    redirect(appendQueryMessage(returnTo, "error", "Regle auto-annulation heures invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_auto_cancel_hours_before_start")));
   }
 
   const payload: Record<string, unknown> = {
@@ -7182,13 +7187,14 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
     token,
     activityId,
     contentCourseIds,
+    t,
   });
   if (!contentSyncResult.ok) {
     redirect(
       appendQueryMessage(
         returnTo,
         "error",
-        `Activite enregistree, mais liaison contenu impossible: ${contentSyncResult.message}`,
+        t("admin.activity_action.updated_content_link_failed", { message: contentSyncResult.message }),
       ),
     );
   }
@@ -7198,6 +7204,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
     activityId,
     selectedLocationIds: planningLocationIds,
     scopeLocationIds: planningScopeLocationIds,
+    t,
   });
 
   revalidatePath("/admin/config");
@@ -7207,12 +7214,12 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
       appendQueryMessage(
         returnTo,
         "error",
-        `Activite enregistree, mais synchronisation des plannings incomplete: ${syncResult.message}`,
+        t("admin.activity_action.updated_planning_sync_failed", { message: syncResult.message }),
       ),
     );
   }
 
-  redirect(appendQueryMessage("/admin/config?section=activities", "ok", "Activite mise a jour"));
+  redirect(appendQueryMessage("/admin/config?section=activities", "ok", t("admin.activity_action.updated")));
 }
 
 export async function createAdminCreditTypeAction(formData: FormData): Promise<void> {
@@ -9472,7 +9479,8 @@ export async function saveAdminConfigMessagingTemplateAction(formData: FormData)
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const templateKind = String(formData.get("template_kind") ?? "").trim().toUpperCase();
   const templateChannel = String(formData.get("template_channel") ?? "").trim().toUpperCase();
@@ -9501,12 +9509,12 @@ export async function saveAdminConfigMessagingTemplateAction(formData: FormData)
   const messagingTab = normalizeMessagingConfigTab(requestedTabRaw, defaultTabForChannel);
 
   if (!body) {
-    redirect(buildMessagingConfigPath(messagingTab, { error: "Corps du modele obligatoire" }));
+    redirect(buildMessagingConfigPath(messagingTab, { error: t("admin.messaging_action.body_required") }));
   }
 
   if (templateKind === "PREDEFINED") {
     if (!templateCode) {
-      redirect(buildMessagingConfigPath(messagingTab, { error: "Template predefini introuvable" }));
+      redirect(buildMessagingConfigPath(messagingTab, { error: t("admin.messaging_action.predefined_template_not_found") }));
     }
 
     const result = await backendRequest<AdminMessagingTemplateOut>(
@@ -9530,21 +9538,21 @@ export async function saveAdminConfigMessagingTemplateAction(formData: FormData)
     }
 
     revalidatePath("/admin/config");
-    redirect(buildMessagingConfigPath(messagingTab, { ok: "Modele predefini mis a jour" }));
+    redirect(buildMessagingConfigPath(messagingTab, { ok: t("admin.messaging_action.predefined_template_updated") }));
   }
 
   if (templateKind !== "CUSTOM") {
-    redirect(buildMessagingConfigPath(messagingTab, { error: "Type de modele invalide" }));
+    redirect(buildMessagingConfigPath(messagingTab, { error: t("admin.messaging_action.invalid_template_kind") }));
   }
 
   if (!name) {
-    redirect(buildMessagingConfigPath(messagingTab, { error: "Nom du modele obligatoire" }));
+    redirect(buildMessagingConfigPath(messagingTab, { error: t("admin.messaging_action.template_name_required") }));
   }
   if (templateChannel !== "EMAIL" && templateChannel !== "SMS" && templateChannel !== "GROUP_NOTE") {
-    redirect(buildMessagingConfigPath(messagingTab, { error: "Canal invalide" }));
+    redirect(buildMessagingConfigPath(messagingTab, { error: t("admin.messaging_action.invalid_channel") }));
   }
   if (templateChannel === "EMAIL" && !subject) {
-    redirect(buildMessagingConfigPath(messagingTab, { error: "Objet obligatoire pour un email" }));
+    redirect(buildMessagingConfigPath(messagingTab, { error: t("admin.messaging_action.email_subject_required") }));
   }
 
   const payload = {
@@ -9577,7 +9585,14 @@ export async function saveAdminConfigMessagingTemplateAction(formData: FormData)
   }
 
   revalidatePath("/admin/config");
-  redirect(buildMessagingConfigPath(messagingTab, { ok: templateId ? "Modele personnalise mis a jour" : "Modele personnalise cree" }));
+  redirect(
+    buildMessagingConfigPath(
+      messagingTab,
+      {
+        ok: templateId ? t("admin.messaging_action.custom_template_updated") : t("admin.messaging_action.custom_template_created"),
+      },
+    ),
+  );
 }
 
 export async function resetAdminConfigPredefinedMessagingTemplateAction(formData: FormData): Promise<void> {
@@ -9586,12 +9601,13 @@ export async function resetAdminConfigPredefinedMessagingTemplateAction(formData
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const messagingTab = normalizeMessagingConfigTab(String(formData.get("messaging_tab") ?? ""), "predefined-email");
 
   const templateCode = String(formData.get("template_code") ?? "").trim().toUpperCase();
   if (!templateCode) {
-    redirect(buildMessagingConfigPath(messagingTab, { error: "Template predefini introuvable" }));
+    redirect(buildMessagingConfigPath(messagingTab, { error: t("admin.messaging_action.predefined_template_not_found") }));
   }
 
   const result = await backendRequest<AdminMessagingTemplateOut>(
@@ -9607,7 +9623,7 @@ export async function resetAdminConfigPredefinedMessagingTemplateAction(formData
   }
 
   revalidatePath("/admin/config");
-  redirect(buildMessagingConfigPath(messagingTab, { ok: "Modele predefini retabli" }));
+  redirect(buildMessagingConfigPath(messagingTab, { ok: t("admin.messaging_action.predefined_template_restored") }));
 }
 
 export async function deleteAdminConfigMessagingTemplateAction(formData: FormData): Promise<void> {
@@ -9616,12 +9632,13 @@ export async function deleteAdminConfigMessagingTemplateAction(formData: FormDat
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const messagingTab = normalizeMessagingConfigTab(String(formData.get("messaging_tab") ?? ""), "custom-email");
 
   const templateId = String(formData.get("template_id") ?? "").trim();
   if (!templateId) {
-    redirect(buildMessagingConfigPath(messagingTab, { error: "Template introuvable" }));
+    redirect(buildMessagingConfigPath(messagingTab, { error: t("admin.messaging_action.template_not_found") }));
   }
 
   const result = await backendRequest<Record<string, never>>(
@@ -9635,7 +9652,7 @@ export async function deleteAdminConfigMessagingTemplateAction(formData: FormDat
   }
 
   revalidatePath("/admin/config");
-  redirect(buildMessagingConfigPath(messagingTab, { ok: "Modele personnalise supprime" }));
+  redirect(buildMessagingConfigPath(messagingTab, { ok: t("admin.messaging_action.custom_template_deleted") }));
 }
 
 export async function updateAdminClientPasswordEmailTemplateAction(formData: FormData): Promise<void> {
@@ -9644,12 +9661,13 @@ export async function updateAdminClientPasswordEmailTemplateAction(formData: For
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const subject = String(formData.get("subject") ?? "").trim();
   const body = String(formData.get("body") ?? "").trim();
   if (!subject || !body) {
-    redirect("/admin/config?section=params-messaging&error=Objet%20et%20corps%20sont%20obligatoires");
+    redirect(appendQueryMessage("/admin/config?section=params-messaging", "error", t("admin.messaging_action.client_password_subject_body_required")));
   }
 
   const result = await backendRequest<AdminClientPasswordEmailTemplateOut>(
@@ -9667,7 +9685,7 @@ export async function updateAdminClientPasswordEmailTemplateAction(formData: For
 
   revalidatePath("/admin/config");
   revalidatePath("/admin/clients");
-  redirect("/admin/config?section=params-messaging&ok=Template%20email%20client%20mis%20a%20jour");
+  redirect(appendQueryMessage("/admin/config?section=params-messaging", "ok", t("admin.messaging_action.client_password_template_updated")));
 }
 
 export async function createAdminFormulaAction(formData: FormData): Promise<void> {
@@ -9675,14 +9693,15 @@ export async function createAdminFormulaAction(formData: FormData): Promise<void
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeAdminReturnPath(formData, "/admin/config/formulas/new");
 
   let payload: Record<string, unknown>;
   try {
-    payload = parseFormulaPayload(formData);
+    payload = parseFormulaPayload(formData, t);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Formulaire formule invalide";
+    const message = error instanceof Error ? error.message : t("admin.formula_action.invalid_form_payload");
     redirect(appendQueryMessage(returnTo, "error", message));
   }
 
@@ -9704,10 +9723,10 @@ export async function createAdminFormulaAction(formData: FormData): Promise<void
   revalidatePath(`/admin/config/formulas/${result.data.id}`);
 
   if (returnTo.startsWith("/admin/config/formulas/new")) {
-    redirect(appendQueryMessage(`/admin/config/formulas/${result.data.id}`, "ok", "Formule cree"));
+    redirect(appendQueryMessage(`/admin/config/formulas/${result.data.id}`, "ok", t("admin.formula_action.created")));
   }
 
-  redirect(appendQueryMessage("/admin/config/formulas", "ok", "Formule cree"));
+  redirect(appendQueryMessage("/admin/config/formulas", "ok", t("admin.formula_action.created")));
 }
 
 export async function updateAdminFormulaAction(formData: FormData): Promise<void> {
@@ -9715,19 +9734,20 @@ export async function updateAdminFormulaAction(formData: FormData): Promise<void
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const formulaId = String(formData.get("formula_id") ?? "").trim();
   if (!formulaId) {
-    redirect("/admin/config/formulas?error=Formule%20invalide");
+    redirect(appendQueryMessage("/admin/config/formulas", "error", t("admin.formula_action.invalid_formula")));
   }
   const returnTo = safeAdminReturnPath(formData, `/admin/config/formulas/${formulaId}`);
 
   let payload: Record<string, unknown>;
   try {
-    payload = parseFormulaPayload(formData);
+    payload = parseFormulaPayload(formData, t);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Formulaire formule invalide";
+    const message = error instanceof Error ? error.message : t("admin.formula_action.invalid_form_payload");
     redirect(appendQueryMessage(returnTo, "error", message));
   }
 
@@ -9746,7 +9766,7 @@ export async function updateAdminFormulaAction(formData: FormData): Promise<void
 
   revalidatePath("/admin/config");
   revalidatePath(`/admin/config/formulas/${formulaId}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Formule mise a jour"));
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.formula_action.updated")));
 }
 
 export async function duplicateAdminFormulaAction(formData: FormData): Promise<void> {
@@ -9754,11 +9774,12 @@ export async function duplicateAdminFormulaAction(formData: FormData): Promise<v
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const formulaId = String(formData.get("formula_id") ?? "").trim();
   if (!formulaId) {
-    redirect("/admin/config/formulas?error=Formule%20invalide");
+    redirect(appendQueryMessage("/admin/config/formulas", "error", t("admin.formula_action.invalid_formula")));
   }
   const returnTo = safeAdminReturnPath(formData, "/admin/config/formulas");
 
@@ -9779,10 +9800,10 @@ export async function duplicateAdminFormulaAction(formData: FormData): Promise<v
   revalidatePath(`/admin/config/formulas/${result.data.id}`);
 
   if (returnTo.startsWith("/admin/config/formulas/")) {
-    redirect(appendQueryMessage(`/admin/config/formulas/${result.data.id}`, "ok", "Formule dupliquee"));
+    redirect(appendQueryMessage(`/admin/config/formulas/${result.data.id}`, "ok", t("admin.formula_action.duplicated")));
   }
 
-  redirect(appendQueryMessage("/admin/config/formulas", "ok", "Formule dupliquee"));
+  redirect(appendQueryMessage("/admin/config/formulas", "ok", t("admin.formula_action.duplicated")));
 }
 
 export async function disableAdminFormulaAction(formData: FormData): Promise<void> {
@@ -9790,11 +9811,12 @@ export async function disableAdminFormulaAction(formData: FormData): Promise<voi
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const formulaId = String(formData.get("formula_id") ?? "").trim();
   if (!formulaId) {
-    redirect("/admin/config/formulas?error=Formule%20invalide");
+    redirect(appendQueryMessage("/admin/config/formulas", "error", t("admin.formula_action.invalid_formula")));
   }
   const returnTo = safeAdminReturnPath(formData, "/admin/config/formulas");
 
@@ -9812,7 +9834,7 @@ export async function disableAdminFormulaAction(formData: FormData): Promise<voi
 
   revalidatePath("/admin/config");
   revalidatePath(`/admin/config/formulas/${formulaId}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Formule desactivee"));
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.formula_action.disabled")));
 }
 
 export async function updatePlanningActivitiesAction(formData: FormData): Promise<void> {
@@ -9857,6 +9879,7 @@ async function syncActivityPlanningAssignments(params: {
   activityId: string;
   selectedLocationIds: string[];
   scopeLocationIds: string[];
+  t: UiTextResolver;
 }): Promise<{ ok: true } | { ok: false; message: string }> {
   const activityId = params.activityId.trim();
   const scopeLocationIds = Array.from(new Set(params.scopeLocationIds.map((value) => value.trim()).filter(Boolean)));
@@ -9875,7 +9898,13 @@ async function syncActivityPlanningAssignments(params: {
       params.token,
     );
     if (!planningResult.ok) {
-      return { ok: false, message: `chargement planning ${locationId}: ${planningResult.message}` };
+      return {
+        ok: false,
+        message: params.t("admin.activity_action.planning_load_failed", {
+          locationId,
+          message: planningResult.message,
+        }),
+      };
     }
 
     const planning = planningResult.data;
@@ -9894,7 +9923,9 @@ async function syncActivityPlanningAssignments(params: {
     if (nextIds.length === 0) {
       return {
         ok: false,
-        message: `le planning ${planning.location_name} doit conserver au moins une activite`,
+        message: params.t("admin.activity_action.planning_requires_one_activity", {
+          location: planning.location_name,
+        }),
       };
     }
 
@@ -9907,7 +9938,13 @@ async function syncActivityPlanningAssignments(params: {
       params.token,
     );
     if (!updateResult.ok) {
-      return { ok: false, message: `planning ${planning.location_name}: ${updateResult.message}` };
+      return {
+        ok: false,
+        message: params.t("admin.activity_action.planning_sync_failed", {
+          location: planning.location_name,
+          message: updateResult.message,
+        }),
+      };
     }
 
     revalidatePath(`/admin/plannings/${locationId}/settings`);
@@ -9920,10 +9957,11 @@ async function syncActivityContentMappings(params: {
   token: string;
   activityId: string;
   contentCourseIds: string[];
+  t: UiTextResolver;
 }): Promise<{ ok: true; data: AdminActivityContentMappingOut[] } | { ok: false; message: string }> {
   const activityId = params.activityId.trim();
   if (!activityId) {
-    return { ok: false, message: "Activite invalide" };
+    return { ok: false, message: params.t("admin.activity_action.invalid_activity") };
   }
   const contentCourseIds = Array.from(new Set(params.contentCourseIds.map((value) => value.trim()).filter(Boolean)));
   const result = await backendRequest<AdminActivityContentMappingOut[]>(
