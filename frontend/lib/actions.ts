@@ -5670,7 +5670,8 @@ export async function bulkAdminClientsAction(formData: FormData): Promise<void> 
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const returnTo = safeAdminReturnPath(formData, "/admin/clients");
   const action = String(formData.get("bulk_action") ?? "").trim().toUpperCase();
@@ -5695,13 +5696,13 @@ export async function bulkAdminClientsAction(formData: FormData): Promise<void> 
   const messageBodyFormat = messageBodyFormatRaw === "HTML" ? "HTML" : "TEXT";
 
   if (selectionScope === "PAGE" && clientIds.length === 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Aucun adherent selectionne"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.clients.bulk_alert_select_client")));
   }
 
   if (action === "EXPORT") {
     const exportIds = selectionScope === "FILTERED" ? filteredClientIds : clientIds;
     if (exportIds.length === 0) {
-      redirect(appendQueryMessage(returnTo, "error", "Aucun adherent selectionne pour export"));
+      redirect(appendQueryMessage(returnTo, "error", t("admin.clients.bulk_export_selection_required")));
     }
     const query = new URLSearchParams();
     for (const clientId of exportIds) {
@@ -5723,24 +5724,30 @@ export async function bulkAdminClientsAction(formData: FormData): Promise<void> 
 
   if (action === "UPDATE_STATUS") {
     if (!targetStatus) {
-      redirect(appendQueryMessage(returnTo, "error", "Statut cible obligatoire"));
+      redirect(appendQueryMessage(returnTo, "error", t("admin.clients.bulk_target_status_required")));
     }
     payload.target_status = targetStatus;
   }
 
   if (action === "ASSIGN_GROUP") {
     if (!groupId) {
-      redirect(appendQueryMessage(returnTo, "error", "Groupe obligatoire"));
+      redirect(appendQueryMessage(returnTo, "error", t("admin.clients.bulk_alert_select_group")));
     }
     payload.group_id = groupId;
   }
 
   if (isMessageAction) {
     if (!messageBody) {
-      redirect(appendQueryMessage(returnTo, "error", isEmailAction ? "Sujet et message obligatoires" : "Message SMS obligatoire"));
+      redirect(
+        appendQueryMessage(
+          returnTo,
+          "error",
+          isEmailAction ? t("admin.clients.bulk_alert_subject_and_message") : t("admin.clients.bulk_alert_sms_message"),
+        ),
+      );
     }
     if (isEmailAction && !messageSubject) {
-      redirect(appendQueryMessage(returnTo, "error", "Sujet et message obligatoires"));
+      redirect(appendQueryMessage(returnTo, "error", t("admin.clients.bulk_alert_subject_and_message")));
     }
     payload.message_subject = messageSubject;
     payload.message_body = messageBody;
@@ -5769,7 +5776,8 @@ export async function createAdminClientGroupAction(formData: FormData): Promise<
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const returnTo = safeAdminReturnPath(formData, "/admin/clients?view=groups");
   const name = String(formData.get("name") ?? "").trim();
@@ -5777,7 +5785,7 @@ export async function createAdminClientGroupAction(formData: FormData): Promise<
   const active = checkboxField(formData, "active");
 
   if (!name) {
-    redirect(appendQueryMessage(returnTo, "error", "Nom de groupe obligatoire"));
+    redirect(appendQueryMessage(returnTo, "error", t("admin.clients.group_name_required")));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -5798,7 +5806,7 @@ export async function createAdminClientGroupAction(formData: FormData): Promise<
   }
 
   revalidatePath("/admin/clients");
-  redirect(appendQueryMessage(returnTo, "ok", "Groupe cree"));
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.clients.group_created")));
 }
 
 export async function createAdminCollaboratorAction(formData: FormData): Promise<void> {
