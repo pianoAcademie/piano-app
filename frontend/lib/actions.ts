@@ -4446,7 +4446,8 @@ export async function refundAdminClientPaymentAction(formData: FormData): Promis
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const paymentSource = String(formData.get("payment_source") ?? "").trim().toUpperCase();
@@ -4456,7 +4457,7 @@ export async function refundAdminClientPaymentAction(formData: FormData): Promis
   const returnTab = returnTabRaw === "factures" ? "factures" : "paiements";
 
   if (!clientId || !paymentSource || !paymentId) {
-    redirect("/admin/clients?error=Paiement%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_payment")));
   }
 
   const result = await backendRequest<{ source: string; payment_id: string }>(
@@ -4471,11 +4472,11 @@ export async function refundAdminClientPaymentAction(formData: FormData): Promis
   );
 
   if (!result.ok) {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "error", result.message));
   }
 
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Avoir%20enregistre`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "ok", t("admin.client_action.credit_note_recorded")));
 }
 
 export async function refundAdminClientPaymentReceiptAction(formData: FormData): Promise<void> {
@@ -4483,7 +4484,8 @@ export async function refundAdminClientPaymentReceiptAction(formData: FormData):
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const receiptId = String(formData.get("receipt_id") ?? "").trim();
@@ -4492,7 +4494,7 @@ export async function refundAdminClientPaymentReceiptAction(formData: FormData):
   const returnTab = returnTabRaw === "reservations" ? "reservations" : "reservations";
 
   if (!clientId || !receiptId) {
-    redirect("/admin/clients?error=Justificatif%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_receipt")));
   }
 
   const result = await backendRequest<{ source: string; payment_id: string }>(
@@ -4507,11 +4509,11 @@ export async function refundAdminClientPaymentReceiptAction(formData: FormData):
   );
 
   if (!result.ok) {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "error", result.message));
   }
 
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Reservation%20remboursee`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "ok", t("admin.client_action.booking_refunded")));
 }
 
 export async function cancelAdminClientInvoiceAction(formData: FormData): Promise<void> {
@@ -4519,7 +4521,8 @@ export async function cancelAdminClientInvoiceAction(formData: FormData): Promis
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const paymentSource = String(formData.get("payment_source") ?? "").trim().toUpperCase();
@@ -4528,7 +4531,7 @@ export async function cancelAdminClientInvoiceAction(formData: FormData): Promis
   const returnTab = returnTabRaw === "factures" ? "factures" : "paiements";
 
   if (!clientId || !paymentSource || !paymentId) {
-    redirect("/admin/clients?error=Facture%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_invoice")));
   }
 
   const result = await backendRequest<{ source: string; payment_id: string }>(
@@ -4543,11 +4546,11 @@ export async function cancelAdminClientInvoiceAction(formData: FormData): Promis
   );
 
   if (!result.ok) {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "error", result.message));
   }
 
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Facture%20annulee`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "ok", t("admin.client_action.invoice_cancelled")));
 }
 
 export async function createAdminClientRangeInvoiceAction(formData: FormData): Promise<void> {
@@ -4841,7 +4844,8 @@ export async function updateAdminClientRangeInvoiceStatusAction(formData: FormDa
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const noteId = String(formData.get("note_id") ?? "").trim();
@@ -4850,10 +4854,10 @@ export async function updateAdminClientRangeInvoiceStatusAction(formData: FormDa
   const returnTab = returnTabRaw === "paiements" ? "paiements" : "factures";
 
   if (!clientId || !noteId) {
-    redirect("/admin/clients?error=Facture%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_invoice")));
   }
   if (statusRaw !== "ISSUED" && statusRaw !== "PAID" && statusRaw !== "CANCELLED") {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=Statut%20de%20facture%20invalide`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "error", t("admin.client_action.invalid_invoice_status")));
   }
 
   const result = await backendRequest<AdminRangeInvoiceOut>(
@@ -4868,11 +4872,11 @@ export async function updateAdminClientRangeInvoiceStatusAction(formData: FormDa
   );
 
   if (!result.ok) {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "error", result.message));
   }
 
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Statut%20facture%20mis%20a%20jour`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "ok", t("admin.client_action.invoice_status_updated")));
 }
 
 export async function sendAdminClientRangeInvoiceEmailAction(formData: FormData): Promise<void> {
@@ -4880,7 +4884,8 @@ export async function sendAdminClientRangeInvoiceEmailAction(formData: FormData)
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const noteId = String(formData.get("note_id") ?? "").trim();
@@ -4889,7 +4894,7 @@ export async function sendAdminClientRangeInvoiceEmailAction(formData: FormData)
   const returnTab = returnTabRaw === "paiements" ? "paiements" : "factures";
 
   if (!clientId || !noteId) {
-    redirect("/admin/clients?error=Facture%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_invoice")));
   }
 
   const kind = kindRaw === "REMINDER" ? "REMINDER" : "INVOICE";
@@ -4925,8 +4930,10 @@ export async function sendAdminClientRangeInvoiceEmailAction(formData: FormData)
   }
 
   revalidatePath(`/admin/clients/${clientId}`);
-  const okMessage = kind === "REMINDER" ? "Relance%20envoyee" : "Facture%20envoyee";
-  redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=${okMessage}`);
+  const okMessage = kind === "REMINDER"
+    ? t("admin.client_action.invoice_reminder_sent")
+    : t("admin.client_action.invoice_sent");
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "ok", okMessage));
 }
 
 export async function sendAdminClientPaymentReceiptAction(formData: FormData): Promise<void> {
@@ -4934,14 +4941,15 @@ export async function sendAdminClientPaymentReceiptAction(formData: FormData): P
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const receiptId = String(formData.get("receipt_id") ?? "").trim();
   const returnTabRaw = String(formData.get("return_tab") ?? "reservations").trim().toLowerCase();
   const returnTab = returnTabRaw === "factures" ? "factures" : "reservations";
   if (!clientId || !receiptId) {
-    redirect("/admin/clients?error=Justificatif%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_receipt")));
   }
 
   const result = await backendRequest<{ receipt_id: string; sent_at: string }>(
@@ -4952,10 +4960,10 @@ export async function sendAdminClientPaymentReceiptAction(formData: FormData): P
     token,
   );
   if (!result.ok) {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "error", result.message));
   }
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Justificatif%20renvoye`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "ok", t("admin.client_action.receipt_resent")));
 }
 
 export async function generateAdminClientBookingFinalInvoiceAction(formData: FormData): Promise<void> {
@@ -4963,14 +4971,15 @@ export async function generateAdminClientBookingFinalInvoiceAction(formData: For
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const bookingId = String(formData.get("booking_id") ?? "").trim();
   const returnTabRaw = String(formData.get("return_tab") ?? "reservations").trim().toLowerCase();
   const returnTab = returnTabRaw === "factures" ? "factures" : "reservations";
   if (!clientId || !bookingId) {
-    redirect("/admin/clients?error=Reservation%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_booking")));
   }
 
   const result = await backendRequest<AdminRangeInvoiceOut>(
@@ -4981,10 +4990,10 @@ export async function generateAdminClientBookingFinalInvoiceAction(formData: For
     token,
   );
   if (!result.ok) {
-    redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "error", result.message));
   }
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(`/admin/clients/${clientId}?tab=${returnTab}&ok=Facture%20finale%20generee`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "ok", t("admin.client_action.final_invoice_generated")));
 }
 
 export async function createAdminClientManualTransactionAction(formData: FormData): Promise<void> {
@@ -4992,7 +5001,8 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const transactionType = String(formData.get("transaction_type") ?? "").trim().toUpperCase();
@@ -5008,7 +5018,7 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
   const legalEntityId = legalEntityIdRaw ? parseUuid(legalEntityIdRaw) : null;
   const customReference = optionalField(formData, "reference");
   if (!clientId) {
-    redirect("/admin/clients?error=Client%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_client")));
   }
   const reconciledInvoiceNoteIdsRaw = formData
     .getAll("reconciled_invoice_note_ids")
@@ -5019,7 +5029,7 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
   for (const rawId of reconciledInvoiceNoteIdsRaw) {
     const parsedId = parseUuid(rawId);
     if (!parsedId) {
-      redirect(`/admin/clients/${clientId}?tab=paiements&error=Facture%20a%20rapprocher%20invalide`);
+      redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", t("admin.client_action.invalid_reconciled_invoice")));
     }
     if (seenReconciledInvoiceNoteIds.has(parsedId)) {
       continue;
@@ -5030,22 +5040,22 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
   const markReconciledInvoicesPaid = parseCheckboxFlag(formData, "mark_reconciled_invoices_paid", false);
   const sendReceiptEmail = parseCheckboxFlag(formData, "send_receipt_email", false);
   if (!["PAYMENT", "REFUND", "CHARGE", "DISCOUNT"].includes(transactionType)) {
-    redirect(`/admin/clients/${clientId}?tab=paiements&error=Type%20de%20transaction%20invalide`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", t("admin.client_action.invalid_transaction_type")));
   }
   if (amountInclVat === null || amountInclVat <= 0) {
-    redirect(`/admin/clients/${clientId}?tab=paiements&error=Montant%20invalide`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", t("admin.client_action.invalid_amount")));
   }
   if (isPaymentTransaction && !paymentMethodCode) {
-    redirect(`/admin/clients/${clientId}?tab=paiements&error=Mode%20de%20paiement%20obligatoire`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", t("admin.client_action.manual_payment_method_required")));
   }
   if (legalEntityIdRaw && !legalEntityId) {
-    redirect(`/admin/clients/${clientId}?tab=paiements&error=Entite%20juridique%20invalide`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", t("admin.client_action.invalid_legal_entity")));
   }
   if (!isPaymentTransaction && (vatRate === null || vatRate < 0 || vatRate > 100)) {
-    redirect(`/admin/clients/${clientId}?tab=paiements&error=Taux%20de%20TVA%20invalide`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", t("admin.client_action.invalid_vat_rate")));
   }
   if (occurredAtRaw && !occurredAt) {
-    redirect(`/admin/clients/${clientId}?tab=paiements&error=Date%20invalide`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", t("admin.client_action.invalid_date")));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -5074,11 +5084,11 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
   );
 
   if (!result.ok) {
-    redirect(`/admin/clients/${clientId}?tab=paiements&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", result.message));
   }
 
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(`/admin/clients/${clientId}?tab=paiements&ok=Transaction%20manuelle%20ajoutee`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "ok", t("admin.client_action.manual_transaction_added")));
 }
 
 export async function updateAdminClientManualTransactionAction(formData: FormData): Promise<void> {
@@ -5086,7 +5096,8 @@ export async function updateAdminClientManualTransactionAction(formData: FormDat
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const transactionId = String(formData.get("transaction_id") ?? "").trim();
@@ -5103,22 +5114,22 @@ export async function updateAdminClientManualTransactionAction(formData: FormDat
   const legalEntityId = legalEntityIdRaw ? parseUuid(legalEntityIdRaw) : null;
 
   if (!clientId || !transactionId) {
-    redirect("/admin/clients?error=Transaction%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_transaction")));
   }
   if (amountInclVat === null || amountInclVat <= 0) {
-    redirect(`/admin/clients/${clientId}?tab=paiements&error=Montant%20invalide`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", t("admin.client_action.invalid_amount")));
   }
   if (isPaymentTransaction && !paymentMethodCode) {
-    redirect(`/admin/clients/${clientId}?tab=paiements&error=Mode%20de%20paiement%20obligatoire`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", t("admin.client_action.manual_payment_method_required")));
   }
   if (legalEntityIdRaw && !legalEntityId) {
-    redirect(`/admin/clients/${clientId}?tab=paiements&error=Entite%20juridique%20invalide`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", t("admin.client_action.invalid_legal_entity")));
   }
   if (!isPaymentTransaction && vatRateRaw && (vatRate === null || vatRate < 0 || vatRate > 100)) {
-    redirect(`/admin/clients/${clientId}?tab=paiements&error=Taux%20de%20TVA%20invalide`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", t("admin.client_action.invalid_vat_rate")));
   }
   if (occurredAtRaw && !occurredAt) {
-    redirect(`/admin/clients/${clientId}?tab=paiements&error=Date%20invalide`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", t("admin.client_action.invalid_date")));
   }
 
   const result = await backendRequest<AdminClientPaymentOut>(
@@ -5143,11 +5154,11 @@ export async function updateAdminClientManualTransactionAction(formData: FormDat
   );
 
   if (!result.ok) {
-    redirect(`/admin/clients/${clientId}?tab=paiements&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", result.message));
   }
 
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(`/admin/clients/${clientId}?tab=paiements&ok=Transaction%20manuelle%20mise%20a%20jour`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "ok", t("admin.client_action.manual_transaction_updated")));
 }
 
 export async function deleteAdminClientManualTransactionAction(formData: FormData): Promise<void> {
@@ -5155,12 +5166,13 @@ export async function deleteAdminClientManualTransactionAction(formData: FormDat
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const transactionId = String(formData.get("transaction_id") ?? "").trim();
   if (!clientId || !transactionId) {
-    redirect("/admin/clients?error=Transaction%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_transaction")));
   }
 
   const result = await backendRequest<Record<string, never>>(
@@ -5172,11 +5184,11 @@ export async function deleteAdminClientManualTransactionAction(formData: FormDat
   );
 
   if (!result.ok) {
-    redirect(`/admin/clients/${clientId}?tab=paiements&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", result.message));
   }
 
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(`/admin/clients/${clientId}?tab=paiements&ok=Transaction%20manuelle%20supprimee`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "ok", t("admin.client_action.manual_transaction_deleted")));
 }
 
 export async function createAdminClientAction(formData: FormData): Promise<void> {
@@ -5553,7 +5565,8 @@ export async function linkExistingFamilyMembersAction(formData: FormData): Promi
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const adultClientId = String(formData.get("adult_client_id") ?? "").trim();
   const childClientId = String(formData.get("child_client_id") ?? "").trim();
@@ -5562,7 +5575,7 @@ export async function linkExistingFamilyMembersAction(formData: FormData): Promi
   const isBillingRecipient = checkboxField(formData, "is_billing_recipient");
 
   if (!adultClientId || !childClientId || !returnClientId) {
-    redirect("/admin/clients?error=Rattachement%20familial%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_family_link")));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -5580,13 +5593,13 @@ export async function linkExistingFamilyMembersAction(formData: FormData): Promi
   );
 
   if (!result.ok) {
-    redirect(`/admin/clients/${returnClientId}?tab=famille&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${returnClientId}?tab=famille`, "error", result.message));
   }
 
   revalidatePath(`/admin/clients/${returnClientId}`);
   revalidatePath(`/admin/clients/${adultClientId}`);
   revalidatePath(`/admin/clients/${childClientId}`);
-  redirect(`/admin/clients/${returnClientId}?tab=famille&ok=Membres%20famille%20rattaches`);
+  redirect(appendQueryMessage(`/admin/clients/${returnClientId}?tab=famille`, "ok", t("admin.client_action.family_members_linked")));
 }
 
 export async function setFamilyBillingRecipientAction(formData: FormData): Promise<void> {
@@ -5594,12 +5607,13 @@ export async function setFamilyBillingRecipientAction(formData: FormData): Promi
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const linkId = String(formData.get("link_id") ?? "").trim();
   const returnClientId = String(formData.get("return_client_id") ?? "").trim();
   if (!linkId || !returnClientId) {
-    redirect("/admin/clients?error=Destinataire%20facture%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_invoice_recipient")));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -5614,11 +5628,11 @@ export async function setFamilyBillingRecipientAction(formData: FormData): Promi
   );
 
   if (!result.ok) {
-    redirect(`/admin/clients/${returnClientId}?tab=famille&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${returnClientId}?tab=famille`, "error", result.message));
   }
 
   revalidatePath(`/admin/clients/${returnClientId}`);
-  redirect(`/admin/clients/${returnClientId}?tab=famille&ok=Destinataire%20facture%20mis%20a%20jour`);
+  redirect(appendQueryMessage(`/admin/clients/${returnClientId}?tab=famille`, "ok", t("admin.client_action.invoice_recipient_updated")));
 }
 
 export async function unlinkFamilyMembersAction(formData: FormData): Promise<void> {
@@ -5626,12 +5640,13 @@ export async function unlinkFamilyMembersAction(formData: FormData): Promise<voi
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const linkId = String(formData.get("link_id") ?? "").trim();
   const returnClientId = String(formData.get("return_client_id") ?? "").trim();
   if (!linkId || !returnClientId) {
-    redirect("/admin/clients?error=Lien%20familial%20invalide");
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_family_link")));
   }
 
   const result = await backendRequest<Record<string, never>>(
@@ -5643,11 +5658,11 @@ export async function unlinkFamilyMembersAction(formData: FormData): Promise<voi
   );
 
   if (!result.ok && result.status !== 204) {
-    redirect(`/admin/clients/${returnClientId}?tab=famille&error=${encodeURIComponent(result.message)}`);
+    redirect(appendQueryMessage(`/admin/clients/${returnClientId}?tab=famille`, "error", result.message));
   }
 
   revalidatePath(`/admin/clients/${returnClientId}`);
-  redirect(`/admin/clients/${returnClientId}?tab=famille&ok=Lien%20familial%20supprime`);
+  redirect(appendQueryMessage(`/admin/clients/${returnClientId}?tab=famille`, "ok", t("admin.client_action.family_link_deleted")));
 }
 
 export async function bulkAdminClientsAction(formData: FormData): Promise<void> {
