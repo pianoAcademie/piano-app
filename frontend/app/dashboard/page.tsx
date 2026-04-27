@@ -939,6 +939,20 @@ function resolvePortalErrorMessage(
   return "";
 }
 
+function resolvePortalWarningMessage(
+  rawWarning: string,
+  warningCode: string,
+  t: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  if (rawWarning) {
+    return rawWarning;
+  }
+  if (warningCode.trim().toLowerCase() === "active_pack_warning") {
+    return t("client.pre_purchase_default_warning");
+  }
+  return "";
+}
+
 function clientInvoiceHref(invoiceId: string, options?: { inline?: boolean }): string {
   const encodedId = encodeURIComponent(invoiceId);
   return options?.inline ? `/client/invoices/${encodedId}/download?inline=true` : `/client/invoices/${encodedId}/download`;
@@ -1018,7 +1032,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const paymentIdParam = readParam(searchParams, "payment_id").trim();
   const paymentReturnParam = readParam(searchParams, "payment_return").trim().toLowerCase();
   const purchaseContextParam = readParam(searchParams, "purchase_context").trim();
-  const warningMessage = readParam(searchParams, "warning").trim();
+  const warningMessage = resolvePortalWarningMessage(
+    readParam(searchParams, "warning").trim(),
+    readParam(searchParams, "warning_code"),
+    t,
+  );
   const confirmExistingPackPurchase = readParam(searchParams, "confirm_existing_pack_purchase") === "1";
   const confirmPlanId = readParam(searchParams, "confirm_plan_id").trim();
   const editProfile = readParam(searchParams, "edit_profile") === "1";
@@ -4150,9 +4168,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       href={withUpdatedQuery(rawParams, {
                         tab: "offers",
                         warning: null,
+                        warning_code: null,
                         confirm_existing_pack_purchase: null,
                         confirm_plan_id: null,
                         error: null,
+                        error_code: null,
                       })}
                     >
                       {t("common.cancel")}

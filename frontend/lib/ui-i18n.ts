@@ -32,6 +32,8 @@ const AUTH_ERROR_MESSAGE_KEYS: Record<string, string> = {
   no_pack_credits: "public_booking.no_pack_credits",
   invalid_payment_link: "public_booking.invalid_payment_link",
   payment_not_found: "public_booking.payment_not_found",
+  profile_preferences_required: "client.account_preferences_required",
+  offer_start_date_invalid: "client.offer_start_date_invalid",
 };
 
 const AUTH_OK_MESSAGE_KEYS: Record<string, string> = {
@@ -44,6 +46,8 @@ const AUTH_OK_MESSAGE_KEYS: Record<string, string> = {
   waitlist_joined: "public_booking.waitlist_joined",
   already_paid: "public_booking.already_paid",
   booking_cancelled: "public_booking.booking_cancelled",
+  profile_updated: "client.profile_updated",
+  offer_subscribed: "client.offer_subscribed",
 };
 
 const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
@@ -4859,11 +4863,15 @@ const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
     "client.cumulative_positive_credits": "Credits cumules (positifs)",
     "client.no_positive_credit_display": "Aucun credit positif a afficher.",
     "client.offer_catalog": "Catalogue des offres",
+    "client.offer_subscribed": "Offre souscrite",
+    "client.offer_start_date_invalid": "Date de demarrage invalide",
     "client.actual_billing_based_on_schedule": "Facturation: au reel selon planning",
     "client.unlimited": "illimite",
     "client.subscribe_offer_title": "Souscrire cette offre",
     "client.no_active_offer": "Aucune offre active.",
     "client.account_title": "Mon compte",
+    "client.account_preferences_required": "Pays, devise et timezone sont obligatoires",
+    "client.profile_updated": "Profil mis a jour",
     "client.first_name_label": "Prenom",
     "client.last_name_label": "Nom",
     "client.mobile_phone_1": "Tel mob 1",
@@ -10157,11 +10165,15 @@ const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
     "client.cumulative_positive_credits": "Cumulative positive credits",
     "client.no_positive_credit_display": "No positive credit to display.",
     "client.offer_catalog": "Offer catalog",
+    "client.offer_subscribed": "Plan subscribed",
+    "client.offer_start_date_invalid": "Invalid start date",
     "client.actual_billing_based_on_schedule": "Billing: actual charges based on schedule",
     "client.unlimited": "unlimited",
     "client.subscribe_offer_title": "Subscribe to this offer",
     "client.no_active_offer": "No active offer.",
     "client.account_title": "My account",
+    "client.account_preferences_required": "Country, currency and timezone are required",
+    "client.profile_updated": "Profile updated",
     "client.first_name_label": "First name",
     "client.last_name_label": "Last name",
     "client.mobile_phone_1": "Mobile phone 1",

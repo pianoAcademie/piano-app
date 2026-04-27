@@ -1393,7 +1393,7 @@ export async function updateProfileAction(formData: FormData): Promise<void> {
   const timezone = String(formData.get("timezone") ?? "").trim();
 
   if (!residence_country || !preferred_currency || !timezone) {
-    redirect("/client?tab=account&edit_profile=1&error=Pays%2C%20devise%20et%20timezone%20sont%20obligatoires");
+    redirect("/client?tab=account&edit_profile=1&error_code=profile_preferences_required");
   }
 
   const payload = {
@@ -1434,7 +1434,7 @@ export async function updateProfileAction(formData: FormData): Promise<void> {
 
   revalidatePath("/client");
   revalidatePath("/dashboard");
-  redirect("/client?tab=account&ok=Profil%20mis%20a%20jour");
+  redirect("/client?tab=account&ok_code=profile_updated");
 }
 
 export async function purchasePlanAction(formData: FormData): Promise<void> {
@@ -1453,7 +1453,7 @@ export async function purchasePlanAction(formData: FormData): Promise<void> {
   }
   if (startDateRaw) {
     if (!parseUtcStartOfDate(startDateRaw)) {
-      redirect("/client?tab=offers&error=Date%20de%20demarrage%20invalide");
+      redirect("/client?tab=offers&error_code=offer_start_date_invalid");
     }
     payload.start_date = startDateRaw;
   }
@@ -1477,11 +1477,7 @@ export async function purchasePlanAction(formData: FormData): Promise<void> {
       confirmPath = setQueryParam(confirmPath, "purchase_start_date", startDateRaw || null);
       confirmPath = setQueryParam(confirmPath, "confirm_plan_id", planId || null);
       confirmPath = setQueryParam(confirmPath, "confirm_existing_pack_purchase", "1");
-      confirmPath = setQueryParam(
-        confirmPath,
-        "warning",
-        "Attention : vous avez deja un carnet actif avec des credits restants. Confirmez-vous votre nouvel achat ?",
-      );
+      confirmPath = setQueryParam(confirmPath, "warning_code", "active_pack_warning");
       redirect(confirmPath);
     }
     redirect(`/client?tab=offers&error=${encodeURIComponent(result.message)}`);
@@ -1492,7 +1488,7 @@ export async function purchasePlanAction(formData: FormData): Promise<void> {
   if (result.data.checkout_url) {
     redirect(result.data.checkout_url);
   }
-  let successPath = "/client?tab=offers&ok=Offre%20souscrite";
+  let successPath = "/client?tab=offers&ok_code=offer_subscribed";
   successPath = setQueryParam(successPath, "purchase_user_id", purchaseUserId || null);
   successPath = setQueryParam(successPath, "purchase_start_date", startDateRaw || null);
   redirect(successPath);
