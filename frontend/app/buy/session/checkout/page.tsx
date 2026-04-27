@@ -5,7 +5,7 @@ import PortalBrandLockup from "../../../../components/portal-brand-lockup";
 import { startFormulaPurchaseLinkAction, submitPublicSessionCheckoutAction } from "../../../../lib/actions";
 import { getPortalToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
-import { localeForUiLanguage, normalizeUiLanguage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
+import { localeForUiLanguage, normalizeUiLanguage, resolveAuthErrorMessage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 import type {
   ClientSessionPurchaseCatalogOut,
   ClientSessionReservationMemberOptionOut,
@@ -143,7 +143,7 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
   const planningReturnTo = readParam(params, "planning_return_to").trim();
   const bookingUserId = readParam(params, "booking_user_id").trim();
   const okMessage = resolveAuthOkMessage(readParam(params, "ok"), readParam(params, "ok_code"), queryLanguage);
-  const errorMessage = readParam(params, "error");
+  const errorMessage = resolveAuthErrorMessage(readParam(params, "error"), readParam(params, "error_code"), queryLanguage);
   const checkoutReturnTo = sessionId ? buildCheckoutHref(sessionId, planningReturnTo, bookingUserId, queryLanguage) : `/buy/session/checkout${queryLanguage === "en" ? "?lang=en" : ""}`;
 
   if (!sessionId) {
@@ -183,7 +183,7 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
   const authResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, portalToken);
   if (!authResult.ok) {
     redirect(
-      `/login?mode=login&return_to=${encodeURIComponent(checkoutReturnTo)}&error=${encodeURIComponent(uiText(queryLanguage, "public_booking.session_expired"))}${queryLanguage === "en" ? "&lang=en" : ""}`,
+      `/login?mode=login&return_to=${encodeURIComponent(checkoutReturnTo)}&error_code=session_expired${queryLanguage === "en" ? "&lang=en" : ""}`,
     );
   }
   const me = authResult.data;

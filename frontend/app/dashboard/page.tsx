@@ -63,7 +63,7 @@ import SectionCard from "../../components/ui-client/section-card";
 import TransactionRow from "../../components/ui-client/transaction-row";
 import UpcomingLessonRow from "../../components/ui-client/upcoming-lesson-row";
 import UrgentPayCard from "../../components/ui-client/urgent-pay-card";
-import { normalizeUiLanguage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
+import { normalizeUiLanguage, resolveAuthErrorMessage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type AgendaView = "agenda" | "week" | "day";
@@ -912,10 +912,15 @@ function resolvePortalErrorMessage(
   rawError: string,
   errorCode: string,
   errorStatus: string,
+  language: UiLanguage,
   t: (key: string, values?: Record<string, string | number>) => string,
 ): string {
   if (rawError) {
     return rawError;
+  }
+  const commonMessage = resolveAuthErrorMessage("", errorCode, language);
+  if (commonMessage) {
+    return commonMessage;
   }
   const normalizedCode = errorCode.trim().toLowerCase();
   const status = Number.parseInt(errorStatus, 10);
@@ -2018,11 +2023,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         session_member_id: null,
         session_ok: null,
         session_error: null,
+        session_ok_code: null,
+        session_error_code: null,
       })
     : withUpdatedQuery(rawParams, {
         tab: "planning",
         session_ok: null,
         session_error: null,
+        session_ok_code: null,
+        session_error_code: null,
       });
   const selectedSessionCloseHref = withUpdatedQuery(rawParams, {
     tab: "planning",
@@ -2030,6 +2039,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     session_member_id: null,
     session_ok: null,
     session_error: null,
+    session_ok_code: null,
+    session_error_code: null,
   });
   const selectedSessionModalStatusCode =
     planningStatusCodeFromLabel(selectedReservationMemberOption?.status_label) ?? selectedSessionPlanningState?.cardStatusCode ?? null;
@@ -2369,10 +2380,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const errorMessage = readParam(searchParams, "error");
   const errorCode = readParam(searchParams, "error_code");
   const errorStatus = readParam(searchParams, "error_status");
-  const sessionOkMessage = selectedSession ? readParam(searchParams, "session_ok") : "";
-  const sessionErrorMessage = selectedSession ? readParam(searchParams, "session_error") : "";
+  const sessionOkMessage = selectedSession
+    ? resolveAuthOkMessage(readParam(searchParams, "session_ok"), readParam(searchParams, "session_ok_code"), language)
+    : "";
+  const sessionErrorMessage = selectedSession
+    ? resolveAuthErrorMessage(readParam(searchParams, "session_error"), readParam(searchParams, "session_error_code"), language)
+    : "";
   const globalOkMessage = sessionOkMessage ? "" : (okMessage || paymentResultMessage);
-  const portalErrorMessage = resolvePortalErrorMessage(errorMessage, errorCode, errorStatus, t);
+  const portalErrorMessage = resolvePortalErrorMessage(errorMessage, errorCode, errorStatus, language, t);
   const globalErrorMessage = sessionErrorMessage ? "" : (portalErrorMessage || paymentResultError);
   const hasPhoneNumber = Boolean(me.mobile_phone_1 || me.mobile_phone_2 || me.home_phone || me.phone);
   const selectedMessageId = readParam(searchParams, "message_id");
@@ -3120,8 +3135,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               session_member_id: null,
                               ok: null,
                               error: null,
+                              ok_code: null,
+                              error_code: null,
                               session_ok: null,
                               session_error: null,
+                              session_ok_code: null,
+                              session_error_code: null,
                             });
                             const reservationFlagLabel =
                               sessionState.familyBookings.length > 1

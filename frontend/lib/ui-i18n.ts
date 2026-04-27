@@ -7,6 +7,7 @@ const AUTH_ERROR_MESSAGE_KEYS: Record<string, string> = {
   invalid_session: "auth.error_invalid_session",
   admin_access_required: "auth.error_admin_access_required",
   client_access_required: "auth.error_client_access_required",
+  booking_login_required: "public_booking.login_required",
   reset_link_invalid: "auth.error_reset_link_invalid",
   reset_password_too_short: "auth.error_reset_password_too_short",
   reset_password_mismatch: "auth.error_reset_password_mismatch",
@@ -26,6 +27,11 @@ const AUTH_ERROR_MESSAGE_KEYS: Record<string, string> = {
   signup_confirm_accuracy_required: "auth.error_signup_confirm_accuracy_required",
   signup_accept_terms_required: "auth.error_signup_accept_terms_required",
   forgot_email_required: "auth.error_forgot_email_required",
+  invalid_slot: "public_booking.invalid_slot",
+  no_eligible_plan: "public_booking.no_eligible_plan",
+  no_pack_credits: "public_booking.no_pack_credits",
+  invalid_payment_link: "public_booking.invalid_payment_link",
+  payment_not_found: "public_booking.payment_not_found",
 };
 
 const AUTH_OK_MESSAGE_KEYS: Record<string, string> = {
@@ -34,6 +40,10 @@ const AUTH_OK_MESSAGE_KEYS: Record<string, string> = {
   login_success: "auth.ok_login_success",
   login_teacher_success: "auth.ok_login_teacher_success",
   signup_success: "auth.ok_signup_success",
+  booking_confirmed: "public_booking.booking_confirmed",
+  waitlist_joined: "public_booking.waitlist_joined",
+  already_paid: "public_booking.already_paid",
+  booking_cancelled: "public_booking.booking_cancelled",
 };
 
 const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
@@ -4550,6 +4560,9 @@ const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
     "public_booking.booking_confirmed": "Reservation confirmee",
     "public_booking.waitlist_joined": "Ajout a la liste d attente",
     "public_booking.already_paid": "Reservation deja reglee",
+    "public_booking.booking_cancelled": "Reservation annulee",
+    "public_booking.invalid_payment_link": "Lien de paiement invalide",
+    "public_booking.payment_not_found": "Paiement introuvable",
     "public_booking.invalid_formula": "Formule invalide",
     "public_booking.valid_email_required": "Veuillez saisir une adresse email valide",
     "public_booking.price_to_confirm": "Tarif a confirmer",
@@ -9845,6 +9858,9 @@ const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
     "public_booking.booking_confirmed": "Booking confirmed",
     "public_booking.waitlist_joined": "Added to the waitlist",
     "public_booking.already_paid": "Booking already paid",
+    "public_booking.booking_cancelled": "Booking cancelled",
+    "public_booking.invalid_payment_link": "Invalid payment link",
+    "public_booking.payment_not_found": "Payment not found",
     "public_booking.invalid_formula": "Invalid formula",
     "public_booking.valid_email_required": "Please enter a valid email address",
     "public_booking.price_to_confirm": "Price to be confirmed",

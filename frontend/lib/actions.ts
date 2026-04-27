@@ -1632,15 +1632,13 @@ export async function submitPublicSessionCheckoutAction(formData: FormData): Pro
   const language = publicActionLanguage(checkoutReturnTo, planningReturnTo);
 
   if (!sessionId) {
-    redirect(appendQueryMessage(checkoutReturnTo, "error", uiText(language, "public_booking.invalid_slot")));
+    redirect(appendQueryMessage(checkoutReturnTo, "error_code", "invalid_slot"));
   }
 
   const token = currentPortalToken();
   if (!token) {
     redirect(setQueryParam(
-      `/login?mode=login&return_to=${encodeURIComponent(checkoutReturnTo)}&error=${encodeURIComponent(
-        uiText(language, "public_booking.login_required"),
-      )}`,
+      `/login?mode=login&return_to=${encodeURIComponent(checkoutReturnTo)}&error_code=booking_login_required`,
       "lang",
       language === "en" ? "en" : null,
     ));
@@ -1663,9 +1661,7 @@ export async function submitPublicSessionCheckoutAction(formData: FormData): Pro
     if (result.status === 401) {
       clearToken();
       redirect(setQueryParam(
-        `/login?mode=login&return_to=${encodeURIComponent(checkoutReturnTo)}&error=${encodeURIComponent(
-          uiText(language, "public_booking.session_expired"),
-        )}`,
+        `/login?mode=login&return_to=${encodeURIComponent(checkoutReturnTo)}&error_code=session_expired`,
         "lang",
         language === "en" ? "en" : null,
       ));
@@ -1683,19 +1679,23 @@ export async function submitPublicSessionCheckoutAction(formData: FormData): Pro
   successPlanningPath = removeQueryParam(successPlanningPath, "session_member_id");
   successPlanningPath = removeQueryParam(successPlanningPath, "session_ok");
   successPlanningPath = removeQueryParam(successPlanningPath, "session_error");
+  successPlanningPath = removeQueryParam(successPlanningPath, "session_ok_code");
+  successPlanningPath = removeQueryParam(successPlanningPath, "session_error_code");
   successPlanningPath = removeQueryParam(successPlanningPath, "ok");
   successPlanningPath = removeQueryParam(successPlanningPath, "error");
+  successPlanningPath = removeQueryParam(successPlanningPath, "ok_code");
+  successPlanningPath = removeQueryParam(successPlanningPath, "error_code");
   if (bookingStatus === "WAITLISTED") {
-    redirect(appendQueryMessage(successPlanningPath, "ok", uiText(language, "public_booking.waitlist_joined")));
+    redirect(appendQueryMessage(successPlanningPath, "ok_code", "waitlist_joined"));
   }
   if (invoiceStatus === "PAID") {
-    redirect(appendQueryMessage(successPlanningPath, "ok", uiText(language, "public_booking.already_paid")));
+    redirect(appendQueryMessage(successPlanningPath, "ok_code", "already_paid"));
   }
   if (invoiceStatus === "COVERED") {
-    redirect(appendQueryMessage(successPlanningPath, "ok", uiText(language, "public_booking.booking_confirmed")));
+    redirect(appendQueryMessage(successPlanningPath, "ok_code", "booking_confirmed"));
   }
 
-  redirect(appendQueryMessage(successPlanningPath, "ok", uiText(language, "public_booking.booking_confirmed")));
+  redirect(appendQueryMessage(successPlanningPath, "ok_code", "booking_confirmed"));
 }
 
 export async function openClientPaymentCheckoutAction(formData: FormData): Promise<void> {
@@ -1710,13 +1710,13 @@ export async function openClientPaymentCheckoutAction(formData: FormData): Promi
     if (directPaymentUrl.startsWith("/") || directPaymentUrl.startsWith("http://") || directPaymentUrl.startsWith("https://")) {
       redirect(directPaymentUrl);
     }
-    redirect(appendQueryMessage(returnTo, "error", "Lien de paiement invalide"));
+    redirect(appendQueryMessage(returnTo, "error_code", "invalid_payment_link"));
   }
 
   const paymentRaw = String(formData.get("payment_id") ?? "").trim();
   const paymentId = paymentRaw.startsWith("plan:") ? paymentRaw.slice("plan:".length) : paymentRaw;
   if (!paymentId) {
-    redirect(appendQueryMessage(returnTo, "error", "Paiement introuvable"));
+    redirect(appendQueryMessage(returnTo, "error_code", "payment_not_found"));
   }
 
   const result = await backendRequest<ClientPaymentCheckoutOut>(
@@ -1746,8 +1746,12 @@ export async function bookSessionAction(formData: FormData): Promise<void> {
   successPlanningPath = removeQueryParam(successPlanningPath, "session_member_id");
   successPlanningPath = removeQueryParam(successPlanningPath, "session_ok");
   successPlanningPath = removeQueryParam(successPlanningPath, "session_error");
+  successPlanningPath = removeQueryParam(successPlanningPath, "session_ok_code");
+  successPlanningPath = removeQueryParam(successPlanningPath, "session_error_code");
   successPlanningPath = removeQueryParam(successPlanningPath, "ok");
   successPlanningPath = removeQueryParam(successPlanningPath, "error");
+  successPlanningPath = removeQueryParam(successPlanningPath, "ok_code");
+  successPlanningPath = removeQueryParam(successPlanningPath, "error_code");
 
   const sessionId = String(formData.get("session_id") ?? "");
   const bookingUserId = String(formData.get("booking_user_id") ?? "").trim();
@@ -1769,29 +1773,39 @@ export async function bookSessionAction(formData: FormData): Promise<void> {
   );
 
   if (!result.ok) {
-    const userMessage =
+    const userErrorCode =
       result.status === 403 && result.message === "No eligible active plan for this session"
-        ? "Aucune formule active compatible avec ce type de cours."
+        ? "no_eligible_plan"
         : result.status === 403 && result.message === "No remaining credits on selected pack"
-          ? "Plus de credits disponibles sur le carnet selectionne."
-        : result.message;
+          ? "no_pack_credits"
+          : "";
+    const userMessage = result.message;
     let failurePath = removeQueryParam(returnTo, "ok");
+    failurePath = removeQueryParam(failurePath, "ok_code");
+    failurePath = removeQueryParam(failurePath, "error");
+    failurePath = removeQueryParam(failurePath, "error_code");
     failurePath = removeQueryParam(failurePath, "session_ok");
+    failurePath = removeQueryParam(failurePath, "session_ok_code");
     if (inSessionContext) {
       failurePath = removeQueryParam(failurePath, "session_error");
-      failurePath = appendQueryMessage(failurePath, "session_error", userMessage);
+      failurePath = removeQueryParam(failurePath, "session_error_code");
+      failurePath = userErrorCode
+        ? appendQueryMessage(failurePath, "session_error_code", userErrorCode)
+        : appendQueryMessage(failurePath, "session_error", userMessage);
     }
-    redirect(appendQueryMessage(failurePath, "error", userMessage));
+    redirect(userErrorCode ? appendQueryMessage(failurePath, "error_code", userErrorCode) : appendQueryMessage(failurePath, "error", userMessage));
   }
 
   revalidatePath("/client");
   revalidatePath("/dashboard");
   if (inSessionContext) {
-    redirect(appendQueryMessage(successPlanningPath, "ok", "Reservation confirmee"));
+    redirect(appendQueryMessage(successPlanningPath, "ok_code", "booking_confirmed"));
   }
   let successPath = removeQueryParam(returnTo, "error");
   successPath = removeQueryParam(successPath, "session_error");
-  redirect(appendQueryMessage(successPath, "ok", "Reservation confirmee"));
+  successPath = removeQueryParam(successPath, "error_code");
+  successPath = removeQueryParam(successPath, "session_error_code");
+  redirect(appendQueryMessage(successPath, "ok_code", "booking_confirmed"));
 }
 
 export async function reservePublicPlanningSessionAction(formData: FormData): Promise<void> {
@@ -1801,7 +1815,7 @@ export async function reservePublicPlanningSessionAction(formData: FormData): Pr
   const token = currentPortalToken();
   if (!token) {
     redirect(setQueryParam(
-      `/login?mode=login&return_to=${encodeURIComponent(returnTo)}&error=${encodeURIComponent(uiText(language, "public_booking.login_required"))}`,
+      `/login?mode=login&return_to=${encodeURIComponent(returnTo)}&error_code=booking_login_required`,
       "lang",
       language === "en" ? "en" : null,
     ));
@@ -1810,12 +1824,16 @@ export async function reservePublicPlanningSessionAction(formData: FormData): Pr
   successPlanningPath = removeQueryParam(successPlanningPath, "session_member_id");
   successPlanningPath = removeQueryParam(successPlanningPath, "session_ok");
   successPlanningPath = removeQueryParam(successPlanningPath, "session_error");
+  successPlanningPath = removeQueryParam(successPlanningPath, "session_ok_code");
+  successPlanningPath = removeQueryParam(successPlanningPath, "session_error_code");
   successPlanningPath = removeQueryParam(successPlanningPath, "ok");
   successPlanningPath = removeQueryParam(successPlanningPath, "error");
+  successPlanningPath = removeQueryParam(successPlanningPath, "ok_code");
+  successPlanningPath = removeQueryParam(successPlanningPath, "error_code");
 
   const sessionId = String(formData.get("session_id") ?? "").trim();
   if (!sessionId) {
-    redirect(appendQueryMessage(returnTo, "session_error", uiText(language, "public_booking.invalid_slot")));
+    redirect(appendQueryMessage(returnTo, "session_error_code", "invalid_slot"));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -1828,22 +1846,29 @@ export async function reservePublicPlanningSessionAction(formData: FormData): Pr
   );
 
   if (!result.ok) {
-    const userMessage =
+    const userErrorCode =
       result.status === 403 && result.message === "No eligible active plan for this session"
-        ? uiText(language, "public_booking.no_eligible_plan")
+        ? "no_eligible_plan"
         : result.status === 403 && result.message === "No remaining credits on selected pack"
-          ? uiText(language, "public_booking.no_pack_credits")
-          : result.message;
+          ? "no_pack_credits"
+          : "";
+    const userMessage = result.message;
     let failurePath = removeQueryParam(returnTo, "ok");
     failurePath = removeQueryParam(failurePath, "error");
+    failurePath = removeQueryParam(failurePath, "ok_code");
+    failurePath = removeQueryParam(failurePath, "error_code");
     failurePath = removeQueryParam(failurePath, "session_ok");
     failurePath = removeQueryParam(failurePath, "session_error");
-    failurePath = appendQueryMessage(failurePath, "session_error", userMessage);
-    redirect(appendQueryMessage(failurePath, "error", userMessage));
+    failurePath = removeQueryParam(failurePath, "session_ok_code");
+    failurePath = removeQueryParam(failurePath, "session_error_code");
+    failurePath = userErrorCode
+      ? appendQueryMessage(failurePath, "session_error_code", userErrorCode)
+      : appendQueryMessage(failurePath, "session_error", userMessage);
+    redirect(userErrorCode ? appendQueryMessage(failurePath, "error_code", userErrorCode) : appendQueryMessage(failurePath, "error", userMessage));
   }
 
   revalidatePath("/embed/planning");
-  redirect(appendQueryMessage(successPlanningPath, "ok", uiText(language, "public_booking.booking_confirmed")));
+  redirect(appendQueryMessage(successPlanningPath, "ok_code", "booking_confirmed"));
 }
 
 export async function cancelBookingAction(formData: FormData): Promise<void> {
@@ -1869,8 +1894,11 @@ export async function cancelBookingAction(formData: FormData): Promise<void> {
 
   revalidatePath("/client");
   revalidatePath("/dashboard");
-  const successPath = removeQueryParam(returnTo, "error");
-  redirect(appendQueryMessage(successPath, "ok", "Reservation annulee"));
+  let successPath = removeQueryParam(returnTo, "error");
+  successPath = removeQueryParam(successPath, "error_code");
+  successPath = removeQueryParam(successPath, "ok");
+  successPath = removeQueryParam(successPath, "ok_code");
+  redirect(appendQueryMessage(successPath, "ok_code", "booking_cancelled"));
 }
 
 export async function professorUpdateAttendanceAction(formData: FormData): Promise<void> {
