@@ -28,6 +28,7 @@ import {
   quickTransformQuoteAction,
   regenerateQuoteDocumentAction,
   resendQuoteAction,
+  resendQuotePublicConfirmationAction,
   rollbackQuoteTransformationAction,
   restoreQuotePublicResponseAction,
   selectQuoteFollowupSlotAction,
@@ -1129,8 +1130,42 @@ const QUOTE_INTERACTION_EVENT_TYPES = new Set([
   "quote_transformation_rolled_back",
 ]);
 
+function quoteConfirmationKindLabel(kind: string, language: UiLanguage = "fr"): string {
+  const normalizedKind = kind.trim().toLowerCase();
+  if (normalizedKind === "quote_public_approved_confirmation") {
+    return uiText(language, "admin.quote_events.kind.approved_confirmation");
+  }
+  if (normalizedKind === "quote_public_rejected_confirmation") {
+    return uiText(language, "admin.quote_events.kind.rejected_confirmation");
+  }
+  if (normalizedKind === "quote_public_change_requested_confirmation") {
+    return uiText(language, "admin.quote_events.kind.change_requested_confirmation");
+  }
+  return uiText(language, "admin.quote_events.kind.client_confirmation");
+}
+
+function quoteConfirmationSkipReasonLabel(reason: string, language: UiLanguage = "fr"): string {
+  const normalizedReason = reason.trim().toLowerCase();
+  if (normalizedReason === "missing_recipient_email") {
+    return uiText(language, "admin.quote_events.reason.missing_recipient_email");
+  }
+  if (normalizedReason === "delivery_disabled") {
+    return uiText(language, "admin.quote_events.reason.delivery_disabled");
+  }
+  return uiText(language, "admin.quote_events.reason.unknown");
+}
+
 function quoteEventTitle(event: QuoteEventOut, language: UiLanguage = "fr"): string {
   const type = String(event.event_type || "").trim().toLowerCase();
+  const payload = event.payload || {};
+  const kind = typeof payload.kind === "string" ? payload.kind.trim().toLowerCase() : "";
+  if (
+    type === "quote_email_sent"
+    && kind.startsWith("quote_public_")
+    && kind.endsWith("_confirmation")
+  ) {
+    return uiText(language, "admin.quote_events.title.client_confirmation_sent");
+  }
   const keyByType: Record<string, string> = {
     quote_created: "admin.quote_events.title.created",
     quote_document_regenerated: "admin.quote_events.title.document_regenerated",
@@ -1157,6 +1192,12 @@ function quoteEventTone(event: QuoteEventOut): "client" | "admin" | "system" {
   const type = String(event.event_type || "").trim().toLowerCase();
   if (["quote_approved", "quote_rejected", "quote_change_requested"].includes(type)) {
     return "client";
+  }
+  if (
+    ["quote_public_confirmation_email_failed", "quote_public_confirmation_email_skipped"].includes(type)
+    && event.actor_type === "admin"
+  ) {
+    return "admin";
   }
   if (
     [
@@ -1191,6 +1232,9 @@ function quoteEventDescription(event: QuoteEventOut, language: UiLanguage = "fr"
   const fromStatus = typeof payload.from_status === "string" ? payload.from_status.trim() : "";
   const toStatus = typeof payload.to_status === "string" ? payload.to_status.trim() : "";
   const error = typeof payload.error === "string" ? payload.error.trim() : "";
+  const kind = typeof payload.kind === "string" ? payload.kind.trim() : "";
+  const reason = typeof payload.reason === "string" ? payload.reason.trim() : "";
+  const detail = typeof payload.detail === "string" ? payload.detail.trim() : "";
   if (type === "quote_change_requested") {
     return message || uiText(language, "admin.quote_events.description.change_requested_fallback");
   }
@@ -1207,6 +1251,17 @@ function quoteEventDescription(event: QuoteEventOut, language: UiLanguage = "fr"
     return uiText(language, "admin.quote_events.description.document_regenerated", { actor: actorLabel });
   }
   if (type === "quote_email_sent") {
+    if (kind.trim().toLowerCase().startsWith("quote_public_") && kind.trim().toLowerCase().endsWith("_confirmation")) {
+      const localizedKind = quoteConfirmationKindLabel(kind, language);
+      return recipientEmail
+        ? uiText(language, "admin.quote_events.description.client_confirmation_sent_to", {
+          email: recipientEmail,
+          kind: localizedKind,
+        })
+        : uiText(language, "admin.quote_events.description.client_confirmation_sent", {
+          kind: localizedKind,
+        });
+    }
     return recipientEmail
       ? uiText(language, "admin.quote_events.description.email_sent_to", { email: recipientEmail })
       : uiText(language, "admin.quote_events.description.email_sent_by", { actor: actorLabel });
@@ -1223,10 +1278,34 @@ function quoteEventDescription(event: QuoteEventOut, language: UiLanguage = "fr"
       : uiText(language, "admin.quote_events.description.action_by", { actor: actorLabel });
   }
   if (type === "quote_public_confirmation_email_failed") {
-    return error || uiText(language, "admin.quote_events.description.confirmation_failed");
+    const localizedKind = quoteConfirmationKindLabel(kind, language);
+    const failureReason = error || uiText(language, "admin.quote_events.description.confirmation_failed");
+    return recipientEmail
+      ? uiText(language, "admin.quote_events.description.client_confirmation_failed_to", {
+        email: recipientEmail,
+        error: failureReason,
+        kind: localizedKind,
+      })
+      : uiText(language, "admin.quote_events.description.client_confirmation_failed", {
+        error: failureReason,
+        kind: localizedKind,
+      });
   }
   if (type === "quote_public_confirmation_email_skipped") {
-    return uiText(language, "admin.quote_events.description.confirmation_skipped");
+    const localizedKind = quoteConfirmationKindLabel(kind, language);
+    const localizedReason = detail
+      ? `${quoteConfirmationSkipReasonLabel(reason, language)} · ${detail}`
+      : quoteConfirmationSkipReasonLabel(reason, language);
+    return recipientEmail
+      ? uiText(language, "admin.quote_events.description.client_confirmation_skipped_to", {
+        email: recipientEmail,
+        kind: localizedKind,
+        reason: localizedReason,
+      })
+      : uiText(language, "admin.quote_events.description.client_confirmation_skipped", {
+        kind: localizedKind,
+        reason: localizedReason,
+      });
   }
   if (type === "quote_cancelled") {
     return uiText(language, "admin.quote_events.description.action_by", { actor: actorLabel });
@@ -1618,6 +1697,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const canResendQuote = ["sent", "approved", "rejected", "expired", "change_requested"].includes(quoteStatus);
   const canCancelQuote = !["cancelled", "approved"].includes(quoteStatus);
   const canRestorePublicResponse = ["approved", "rejected", "change_requested"].includes(quoteStatus);
+  const canResendPublicConfirmation = ["approved", "rejected", "change_requested"].includes(quoteStatus);
   const restoreTargetStatusRaw = readStringMeta(detail.quote.meta || {}, "public_response_previous_status", "").trim().toLowerCase();
   const restoreTargetStatus =
     restoreTargetStatusRaw === "sent" || restoreTargetStatusRaw === "change_requested"
@@ -1631,6 +1711,18 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const lastRecipientEmail = readStringMeta(detail.quote.meta || {}, "recipient_email", "").trim().toLowerCase();
   const lastRecipientPhone = readStringMeta(detail.quote.meta || {}, "recipient_phone", "").trim();
   const defaultThirdPartyEmail = lastRecipientEmail && lastRecipientEmail !== ownerEmail ? lastRecipientEmail : "";
+  const defaultPublicConfirmationRecipient = [
+    isChildSource ? resolvedParentReferentEmail : "",
+    ownerEmail,
+    lastRecipientEmail,
+  ]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .find((value) => value && value !== "-") || "";
+  const publicConfirmationStatusLabel = quoteStatus === "approved"
+    ? t("admin.quote_events.kind.approved_confirmation")
+    : quoteStatus === "rejected"
+      ? t("admin.quote_events.kind.rejected_confirmation")
+      : t("admin.quote_events.kind.change_requested_confirmation");
   const defaultPrimaryPhone = [lastRecipientPhone, resolvedParentReferentPhone, ownerPhone]
     .map((value) => String(value || "").trim())
     .find((value) => value && value !== "-") || "";
@@ -1870,6 +1962,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     : null;
   const regenerateFormId = `quote-regenerate-form-${detail.quote.id}`;
   const restorePublicResponseFormId = `quote-restore-public-response-form-${detail.quote.id}`;
+  const resendPublicConfirmationFormId = `quote-resend-public-confirmation-form-${detail.quote.id}`;
   const sendPrimaryFormId = `quote-send-primary-form-${detail.quote.id}`;
   const sendThirdPartyFormId = `quote-send-third-party-form-${detail.quote.id}`;
   const sendEmailPreviewPath = `/admin/quotes/${encodeURIComponent(detail.quote.id)}/email-preview`;
@@ -2556,6 +2649,52 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	                        className="ghost"
 	                      />
                     </form>
+                  </div>
+                ) : null}
+
+                {canResendPublicConfirmation ? (
+                  <div className="card" style={{ minWidth: 360, flex: "1 1 360px" }}>
+                    <h4>{t("admin.quote_detail.public_confirmation_title")}</h4>
+                    <p className="muted top-gap-sm">
+                      {t("admin.quote_detail.public_confirmation_help", { status: publicConfirmationStatusLabel })}
+                    </p>
+                    <form
+                      id={resendPublicConfirmationFormId}
+                      action={resendQuotePublicConfirmationAction}
+                      className="top-gap-sm"
+                    >
+                      <input type="hidden" name="quote_id" value={detail.quote.id} />
+                      <input type="hidden" name="return_to" value={selfPath} />
+                      <label>
+                        {t("admin.quote_detail.public_confirmation_recipient")}
+                        <input
+                          type="email"
+                          name="recipient_email"
+                          defaultValue={defaultPublicConfirmationRecipient}
+                          placeholder={t("admin.quote_detail.notify_email_placeholder")}
+                        />
+                      </label>
+                      <div className="row wrap gap-sm top-gap-sm">
+                        <ConfirmSubmitButton
+                          formId={resendPublicConfirmationFormId}
+                          label={t("admin.quote_detail.public_confirmation_resend")}
+                          title={t("admin.quote_detail.public_confirmation_confirm_title")}
+                          description={t("admin.quote_detail.public_confirmation_confirm_description", { status: publicConfirmationStatusLabel })}
+                          confirmLabel={t("admin.quote_detail.public_confirmation_resend")}
+                          language={language}
+                          className="ghost"
+                        />
+                      </div>
+                    </form>
+                    {defaultPublicConfirmationRecipient ? (
+                      <small className="muted top-gap-sm">
+                        {t("admin.quote_detail.public_confirmation_default_recipient_hint", { email: defaultPublicConfirmationRecipient })}
+                      </small>
+                    ) : (
+                      <small className="muted top-gap-sm">
+                        {t("admin.quote_detail.public_confirmation_recipient_missing")}
+                      </small>
+                    )}
                   </div>
                 ) : null}
 

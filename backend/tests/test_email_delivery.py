@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.services.email_delivery import send_email
+from app.services.email_delivery import EmailDeliveryError, send_email
 from app.services.messaging_templates import MessagingDeliveryConfig
 
 
@@ -104,6 +104,29 @@ class EmailDeliveryTests(unittest.TestCase):
 
         self.assertIsInstance(result, str)
         self.assertTrue(result.startswith("mail-"))
+
+    def test_send_email_can_raise_on_failure_when_requested(self) -> None:
+        with patch(
+            "app.services.email_delivery.resolve_messaging_delivery_config",
+            return_value=self.config,
+        ), patch(
+            "app.services.email_delivery.smtplib.SMTP",
+            _FailingSmtp,
+        ), patch(
+            "app.services.email_delivery.log_communication",
+            return_value=None,
+        ):
+            with self.assertRaises(EmailDeliveryError) as context:
+                send_email(
+                    to_email="sandra.baes@gmail.com",
+                    subject="Test",
+                    body="Hello",
+                    body_format="TEXT",
+                    context="QUOTE_APPROVED",
+                    raise_on_failure=True,
+                )
+
+        self.assertEqual(str(context.exception), "SMTP send exception")
 
 
 if __name__ == "__main__":

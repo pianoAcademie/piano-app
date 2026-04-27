@@ -257,6 +257,7 @@ def send_quote_templated_email(
     template_ref: str | None = None,
     sender_kind: str = "STUDIO",
     email_context: str = "QUOTE_SENT",
+    raise_on_failure: bool = False,
 ) -> tuple[QuoteRenderedEmail, str | None]:
     rendered = render_quote_email_template(
         db,
@@ -277,6 +278,7 @@ def send_quote_templated_email(
         from_name=sender.from_name,
         reply_to=sender.reply_to,
         subject_prefix=sender.subject_prefix,
+        raise_on_failure=raise_on_failure,
     )
     return rendered, message_id
 

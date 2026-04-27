@@ -10593,6 +10593,41 @@ export async function restoreQuotePublicResponseAction(formData: FormData): Prom
   redirect(appendQueryMessage(returnTo, "ok", "Statut public du devis restaure"));
 }
 
+export async function resendQuotePublicConfirmationAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+
+  const language = await ensureAdminAndGetLanguage(token);
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes?quote_id=${encodeURIComponent(quoteId)}`));
+  if (!quoteId) {
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_detail.quote_not_found")));
+  }
+
+  const recipientEmail = String(formData.get("recipient_email") ?? "").trim();
+  const result = await backendRequest<{ quote: { id: string } }>(
+    `/api/v1/quotes/${encodeURIComponent(quoteId)}/resend-public-confirmation-email`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        recipient_email: recipientEmail || null,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/quotes");
+  revalidatePath("/admin/communications");
+  revalidatePath(`/admin/quotes/${quoteId}`);
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_detail.public_confirmation_resent")));
+}
+
 export async function resendCommunicationAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

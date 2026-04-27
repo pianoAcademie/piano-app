@@ -2193,6 +2193,20 @@ def _restore_public_response_target_status(quote: Quote) -> str:
     return "sent"
 
 
+def _public_quote_confirmation_config(status_value: str | None) -> tuple[str, str]:
+    normalized_status = str(status_value or "").strip().lower()
+    if normalized_status == "approved":
+        return USAGE_CONTEXT_QUOTE_APPROVED, "quote_public_approved_confirmation"
+    if normalized_status == "rejected":
+        return USAGE_CONTEXT_QUOTE_REJECTED, "quote_public_rejected_confirmation"
+    if normalized_status == "change_requested":
+        return USAGE_CONTEXT_QUOTE_CHANGE_REQUESTED, "quote_public_change_requested_confirmation"
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Quote has no public confirmation email for its current status",
+    )
+
+
 def _try_send_public_quote_confirmation_email(
     db: Session,
     *,
@@ -2200,15 +2214,20 @@ def _try_send_public_quote_confirmation_email(
     lines: list[QuoteLine],
     usage_context: str,
     kind: str,
-) -> None:
-    recipient_email = _resolve_recipient_email(db, quote)
+    explicit_email: str | None = None,
+    template_ref: str | None = None,
+    actor_type: str = "system",
+    actor_id: UUID | None = None,
+) -> dict[str, str | None]:
+    recipient_email = _resolve_recipient_email(db, quote, explicit_email=explicit_email)
     now = _utcnow()
     if recipient_email is None:
         db.add(
             QuoteEvent(
                 quote_id=quote.id,
                 event_type="quote_public_confirmation_email_skipped",
-                actor_type="system",
+                actor_type=actor_type,
+                actor_id=actor_id,
                 payload={
                     "kind": kind,
                     "usage_context": usage_context,
@@ -2218,14 +2237,18 @@ def _try_send_public_quote_confirmation_email(
             )
         )
         db.commit()
-        return
+        return {
+            "status": "skipped",
+            "reason": "missing_recipient_email",
+        }
     delivery_error = email_delivery_disabled_reason()
     if delivery_error:
         db.add(
             QuoteEvent(
                 quote_id=quote.id,
                 event_type="quote_public_confirmation_email_skipped",
-                actor_type="system",
+                actor_type=actor_type,
+                actor_id=actor_id,
                 payload={
                     "kind": kind,
                     "usage_context": usage_context,
@@ -2237,7 +2260,12 @@ def _try_send_public_quote_confirmation_email(
             )
         )
         db.commit()
-        return
+        return {
+            "status": "skipped",
+            "reason": "delivery_disabled",
+            "detail": delivery_error,
+            "recipient_email": recipient_email,
+        }
     try:
         quote.meta = {**_quote_meta_dict(quote), "recipient_email": recipient_email}
         db.add(quote)
@@ -2248,18 +2276,24 @@ def _try_send_public_quote_confirmation_email(
             recipient_email=recipient_email,
             kind=kind,
             usage_context=usage_context,
-            actor_id=None,
-            actor_type="system",
+            actor_id=actor_id,
+            actor_type=actor_type,
             allow_duplicate=True,
+            template_ref=template_ref,
         )
         db.commit()
+        return {
+            "status": "sent",
+            "recipient_email": recipient_email,
+        }
     except Exception as exc:
         db.rollback()
         db.add(
             QuoteEvent(
                 quote_id=quote.id,
                 event_type="quote_public_confirmation_email_failed",
-                actor_type="system",
+                actor_type=actor_type,
+                actor_id=actor_id,
                 payload={
                     "kind": kind,
                     "usage_context": usage_context,
@@ -2270,6 +2304,11 @@ def _try_send_public_quote_confirmation_email(
             )
         )
         db.commit()
+        return {
+            "status": "failed",
+            "recipient_email": recipient_email,
+            "error": str(exc),
+        }
 
 
 def _build_payment_schedule_for_quote(db: Session, quote: Quote, *, total_ttc: Decimal) -> list[dict[str, object]]:
@@ -3713,6 +3752,7 @@ def _send_quote_email(
         usage_context=usage_context,
         template_ref=template_ref,
         email_context=kind.upper(),
+        raise_on_failure=True,
     )
     out.subject = rendered.subject
     out.provider_message_id = provider_message_id
@@ -3724,7 +3764,7 @@ def _send_quote_email(
     if not provider_message_id:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Quote email delivery failed",
+            detail="Quote email delivery failed: empty provider message id",
         )
 
     db.add(
@@ -4069,6 +4109,48 @@ def cancel_quote(
         )
     )
     db.commit()
+    db.refresh(quote)
+    return _quote_detail_out(db, quote)
+
+
+@router.post("/quotes/{quote_id}/resend-public-confirmation-email", response_model=QuoteDetailOut)
+def resend_quote_public_confirmation_email(
+    quote_id: UUID,
+    payload: QuoteSendRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteDetailOut:
+    quote = _load_quote(db, quote_id, lock=True)
+    usage_context, kind = _public_quote_confirmation_config(quote.status)
+    lines = _load_quote_lines(db, quote.id)
+    result = _try_send_public_quote_confirmation_email(
+        db,
+        quote=quote,
+        lines=lines,
+        usage_context=usage_context,
+        kind=kind,
+        explicit_email=payload.recipient_email,
+        template_ref=payload.template_ref,
+        actor_type="admin",
+        actor_id=current_user.id,
+    )
+    outcome = str(result.get("status") or "").strip().lower()
+    if outcome == "skipped":
+        reason = str(result.get("reason") or "").strip().lower()
+        if reason == "missing_recipient_email":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="No recipient email resolved for public confirmation",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(result.get("detail") or "Quote confirmation delivery disabled"),
+        )
+    if outcome == "failed":
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(result.get("error") or "Quote confirmation email delivery failed"),
+        )
     db.refresh(quote)
     return _quote_detail_out(db, quote)
 

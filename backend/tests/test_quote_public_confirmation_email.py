@@ -44,7 +44,7 @@ class QuotePublicConfirmationEmailTests(unittest.TestCase):
             "app.api.routes.quotes._send_quote_email",
             side_effect=RuntimeError("SMTP send exception"),
         ):
-            _try_send_public_quote_confirmation_email(
+            result = _try_send_public_quote_confirmation_email(
                 db,
                 quote=quote,
                 lines=[],
@@ -56,6 +56,7 @@ class QuotePublicConfirmationEmailTests(unittest.TestCase):
             row for row in db.added
             if isinstance(row, QuoteEvent) and row.event_type == "quote_public_confirmation_email_failed"
         ]
+        self.assertEqual(result.get("status"), "failed")
         self.assertEqual(len(failure_events), 1)
         self.assertEqual(db.rollback_count, 1)
         self.assertGreaterEqual(db.commit_count, 1)
@@ -70,7 +71,7 @@ class QuotePublicConfirmationEmailTests(unittest.TestCase):
             "app.api.routes.quotes._resolve_recipient_email",
             return_value=None,
         ):
-            _try_send_public_quote_confirmation_email(
+            result = _try_send_public_quote_confirmation_email(
                 db,
                 quote=quote,
                 lines=[],
@@ -82,6 +83,7 @@ class QuotePublicConfirmationEmailTests(unittest.TestCase):
             row for row in db.added
             if isinstance(row, QuoteEvent) and row.event_type == "quote_public_confirmation_email_skipped"
         ]
+        self.assertEqual(result.get("status"), "skipped")
         self.assertEqual(len(skipped_events), 1)
         self.assertEqual(skipped_events[0].payload.get("reason"), "missing_recipient_email")
 

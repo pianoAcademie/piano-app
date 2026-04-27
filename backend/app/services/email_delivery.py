@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 EmailAttachment = tuple[str, bytes, str]
 
 
+class EmailDeliveryError(RuntimeError):
+    """Raised when a caller explicitly wants delivery failures surfaced."""
+
+
 def email_delivery_disabled_reason() -> str | None:
     return messaging_delivery_disabled_reason(resolve_messaging_delivery_config())
 
@@ -110,6 +114,7 @@ def send_email(
     professor_id: UUID | None = None,
     recipient_user_id: UUID | None = None,
     communication_type: str | None = None,
+    raise_on_failure: bool = False,
 ) -> str | None:
     message_id = f"mail-{uuid4()}"
     delivery_config = resolve_messaging_delivery_config()
@@ -156,6 +161,8 @@ def send_email(
             provider=provider,
             provider_message_id=message_id,
         )
+        if raise_on_failure:
+            raise EmailDeliveryError("Email delivery skipped (LOG mode)")
         return None
 
     host, port = _smtp_host_port(delivery_config)
@@ -188,6 +195,8 @@ def send_email(
             provider_message_id=message_id,
             error_message="Missing SMTP host",
         )
+        if raise_on_failure:
+            raise EmailDeliveryError("Missing SMTP host")
         return None
 
     if not username or not password:
@@ -216,6 +225,8 @@ def send_email(
             provider_message_id=message_id,
             error_message="Missing SMTP credentials",
         )
+        if raise_on_failure:
+            raise EmailDeliveryError("Missing SMTP credentials")
         return None
 
     message = _build_message(
@@ -277,6 +288,8 @@ def send_email(
             provider_message_id=message_id,
             error_message="SMTP send exception",
         )
+        if raise_on_failure:
+            raise EmailDeliveryError("SMTP send exception")
         return None
 
     logger.info(
