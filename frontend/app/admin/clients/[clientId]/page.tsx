@@ -3925,7 +3925,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       {t("admin.client_detail.language")}
                       <select name="preferred_language" defaultValue={client.preferred_language || "fr"} required>
                         <option value="fr">{uiText(language, "admin.client_detail.language_name_fr")}</option>
-                        <option value="en">English</option>
+                        <option value="en">{uiText(language, "admin.client_detail.language_name_en")}</option>
                       </select>
                     </label>
 

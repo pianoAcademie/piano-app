@@ -639,11 +639,11 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                 <strong>{professor.phone ?? t("admin.professor_detail.not_provided")}</strong>
               </article>
               <article className="item row spread">
-                <span className="muted">SIRET</span>
+                <span className="muted">{t("admin.professors.siret_label")}</span>
                 <strong>{professor.siret ?? t("admin.professor_detail.not_provided")}</strong>
               </article>
               <article className="item row spread">
-                <span className="muted">IBAN</span>
+                <span className="muted">{t("admin.professors.iban_label")}</span>
                 <strong>{professor.iban ?? t("admin.professor_detail.not_provided")}</strong>
               </article>
               <article className="item row spread">
@@ -755,12 +755,12 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
               </label>
 
               <label>
-                SIRET
+                {t("admin.professors.siret_label")}
                 <input type="text" name="siret" defaultValue={professor.siret ?? ""} maxLength={30} />
               </label>
 
               <label>
-                IBAN
+                {t("admin.professors.iban_label")}
                 <input type="text" name="iban" defaultValue={professor.iban ?? ""} maxLength={34} />
               </label>
 

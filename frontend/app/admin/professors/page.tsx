@@ -324,12 +324,12 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
               </label>
 
               <label>
-                SIRET
+                {t("admin.professors.siret_label")}
                 <input type="text" name="siret" maxLength={30} placeholder={t("admin.professors.siret_placeholder")} />
               </label>
 
               <label>
-                IBAN
+                {t("admin.professors.iban_label")}
                 <input type="text" name="iban" maxLength={34} placeholder={t("admin.professors.iban_placeholder")} />
               </label>
 
