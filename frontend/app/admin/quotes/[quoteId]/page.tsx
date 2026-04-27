@@ -1662,8 +1662,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       <section className="card quote-interactions-card">
         <div className="row spread wrap gap-sm">
           <div>
-            <h3>Historique des interactions</h3>
-            <p className="muted">Trace des actions client, BO et automatisations sur ce devis.</p>
+            <h3>{t("admin.quote_detail.interaction_history_title")}</h3>
+            <p className="muted">{t("admin.quote_detail.interaction_history_subtitle")}</p>
           </div>
         </div>
         <ol className="quote-interactions-timeline top-gap-sm">
@@ -1911,8 +1911,16 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   ];
   const commercialState = commercialStateFromQuote(detail.quote);
   const integrationState = integrationStateFromQuote(detail.quote, commercialState, activeFollowup);
-  const validationChannel = readStringMeta(detail.quote.meta || {}, "validation_channel", detail.quote.approved_at ? "Portail public" : "-");
-  const integrationTargetMode = readStringMeta(detail.quote.meta || {}, "integration_target_mode", "Creation / mise a jour a verifier");
+  const validationChannel = readStringMeta(
+    detail.quote.meta || {},
+    "validation_channel",
+    detail.quote.approved_at ? t("admin.quote_detail.validation_channel_public_portal") : "-",
+  );
+  const integrationTargetMode = readStringMeta(
+    detail.quote.meta || {},
+    "integration_target_mode",
+    t("admin.quote_detail.integration_target_mode_review"),
+  );
   const clientMatchRaw = readStringMeta(detail.quote.meta || {}, "client_match_status", detail.quote.client_id ? "deja_lie" : "aucun").toLowerCase();
   const clientMatchStatus = clientMatchRaw === "probable" || clientMatchRaw === "multiple" || clientMatchRaw === "deja_lie" ? clientMatchRaw : "aucun";
   const integrationAlerts: string[] = [];
@@ -2007,7 +2015,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     totalHt: Number(detail.lines.reduce((sum, line) => sum + toNumber(line.amount_ht), 0).toFixed(2)),
     schoolYearLabel: detail.quote.school_year_label,
     legalEntityId: detail.quote.legal_entity_id,
-    legalEntityName: legalEntities.find((entity) => entity.id === detail.quote.legal_entity_id)?.name || "A definir",
+    legalEntityName: legalEntities.find((entity) => entity.id === detail.quote.legal_entity_id)?.name || t("admin.quote_transform.to_define"),
     paymentPlanName: paymentPlans.find((plan) => plan.id === detail.quote.payment_plan_id)?.name || "-",
     quoteType: detail.quote.quote_type,
     quoteTypeFormulaName: selectedQuoteType?.formula_name || null,
@@ -2758,8 +2766,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	          <label>
 	            {t("common.language")}
 	            <select name="language" defaultValue={quoteLanguage} disabled={detail.quote.status !== "created"}>
-	              <option value="fr">Francais</option>
-	              <option value="en">English</option>
+	              <option value="fr">{t("common.french")}</option>
+	              <option value="en">{t("common.english")}</option>
 	            </select>
 	          </label>
 	          <label>
