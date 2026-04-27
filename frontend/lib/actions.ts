@@ -1086,6 +1086,14 @@ async function ensureAdminAndGetLanguage(token: string): Promise<UiLanguage> {
   return normalizeUiLanguage(me.preferred_language);
 }
 
+async function ensureProfessorAndGetLanguage(token: string): Promise<UiLanguage> {
+  const me = await fetchCurrentUser(token);
+  if (!me || me.role !== "prof") {
+    redirect("/login?error_code=invalid_session");
+  }
+  return normalizeUiLanguage(me.preferred_language);
+}
+
 function publicActionLanguage(...paths: string[]): UiLanguage {
   for (const path of paths) {
     const value = String(path ?? "").trim();
@@ -1898,13 +1906,15 @@ export async function professorUpdateAttendanceAction(formData: FormData): Promi
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
+  const language = await ensureProfessorAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const returnTo = safeProfessorReturnPath(formData, "/prof?tab=planning");
   const bookingId = String(formData.get("booking_id") ?? "").trim();
   const attendanceStatus = String(formData.get("attendance_status") ?? "").trim().toUpperCase();
 
   if (!bookingId || !["ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"].includes(attendanceStatus)) {
-    redirect(appendQueryMessage(returnTo, "error", "Saisie de presence invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.invalid_attendance_entry")));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -1921,7 +1931,7 @@ export async function professorUpdateAttendanceAction(formData: FormData): Promi
   }
 
   revalidatePath("/prof");
-  redirect(appendQueryMessage(returnTo, "ok", "Presence mise a jour"));
+  redirect(appendQueryMessage(returnTo, "ok", t("teacher.action.attendance_updated")));
 }
 
 export async function professorSendSessionMessageAction(formData: FormData): Promise<void> {
@@ -1929,6 +1939,8 @@ export async function professorSendSessionMessageAction(formData: FormData): Pro
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
+  const language = await ensureProfessorAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const returnTo = safeProfessorReturnPath(formData, "/prof?tab=planning");
   const sessionId = String(formData.get("session_id") ?? "").trim();
@@ -1940,7 +1952,7 @@ export async function professorSendSessionMessageAction(formData: FormData): Pro
   const recipientScope = targetUserId ? "STUDENT" : recipientTarget === "ADMIN" ? "ADMIN" : "GROUP";
 
   if (!sessionId || !subject || !body) {
-    redirect(appendQueryMessage(returnTo, "error", "Sujet et message obligatoires"));
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.subject_message_required")));
   }
 
   const result = await backendRequest<{ message_id: string; recipient_count: number }>(
@@ -1963,7 +1975,7 @@ export async function professorSendSessionMessageAction(formData: FormData): Pro
   }
 
   revalidatePath("/prof");
-  redirect(appendQueryMessage(returnTo, "ok", `Message envoye (${result.data.recipient_count} destinataire(s))`));
+  redirect(appendQueryMessage(returnTo, "ok", t("teacher.action.message_sent_summary", { count: result.data.recipient_count })));
 }
 
 export async function professorMarkSessionAbsentAction(formData: FormData): Promise<void> {
@@ -1971,6 +1983,8 @@ export async function professorMarkSessionAbsentAction(formData: FormData): Prom
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
+  const language = await ensureProfessorAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const returnTo = safeProfessorReturnPath(formData, "/prof?tab=planning");
   const sessionId = String(formData.get("session_id") ?? "").trim();
@@ -1980,7 +1994,7 @@ export async function professorMarkSessionAbsentAction(formData: FormData): Prom
   const studentsFormat = String(formData.get("students_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
 
   if (!sessionId) {
-    redirect(appendQueryMessage(returnTo, "error", "Creneau invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.invalid_session_slot")));
   }
 
   const payload: Record<string, unknown> = {
@@ -2006,7 +2020,7 @@ export async function professorMarkSessionAbsentAction(formData: FormData): Prom
   }
 
   revalidatePath("/prof");
-  redirect(appendQueryMessage(returnTo, "ok", `Creneau annule (notif: ${result.data.notified_students})`));
+  redirect(appendQueryMessage(returnTo, "ok", t("teacher.action.session_cancelled_summary", { count: result.data.notified_students })));
 }
 
 export async function teacherApproveStatementsAction(formData: FormData): Promise<void> {
@@ -2014,11 +2028,13 @@ export async function teacherApproveStatementsAction(formData: FormData): Promis
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
+  const language = await ensureProfessorAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
   const month = Number.parseInt(String(formData.get("month") ?? "").trim(), 10);
   if (!Number.isFinite(year) || !Number.isFinite(month)) {
-    redirect(appendQueryMessage(returnTo, "error", "Periode invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.invalid_period")));
   }
 
   const result = await backendRequest<TeacherApproveStatementsOut>(
@@ -2034,7 +2050,7 @@ export async function teacherApproveStatementsAction(formData: FormData): Promis
   revalidatePath("/prof/statements");
   revalidatePath(`/prof/statements/${year}/${month}`);
   revalidatePath("/prof");
-  redirect(appendQueryMessage(returnTo, "ok", `${result.data.generated_invoices.length} facture(s) generee(s)`));
+  redirect(appendQueryMessage(returnTo, "ok", t("teacher.action.generated_invoices_summary", { count: result.data.generated_invoices.length })));
 }
 
 export async function teacherApproveStatementsOnlyAction(formData: FormData): Promise<void> {
@@ -2042,11 +2058,13 @@ export async function teacherApproveStatementsOnlyAction(formData: FormData): Pr
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
+  const language = await ensureProfessorAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
   const month = Number.parseInt(String(formData.get("month") ?? "").trim(), 10);
   if (!Number.isFinite(year) || !Number.isFinite(month)) {
-    redirect(appendQueryMessage(returnTo, "error", "Periode invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.invalid_period")));
   }
 
   const result = await backendRequest<TeacherStatementOut[]>(
@@ -2062,7 +2080,7 @@ export async function teacherApproveStatementsOnlyAction(formData: FormData): Pr
   revalidatePath("/prof/statements");
   revalidatePath(`/prof/statements/${year}/${month}`);
   revalidatePath("/prof");
-  redirect(appendQueryMessage(returnTo, "ok", "Releve approuve. Choisissez maintenant votre mode de facturation."));
+  redirect(appendQueryMessage(returnTo, "ok", t("teacher.action.statement_approved_choose_billing")));
 }
 
 export async function teacherGenerateStatementsInvoiceAction(formData: FormData): Promise<void> {
@@ -2070,11 +2088,13 @@ export async function teacherGenerateStatementsInvoiceAction(formData: FormData)
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
+  const language = await ensureProfessorAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
   const month = Number.parseInt(String(formData.get("month") ?? "").trim(), 10);
   if (!Number.isFinite(year) || !Number.isFinite(month)) {
-    redirect(appendQueryMessage(returnTo, "error", "Periode invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.invalid_period")));
   }
 
   const result = await backendRequest<TeacherApproveStatementsOut>(
@@ -2090,7 +2110,7 @@ export async function teacherGenerateStatementsInvoiceAction(formData: FormData)
   revalidatePath("/prof/statements");
   revalidatePath(`/prof/statements/${year}/${month}`);
   revalidatePath("/prof");
-  redirect(appendQueryMessage(returnTo, "ok", `${result.data.generated_invoices.length} facture(s) generee(s)`));
+  redirect(appendQueryMessage(returnTo, "ok", t("teacher.action.generated_invoices_summary", { count: result.data.generated_invoices.length })));
 }
 
 export async function teacherDisputeStatementsAction(formData: FormData): Promise<void> {
@@ -2098,12 +2118,17 @@ export async function teacherDisputeStatementsAction(formData: FormData): Promis
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
+  const language = await ensureProfessorAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
   const month = Number.parseInt(String(formData.get("month") ?? "").trim(), 10);
   const message = String(formData.get("message") ?? "").trim();
-  if (!Number.isFinite(year) || !Number.isFinite(month) || !message) {
-    redirect(appendQueryMessage(returnTo, "error", "Message de litige obligatoire"));
+  if (!Number.isFinite(year) || !Number.isFinite(month)) {
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.invalid_period")));
+  }
+  if (!message) {
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.dispute_message_required")));
   }
   const result = await backendRequest<TeacherStatementOut[]>(
     `/api/v1/teacher/statements/${year}/${month}/dispute`,
@@ -2118,7 +2143,7 @@ export async function teacherDisputeStatementsAction(formData: FormData): Promis
   }
   revalidatePath("/prof/statements");
   revalidatePath(`/prof/statements/${year}/${month}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Litige envoye a l administration"));
+  redirect(appendQueryMessage(returnTo, "ok", t("teacher.action.dispute_sent_admin")));
 }
 
 export async function teacherDisputeSelectedLinesAction(formData: FormData): Promise<void> {
@@ -2126,6 +2151,8 @@ export async function teacherDisputeSelectedLinesAction(formData: FormData): Pro
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
+  const language = await ensureProfessorAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
   const month = Number.parseInt(String(formData.get("month") ?? "").trim(), 10);
@@ -2134,11 +2161,14 @@ export async function teacherDisputeSelectedLinesAction(formData: FormData): Pro
     .getAll("selected_lines")
     .map((value) => String(value).trim())
     .filter((value) => value.length > 0);
-  if (!Number.isFinite(year) || !Number.isFinite(month) || !message) {
-    redirect(appendQueryMessage(returnTo, "error", "Commentaire obligatoire"));
+  if (!Number.isFinite(year) || !Number.isFinite(month)) {
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.invalid_period")));
+  }
+  if (!message) {
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.comment_required")));
   }
   if (selectedLines.length === 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Selectionnez au moins une ligne"));
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.select_at_least_one_line")));
   }
   const result = await backendRequest<TeacherStatementOut[]>(
     `/api/v1/teacher/statements/${year}/${month}/dispute-lines`,
@@ -2154,7 +2184,7 @@ export async function teacherDisputeSelectedLinesAction(formData: FormData): Pro
   revalidatePath("/prof/statements");
   revalidatePath(`/prof/statements/${year}/${month}`);
   const successPath = setQueryParam(
-    appendQueryMessage(returnTo, "ok", "Probleme envoye a l administration"),
+    appendQueryMessage(returnTo, "ok", t("teacher.action.issue_sent_admin")),
     "notice",
     "dispute_sent",
   );
@@ -2166,6 +2196,8 @@ export async function teacherReportMissingServiceAction(formData: FormData): Pro
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
+  const language = await ensureProfessorAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
   const month = Number.parseInt(String(formData.get("month") ?? "").trim(), 10);
@@ -2177,13 +2209,13 @@ export async function teacherReportMissingServiceAction(formData: FormData): Pro
   const comment = String(formData.get("comment") ?? "").trim();
 
   if (!Number.isFinite(year) || !Number.isFinite(month) || !serviceDate || !courseTypeId || !locationId || !comment) {
-    redirect(appendQueryMessage(returnTo, "error", "Tous les champs obligatoires doivent etre renseignes"));
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.missing_service_required_fields")));
   }
   let attendeeCount: number | null = null;
   if (attendeeCountRaw) {
     attendeeCount = Number.parseInt(attendeeCountRaw, 10);
     if (!Number.isFinite(attendeeCount) || attendeeCount < 0) {
-      redirect(appendQueryMessage(returnTo, "error", "Nombre d eleves presents invalide"));
+      redirect(appendQueryMessage(returnTo, "error", t("teacher.action.invalid_attendee_count")));
     }
   }
 
@@ -2208,7 +2240,7 @@ export async function teacherReportMissingServiceAction(formData: FormData): Pro
   revalidatePath("/prof/statements");
   revalidatePath(`/prof/statements/${year}/${month}`);
   const successPath = setQueryParam(
-    appendQueryMessage(returnTo, "ok", "Prestation manquante signalee a l administration"),
+    appendQueryMessage(returnTo, "ok", t("teacher.action.missing_service_sent_admin")),
     "notice",
     "missing_service_sent",
   );
@@ -2220,10 +2252,12 @@ export async function teacherCancelInvoiceAction(formData: FormData): Promise<vo
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
+  const language = await ensureProfessorAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const invoiceId = String(formData.get("invoice_id") ?? "").trim();
   if (!invoiceId) {
-    redirect(appendQueryMessage(returnTo, "error", "Facture invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.invalid_invoice")));
   }
   const result = await backendRequest<TeacherInvoiceOut>(
     `/api/v1/teacher/invoices/${invoiceId}/cancel`,
@@ -2237,7 +2271,7 @@ export async function teacherCancelInvoiceAction(formData: FormData): Promise<vo
   }
   revalidatePath("/prof/statements");
   revalidatePath(`/prof/invoices/${invoiceId}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Facture annulee"));
+  redirect(appendQueryMessage(returnTo, "ok", t("teacher.action.invoice_cancelled")));
 }
 
 export async function teacherUncancelInvoiceAction(formData: FormData): Promise<void> {
@@ -2245,10 +2279,12 @@ export async function teacherUncancelInvoiceAction(formData: FormData): Promise<
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
+  const language = await ensureProfessorAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const invoiceId = String(formData.get("invoice_id") ?? "").trim();
   if (!invoiceId) {
-    redirect(appendQueryMessage(returnTo, "error", "Facture invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.invalid_invoice")));
   }
   const result = await backendRequest<TeacherInvoiceOut>(
     `/api/v1/teacher/invoices/${invoiceId}/uncancel`,
@@ -2262,7 +2298,7 @@ export async function teacherUncancelInvoiceAction(formData: FormData): Promise<
   }
   revalidatePath("/prof/statements");
   revalidatePath(`/prof/invoices/${invoiceId}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Facture reactivee"));
+  redirect(appendQueryMessage(returnTo, "ok", t("teacher.action.invoice_reactivated")));
 }
 
 export async function teacherSendInvoiceToAccountingAction(formData: FormData): Promise<void> {
@@ -2270,10 +2306,12 @@ export async function teacherSendInvoiceToAccountingAction(formData: FormData): 
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
+  const language = await ensureProfessorAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const invoiceId = String(formData.get("invoice_id") ?? "").trim();
   if (!invoiceId) {
-    redirect(appendQueryMessage(returnTo, "error", "Facture invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.invalid_invoice")));
   }
   const result = await backendRequest<TeacherInvoiceOut>(
     `/api/v1/teacher/invoices/${invoiceId}/send-to-accounting`,
@@ -2287,7 +2325,7 @@ export async function teacherSendInvoiceToAccountingAction(formData: FormData): 
   }
   revalidatePath("/prof/statements");
   revalidatePath(`/prof/invoices/${invoiceId}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Facture envoyee a la comptabilite"));
+  redirect(appendQueryMessage(returnTo, "ok", t("teacher.action.invoice_sent_to_accounting")));
 }
 
 export async function teacherSendExternalInvoiceAction(formData: FormData): Promise<void> {
@@ -2295,6 +2333,8 @@ export async function teacherSendExternalInvoiceAction(formData: FormData): Prom
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
+  const language = await ensureProfessorAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const returnTo = safeProfessorReturnPath(formData, "/prof/statements");
   const year = Number.parseInt(String(formData.get("year") ?? "").trim(), 10);
   const month = Number.parseInt(String(formData.get("month") ?? "").trim(), 10);
@@ -2302,10 +2342,10 @@ export async function teacherSendExternalInvoiceAction(formData: FormData): Prom
   const note = optionalField(formData, "note");
   const invoiceFile = formData.get("invoice_file");
   if (!Number.isFinite(year) || !Number.isFinite(month) || !payorLegalEntityId) {
-    redirect(appendQueryMessage(returnTo, "error", "Periode ou payeur invalide"));
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.invalid_period_or_payor")));
   }
   if (!(invoiceFile instanceof File) || invoiceFile.size <= 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Veuillez selectionner un PDF de facture"));
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.select_invoice_pdf")));
   }
 
   const payload = new FormData();
@@ -2328,7 +2368,7 @@ export async function teacherSendExternalInvoiceAction(formData: FormData): Prom
   }
   revalidatePath("/prof/statements");
   revalidatePath(`/prof/statements/${year}/${month}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Facture externe envoyee a la comptabilite"));
+  redirect(appendQueryMessage(returnTo, "ok", t("teacher.action.external_invoice_sent_to_accounting")));
 }
 
 export async function createAdminSessionAction(formData: FormData): Promise<void> {
