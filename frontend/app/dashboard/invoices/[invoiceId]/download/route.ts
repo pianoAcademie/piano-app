@@ -9,6 +9,14 @@ type RouteParams = {
   };
 };
 
+function invoiceErrorRedirect(status?: number): string {
+  const params = new URLSearchParams({ tab: "finance", error_code: "invoice_unavailable" });
+  if (typeof status === "number" && Number.isFinite(status) && status > 0) {
+    params.set("error_status", String(status));
+  }
+  return `/client?${params.toString()}`;
+}
+
 function redirectTo(path: string): Response {
   return new Response(null, {
     status: 302,
@@ -36,13 +44,13 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
   const invoiceId = params.invoiceId.trim();
   const inline = request.nextUrl.searchParams.get("inline") === "true";
   if (!invoiceId) {
-    return redirectTo("/client?tab=finance&error=Facture%20indisponible");
+    return redirectTo(invoiceErrorRedirect());
   }
 
   if (invoiceId.startsWith("plan:")) {
     const subscriptionId = invoiceId.slice("plan:".length).trim();
     if (!subscriptionId) {
-      return redirectTo("/client?tab=finance&error=Facture%20indisponible");
+      return redirectTo(invoiceErrorRedirect());
     }
     const publicUrl = `${backendUrl()}/api/v1/public/invoices/plans/${encodeURIComponent(subscriptionId)}/download`;
     const response = await fetch(publicUrl, {
@@ -50,7 +58,7 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
       cache: "no-store",
     });
     if (!response.ok) {
-      return redirectTo(`/client?tab=finance&error=${encodeURIComponent(`Facture indisponible (${response.status})`)}`);
+      return redirectTo(invoiceErrorRedirect(response.status));
     }
     const buffer = await response.arrayBuffer();
     const contentDisposition = rewriteContentDisposition(
@@ -83,7 +91,7 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
   });
 
   if (!response.ok) {
-    return redirectTo(`/client?tab=finance&error=${encodeURIComponent(`Facture indisponible (${response.status})`)}`);
+    return redirectTo(invoiceErrorRedirect(response.status));
   }
 
   const buffer = await response.arrayBuffer();

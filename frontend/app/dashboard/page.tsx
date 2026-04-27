@@ -908,6 +908,25 @@ function withUpdatedQuery(base: URLSearchParams, updates: Record<string, string 
   return query ? `/client?${query}` : "/client";
 }
 
+function resolvePortalErrorMessage(
+  rawError: string,
+  errorCode: string,
+  errorStatus: string,
+  t: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  if (rawError) {
+    return rawError;
+  }
+  if (errorCode.trim().toLowerCase() !== "invoice_unavailable") {
+    return "";
+  }
+  const status = Number.parseInt(errorStatus, 10);
+  if (Number.isFinite(status) && status > 0) {
+    return t("client.error_invoice_unavailable_with_status", { status });
+  }
+  return t("client.error_invoice_unavailable");
+}
+
 function clientInvoiceHref(invoiceId: string, options?: { inline?: boolean }): string {
   const encodedId = encodeURIComponent(invoiceId);
   return options?.inline ? `/client/invoices/${encodedId}/download?inline=true` : `/client/invoices/${encodedId}/download`;
@@ -2341,10 +2360,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const impersonationDisplayName = impersonationNameHint || displayName;
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error");
+  const errorCode = readParam(searchParams, "error_code");
+  const errorStatus = readParam(searchParams, "error_status");
   const sessionOkMessage = selectedSession ? readParam(searchParams, "session_ok") : "";
   const sessionErrorMessage = selectedSession ? readParam(searchParams, "session_error") : "";
   const globalOkMessage = sessionOkMessage ? "" : (okMessage || paymentResultMessage);
-  const globalErrorMessage = sessionErrorMessage ? "" : (errorMessage || paymentResultError);
+  const portalErrorMessage = resolvePortalErrorMessage(errorMessage, errorCode, errorStatus, t);
+  const globalErrorMessage = sessionErrorMessage ? "" : (portalErrorMessage || paymentResultError);
   const hasPhoneNumber = Boolean(me.mobile_phone_1 || me.mobile_phone_2 || me.home_phone || me.phone);
   const selectedMessageId = readParam(searchParams, "message_id");
   const selectedMessage = selectedMessageId ? messageRows.find((row) => row.id === selectedMessageId) ?? null : null;
