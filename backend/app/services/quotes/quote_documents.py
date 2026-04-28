@@ -9,6 +9,7 @@ import io
 import logging
 import re
 from typing import Any
+import unicodedata
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -232,6 +233,7 @@ QUOTE_DOC_TEXT = {
         "course_solfege_level": "niveau {level}",
         "course_included_quote": "inclus dans le devis",
         "to_select": "à sélectionner",
+        "to_select_short": "à choisir",
         "solfege_option_included": "Option solfège : incluse dans le présent devis.",
         "solfege_estimated_level": "Niveau estimé",
         "solfege_slot_selected": "Créneau retenu",
@@ -427,6 +429,7 @@ QUOTE_DOC_TEXT = {
         "course_solfege_level": "level {level}",
         "course_included_quote": "included in the quote",
         "to_select": "to be selected",
+        "to_select_short": "to choose",
         "solfege_option_included": "Music theory option: included in this quote.",
         "solfege_estimated_level": "Estimated level",
         "solfege_slot_selected": "Selected slot",
@@ -1347,6 +1350,14 @@ def _harmonize_display_text(value: Any) -> str:
     return text
 
 
+def _searchable_text(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    normalized = unicodedata.normalize("NFKD", text)
+    return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
 def _factorize_slot_labels(labels: list[str], *, language: str | None = None) -> tuple[list[str], str]:
     sanitized_labels = [_sanitize_slot_label_text(item, language=language) for item in labels if str(item or "").strip()]
     if not sanitized_labels:
@@ -1394,7 +1405,7 @@ def _is_solfege_planning_block(block: dict[str, Any]) -> bool:
     activity_label = str(block.get("activity_label") or "").strip()
     activity_code = str(block.get("activity_code") or block.get("activity_service_code") or "").strip()
     pending_level = str(block.get("pending_solfege_level") or "").strip()
-    haystack = f"{activity_label} {activity_code}".strip().lower()
+    haystack = _searchable_text(f"{activity_label} {activity_code}")
     return bool(pending_level) or "solfege" in haystack
 
 
@@ -1413,11 +1424,11 @@ def _pending_planning_block_display(block: dict[str, Any], *, language: str | No
         if level_label:
             activity_label += f" - {_quote_doc_text('course_solfege_level', language=language, level=level_label)}"
         activity_label += f" ({_quote_doc_text('course_included_quote', language=language)})"
-        return activity_label, "-", _quote_doc_text("to_select", language=language), "-"
+        return activity_label, "-", _quote_doc_text("to_select_short", language=language), "-"
     return (
         _harmonize_display_text(str(block.get("activity_label") or "-").strip() or "-"),
-        _quote_doc_text("to_select", language=language),
-        _quote_doc_text("to_select", language=language),
+        _quote_doc_text("to_select_short", language=language),
+        _quote_doc_text("to_select_short", language=language),
         "-",
     )
 
@@ -1920,7 +1931,7 @@ def _solfege_pending_block_info(snapshot: dict[str, Any], *, language: str | Non
             continue
         activity_label = str(raw.get("activity_label") or "").strip()
         activity_code = str(raw.get("activity_code") or raw.get("activity_service_code") or "").strip()
-        haystack = f"{activity_label} {activity_code}".strip().lower()
+        haystack = _searchable_text(f"{activity_label} {activity_code}")
         if "solfege" not in haystack:
             continue
         try:
@@ -1950,7 +1961,7 @@ def _solfege_pending_block_info(snapshot: dict[str, Any], *, language: str | Non
         if str(recommendation.get("selected_session_id") or "").strip():
             continue
         activity_name = str(recommendation.get("activity_name") or "").strip()
-        if "solfege" not in activity_name.lower():
+        if "solfege" not in _searchable_text(activity_name):
             continue
         has_pending_selection = True
         if not level_code:
