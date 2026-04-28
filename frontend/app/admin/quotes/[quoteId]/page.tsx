@@ -1955,7 +1955,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     return [selectedTermsTemplate, ...languageTermsTemplates];
   })();
   const pdfVersionTag = String(detail.quote.document_hash || detail.quote.document_generated_at || "").trim();
-  const adminPdfHref = `/admin/quotes/${detail.quote.id}/pdf${pdfVersionTag ? `?v=${encodeURIComponent(pdfVersionTag)}` : ""}`;
+  const adminPdfHref = withUiLanguage(
+    `/admin/quotes/${detail.quote.id}/pdf${pdfVersionTag ? `?v=${encodeURIComponent(pdfVersionTag)}` : ""}`,
+    language,
+  );
   const publicPdfHref = detail.quote.public_pdf_url
     ? `${detail.quote.public_pdf_url}${pdfVersionTag ? `&v=${encodeURIComponent(pdfVersionTag)}` : ""}`
     : detail.quote.pdf_token
