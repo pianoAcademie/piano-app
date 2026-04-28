@@ -3,63 +3,69 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { type UiLanguage, uiText } from "../lib/ui-i18n";
+type UiLanguage = "fr" | "en";
+
+type LocalizedLabel = Record<UiLanguage, string>;
 
 type NavItem = {
   href: string;
-  label: string;
+  label: LocalizedLabel;
   icon: string;
 };
 
 type NavSection = {
-  title: string;
+  key: string;
+  title: LocalizedLabel;
   items: NavItem[];
 };
 
-function navSections(language: UiLanguage): NavSection[] {
-  return [
-    {
-      title: uiText(language, "admin.nav.operations"),
-      items: [
-        { href: "/admin", label: uiText(language, "admin.nav.planning"), icon: "📅" },
-        { href: "/admin/clients", label: uiText(language, "admin.nav.clients"), icon: "👥" },
-        { href: "/admin/professors", label: uiText(language, "admin.nav.professors"), icon: "🧑‍🏫" },
-      ],
-    },
-    {
-      title: uiText(language, "admin.nav.finance"),
-      items: [
-        { href: "/admin/salary-payments", label: uiText(language, "admin.nav.salary_payments"), icon: "💶" },
-        { href: "/admin/teacher-invoicing", label: uiText(language, "admin.nav.teacher_invoicing"), icon: "🧾" },
-        { href: "/admin/subscriptions", label: uiText(language, "admin.nav.subscriptions"), icon: "🔁" },
-        { href: "/admin/intakes", label: uiText(language, "admin.nav.intakes"), icon: "🧠" },
-        { href: "/admin/quotes", label: uiText(language, "admin.nav.quotes"), icon: "📑" },
-        { href: "/admin/prospects", label: uiText(language, "admin.nav.prospects"), icon: "🧲" },
-        { href: "/admin/products", label: uiText(language, "admin.nav.products"), icon: "📦" },
-      ],
-    },
-    {
-      title: uiText(language, "admin.nav.communication"),
-      items: [
-        { href: "/admin/a-traiter", label: uiText(language, "admin.nav.todo"), icon: "📥" },
-        { href: "/admin/communications", label: uiText(language, "admin.nav.communications"), icon: "✉️" },
-        { href: "/admin/notifications/jobs", label: uiText(language, "admin.nav.jobs"), icon: "🧭" },
-        { href: "/admin/notifications/incidents", label: uiText(language, "admin.nav.incidents"), icon: "🚨" },
-      ],
-    },
-    {
-      title: uiText(language, "admin.nav.administration"),
-      items: [
-        { href: "/admin/config", label: uiText(language, "admin.nav.config"), icon: "⚙️" },
-        { href: "/admin/reporting", label: uiText(language, "admin.nav.reporting"), icon: "📊" },
-      ],
-    },
-  ];
-}
+const NAV_SECTIONS: NavSection[] = [
+  {
+    key: "operations",
+    title: { fr: "Operations", en: "Operations" },
+    items: [
+      { href: "/admin", label: { fr: "Planning", en: "Schedule" }, icon: "📅" },
+      { href: "/admin/simulation-planning", label: { fr: "Simulation planning", en: "Planning simulation" }, icon: "🧮" },
+      { href: "/admin/clients", label: { fr: "Clients", en: "Clients" }, icon: "👥" },
+      { href: "/admin/professors", label: { fr: "Collaborateurs", en: "Collaborators" }, icon: "🧑‍🏫" },
+    ],
+  },
+  {
+    key: "finance",
+    title: { fr: "Finance", en: "Finance" },
+    items: [
+      { href: "/admin/salary-payments", label: { fr: "Paiement des salaires", en: "Salary payments" }, icon: "💶" },
+      { href: "/admin/teacher-invoicing", label: { fr: "Facturation professeurs", en: "Teacher invoicing" }, icon: "🧾" },
+      { href: "/admin/subscriptions", label: { fr: "Abonnements", en: "Subscriptions" }, icon: "🔁" },
+      { href: "/admin/intakes", label: { fr: "Intakes", en: "Intakes" }, icon: "🧠" },
+      { href: "/admin/quotes", label: { fr: "Devis", en: "Quotes" }, icon: "📑" },
+      { href: "/admin/prospects", label: { fr: "Prospects", en: "Prospects" }, icon: "🧲" },
+      { href: "/admin/products", label: { fr: "Produits", en: "Products" }, icon: "📦" },
+    ],
+  },
+  {
+    key: "communication",
+    title: { fr: "Communication", en: "Communication" },
+    items: [
+      { href: "/admin/a-traiter", label: { fr: "A traiter", en: "To process" }, icon: "📥" },
+      { href: "/admin/communications", label: { fr: "Communications", en: "Communications" }, icon: "✉️" },
+      { href: "/admin/notifications/jobs", label: { fr: "Monitoring jobs", en: "Job monitoring" }, icon: "🧭" },
+      { href: "/admin/notifications/incidents", label: { fr: "Incidents", en: "Incidents" }, icon: "🚨" },
+    ],
+  },
+  {
+    key: "administration",
+    title: { fr: "Administration", en: "Administration" },
+    items: [
+      { href: "/admin/config", label: { fr: "Configuration", en: "Settings" }, icon: "⚙️" },
+      { href: "/admin/reporting", label: { fr: "Reporting", en: "Reporting" }, icon: "📊" },
+    ],
+  },
+];
 
 type AdminNavProps = {
   collapsed: boolean;
-  language: UiLanguage;
+  language?: UiLanguage;
 };
 
 function isLinkActive(pathname: string, href: string): boolean {
@@ -69,27 +75,33 @@ function isLinkActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export default function AdminNav({ collapsed, language }: AdminNavProps): JSX.Element {
+function withUiLanguage(href: string, language: UiLanguage): string {
+  if (language !== "en") {
+    return href;
+  }
+  return `${href}${href.includes("?") ? "&" : "?"}lang=en`;
+}
+
+export default function AdminNav({ collapsed, language = "fr" }: AdminNavProps): JSX.Element {
   const pathname = usePathname() || "";
-  const sections = navSections(language);
 
   return (
     <nav className={`admin-nav ${collapsed ? "collapsed" : ""}`}>
-      {sections.map((section) => (
-        <section className="admin-nav-section" key={section.title}>
-          <h3 className="admin-nav-section-title">{section.title}</h3>
+      {NAV_SECTIONS.map((section) => (
+        <section className="admin-nav-section" key={section.key}>
+          <h3 className="admin-nav-section-title">{section.title[language]}</h3>
           <div className="admin-nav-section-items">
             {section.items.map((item) => (
               <Link
                 key={item.href}
-                href={item.href}
+                href={withUiLanguage(item.href, language)}
                 className={`admin-nav-link ${isLinkActive(pathname, item.href) ? "active" : ""}`}
-                title={item.label}
+                title={item.label[language]}
               >
                 <span className="admin-nav-icon" aria-hidden="true">
                   {item.icon}
                 </span>
-                <span className="admin-nav-label">{item.label}</span>
+                <span className="admin-nav-label">{item.label[language]}</span>
               </Link>
             ))}
           </div>

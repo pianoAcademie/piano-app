@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 
-import { normalizeUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
+type UiLanguage = "fr" | "en";
 
 type SessionTimeFieldsProps = {
   startName?: string;
@@ -11,12 +11,12 @@ type SessionTimeFieldsProps = {
   startLabel?: string;
   endLabel?: string;
   durationLabel?: string;
+  language?: UiLanguage;
   defaultStartTime?: string;
   defaultEndTime?: string;
   defaultDurationMinutes?: number | null;
   requiredStart?: boolean;
   labelClassName?: string;
-  language?: UiLanguage | string;
 };
 
 function parseTimeToMinutes(value: string): number | null {
@@ -63,17 +63,17 @@ export default function SessionTimeFields({
   startLabel,
   endLabel,
   durationLabel,
+  language = "fr",
   defaultStartTime = "12:00",
   defaultEndTime = "13:00",
   defaultDurationMinutes = null,
   requiredStart = true,
   labelClassName = "session-time-field",
-  language: languageProp = "fr",
 }: SessionTimeFieldsProps) {
-  const language = normalizeUiLanguage(languageProp);
-  const localizedStartLabel = startLabel ?? uiText(language, "session_time.start");
-  const localizedEndLabel = endLabel ?? uiText(language, "session_time.end");
-  const localizedDurationLabel = durationLabel ?? uiText(language, "session_time.duration_minutes");
+  const resolvedStartLabel = startLabel ?? (language === "en" ? "Start time" : "Heure debut");
+  const resolvedEndLabel = endLabel ?? (language === "en" ? "End time" : "Heure fin");
+  const resolvedDurationLabel = durationLabel ?? (language === "en" ? "Duration (minutes)" : "Duree (minutes)");
+
   const normalizedDuration = useMemo(() => {
     if (typeof defaultDurationMinutes === "number" && Number.isFinite(defaultDurationMinutes) && defaultDurationMinutes > 0) {
       return String(Math.floor(defaultDurationMinutes));
@@ -129,17 +129,17 @@ export default function SessionTimeFields({
   return (
     <>
       <label className={labelClassName}>
-        {localizedStartLabel}
+        {resolvedStartLabel}
         <input type="time" name={startName} value={startTime} required={requiredStart} onChange={(event) => handleStartTimeChange(event.target.value)} />
       </label>
 
       <label className={labelClassName}>
-        {localizedEndLabel}
+        {resolvedEndLabel}
         <input type="time" name={endName} value={endTime} onChange={(event) => handleEndTimeChange(event.target.value)} />
       </label>
 
       <label className={labelClassName}>
-        {localizedDurationLabel}
+        {resolvedDurationLabel}
         <input
           type="number"
           min={1}

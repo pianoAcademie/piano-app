@@ -1,17 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import AdminNav from "./admin-nav";
-import { type UiLanguage, uiText } from "../lib/ui-i18n";
 
 const SIDEBAR_COLLAPSED_KEY = "admin_sidebar_collapsed_v1";
+
+type UiLanguage = "fr" | "en";
 
 type AdminSidebarProps = {
   displayName: string;
   email: string;
   roleLabel: string;
-  language: UiLanguage;
 };
 
 function initialsFromDisplayName(value: string): string {
@@ -25,8 +26,15 @@ function initialsFromDisplayName(value: string): string {
   return `${tokens[0].slice(0, 1)}${tokens[1].slice(0, 1)}`.toUpperCase();
 }
 
-export default function AdminSidebar({ displayName, email, roleLabel, language }: AdminSidebarProps): JSX.Element {
+export default function AdminSidebar({ displayName, email, roleLabel }: AdminSidebarProps): JSX.Element {
+  const searchParams = useSearchParams();
+  const language: UiLanguage = searchParams.get("lang") === "en" ? "en" : "fr";
   const [collapsed, setCollapsed] = useState(false);
+  const displayedRoleLabel = language === "en" && roleLabel === "Administrateur" ? "Administrator" : roleLabel;
+  const collapseLabel = language === "en" ? "Collapse sidebar" : "Replier la barre laterale";
+  const expandLabel = language === "en" ? "Expand sidebar" : "Etendre la barre laterale";
+  const collapseText = language === "en" ? "Collapse" : "Replier";
+  const expandText = language === "en" ? "Expand" : "Etendre";
 
   useEffect(() => {
     try {
@@ -61,7 +69,7 @@ export default function AdminSidebar({ displayName, email, roleLabel, language }
         </span>
         <div className="admin-user-main">
           <p className="admin-user-name">{displayName}</p>
-          <small className="admin-user-role muted">{roleLabel}</small>
+          <small className="admin-user-role muted">{displayedRoleLabel}</small>
           <small className="admin-user-email muted">{email}</small>
         </div>
       </div>
@@ -72,12 +80,10 @@ export default function AdminSidebar({ displayName, email, roleLabel, language }
         type="button"
         className="admin-sidebar-toggle"
         onClick={toggleCollapsed}
-        aria-label={collapsed ? uiText(language, "admin.sidebar_expand_aria") : uiText(language, "admin.sidebar_collapse_aria")}
+        aria-label={collapsed ? expandLabel : collapseLabel}
       >
         <span aria-hidden="true">{collapsed ? "»" : "«"}</span>
-        <span className="admin-sidebar-toggle-label">
-          {collapsed ? uiText(language, "admin.sidebar_expand") : uiText(language, "admin.sidebar_collapse")}
-        </span>
+        <span className="admin-sidebar-toggle-label">{collapsed ? expandText : collapseText}</span>
       </button>
     </aside>
   );

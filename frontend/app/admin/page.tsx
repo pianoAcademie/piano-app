@@ -26,9 +26,10 @@ import ModalA11yFrame from "../../components/modal-a11y-frame";
 import PresenceButtonsGroup from "../../components/presence-buttons-group";
 import DayEventsDrawer from "../../components/planning/day-events-drawer";
 import MonthDayCard from "../../components/planning/month-day-card";
-import SessionEditModalBridge from "../../components/planning/session-edit-modal-bridge";
 import SessionCreateMainFields from "../../components/planning/session-create-main-fields";
+import SessionCreateSubmitButton from "../../components/planning/session-create-submit-button";
 import { localeForUiLanguage, normalizeUiLanguage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
+import { resolveUiFlashMessage, withUiLanguage } from "../../lib/ui-messages";
 import type {
   AdminClientOut,
   AdminMessagingTemplateOut,
@@ -69,7 +70,6 @@ type CreateSessionDraft = {
   visibility_scopes: SessionAudienceScope[];
   booking_scopes: SessionAudienceScope[];
   external_booking_price_ttc: string;
-  show_external_remaining_seats: "1" | "0";
   public_description: string;
   private_description: string;
   professor_reminder_note: string;
@@ -83,6 +83,7 @@ type AgendaRange = {
 };
 
 type PlanningQuery = {
+  language: UiLanguage;
   agendaView: AgendaView;
   agendaDate: string;
   timezone: string;
@@ -109,6 +110,21 @@ const PLANNING_TIMEZONES: Array<{ value: string; labelKey: string }> = [
   { value: "America/Los_Angeles", labelKey: "admin.planning.timezone.america_los_angeles" },
 ];
 
+const SESSION_AUDIENCE_SCOPE_LABELS: Record<SessionAudienceScope, string> = {
+  EXTERNAL: "Externe",
+  SUBSCRIPTION: "Abonne / carnet",
+  FORFAIT: "Forfait",
+  PRIVATE: "Prive",
+};
+
+function pickText(language: UiLanguage, fr: string, en: string): string {
+  return language === "en" ? en : fr;
+}
+
+function localeForLanguage(language: UiLanguage): string {
+  return language === "en" ? "en-GB" : "fr-FR";
+}
+
 function planningTimezoneLabel(value: string, language: UiLanguage): string {
   const known = PLANNING_TIMEZONES.find((option) => option.value === value);
   if (known) {
@@ -133,10 +149,6 @@ function readMultiParam(params: SearchParams, key: string): string[] {
     .map((token) => token.trim())
     .filter((token) => token.length > 0);
   return Array.from(new Set(entries));
-}
-
-function hasQueryParam(params: SearchParams, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(params, key);
 }
 
 function parseAgendaView(value: string): AgendaView {
@@ -227,7 +239,7 @@ function todayKeyInTimezone(timezone: string): string {
 function agendaDayLabel(dayKey: string, view: AgendaView, language: UiLanguage = "fr"): string {
   const date = keyToUtcDate(dayKey);
   if (view === "day") {
-    return new Intl.DateTimeFormat(localeForUiLanguage(language), {
+    return new Intl.DateTimeFormat(localeForLanguage(language), {
       weekday: "long",
       day: "2-digit",
       month: "long",
@@ -236,7 +248,7 @@ function agendaDayLabel(dayKey: string, view: AgendaView, language: UiLanguage =
     }).format(date);
   }
 
-  return new Intl.DateTimeFormat(localeForUiLanguage(language), {
+  return new Intl.DateTimeFormat(localeForLanguage(language), {
     weekday: "short",
     day: "2-digit",
     month: "short",
@@ -246,7 +258,7 @@ function agendaDayLabel(dayKey: string, view: AgendaView, language: UiLanguage =
 
 function agendaDayLongLabel(dayKey: string, language: UiLanguage = "fr"): string {
   const date = keyToUtcDate(dayKey);
-  return new Intl.DateTimeFormat(localeForUiLanguage(language), {
+  return new Intl.DateTimeFormat(localeForLanguage(language), {
     weekday: "long",
     day: "2-digit",
     month: "long",
@@ -267,7 +279,7 @@ function buildAgendaRange(view: AgendaView, focusDayKey: string, language: UiLan
       from,
       to,
       dayKeys: [focusDayKey],
-      title: new Intl.DateTimeFormat(localeForUiLanguage(language), {
+      title: new Intl.DateTimeFormat(localeForLanguage(language), {
         weekday: "long",
         day: "2-digit",
         month: "long",
@@ -293,12 +305,12 @@ function buildAgendaRange(view: AgendaView, focusDayKey: string, language: UiLan
       from,
       to,
       dayKeys,
-      title: `${new Intl.DateTimeFormat(localeForUiLanguage(language), {
+      title: `${new Intl.DateTimeFormat(localeForLanguage(language), {
         day: "2-digit",
         month: "short",
         year: "numeric",
         timeZone: "UTC",
-      }).format(from)} - ${new Intl.DateTimeFormat(localeForUiLanguage(language), {
+      }).format(from)} - ${new Intl.DateTimeFormat(localeForLanguage(language), {
         day: "2-digit",
         month: "short",
         year: "numeric",
@@ -326,7 +338,7 @@ function buildAgendaRange(view: AgendaView, focusDayKey: string, language: UiLan
     from,
     to,
     dayKeys,
-    title: new Intl.DateTimeFormat(localeForUiLanguage(language), {
+    title: new Intl.DateTimeFormat(localeForLanguage(language), {
       month: "long",
       year: "numeric",
       timeZone: "UTC",
@@ -347,12 +359,12 @@ function shiftAgendaDate(view: AgendaView, agendaDate: string, direction: -1 | 1
 
 function agendaNavigationHint(view: AgendaView, language: UiLanguage = "fr"): string {
   if (view === "month") {
-    return uiText(language, "admin.planning.navigation.month");
+    return pickText(language, "Navigation: mois par mois.", "Navigation: month by month.");
   }
   if (view === "week") {
-    return uiText(language, "admin.planning.navigation.week");
+    return pickText(language, "Navigation: semaine par semaine.", "Navigation: week by week.");
   }
-  return uiText(language, "admin.planning.navigation.day");
+  return pickText(language, "Navigation: jour par jour.", "Navigation: day by day.");
 }
 
 function toDateTimeLocalUtcValue(value: string): string {
@@ -377,12 +389,12 @@ function toDateInputInTimezone(value: string, timezone: string): string {
   return `${year}-${month}-${day}`;
 }
 
-function toTimeInputInTimezone(value: string, timezone: string, language: UiLanguage = "fr"): string {
+function toTimeInputInTimezone(value: string, timezone: string): string {
   const parsed = safeDate(value);
   if (!parsed) {
     return "";
   }
-  return parsed.toLocaleTimeString(localeForUiLanguage(language), {
+  return parsed.toLocaleTimeString("fr-FR", {
     timeZone: resolveTimezone(timezone),
     hour: "2-digit",
     minute: "2-digit",
@@ -390,11 +402,11 @@ function toTimeInputInTimezone(value: string, timezone: string, language: UiLang
   });
 }
 
-function formatDateKeyLabel(value: string, language: UiLanguage = "fr"): string {
+function formatDateKeyFr(value: string, language: UiLanguage = "fr"): string {
   if (!isDateKey(value)) {
     return "-";
   }
-  return new Intl.DateTimeFormat(localeForUiLanguage(language), {
+  return new Intl.DateTimeFormat(localeForLanguage(language), {
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -410,12 +422,12 @@ function formatDate(value: string, timezone?: string, language: UiLanguage = "fr
   const resolvedTimezone = timezone ? resolveTimezone(timezone) : "";
   if (resolvedTimezone) {
     const dateKey = toDateInputInTimezone(value, resolvedTimezone);
-    const timeKey = toTimeInputInTimezone(value, resolvedTimezone, language);
+    const timeKey = toTimeInputInTimezone(value, resolvedTimezone);
     if (dateKey && timeKey) {
-      return `${formatDateKeyLabel(dateKey, language)}, ${timeKey}`;
+      return `${formatDateKeyFr(dateKey, language)}, ${timeKey}`;
     }
   }
-  return parsed.toLocaleString(localeForUiLanguage(language), {
+  return parsed.toLocaleString(localeForLanguage(language), {
     dateStyle: "medium",
     timeStyle: "short",
   });
@@ -428,12 +440,12 @@ function formatTime(value: string, timezone?: string, language: UiLanguage = "fr
   }
   const resolvedTimezone = timezone ? resolveTimezone(timezone) : "";
   if (resolvedTimezone) {
-    const timeKey = toTimeInputInTimezone(value, resolvedTimezone, language);
+    const timeKey = toTimeInputInTimezone(value, resolvedTimezone);
     if (timeKey) {
       return timeKey;
     }
   }
-  return parsed.toLocaleTimeString(localeForUiLanguage(language), {
+  return parsed.toLocaleTimeString(localeForLanguage(language), {
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -452,7 +464,7 @@ function stripHtml(raw: string): string {
 
 function sessionTimeRangeLabel(session: AdminSessionOut, language: UiLanguage = "fr"): string {
   if (session.is_all_day) {
-    return uiText(language, "admin.planning.all_day");
+    return pickText(language, "Toute la journee", "All day");
   }
   return `${formatTime(session.start_at_utc, session.timezone, language)} - ${formatTime(session.end_at_utc, session.timezone, language)}`;
 }
@@ -507,41 +519,41 @@ function statusClass(status: string): string {
 
 function bookingEnrollmentLabel(status: string, language: UiLanguage = "fr"): string {
   if (status === "WAITLISTED") {
-    return uiText(language, "admin.planning.enrollment.waitlist");
+    return pickText(language, "Liste attente", "Waitlist");
   }
   if (status === "BOOKED") {
-    return uiText(language, "admin.planning.enrollment.booked");
+    return pickText(language, "Inscrit", "Booked");
   }
   if (status === "CANCELLED") {
-    return uiText(language, "admin.planning.enrollment.cancelled");
+    return pickText(language, "Annule", "Cancelled");
   }
-  return uiText(language, "admin.planning.enrollment.booked");
+  return pickText(language, "Inscrit", "Booked");
 }
 
 function bookingPresenceLabel(status: string, language: UiLanguage = "fr"): string | null {
   if (status === "ATTENDED") {
-    return uiText(language, "admin.planning.presence.attended");
+    return pickText(language, "Present", "Present");
   }
   if (status === "NO_SHOW") {
-    return uiText(language, "admin.planning.presence.absent");
+    return pickText(language, "Absent", "Absent");
   }
   if (status === "EXCUSED_ABSENCE") {
-    return uiText(language, "admin.planning.presence.excused");
+    return pickText(language, "Abs. excusee", "Excused");
   }
   return null;
 }
 
 function attendanceChoiceLabel(status: string, language: UiLanguage = "fr"): string {
   if (status === "ATTENDED") {
-    return uiText(language, "admin.planning.attendance.attended");
+    return pickText(language, "Present", "Present");
   }
   if (status === "NO_SHOW") {
-    return uiText(language, "admin.planning.attendance.no_show");
+    return pickText(language, "Absent non excuse", "Unexcused absence");
   }
   if (status === "EXCUSED_ABSENCE") {
-    return uiText(language, "admin.planning.attendance.excused");
+    return pickText(language, "Absent excuse", "Excused absence");
   }
-  return uiText(language, "admin.planning.attendance.to_fill");
+  return pickText(language, "A saisir", "To fill in");
 }
 
 function canEditAttendance(status: string): boolean {
@@ -564,15 +576,15 @@ function attendanceBadgeToneClass(status: string): string {
 function sessionTypeLabel(session: AdminSessionOut, locationLabel: string, language: UiLanguage = "fr"): string {
   const lowerLocation = locationLabel.toLowerCase();
   if (lowerLocation.includes("online") || lowerLocation.includes("ligne")) {
-    return uiText(language, "admin.planning.session_type.online");
+    return "Online";
   }
   if (lowerLocation.includes("domicile")) {
-    return uiText(language, "admin.planning.session_type.home");
+    return pickText(language, "Domicile", "Home visit");
   }
   if (session.is_private) {
-    return uiText(language, "admin.planning.session_type.private");
+    return pickText(language, "Prive", "Private");
   }
-  return uiText(language, "admin.planning.session_type.group");
+  return pickText(language, "Collectif", "Group");
 }
 
 function normalizeSessionAudienceScope(raw: unknown, fallback: SessionAudienceScope): SessionAudienceScope {
@@ -605,38 +617,28 @@ function normalizeSessionAudienceScopes(raw: unknown, fallback: SessionAudienceS
 }
 
 function sessionAudienceScopeLabel(scope: SessionAudienceScope, language: UiLanguage = "fr"): string {
-  if (scope === "EXTERNAL") return uiText(language, "admin.planning.audience.external");
-  if (scope === "SUBSCRIPTION") return uiText(language, "admin.planning.audience.subscription");
-  if (scope === "FORFAIT") return uiText(language, "admin.planning.audience.forfait");
-  if (scope === "PRIVATE") return uiText(language, "admin.planning.audience.private");
-  return scope;
+  if (language === "en") {
+    if (scope === "EXTERNAL") {
+      return "External";
+    }
+    if (scope === "SUBSCRIPTION") {
+      return "Subscription / pass";
+    }
+    if (scope === "FORFAIT") {
+      return "Package";
+    }
+    if (scope === "PRIVATE") {
+      return "Private";
+    }
+  }
+  return SESSION_AUDIENCE_SCOPE_LABELS[scope] ?? scope;
 }
 
 function sessionAudienceScopesLabel(scopes: SessionAudienceScope[], language: UiLanguage = "fr"): string {
   if (scopes.length === 1 && scopes[0] === "PRIVATE") {
-    return uiText(language, "admin.planning.audience.private");
+    return pickText(language, "Prive", "Private");
   }
   return scopes.map((scope) => sessionAudienceScopeLabel(scope, language)).join(" + ");
-}
-
-function messageAudienceLabel(
-  audience: "STUDENTS" | "PARENTS" | "STUDENTS_AND_PARENTS" | "PROFESSOR" | "ADMINS" | "SELF",
-  language: UiLanguage = "fr",
-): string {
-  if (audience === "STUDENTS") return uiText(language, "admin.planning.message_audience.students");
-  if (audience === "PARENTS") return uiText(language, "admin.planning.message_audience.parents");
-  if (audience === "STUDENTS_AND_PARENTS") return uiText(language, "admin.planning.message_audience.students_and_parents");
-  if (audience === "PROFESSOR") return uiText(language, "admin.planning.message_audience.professor");
-  if (audience === "ADMINS") return uiText(language, "admin.planning.message_audience.admins");
-  return uiText(language, "admin.planning.message_audience.self");
-}
-
-function noteDestinationLabel(
-  destination: "PRIVATE" | "STUDENTS" | "PARENTS" | "STUDENTS_AND_PARENTS" | "PROFESSOR" | "ADMINS" | "SELF",
-  language: UiLanguage = "fr",
-): string {
-  if (destination === "PRIVATE") return uiText(language, "admin.planning.message_audience.private");
-  return messageAudienceLabel(destination, language);
 }
 
 function isBookingRemovable(session: AdminSessionOut, booking: AdminSessionBookingOut): boolean {
@@ -655,6 +657,9 @@ function isBookingRemovable(session: AdminSessionOut, booking: AdminSessionBooki
 
 function buildPlanningHref(query: PlanningQuery): string {
   const sp = new URLSearchParams();
+  if (query.language === "en") {
+    sp.set("lang", "en");
+  }
   sp.set("agenda_view", query.agendaView);
   sp.set("agenda_date", query.agendaDate);
   sp.set("timezone", query.timezone);
@@ -731,46 +736,22 @@ function removeQueryParam(href: string, key: string): string {
 
 function recurrenceLabel(session: AdminSessionOut, language: UiLanguage = "fr"): string {
   if (!session.recurrence_rule) {
-    return uiText(language, "admin.planning.recurrence.one_off");
+    return pickText(language, "Ponctuel", "One-time");
   }
   const { frequency, interval, timeBasis } = parseRecurrenceRuleDefaults(session.recurrence_rule);
 
-  let label = uiText(language, "admin.planning.recurrence.weekly_short");
+  let label = pickText(language, "Hebdo", "Weekly");
   if (frequency === "DAILY") {
-    label =
-      interval > 1
-        ? uiText(language, "admin.planning.recurrence.every_days", { count: interval })
-        : uiText(language, "admin.planning.recurrence.daily_short");
+    label = interval > 1 ? pickText(language, `Tous les ${interval} jours`, `Every ${interval} days`) : pickText(language, "Quotidien", "Daily");
   } else if (frequency === "WEEKLY") {
-    label =
-      interval > 1
-        ? uiText(language, "admin.planning.recurrence.every_weeks", { count: interval })
-        : uiText(language, "admin.planning.recurrence.weekly_short");
+    label = interval > 1 ? pickText(language, `Toutes les ${interval} semaines`, `Every ${interval} weeks`) : pickText(language, "Hebdo", "Weekly");
   } else if (frequency === "MONTHLY") {
-    label =
-      interval > 1
-        ? uiText(language, "admin.planning.recurrence.every_months", { count: interval })
-        : uiText(language, "admin.planning.recurrence.monthly_short");
+    label = interval > 1 ? pickText(language, `Tous les ${interval} mois`, `Every ${interval} months`) : pickText(language, "Mensuel", "Monthly");
   }
   if (timeBasis === "LOCAL") {
-    return `${label} · ${uiText(language, "admin.planning.recurrence.fixed_local_time")}`;
+    return `${label} · ${pickText(language, "heure locale fixe", "fixed local time")}`;
   }
-  return `${label} · ${uiText(language, "admin.planning.recurrence.fixed_utc_time")}`;
-}
-
-function isRecurringSession(session: AdminSessionOut): boolean {
-  return Boolean(session.recurrence_group_id || session.recurrence_rule);
-}
-
-function recurrenceSummaryLabel(session: AdminSessionOut, language: UiLanguage = "fr"): string {
-  if (!isRecurringSession(session)) {
-    return uiText(language, "admin.planning.one_off_slot");
-  }
-  const parts = [recurrenceLabel(session, language)];
-  if (session.recurrence_end_date) {
-    parts.push(uiText(language, "admin.planning.recurrence.until_label", { date: formatDateKeyLabel(session.recurrence_end_date, language) }));
-  }
-  return `${uiText(language, "admin.planning.recurring_series")} · ${parts.join(" · ")}`;
+  return `${label} · ${pickText(language, "UTC fixe", "fixed UTC")}`;
 }
 
 function defaultApplyScope(session: AdminSessionOut): ApplyScope {
@@ -847,7 +828,6 @@ function parseCreateSessionDraft(raw: string): CreateSessionDraft | null {
       visibility_scopes: visibilityScopes,
       booking_scopes: bookingScopes,
       external_booking_price_ttc: String(parsed.external_booking_price_ttc ?? ""),
-      show_external_remaining_seats: String(parsed.show_external_remaining_seats ?? "1") === "0" ? "0" : "1",
       public_description: String(parsed.public_description ?? ""),
       private_description: String(parsed.private_description ?? ""),
       professor_reminder_note: String(parsed.professor_reminder_note ?? ""),
@@ -879,10 +859,6 @@ function draftNonNegativeInteger(raw: string): number | null {
     return null;
   }
   return parsed;
-}
-
-function shouldShowLocationCue(sessions: AdminSessionOut[]): boolean {
-  return new Set(sessions.map((session) => session.location_id)).size > 1;
 }
 
 function parseRecurrenceRuleDefaults(
@@ -928,7 +904,6 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const selectedCourseType = readParam(searchParams, "course_type_id");
   const selectedActivityIds = readMultiParam(searchParams, "activity_ids");
   const rawLocation = readParam(searchParams, "location_id");
-  const hasQuickLocationParam = hasQueryParam(searchParams, "location_id");
   const selectedLocationIdsFromQuery = readMultiParam(searchParams, "location_ids");
   const selectedProfessorLegacy = readParam(searchParams, "professor_id");
   const selectedProfessorIdsFromQuery = readMultiParam(searchParams, "professor_ids");
@@ -991,22 +966,12 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const confirmActionRaw = readParam(searchParams, "confirm_action").toLowerCase();
   const confirmAction: "" | "cancel" | "delete" = confirmActionRaw === "cancel" || confirmActionRaw === "delete" ? confirmActionRaw : "";
 
-  const selectedLocationIds = hasQuickLocationParam
-    ? rawLocation
-      ? [rawLocation]
-      : []
-    : selectedLocationIdsFromQuery.length
-      ? selectedLocationIdsFromQuery
-      : rawLocation
-        ? [rawLocation]
-        : [];
-
   const sessionsQuery = new URLSearchParams();
-  const locationFilterIdsForApi = selectedLocationIds;
+  const locationFilterIdsForApi = selectedLocationIdsFromQuery.length ? selectedLocationIdsFromQuery : rawLocation ? [rawLocation] : [];
   for (const locationId of locationFilterIdsForApi) {
     sessionsQuery.append("location_ids", locationId);
   }
-  if (selectedActivityIds.length === 0 && selectedCourseType) {
+  if (selectedCourseType) {
     sessionsQuery.set("course_type_id", selectedCourseType);
   }
   for (const professorId of selectedProfessorIds) {
@@ -1071,7 +1036,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         return [] as AdminMessagingTemplateOut[];
       })();
 
-  const focusedLocationId = hasQuickLocationParam ? rawLocation : rawLocation || selectedLocationIdsFromQuery[0] || "";
+  const focusedLocationId = rawLocation || selectedLocationIdsFromQuery[0] || "";
+  const selectedLocationIds = selectedLocationIdsFromQuery.length ? selectedLocationIdsFromQuery : rawLocation ? [rawLocation] : [];
   const focusedLocation = locations.find((location) => location.id === focusedLocationId) ?? null;
 
   const courseTypesEndpoint = focusedLocationId
@@ -1084,12 +1050,14 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         errors.push(`course-types: ${courseTypesResult.message}`);
         return [] as CourseTypeOut[];
       })();
+  const isEnglish = language === "en";
 
   const queryForLinks: PlanningQuery = {
+    language,
     agendaView,
     agendaDate,
     timezone,
-    locationId: hasQuickLocationParam ? rawLocation : "",
+    locationId: focusedLocationId,
     locationIds: selectedLocationIds,
     activityIds: selectedActivityIds,
     courseTypeId: selectedCourseType,
@@ -1114,7 +1082,6 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const filtersCloseHref = buildPlanningHref({ ...queryForLinks, createOpen: false, showFilters: false, dayDetails: "" });
   const filtersResetHref = buildPlanningHref({
     ...queryForLinks,
-    locationId: "",
     activityIds: [],
     courseTypeId: "",
     locationIds: [],
@@ -1134,11 +1101,6 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const previousHref = buildPlanningHref({ ...queryForLinks, agendaDate: previousAgendaDate, createOpen: false, dayDetails: "" });
   const nextHref = buildPlanningHref({ ...queryForLinks, agendaDate: nextAgendaDate, createOpen: false, dayDetails: "" });
   const todayHref = buildPlanningHref({ ...queryForLinks, agendaDate: todayAgendaKey, createOpen: false, dayDetails: "" });
-  const quickJumpLabel = agendaView === "month" ? t("admin.planning.quick_jump.month") : t("admin.planning.quick_jump.direct");
-  const quickJumpHelp =
-    agendaView === "month"
-      ? t("admin.planning.quick_jump_help.month")
-      : t("admin.planning.quick_jump_help.direct");
 
   const agendaRange = buildAgendaRange(agendaView, agendaDate, language);
   const fromMs = agendaRange.from.getTime();
@@ -1150,12 +1112,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const clientById = new Map(clients.map((row) => [row.id, row]));
   const selectedLocationSet = new Set(selectedLocationIds);
   const selectedActivitySet = new Set(selectedActivityIds);
-  const quickSelectedActivityIds = selectedActivityIds.length > 0 ? selectedActivityIds : selectedCourseType ? [selectedCourseType] : [];
   const selectedProfessorSet = new Set(selectedProfessorIds);
   const selectedActivityLabels = selectedActivityIds
     .map((activityId) => courseTypeById.get(activityId)?.name ?? "")
     .filter((name) => name.length > 0);
-  const selectedLocationLabels = selectedLocationIds
+  const selectedLocationLabels = selectedLocationIdsFromQuery
     .map((locationId) => locationById.get(locationId)?.name ?? "")
     .filter((name) => name.length > 0);
   const selectedProfessorLabels = selectedProfessorIds
@@ -1170,26 +1131,25 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     .map((client) => clientDisplayName(client));
   const hasAdvancedFilters =
     selectedActivityIds.length > 0 ||
-    (!hasQuickLocationParam && selectedLocationIdsFromQuery.length > 0) ||
+    Boolean(selectedCourseType) ||
+    selectedLocationIdsFromQuery.length > 0 ||
     selectedProfessorIds.length > 0 ||
     selectedClientIds.length > 0 ||
     selectedStatus !== "ALL" ||
-    selectedClientStatus !== "ALL" ||
-    timezone !== "Europe/Paris";
+    selectedClientStatus !== "ALL";
   const planningLocationLabel =
     selectedLocationLabels.length > 1
-      ? t("admin.planning.multi_locations", { count: selectedLocationLabels.length })
+      ? pickText(language, `Multi lieux (${selectedLocationLabels.length})`, `Multiple locations (${selectedLocationLabels.length})`)
       : selectedLocationLabels[0]
         ? selectedLocationLabels[0]
         : focusedLocation?.name
           ? focusedLocation.name
-          : t("admin.planning.all_locations");
-  const planningViewLabel =
-    agendaView === "month"
-      ? t("admin.planning.view_month")
-      : agendaView === "week"
-        ? t("admin.planning.view_week")
-        : t("admin.planning.view_day");
+          : pickText(language, "Tous les lieux", "All locations");
+  const planningViewLabel = agendaView === "month"
+    ? pickText(language, "Mois", "Month")
+    : agendaView === "week"
+      ? pickText(language, "Semaine", "Week")
+      : pickText(language, "Jour", "Day");
   const planningSubtitle = `${planningViewLabel} · ${planningLocationLabel} · ${timezone}`;
 
   const filteredSessions = sessions
@@ -1200,7 +1160,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       if (selectedActivitySet.size > 0 && !selectedActivitySet.has(session.course_type_id)) {
         return false;
       }
-      if (selectedActivitySet.size === 0 && selectedCourseType && session.course_type_id !== selectedCourseType) {
+      if (selectedCourseType && session.course_type_id !== selectedCourseType) {
         return false;
       }
       if (selectedProfessorSet.size > 0 && (!session.teacher_id || !selectedProfessorSet.has(session.teacher_id))) {
@@ -1215,7 +1175,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       }
       return startMs >= fromMs && startMs <= toMs;
     })
-    .sort((a, b) => a.start_at_utc.localeCompare(b.start_at_utc, localeForUiLanguage(language)));
+    .sort((a, b) => a.start_at_utc.localeCompare(b.start_at_utc));
 
   const sessionsByDay = new Map<string, AdminSessionOut[]>();
   for (const session of filteredSessions) {
@@ -1230,27 +1190,10 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     label: agendaDayLabel(dayKey, agendaView, language),
     sessions: sessionsByDay.get(dayKey) ?? [],
   }));
-  const showLocationCue = agendaView === "month" && shouldShowLocationCue(filteredSessions);
-  const visibleLocationToneById = new Map(
-    Array.from(
-      new Map(
-        filteredSessions.map((session) => [
-          session.location_id,
-          locationById.get(session.location_id)?.name ?? session.location_label ?? session.location_id,
-        ]),
-      ).entries(),
-    )
-      .sort((a, b) => a[1].localeCompare(b[1], localeForUiLanguage(language)))
-      .map(([locationId], index) => [locationId, `location-tone-${(index % 6) + 1}`]),
-  );
   const agendaDayCards = agendaDays.map((day) => ({
     key: day.key,
     label: day.label,
-    events: day.sessions.map((session) => ({
-      ...session,
-      show_location_badge: showLocationCue,
-      location_tone: visibleLocationToneById.get(session.location_id) ?? "location-tone-1",
-    })),
+    events: day.sessions.map((session) => session),
   }));
   const selectedDayDetails = dayDetails ? agendaDayCards.find((day) => day.key === dayDetails) ?? null : null;
   const visibleEventsByView = agendaView === "month" ? 5 : agendaView === "week" ? 8 : 24;
@@ -1281,7 +1224,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
   const clientsSorted = [...clients]
     .filter((client) => client.is_active)
-    .sort((a, b) => clientDisplayName(a).localeCompare(clientDisplayName(b), localeForUiLanguage(language)));
+    .sort((a, b) => clientDisplayName(a).localeCompare(clientDisplayName(b), "fr"));
   const locationFilterOptions = locations.map((location) => ({ id: location.id, label: location.name }));
   const professorFilterOptions = professors.map((professor) => ({
     id: professor.id,
@@ -1312,9 +1255,12 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const sessionRecipientStudentNames = sessionRecipientStudents.map((item) => item.label.split(" <")[0] || item.label);
   const sessionRecipientSummary = compactList(sessionRecipientStudentNames, 2);
 
-  const okMessage = resolveAuthOkMessage(readParam(searchParams, "ok"), readParam(searchParams, "ok_code"), language);
-  const errorMessage = readParam(searchParams, "error");
-
+  const okMessage =
+    resolveUiFlashMessage(searchParams, language, "ok") ??
+    resolveAuthOkMessage(readParam(searchParams, "ok"), readParam(searchParams, "ok_code"), language);
+  const errorMessage =
+    resolveUiFlashMessage(searchParams, language, "error") ??
+    readParam(searchParams, "error");
   const modalHref = selectedSession ? withSessionInHref(baseHref, selectedSession.id) : baseHref;
   const attendanceModalHref = selectedSession ? withQueryParam(modalHref, "attendance", "1") : modalHref;
   const attendanceModalBaseHref = removeQueryParam(removeQueryParam(attendanceModalHref, "booking_focus"), "attendance_filter");
@@ -1343,12 +1289,6 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const editTabHref = (tab: SlotEditTab): string => withQueryParam(editSessionHref, "edit_tab", tab);
   const notesAdvancedHref = withQueryParam(editTabHref("notes"), "notes_mode", "advanced");
   const notesSimpleHref = removeQueryParam(editTabHref("notes"), "notes_mode");
-  const editTabHrefs: Record<SlotEditTab, string> = {
-    general: editTabHref("general"),
-    schedule: editTabHref("schedule"),
-    visibility: editTabHref("visibility"),
-    notes: editTabHref("notes"),
-  };
   const activeEditTabHref = (() => {
     const base = editTabHref(editTab);
     if (editTab === "notes" && notesAdvancedMode) {
@@ -1384,8 +1324,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       : null;
   const attendanceMissingCount = selectedSessionBookings.filter((booking) => bookingPresenceLabel(booking.status, language) === null).length;
   const attendanceCompletedCount = selectedSessionBookings.length - attendanceMissingCount;
-  const selectedCourseTypeName = selectedSession ? courseTypeById.get(selectedSession.course_type_id)?.name ?? t("admin.planning.course_type_undefined") : "";
-  const selectedLocationName = selectedSession ? locationById.get(selectedSession.location_id)?.name ?? t("admin.planning.location_undefined") : "";
+  const selectedCourseTypeName = selectedSession ? courseTypeById.get(selectedSession.course_type_id)?.name ?? pickText(language, "Type non defini", "Undefined type") : "";
+  const selectedLocationName = selectedSession ? locationById.get(selectedSession.location_id)?.name ?? pickText(language, "Lieu non defini", "Undefined location") : "";
   const selectedHabitualProfessorDetail =
     selectedSession && selectedSession.habitual_teacher_id ? professorById.get(selectedSession.habitual_teacher_id) : null;
   const selectedSubstituteProfessorDetail =
@@ -1400,7 +1340,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const selectedHabitualProfessorName = selectedSession
     ? (selectedSession.habitual_teacher_display_name || "").trim() ||
       (selectedHabitualProfessorDetail ? `${selectedHabitualProfessorDetail.first_name} ${selectedHabitualProfessorDetail.last_name}`.trim() : "") ||
-      t("admin.planning.teacher_undefined")
+      pickText(language, "Professeur non defini", "Undefined teacher")
     : "";
   const selectedSubstituteProfessorName = selectedSession
     ? (selectedSession.substitute_teacher_display_name || "").trim() ||
@@ -1414,29 +1354,25 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const selectedHabitualProfessorLabel = !selectedSession
     ? ""
     : !selectedSessionRequiresProfessor
-      ? selectedHabitualProfessorName === t("admin.planning.teacher_undefined")
-        ? t("admin.planning.no_teacher_required")
-        : t("admin.planning.optional_teacher_label", { name: selectedHabitualProfessorName })
+      ? selectedHabitualProfessorName === pickText(language, "Professeur non defini", "Undefined teacher")
+        ? pickText(language, "Non requis", "Not required")
+        : `${selectedHabitualProfessorName}${pickText(language, " (optionnel)", " (optional)")}`
       : selectedHabitualProfessorName;
   const selectedSubstituteProfessorLabel = !selectedSession
     ? ""
     : !selectedSessionRequiresProfessor
       ? selectedSubstituteProfessorName
-        ? t("admin.planning.optional_teacher_label", { name: selectedSubstituteProfessorName })
-        : t("admin.planning.none")
-      : selectedSubstituteProfessorName || t("admin.planning.none");
+        ? `${selectedSubstituteProfessorName}${pickText(language, " (optionnel)", " (optional)")}`
+        : pickText(language, "Aucun", "None")
+      : selectedSubstituteProfessorName || pickText(language, "Aucun", "None");
   const selectedSessionIsSubstituted = Boolean(selectedSession?.substitute_teacher_id);
   const selectedEffectiveProfessorLabel = !selectedSession
     ? ""
     : !selectedSessionRequiresProfessor
-      ? selectedEffectiveProfessorName && selectedEffectiveProfessorName !== t("admin.planning.teacher_undefined")
-        ? selectedSessionIsSubstituted
-          ? t("admin.planning.optional_substitute_teacher_label", { name: selectedEffectiveProfessorName })
-          : t("admin.planning.optional_teacher_label", { name: selectedEffectiveProfessorName })
-        : t("admin.planning.no_teacher_required")
-      : selectedSessionIsSubstituted
-        ? t("admin.planning.substitute_teacher_label", { name: selectedEffectiveProfessorName })
-        : selectedEffectiveProfessorName;
+      ? selectedEffectiveProfessorName && selectedEffectiveProfessorName !== pickText(language, "Professeur non defini", "Undefined teacher")
+        ? `${selectedEffectiveProfessorName}${selectedSessionIsSubstituted ? pickText(language, " (remplacant optionnel)", " (optional substitute)") : pickText(language, " (optionnel)", " (optional)")}`
+        : pickText(language, "Non requis", "Not required")
+      : `${selectedEffectiveProfessorName}${selectedSessionIsSubstituted ? pickText(language, " (remplacant)", " (substitute)") : ""}`;
   const selectedEffectiveProfessorZoomLink = (selectedEffectiveProfessorDetail?.zoom_link ?? "").trim();
   const selectedSessionZoomLink =
     selectedSession && ((selectedSession.zoom_link ?? "").trim() || (selectedSessionIsOnline ? selectedEffectiveProfessorZoomLink : ""))
@@ -1445,7 +1381,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const selectedSessionTypeName = selectedSession ? sessionTypeLabel(selectedSession, selectedLocationName, language) : "";
   const selectedSessionHeaderTitle = selectedSession ? `${selectedCourseTypeName} - ${selectedLocationName}` : "";
   const selectedSessionSubtitle = selectedSession
-    ? `${formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)} · ${sessionTimeRangeLabel(selectedSession, language)} · ${selectedSession.timezone} · ${t("admin.planning.teacher_short")}: ${selectedEffectiveProfessorLabel || t("admin.planning.no_teacher_required")}`
+    ? `${formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)} · ${sessionTimeRangeLabel(selectedSession, language)} · ${selectedSession.timezone} · ${pickText(language, "Prof:", "Teacher:")} ${selectedEffectiveProfessorLabel || pickText(language, "Non requis", "Not required")}`
     : "";
   const timezoneOptionValues = new Set(PLANNING_TIMEZONES.map((option) => option.value));
   const translatedPlanningTimezones = PLANNING_TIMEZONES.map((option) => ({
@@ -1474,7 +1410,6 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     (createAllowsStudentBookings && !(createInitialVisibilityScopes.length === 1 && createInitialVisibilityScopes[0] === "PRIVATE")
       ? ["EXTERNAL"]
       : ["PRIVATE"]);
-  const createShowExternalRemainingSeats = createDraft?.show_external_remaining_seats !== "0";
   const selectedVisibilityScopes: SessionAudienceScope[] = selectedSession
     ? normalizeSessionAudienceScopes(
         selectedSession.visibility_scopes ?? selectedSession.visibility_scope,
@@ -1487,7 +1422,6 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         [selectedSession.allow_online_booking ? "EXTERNAL" : "PRIVATE"],
       )
     : ["PRIVATE"];
-  const selectedShowExternalRemainingSeats = selectedSession?.show_external_remaining_seats !== false;
   const createDraftDuration = createDraft ? draftPositiveInteger(createDraft.duration_minutes) : null;
   const createDraftCapacity = createDraft ? draftNonNegativeInteger(createDraft.capacity_max) : null;
   const createRecurrenceMode = createDraft?.recurrence_mode?.trim().toUpperCase() === "RECURRING" ? "RECURRING" : "NONE";
@@ -1499,40 +1433,38 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const createRecurrenceInterval = createDraft ? draftPositiveInteger(createDraft.recurrence_interval) ?? 1 : 1;
   const createRecurrenceTimeBasis = createDraft?.recurrence_time_basis?.trim().toUpperCase() === "UTC" ? "UTC" : "LOCAL";
   const editRecurrenceDefaults = parseRecurrenceRuleDefaults(selectedSession?.recurrence_rule);
-  const editDefaultRecurrenceMode = selectedSession?.recurrence_group_id ? "RECURRING" : "NONE";
   const editRecurrenceUntilDate = selectedSession
-    ? selectedSession.recurrence_end_date ??
-      toDateInputInTimezone(addUtcDays(new Date(selectedSession.start_at_utc), 84).toISOString(), selectedSession.timezone)
+    ? toDateInputInTimezone(addUtcDays(new Date(selectedSession.start_at_utc), 84).toISOString(), selectedSession.timezone)
     : agendaDate;
 
   return (
     <section className="admin-page-grid">
       {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
       {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
-      {errors.length > 0 ? <section className="flash-err">{t("admin.planning.backend_error", { message: errors.join(" | ") })}</section> : null}
+      {errors.length > 0 ? <section className="flash-err">{isEnglish ? "Backend error:" : "Erreur backend:"} {errors.join(" | ")}</section> : null}
 
       <section className="card planning-header-card">
         <div className="row spread planning-header-row">
           <div className="stack-xs">
-            <h2>{t("admin.planning.page_title")}</h2>
+            <h2>{isEnglish ? "Schedule" : "Planning"}</h2>
             <p className="muted planning-subtitle">{planningSubtitle}</p>
           </div>
           <div className="row planning-header-actions">
             <a className={`mode-link ${!createOpen ? "mode-active" : ""}`} href={lectureHref}>
-              {t("admin.planning.mode_read")}
+              {isEnglish ? "View" : "Lecture"}
             </a>
             <a className={`mode-link ${createOpen ? "mode-active" : ""}`} href={createHref}>
-              {t("admin.planning.mode_edit")}
+              {isEnglish ? "Edit" : "Edition"}
             </a>
             <a className="icon-add-button" href={createHref}>
               <span className="icon-add-button-plus" aria-hidden="true">
                 +
               </span>
-              {t("admin.planning.add_slot")}
+              {isEnglish ? "Add slot" : "Ajouter un creneau"}
             </a>
             {focusedLocationId ? (
-              <Link className="mode-link" href={`/admin/plannings/${focusedLocationId}/settings`}>
-                {t("admin.planning.settings")}
+              <Link className="mode-link" href={withUiLanguage(`/admin/plannings/${focusedLocationId}/settings`, language)}>
+                {isEnglish ? "Settings" : "Parametres"}
               </Link>
             ) : null}
           </div>
@@ -1541,12 +1473,12 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
       <section className="card planning-filters-card">
         <form method="get" className="planning-quick-form">
-          <input type="hidden" name="course_type_id" value="" />
+          {language === "en" ? <input type="hidden" name="lang" value="en" /> : null}
+          <input type="hidden" name="course_type_id" value={selectedCourseType} />
           <input type="hidden" name="status" value={selectedStatus} />
           <input type="hidden" name="client_status" value={selectedClientStatus} />
           <input type="hidden" name="agenda_date" value={agendaDate} />
-          <input type="hidden" name="timezone" value={timezone} />
-          {quickSelectedActivityIds.map((activityId) => (
+          {selectedActivityIds.map((activityId) => (
             <input key={`quick-activity-${activityId}`} type="hidden" name="activity_ids" value={activityId} />
           ))}
           {selectedLocationIdsFromQuery.map((locationId) => (
@@ -1561,66 +1493,65 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
           {dayDetails ? <input type="hidden" name="day_details" value={dayDetails} /> : null}
 
           <label>
-            {t("admin.planning.filter.location")}
+            {isEnglish ? "Location" : "Lieu"}
             <AutoSubmitSelect
               name="location_id"
               defaultValue={focusedLocationId}
-              options={[{ value: "", label: t("admin.planning.filter.all_locations") }, ...locations.map((row) => ({ value: row.id, label: row.name }))]}
+              options={[{ value: "", label: isEnglish ? "-- All locations --" : "-- Tous les lieux --" }, ...locations.map((row) => ({ value: row.id, label: row.name }))]}
             />
           </label>
 
           <label>
-            {t("admin.planning.filter.activity")}
-            <AutoSubmitSelect
-              name="activity_ids"
-              defaultValue=""
-              options={[{ value: "", label: t("admin.planning.filter.add_activity") }, ...courseTypes.map((row) => ({ value: row.id, label: row.name }))]}
-            />
-          </label>
-
-          <label>
-            {t("admin.planning.filter.agenda_view")}
+            {isEnglish ? "Calendar view" : "Vue agenda"}
             <AutoSubmitSelect
               name="agenda_view"
               defaultValue={agendaView}
               options={[
-                { value: "month", label: t("admin.planning.view_month") },
-                { value: "week", label: t("admin.planning.view_week") },
-                { value: "day", label: t("admin.planning.view_day") },
+                { value: "month", label: isEnglish ? "Month" : "Mois" },
+                { value: "week", label: isEnglish ? "Week" : "Semaine" },
+                { value: "day", label: isEnglish ? "Day" : "Jour" },
               ]}
+            />
+          </label>
+
+          <label>
+            {isEnglish ? "Timezone" : "Fuseau horaire"}
+            <AutoSubmitSelect
+              name="timezone"
+              defaultValue={timezone}
+              options={timezoneOptions.map((option) => ({ value: option.value, label: option.label }))}
             />
           </label>
 
           <div className="row">
             <a className="planning-reset-link" href={filtersResetHref}>
-              {t("common.reset")}
+              {isEnglish ? "Reset" : "Reinitialiser"}
             </a>
             <a className="mode-link planning-advanced-link" href={filtersHref}>
-              {t("admin.planning.advanced_filters")}
+              {isEnglish ? "Advanced filters" : "Filtres avances"}
             </a>
           </div>
         </form>
         <div className="row planning-active-filters">
           {selectedActivityLabels.length > 0 ? (
-            <span className="badge">{t("admin.planning.active.activities", { value: compactList(selectedActivityLabels) })}</span>
+            <span className="badge">{isEnglish ? "Activities" : "Activites"}: {compactList(selectedActivityLabels)}</span>
           ) : null}
-          {selectedCourseType && selectedActivityIds.length === 0 ? (
-            <span className="badge">{t("admin.planning.active.course_type", { value: courseTypeById.get(selectedCourseType)?.name ?? t("admin.planning.selection") })}</span>
+          {selectedCourseType ? (
+            <span className="badge">{isEnglish ? "Type" : "Type"}: {courseTypeById.get(selectedCourseType)?.name ?? pickText(language, "Selection", "Selection")}</span>
           ) : null}
           {selectedLocationLabels.length > 0 ? (
-            <span className="badge">{t("admin.planning.active.locations", { value: compactList(selectedLocationLabels) })}</span>
+            <span className="badge">{isEnglish ? "Locations" : "Lieux"}: {compactList(selectedLocationLabels)}</span>
           ) : null}
-          {timezone !== "Europe/Paris" ? <span className="badge">{t("admin.planning.active.timezone", { value: timezone })}</span> : null}
           {selectedProfessorLabels.length > 0 ? (
-            <span className="badge">{t("admin.planning.active.teachers", { value: compactList(selectedProfessorLabels) })}</span>
+            <span className="badge">{isEnglish ? "Teachers" : "Professeurs"}: {compactList(selectedProfessorLabels)}</span>
           ) : null}
           {selectedClientLabels.length > 0 ? (
-            <span className="badge">{t("admin.planning.active.students", { value: compactList(selectedClientLabels) })}</span>
+            <span className="badge">{isEnglish ? "Students" : "Etudiants"}: {compactList(selectedClientLabels)}</span>
           ) : null}
-          {selectedStatus !== "ALL" ? <span className="badge">{t("admin.planning.active.lesson_status", { value: selectedStatus })}</span> : null}
-          {selectedClientStatus !== "ALL" ? <span className="badge">{t("admin.planning.active.member_status", { value: selectedClientStatus })}</span> : null}
+          {selectedStatus !== "ALL" ? <span className="badge">{isEnglish ? "Session status" : "Statut cours"}: {selectedStatus}</span> : null}
+          {selectedClientStatus !== "ALL" ? <span className="badge">{isEnglish ? "Client status" : "Statut adherent"}: {selectedClientStatus}</span> : null}
           {!hasAdvancedFilters ? (
-            <span className="muted">{t("admin.planning.active.none")}</span>
+            <span className="muted">{isEnglish ? "No advanced filters active." : "Aucun filtre avance actif."}</span>
           ) : null}
         </div>
       </section>
@@ -1628,20 +1559,23 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       {filtersOpen ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact planning-filters-modal">
-            <a className="modal-close-x" href={filtersCloseHref} aria-label={t("common.close")}>
+            <a className="modal-close-x" href={filtersCloseHref} aria-label={isEnglish ? "Close" : "Fermer"}>
               ×
             </a>
-            <h2 className="modal-title">{t("admin.planning.filters_title")}</h2>
-            <p className="muted">{t("admin.planning.filters_help")}</p>
+            <h2 className="modal-title">{isEnglish ? "Schedule filters" : "Filtres planning"}</h2>
+            <p className="muted">{isEnglish ? "You can filter by multiple locations, teachers and students." : "Vous pouvez filtrer sur plusieurs lieux, professeurs et etudiants."}</p>
             <form method="get" className="grid cols-2">
+              {language === "en" ? <input type="hidden" name="lang" value="en" /> : null}
+              <input type="hidden" name="location_id" value={focusedLocationId} />
               <input type="hidden" name="agenda_view" value={agendaView} />
               <input type="hidden" name="agenda_date" value={agendaDate} />
+              <input type="hidden" name="timezone" value={timezone} />
               {dayDetails ? <input type="hidden" name="day_details" value={dayDetails} /> : null}
 
               <label className="span-2">
-                {t("admin.planning.filter.course_type")}
+                {isEnglish ? "Course type" : "Type de cours"}
                 <select name="course_type_id" defaultValue={selectedCourseType}>
-                  <option value="">{t("common.all")}</option>
+                  <option value="">{isEnglish ? "All" : "Tous"}</option>
                   {courseTypes.map((row) => (
                     <option key={row.id} value={row.id}>
                       {row.name}
@@ -1652,59 +1586,44 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
               <SearchMultiSelect
                 className="span-2"
-                label={t("admin.planning.filter.by_activities")}
+                label={isEnglish ? "By activities" : "Par activites"}
                 name="activity_ids"
                 options={courseTypes.map((row) => ({ id: row.id, label: row.name }))}
                 selectedIds={selectedActivityIds}
-                placeholder={t("admin.planning.filter.search_activity")}
-                emptySelectionLabel={t("admin.planning.filter.no_activity")}
-                language={language}
+                placeholder={isEnglish ? "Search an activity..." : "Rechercher une activite..."}
+                emptySelectionLabel={isEnglish ? "No activity selected." : "Aucune activite selectionnee."}
               />
 
               <SearchMultiSelect
-                label={t("admin.planning.filter.by_rooms")}
+                label={isEnglish ? "By rooms" : "Par salles"}
                 name="location_ids"
                 options={locationFilterOptions}
-                selectedIds={selectedLocationIds}
-                placeholder={t("admin.planning.filter.search_room")}
-                emptySelectionLabel={t("admin.planning.filter.no_room")}
-                language={language}
+                selectedIds={selectedLocationIdsFromQuery}
+                placeholder={isEnglish ? "Search a room..." : "Rechercher une salle..."}
+                emptySelectionLabel={isEnglish ? "No room selected." : "Aucune salle selectionnee."}
               />
 
               <SearchMultiSelect
-                label={t("admin.planning.filter.by_teachers")}
+                label={isEnglish ? "By teachers" : "Par enseignants"}
                 name="professor_ids"
                 options={professorFilterOptions}
                 selectedIds={selectedProfessorIds}
-                placeholder={t("admin.planning.filter.search_teacher")}
-                emptySelectionLabel={t("admin.planning.filter.no_teacher")}
-                language={language}
+                placeholder={isEnglish ? "Search a teacher..." : "Rechercher un enseignant..."}
+                emptySelectionLabel={isEnglish ? "No teacher selected." : "Aucun enseignant selectionne."}
               />
 
               <SearchMultiSelect
                 className="span-2"
-                label={t("admin.planning.filter.by_students")}
+                label={isEnglish ? "By students" : "Par etudiants"}
                 name="client_ids"
                 options={clientFilterOptions}
                 selectedIds={selectedClientIds}
-                placeholder={t("admin.planning.filter.search_student")}
-                emptySelectionLabel={t("admin.planning.filter.no_student")}
-                language={language}
+                placeholder={isEnglish ? "Search a student..." : "Rechercher un etudiant..."}
+                emptySelectionLabel={isEnglish ? "No student selected." : "Aucun etudiant selectionne."}
               />
 
               <label>
-                {t("admin.planning.filter.session_timezone")}
-                <select name="timezone" defaultValue={timezone}>
-                  {timezoneOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                {t("admin.planning.filter.lesson_status")}
+                {isEnglish ? "Session status" : "Statut cours"}
                 <select name="status" defaultValue={selectedStatus}>
                   <option value="ALL">{t("common.all")}</option>
                   <option value="SCHEDULED">{t("admin.planning.status.scheduled")}</option>
@@ -1714,7 +1633,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               </label>
 
               <label>
-                {t("admin.planning.filter.member_status")}
+                {isEnglish ? "Client status" : "Statut adherent"}
                 <select name="client_status" defaultValue={selectedClientStatus}>
                   <option value="ALL">{t("common.all")}</option>
                   <option value="ACTIVE">{t("admin.clients.status_active")}</option>
@@ -1727,9 +1646,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               </label>
 
               <div className="row span-2">
-                <button type="submit">{t("common.apply")}</button>
+                <button type="submit">{isEnglish ? "Apply" : "Appliquer"}</button>
                 <a className="reset-link" href={filtersResetHref}>
-                  {t("common.reset")}
+                  {isEnglish ? "Reset" : "Reinitialiser"}
                 </a>
               </div>
             </form>
@@ -1740,39 +1659,51 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       {createOpen && !filtersOpen && !selectedDayDetails && !selectedSession ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-create-session">
-            <a className="modal-close-x" href={createCloseHref} aria-label={t("common.close")}>
+            <a className="modal-close-x" href={createCloseHref} aria-label={language === "en" ? "Close" : "Fermer"}>
               ×
             </a>
-            <h2 className="modal-title">{t("admin.planning.create_title")}</h2>
-            <p className="muted">{t("admin.planning.create_help")}</p>
+            <h2 className="modal-title">{language === "en" ? "Add a slot" : "Ajouter un creneau"}</h2>
+            <p className="muted">
+              {language === "en"
+                ? "A slot happens on a single local day. Capacity 0 is allowed for slots without students."
+                : "Un creneau est sur un seul jour local. Capacite 0 autorisee pour les creneaux sans eleve."}
+            </p>
             {(okMessage || errorMessage) ? (
               <section className="modal-overlay modal-overlay-front">
                 <article className="modal-panel modal-compact">
-                  <a className="modal-close-x" href={errorMessage ? createFeedbackDismissHref : createCloseHref} aria-label={t("common.close")}>
+                  <a
+                    className="modal-close-x"
+                    href={errorMessage ? createFeedbackDismissHref : createCloseHref}
+                    aria-label={language === "en" ? "Close" : "Fermer"}
+                  >
                     ×
                   </a>
-                  <h3 className="modal-title">{errorMessage ? t("admin.planning.create_impossible") : t("admin.planning.create_done")}</h3>
+                  <h3 className="modal-title">
+                    {errorMessage
+                      ? (language === "en" ? "Could not create slot" : "Creation impossible")
+                      : (language === "en" ? "Slot created" : "Creation terminee")}
+                  </h3>
                   {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
                   {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
                   <div className="row modal-actions-end">
                     {errorMessage ? (
                       <a className="ghost" href={createFeedbackDismissHref}>
-                        {t("admin.planning.fix_entry")}
+                        {language === "en" ? "Fix the form" : "Corriger la saisie"}
                       </a>
                     ) : null}
                     <a className="mode-link" href={createCloseHref}>
-                      {t("common.close")}
+                      {language === "en" ? "Close" : "Fermer"}
                     </a>
                   </div>
                 </article>
               </section>
             ) : null}
-            <form action={createAdminSessionAction} className="create-session-form">
+            <form action={createAdminSessionAction} className="create-session-form" noValidate>
               <input type="hidden" name="return_to" value={createHref} />
               <section className="create-session-section">
                 <div className="row spread">
-                  <h3 className="create-session-section-title">{t("admin.planning.main_information")}</h3>
-                  <span className="badge">{t("admin.planning.required_badge")}</span>
+                  <h3 className="create-session-section-title">{language === "en" ? "Main information" : "Informations principales"}</h3>
+                  <span className="badge">{language === "en" ? "Required" : "Obligatoire"}</span>
                 </div>
                 <SessionCreateMainFields
                   language={language}
@@ -1798,6 +1729,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   defaultLocationId={focusedLocationId || (locations[0]?.id ?? "")}
                   defaultSessionTimezone={timezone}
                   defaultStartDate={agendaDate}
+                  recurrenceDefaults={{
+                    mode: createRecurrenceMode,
+                    frequency: createRecurrenceFrequency,
+                    interval: createRecurrenceInterval,
+                    untilDate: createDraft?.recurrence_until_date || "",
+                    keepLocalTime: createRecurrenceTimeBasis === "LOCAL",
+                  }}
                   draft={
                     createDraft
                       ? {
@@ -1819,92 +1757,44 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 />
               </section>
 
-              <fieldset className="create-session-section recurrence-panel">
-                <legend>{t("admin.planning.recurrence")}</legend>
-                <div className="recurrence-mode-row">
-                  <label className="checkline">
-                    <input type="radio" name="recurrence_mode" value="NONE" defaultChecked={createRecurrenceMode === "NONE"} />
-                    {t("admin.planning.recurrence.single")}
-                  </label>
-                  <label className="checkline">
-                    <input type="radio" name="recurrence_mode" value="RECURRING" defaultChecked={createRecurrenceMode === "RECURRING"} />
-                    {t("admin.planning.recurrence.recurring")}
-                  </label>
-                </div>
-
-                <div className="recurrence-settings">
-                  <div className="grid cols-3 recurrence-grid">
-                    <label>
-                      {t("admin.planning.recurrence.frequency")}
-                      <select name="recurrence_frequency" defaultValue={createRecurrenceFrequency}>
-                        <option value="DAILY">{t("admin.planning.recurrence.daily")}</option>
-                        <option value="WEEKLY">{t("admin.planning.recurrence.weekly")}</option>
-                        <option value="MONTHLY">{t("admin.planning.recurrence.monthly")}</option>
-                      </select>
-                    </label>
-
-                    <label>
-                      {t("admin.planning.recurrence.every")}
-                      <input type="number" name="recurrence_interval" min={1} defaultValue={createRecurrenceInterval} />
-                      <small className="muted">{t("admin.planning.recurrence.every_help")}</small>
-                    </label>
-
-                    <label>
-                      {t("admin.planning.recurrence.until")}
-                      <input type="date" name="recurrence_until_date" defaultValue={createDraft?.recurrence_until_date || ""} />
-                    </label>
-                  </div>
-                  <label className="checkline">
-                    <input
-                      type="checkbox"
-                      name="recurrence_keep_local_time"
-                      value="1"
-                      defaultChecked={createRecurrenceTimeBasis === "LOCAL"}
-                    />
-                    {t("admin.planning.recurrence.keep_local_time")}
-                  </label>
-                  <p className="muted">
-                    {t("admin.planning.recurrence.keep_local_time_help")}
-                  </p>
-                  <p className="muted">{t("admin.planning.recurrence.until_included")}</p>
-                </div>
-              </fieldset>
-
               <section className="create-session-section">
-                <h3 className="create-session-section-title">{t("admin.planning.visibility_descriptions")}</h3>
+                <h3 className="create-session-section-title">{language === "en" ? "Visibility and descriptions" : "Visibilite et descriptions"}</h3>
                 <div className="grid cols-2 create-session-visibility-grid">
                   <SessionVisibilityFields
                     language={language}
                     initialVisibilityScopes={createInitialVisibilityScopes}
                     initialBookingScopes={createInitialBookingScopes}
                     allowsStudentBookings={createAllowsStudentBookings}
-                    initialShowExternalRemainingSeats={createShowExternalRemainingSeats}
                   />
 
                   <label>
-                    {t("admin.planning.external_price")}
+                    {language === "en" ? "External booking price incl. VAT" : "Tarif reservation externe TTC"}
                     <input
                       type="text"
                       name="external_booking_price_ttc"
                       inputMode="decimal"
                       defaultValue={createDraft?.external_booking_price_ttc || ""}
-                      placeholder={t("admin.planning.external_price_placeholder")}
+                      placeholder="ex. 35,00"
                     />
-                    <small className="muted">{t("admin.planning.external_price_help")}</small>
+                    <small className="muted">
+                      {language === "en"
+                        ? "Leave empty to keep this slot hidden from the external integration."
+                        : "Laissez vide pour ne pas exposer ce creneau a l integration externe."}
+                    </small>
                   </label>
 
                   <label>
-                    {t("admin.planning.public_description")}
+                    {language === "en" ? "Public description (client view)" : "Description publique (vue client)"}
                     <textarea name="public_description" rows={4} defaultValue={createDraft?.public_description || ""} />
                   </label>
 
                   <label>
-                    {t("admin.planning.private_description")}
+                    {language === "en" ? "Private description (internal)" : "Description privee (interne)"}
                     <textarea name="private_description" rows={4} defaultValue={createDraft?.private_description || ""} />
                   </label>
 
                   <label className="span-2">
-                    {t("admin.planning.professor_note")}
+                    {language === "en" ? "Note for the teacher (sent 24h before)" : "Note pour le professeur (envoyee 24h avant)"}
                     <RichMessageEditor
                       name="professor_reminder_note"
                       formatName="professor_reminder_note_format"
@@ -1912,20 +1802,25 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       maxLength={12000}
                       defaultFormat="HTML"
                       defaultValue={createDraft?.professor_reminder_note || ""}
-                      placeholder={t("admin.planning.professor_note_placeholder")}
-                      language={language}
+                      placeholder={
+                        language === "en"
+                          ? "Enter the note to include in the teacher reminder..."
+                          : "Saisir la note a joindre au rappel professeur..."
+                      }
                     />
                   </label>
                 </div>
               </section>
 
               <div className="row spread create-session-actions">
-                <p className="muted">{t("admin.planning.required_fields_help")}</p>
+                <p className="muted">
+                  {language === "en" ? "Required fields are marked at the top of the form." : "Les champs obligatoires sont marques en haut du formulaire."}
+                </p>
                 <div className="row">
                   <a className="reset-link" href={createCloseHref}>
-                    {t("common.cancel")}
+                    {language === "en" ? "Cancel" : "Annuler"}
                   </a>
-                  <button type="submit">{t("admin.planning.add_slot")}</button>
+                  <SessionCreateSubmitButton language={language} />
                 </div>
               </div>
             </form>
@@ -1935,50 +1830,17 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
       <section className="card">
         <div className="row spread">
-          <h2>{t("admin.planning.agenda_title")}</h2>
-          <div className="row planning-agenda-nav">
+          <h2>{isEnglish ? "Calendar" : "Agenda"}</h2>
+          <div className="row">
             <a className="mode-link" href={previousHref}>
               ←
             </a>
-            <details className="planning-jump-menu">
-              <summary className="badge planning-jump-trigger" aria-label={quickJumpLabel}>
-                {agendaRange.title}
-              </summary>
-              <form method="get" className="planning-jump-form">
-                <input type="hidden" name="agenda_view" value={agendaView} />
-                <input type="hidden" name="timezone" value={timezone} />
-                <input type="hidden" name="location_id" value={focusedLocationId} />
-                <input type="hidden" name="course_type_id" value={selectedCourseType} />
-                <input type="hidden" name="status" value={selectedStatus} />
-                <input type="hidden" name="client_status" value={selectedClientStatus} />
-                {selectedActivityIds.map((activityId) => (
-                  <input key={`jump-activity-${activityId}`} type="hidden" name="activity_ids" value={activityId} />
-                ))}
-                {selectedLocationIdsFromQuery.map((locationId) => (
-                  <input key={`jump-location-${locationId}`} type="hidden" name="location_ids" value={locationId} />
-                ))}
-                {selectedProfessorIds.map((professorId) => (
-                  <input key={`jump-professor-${professorId}`} type="hidden" name="professor_ids" value={professorId} />
-                ))}
-                {selectedClientIds.map((clientId) => (
-                  <input key={`jump-client-${clientId}`} type="hidden" name="client_ids" value={clientId} />
-                ))}
-
-                <label className="planning-jump-field">
-                  <span>{quickJumpLabel}</span>
-                  <input type="date" name="agenda_date" defaultValue={agendaDate} required />
-                </label>
-                <p className="muted planning-jump-help">{quickJumpHelp}</p>
-                <div className="row planning-jump-actions">
-                  <button type="submit">{t("admin.planning.go")}</button>
-                </div>
-              </form>
-            </details>
+            <span className="badge">{agendaRange.title}</span>
             <a className="mode-link" href={nextHref}>
               →
             </a>
             <a className="mode-link" href={todayHref}>
-              {t("admin.planning.today")}
+              {isEnglish ? "Today" : "Aujourd'hui"}
             </a>
           </div>
         </div>
@@ -1987,11 +1849,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         <div className={`agenda-grid agenda-grid-${agendaView}`}>
           {agendaDayCards.map((day) => (
             <MonthDayCard
-              language={language}
               key={day.key}
               dayLabel={day.label}
               events={day.events}
               isToday={day.key === todayAgendaKey}
+              language={language}
               maxVisibleEvents={visibleEventsByView}
               expanded={agendaView !== "month"}
               dayDetailsHref={buildPlanningHref({ ...queryForLinks, createOpen: false, showFilters: false, dayDetails: day.key })}
@@ -2003,15 +1865,15 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
       <DayEventsDrawer
         isOpen={Boolean(selectedDayDetails && !selectedSession)}
-        language={language}
         dayLabel={selectedDayDetails ? agendaDayLongLabel(selectedDayDetails.key, language) : ""}
         events={selectedDayDetails ? selectedDayDetails.events : []}
+        language={language}
         closeHref={dayDetailsCloseHref}
         openSessionHref={(sessionId) => withSessionInHref(sessionModalBaseHref, sessionId)}
       />
 
       {selectedSession && !editSessionOpen ? (
-        <ModalA11yFrame className="modal-overlay session-slot-overlay" closeHref={baseHref} label={t("admin.planning.detail_label")}>
+        <ModalA11yFrame className="modal-overlay session-slot-overlay" closeHref={baseHref} label={isEnglish ? "Slot details" : "Detail du creneau"}>
           <article className="modal-panel session-slot-modal">
             <header className="session-slot-header">
               <div className="session-slot-header-main">
@@ -2021,39 +1883,39 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               <div className="session-slot-header-actions">
                 <span className={`status-badge ${statusClass(selectedSession.status)}`}>{selectedSession.status_label}</span>
                 <details className="session-slot-overflow-menu">
-                  <summary aria-label={t("admin.planning.more_options")}>⋯</summary>
+                  <summary aria-label={isEnglish ? "More options" : "Plus d options"}>⋯</summary>
                   <div className="session-slot-overflow-panel">
-                    <p className="muted">{t("admin.planning.actions")}</p>
+                    <p className="muted">{isEnglish ? "Actions" : "Actions"}</p>
                     <a className="mode-link" href={attendanceModalHref}>
-                      {t("admin.planning.take_attendance")}
+                      {isEnglish ? "Take attendance" : "Prendre les presences"}
                     </a>
                     <a className="mode-link" href={groupNotesModalHref}>
-                      {t("admin.planning.group_note")}
+                      {isEnglish ? "Group note" : "Note de groupe"}
                     </a>
                     <a className="mode-link" href={sessionEmailModalHref}>
-                      {t("admin.planning.send_email")}
+                      {isEnglish ? "Send email" : "Envoyer email"}
                     </a>
                     <a className="mode-link" href={sessionSmsModalHref}>
-                      {t("admin.planning.send_sms")}
+                      {isEnglish ? "Send SMS" : "Envoyer SMS"}
                     </a>
                     <a className="mode-link" href={duplicateModalHref}>
-                      {t("common.duplicate")}
+                      {isEnglish ? "Duplicate" : "Dupliquer"}
                     </a>
                     <a className="danger-link" href={deleteConfirmHref}>
-                      {t("admin.planning.delete_slot")}
+                      {isEnglish ? "Delete slot" : "Supprimer le creneau"}
                     </a>
                     <hr />
-                    <p className="muted">{t("admin.planning.info")}</p>
-                    <span className="badge">{t("admin.planning.teacher_badge", { value: selectedEffectiveProfessorLabel || t("admin.planning.no_teacher_required") })}</span>
-                    {selectedSessionIsSubstituted ? <span className="badge">{t("admin.planning.substitute_badge")}</span> : null}
-                    <span className="badge">{t("admin.planning.display_badge", { value: sessionAudienceScopesLabel(selectedVisibilityScopes, language) })}</span>
+                    <p className="muted">{isEnglish ? "Details" : "Infos"}</p>
+                    <span className="badge">{isEnglish ? "Teacher" : "Professeur"}: {selectedEffectiveProfessorLabel || pickText(language, "Non requis", "Not required")}</span>
+                    {selectedSessionIsSubstituted ? <span className="badge">{isEnglish ? "Substitute" : "Remplacant"}</span> : null}
+                    <span className="badge">{isEnglish ? "Visibility" : "Affichage"}: {sessionAudienceScopesLabel(selectedVisibilityScopes, language)}</span>
                     <span className="badge">
-                      {t("admin.planning.booking_badge", { value: selectedSessionAllowsStudentBookings ? sessionAudienceScopesLabel(selectedBookingScopes, language) : t("admin.planning.closed") })}
+                      {isEnglish ? "Booking" : "Reservation"}: {selectedSessionAllowsStudentBookings ? sessionAudienceScopesLabel(selectedBookingScopes, language) : pickText(language, "Fermee", "Closed")}
                     </span>
-                    {!selectedSessionAllowsStudentBookings ? <span className="badge">{t("admin.planning.no_student")}</span> : null}
+                    {!selectedSessionAllowsStudentBookings ? <span className="badge">{isEnglish ? "No students" : "Sans eleve"}</span> : null}
                   </div>
                 </details>
-                <a className="modal-close-x session-slot-close" href={baseHref} aria-label={t("common.close")}>
+                <a className="modal-close-x session-slot-close" href={baseHref} aria-label={isEnglish ? "Close" : "Fermer"}>
                   ×
                 </a>
               </div>
@@ -2067,44 +1929,43 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 {selectedSession.booked_count}/{selectedSession.capacity_max}
               </span>
               <span className="badge">{selectedSessionTypeName}</span>
-              <span className="badge">{isRecurringSession(selectedSession) ? t("admin.planning.recurring_series") : t("admin.planning.one_off_slot")}</span>
-              {isRecurringSession(selectedSession) ? <span className="badge">{recurrenceLabel(selectedSession, language)}</span> : null}
-              <span className="badge">{t("admin.planning.display_inline", { value: sessionAudienceScopesLabel(selectedVisibilityScopes, language) })}</span>
+              <span className="badge">{recurrenceLabel(selectedSession)}</span>
+              <span className="badge">{isEnglish ? "Visibility" : "Affichage"} {sessionAudienceScopesLabel(selectedVisibilityScopes, language)}</span>
               <span className="badge">
-                {t("admin.planning.booking_inline", { value: selectedSessionAllowsStudentBookings ? sessionAudienceScopesLabel(selectedBookingScopes, language) : t("admin.planning.closed") })}
+                {isEnglish ? "Booking" : "Reservation"} {selectedSessionAllowsStudentBookings ? sessionAudienceScopesLabel(selectedBookingScopes, language) : pickText(language, "Fermee", "Closed")}
               </span>
-              {!selectedSessionAllowsStudentBookings ? <span className="badge">{t("admin.planning.no_student")}</span> : null}
+              {!selectedSessionAllowsStudentBookings ? <span className="badge">{isEnglish ? "No students" : "Sans eleve"}</span> : null}
             </div>
 
             <div className="session-slot-toolbar">
               <a className="mode-link" href={editSessionHref}>
-                {t("common.edit")}
+                {isEnglish ? "Edit" : "Modifier"}
               </a>
               {selectedSession.status !== "CANCELLED" ? (
                 <a className="danger-link" href={cancelConfirmHref}>
-                  {t("common.cancel")}
+                  {isEnglish ? "Cancel" : "Annuler"}
                 </a>
               ) : null}
               <details className="session-slot-overflow-menu session-slot-toolbar-menu">
-                <summary aria-label={t("admin.planning.more_actions")}>⋯</summary>
+                <summary aria-label={isEnglish ? "More actions" : "Plus d actions"}>⋯</summary>
                 <div className="session-slot-overflow-panel">
                   <a className="mode-link" href={attendanceModalHref}>
-                    {t("admin.planning.take_attendance")}
+                    {isEnglish ? "Take attendance" : "Prendre les presences"}
                   </a>
                   <a className="mode-link" href={groupNotesModalHref}>
-                    {t("admin.planning.group_note")}
+                    {isEnglish ? "Group note" : "Note de groupe"}
                   </a>
                   <a className="mode-link" href={sessionEmailModalHref}>
-                    {t("admin.planning.send_email")}
+                    {isEnglish ? "Send email" : "Envoyer email"}
                   </a>
                   <a className="mode-link" href={sessionSmsModalHref}>
-                    {t("admin.planning.send_sms")}
+                    {isEnglish ? "Send SMS" : "Envoyer SMS"}
                   </a>
                   <a className="mode-link" href={duplicateModalHref}>
-                    {t("common.duplicate")}
+                    {isEnglish ? "Duplicate" : "Dupliquer"}
                   </a>
                   <a className="danger-link" href={deleteConfirmHref}>
-                    {t("common.delete")}
+                    {isEnglish ? "Delete" : "Supprimer"}
                   </a>
                 </div>
               </details>
@@ -2112,10 +1973,10 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
             <div className="session-slot-body">
               <details className="session-slot-section session-slot-section-attendees" open>
-                <summary>{t("admin.planning.attendees_count", { count: selectedSessionBookings.length })}</summary>
+                <summary>{isEnglish ? "Attendees" : "Inscrits"} ({selectedSessionBookings.length})</summary>
                 <div className="session-slot-section-body">
                   {selectedSessionBookings.length === 0 ? (
-                    <p className="muted">{t("admin.planning.no_attendee")}</p>
+                    <p className="muted">{isEnglish ? "No student booked." : "Aucun eleve inscrit."}</p>
                   ) : (
                     <div className="session-bookings-summary-list session-slot-attendees-list">
                       {selectedSessionBookings.map((booking, index) => {
@@ -2130,12 +1991,12 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                                   href={`/admin/clients/${booking.client_id}`}
                                   target="_blank"
                                   rel="noreferrer"
-                                  title={t("admin.planning.open_client_record_new_tab")}
+                                  title={isEnglish ? "Open client record in a new tab" : "Ouvrir la fiche client dans un nouvel onglet"}
                                 >
-                                  {booking.client_display_name || t("admin.planning.participant_number", { count: index + 1 })}
+                                  {booking.client_display_name || `Participant ${index + 1}`}
                                 </Link>
                               ) : (
-                                <strong>{booking.client_display_name || t("admin.planning.participant_number", { count: index + 1 })}</strong>
+                                <strong>{booking.client_display_name || `Participant ${index + 1}`}</strong>
                               )}
                               <small className="muted">{booking.client_email}</small>
                             </div>
@@ -2144,15 +2005,15 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                                 {enrollment}
                                 {booking.waitlist_position ? ` #${booking.waitlist_position}` : ""}
                               </span>
-                              <span className={`status-pill ${presence ? "status-ok" : "status-off"}`}>{presence ?? t("admin.planning.presence.missing")}</span>
+                              <span className={`status-pill ${presence ? "status-ok" : "status-off"}`}>{presence ?? pickText(language, "Presence: -", "Attendance: -")}</span>
                             </div>
                             <div className="session-slot-attendee-actions">
                               <a className="mode-link" href={attendanceBookingHref(booking.id)}>
-                                {t("admin.planning.presence_and_note")}
+                                {isEnglish ? "Attendance & note" : "Presence & note"}
                               </a>
                               {isBookingRemovable(selectedSession, booking) ? (
                                 <details className="session-slot-inline-confirm">
-                                  <summary className="session-slot-delete-icon" aria-label={t("admin.planning.remove_attendee")} title={t("admin.planning.remove_attendee")}>
+                                  <summary className="session-slot-delete-icon" aria-label={isEnglish ? "Remove this attendee" : "Retirer cet inscrit"} title={isEnglish ? "Remove this attendee" : "Retirer cet inscrit"}>
                                     🗑
                                   </summary>
                                   <form action={adminRemoveClientFromSessionAction} className="session-slot-inline-confirm-panel">
@@ -2163,23 +2024,23 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                                       <fieldset className="scope-inline compact">
                                         <label className="checkline">
                                           <input type="radio" name="scope" value="OCCURRENCE" defaultChecked />
-                                          {t("admin.planning.this_session")}
+                                          {isEnglish ? "This session" : "Cette seance"}
                                         </label>
                                         <label className="checkline">
                                           <input type="radio" name="scope" value="SERIES_FUTURE" />
-                                          {t("admin.planning.future_series")}
+                                          {isEnglish ? "Future series" : "Serie future"}
                                         </label>
                                       </fieldset>
                                     ) : (
                                       <input type="hidden" name="scope" value="OCCURRENCE" />
                                     )}
                                     <button className="danger" type="submit">
-                                      {t("admin.planning.confirm")}
+                                      {isEnglish ? "Confirm" : "Confirmer"}
                                     </button>
                                   </form>
                                 </details>
                               ) : (
-                                <span className="muted">{t("admin.planning.locked")}</span>
+                                <span className="muted">{isEnglish ? "Locked" : "Verrouille"}</span>
                               )}
                             </div>
                           </article>
@@ -2189,7 +2050,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   )}
                   {selectedSession.group_note ? (
                     <p className="muted top-gap-sm">
-                      <strong>{t("admin.planning.group_note_label")}:</strong> {stripHtml(selectedSession.group_note)}
+                      <strong>{isEnglish ? "Group note:" : "Note de groupe:"}</strong> {stripHtml(selectedSession.group_note)}
                     </p>
                   ) : null}
                 </div>
@@ -2197,11 +2058,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
               <aside className="session-slot-right">
                 <details className="session-slot-section session-slot-section-enroll" open>
-                  <summary>{selectedSessionAllowsStudentBookings ? t("admin.planning.enroll_student") : t("admin.planning.student_enrollments")}</summary>
+                  <summary>{selectedSessionAllowsStudentBookings ? (isEnglish ? "Add a student" : "Inscrire un eleve") : (isEnglish ? "Student bookings" : "Inscriptions eleves")}</summary>
                   <div className="session-slot-section-body">
                     {!selectedSessionAllowsStudentBookings ? (
                       <p className="muted">
-                        {t("admin.planning.no_enrollment_possible")}
+                        {isEnglish
+                          ? "This slot is marked as no-student. No booking is possible from the schedule or from the client portal."
+                          : "Ce creneau est marque sans eleve. Aucune inscription n est possible depuis le planning ni depuis l espace client."}
                       </p>
                     ) : (
                       <form action={adminAddClientToSessionAction} className="session-enroll-form">
@@ -2210,38 +2073,37 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
                         <SearchMultiSelect
                           className="session-enroll-search"
-                          label={t("client.child")}
+                          label={isEnglish ? "Student" : "Eleve"}
                           name="client_id"
                           options={bookingClientOptions}
                           selectedIds={[]}
-                          placeholder={t("admin.planning.enroll_search_student")}
-                          emptySelectionLabel={t("admin.planning.enroll_no_student_selected")}
+                          placeholder={isEnglish ? "Search a student..." : "Rechercher un eleve..."}
+                          emptySelectionLabel={isEnglish ? "No student selected." : "Aucun eleve selectionne."}
                           maxSelections={1}
                           requiredSelection
-                          language={language}
                         />
 
                         <div className="session-enroll-submit">
                           {selectedSession.recurrence_group_id ? (
                             <details className="session-slot-add-confirm">
-                              <summary>{t("admin.planning.add_student")}</summary>
+                              <summary>{isEnglish ? "Add" : "Ajouter"}</summary>
                               <div className="session-slot-inline-confirm-panel session-slot-scope-panel">
-                                <p className="muted">{t("admin.planning.enroll_scope_help")}</p>
+                                <p className="muted">{isEnglish ? "Book the student on this session or on the future series?" : "Inscrire l eleve sur cette seance ou sur la serie future ?"}</p>
                                 <label className="checkline">
                                   <input type="radio" name="scope" value="OCCURRENCE" defaultChecked />
-                                  {t("admin.planning.this_session_only")}
+                                  {isEnglish ? "This session only" : "Cette seance uniquement"}
                                 </label>
                                 <label className="checkline">
                                   <input type="radio" name="scope" value="SERIES_FUTURE" />
-                                  {t("admin.planning.whole_future_series")}
+                                  {isEnglish ? "Whole series (future sessions)" : "Toute la serie (futures)"}
                                 </label>
-                                <button type="submit">{t("admin.planning.confirm")}</button>
+                                <button type="submit">{isEnglish ? "Confirm" : "Confirmer"}</button>
                               </div>
                             </details>
                           ) : (
                             <>
                               <input type="hidden" name="scope" value="OCCURRENCE" />
-                              <button type="submit">{t("admin.planning.add_student")}</button>
+                              <button type="submit">{isEnglish ? "Add" : "Ajouter"}</button>
                             </>
                           )}
                         </div>
@@ -2251,46 +2113,43 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 </details>
 
                 <details className="session-slot-section session-slot-section-details" open>
-                  <summary>{t("common.details")}</summary>
+                  <summary>{isEnglish ? "Details" : "Details"}</summary>
                   <div className="session-slot-section-body session-slot-details-list">
                     <p className="muted">
-                      <strong>{t("admin.planning.activity")}:</strong> {selectedCourseTypeName}
+                      <strong>{isEnglish ? "Activity:" : "Activite:"}</strong> {selectedCourseTypeName}
                     </p>
                     <p className="muted">
-                      <strong>{t("admin.planning.recurrence_label")}:</strong> {recurrenceSummaryLabel(selectedSession, language)}
+                      <strong>{isEnglish ? "Usual teacher:" : "Professeur habituel:"}</strong> {selectedHabitualProfessorLabel}
                     </p>
                     <p className="muted">
-                      <strong>{t("admin.planning.regular_teacher")}:</strong> {selectedHabitualProfessorLabel}
+                      <strong>{isEnglish ? "Substitute teacher:" : "Professeur remplacant:"}</strong> {selectedSubstituteProfessorLabel}
                     </p>
                     <p className="muted">
-                      <strong>{t("admin.planning.substitute_teacher")}:</strong> {selectedSubstituteProfessorLabel}
+                      <strong>{isEnglish ? "Effective teacher:" : "Professeur effectif:"}</strong> {selectedEffectiveProfessorLabel || pickText(language, "Non requis", "Not required")}
                     </p>
                     <p className="muted">
-                      <strong>{t("admin.planning.effective_teacher")}:</strong> {selectedEffectiveProfessorLabel || t("admin.planning.no_teacher_required")}
-                    </p>
-                    <p className="muted">
-                      <strong>{t("common.location")}:</strong> {selectedLocationName}
+                      <strong>{isEnglish ? "Location:" : "Lieu:"}</strong> {selectedLocationName}
                     </p>
                     {selectedSessionZoomLink ? (
                       <p>
                         <a href={selectedSessionZoomLink} target="_blank" rel="noreferrer">
-                          {t("admin.planning.zoom_link")}
+                          {isEnglish ? "Zoom link" : "Lien Zoom"}
                         </a>
                       </p>
                     ) : null}
                     {selectedSession.public_description ? (
                       <p className="muted">
-                        <strong>{t("admin.planning.public_description_label")}:</strong> {selectedSession.public_description}
+                        <strong>{isEnglish ? "Public description:" : "Description publique:"}</strong> {selectedSession.public_description}
                       </p>
                     ) : null}
                     {selectedSession.private_description ? (
                       <p className="muted">
-                        <strong>{t("admin.planning.private_description_label")}:</strong> {selectedSession.private_description}
+                        <strong>{isEnglish ? "Private description:" : "Description privee:"}</strong> {selectedSession.private_description}
                       </p>
                     ) : null}
                     {selectedSession.professor_reminder_note ? (
                       <p className="muted">
-                        <strong>{t("admin.planning.professor_note_summary")}:</strong> {stripHtml(selectedSession.professor_reminder_note)}
+                        <strong>{isEnglish ? "Teacher note (24h reminder):" : "Note professeur (rappel 24h):"}</strong> {stripHtml(selectedSession.professor_reminder_note)}
                       </p>
                     ) : null}
                   </div>
@@ -2306,29 +2165,29 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
           <article className="modal-panel session-edit-modal-shell">
             <header className="session-edit-shell-header">
               <div>
-                <h2 className="modal-title">{t("admin.planning.edit_slot")}</h2>
+                <h2 className="modal-title">{isEnglish ? "Edit slot" : "Modifier le creneau"}</h2>
                 <p className="muted">
-                  {formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)} · {selectedLocationName} · {t("admin.planning.recorded_schedule", { value: sessionTimeRangeLabel(selectedSession, language) })}
+                  {formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)} · {selectedLocationName} · {isEnglish ? "Saved time" : "Horaire enregistre"}: {sessionTimeRangeLabel(selectedSession, language)}
                 </p>
               </div>
               <div className="session-edit-shell-header-actions">
                 <details className="session-slot-overflow-menu">
-                  <summary aria-label={t("admin.planning.secondary_actions")}>⋯</summary>
+                  <summary aria-label={isEnglish ? "Secondary actions" : "Actions secondaires"}>⋯</summary>
                   <div className="session-slot-overflow-panel">
                     <a className="mode-link" href={duplicateModalHref}>
-                      {t("admin.planning.duplicate_slot")}
+                      {isEnglish ? "Duplicate slot" : "Dupliquer le creneau"}
                     </a>
                     <a className="danger-link" href={deleteConfirmHref}>
-                      {t("admin.planning.delete_slot")}
+                      {isEnglish ? "Delete slot" : "Supprimer le creneau"}
                     </a>
                     {selectedSessionZoomLink ? (
                       <a className="mode-link" href={selectedSessionZoomLink} target="_blank" rel="noreferrer">
-                        {t("admin.planning.copy_zoom_link")}
+                        {isEnglish ? "Copy Zoom link" : "Copier lien Zoom"}
                       </a>
                     ) : null}
                   </div>
                 </details>
-                <a className="modal-close-x session-slot-close" href={modalHref} aria-label={t("common.close")}>
+                <a className="modal-close-x session-slot-close" href={modalHref} aria-label={isEnglish ? "Close" : "Fermer"}>
                   ×
                 </a>
               </div>
@@ -2337,64 +2196,43 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             {okMessage ? <section className="flash-ok modal-flash">{okMessage}</section> : null}
             {errorMessage ? <section className="flash-err modal-flash">{errorMessage}</section> : null}
 
-            <SessionEditModalBridge initialActiveTab={editTab} tabReturnHrefs={editTabHrefs}>
-              <form action={updateAdminSessionAction} className="session-edit-shell-form" noValidate>
-                <input type="hidden" name="session_id" value={selectedSession.id} />
-                <input type="hidden" name="return_to" value={activeEditTabHref} data-session-edit-return-to />
-                <input type="hidden" name="has_recurrence_group" value={selectedSession.recurrence_group_id ? "1" : "0"} />
+            <form action={updateAdminSessionAction} className="session-edit-shell-form" noValidate>
+              <input type="hidden" name="session_id" value={selectedSession.id} />
+              <input type="hidden" name="return_to" value={activeEditTabHref} />
+              <input type="hidden" name="has_recurrence_group" value={selectedSession.recurrence_group_id ? "1" : "0"} />
 
-                <nav className="session-edit-tabs" aria-label={t("admin.planning.sections_label")}>
-                  <a
-                    className={`session-edit-tab ${editTab === "general" ? "active" : ""}`}
-                    href={editTabHref("general")}
-                    data-session-edit-tab="general"
-                  >
-                    <span>{t("admin.planning.section_general")}</span>
-                    <small>{selectedEffectiveProfessorLabel || t("admin.planning.no_teacher_required")} · {t("admin.planning.places_count", { count: selectedSession.capacity_max })}</small>
-                  </a>
-                  <a
-                    className={`session-edit-tab ${editTab === "schedule" ? "active" : ""}`}
-                    href={editTabHref("schedule")}
-                    data-session-edit-tab="schedule"
-                  >
-                    <span>{t("admin.planning.section_schedule")}</span>
-                    <small>{t("admin.planning.recorded_short", { value: sessionTimeRangeLabel(selectedSession, language) })}</small>
-                  </a>
-                  <a
-                    className={`session-edit-tab ${editTab === "visibility" ? "active" : ""}`}
-                    href={editTabHref("visibility")}
-                    data-session-edit-tab="visibility"
-                  >
-                    <span>{t("admin.planning.section_visibility")}</span>
-                    <small>
-                      {sessionAudienceScopesLabel(selectedVisibilityScopes, language)} ·{" "}
-                      {selectedSessionAllowsStudentBookings ? sessionAudienceScopesLabel(selectedBookingScopes, language) : t("admin.planning.closed")}
-                    </small>
-                  </a>
-                  <a
-                    className={`session-edit-tab ${editTab === "notes" ? "active" : ""}`}
-                    href={editTabHref("notes")}
-                    data-session-edit-tab="notes"
-                  >
-                    <span>{t("admin.planning.section_notes")}</span>
-                    <small>{selectedSession.professor_reminder_note ? t("admin.planning.filled") : t("admin.planning.empty")}</small>
-                  </a>
-                </nav>
+              <nav className="session-edit-tabs" aria-label={isEnglish ? "Edit slot sections" : "Sections modification creneau"}>
+                <a className={`session-edit-tab ${editTab === "general" ? "active" : ""}`} href={editTabHref("general")}>
+                  <span>{isEnglish ? "General" : "General"}</span>
+                  <small>{selectedEffectiveProfessorLabel || pickText(language, "Non requis", "Not required")} · {selectedSession.capacity_max} {isEnglish ? "seats" : "places"}</small>
+                </a>
+                <a className={`session-edit-tab ${editTab === "schedule" ? "active" : ""}`} href={editTabHref("schedule")}>
+                  <span>{isEnglish ? "Schedule & recurrence" : "Horaire & recurrence"}</span>
+                  <small>{isEnglish ? "Saved" : "Enregistre"}: {sessionTimeRangeLabel(selectedSession, language)}</small>
+                </a>
+                <a className={`session-edit-tab ${editTab === "visibility" ? "active" : ""}`} href={editTabHref("visibility")}>
+                  <span>{isEnglish ? "Visibility" : "Visibilite"}</span>
+                  <small>
+                    {sessionAudienceScopesLabel(selectedVisibilityScopes, language)} ·{" "}
+                    {selectedSessionAllowsStudentBookings ? sessionAudienceScopesLabel(selectedBookingScopes, language) : pickText(language, "Fermee", "Closed")}
+                  </small>
+                </a>
+                <a className={`session-edit-tab ${editTab === "notes" ? "active" : ""}`} href={editTabHref("notes")}>
+                  <span>{isEnglish ? "Notes & messages" : "Notes & messages"}</span>
+                  <small>{selectedSession.professor_reminder_note ? pickText(language, "Renseignee", "Filled in") : pickText(language, "Vide", "Empty")}</small>
+                </a>
+              </nav>
 
-                <div className="session-edit-shell-body">
-                  <section
-                    className={`session-edit-panel ${editTab === "general" ? "active" : ""}`}
-                    data-session-edit-panel="general"
-                    hidden={editTab !== "general"}
-                  >
+              <div className="session-edit-shell-body">
+                <section className={`session-edit-panel ${editTab === "general" ? "active" : ""}`}>
                   <div className="grid cols-2">
                     <label>
-                      {t("admin.planning.title_label")}
+                      {isEnglish ? "Title" : "Titre"}
                       <input type="text" name="title" defaultValue={selectedSession.title} required />
                     </label>
 
                     <label>
-                      {t("admin.planning.course_type")}
+                      {isEnglish ? "Course type" : "Type de cours"}
                       <select name="course_type_id" defaultValue={selectedSession.course_type_id} required>
                         {courseTypes.map((row) => (
                           <option key={row.id} value={row.id}>
@@ -2405,7 +2243,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     </label>
 
                     <label>
-                      {t("common.location")}
+                      {isEnglish ? "Location" : "Lieu"}
                       <select name="location_id" defaultValue={selectedSession.location_id} required>
                         {locations.map((row) => (
                           <option key={row.id} value={row.id}>
@@ -2416,9 +2254,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     </label>
 
                     <label>
-                      {t("admin.planning.coach")}
+                      {isEnglish ? "Teacher" : "Coach"}
                       <select name="professor_id" defaultValue={selectedSession.professor_id ?? ""}>
-                        <option value="">{t("admin.planning.no_teacher")}</option>
+                        <option value="">{isEnglish ? "No teacher" : "Sans professeur"}</option>
                         {professors.map((row) => (
                           <option key={row.id} value={row.id}>
                             {row.first_name} {row.last_name}
@@ -2426,14 +2264,14 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         ))}
                       </select>
                       {!selectedSessionRequiresProfessor ? (
-                        <small className="muted">{t("admin.planning.optional_teacher_help")}</small>
+                        <small className="muted">{isEnglish ? "Teacher is optional for this slot type." : "Le professeur est optionnel pour ce type de creneau."}</small>
                       ) : null}
                     </label>
 
                     <label>
-                      {t("admin.planning.substitute_teacher_occurrence")}
+                      {isEnglish ? "Substitute teacher (occurrence)" : "Professeur remplacant (occurrence)"}
                       <select name="substitute_teacher_id" defaultValue={selectedSession.substitute_teacher_id ?? ""}>
-                        <option value="">{t("admin.planning.no_substitute")}</option>
+                        <option value="">{isEnglish ? "No substitute" : "Aucun remplacant"}</option>
                         {professors.map((row) => (
                           <option key={row.id} value={row.id}>
                             {row.first_name} {row.last_name}
@@ -2443,42 +2281,38 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     </label>
 
                     <label>
-                      {t("admin.planning.capacity_max")}
+                      {isEnglish ? "Max capacity" : "Capacite max"}
                       <input type="number" name="capacity_max" min={0} defaultValue={selectedSession.capacity_max} />
                       {!selectedSessionAllowsStudentBookings ? (
-                        <small className="muted">{t("admin.planning.zero_capacity_help")}</small>
+                        <small className="muted">{isEnglish ? "Leave 0 for a no-student slot." : "Laissez 0 pour un creneau sans eleve."}</small>
                       ) : null}
                     </label>
 
                     <label>
-                      {t("common.status")}
+                      {isEnglish ? "Status" : "Statut"}
                       <select name="status" defaultValue={selectedSession.status}>
-                        <option value="SCHEDULED">{t("admin.planning.status.scheduled")}</option>
-                        <option value="COMPLETED">{t("admin.planning.status.completed")}</option>
-                        <option value="CANCELLED">{t("admin.planning.status.cancelled")}</option>
+                        <option value="SCHEDULED">{isEnglish ? "Scheduled" : "Planifie"}</option>
+                        <option value="COMPLETED">{isEnglish ? "Completed" : "Termine"}</option>
+                        <option value="CANCELLED">{isEnglish ? "Cancelled" : "Annule"}</option>
                       </select>
                     </label>
 
                     <label className="session-edit-span">
-                      {t("admin.planning.zoom_link")}
+                      {isEnglish ? "Zoom link" : "Lien Zoom"}
                       <input type="url" name="zoom_link" defaultValue={selectedSession.zoom_link ?? ""} />
                     </label>
 
                     <label className="session-edit-span">
-                      {t("admin.planning.substitute_note")}
+                      {isEnglish ? "Substitute note (optional)" : "Note remplaçant (optionnel)"}
                       <textarea name="substitute_note" rows={2} defaultValue={selectedSession.substitute_note ?? ""} />
                     </label>
                   </div>
-                  </section>
+                </section>
 
-                  <section
-                    className={`session-edit-panel ${editTab === "schedule" ? "active" : ""}`}
-                    data-session-edit-panel="schedule"
-                    hidden={editTab !== "schedule"}
-                  >
+                <section className={`session-edit-panel ${editTab === "schedule" ? "active" : ""}`}>
                   <div className="grid cols-2">
                     <label>
-                      {t("admin.planning.start_day")}
+                      {isEnglish ? "Start date" : "Jour debut"}
                       <input
                         type="date"
                         name="start_date"
@@ -2488,23 +2322,23 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     </label>
 
                     <label>
-                      {t("admin.planning.apply_scope")}
+                      {isEnglish ? "Edit scope" : "Portee modification"}
                       <select name="apply_scope" defaultValue={defaultApplyScope(selectedSession)}>
-                        <option value="ONE">{t("admin.planning.scope.one")}</option>
-                        {selectedSession.recurrence_group_id ? <option value="SERIES_FUTURE">{t("admin.planning.scope.future")}</option> : null}
-                        {selectedSession.recurrence_group_id ? <option value="SERIES_ALL">{t("admin.planning.scope.all")}</option> : null}
+                        <option value="ONE">{isEnglish ? "This occurrence" : "Cette occurrence"}</option>
+                        {selectedSession.recurrence_group_id ? <option value="SERIES_FUTURE">{isEnglish ? "Future series" : "Serie future"}</option> : null}
+                        {selectedSession.recurrence_group_id ? <option value="SERIES_ALL">{isEnglish ? "Whole series" : "Toute la serie"}</option> : null}
                       </select>
                     </label>
 
                     <label className="checkline session-edit-span">
                       <input type="checkbox" name="is_all_day" defaultChecked={selectedSession.is_all_day} />
-                      {t("admin.planning.all_day_slot")}
+                      {isEnglish ? "All-day slot" : "Creneau sur toute la journee"}
                     </label>
 
                     <details className="session-edit-collapsible session-edit-span">
-                      <summary>{t("admin.planning.advanced_options")}</summary>
+                      <summary>{isEnglish ? "Advanced options" : "Options avancees"}</summary>
                       <label>
-                        {t("admin.planning.filter.session_timezone")}
+                        {isEnglish ? "Session timezone" : "Fuseau horaire du creneau"}
                         <select name="session_timezone" defaultValue={selectedSession.timezone} required>
                           {sessionTimezoneOptions.map((option) => (
                             <option key={option.value} value={option.value}>
@@ -2516,50 +2350,49 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     </details>
 
                     <SessionTimeFields
-                      startLabel={t("admin.planning.start_time")}
-                      endLabel={t("admin.planning.end_time")}
-                      durationLabel={t("admin.planning.duration_minutes")}
+                      language={language}
                       labelClassName="session-time-field"
-                      defaultStartTime={toTimeInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone, language)}
-                      defaultEndTime={toTimeInputInTimezone(selectedSession.end_at_utc, selectedSession.timezone, language)}
+                      defaultStartTime={toTimeInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)}
+                      defaultEndTime={toTimeInputInTimezone(selectedSession.end_at_utc, selectedSession.timezone)}
                       defaultDurationMinutes={sessionDurationMinutes(selectedSession)}
                       requiredStart
-                      language={language}
                     />
                     <p className="muted session-edit-span">
-                      {t("admin.planning.edit_schedule_help")}
+                      {isEnglish
+                        ? "The header shows the saved time. The fields above show your in-progress changes before saving."
+                        : "L'entete affiche l'horaire enregistre. Les champs ci-dessus montrent vos modifications en cours avant enregistrement."}
                     </p>
                   </div>
 
                   <fieldset className="session-edit-span recurrence-panel">
-                    <legend>{t("admin.planning.recurrence")}</legend>
+                    <legend>{isEnglish ? "Recurrence" : "Recurrence"}</legend>
                     <div className="recurrence-mode-row">
                       <label className="checkline">
-                        <input type="radio" name="recurrence_mode" value="NONE" defaultChecked={editDefaultRecurrenceMode === "NONE"} />
-                        {t("admin.planning.recurrence.no_change")}
+                        <input type="radio" name="recurrence_mode" value="NONE" defaultChecked />
+                        {isEnglish ? "Do not change recurrence" : "Ne pas modifier la recurrence"}
                       </label>
                       <label className="checkline">
-                        <input type="radio" name="recurrence_mode" value="RECURRING" defaultChecked={editDefaultRecurrenceMode === "RECURRING"} />
-                        {t("admin.planning.recurrence.edit")}
+                        <input type="radio" name="recurrence_mode" value="RECURRING" />
+                        {isEnglish ? "Edit recurrence" : "Modifier la recurrence"}
                       </label>
                     </div>
                     <div className="recurrence-settings">
                       <div className="grid cols-3 recurrence-grid">
                         <label>
-                          {t("admin.planning.recurrence.frequency")}
+                          {isEnglish ? "Frequency" : "Frequence"}
                           <select name="recurrence_frequency" defaultValue={editRecurrenceDefaults.frequency}>
-                            <option value="DAILY">{t("admin.planning.recurrence.daily")}</option>
-                            <option value="WEEKLY">{t("admin.planning.recurrence.weekly")}</option>
-                            <option value="MONTHLY">{t("admin.planning.recurrence.monthly")}</option>
+                            <option value="DAILY">{isEnglish ? "Daily" : "Journaliere"}</option>
+                            <option value="WEEKLY">{isEnglish ? "Weekly" : "Hebdomadaire"}</option>
+                            <option value="MONTHLY">{isEnglish ? "Monthly" : "Mensuelle"}</option>
                           </select>
                         </label>
                         <label>
-                          {t("admin.planning.recurrence.every")}
+                          {isEnglish ? "Repeats every" : "Se repete chaque"}
                           <input type="number" name="recurrence_interval" min={1} defaultValue={editRecurrenceDefaults.interval} />
-                          <small className="muted">{t("admin.planning.recurrence.every_help")}</small>
+                          <small className="muted">{isEnglish ? "Example: 2 for every 2 weeks." : "Ex: 2 pour toutes les 2 semaines."}</small>
                         </label>
                         <label>
-                          {t("admin.planning.recurrence.until")}
+                          {isEnglish ? "Repeat until" : "Repeter jusqu au"}
                           <input type="date" name="recurrence_until_date" defaultValue={editRecurrenceUntilDate} />
                         </label>
                       </div>
@@ -2570,80 +2403,79 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                           value="1"
                           defaultChecked={editRecurrenceDefaults.timeBasis === "LOCAL"}
                         />
-                        {t("admin.planning.recurrence.keep_local_time")}
+                        {isEnglish ? "Keep local time" : "Heure locale fixe"}
                       </label>
                       <p className="muted">
-                        {t("admin.planning.recurrence.edit_local_time_help")}
+                        {isEnglish
+                          ? "When this option is enabled, a 6 PM lesson stays at 6 PM in local time even after daylight saving changes."
+                          : "Quand cette option est activee, un cours a 18h reste a 18h en heure locale meme apres un changement d'heure."}
                       </p>
                       {selectedSession.recurrence_group_id ? (
                         <p className="muted">
-                          {t("admin.planning.recurrence.existing_series_help")}
+                          {isEnglish
+                            ? <>Existing series: to change recurrence, choose scope <strong>Future series</strong> or <strong>Whole series</strong>.</>
+                            : <>Serie existante: pour changer la recurrence, choisir la portee <strong>Serie future</strong> ou <strong>Toute la serie</strong>.</>}
                         </p>
                       ) : (
-                        <p className="muted">{t("admin.planning.recurrence.convert_help")}</p>
+                        <p className="muted">{isEnglish ? "Enable recurrence editing to convert this one-time slot." : "Activez la modification recurrence pour convertir ce creneau ponctuel."}</p>
                       )}
                     </div>
                   </fieldset>
-                  </section>
+                </section>
 
-                  <section
-                    className={`session-edit-panel ${editTab === "visibility" ? "active" : ""}`}
-                    data-session-edit-panel="visibility"
-                    hidden={editTab !== "visibility"}
-                  >
+                <section className={`session-edit-panel ${editTab === "visibility" ? "active" : ""}`}>
                   <div className="grid cols-2">
                     <SessionVisibilityFields
                       language={language}
                       initialVisibilityScopes={selectedVisibilityScopes}
                       initialBookingScopes={selectedBookingScopes}
                       allowsStudentBookings={selectedSessionAllowsStudentBookings}
-                      initialShowExternalRemainingSeats={selectedShowExternalRemainingSeats}
                     />
 
                     <label>
-                      {t("admin.planning.external_price")}
+                      {language === "en" ? "External booking price incl. VAT" : "Tarif reservation externe TTC"}
                       <input
                         type="text"
                         name="external_booking_price_ttc"
                         inputMode="decimal"
                         defaultValue={selectedSession.external_booking_price_ttc ?? ""}
-                        placeholder={t("admin.planning.external_price_placeholder")}
+                        placeholder="ex. 35,00"
                       />
-                      <small className="muted">{t("admin.planning.external_price_remove_help")}</small>
+                      <small className="muted">
+                        {language === "en"
+                          ? "Leave empty to remove this slot from the external iframe."
+                          : "Laissez vide pour retirer ce creneau de l iframe externe."}
+                      </small>
                     </label>
                   </div>
 
                   <details className="session-edit-collapsible" open={Boolean(selectedSession.public_description)}>
-                    <summary>{t("admin.planning.public_description_optional")}</summary>
+                    <summary>{language === "en" ? "Public description (optional)" : "Description publique (optionnel)"}</summary>
                     <label>
-                      {t("admin.planning.public_description")}
+                      {language === "en" ? "Public description (client view)" : "Description publique (vue client)"}
                       <textarea name="public_description" rows={4} defaultValue={selectedSession.public_description ?? ""} />
                     </label>
                   </details>
 
                   <details className="session-edit-collapsible" open={Boolean(selectedSession.private_description)}>
-                    <summary>{t("admin.planning.private_description_optional")}</summary>
+                    <summary>{language === "en" ? "Private description (optional)" : "Description privee (optionnel)"}</summary>
                     <label>
-                      {t("admin.planning.private_description")}
+                      {language === "en" ? "Private description (internal)" : "Description privee (interne)"}
                       <textarea name="private_description" rows={4} defaultValue={selectedSession.private_description ?? ""} />
                     </label>
                   </details>
-                  </section>
+                </section>
 
-                  <section
-                    className={`session-edit-panel ${editTab === "notes" ? "active" : ""}`}
-                    data-session-edit-panel="notes"
-                    hidden={editTab !== "notes"}
-                  >
+                <section className={`session-edit-panel ${editTab === "notes" ? "active" : ""}`}>
                   <div className="row spread">
-                    <p className="muted">{t("admin.planning.professor_note_help")}</p>
+                    <p className="muted">{isEnglish ? "Note for the teacher (sent 24h before)." : "Note pour le professeur (envoyee 24h avant)."}</p>
                     {notesAdvancedMode ? (
                       <a className="mode-link" href={notesSimpleHref}>
-                        {t("admin.planning.simple_mode")}
+                        {isEnglish ? "Simple mode" : "Mode simple"}
                       </a>
                     ) : (
                       <a className="mode-link" href={notesAdvancedHref}>
-                        {t("admin.planning.advanced_mode")}
+                        {isEnglish ? "Advanced mode" : "Mode avance"}
                       </a>
                     )}
                   </div>
@@ -2655,48 +2487,43 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       maxLength={12000}
                       defaultFormat="HTML"
                       defaultValue={selectedSession.professor_reminder_note ?? ""}
-                      placeholder={t("admin.planning.professor_note_placeholder")}
-                      language={language}
+                      placeholder={isEnglish ? "Enter the note to include in the teacher reminder..." : "Saisir la note a joindre au rappel professeur..."}
                     />
                   ) : (
                     <label className="session-edit-span">
-                      {t("common.message")}
+                      {isEnglish ? "Message" : "Message"}
                       <textarea
                         name="professor_reminder_note"
                         rows={6}
                         defaultValue={selectedSession.professor_reminder_note ?? ""}
-                        placeholder={t("admin.planning.professor_note_placeholder")}
+                        placeholder={isEnglish ? "Enter the note to include in the teacher reminder..." : "Saisir la note a joindre au rappel professeur..."}
                       />
                     </label>
                   )}
-                  </section>
-                </div>
+                </section>
+              </div>
 
-                <footer className="session-edit-shell-footer">
-                  <a className="reset-link" href={modalHref}>
-                    {t("common.cancel")}
-                  </a>
-                  <button type="submit">{t("common.save")}</button>
-                </footer>
-              </form>
+              <footer className="session-edit-shell-footer">
+                <a className="reset-link" href={modalHref}>
+                  {isEnglish ? "Cancel" : "Annuler"}
+                </a>
+                <button type="submit">{isEnglish ? "Save" : "Enregistrer"}</button>
+              </footer>
+            </form>
 
-              <form
-                action={shiftAdminSessionAction}
-                className="row quick-shift-row"
-                data-session-edit-schedule-only
-                hidden={editTab !== "schedule"}
-              >
+            {editTab === "schedule" ? (
+              <form action={shiftAdminSessionAction} className="row quick-shift-row">
                 <input type="hidden" name="session_id" value={selectedSession.id} />
-                <input type="hidden" name="return_to" value={activeEditTabHref} data-session-edit-return-to />
+                <input type="hidden" name="return_to" value={activeEditTabHref} />
                 <input type="hidden" name="current_start_at_utc" value={toDateTimeLocalUtcValue(selectedSession.start_at_utc)} />
                 <input type="hidden" name="current_end_at_utc" value={toDateTimeLocalUtcValue(selectedSession.end_at_utc)} />
 
                 <label className="scope-inline compact">
-                  {t("admin.planning.quick_adjust")}
+                  {isEnglish ? "Quick shift" : "Ajustement rapide"}
                   <select name="apply_scope" defaultValue={defaultApplyScope(selectedSession)}>
-                    <option value="ONE">{t("admin.planning.scope.one")}</option>
-                    {selectedSession.recurrence_group_id ? <option value="SERIES_FUTURE">{t("admin.planning.scope.future")}</option> : null}
-                    {selectedSession.recurrence_group_id ? <option value="SERIES_ALL">{t("admin.planning.scope.all")}</option> : null}
+                    <option value="ONE">{isEnglish ? "This occurrence" : "Cette occurrence"}</option>
+                    {selectedSession.recurrence_group_id ? <option value="SERIES_FUTURE">{isEnglish ? "Future series" : "Serie future"}</option> : null}
+                    {selectedSession.recurrence_group_id ? <option value="SERIES_ALL">{isEnglish ? "Whole series" : "Toute la serie"}</option> : null}
                   </select>
                 </label>
                 <button type="submit" name="minutes_delta" value="-15" className="ghost small-btn">
@@ -2712,7 +2539,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   +1j
                 </button>
               </form>
-            </SessionEditModalBridge>
+            ) : null}
           </article>
         </section>
       ) : null}
@@ -2722,20 +2549,19 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
           <article className="modal-panel session-attendance-modal-v2">
             <header className="note-modal-header">
               <div className="note-modal-header-main">
-                <h2 className="modal-title">{t("admin.planning.attendance_title")}</h2>
+                <h2 className="modal-title">{isEnglish ? "Attendance" : "Presences"}</h2>
                 <p className="muted">
                   {selectedCourseTypeName} · {formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)} · {sessionTimeRangeLabel(selectedSession, language)} · {selectedLocationName}
                 </p>
               </div>
               <div className="note-modal-header-meta">
                 <span className="status-badge status-waitlist">
-                  {t("admin.planning.student_progress", {
-                    current: focusedAttendanceBooking ? focusedAttendanceIndex + 1 : 0,
-                    total: attendanceBookings.length || (focusedAttendanceBooking ? 1 : 0),
-                  })}
+                  {focusedAttendanceBooking
+                    ? `${isEnglish ? "Student" : "Eleve"} ${focusedAttendanceIndex + 1}/${attendanceBookings.length || 1}`
+                    : `${isEnglish ? "Student" : "Eleve"} 0/${attendanceBookings.length || 0}`}
                 </span>
-                <span className="status-badge status-scheduled">{t("admin.planning.remaining_count", { count: attendanceMissingCount })}</span>
-                <a className="modal-close-x" href={modalHref} aria-label={t("admin.planning.close")}>
+                <span className="status-badge status-scheduled">{isEnglish ? "Remaining" : "Restant"} {attendanceMissingCount}</span>
+                <a className="modal-close-x" href={modalHref} aria-label={isEnglish ? "Close" : "Fermer"}>
                   ×
                 </a>
               </div>
@@ -2743,7 +2569,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
             {!selectedSessionHasBookings || !focusedAttendanceBooking ? (
               <section className="note-modal-empty">
-                <p className="muted">{t("admin.planning.no_student_on_slot")}</p>
+                <p className="muted">{isEnglish ? "No student booked on this slot." : "Aucun eleve inscrit sur ce creneau."}</p>
               </section>
             ) : (
               <>
@@ -2751,10 +2577,10 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   <aside className="attendance-v2-list">
                     <div className="attendance-v2-list-filters">
                       <a className={`mode-link ${attendanceFilter === "all" ? "mode-active" : ""}`} href={attendanceFilteredHref("all")}>
-                        {t("admin.planning.filter_all")}
+                        {isEnglish ? "All" : "Tous"}
                       </a>
                       <a className={`mode-link ${attendanceFilter === "missing" ? "mode-active" : ""}`} href={attendanceFilteredHref("missing")}>
-                        {t("admin.planning.filter_missing")}
+                        {isEnglish ? "Missing" : "Manquants"}
                       </a>
                     </div>
                     <div className="attendance-v2-students">
@@ -2765,7 +2591,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                           className={`attendance-v2-student-row ${booking.id === focusedAttendanceBooking.id ? "active" : ""}`}
                         >
                           <div className="attendance-v2-student-main">
-                            <strong>{booking.client_display_name || t("admin.planning.participant_number", { number: index + 1 })}</strong>
+                            <strong>{booking.client_display_name || `${pickText(language, "Participant", "Student")} ${index + 1}`}</strong>
                             <small className="muted">{bookingEnrollmentLabel(booking.status, language)}</small>
                           </div>
                           <span className={`status-badge ${attendanceBadgeToneClass(booking.status)}`}>
@@ -2779,18 +2605,18 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   <section className="attendance-v2-main">
                     <div className="attendance-v2-main-head">
                       <div>
-                        <h3>{focusedAttendanceBooking.client_display_name || t("admin.planning.selection")}</h3>
-                        <p className="muted">{t("admin.planning.completed_count", { count: attendanceCompletedCount, total: selectedSessionBookings.length })}</p>
+                        <h3>{focusedAttendanceBooking.client_display_name || pickText(language, "Participant", "Student")}</h3>
+                        <p className="muted">{isEnglish ? "Completed" : "Completes"}: {attendanceCompletedCount} / {selectedSessionBookings.length}</p>
                       </div>
                       <div className="attendance-v2-nav-links">
                         {previousAttendanceBooking ? (
                           <a className="mode-link" href={attendanceBookingHref(previousAttendanceBooking.id)}>
-                            ← {t("admin.planning.previous")}
+                            {isEnglish ? "← Previous" : "← Precedent"}
                           </a>
                         ) : null}
                         {nextAttendanceBooking ? (
                           <a className="mode-link" href={attendanceBookingHref(nextAttendanceBooking.id)}>
-                            {t("admin.planning.next")} →
+                            {isEnglish ? "Next →" : "Suivant →"}
                           </a>
                         ) : null}
                       </div>
@@ -2803,10 +2629,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         <input
                           type="hidden"
                           name="return_to"
-                          value={nextAttendanceBooking ? attendanceBookingHref(nextAttendanceBooking.id) : attendanceBookingHref(focusedAttendanceBooking.id)}
+                          value={nextAttendanceBooking ? attendanceBookingHref(nextAttendanceBooking.id) : modalHref}
                         />
                         <PresenceButtonsGroup
-                          language={language}
                           formId="attendance-status-form"
                           initialValue={
                             focusedAttendanceBooking.status === "ATTENDED" ||
@@ -2820,34 +2645,34 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         />
                       </form>
                     ) : (
-                      <p className="muted">{t("admin.planning.presence_not_editable")}</p>
+                      <p className="muted">{isEnglish ? "Attendance cannot be edited for this status." : "Presence non editable pour ce statut."}</p>
                     )}
 
                     <details className="attendance-v2-notes">
-                      <summary>{t("admin.planning.notes_optional")}</summary>
+                      <summary>{isEnglish ? "Notes (optional)" : "Notes (optionnel)"}</summary>
                       <form action={adminUpdateSessionBookingNoteAction} className="attendance-v2-note-form">
                         <input type="hidden" name="session_id" value={selectedSession.id} />
                         <input type="hidden" name="booking_id" value={focusedAttendanceBooking.id} />
                         <input type="hidden" name="student_id" value={focusedAttendanceBooking.client_id} />
-                        <input type="hidden" name="student_display_name" value={focusedAttendanceBooking.client_display_name || t("admin.planning.student_label")} />
+                        <input type="hidden" name="student_display_name" value={focusedAttendanceBooking.client_display_name || pickText(language, "Eleve", "Student")} />
                         <input type="hidden" name="session_title" value={selectedSession.title} />
                         <input type="hidden" name="return_to" value={attendanceBookingHref(focusedAttendanceBooking.id)} />
                         <label className="session-edit-span">
-                          {t("admin.planning.message")}
+                          {isEnglish ? "Message" : "Message"}
                           <input type="hidden" name="student_note_format" value="TEXT" />
                           <textarea
                             name="student_note"
                             rows={5}
-                            placeholder={t("admin.planning.internal_note_placeholder")}
+                            placeholder={isEnglish ? "Internal note..." : "Note interne..."}
                             defaultValue={stripHtml(focusedAttendanceBooking.student_note ?? "")}
                           />
                         </label>
                         <div className="row">
                           <button type="submit" name="note_action" value="SAVE_INTERNAL" className="ghost">
-                            {t("admin.planning.save_note")}
+                            {isEnglish ? "Save note" : "Enregistrer la note"}
                           </button>
                           <button type="submit" name="note_action" value="SEND_PARENTS" className="ghost">
-                            {t("admin.planning.send_to_parents")}
+                            {isEnglish ? "Send to parents" : "Envoyer aux parents"}
                           </button>
                         </div>
                       </form>
@@ -2856,12 +2681,14 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 </div>
                 <footer className="note-modal-footer">
                   <a className="reset-link" href={modalHref}>
-                    {t("admin.planning.cancel")}
+                    {isEnglish ? "Cancel" : "Annuler"}
                   </a>
                   <div className="row">
                     {canEditAttendance(focusedAttendanceBooking.status) ? (
                       <button type="submit" form="attendance-status-form">
-                        {t("admin.planning.save_and_next")}
+                        {nextAttendanceBooking
+                          ? (isEnglish ? "Save & next" : "Enregistrer & suivant")
+                          : (isEnglish ? "Save & close" : "Enregistrer & fermer")}
                       </button>
                     ) : null}
                   </div>
@@ -2877,13 +2704,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
           <article className="modal-panel note-modal-shell">
             <header className="note-modal-header">
               <div className="note-modal-header-main">
-                <h2 className="modal-title">{t("admin.planning.group_note_title")}</h2>
+                <h2 className="modal-title">{isEnglish ? "Group note" : "Note de groupe"}</h2>
                 <p className="muted">
                   {selectedCourseTypeName} · {formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)} · {sessionTimeRangeLabel(selectedSession, language)}
                 </p>
               </div>
               <div className="note-modal-header-meta">
-                <a className="modal-close-x" href={modalHref} aria-label={t("admin.planning.close")}>
+                <a className="modal-close-x" href={modalHref} aria-label={isEnglish ? "Close" : "Fermer"}>
                   ×
                 </a>
               </div>
@@ -2896,13 +2723,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
               <nav className="note-modal-tabs">
                 <a className={`note-modal-tab ${groupNoteTab === "content" ? "active" : ""}`} href={groupNoteTabHref("content")}>
-                  {t("admin.planning.tab_content")}
+                  {isEnglish ? "Content" : "Contenu"}
                 </a>
                 <a className={`note-modal-tab ${groupNoteTab === "recipients" ? "active" : ""}`} href={groupNoteTabHref("recipients")}>
-                  {t("admin.planning.tab_recipients")}
+                  {isEnglish ? "Recipients" : "Destinataires"}
                 </a>
                 <a className={`note-modal-tab ${groupNoteTab === "send" ? "active" : ""}`} href={groupNoteTabHref("send")}>
-                  {t("admin.planning.tab_send")}
+                  {isEnglish ? "Send" : "Envoi"}
                 </a>
               </nav>
 
@@ -2910,10 +2737,10 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 <section className={`note-modal-panel ${groupNoteTab === "content" ? "active" : ""}`}>
                   {groupNoteTemplates.length > 0 ? (
                     <label className="session-edit-span">
-                      {t("admin.planning.template_label")}
+                      {isEnglish ? "Template" : "Modele"}
                       <div className="note-template-row">
                         <select name="group_note_template_id" defaultValue={selectedGroupNoteTemplate?.id ?? ""}>
-                          <option value="">{t("admin.planning.no_template")}</option>
+                          <option value="">{isEnglish ? "No template" : "Aucun modele"}</option>
                           {groupNoteTemplates.map((template) => (
                             <option key={template.id} value={template.id}>
                               {template.name}
@@ -2922,25 +2749,25 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         </select>
                         {selectedGroupNoteTemplate ? (
                           <a className="mode-link" href={groupNotesModalClearTemplateHref}>
-                            {t("admin.planning.remove")}
+                            {isEnglish ? "Remove" : "Retirer"}
                           </a>
                         ) : null}
                       </div>
                     </label>
                   ) : (
                     <div className="session-edit-alert">
-                      {t("admin.planning.no_template_configured")}
+                      {isEnglish ? "No template configured. Add one in Settings > Messaging." : "Aucun modele configure. Ajoutez-en un dans Configuration > Messagerie."}
                     </div>
                   )}
                   <div className="row spread">
-                    <p className="muted">{t("admin.planning.group_note_content_label")}</p>
+                    <p className="muted">{isEnglish ? "Note content" : "Contenu de la note"}</p>
                     {groupNoteAdvancedMode ? (
                       <a className="mode-link" href={groupNoteSimpleHref}>
-                        {t("admin.planning.simple_mode")}
+                        {isEnglish ? "Simple mode" : "Mode simple"}
                       </a>
                     ) : (
                       <a className="mode-link" href={groupNoteAdvancedHref}>
-                        {t("admin.planning.advanced_mode")}
+                        {isEnglish ? "Advanced mode" : "Mode avance"}
                       </a>
                     )}
                   </div>
@@ -2950,13 +2777,12 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       formatName="group_note_format"
                       rows={10}
                       maxLength={12000}
-                      placeholder={t("admin.planning.group_note_placeholder")}
+                      placeholder={isEnglish ? "Enter a group note..." : "Saisir une note de groupe..."}
                       defaultValue={groupNotePrefill}
-                      language={language}
                     />
                   ) : (
                     <label className="session-edit-span">
-                      {t("admin.planning.message")}
+                      {isEnglish ? "Message" : "Message"}
                       <input type="hidden" name="group_note_format" value="TEXT" />
                       <textarea name="group_note" rows={8} defaultValue={stripHtml(groupNotePrefill)} />
                     </label>
@@ -2965,10 +2791,10 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
                 <section className={`note-modal-panel ${groupNoteTab === "recipients" ? "active" : ""}`}>
                   <fieldset className="note-destination-radios">
-                    <legend>{t("admin.planning.destination_label")}</legend>
+                    <legend>{isEnglish ? "Destination" : "Destination"}</legend>
                     <label className="checkline">
                       <input type="radio" name="note_destination" value="PRIVATE" defaultChecked={groupNoteDestination === "PRIVATE"} />
-                      {noteDestinationLabel("PRIVATE", language)}
+                      {isEnglish ? "Internal" : "Interne"}
                     </label>
                     <label className="checkline">
                       <input
@@ -2977,68 +2803,67 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         value="STUDENTS_AND_PARENTS"
                         defaultChecked={groupNoteDestination === "STUDENTS_AND_PARENTS"}
                       />
-                      {noteDestinationLabel("STUDENTS_AND_PARENTS", language)}
+                      {isEnglish ? "Parents / students" : "Parents / eleves"}
                     </label>
                     <label className="checkline">
                       <input type="radio" name="note_destination" value="PARENTS" defaultChecked={groupNoteDestination === "PARENTS"} />
-                      {noteDestinationLabel("PARENTS", language)}
+                      {isEnglish ? "Parents only" : "Parents uniquement"}
                     </label>
                     <label className="checkline">
                       <input type="radio" name="note_destination" value="STUDENTS" defaultChecked={groupNoteDestination === "STUDENTS"} />
-                      {noteDestinationLabel("STUDENTS", language)}
+                      {isEnglish ? "Students only" : "Eleves uniquement"}
                     </label>
                     <label className="checkline">
                       <input type="radio" name="note_destination" value="PROFESSOR" defaultChecked={groupNoteDestination === "PROFESSOR"} />
-                      {noteDestinationLabel("PROFESSOR", language)}
+                      {isEnglish ? "Teacher" : "Professeur"}
                     </label>
                     <label className="checkline">
                       <input type="radio" name="note_destination" value="ADMINS" defaultChecked={groupNoteDestination === "ADMINS"} />
-                      {noteDestinationLabel("ADMINS", language)}
+                      {isEnglish ? "Administration" : "Administration"}
                     </label>
                     <label className="checkline">
                       <input type="radio" name="note_destination" value="SELF" defaultChecked={groupNoteDestination === "SELF"} />
-                      {noteDestinationLabel("SELF", language)}
+                      {isEnglish ? "Myself" : "Moi-meme"}
                     </label>
                   </fieldset>
 
                   <div className="note-recipient-summary">
-                    <strong>{t("admin.planning.selected_students_count", { count: sessionRecipientStudentIds.length })}</strong>
-                    <span className="muted">{sessionRecipientSummary || t("admin.planning.no_student_summary")}</span>
+                    <strong>{sessionRecipientStudentIds.length} {isEnglish ? "student(s) selected" : "eleve(s) selectionne(s)"}</strong>
+                    <span className="muted">{sessionRecipientSummary || pickText(language, "Aucun eleve", "No student")}</span>
                   </div>
                   <details className="note-recipient-picker" open={isGroupNoteStudentAudience}>
-                    <summary>{t("admin.planning.edit_selection")}</summary>
+                    <summary>{isEnglish ? "Edit selection" : "Modifier la selection"}</summary>
                     <SearchMultiSelect
                       className="session-edit-span"
-                      label={t("admin.planning.included_students")}
+                      label={isEnglish ? "Included students" : "Eleves inclus"}
                       name="included_student_ids"
                       options={sessionRecipientStudents}
                       selectedIds={sessionRecipientStudentIds}
-                      placeholder={t("admin.planning.search_student")}
-                      emptySelectionLabel={selectedSessionHasBookings ? t("admin.planning.no_student_selected") : t("admin.planning.no_student_on_slot")}
-                      language={language}
+                      placeholder={isEnglish ? "Search a student..." : "Rechercher un eleve..."}
+                      emptySelectionLabel={selectedSessionHasBookings ? pickText(language, "Aucun eleve selectionne.", "No student selected.") : pickText(language, "Aucun eleve inscrit sur ce creneau.", "No student booked on this slot.")}
                     />
                   </details>
                   {!selectedSessionHasBookings && isGroupNoteStudentAudience ? (
-                    <p className="flash-err">{t("admin.planning.no_student_for_student_audience")}</p>
+                    <p className="flash-err">{isEnglish ? "No student is booked on this slot for a Students/Parents send." : "Aucun eleve inscrit sur ce creneau pour un envoi Eleves/Parents."}</p>
                   ) : null}
                 </section>
 
                 <section className={`note-modal-panel ${groupNoteTab === "send" ? "active" : ""}`}>
                   {groupNoteDestination === "PRIVATE" ? (
-                    <p className="muted">{t("admin.planning.internal_destination_help")}</p>
+                    <p className="muted">{isEnglish ? "Internal destination: no external send will be performed." : "Destination interne: aucun envoi externe n est effectue."}</p>
                   ) : (
                     <>
                       <label className="checkline">
                         <input type="checkbox" name="send_to_self" />
-                        {t("admin.planning.send_copy_self")}
+                        {isEnglish ? "Send myself a copy too" : "M envoyer aussi une copie"}
                       </label>
                       <label>
-                        {t("admin.planning.email_subject_optional")}
-                        <input type="text" name="subject" defaultValue={t("admin.planning.group_note_subject_default", { title: selectedSession.title })} maxLength={255} />
+                        {isEnglish ? "Email subject (optional)" : "Sujet email (optionnel)"}
+                        <input type="text" name="subject" defaultValue={`${isEnglish ? "Group note" : "Note de groupe"} - ${selectedSession.title}`} maxLength={255} />
                       </label>
                       <label className="checkline">
                         <input type="checkbox" name="confirm_send" />
-                        {t("admin.planning.confirm_send_count", { count: sessionRecipientStudentIds.length })}
+                        {isEnglish ? `Confirm send (${sessionRecipientStudentIds.length} potential recipient(s))` : `Confirmer l envoi (${sessionRecipientStudentIds.length} destinataire(s) potentiels)`}
                       </label>
                     </>
                   )}
@@ -3047,15 +2872,15 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
               <footer className="note-modal-footer">
                 <a className="reset-link" href={modalHref}>
-                  {t("admin.planning.close")}
+                  {isEnglish ? "Close" : "Fermer"}
                 </a>
                 <div className="row">
                   <button type="submit" name="note_action" value="SAVE_ONLY" className="ghost">
-                    {t("admin.planning.save")}
+                    {isEnglish ? "Save" : "Enregistrer"}
                   </button>
                   {groupNoteDestination !== "PRIVATE" ? (
                     <button type="submit" name="note_action" value="SEND_EMAIL">
-                      {t("admin.planning.send")}
+                      {isEnglish ? "Send" : "Envoyer"}
                     </button>
                   ) : null}
                 </div>
@@ -3070,13 +2895,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
           <article className="modal-panel note-modal-shell">
             <header className="note-modal-header">
               <div className="note-modal-header-main">
-                <h2 className="modal-title">{t("admin.planning.email_title")}</h2>
+                <h2 className="modal-title">{isEnglish ? "Send an email" : "Envoyer un email"}</h2>
                 <p className="muted">
-                  {t("admin.planning.slot_prefix")} {selectedCourseTypeName} · {formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)} · {formatTime(selectedSession.start_at_utc, selectedSession.timezone, language)}
+                  {isEnglish ? "Slot" : "Creneau"}: {selectedCourseTypeName} · {formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)} · {formatTime(selectedSession.start_at_utc, selectedSession.timezone, language)}
                 </p>
               </div>
               <div className="note-modal-header-meta">
-                <a className="modal-close-x" href={modalHref} aria-label={t("admin.planning.close")}>
+                <a className="modal-close-x" href={modalHref} aria-label={isEnglish ? "Close" : "Fermer"}>
                   ×
                 </a>
               </div>
@@ -3088,63 +2913,62 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
               <nav className="note-modal-tabs">
                 <a className={`note-modal-tab ${emailTab === "recipients" ? "active" : ""}`} href={sessionEmailTabHref("recipients")}>
-                  {t("admin.planning.tab_recipients")}
+                  {isEnglish ? "Recipients" : "Destinataires"}
                 </a>
                 <a className={`note-modal-tab ${emailTab === "content" ? "active" : ""}`} href={sessionEmailTabHref("content")}>
-                  {t("admin.planning.tab_content")}
+                  {isEnglish ? "Content" : "Contenu"}
                 </a>
                 <a className={`note-modal-tab ${emailTab === "send" ? "active" : ""}`} href={sessionEmailTabHref("send")}>
-                  {t("admin.planning.tab_options")}
+                  {isEnglish ? "Options" : "Options"}
                 </a>
               </nav>
 
               <div className="note-modal-body">
                 <section className={`note-modal-panel ${emailTab === "recipients" ? "active" : ""}`}>
                   <label>
-                    {t("admin.planning.recipients_label")}
+                    {isEnglish ? "Recipients" : "Destinataires"}
                     <select name="audience" defaultValue={emailAudience}>
-                      <option value="STUDENTS">{messageAudienceLabel("STUDENTS", language)}</option>
-                      <option value="PARENTS">{messageAudienceLabel("PARENTS", language)}</option>
-                      <option value="STUDENTS_AND_PARENTS">{messageAudienceLabel("STUDENTS_AND_PARENTS", language)}</option>
-                      <option value="PROFESSOR">{messageAudienceLabel("PROFESSOR", language)}</option>
-                      <option value="ADMINS">{messageAudienceLabel("ADMINS", language)}</option>
-                      <option value="SELF">{messageAudienceLabel("SELF", language)}</option>
+                      <option value="STUDENTS">{isEnglish ? "Booked students" : "Eleves inscrits"}</option>
+                      <option value="PARENTS">{isEnglish ? "Parents of students" : "Parents des eleves"}</option>
+                      <option value="STUDENTS_AND_PARENTS">{isEnglish ? "Students + parents" : "Eleves + parents"}</option>
+                      <option value="PROFESSOR">{isEnglish ? "Teacher" : "Professeur"}</option>
+                      <option value="ADMINS">{isEnglish ? "Administration" : "Administration"}</option>
+                      <option value="SELF">{isEnglish ? "Myself" : "Moi-meme"}</option>
                     </select>
                   </label>
                   <div className="note-recipient-summary">
-                    <strong>{t("admin.planning.selected_recipients_count", { count: sessionRecipientStudentIds.length })}</strong>
-                    <span className="muted">{sessionRecipientSummary || t("admin.planning.no_student_recipient")}</span>
+                    <strong>{sessionRecipientStudentIds.length} {isEnglish ? "recipient(s) selected" : "destinataire(s) selectionnes"}</strong>
+                    <span className="muted">{sessionRecipientSummary || pickText(language, "Aucun destinataire eleve", "No student recipient")}</span>
                   </div>
                   <details className="note-recipient-picker" open={emailAudience === "STUDENTS" || emailAudience === "PARENTS" || emailAudience === "STUDENTS_AND_PARENTS"}>
-                    <summary>{t("admin.planning.edit")}</summary>
+                    <summary>{isEnglish ? "Edit" : "Modifier"}</summary>
                     <SearchMultiSelect
                       className="session-edit-span"
-                      label={t("admin.planning.included_students_optional_remove")}
+                      label={isEnglish ? "Included students (you can remove some)" : "Eleves inclus (vous pouvez en retirer)"}
                       name="included_student_ids"
                       options={sessionRecipientStudents}
                       selectedIds={sessionRecipientStudentIds}
-                      placeholder={t("admin.planning.search_student")}
-                      emptySelectionLabel={t("admin.planning.no_student_selected")}
-                      language={language}
+                      placeholder={isEnglish ? "Search a student..." : "Rechercher un eleve..."}
+                      emptySelectionLabel={isEnglish ? "No student selected." : "Aucun eleve selectionne."}
                     />
                   </details>
-                  {!selectedSessionHasBookings ? <p className="muted">{t("admin.planning.no_student_recipient_help")}</p> : null}
+                  {!selectedSessionHasBookings ? <p className="muted">{isEnglish ? "No student booked: use Teacher, Administration or Myself." : "Aucun eleve inscrit: utilisez Professeur, Administration ou Moi-meme."}</p> : null}
                 </section>
 
                 <section className={`note-modal-panel ${emailTab === "content" ? "active" : ""}`}>
                   <label>
-                    {t("admin.planning.subject")}
-                    <input type="text" name="subject" defaultValue={t("admin.planning.slot_message_subject_default", { title: selectedSession.title })} maxLength={255} required />
+                    {isEnglish ? "Subject" : "Sujet"}
+                    <input type="text" name="subject" defaultValue={`${isEnglish ? "Slot message" : "Message creneau"}: ${selectedSession.title}`} maxLength={255} required />
                   </label>
                   <div className="row spread">
-                    <p className="muted">{t("admin.planning.message")}</p>
+                    <p className="muted">{isEnglish ? "Message" : "Message"}</p>
                     {emailAdvancedMode ? (
                       <a className="mode-link" href={sessionEmailSimpleHref}>
-                        {t("admin.planning.simple_mode")}
+                        {isEnglish ? "Simple mode" : "Mode simple"}
                       </a>
                     ) : (
                       <a className="mode-link" href={sessionEmailAdvancedHref}>
-                        {t("admin.planning.advanced_mode")}
+                        {isEnglish ? "Advanced mode" : "Mode avance"}
                       </a>
                     )}
                   </div>
@@ -3154,25 +2978,26 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       formatName="body_format"
                       rows={10}
                       maxLength={12000}
-                      defaultValue={t("admin.planning.email_default_body", {
-                        title: selectedSession.title,
-                        date: formatDate(selectedSession.start_at_utc, selectedSession.timezone, language),
-                      })}
-                      placeholder={t("admin.planning.enter_message")}
-                      language={language}
+                      defaultValue={
+                        isEnglish
+                          ? `Hello,\n\nMessage about the slot "${selectedSession.title}" on ${formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)}.\n`
+                          : `Bonjour,\n\nMessage concernant le creneau "${selectedSession.title}" du ${formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)}.\n`
+                      }
+                      placeholder={isEnglish ? "Enter your message..." : "Saisir votre message..."}
                     />
                   ) : (
                     <label className="session-edit-span">
-                      {t("admin.planning.message")}
+                      {isEnglish ? "Message" : "Message"}
                       <input type="hidden" name="body_format" value="TEXT" />
                       <textarea
                         name="body"
                         rows={8}
-                        defaultValue={t("admin.planning.email_default_body", {
-                          title: selectedSession.title,
-                          date: formatDate(selectedSession.start_at_utc, selectedSession.timezone, language),
-                        })}
-                        placeholder={t("admin.planning.enter_message")}
+                        defaultValue={
+                          isEnglish
+                            ? `Hello,\n\nMessage about the slot "${selectedSession.title}" on ${formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)}.\n`
+                            : `Bonjour,\n\nMessage concernant le creneau "${selectedSession.title}" du ${formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)}.\n`
+                        }
+                        placeholder={isEnglish ? "Enter your message..." : "Saisir votre message..."}
                       />
                     </label>
                   )}
@@ -3181,25 +3006,25 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 <section className={`note-modal-panel ${emailTab === "send" ? "active" : ""}`}>
                   <label className="checkline">
                     <input type="checkbox" name="send_to_self" />
-                    {t("admin.planning.send_copy_self")}
+                    {isEnglish ? "Send myself a copy too" : "M envoyer aussi une copie"}
                   </label>
                   <label className="session-edit-span">
-                    {t("admin.planning.copy_emails_optional")}
+                    {isEnglish ? "Copy (emails, optional)" : "Copie (emails, optionnel)"}
                     <textarea name="cc_emails" rows={2} placeholder="copie@example.com; autre@example.com" />
                   </label>
                   <label className="checkline">
                     <input type="checkbox" name="confirm_send" />
-                    {t("admin.planning.confirm_send_to_count", { count: sessionRecipientStudentIds.length })}
+                    {isEnglish ? `Confirm send to ${sessionRecipientStudentIds.length} recipient(s)` : `Confirmer l envoi a ${sessionRecipientStudentIds.length} destinataire(s)`}
                   </label>
                 </section>
               </div>
 
               <footer className="note-modal-footer">
                 <a className="reset-link" href={modalHref}>
-                  {t("admin.planning.close")}
+                  {isEnglish ? "Close" : "Fermer"}
                 </a>
                 <div className="row">
-                  <button type="submit">{t("admin.planning.send")}</button>
+                  <button type="submit">{isEnglish ? "Send" : "Envoyer"}</button>
                 </div>
               </footer>
             </form>
@@ -3209,79 +3034,91 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
       {selectedSession && sessionSmsModalOpen ? (
         <section className="modal-overlay modal-overlay-front">
-          <article className="modal-panel modal-compact session-group-notes-modal">
-            <a className="modal-close-x" href={modalHref} aria-label={t("admin.planning.close")}>
-              ×
-            </a>
-            <h2 className="modal-title">{t("admin.planning.sms_title")}</h2>
-            <p className="muted">{t("admin.planning.sms_help")}</p>
-            <form action={adminSendSessionBroadcastAction} className="grid top-gap-sm">
+          <article className="modal-panel note-modal-shell">
+            <header className="note-modal-header">
+              <div className="note-modal-header-main">
+                <h2 className="modal-title">{isEnglish ? "Send an SMS" : "Envoyer un SMS"}</h2>
+                <p className="muted">{isEnglish ? "Group send for students or parents linked to this slot." : "Envoi groupe pour les eleves ou parents rattaches a ce creneau."}</p>
+              </div>
+              <div className="note-modal-header-meta">
+                <a className="modal-close-x" href={modalHref} aria-label={isEnglish ? "Close" : "Fermer"}>
+                  ×
+                </a>
+              </div>
+            </header>
+
+            <form action={adminSendSessionBroadcastAction} className="note-modal-form">
               <input type="hidden" name="session_id" value={selectedSession.id} />
               <input type="hidden" name="channel" value="SMS" />
               <input type="hidden" name="return_to" value={sessionSmsModalHref} />
 
-              <label>
-                {t("admin.planning.recipients_label")}
-                <select name="audience" defaultValue="STUDENTS">
-                  <option value="STUDENTS">{messageAudienceLabel("STUDENTS", language)}</option>
-                  <option value="PARENTS">{messageAudienceLabel("PARENTS", language)}</option>
-                  <option value="STUDENTS_AND_PARENTS">{messageAudienceLabel("STUDENTS_AND_PARENTS", language)}</option>
-                  <option value="PROFESSOR">{messageAudienceLabel("PROFESSOR", language)}</option>
-                  <option value="ADMINS">{messageAudienceLabel("ADMINS", language)}</option>
-                  <option value="SELF">{messageAudienceLabel("SELF", language)}</option>
-                </select>
-              </label>
+              <div className="note-modal-body">
+                <section className="note-modal-panel active">
+                  <label>
+                    {isEnglish ? "Recipients" : "Destinataires"}
+                    <select name="audience" defaultValue="STUDENTS">
+                      <option value="STUDENTS">{isEnglish ? "Booked students" : "Eleves inscrits"}</option>
+                      <option value="PARENTS">{isEnglish ? "Parents of students" : "Parents des eleves"}</option>
+                      <option value="STUDENTS_AND_PARENTS">{isEnglish ? "Students + parents" : "Eleves + parents"}</option>
+                      <option value="PROFESSOR">{isEnglish ? "Teacher" : "Professeur"}</option>
+                      <option value="ADMINS">{isEnglish ? "Administration" : "Administration"}</option>
+                      <option value="SELF">{isEnglish ? "Myself" : "Moi-meme"}</option>
+                    </select>
+                  </label>
 
-              <SearchMultiSelect
-                className="session-edit-span"
-                label={t("admin.planning.included_students_optional_remove")}
-                name="included_student_ids"
-                options={sessionRecipientStudents}
-                selectedIds={sessionRecipientStudentIds}
-                placeholder={t("admin.planning.search_student")}
-                emptySelectionLabel={t("admin.planning.no_student_selected")}
-                language={language}
-              />
-              {!selectedSessionHasBookings ? <p className="muted">{t("admin.planning.no_student_recipient_help")}</p> : null}
+                  <SearchMultiSelect
+                    className="session-edit-span"
+                    label={isEnglish ? "Included students (you can remove some)" : "Eleves inclus (vous pouvez en retirer)"}
+                    name="included_student_ids"
+                    options={sessionRecipientStudents}
+                    selectedIds={sessionRecipientStudentIds}
+                    placeholder={isEnglish ? "Search a student..." : "Rechercher un eleve..."}
+                    emptySelectionLabel={isEnglish ? "No student selected." : "Aucun eleve selectionne."}
+                  />
+                  {!selectedSessionHasBookings ? <p className="muted">{isEnglish ? "No student booked: use Teacher, Administration or Myself." : "Aucun eleve inscrit: utilisez Professeur, Administration ou Moi-meme."}</p> : null}
 
-              <label className="checkline">
-                <input type="checkbox" name="send_to_self" />
-                {t("admin.planning.send_copy_self")}
-              </label>
+                  <label className="checkline">
+                    <input type="checkbox" name="send_to_self" />
+                    {isEnglish ? "Send myself a copy too" : "M envoyer aussi une copie"}
+                  </label>
 
-              <label>
-                {t("admin.planning.subject_optional")}
-                <input type="text" name="subject" defaultValue={t("admin.planning.sms_subject_default", { title: selectedSession.title })} maxLength={255} />
-              </label>
+                  <label>
+                    {isEnglish ? "Subject (optional)" : "Sujet (optionnel)"}
+                    <input type="text" name="subject" defaultValue={`${isEnglish ? "Slot info" : "Information creneau"}: ${selectedSession.title}`} maxLength={255} />
+                  </label>
 
-              <label className="session-edit-span">
-                {t("admin.planning.copy_phones_optional")}
-                <textarea name="cc_phone_numbers" rows={2} placeholder="+33600000000; 0600000000" />
-              </label>
+                  <label className="session-edit-span">
+                    {isEnglish ? "Copy (phone numbers, separated by commas, semicolons or new lines)" : "Copie (telephones separes par virgule, point-virgule ou retour ligne)"}
+                    <textarea name="cc_phone_numbers" rows={2} placeholder="+33600000000; 0600000000" />
+                  </label>
 
-              <label className="session-edit-span">
-                {t("admin.planning.sms_message_label")}
-                <RichMessageEditor
-                  name="body"
-                  formatName="body_format"
-                  defaultFormat="TEXT"
-                  rows={8}
-                  maxLength={12000}
-                  defaultValue={t("admin.planning.sms_default_body", {
-                    title: selectedSession.title,
-                    date: formatDate(selectedSession.start_at_utc, selectedSession.timezone, language),
-                  })}
-                  placeholder={t("admin.planning.enter_sms_message")}
-                  language={language}
-                />
-              </label>
-
-              <div className="row spread">
-                <a className="reset-link" href={modalHref}>
-                  {t("admin.planning.cancel")}
-                </a>
-                <button type="submit">{t("admin.planning.send_sms")}</button>
+                  <label className="session-edit-span">
+                    {isEnglish ? "SMS message" : "Message SMS"}
+                    <RichMessageEditor
+                      name="body"
+                      formatName="body_format"
+                      defaultFormat="TEXT"
+                      rows={8}
+                      maxLength={12000}
+                      defaultValue={
+                        isEnglish
+                          ? `Hello,\nMessage about the slot "${selectedSession.title}" on ${formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)}.`
+                          : `Bonjour,\nMessage concernant le creneau "${selectedSession.title}" du ${formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)}.`
+                      }
+                      placeholder={isEnglish ? "Enter your SMS message..." : "Saisir votre message SMS..."}
+                    />
+                  </label>
+                </section>
               </div>
+
+              <footer className="note-modal-footer">
+                <a className="reset-link" href={modalHref}>
+                  {isEnglish ? "Cancel" : "Annuler"}
+                </a>
+                <div className="row">
+                  <button type="submit">{isEnglish ? "Send SMS" : "Envoyer le SMS"}</button>
+                </div>
+              </footer>
             </form>
           </article>
         </section>
@@ -3290,12 +3127,14 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       {selectedSession && duplicateModalOpen ? (
         <section className="modal-overlay modal-overlay-front">
           <article className="modal-panel modal-compact">
-            <a className="modal-close-x" href={modalHref} aria-label={t("admin.planning.close")}>
+            <a className="modal-close-x" href={modalHref} aria-label={isEnglish ? "Close" : "Fermer"}>
               ×
             </a>
-            <h2 className="modal-title">{t("admin.planning.duplicate_title")}</h2>
+            <h2 className="modal-title">{isEnglish ? "Duplicate slot" : "Dupliquer le creneau"}</h2>
             <p className="muted">
-              {t("admin.planning.duplicate_help")}
+              {isEnglish
+                ? "Set the target date and start time. Students linked to the slot will be duplicated automatically."
+                : "Definir la date cible et l heure de debut. Les eleves rattaches au creneau seront dupliques automatiquement."}
             </p>
 
             <form action={duplicateAdminSessionAction} className="grid top-gap-sm">
@@ -3305,7 +3144,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
               <div className="grid cols-2">
                 <label>
-                  {t("admin.planning.target_date")}
+                  {isEnglish ? "Target date" : "Date cible"}
                   <input
                     type="date"
                     name="target_date"
@@ -3314,11 +3153,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   />
                 </label>
                 <label>
-                  {t("admin.planning.target_start_time")}
+                  {isEnglish ? "Start time" : "Heure de debut"}
                   <input
                     type="time"
                     name="target_time"
-                    defaultValue={toTimeInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone, language)}
+                    defaultValue={toTimeInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)}
                     required
                   />
                 </label>
@@ -3326,28 +3165,28 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
               {selectedSession.recurrence_group_id ? (
                 <fieldset className="grid">
-                  <legend>{t("admin.planning.duplicate_scope")}</legend>
+                  <legend>{isEnglish ? "Duplication scope" : "Portee de duplication"}</legend>
                   <label className="checkline">
                     <input type="radio" name="apply_scope" value="ONE" defaultChecked />
-                    {t("admin.planning.duplicate_one")}
+                    {isEnglish ? "Duplicate this slot only" : "Dupliquer ce creneau uniquement"}
                   </label>
                   <label className="checkline">
                     <input type="radio" name="apply_scope" value="SERIES_FUTURE" />
-                    {t("admin.planning.duplicate_future")}
+                    {isEnglish ? "Duplicate this slot and following recurring occurrences" : "Dupliquer ce creneau et les occurrences recurrentes suivantes"}
                   </label>
                 </fieldset>
               ) : (
                 <>
                   <input type="hidden" name="apply_scope" value="ONE" />
-                  <p className="muted">{t("admin.planning.one_off_duplicate_help")}</p>
+                  <p className="muted">{isEnglish ? "One-time slot: duplicate only one slot." : "Creneau ponctuel: duplication d un seul creneau."}</p>
                 </>
               )}
 
               <div className="row spread">
                 <a className="reset-link" href={modalHref}>
-                  {t("admin.planning.cancel")}
+                  {isEnglish ? "Cancel" : "Annuler"}
                 </a>
-                <button type="submit">{t("admin.planning.duplicate_slot")}</button>
+                <button type="submit">{isEnglish ? "Duplicate slot" : "Dupliquer le creneau"}</button>
               </div>
             </form>
           </article>
@@ -3357,14 +3196,14 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       {selectedSession && confirmAction ? (
         <section className="modal-overlay modal-overlay-front">
           <article className="modal-panel modal-confirm-operation">
-            <a className="modal-close-x" href={confirmCloseHref} aria-label={t("admin.planning.close")}>
+            <a className="modal-close-x" href={confirmCloseHref} aria-label={isEnglish ? "Close" : "Fermer"}>
               ×
             </a>
-            <h2 className="modal-title">{confirmAction === "delete" ? t("admin.planning.confirm_delete_title") : t("admin.planning.confirm_cancel_title")}</h2>
+            <h2 className="modal-title">{confirmAction === "delete" ? (isEnglish ? "Confirm deletion" : "Confirmer la suppression") : (isEnglish ? "Confirm cancellation" : "Confirmer l'annulation")}</h2>
             <p className="muted">
               {confirmAction === "delete"
-                ? t("admin.planning.confirm_delete_help")
-                : t("admin.planning.confirm_cancel_help")}
+                ? (isEnglish ? "The slot will be removed from the calendar. You can notify booked students and the teacher." : "Le creneau sera supprime du calendrier. Vous pouvez notifier les eleves inscrits et le professeur.")
+                : (isEnglish ? "The slot will remain visible in the calendar with status CANCELLED. You can notify booked students and the teacher." : "Le creneau restera visible au calendrier avec le statut CANCELLED. Vous pouvez notifier les eleves inscrits et le professeur.")}
             </p>
 
             <form action={confirmAction === "delete" ? deleteAdminSessionAction : cancelAdminSessionAction} className="grid">
@@ -3372,48 +3211,46 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               <input type="hidden" name="return_to" value={modalHref} />
               {confirmAction === "delete" && selectedSession.recurrence_group_id ? (
                 <label className="session-edit-span">
-                  {t("admin.planning.delete_following_label")}
+                  {isEnglish ? "Delete all occurrences starting from this slot?" : "Supprimer toutes les occurrences a partir de ce creneau ?"}
                   <select name="delete_following" defaultValue="no">
-                    <option value="no">{t("admin.planning.delete_following_one")}</option>
-                    <option value="yes">{t("admin.planning.delete_following_future")}</option>
+                    <option value="no">{isEnglish ? "No, delete this slot only" : "Non, supprimer uniquement ce creneau"}</option>
+                    <option value="yes">{isEnglish ? "Yes, delete this slot and all following occurrences" : "Oui, supprimer ce creneau et toutes les occurrences suivantes"}</option>
                   </select>
                 </label>
               ) : (
                 <label>
-                  {t("admin.planning.scope_label")}
+                  {isEnglish ? "Scope" : "Portee"}
                   <select name="apply_scope" defaultValue={defaultApplyScope(selectedSession)}>
-                    <option value="ONE">{t("admin.planning.this_session_only")}</option>
-                    {selectedSession.recurrence_group_id ? <option value="SERIES_FUTURE">{t("admin.planning.scope.future")}</option> : null}
-                    {selectedSession.recurrence_group_id ? <option value="SERIES_ALL">{t("admin.planning.scope.all")}</option> : null}
+                    <option value="ONE">{isEnglish ? "This slot" : "Ce creneau"}</option>
+                    {selectedSession.recurrence_group_id ? <option value="SERIES_FUTURE">{isEnglish ? "Future series" : "Serie future"}</option> : null}
+                    {selectedSession.recurrence_group_id ? <option value="SERIES_ALL">{isEnglish ? "Whole series" : "Toute la serie"}</option> : null}
                   </select>
                 </label>
               )}
 
               <p className="muted span-3">
-                {t("admin.planning.target_professor")}: <strong>{selectedEffectiveProfessorLabel || t("admin.planning.no_teacher_required")}</strong>
+                {isEnglish ? "Target teacher" : "Professeur cible"}: <strong>{selectedEffectiveProfessorLabel || pickText(language, "Non requis", "Not required")}</strong>
               </p>
 
               <label className="checkline span-3">
                 <input type="checkbox" name="notify_students" />
-                {t("admin.planning.notify_students")}
+                {isEnglish ? "Send a message to all booked students" : "Envoyer un message a tous les eleves inscrits"}
               </label>
 
               <label>
-                {t("admin.planning.students_subject")}
+                {isEnglish ? "Student subject" : "Sujet eleves"}
                 <input
                   type="text"
                   name="students_subject"
-                  defaultValue={
-                    confirmAction === "delete"
-                      ? t("admin.planning.students_subject_delete_default", { title: selectedSession.title })
-                      : t("admin.planning.students_subject_cancel_default", { title: selectedSession.title })
-                  }
+                  defaultValue={`${confirmAction === "delete"
+                    ? (isEnglish ? "Deletion" : "Suppression")
+                    : (isEnglish ? "Cancellation" : "Annulation")} ${isEnglish ? "of slot" : "du creneau"}: ${selectedSession.title}`}
                   maxLength={255}
                 />
               </label>
 
               <label className="session-edit-span">
-                {t("admin.planning.students_message")}
+                {isEnglish ? "Student message" : "Message eleves"}
                 <RichMessageEditor
                   name="students_message"
                   formatName="students_format"
@@ -3421,53 +3258,49 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   maxLength={12000}
                   defaultValue={
                     confirmAction === "delete"
-                      ? t("admin.planning.students_message_delete_default", {
-                          title: selectedSession.title,
-                          date: formatDate(selectedSession.start_at_utc, selectedSession.timezone, language),
-                        })
-                      : t("admin.planning.students_message_cancel_default", {
-                          title: selectedSession.title,
-                          date: formatDate(selectedSession.start_at_utc, selectedSession.timezone, language),
-                        })
+                      ? (isEnglish
+                        ? `Hello,\n\nThe slot "${selectedSession.title}" on ${formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)} has been deleted.\n\nPiano Academie`
+                        : `Bonjour,\n\nLe creneau \"${selectedSession.title}\" du ${formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)} a ete supprime.\n\nPiano Academie`)
+                      : (isEnglish
+                        ? `Hello,\n\nThe slot "${selectedSession.title}" on ${formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)} has been cancelled.\n\nPiano Academie`
+                        : `Bonjour,\n\nLe creneau \"${selectedSession.title}\" du ${formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)} a ete annule.\n\nPiano Academie`)
                   }
-                  placeholder={t("admin.planning.students_message")}
-                  language={language}
+                  placeholder={isEnglish ? "Student message" : "Message eleves"}
                 />
               </label>
 
               <label className="checkline span-3">
                 <input type="checkbox" name="notify_professor" />
-                {t("admin.planning.notify_professor")}
+                {isEnglish ? "Send a message to the selected teacher" : "Envoyer un message au professeur selectionne"}
               </label>
 
               <label className="checkline span-3">
                 <input type="checkbox" name="professor_same_as_students" defaultChecked />
-                {t("admin.planning.same_as_students")}
+                {isEnglish ? "Use the same subject/message as for students" : "Utiliser le meme sujet/message que pour les eleves"}
               </label>
 
               <label>
-                {t("admin.planning.professor_subject_distinct")}
+                {isEnglish ? "Teacher subject (if different)" : "Sujet professeur (si message distinct)"}
                 <input type="text" name="professor_subject" maxLength={255} />
               </label>
 
               <label className="session-edit-span">
-                {t("admin.planning.professor_message_distinct")}
+                {isEnglish ? "Teacher message (if different)" : "Message professeur (si message distinct)"}
                 <RichMessageEditor
                   name="professor_message"
                   formatName="professor_format"
                   rows={8}
                   maxLength={12000}
-                  placeholder={t("admin.planning.professor_message_distinct")}
-                  language={language}
+                  placeholder={isEnglish ? "Teacher message" : "Message professeur"}
                 />
               </label>
 
               <div className="row quick-actions-row">
                 <button className="danger" type="submit">
-                  {confirmAction === "delete" ? t("admin.planning.confirm_delete_title") : t("admin.planning.confirm_cancel_title")}
+                  {confirmAction === "delete" ? (isEnglish ? "Confirm deletion" : "Confirmer la suppression") : (isEnglish ? "Confirm cancellation" : "Confirmer l'annulation")}
                 </button>
                 <a className="reset-link" href={confirmCloseHref}>
-                  {t("admin.planning.return")}
+                  {isEnglish ? "Back" : "Retour"}
                 </a>
               </div>
             </form>

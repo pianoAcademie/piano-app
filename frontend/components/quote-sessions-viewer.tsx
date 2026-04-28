@@ -1,8 +1,7 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
-
-import { normalizeUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
 
 type QuoteSession = {
   date: string;
@@ -16,16 +15,15 @@ type QuoteSession = {
 type QuoteSessionsViewerProps = {
   quoteNumber: string;
   sessions: QuoteSession[];
-  language?: UiLanguage | string;
 };
 
-function modalityLabel(value: string, language: UiLanguage): string {
+function modalityLabel(value: string, isEnglish: boolean): string {
   const normalized = value.trim().toUpperCase();
   if (normalized === "ONLINE") {
-    return uiText(language, "admin.quote_planning.modality_online");
+    return isEnglish ? "Online" : "En ligne";
   }
   if (normalized === "ONSITE") {
-    return uiText(language, "admin.quote_planning.modality_onsite");
+    return isEnglish ? "On-site" : "Presentiel";
   }
   return normalized || "-";
 }
@@ -35,22 +33,17 @@ function csvEscapeCell(value: string): string {
   return `"${normalized}"`;
 }
 
-function toCsv(sessions: QuoteSession[], language: UiLanguage): string {
-  const header = [
-    uiText(language, "common.date"),
-    uiText(language, "admin.quote_planning.start_time"),
-    uiText(language, "admin.quote_planning.end_time"),
-    uiText(language, "admin.quote_lines.kind_activity"),
-    uiText(language, "common.location"),
-    uiText(language, "admin.quote_planning.modality"),
-  ];
+function toCsv(sessions: QuoteSession[], isEnglish: boolean): string {
+  const header = isEnglish
+    ? ["Date", "Start time", "End time", "Activity", "Location", "Modality"]
+    : ["Date", "Heure debut", "Heure fin", "Activite", "Lieu", "Modalite"];
   const lines = sessions.map((row) => [
     row.date,
     row.start_time,
     row.end_time,
     row.activity_label,
     row.location_label,
-    modalityLabel(row.modality, language),
+    modalityLabel(row.modality, isEnglish),
   ]);
   return [header, ...lines]
     .map((line) => line.map((item) => csvEscapeCell(String(item))).join(";"))
@@ -59,12 +52,12 @@ function toCsv(sessions: QuoteSession[], language: UiLanguage): string {
 
 function safeFileNamePart(value: string): string {
   const normalized = value.trim().toLowerCase().replaceAll(/[^a-z0-9_-]+/g, "-").replaceAll(/-+/g, "-");
-  return normalized.replaceAll(/^-|-$/g, "") || "file";
+  return normalized.replaceAll(/^-|-$/g, "") || "devis";
 }
 
-export default function QuoteSessionsViewer({ quoteNumber, sessions, language: languageProp = "fr" }: QuoteSessionsViewerProps): JSX.Element {
-  const language = normalizeUiLanguage(languageProp);
-  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+export default function QuoteSessionsViewer({ quoteNumber, sessions }: QuoteSessionsViewerProps): JSX.Element {
+  const searchParams = useSearchParams();
+  const isEnglish = searchParams?.get("lang") === "en";
   const [open, setOpen] = useState(false);
 
   const normalized = useMemo(
@@ -75,8 +68,8 @@ export default function QuoteSessionsViewer({ quoteNumber, sessions, language: l
           date: String(row.date || "").trim(),
           start_time: String(row.start_time || "").trim(),
           end_time: String(row.end_time || "").trim(),
-          activity_label: String(row.activity_label || t("admin.quote_lines.kind_activity")),
-          location_label: String(row.location_label || t("admin.quote_detail.location_not_defined")),
+          activity_label: String(row.activity_label || (isEnglish ? "Activity" : "Activite")),
+          location_label: String(row.location_label || (isEnglish ? "Location not defined" : "Lieu non defini")),
           modality: String(row.modality || ""),
         }))
         .sort((a, b) => {
@@ -86,37 +79,37 @@ export default function QuoteSessionsViewer({ quoteNumber, sessions, language: l
           if (a.start_time > b.start_time) return 1;
           return 0;
         }),
-    [sessions, language],
+    [isEnglish, sessions],
   );
 
   const csvHref = useMemo(() => {
-    const csv = toCsv(normalized, language);
+    const csv = toCsv(normalized, isEnglish);
     return `data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`;
-  }, [normalized, language]);
+  }, [isEnglish, normalized]);
 
-  const downloadName = `${safeFileNamePart(t("admin.quote_sessions.file_prefix"))}-${safeFileNamePart(quoteNumber)}-${safeFileNamePart(t("admin.quote_sessions.file_suffix"))}.csv`;
+  const downloadName = `devis-${safeFileNamePart(quoteNumber)}-seances.csv`;
 
   if (normalized.length === 0) {
-    return <p className="muted top-gap-sm">{t("admin.quote_sessions.empty")}</p>;
+    return <p className="muted top-gap-sm">{isEnglish ? "No detailed sessions." : "Aucune seance detaillee."}</p>;
   }
 
   return (
     <>
       <div className="row wrap gap-sm top-gap-sm">
         <button type="button" className="ghost" onClick={() => setOpen(true)}>
-          {t("admin.quote_sessions.show_detail", { count: normalized.length })}
+          {isEnglish ? `View details (${normalized.length} sessions)` : `Voir le detail (${normalized.length} seances)`}
         </button>
         <a className="ghost" href={csvHref} download={downloadName}>
-          {t("admin.quote_sessions.download_csv")}
+          {isEnglish ? "Download CSV" : "Telecharger CSV"}
         </a>
       </div>
 
       {open ? (
-        <section className="modal-overlay modal-overlay-front" role="dialog" aria-modal="true" aria-label={t("admin.quote_sessions.detail_aria")}>
+        <section className="modal-overlay modal-overlay-front" role="dialog" aria-modal="true" aria-label={isEnglish ? "Session details" : "Detail des seances"}>
           <article className="modal-panel quote-sessions-modal">
             <div className="row spread wrap gap-sm">
-              <h3 className="modal-title">{t("admin.quote_sessions.detail_title", { count: normalized.length })}</h3>
-              <button type="button" className="modal-close-x" onClick={() => setOpen(false)} aria-label={t("common.close")}>
+              <h3 className="modal-title">{isEnglish ? `Session details (${normalized.length})` : `Detail des seances (${normalized.length})`}</h3>
+              <button type="button" className="modal-close-x" onClick={() => setOpen(false)} aria-label={isEnglish ? "Close" : "Fermer"}>
                 x
               </button>
             </div>
@@ -131,7 +124,7 @@ export default function QuoteSessionsViewer({ quoteNumber, sessions, language: l
                     {" · "}
                     {session.location_label}
                     {" · "}
-                    {modalityLabel(session.modality, language)}
+                    {modalityLabel(session.modality, isEnglish)}
                   </small>
                 </article>
               ))}
@@ -139,10 +132,10 @@ export default function QuoteSessionsViewer({ quoteNumber, sessions, language: l
 
             <div className="row wrap gap-sm top-gap-sm">
               <a className="ghost" href={csvHref} download={downloadName}>
-                {t("admin.quote_sessions.download_csv")}
+                {isEnglish ? "Download CSV" : "Telecharger CSV"}
               </a>
               <button type="button" className="ghost" onClick={() => setOpen(false)}>
-                {t("common.close")}
+                {isEnglish ? "Close" : "Fermer"}
               </button>
             </div>
           </article>

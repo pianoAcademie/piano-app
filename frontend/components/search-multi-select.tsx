@@ -1,8 +1,8 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-
-import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
+import type { UiLanguage } from "../lib/ui-messages";
 
 type Option = {
   id: string;
@@ -15,31 +15,34 @@ type Props = {
   options: Option[];
   selectedIds: string[];
   placeholder: string;
+  language?: UiLanguage;
   className?: string;
   emptySelectionLabel?: string;
   emptySummaryLabel?: string;
-  maxSelections?: number;
-  requiredSelection?: boolean;
-  requiredSelectionMessage?: string;
   selectedCountLabel?: string;
   removeOptionLabel?: string;
   clearLabel?: string;
   availableOptionsLabel?: string;
   noResultsLabel?: string;
   limitResultsLabel?: string;
-  language?: UiLanguage | string;
+  maxSelections?: number;
+  requiredSelection?: boolean;
+  requiredSelectionMessage?: string;
   onSelectionChange?: (ids: string[]) => void;
 };
 
-function interpolate(template: string, values: Record<string, string | number>): string {
-  return template.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ""));
+function applyTemplate(template: string, replacements: Record<string, string | number>): string {
+  return Object.entries(replacements).reduce(
+    (output, [key, value]) => output.replaceAll(`{${key}}`, String(value)),
+    template,
+  );
 }
 
-function normalize(value: string): string {
+function normalize(value: string, language: UiLanguage): string {
   return value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase("fr-FR");
+    .toLocaleLowerCase(language === "en" ? "en-GB" : "fr-FR");
 }
 
 export default function SearchMultiSelect({
@@ -48,36 +51,51 @@ export default function SearchMultiSelect({
   options,
   selectedIds,
   placeholder,
+  language,
   className,
   emptySelectionLabel,
   emptySummaryLabel,
-  maxSelections,
-  requiredSelection = false,
-  requiredSelectionMessage,
   selectedCountLabel,
   removeOptionLabel,
   clearLabel,
   availableOptionsLabel,
   noResultsLabel,
   limitResultsLabel,
-  language: languageProp = "fr",
+  maxSelections,
+  requiredSelection = false,
+  requiredSelectionMessage,
   onSelectionChange,
 }: Props): JSX.Element {
-  const language = normalizeUiLanguage(languageProp);
-  const localizedEmptySelectionLabel = emptySelectionLabel ?? uiText(language, "search_multi.empty_selection");
-  const localizedEmptySummaryLabel = emptySummaryLabel ?? uiText(language, "search_multi.empty_summary");
-  const localizedRequiredSelectionMessage = requiredSelectionMessage ?? uiText(language, "search_multi.required_selection");
-  const localizedSelectedCountLabel = selectedCountLabel ?? uiText(language, "search_multi.selected_count");
-  const localizedRemoveOptionLabel = removeOptionLabel ?? uiText(language, "search_multi.remove_option");
-  const localizedClearLabel = clearLabel ?? uiText(language, "search_multi.clear");
-  const localizedAvailableOptionsLabel = availableOptionsLabel ?? uiText(language, "search_multi.available_options");
-  const localizedNoResultsLabel = noResultsLabel ?? uiText(language, "search_multi.no_results");
-  const localizedLimitResultsLabel = limitResultsLabel ?? uiText(language, "search_multi.limit_results");
+  const searchParams = useSearchParams();
+  const resolvedLanguage: UiLanguage = language ?? (searchParams?.get("lang") === "en" ? "en" : "fr");
+  const text = resolvedLanguage === "en"
+    ? {
+        emptySelection: "No selection.",
+        requiredSelection: "Selection required.",
+        selectedCount: (count: number) => `${count} selected`,
+        emptyState: "Empty selection",
+        remove: (optionLabel: string) => `Remove ${optionLabel}`,
+        clear: "Clear",
+        available: `${label} available`,
+        noResult: "No result.",
+        resultLimit: "Display limited to 120 results.",
+      }
+    : {
+        emptySelection: "Aucune selection.",
+        requiredSelection: "Selection obligatoire.",
+        selectedCount: (count: number) => `${count} selection(s)`,
+        emptyState: "Selection vide",
+        remove: (optionLabel: string) => `Retirer ${optionLabel}`,
+        clear: "Vider",
+        available: `${label} disponibles`,
+        noResult: "Aucun resultat.",
+        resultLimit: "Affichage limite a 120 resultats.",
+      };
   const rootRef = useRef<HTMLDivElement | null>(null);
   const optionById = useMemo(() => new Map(options.map((option) => [option.id, option])), [options]);
   const sortedOptions = useMemo(
-    () => [...options].sort((a, b) => a.label.localeCompare(b.label, localeForUiLanguage(language))),
-    [language, options],
+    () => [...options].sort((a, b) => a.label.localeCompare(b.label, resolvedLanguage === "en" ? "en" : "fr")),
+    [options, resolvedLanguage],
   );
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string[]>(
@@ -94,17 +112,30 @@ export default function SearchMultiSelect({
   );
 
   const matchingOptions = useMemo(() => {
-    const normalizedQuery = normalize(query.trim());
+    const normalizedQuery = normalize(query.trim(), resolvedLanguage);
     const candidates = sortedOptions.filter((option) => !selectedSet.has(option.id));
     if (!normalizedQuery) {
       return candidates;
     }
-    return candidates.filter((option) => normalize(option.label).includes(normalizedQuery));
-  }, [query, selectedSet, sortedOptions]);
+    return candidates.filter((option) => normalize(option.label, resolvedLanguage).includes(normalizedQuery));
+  }, [query, resolvedLanguage, selectedSet, sortedOptions]);
   const filteredOptions = matchingOptions.slice(0, 120);
   const hasHiddenOptions = matchingOptions.length > filteredOptions.length;
   const singleSelection = maxSelections === 1;
   const [selectionError, setSelectionError] = useState("");
+  const resolvedEmptySelectionLabel = emptySelectionLabel ?? text.emptySelection;
+  const resolvedEmptySummaryLabel = emptySummaryLabel ?? text.emptyState;
+  const resolvedRequiredSelectionMessage = requiredSelectionMessage ?? text.requiredSelection;
+
+  const selectedCountSummary = (count: number): string =>
+    selectedCountLabel ? applyTemplate(selectedCountLabel, { count }) : text.selectedCount(count);
+
+  const removeOptionText = (optionLabel: string): string =>
+    removeOptionLabel ? applyTemplate(removeOptionLabel, { label: optionLabel }) : text.remove(optionLabel);
+
+  const availableOptionsText = availableOptionsLabel
+    ? applyTemplate(availableOptionsLabel, { label })
+    : text.available;
 
   useEffect(() => {
     if (!requiredSelection) {
@@ -122,11 +153,11 @@ export default function SearchMultiSelect({
         return;
       }
       event.preventDefault();
-      setSelectionError(localizedRequiredSelectionMessage);
+      setSelectionError(resolvedRequiredSelectionMessage);
     };
     form.addEventListener("submit", onSubmit);
     return () => form.removeEventListener("submit", onSubmit);
-  }, [localizedRequiredSelectionMessage, requiredSelection, selected]);
+  }, [requiredSelection, resolvedRequiredSelectionMessage, selected]);
 
   useEffect(() => {
     if (selected.length > 0 && selectionError) {
@@ -160,23 +191,17 @@ export default function SearchMultiSelect({
     <div ref={rootRef} className={`planning-multi-search ${className ?? ""}`.trim()}>
       <div className="planning-multi-search-head">
         <strong>{label}</strong>
-        <small className="muted">
-          {selected.length > 0 ? interpolate(localizedSelectedCountLabel, { count: selected.length }) : localizedEmptySummaryLabel}
-        </small>
+        <small className="muted">{selected.length > 0 ? selectedCountSummary(selected.length) : resolvedEmptySummaryLabel}</small>
       </div>
 
       <div className="planning-multi-search-selected" aria-live="polite">
         {selectedOptions.length === 0 ? (
-          <small className="muted">{localizedEmptySelectionLabel}</small>
+          <small className="muted">{resolvedEmptySelectionLabel}</small>
         ) : (
           selectedOptions.map((option) => (
             <span key={option.id} className="badge planning-multi-search-chip">
               {option.label}
-              <button
-                type="button"
-                aria-label={interpolate(localizedRemoveOptionLabel, { label: option.label })}
-                onClick={() => setSelected((prev) => prev.filter((id) => id !== option.id))}
-              >
+              <button type="button" aria-label={removeOptionText(option.label)} onClick={() => setSelected((prev) => prev.filter((id) => id !== option.id))}>
                 ×
               </button>
             </span>
@@ -204,14 +229,14 @@ export default function SearchMultiSelect({
         />
         {selected.length > 0 ? (
           <button type="button" className="reset-link planning-multi-search-clear" onClick={() => setSelected([])}>
-            {localizedClearLabel}
+            {clearLabel ?? text.clear}
           </button>
         ) : null}
       </div>
 
-      <div className="planning-multi-search-options" role="listbox" aria-label={interpolate(localizedAvailableOptionsLabel, { label })}>
+      <div className="planning-multi-search-options" role="listbox" aria-label={availableOptionsText}>
         {filteredOptions.length === 0 ? (
-          <small className="muted">{localizedNoResultsLabel}</small>
+          <small className="muted">{noResultsLabel ?? text.noResult}</small>
         ) : (
           filteredOptions.map((option) => (
             <button
@@ -227,7 +252,7 @@ export default function SearchMultiSelect({
             </button>
           ))
         )}
-        {hasHiddenOptions ? <small className="muted">{localizedLimitResultsLabel}</small> : null}
+        {hasHiddenOptions ? <small className="muted">{limitResultsLabel ?? text.resultLimit}</small> : null}
       </div>
 
       {selectionError ? (

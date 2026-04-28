@@ -2,140 +2,152 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-
-import { type UiLanguage, uiText } from "../lib/ui-i18n";
+import type { UiLanguage } from "../lib/ui-messages";
 
 type Crumb = {
   label: string;
   href?: string;
 };
 
-function configSectionLabels(language: UiLanguage): Record<string, string> {
-  return {
-    "params-account": uiText(language, "admin.breadcrumb.account_info"),
-    "params-subscriptions": uiText(language, "admin.breadcrumb.subscription_settings"),
-    "params-payments": uiText(language, "admin.breadcrumb.payment_methods"),
-    formulas: uiText(language, "admin.breadcrumb.formulas"),
-    quotes: uiText(language, "admin.breadcrumb.quotes"),
-    calendars: uiText(language, "admin.breadcrumb.school_calendars"),
-    activities: uiText(language, "admin.breadcrumb.activities"),
-    promo: uiText(language, "admin.breadcrumb.promo"),
-    products: uiText(language, "admin.breadcrumb.products"),
-    "payment-rules": uiText(language, "admin.breadcrumb.payment_rules"),
-    integrations: uiText(language, "admin.breadcrumb.integrations"),
-    "purchase-link": uiText(language, "admin.breadcrumb.purchase_link"),
-    "credit-types": uiText(language, "admin.breadcrumb.credit_types"),
-  };
+function pickText(language: UiLanguage, fr: string, en: string): string {
+  return language === "en" ? en : fr;
+}
+
+function withLanguage(href: string, language: UiLanguage): string {
+  if (language !== "en") {
+    return href;
+  }
+  const separator = href.includes("?") ? "&" : "?";
+  return `${href}${separator}lang=en`;
 }
 
 function looksLikeId(value: string): boolean {
   return value.length > 20 || value.includes("-");
 }
 
+function configSectionLabel(section: string, language: UiLanguage): string | undefined {
+  const labels: Record<string, string> = {
+    "params-account": pickText(language, "Informations du compte", "Account information"),
+    "params-subscriptions": pickText(language, "Parametrage abonnements", "Subscription settings"),
+    "params-payments": pickText(language, "Moyens de paiement", "Payment methods"),
+    formulas: pickText(language, "Formules", "Plans"),
+    quotes: pickText(language, "Devis", "Quotes"),
+    calendars: pickText(language, "Calendriers scolaires", "School calendars"),
+    activities: pickText(language, "Activites", "Activities"),
+    promo: pickText(language, "Code promo", "Promo code"),
+    products: pickText(language, "Produits", "Products"),
+    "payment-rules": pickText(language, "Regles de paiement", "Payment rules"),
+    integrations: pickText(language, "Integrations", "Integrations"),
+    "purchase-link": pickText(language, "Lien d'achat", "Purchase link"),
+    "credit-types": pickText(language, "Types de credit", "Credit types"),
+  };
+  return labels[section];
+}
+
 function labelForSegment(segment: string, previous: string, language: UiLanguage): string | null {
   if (segment === "clients") {
-    return uiText(language, "admin.breadcrumb.clients");
+    return pickText(language, "Clients", "Clients");
   }
   if (segment === "professors") {
-    return uiText(language, "admin.breadcrumb.professors");
+    return pickText(language, "Collaborateurs", "Collaborators");
   }
   if (segment === "reporting") {
-    return uiText(language, "admin.nav.reporting");
+    return "Reporting";
   }
   if (segment === "salary-payments") {
-    return uiText(language, "admin.breadcrumb.salary_payments");
+    return pickText(language, "Paiement des salaires", "Salary payments");
   }
   if (segment === "teacher-invoicing") {
-    return uiText(language, "admin.breadcrumb.teacher_invoicing");
+    return pickText(language, "Facturation professeurs", "Teacher invoicing");
   }
   if (segment === "statements" && previous === "teacher-invoicing") {
-    return uiText(language, "admin.breadcrumb.statements");
+    return pickText(language, "Releves", "Statements");
   }
   if (segment === "invoices" && previous === "teacher-invoicing") {
-    return uiText(language, "admin.breadcrumb.invoices");
+    return pickText(language, "Factures", "Invoices");
   }
   if (segment === "template" && previous === "teacher-invoicing") {
-    return uiText(language, "admin.breadcrumb.invoice_template");
+    return pickText(language, "Template de facture", "Invoice template");
   }
   if (segment === "salary-grid" && previous === "teacher-invoicing") {
-    return uiText(language, "admin.breadcrumb.salary_grid");
+    return pickText(language, "Grille de salaire", "Salary grid");
   }
   if (segment === "subscriptions") {
-    return uiText(language, "admin.breadcrumb.subscriptions");
+    return pickText(language, "Abonnements", "Subscriptions");
   }
   if (segment === "quotes") {
-    return uiText(language, "admin.breadcrumb.quotes");
+    return pickText(language, "Devis", "Quotes");
   }
   if (segment === "intakes") {
-    return uiText(language, "admin.breadcrumb.intakes");
+    return "Intakes";
   }
   if (segment === "prospects") {
-    return uiText(language, "admin.breadcrumb.prospects");
+    return pickText(language, "Prospects", "Prospects");
   }
   if (segment === "new" && previous === "quotes") {
-    return uiText(language, "admin.breadcrumb.new_quote");
+    return pickText(language, "Nouveau devis", "New quote");
   }
   if (segment === "new" && previous === "prospects") {
-    return uiText(language, "admin.breadcrumb.new_prospect");
+    return pickText(language, "Nouveau prospect", "New prospect");
   }
   if (segment === "communications") {
-    return uiText(language, "admin.breadcrumb.communications");
+    return pickText(language, "Communications", "Communications");
   }
   if (segment === "a-traiter") {
-    return uiText(language, "admin.breadcrumb.todo");
+    return pickText(language, "A traiter", "To process");
   }
   if (segment === "notifications") {
-    return uiText(language, "admin.breadcrumb.notifications");
+    return pickText(language, "Notifications", "Notifications");
   }
   if (segment === "jobs" && previous === "notifications") {
-    return uiText(language, "admin.breadcrumb.jobs");
+    return pickText(language, "Monitoring jobs", "Job monitoring");
   }
   if (segment === "incidents" && previous === "notifications") {
-    return uiText(language, "admin.breadcrumb.incidents");
+    return pickText(language, "Incidents", "Incidents");
   }
   if (segment === "products") {
-    return uiText(language, "admin.breadcrumb.products");
+    return pickText(language, "Produits", "Products");
   }
   if (segment === "config") {
-    return uiText(language, "admin.breadcrumb.config");
+    return pickText(language, "Configuration", "Settings");
   }
   if (segment === "formulas") {
-    return uiText(language, "admin.breadcrumb.formulas");
+    return pickText(language, "Formules", "Plans");
   }
   if (segment === "calendars" && previous === "config") {
-    return uiText(language, "admin.breadcrumb.school_calendars");
+    return pickText(language, "Calendriers scolaires", "School calendars");
   }
   if (segment === "new" && previous === "formulas") {
-    return uiText(language, "admin.breadcrumb.new_formula");
+    return pickText(language, "Nouvelle formule", "New plan");
   }
   if (segment === "plannings") {
-    return uiText(language, "admin.breadcrumb.planning");
+    return pickText(language, "Planning", "Schedule");
   }
   if (segment === "settings" && previous !== "config") {
-    return uiText(language, "admin.breadcrumb.planning_settings");
+    return pickText(language, "Parametres planning", "Schedule settings");
   }
 
   if (previous === "clients" && looksLikeId(segment)) {
-    return uiText(language, "admin.breadcrumb.client_record");
+    return pickText(language, "Fiche client", "Client profile");
   }
   if (previous === "professors" && looksLikeId(segment)) {
-    return uiText(language, "admin.breadcrumb.professor_record");
+    return pickText(language, "Fiche collaborateur", "Collaborator profile");
   }
   if (previous === "formulas" && looksLikeId(segment)) {
-    return uiText(language, "admin.breadcrumb.edit_formula");
+    return pickText(language, "Modifier formule", "Edit plan");
   }
   if (previous === "quotes" && looksLikeId(segment)) {
-    return uiText(language, "admin.breadcrumb.quote_detail");
+    return pickText(language, "Detail devis", "Quote details");
   }
   if (previous === "intakes" && looksLikeId(segment)) {
-    return uiText(language, "admin.breadcrumb.intake_detail");
+    return pickText(language, "Detail intake", "Intake details");
   }
   if (previous === "prospects" && looksLikeId(segment)) {
-    return uiText(language, "admin.breadcrumb.prospect_detail");
+    return pickText(language, "Detail prospect", "Prospect details");
   }
 
   if (looksLikeId(segment)) {
-    return uiText(language, "admin.breadcrumb.detail");
+    return pickText(language, "Detail", "Details");
   }
   return null;
 }
@@ -156,12 +168,12 @@ function hrefForSegment(segments: string[], index: number): string {
 
 type AdminBreadcrumbProps = {
   compact?: boolean;
-  language?: UiLanguage;
 };
 
-export default function AdminBreadcrumb({ compact = false, language = "fr" }: AdminBreadcrumbProps): JSX.Element | null {
+export default function AdminBreadcrumb({ compact = false }: AdminBreadcrumbProps): JSX.Element | null {
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const language: UiLanguage = searchParams?.get("lang") === "en" ? "en" : "fr";
   if (!pathname) {
     return null;
   }
@@ -172,11 +184,10 @@ export default function AdminBreadcrumb({ compact = false, language = "fr" }: Ad
       return null;
     }
 
-    const sectionLabels = configSectionLabels(language);
-    crumbs = [{ label: uiText(language, "admin.breadcrumb.admin"), href: "/admin" }];
+    crumbs = [{ label: pickText(language, "Administration", "Administration"), href: withLanguage("/admin", language) }];
 
     if (segments.length === 1) {
-      crumbs.push({ label: uiText(language, "admin.breadcrumb.planning") });
+      crumbs.push({ label: pickText(language, "Planning", "Schedule") });
     } else {
       for (let i = 1; i < segments.length; i += 1) {
         const segment = segments[i];
@@ -187,14 +198,14 @@ export default function AdminBreadcrumb({ compact = false, language = "fr" }: Ad
           continue;
         }
 
-        const href = i === segments.length - 1 ? undefined : hrefForSegment(segments, i);
+        const href = i === segments.length - 1 ? undefined : withLanguage(hrefForSegment(segments, i), language);
         crumbs.push({ label, href });
       }
     }
 
     if (pathname === "/admin/config") {
       const section = searchParams?.get("section");
-      const sectionLabel = section ? sectionLabels[section] : undefined;
+      const sectionLabel = section ? configSectionLabel(section, language) : undefined;
       if (sectionLabel && !crumbs.some((crumb) => crumb.label === sectionLabel)) {
         crumbs.push({ label: sectionLabel });
       }
@@ -208,7 +219,7 @@ export default function AdminBreadcrumb({ compact = false, language = "fr" }: Ad
 
   if (compact) {
     return (
-      <nav className="admin-breadcrumb admin-breadcrumb-inline" aria-label={uiText(language, "admin.breadcrumb_title")}>
+      <nav className="admin-breadcrumb admin-breadcrumb-inline" aria-label={pickText(language, "Fil d'Ariane", "Breadcrumb")}>
         {crumbsToRender.map((crumb, index) => {
           const key = `${crumb.label}-${index}`;
           const isLast = index === crumbsToRender.length - 1;
@@ -230,8 +241,8 @@ export default function AdminBreadcrumb({ compact = false, language = "fr" }: Ad
   }
 
   return (
-    <section className="admin-breadcrumb-wrap" aria-label={uiText(language, "admin.breadcrumb_title")}>
-      <small className="admin-breadcrumb-title">{uiText(language, "admin.breadcrumb_title")}</small>
+    <section className="admin-breadcrumb-wrap" aria-label={pickText(language, "Fil d'Ariane", "Breadcrumb")}>
+      <small className="admin-breadcrumb-title">{pickText(language, "Fil d'Ariane", "Breadcrumb")}</small>
       <nav className="admin-breadcrumb">
         {crumbsToRender.map((crumb, index) => {
           const key = `${crumb.label}-${index}`;

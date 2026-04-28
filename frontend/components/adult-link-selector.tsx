@@ -1,8 +1,7 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
-
-import { type UiLanguage, uiText } from "../lib/ui-i18n";
 
 type AdultCandidate = {
   id: string;
@@ -20,23 +19,25 @@ type AdultCandidate = {
 
 type Props = {
   adults: AdultCandidate[];
-  language: UiLanguage;
+  language?: "fr" | "en";
 };
 
 export default function AdultLinkSelector({ adults, language }: Props): JSX.Element {
+  const searchParams = useSearchParams();
+  const resolvedLanguage = language ?? (searchParams?.get("lang") === "en" ? "en" : "fr");
+  const isEnglish = resolvedLanguage === "en";
   const [selectedId, setSelectedId] = useState<string>("");
   const selected = useMemo(
     () => adults.find((adult) => adult.id === selectedId) ?? null,
     [adults, selectedId],
   );
-  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   return (
     <div className="grid">
       <label>
-        {t("admin.clients.existing_adult_to_link")}
+        {isEnglish ? "Existing adult to link" : "Adulte existant a rattacher"}
         <select name="existing_adult_id" value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
-          <option value="">{t("admin.clients.none")}</option>
+          <option value="">{isEnglish ? "None" : "Aucun"}</option>
           {adults.map((adult) => (
             <option key={adult.id} value={adult.id}>
               {adult.display_name}
@@ -49,11 +50,11 @@ export default function AdultLinkSelector({ adults, language }: Props): JSX.Elem
         <article className="item">
           <strong>{selected.display_name}</strong>
           <p className="muted">
-            {selected.email} | {uiText(language, "client.mobile_phone_1")}: {selected.mobile_phone_1 ?? "-"} | {uiText(language, "client.mobile_phone_2")}: {selected.mobile_phone_2 ?? "-"} | {uiText(language, "client.home_phone_label")}:{" "}
+            {selected.email} | {isEnglish ? "Mobile 1" : "Mobile 1"}: {selected.mobile_phone_1 ?? "-"} | {isEnglish ? "Mobile 2" : "Mobile 2"}: {selected.mobile_phone_2 ?? "-"} | {isEnglish ? "Home" : "Domicile"}:{" "}
             {selected.home_phone ?? "-"}
           </p>
           <p className="muted">
-            {uiText(language, "client.address_label")}: {selected.address_line ?? "-"}, {selected.postal_code ?? "-"} {selected.city ?? "-"} ({selected.address_country}) | {uiText(language, "client.residence_country_label")}:{" "}
+            {isEnglish ? "Address" : "Adresse"}: {selected.address_line ?? "-"}, {selected.postal_code ?? "-"} {selected.city ?? "-"} ({selected.address_country}) | {isEnglish ? "Residence" : "Residence"}:{" "}
             {selected.residence_country}
           </p>
         </article>

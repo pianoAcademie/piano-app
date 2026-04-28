@@ -1,8 +1,7 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-
-import { normalizeUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
 
 type LegalEntityOption = {
   id: string;
@@ -33,7 +32,7 @@ type ManualTransactionLegalEntityFieldsProps = {
   initialLegalEntityId?: string | null;
   reconcilableInvoices?: ReconcilableInvoiceOption[];
   showReconciliation?: boolean;
-  language?: UiLanguage | string;
+  language?: "fr" | "en";
 };
 
 export default function ManualTransactionLegalEntityFields({
@@ -44,10 +43,50 @@ export default function ManualTransactionLegalEntityFields({
   initialLegalEntityId = null,
   reconcilableInvoices = [],
   showReconciliation = false,
-  language: languageProp = "fr",
+  language,
 }: ManualTransactionLegalEntityFieldsProps): JSX.Element {
-  const language = normalizeUiLanguage(languageProp);
-  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const searchParams = useSearchParams();
+  const resolvedLanguage = language ?? (searchParams?.get("lang") === "en" ? "en" : "fr");
+  const isEnglish = resolvedLanguage === "en";
+  const text = isEnglish
+    ? {
+        paymentMethodRequired: "Payment method *",
+        paymentMethodOptional: "Payment method (optional)",
+        select: "Select...",
+        unspecified: "(Not specified)",
+        reconciliation: "Invoice reconciliation (optional)",
+        selection: "Sel.",
+        invoiceDate: "Invoice date",
+        amount: "Amount",
+        invoiceNumber: "Invoice number",
+        legalEntity: "Legal entity",
+        noInvoice: "No issued invoice waiting for payment matching.",
+        markPaid: "Manually mark selected invoices as paid (if the payment amount is sufficient)",
+        reconciliationHint:
+          "If payment amount < invoice total(s), they remain unpaid. If payment amount >= invoice total(s), you can validate them as paid.",
+        legalEntityRequired: "Legal entity *",
+        separatePaymentPerEntity: "Create one payment per legal entity",
+        selectedInvoiceEntityUndetermined: "Cannot determine the legal entity for a selected invoice",
+      }
+    : {
+        paymentMethodRequired: "Mode de paiement *",
+        paymentMethodOptional: "Mode de paiement (optionnel)",
+        select: "Selectionner...",
+        unspecified: "(Non precise)",
+        reconciliation: "Rapprochement facture (optionnel)",
+        selection: "Sel.",
+        invoiceDate: "Date facture",
+        amount: "Montant",
+        invoiceNumber: "Numero facture",
+        legalEntity: "Entite",
+        noInvoice: "Aucune facture emise en attente de paiement a rapprocher.",
+        markPaid: "Marquer manuellement les factures selectionnees comme payees (si montant regle suffisant)",
+        reconciliationHint:
+          "Si montant paiement < total facture(s), elles restent a payer. Si montant paiement >= total facture(s), vous pouvez les valider comme payees.",
+        legalEntityRequired: "Entite legale *",
+        separatePaymentPerEntity: "Creer un paiement par entite",
+        selectedInvoiceEntityUndetermined: "Impossible de determiner l'entite juridique d'une facture selectionnee",
+      };
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [paymentMethodCode, setPaymentMethodCode] = useState<string>(initialPaymentMethodCode);
   const [manualLegalEntityId, setManualLegalEntityId] = useState<string>(initialLegalEntityId ?? "");
@@ -107,9 +146,9 @@ export default function ManualTransactionLegalEntityFields({
     : null;
 
   const blockingError = hasMixedSelectedInvoiceEntities
-    ? t("admin.client_detail.manual_reconcile_block_mixed_entities")
+    ? text.separatePaymentPerEntity
     : hasSelectedInvoiceWithoutEntity
-      ? t("admin.client_detail.manual_reconcile_block_missing_entity")
+      ? text.selectedInvoiceEntityUndetermined
       : null;
 
   useEffect(() => {
@@ -136,14 +175,14 @@ export default function ManualTransactionLegalEntityFields({
     <div ref={rootRef} className="span-2 grid">
       {paymentMethods.length > 0 ? (
         <label>
-          {paymentMethodRequired ? t("admin.client_detail.manual_payment_method_required") : t("admin.client_detail.manual_payment_method_optional")}
+          {paymentMethodRequired ? text.paymentMethodRequired : text.paymentMethodOptional}
           <select
             name="payment_method_code"
             defaultValue={initialPaymentMethodCode}
             required={paymentMethodRequired}
             onChange={(event) => setPaymentMethodCode(event.currentTarget.value)}
           >
-            {paymentMethodRequired ? <option value="" disabled>{t("admin.client_detail.select_placeholder")}</option> : <option value="">{t("admin.client_detail.not_specified")}</option>}
+            {paymentMethodRequired ? <option value="" disabled>{text.select}</option> : <option value="">{text.unspecified}</option>}
             {paymentMethods.map((method) => (
               <option key={method.code} value={method.code}>
                 {method.label}
@@ -155,17 +194,17 @@ export default function ManualTransactionLegalEntityFields({
 
       {showReconciliation ? (
         <fieldset className="config-payment-fieldset span-2">
-          <legend>{t("admin.client_detail.manual_reconcile_title")}</legend>
+          <legend>{text.reconciliation}</legend>
           {reconcilableInvoices.length > 0 ? (
             <div className="table-wrap">
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th aria-label={t("admin.client_detail.manual_reconcile_selection_aria")}>{t("admin.client_detail.manual_reconcile_selection_short")}</th>
-                    <th>{t("admin.client_detail.manual_reconcile_invoice_date")}</th>
-                    <th>{t("common.amount")}</th>
-                    <th>{t("admin.client_detail.manual_reconcile_invoice_number")}</th>
-                    <th>{t("admin.client_detail.manual_reconcile_entity")}</th>
+                    <th aria-label={text.selection}>{text.selection}</th>
+                    <th>{text.invoiceDate}</th>
+                    <th>{text.amount}</th>
+                    <th>{text.invoiceNumber}</th>
+                    <th>{text.legalEntity}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -199,21 +238,19 @@ export default function ManualTransactionLegalEntityFields({
               </table>
             </div>
           ) : (
-            <p className="muted">{t("admin.client_detail.manual_reconcile_empty")}</p>
+            <p className="muted">{text.noInvoice}</p>
           )}
           <input type="hidden" name="mark_reconciled_invoices_paid" value="off" />
           <label className="checkline">
             <input type="checkbox" name="mark_reconciled_invoices_paid" value="on" />
-            {t("admin.client_detail.manual_reconcile_mark_paid")}
+            {text.markPaid}
           </label>
-          <p className="muted">
-            {t("admin.client_detail.manual_reconcile_help")}
-          </p>
+          <p className="muted">{text.reconciliationHint}</p>
         </fieldset>
       ) : null}
 
       <label>
-        {t("admin.client_detail.manual_legal_entity_required")}
+        {text.legalEntityRequired}
         {showManualSelector ? (
           <select
             name="legal_entity_id"
@@ -221,7 +258,7 @@ export default function ManualTransactionLegalEntityFields({
             value={manualLegalEntityId}
             onChange={(event) => setManualLegalEntityId(event.currentTarget.value)}
           >
-            <option value="" disabled>{t("admin.client_detail.select_placeholder")}</option>
+            <option value="" disabled>{text.select}</option>
             {legalEntities.map((entity) => (
               <option key={entity.id} value={entity.id}>
                 {entity.name}

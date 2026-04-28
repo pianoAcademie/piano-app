@@ -1,8 +1,7 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-
-import { type UiLanguage, uiText } from "../lib/ui-i18n";
 
 type GroupOption = {
   id: string;
@@ -15,18 +14,8 @@ type Props = {
   groups: GroupOption[];
   pageCount: number;
   filteredCount: number;
-  language: UiLanguage;
+  language?: "fr" | "en";
 };
-
-function statusLabel(status: string, language: UiLanguage): string {
-  const normalized = status.trim().toUpperCase();
-  if (normalized === "ACTIVE") return uiText(language, "admin.clients.status_active");
-  if (normalized === "TRIAL") return uiText(language, "admin.clients.status_trial");
-  if (normalized === "PENDING") return uiText(language, "admin.clients.status_pending");
-  if (normalized === "INACTIVE") return uiText(language, "admin.clients.status_inactive");
-  if (normalized === "ARCHIVED") return uiText(language, "admin.clients.status_archived");
-  return normalized;
-}
 
 function getForm(): HTMLFormElement | null {
   const form = document.getElementById("clients-bulk-form");
@@ -71,10 +60,85 @@ function syncHeaderToggle(form: HTMLFormElement): number {
 }
 
 export default function ClientBulkControls({ groups, pageCount, filteredCount, language }: Props): JSX.Element {
+  const searchParams = useSearchParams();
+  const resolvedLanguage = language ?? (searchParams?.get("lang") === "en" ? "en" : "fr");
+  const isEnglish = resolvedLanguage === "en";
+  const text = isEnglish
+    ? {
+        action: "Action",
+        updateStatuses: "Update statuses",
+        assignGroup: "Assign to a group",
+        archive: "Archive",
+        emailClients: "New email (selected clients)",
+        emailParents: "New email (selected parents)",
+        smsClients: "Send SMS (selected clients)",
+        smsParents: "Send SMS (selected parents)",
+        exportCsv: "Download Excel (CSV)",
+        delete: "Delete",
+        newStatus: "New status",
+        group: "Group",
+        select: "Select",
+        subject: "Subject",
+        subjectRequired: "(required)",
+        subjectOptionalSms: "(optional for SMS)",
+        subjectPlaceholder: "Message subject",
+        format: "Format",
+        textFormat: "Text",
+        htmlFormat: "HTML",
+        message: "Message",
+        messagePlaceholder: "Message content...",
+        selectPage: `Select page (${pageCount})`,
+        selectFiltered: `Select all filtered (${filteredCount})`,
+        clearSelection: "Clear selection",
+        filteredScope: `Selection scope: all filtered clients (${filteredCount}).`,
+        pageScope: (selectedCount: number) => `Selection scope: current page (${selectedCount}/${pageCount}).`,
+        apply: "Apply",
+        pageSelectionRequired: "Select at least one client on the page.",
+        noFilteredClient: "No client matches the filter.",
+        groupRequired: "Select a group.",
+        smsRequired: "SMS message is required.",
+        subjectMessageRequired: "Subject and message are required.",
+        deleteConfirm: (total: number) => `Confirm permanent deletion of ${total} client(s)? This action cannot be undone.`,
+      }
+    : {
+        action: "Action",
+        updateStatuses: "Mettre a jour les statuts",
+        assignGroup: "Affecter a un groupe",
+        archive: "Archiver",
+        emailClients: "Nouveau courriel (clients selectionnes)",
+        emailParents: "Nouveau courriel (parents selectionnes)",
+        smsClients: "Envoyer SMS (clients selectionnes)",
+        smsParents: "Envoyer SMS (parents selectionnes)",
+        exportCsv: "Telecharger Excel (CSV)",
+        delete: "Supprimer",
+        newStatus: "Nouveau statut",
+        group: "Groupe",
+        select: "Selectionner",
+        subject: "Sujet",
+        subjectRequired: "(obligatoire)",
+        subjectOptionalSms: "(optionnel pour SMS)",
+        subjectPlaceholder: "Objet du message",
+        format: "Format",
+        textFormat: "Texte",
+        htmlFormat: "HTML",
+        message: "Message",
+        messagePlaceholder: "Contenu du message...",
+        selectPage: `Selectionner la page (${pageCount})`,
+        selectFiltered: `Selectionner tous les filtres (${filteredCount})`,
+        clearSelection: "Effacer la selection",
+        filteredScope: `Portee selection: tous les clients filtres (${filteredCount}).`,
+        pageScope: (selectedCount: number) => `Portee selection: page courante (${selectedCount}/${pageCount}).`,
+        apply: "Appliquer",
+        pageSelectionRequired: "Selectionnez au moins un adherent de la page.",
+        noFilteredClient: "Aucun adherent ne correspond au filtre.",
+        groupRequired: "Selectionnez un groupe.",
+        smsRequired: "Message SMS obligatoire.",
+        subjectMessageRequired: "Sujet et message obligatoires.",
+        deleteConfirm: (total: number) => `Confirmer la suppression definitive de ${total} adherent(s) ? Cette action est irreversible.`,
+      };
   const [action, setAction] = useState("UPDATE_STATUS");
   const [selectionScope, setSelectionScope] = useState<SelectionScope>("PAGE");
   const [selectedOnPage, setSelectedOnPage] = useState(0);
-  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const canPickGroup = useMemo(() => action === "ASSIGN_GROUP", [action]);
   const canPickStatus = useMemo(() => action === "UPDATE_STATUS", [action]);
@@ -122,35 +186,35 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
 
       <div className="row bulk-controls-row">
         <label className="bulk-inline-field">
-          {t("admin.clients.bulk_action")}
+          {text.action}
           <select name="bulk_action" value={action} onChange={(event) => setAction(event.target.value)}>
-            <option value="UPDATE_STATUS">{t("admin.clients.bulk_update_status")}</option>
-            <option value="ASSIGN_GROUP">{t("admin.clients.bulk_assign_group")}</option>
-            <option value="ARCHIVE">{t("admin.clients.bulk_archive")}</option>
-            <option value="EMAIL_CLIENTS">{t("admin.clients.bulk_email_clients")}</option>
-            <option value="EMAIL_PARENTS">{t("admin.clients.bulk_email_parents")}</option>
-            <option value="SMS_CLIENTS">{t("admin.clients.bulk_sms_clients")}</option>
-            <option value="SMS_PARENTS">{t("admin.clients.bulk_sms_parents")}</option>
-            <option value="EXPORT">{t("admin.clients.bulk_export")}</option>
-            <option value="DELETE">{t("admin.clients.bulk_delete")}</option>
+            <option value="UPDATE_STATUS">{text.updateStatuses}</option>
+            <option value="ASSIGN_GROUP">{text.assignGroup}</option>
+            <option value="ARCHIVE">{text.archive}</option>
+            <option value="EMAIL_CLIENTS">{text.emailClients}</option>
+            <option value="EMAIL_PARENTS">{text.emailParents}</option>
+            <option value="SMS_CLIENTS">{text.smsClients}</option>
+            <option value="SMS_PARENTS">{text.smsParents}</option>
+            <option value="EXPORT">{text.exportCsv}</option>
+            <option value="DELETE">{text.delete}</option>
           </select>
         </label>
 
         <label className="bulk-inline-field">
-          {t("admin.clients.bulk_new_status")}
+          {text.newStatus}
           <select name="target_status" defaultValue="ACTIVE" disabled={!canPickStatus}>
-            <option value="ACTIVE">{statusLabel("ACTIVE", language)}</option>
-            <option value="TRIAL">{statusLabel("TRIAL", language)}</option>
-            <option value="PENDING">{statusLabel("PENDING", language)}</option>
-            <option value="INACTIVE">{statusLabel("INACTIVE", language)}</option>
-            <option value="ARCHIVED">{statusLabel("ARCHIVED", language)}</option>
+            <option value="ACTIVE">ACTIF</option>
+            <option value="TRIAL">ESSAI</option>
+            <option value="PENDING">EN ATTENTE</option>
+            <option value="INACTIVE">INACTIF</option>
+            <option value="ARCHIVED">ARCHIVE</option>
           </select>
         </label>
 
         <label className="bulk-inline-field">
-          {t("admin.clients.bulk_group")}
+          {text.group}
           <select name="group_id" defaultValue="" disabled={!canPickGroup}>
-            <option value="">{t("admin.clients.bulk_select_group")}</option>
+            <option value="">{text.select}</option>
             {groups.map((group) => (
               <option key={group.id} value={group.id}>
                 {group.name}
@@ -163,19 +227,19 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
       {isMessageAction ? (
         <div className="grid cols-2">
           <label className="span-2">
-            {isEmailMessageAction ? t("admin.clients.bulk_subject_required") : t("admin.clients.bulk_subject_optional_sms")}
-            <input type="text" name="message_subject" maxLength={255} placeholder={t("admin.clients.bulk_subject_placeholder")} />
+            {text.subject} {isEmailMessageAction ? text.subjectRequired : text.subjectOptionalSms}
+            <input type="text" name="message_subject" maxLength={255} placeholder={text.subjectPlaceholder} />
           </label>
           <label>
-            {t("admin.clients.bulk_format")}
+            {text.format}
             <select name="message_body_format" defaultValue="TEXT" disabled={isSmsMessageAction}>
-              <option value="TEXT">{t("admin.clients.bulk_text")}</option>
-              <option value="HTML">{uiText(language, "common.html")}</option>
+              <option value="TEXT">{text.textFormat}</option>
+              <option value="HTML">{text.htmlFormat}</option>
             </select>
           </label>
           <label className="span-2">
-            {t("admin.clients.bulk_message")}
-            <textarea name="message_body" rows={5} maxLength={12000} placeholder={t("admin.clients.bulk_message_placeholder")} />
+            {text.message}
+            <textarea name="message_body" rows={5} maxLength={12000} placeholder={text.messagePlaceholder} />
           </label>
         </div>
       ) : null}
@@ -194,7 +258,7 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
             setSelectedOnPage(syncHeaderToggle(form));
           }}
         >
-          {t("admin.clients.bulk_select_page", { count: pageCount })}
+          {text.selectPage}
         </button>
 
         <button
@@ -210,7 +274,7 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
             setSelectedOnPage(syncHeaderToggle(form));
           }}
         >
-          {t("admin.clients.bulk_select_filtered", { count: filteredCount })}
+          {text.selectFiltered}
         </button>
 
         <button
@@ -226,14 +290,14 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
             setSelectedOnPage(syncHeaderToggle(form));
           }}
         >
-          {t("admin.clients.bulk_clear_selection")}
+          {text.clearSelection}
         </button>
       </div>
 
       <small className="muted">
         {selectionScope === "FILTERED"
-          ? t("admin.clients.bulk_scope_filtered", { count: filteredCount })
-          : t("admin.clients.bulk_scope_page", { selected: selectedOnPage, count: pageCount })}
+          ? text.filteredScope
+          : text.pageScope(selectedOnPage)}
       </small>
 
       <div className="row">
@@ -250,13 +314,13 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
 
             if (selectionScope === "PAGE" && selectedIds.length === 0) {
               event.preventDefault();
-              window.alert(t("admin.clients.bulk_alert_select_client"));
+              window.alert(text.pageSelectionRequired);
               return;
             }
 
             if (selectionScope === "FILTERED" && selectedFilteredIds.length === 0) {
               event.preventDefault();
-              window.alert(t("admin.clients.bulk_alert_no_filtered"));
+              window.alert(text.noFilteredClient);
               return;
             }
 
@@ -264,7 +328,7 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
               const groupField = form.elements.namedItem("group_id") as HTMLSelectElement | null;
               if (!groupField || !groupField.value) {
                 event.preventDefault();
-                window.alert(t("admin.clients.bulk_alert_select_group"));
+                window.alert(text.groupRequired);
                 return;
               }
             }
@@ -276,12 +340,12 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
               const body = (bodyField?.value || "").trim();
               if (!body) {
                 event.preventDefault();
-                window.alert(isEmailMessageAction ? t("admin.clients.bulk_alert_subject_and_message") : t("admin.clients.bulk_alert_sms_message"));
+                window.alert(isEmailMessageAction ? text.subjectMessageRequired : text.smsRequired);
                 return;
               }
               if (isEmailMessageAction && !subject) {
                 event.preventDefault();
-                window.alert(t("admin.clients.bulk_alert_subject_and_message"));
+                window.alert(text.subjectMessageRequired);
                 return;
               }
             }
@@ -291,16 +355,14 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
                 selectionScope === "FILTERED"
                   ? selectedFilteredIds.length
                   : selectedIds.length;
-              const confirmed = window.confirm(
-                t("admin.clients.bulk_delete_confirm", { count: total }),
-              );
+              const confirmed = window.confirm(text.deleteConfirm(total));
               if (!confirmed) {
                 event.preventDefault();
               }
             }
           }}
         >
-          {uiText(language, "common.apply")}
+          {text.apply}
         </button>
       </div>
     </div>

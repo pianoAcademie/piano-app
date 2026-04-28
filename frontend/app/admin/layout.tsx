@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
@@ -7,47 +8,46 @@ import AdminSidebar from "../../components/admin-sidebar";
 import { getAdminToken } from "../../lib/auth-cookies";
 import { logoutAction } from "../../lib/actions";
 import { backendRequest } from "../../lib/backend";
+import { uiLanguageFromAcceptLanguage, withUiLanguage, withUiMessageCode } from "../../lib/ui-messages";
 import type { UserOut } from "../../lib/types";
-import { normalizeUiLanguage, uiText } from "../../lib/ui-i18n";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }): Promise<JSX.Element> {
+  const language = uiLanguageFromAcceptLanguage(headers().get("accept-language"), "fr");
   const token = getAdminToken();
   if (!token) {
-    redirect("/login?error_code=session_expired");
+    redirect(withUiMessageCode("/login", "error", "session_expired", { lang: language }));
   }
 
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
   if (!meResult.ok || meResult.data.role !== "admin") {
-    redirect("/login?error_code=admin_access_required");
+    redirect(withUiMessageCode("/login", "error", "admin_access_required", { lang: language }));
   }
 
   const displayName = [meResult.data.first_name, meResult.data.last_name].filter(Boolean).join(" ") || meResult.data.email;
-  const language = normalizeUiLanguage(meResult.data.preferred_language);
 
   return (
     <div className="admin-shell" data-ui-language={language}>
       <AdminSidebar
         displayName={displayName}
         email={meResult.data.email}
-        roleLabel={uiText(language, "common.administrator")}
-        language={language}
+        roleLabel={language === "en" ? "Administrator" : "Administrateur"}
       />
 
       <div className="admin-main">
         <header className="admin-topbar">
           <div className="admin-topbar-left">
-            <strong className="admin-topbar-title">{uiText(language, "admin.portal_title")}</strong>
+            <strong className="admin-topbar-title">{language === "en" ? "Admin portal" : "Portail admin"}</strong>
             <Suspense fallback={<span className="muted">...</span>}>
-              <AdminBreadcrumb compact language={language} />
+              <AdminBreadcrumb compact />
             </Suspense>
           </div>
           <div className="row admin-topbar-actions">
-            <Link className="reset-link topbar-btn" href="/client?tab=home">
-              {uiText(language, "admin.client_view")}
+            <Link className="reset-link topbar-btn" href={withUiLanguage("/client?tab=home", language)}>
+              {language === "en" ? "Client view" : "Vue client"}
             </Link>
             <form action={logoutAction}>
               <button className="ghost topbar-btn" type="submit">
-                {uiText(language, "common.logout")}
+                {language === "en" ? "Sign out" : "Se deconnecter"}
               </button>
             </form>
           </div>
