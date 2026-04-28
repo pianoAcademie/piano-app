@@ -3284,10 +3284,10 @@ def _build_template_values(
     )
     pass_recup_compact_notice_html = (
         f"<p><strong>{escape(_quote_doc_text('pass_recup_option_not_subscribed', language=language))}</strong>"
-        "<br/><font size='10' color='#6b7280'><i>"
+        "<br/><span style='font-size:10px;line-height:1.45;color:#6b7280;'><i>"
         f"{escape(_quote_doc_text('pass_recup_compact_text', language=language))}"
         f"<br/>&bull; {escape(_quote_doc_text('pass_recup_compact_limit', language=language))}"
-        "</i></font></p>"
+        "</i></span></p>"
         if display_flags["showPassRecupCompactNotice"]
         else ""
     )
