@@ -934,6 +934,7 @@ def _document_style_html() -> str:
         ".quote-cover-subtitle{font-size:14px;color:#4b5563;margin-bottom:9mm;}"
         ".quote-cover-name{font-size:22px;margin-bottom:4mm;}"
         ".quote-cover-meta{font-size:12px;color:#4b5563;line-height:1.6;}"
+        ".quote-small-muted{font-size:10px;line-height:1.45;color:#6b7280;}"
         ".quote-table{width:100%;border-collapse:collapse;border-spacing:0;margin:6px 0 10px 0;font-size:11px;table-layout:auto;}"
         ".quote-table thead{display:table-header-group;}"
         ".quote-table tfoot{display:table-footer-group;}"
@@ -941,7 +942,6 @@ def _document_style_html() -> str:
         ".quote-table th{background:#e7edf7 !important;color:#111827 !important;border:1px solid #c2ccda !important;padding:12px 10px 12px 10px !important;padding-top:12px !important;padding-right:10px !important;padding-bottom:12px !important;padding-left:10px !important;text-align:left !important;font-weight:700 !important;line-height:1.4 !important;vertical-align:middle !important;height:auto !important;min-height:30px;white-space:normal !important;word-break:break-word !important;overflow-wrap:anywhere !important;}"
         ".quote-table td{border:1px solid #d3dbe7 !important;padding:12px 10px 12px 10px !important;padding-top:12px !important;padding-right:10px !important;padding-bottom:12px !important;padding-left:10px !important;vertical-align:middle !important;color:#111827 !important;line-height:1.45 !important;height:auto !important;min-height:30px;white-space:normal !important;word-break:break-word !important;overflow-wrap:anywhere !important;}"
         ".quote-table td>*{margin-top:0;margin-bottom:0;}"
-        "font[size='10']{font-size:10px !important;line-height:1.45 !important;color:#6b7280 !important;}"
         ".quote-footer{width:100%;border-collapse:collapse;margin-top:12px;padding-top:8px;border-top:1px solid #cdd4de;font-size:10px;color:#475467;}"
         ".quote-footer td{vertical-align:top;}"
         ".quote-terms-title{margin-top:0;}"
@@ -1181,6 +1181,27 @@ def _section_html(title: str, content_html: str, *, level: int = 2) -> str:
         return ""
     tag = "h3" if level == 3 else "h2"
     return f"<{tag}>{escape(title)}</{tag}>{content}"
+
+
+def _pass_recup_compact_notice_markup(*, language: str | None = None, pdf_compatible: bool = False) -> str:
+    title = escape(_quote_doc_text("pass_recup_option_not_subscribed", language=language))
+    compact_text = escape(_quote_doc_text("pass_recup_compact_text", language=language))
+    compact_limit = escape(_quote_doc_text("pass_recup_compact_limit", language=language))
+    if pdf_compatible:
+        return (
+            f"<p><b>{title}</b>"
+            "<br/><font size='9' color='#667085'><i>"
+            f"{compact_text}"
+            f"<br/>&bull; {compact_limit}"
+            "</i></font></p>"
+        )
+    return (
+        f"<p><strong>{title}</strong>"
+        "<br/><span class='quote-small-muted'><i>"
+        f"{compact_text}"
+        f"<br/>&bull; {compact_limit}"
+        "</i></span></p>"
+    )
 
 
 def _weekday_label(value: Any, *, language: str | None = None) -> str:
@@ -3283,11 +3304,12 @@ def _build_template_values(
         else ""
     )
     pass_recup_compact_notice_html = (
-        f"<p><strong>{escape(_quote_doc_text('pass_recup_option_not_subscribed', language=language))}</strong>"
-        "<br/><span style='font-size:10px;line-height:1.45;color:#6b7280;'><i>"
-        f"{escape(_quote_doc_text('pass_recup_compact_text', language=language))}"
-        f"<br/>&bull; {escape(_quote_doc_text('pass_recup_compact_limit', language=language))}"
-        "</i></span></p>"
+        _pass_recup_compact_notice_markup(language=language)
+        if display_flags["showPassRecupCompactNotice"]
+        else ""
+    )
+    pass_recup_compact_notice_pdf_html = (
+        _pass_recup_compact_notice_markup(language=language, pdf_compatible=True)
         if display_flags["showPassRecupCompactNotice"]
         else ""
     )
@@ -3439,6 +3461,7 @@ def _build_template_values(
         "masterclass_block_html": masterclass_block_html,
         "pass_recup_block_html": pass_recup_block_html,
         "pass_recup_compact_notice_html": pass_recup_compact_notice_html,
+        "pass_recup_compact_notice_pdf_html": pass_recup_compact_notice_pdf_html,
         "options_section_html": options_section_html,
         "payment_method_block_html": payment_method_block_html,
         "activities_planning_section_html": activities_planning_section_html,
@@ -4767,7 +4790,12 @@ def _render_quote_pdf_blocks(
         _apply_template("{solfege_block_html}", values=values, html_keys={"solfege_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""),
         _apply_template("{masterclass_block_html}", values=values, html_keys={"masterclass_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""),
         _apply_template("{pass_recup_block_html}", values=values, html_keys={"pass_recup_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""),
-        _apply_template("{pass_recup_compact_notice_html}", values=values, html_keys={"pass_recup_compact_notice_html"}, html_output=True).replace("<p>", "").replace("</p>", ""),
+        _apply_template(
+            "{pass_recup_compact_notice_pdf_html}",
+            values=values,
+            html_keys={"pass_recup_compact_notice_pdf_html"},
+            html_output=True,
+        ).replace("<p>", "").replace("</p>", ""),
     ]
     option_blocks = [block.strip() for block in option_blocks if str(block or "").strip()]
     if option_blocks:
