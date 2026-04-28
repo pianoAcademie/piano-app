@@ -10533,16 +10533,17 @@ export async function createQuoteProspectAction(formData: FormData): Promise<voi
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const adminLanguage = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  const successReturnTo = withUiLanguage(returnTo, adminLanguage);
   const email = String(formData.get("prospect_email") ?? "").trim().toLowerCase();
   const firstName = String(formData.get("prospect_first_name") ?? "").trim();
   const lastName = String(formData.get("prospect_last_name") ?? "").trim();
   const phone = String(formData.get("prospect_phone") ?? "").trim();
 
   if (!email || !email.includes("@")) {
-    redirect(appendQueryMessage(returnTo, "error", "Email prospect invalide"));
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_prospect_email_invalid", { lang: adminLanguage }));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -10560,11 +10561,12 @@ export async function createQuoteProspectAction(formData: FormData): Promise<voi
   );
 
   if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
+    redirect(appendQueryMessage(successReturnTo, "error", result.message));
   }
 
   revalidatePath("/admin/quotes");
-  redirect(`${returnTo}${returnTo.includes("?") ? "&" : "?"}prospect_id=${encodeURIComponent(result.data.id)}&ok=${encodeURIComponent("Prospect cree")}`);
+  const nextPath = setQueryParam(successReturnTo, "prospect_id", result.data.id);
+  redirect(withUiMessageCode(nextPath, "ok", "prospect_created", { lang: adminLanguage }));
 }
 
 export async function createQuoteDraftAction(formData: FormData): Promise<void> {
@@ -10572,9 +10574,10 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const adminLanguage = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  const successReturnTo = withUiLanguage(returnTo, adminLanguage);
   const contextType = String(formData.get("context_type") ?? "acquisition").trim().toLowerCase() === "active_client" ? "active_client" : "acquisition";
   const prospectId = parseUuid(String(formData.get("prospect_id") ?? ""));
   const clientId = parseUuid(String(formData.get("client_id") ?? ""));
@@ -10585,8 +10588,8 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   const termsTemplateId = parseUuid(String(formData.get("terms_template_id") ?? ""));
   const locationId = parseUuid(String(formData.get("location_id") ?? ""));
   const quoteTemplateUuid = parseUuid(String(formData.get("quote_template_uuid") ?? ""));
-  const languageRaw = String(formData.get("language") ?? "").trim().toLowerCase();
-  const language = languageRaw ? languageRaw.slice(0, 8) : null;
+  const quoteLanguageRaw = String(formData.get("language") ?? "").trim().toLowerCase();
+  const quoteLanguage = quoteLanguageRaw ? quoteLanguageRaw.slice(0, 8) : null;
   const currencyRaw = String(formData.get("currency") ?? "EUR").trim().toUpperCase();
   const currency = currencyRaw.length === 3 ? currencyRaw : "EUR";
   const tvaRateRaw = String(formData.get("tva_rate") ?? "").trim();
@@ -10599,12 +10602,12 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   const passRecupMode = passRecupModeRaw === "enabled" || passRecupModeRaw === "disabled" ? passRecupModeRaw : "auto";
   const parsedSolfegeSlot = parseSolfegeSlotJson(solfegeSlotJsonRaw);
   if (parsedSolfegeSlot === undefined) {
-    redirect(appendQueryMessage(returnTo, "error", "Creneau solfege invalide"));
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_solfege_slot_invalid", { lang: adminLanguage }));
   }
   const planningBlocksRaw = String(formData.get("planning_blocks_json") ?? "").trim();
   const planningBlocks = planningBlocksRaw ? parsePlanningBlocksJson(planningBlocksRaw) : [];
   if (planningBlocks === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Planning devis invalide"));
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_planning_invalid", { lang: adminLanguage }));
   }
   const effectivePlanningSchoolYearLabel = deriveSchoolYearLabelFromBlocks(planningBlocks, schoolYearLabel);
   const resolvedEstimatedSolfegeLevel = estimatedSolfegeLevel;
@@ -10632,19 +10635,19 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   if (tvaRateRaw) {
     const parsedTva = Number(tvaRateRaw);
     if (!Number.isFinite(parsedTva) || parsedTva < 0 || parsedTva > 100) {
-      redirect(appendQueryMessage(returnTo, "error", "TVA invalide"));
+      redirect(withUiMessageCode(successReturnTo, "error", "quote_vat_invalid", { lang: adminLanguage }));
     }
     tvaRate = parsedTva.toFixed(2);
   }
 
   if (contextType === "acquisition" && !prospectId) {
-    redirect(appendQueryMessage(returnTo, "error", "Selectionner un prospect pour un devis acquisition"));
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_acquisition_prospect_required", { lang: adminLanguage }));
   }
   if (contextType === "active_client" && !clientId) {
-    redirect(appendQueryMessage(returnTo, "error", "Selectionner un client actif pour ce devis"));
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_active_client_required", { lang: adminLanguage }));
   }
   if (expiryDaysRaw && expiryDays === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Delai expiration invalide"));
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_expiry_invalid", { lang: adminLanguage }));
   }
 
   let calendarSnapshot: Record<string, unknown> = {};
@@ -10713,7 +10716,7 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
     terms_template_id: termsTemplateId,
     school_year_label: effectivePlanningSchoolYearLabel,
     currency,
-    language,
+    language: quoteLanguage,
     vat_rate: tvaRate,
     meta: nextMeta,
     expiry_days: expiryDays,
@@ -10746,11 +10749,12 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   );
 
   if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
+    redirect(appendQueryMessage(successReturnTo, "error", result.message));
   }
 
   revalidatePath("/admin/quotes");
-  redirect(`/admin/quotes/${encodeURIComponent(result.data.quote.id)}?back=${encodeURIComponent("/admin/quotes")}&ok=${encodeURIComponent("Devis brouillon cree")}`);
+  const detailPath = withUiLanguage(`/admin/quotes/${encodeURIComponent(result.data.quote.id)}?back=${encodeURIComponent(successReturnTo)}`, adminLanguage);
+  redirect(withUiMessageCode(detailPath, "ok", "quote_detail_created", { lang: adminLanguage }));
 }
 
 export async function sendQuoteAction(formData: FormData): Promise<void> {
@@ -10758,13 +10762,14 @@ export async function sendQuoteAction(formData: FormData): Promise<void> {
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const recipientEmail = String(formData.get("recipient_email") ?? "").trim();
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes?quote_id=${encodeURIComponent(quoteId)}`));
+  const successReturnTo = withUiLanguage(returnTo, language);
   if (!quoteId) {
-    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_not_found", { lang: language }));
   }
 
   const result = await backendRequest<{ quote: { id: string } }>(
@@ -10783,11 +10788,11 @@ export async function sendQuoteAction(formData: FormData): Promise<void> {
   );
 
   if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
+    redirect(appendQueryMessage(successReturnTo, "error", result.message));
   }
   revalidatePath("/admin/quotes");
   revalidatePath(`/admin/quotes/${quoteId}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Devis envoye"));
+  redirect(withUiMessageCode(successReturnTo, "ok", "quote_sent", { lang: language }));
 }
 
 export async function resendQuoteAction(formData: FormData): Promise<void> {
@@ -10795,13 +10800,14 @@ export async function resendQuoteAction(formData: FormData): Promise<void> {
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const recipientEmail = String(formData.get("recipient_email") ?? "").trim();
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes?quote_id=${encodeURIComponent(quoteId)}`));
+  const successReturnTo = withUiLanguage(returnTo, language);
   if (!quoteId) {
-    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_not_found", { lang: language }));
   }
 
   const result = await backendRequest<{ quote: { id: string } }>(
@@ -10820,12 +10826,12 @@ export async function resendQuoteAction(formData: FormData): Promise<void> {
   );
 
   if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
+    redirect(appendQueryMessage(successReturnTo, "error", result.message));
   }
   revalidatePath("/admin/quotes");
   revalidatePath("/admin/communications");
   revalidatePath(`/admin/quotes/${quoteId}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Devis renvoye"));
+  redirect(withUiMessageCode(successReturnTo, "ok", "quote_resent", { lang: language }));
 }
 
 export async function cancelQuoteAction(formData: FormData): Promise<void> {
@@ -10833,12 +10839,13 @@ export async function cancelQuoteAction(formData: FormData): Promise<void> {
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes?quote_id=${encodeURIComponent(quoteId)}`));
+  const successReturnTo = withUiLanguage(returnTo, language);
   if (!quoteId) {
-    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_not_found", { lang: language }));
   }
 
   const result = await backendRequest<{ quote: { id: string } }>(
@@ -10858,13 +10865,13 @@ export async function cancelQuoteAction(formData: FormData): Promise<void> {
   );
 
   if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
+    redirect(appendQueryMessage(successReturnTo, "error", result.message));
   }
 
   revalidatePath("/admin/quotes");
   revalidatePath("/admin/communications");
   revalidatePath(`/admin/quotes/${quoteId}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Devis annule"));
+  redirect(withUiMessageCode(successReturnTo, "ok", "quote_cancelled", { lang: language }));
 }
 
 export async function restoreQuotePublicResponseAction(formData: FormData): Promise<void> {
@@ -10872,12 +10879,13 @@ export async function restoreQuotePublicResponseAction(formData: FormData): Prom
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes?quote_id=${encodeURIComponent(quoteId)}`));
+  const successReturnTo = withUiLanguage(returnTo, language);
   if (!quoteId) {
-    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_not_found", { lang: language }));
   }
 
   const result = await backendRequest<{ quote: { id: string } }>(
@@ -10889,12 +10897,12 @@ export async function restoreQuotePublicResponseAction(formData: FormData): Prom
   );
 
   if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
+    redirect(appendQueryMessage(successReturnTo, "error", result.message));
   }
 
   revalidatePath("/admin/quotes");
   revalidatePath(`/admin/quotes/${quoteId}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Statut public du devis restaure"));
+  redirect(withUiMessageCode(successReturnTo, "ok", "quote_public_response_restored", { lang: language }));
 }
 
 export async function resendQuotePublicConfirmationAction(formData: FormData): Promise<void> {
@@ -10970,12 +10978,13 @@ export async function regenerateQuoteDocumentAction(formData: FormData): Promise
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  const successReturnTo = withUiLanguage(returnTo, language);
   if (!quoteId) {
-    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_not_found", { lang: language }));
   }
 
   const result = await backendRequest<{ quote_id: string; document_status: string }>(
@@ -10985,12 +10994,12 @@ export async function regenerateQuoteDocumentAction(formData: FormData): Promise
   );
 
   if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
+    redirect(appendQueryMessage(successReturnTo, "error", result.message));
   }
 
   revalidatePath("/admin/quotes");
   revalidatePath(`/admin/quotes/${quoteId}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Document devis regenere"));
+  redirect(withUiMessageCode(successReturnTo, "ok", "quote_document_regenerated", { lang: language }));
 }
 
 export async function duplicateQuoteAction(formData: FormData): Promise<void> {
@@ -10998,12 +11007,13 @@ export async function duplicateQuoteAction(formData: FormData): Promise<void> {
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  const successReturnTo = withUiLanguage(returnTo, language);
   if (!quoteId) {
-    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_not_found", { lang: language }));
   }
 
   const result = await backendRequest<{ quote: { id: string } }>(
@@ -11013,10 +11023,11 @@ export async function duplicateQuoteAction(formData: FormData): Promise<void> {
   );
 
   if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
+    redirect(appendQueryMessage(successReturnTo, "error", result.message));
   }
   revalidatePath("/admin/quotes");
-  redirect(`/admin/quotes/${encodeURIComponent(result.data.quote.id)}?back=${encodeURIComponent("/admin/quotes")}&ok=${encodeURIComponent("Nouvelle version creee")}`);
+  const detailPath = withUiLanguage(`/admin/quotes/${encodeURIComponent(result.data.quote.id)}?back=${encodeURIComponent(successReturnTo)}`, language);
+  redirect(withUiMessageCode(detailPath, "ok", "quote_duplicated", { lang: language }));
 }
 
 export async function updateQuoteSettingsAction(formData: FormData): Promise<void> {
@@ -11024,12 +11035,13 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  const successReturnTo = withUiLanguage(returnTo, language);
   if (!quoteId) {
-    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_not_found", { lang: language }));
   }
 
   const quoteTypeId = parseUuid(String(formData.get("quote_type_id") ?? ""));
@@ -11041,8 +11053,8 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
   const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim();
   const currencyRaw = String(formData.get("currency") ?? "EUR").trim().toUpperCase();
   const currency = currencyRaw.length === 3 ? currencyRaw : "EUR";
-  const languageRaw = String(formData.get("language") ?? "").trim().toLowerCase();
-  const language = languageRaw ? languageRaw.slice(0, 8) : null;
+  const quoteLanguageRaw = String(formData.get("language") ?? "").trim().toLowerCase();
+  const quoteLanguage = quoteLanguageRaw ? quoteLanguageRaw.slice(0, 8) : null;
   const expiryDays = parsePositiveInt(String(formData.get("expiry_days") ?? "")) ?? null;
   const hasEstimatedSolfegeLevel = formData.has("estimated_solfege_level");
   const estimatedSolfegeLevelRaw = String(formData.get("estimated_solfege_level") ?? "").trim();
@@ -11053,7 +11065,7 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
   const tvaRateRaw = String(formData.get("tva_rate") ?? "").trim();
 
   if (expiryDays !== null && (expiryDays < 1 || expiryDays > 120)) {
-    redirect(appendQueryMessage(returnTo, "error", "Delai expiration invalide"));
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_expiry_invalid", { lang: language }));
   }
 
   let meta: Record<string, unknown> = {};
@@ -11072,7 +11084,7 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
     if (tvaRateRaw) {
       const parsedTva = Number(tvaRateRaw);
       if (!Number.isFinite(parsedTva) || parsedTva < 0 || parsedTva > 100) {
-        redirect(appendQueryMessage(returnTo, "error", "TVA invalide"));
+        redirect(withUiMessageCode(successReturnTo, "error", "quote_vat_invalid", { lang: language }));
       }
       meta.tva_rate = parsedTva.toFixed(2);
     } else {
@@ -11113,7 +11125,7 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
     payment_plan_id: paymentPlanId,
     school_year_label: schoolYearLabel || null,
     currency,
-    language,
+    language: quoteLanguage,
     meta,
   };
   if (quoteTemplateUuid) {
@@ -11141,12 +11153,12 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
     token,
   );
   if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
+    redirect(appendQueryMessage(successReturnTo, "error", result.message));
   }
 
   revalidatePath("/admin/quotes");
   revalidatePath(`/admin/quotes/${quoteId}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Parametres devis mis a jour"));
+  redirect(withUiMessageCode(successReturnTo, "ok", "quote_settings_updated", { lang: language }));
 }
 
 export async function updateQuoteLinesAction(formData: FormData): Promise<void> {
@@ -11154,12 +11166,13 @@ export async function updateQuoteLinesAction(formData: FormData): Promise<void> 
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  const successReturnTo = withUiLanguage(returnTo, language);
   if (!quoteId) {
-    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_not_found", { lang: language }));
   }
 
   const lines = parseQuoteWizardLines(String(formData.get("lines_json") ?? ""));
@@ -11190,12 +11203,12 @@ export async function updateQuoteLinesAction(formData: FormData): Promise<void> 
     token,
   );
   if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
+    redirect(appendQueryMessage(successReturnTo, "error", result.message));
   }
 
   revalidatePath("/admin/quotes");
   revalidatePath(`/admin/quotes/${quoteId}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Lignes devis mises a jour"));
+  redirect(withUiMessageCode(successReturnTo, "ok", "quote_lines_updated", { lang: language }));
 }
 
 type QuotePlanningBlockInput = {
@@ -11579,17 +11592,18 @@ export async function updateQuotePlanningAction(formData: FormData): Promise<voi
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  const successReturnTo = withUiLanguage(returnTo, language);
   if (!quoteId) {
-    redirect(appendQueryMessage(returnTo, "error", "Devis introuvable"));
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_not_found", { lang: language }));
   }
 
   const blocks = parsePlanningBlocksJson(String(formData.get("planning_blocks_json") ?? ""));
   if (blocks === null) {
-    redirect(appendQueryMessage(returnTo, "error", "Planning invalide"));
+    redirect(withUiMessageCode(successReturnTo, "error", "planning_invalid", { lang: language }));
   }
 
   let currentMeta: Record<string, unknown> = {};
@@ -11638,12 +11652,12 @@ export async function updateQuotePlanningAction(formData: FormData): Promise<voi
     token,
   );
   if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
+    redirect(appendQueryMessage(successReturnTo, "error", result.message));
   }
 
   revalidatePath("/admin/quotes");
   revalidatePath(`/admin/quotes/${quoteId}`);
-  redirect(appendQueryMessage(returnTo, "ok", "Planning devis mis a jour"));
+  redirect(withUiMessageCode(successReturnTo, "ok", "quote_planning_updated", { lang: language }));
 }
 
 type ProspectPayload = {

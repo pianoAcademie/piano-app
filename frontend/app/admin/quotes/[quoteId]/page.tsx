@@ -64,6 +64,7 @@ import type {
   UserOut,
 } from "../../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
+import { resolveUiFlashMessage, withUiLanguage, withUiMessageCode } from "../../../../lib/ui-messages";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type QuoteWorkspaceSection =
@@ -1385,14 +1386,14 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 
   const quoteId = String(params.quoteId || "").trim();
   if (!quoteId) {
-    redirect("/admin/quotes?error=Devis%20introuvable");
+    redirect(withUiMessageCode("/admin/quotes", "error", "quote_not_found", { lang: language }));
   }
 
-  const backPath = safeBackPath(readParam(searchParams, "back"));
+  const backPath = withUiLanguage(safeBackPath(readParam(searchParams, "back")), language);
   const activeSection = parseWorkspaceSection(readParam(searchParams, "section"));
   const quickScenario = parseQuickScenario(readParam(searchParams, "quick_scenario"));
-  const ok = readParam(searchParams, "ok");
-  const error = readParam(searchParams, "error");
+  const ok = resolveUiFlashMessage(searchParams, language, "ok") || readParam(searchParams, "ok");
+  const error = resolveUiFlashMessage(searchParams, language, "error") || readParam(searchParams, "error");
 
   const [
     detailResult,
@@ -1965,11 +1966,11 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const resendPublicConfirmationFormId = `quote-resend-public-confirmation-form-${detail.quote.id}`;
   const sendPrimaryFormId = `quote-send-primary-form-${detail.quote.id}`;
   const sendThirdPartyFormId = `quote-send-third-party-form-${detail.quote.id}`;
-  const sendEmailPreviewPath = `/admin/quotes/${encodeURIComponent(detail.quote.id)}/email-preview`;
+  const sendEmailPreviewPath = withUiLanguage(`/admin/quotes/${encodeURIComponent(detail.quote.id)}/email-preview`, language);
 
   const quoteBasePath = `/admin/quotes/${encodeURIComponent(detail.quote.id)}`;
   const sectionHref = (section: QuoteWorkspaceSection): string =>
-    `${quoteBasePath}?back=${encodeURIComponent(backPath)}&section=${section}`;
+    withUiLanguage(`${quoteBasePath}?back=${encodeURIComponent(backPath)}&section=${section}`, language);
   const selfPath = appendQuickScenario(sectionHref(activeSection), quickScenario);
   const transformBasePath = `${quoteBasePath}/transform?back=${encodeURIComponent(selfPath)}${quickScenario === "live" ? "" : `&scenario=${quickScenario}`}`;
   const followupTransformationFailureUi =
@@ -2317,7 +2318,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	                  {selectedProspect ? (
                     <Link
                       className="ghost"
-	                      href={`/admin/prospects/${encodeURIComponent(selectedProspect.id)}?return_to=${encodeURIComponent(selfPath)}`}
+	                      href={withUiLanguage(`/admin/prospects/${encodeURIComponent(selectedProspect.id)}?return_to=${encodeURIComponent(selfPath)}`, language)}
 	                    >
 	                      {t("admin.quote_detail.edit_prospect")}
 	                    </Link>

@@ -11,6 +11,7 @@ import { duplicateQuoteAction, sendQuoteAction } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
 import type { AdminActivityOut, AdminClientOut, UserOut } from "../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
+import { resolveUiFlashMessage, withUiLanguage } from "../../../lib/ui-messages";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -360,6 +361,8 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
   const expiresToFilterRaw = readParam(searchParams, "expires_to");
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
+  const okMessage = resolveUiFlashMessage(searchParams, language, "ok") || ok;
+  const errorMessage = resolveUiFlashMessage(searchParams, language, "error") || error;
 
   const minTotalFilter = parseDecimal(minTotalFilterRaw);
   const maxTotalFilter = parseDecimal(maxTotalFilterRaw);
@@ -507,7 +510,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
     return true;
   });
 
-  const currentListHref = buildQuotesListHref({
+  const currentListHref = withUiLanguage(buildQuotesListHref({
     status: statusFilter,
     contextType: contextFilter,
     activityId: activityFilter,
@@ -527,7 +530,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
     createdTo: createdToFilterRaw,
     expiresFrom: expiresFromFilterRaw,
     expiresTo: expiresToFilterRaw,
-  });
+  }), language);
 
   const currencyValues = Array.from(new Set(quotes.map((row) => (row.currency || "").toUpperCase()).filter(Boolean))).sort();
   const quoteTypeValues = Array.from(new Set(quotes.map((row) => (row.quote_type || "").trim()).filter(Boolean))).sort();
@@ -549,13 +552,13 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
             <p className="muted">{t("admin.quotes.subtitle")}</p>
           </div>
           <div className="row wrap gap-sm">
-            <Link className="ghost" href="/admin/prospects">
+            <Link className="ghost" href={withUiLanguage("/admin/prospects", language)}>
               {t("admin.quotes.view_prospects")}
             </Link>
-            <Link className="ghost" href="/admin/config/quotes">
+            <Link className="ghost" href={withUiLanguage("/admin/config/quotes", language)}>
               {t("admin.quotes.configure_quotes")}
             </Link>
-            <Link className="mode-link" href="/admin/quotes/new">
+            <Link className="mode-link" href={withUiLanguage("/admin/quotes/new", language)}>
               {t("admin.quotes.new_quote")}
             </Link>
           </div>
@@ -564,8 +567,8 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
 
       {!quotesResult.ok ? <section className="flash-err">{t("admin.quotes.error_quotes")}: {quotesResult.message}</section> : null}
       {!activitiesResult.ok ? <section className="flash-err">{t("admin.quotes.error_activities")}: {activitiesResult.message}</section> : null}
-      {ok ? <section className="flash-ok">{ok}</section> : null}
-      {error ? <section className="flash-err">{error}</section> : null}
+      {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
+      {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
 
       <QuoteListPageRefine
         language={language}
@@ -702,7 +705,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
 
           <div className="row end cols-span-4 top-gap-sm">
             <button type="submit">{t("admin.quotes.filter")}</button>
-            <a className="ghost" href="/admin/quotes">{t("common.reset")}</a>
+            <a className="ghost" href={withUiLanguage("/admin/quotes", language)}>{t("common.reset")}</a>
           </div>
         </form>
 
@@ -741,7 +744,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                   const rowProspectType = row.context_type === "acquisition"
                     ? prospectTypeLabelFromMeta((owner as ProspectOut | undefined)?.meta || {})
                     : prospectTypeLabelFromClient(owner as AdminClientOut | undefined);
-                  const detailHref = `/admin/quotes/${row.id}?back=${encodeURIComponent(currentListHref)}`;
+                  const detailHref = withUiLanguage(`/admin/quotes/${row.id}?back=${encodeURIComponent(currentListHref)}`, language);
                   const publicHref = row.public_url ?? (row.public_token ? `/q/${row.id}?t=${encodeURIComponent(row.public_token)}` : "");
                   const publicAbsoluteHref = row.public_url ?? "";
                   const commercialState = quoteValidationState(row);

@@ -6,6 +6,7 @@ import QuoteWizardForm from "../../../../components/quote-wizard-form";
 import { createQuoteDraftAction } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
 import { normalizeUiLanguage, uiText } from "../../../../lib/ui-i18n";
+import { resolveUiFlashMessage, withUiLanguage } from "../../../../lib/ui-messages";
 import type {
   AdminActivityOut,
   AdminCatalogKitOut,
@@ -96,6 +97,11 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
   const selectedProspectId = readParam(searchParams, "prospect_id");
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
+  const okMessage = resolveUiFlashMessage(searchParams, language, "ok") || ok;
+  const errorMessage = resolveUiFlashMessage(searchParams, language, "error") || error;
+  const quotesListHref = withUiLanguage("/admin/quotes", language);
+  const quotesNewHref = withUiLanguage("/admin/quotes/new", language);
+  const newProspectHref = withUiLanguage(`/admin/prospects/new?return_to=${encodeURIComponent(quotesNewHref)}`, language);
 
   const [
     prospectsResult,
@@ -165,18 +171,18 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
             <p className="muted">{t("admin.quote_new.page_subtitle")}</p>
           </div>
           <div className="row wrap gap-sm">
-            <Link className="ghost" href="/admin/prospects/new?return_to=/admin/quotes/new">
+            <Link className="ghost" href={newProspectHref}>
               {t("admin.quote_new.new_prospect")}
             </Link>
-            <Link className="ghost" href="/admin/quotes">
+            <Link className="ghost" href={quotesListHref}>
               {t("admin.quote_new.back_to_quotes")}
             </Link>
           </div>
         </div>
       </section>
 
-      {ok ? <section className="flash-ok">{ok}</section> : null}
-      {error ? <section className="flash-err">{error}</section> : null}
+      {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
+      {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
       {loadErrors.length > 0 ? (
         <section className="card">
           <h3>{t("admin.quote_new.loading_errors")}</h3>
@@ -189,7 +195,7 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
       ) : null}
 
       <QuoteWizardForm
-        returnTo="/admin/quotes/new"
+        returnTo={quotesNewHref}
         prospects={prospects.map((row) => ({
           id: row.id,
           label: displayName(row.first_name, row.last_name, row.email),
