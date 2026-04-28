@@ -30,6 +30,7 @@ import {
   type QuoteTransformSession,
 } from "./quote-transformation";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "./ui-i18n";
+import { withUiLanguage, withUiMessageCode } from "./ui-messages";
 import type {
   AdminActivityOut,
   AdminActivityContentMappingOut,
@@ -11777,12 +11778,13 @@ export async function createAdminProspectAction(formData: FormData): Promise<voi
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const returnTo = safeAdminProspectsPath(String(formData.get("return_to") ?? "/admin/prospects"));
+  const successReturnTo = withUiLanguage(returnTo, language);
   const payload = buildProspectPayloadFromForm(formData);
   if (!payload) {
-    redirect(appendQueryMessage(returnTo, "error", "Champs prospect invalides"));
+    redirect(withUiMessageCode(successReturnTo, "error", "invalid_prospect_fields", { lang: language }));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -11794,12 +11796,12 @@ export async function createAdminProspectAction(formData: FormData): Promise<voi
     token,
   );
   if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
+    redirect(appendQueryMessage(successReturnTo, "error", result.message));
   }
 
   revalidatePath("/admin/prospects");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Prospect cree"));
+  redirect(withUiMessageCode(successReturnTo, "ok", "prospect_created", { lang: language }));
 }
 
 export async function updateAdminProspectAction(formData: FormData): Promise<void> {
@@ -11807,17 +11809,18 @@ export async function updateAdminProspectAction(formData: FormData): Promise<voi
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const prospectId = String(formData.get("prospect_id") ?? "").trim();
   const returnTo = safeAdminProspectsPath(String(formData.get("return_to") ?? "/admin/prospects"));
+  const successReturnTo = withUiLanguage(returnTo, language);
   if (!prospectId) {
-    redirect(appendQueryMessage(returnTo, "error", "Prospect introuvable"));
+    redirect(withUiMessageCode(successReturnTo, "error", "prospect_not_found", { lang: language }));
   }
 
   const payload = buildProspectPayloadFromForm(formData);
   if (!payload) {
-    redirect(appendQueryMessage(returnTo, "error", "Champs prospect invalides"));
+    redirect(withUiMessageCode(successReturnTo, "error", "invalid_prospect_fields", { lang: language }));
   }
 
   const status = String(formData.get("status") ?? "").trim().toLowerCase();
@@ -11848,12 +11851,12 @@ export async function updateAdminProspectAction(formData: FormData): Promise<voi
     token,
   );
   if (!result.ok) {
-    redirect(appendQueryMessage(returnTo, "error", result.message));
+    redirect(appendQueryMessage(successReturnTo, "error", result.message));
   }
 
   revalidatePath("/admin/prospects");
   revalidatePath("/admin/quotes/new");
-  redirect(appendQueryMessage(returnTo, "ok", "Prospect mis a jour"));
+  redirect(withUiMessageCode(successReturnTo, "ok", "prospect_updated", { lang: language }));
 }
 
 function safeAdminConfigQuotesPath(path: string, fallback = "/admin/config/quotes"): string {

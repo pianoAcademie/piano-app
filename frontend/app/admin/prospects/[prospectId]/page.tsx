@@ -7,6 +7,7 @@ import { updateAdminProspectAction } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
 import type { UserOut } from "../../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
+import { resolveUiFlashMessage, withUiLanguage, withUiMessageCode } from "../../../../lib/ui-messages";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -119,12 +120,12 @@ export default async function AdminProspectDetailPage({ params, searchParams }: 
 
   const prospectId = String(params.prospectId || "").trim();
   if (!prospectId) {
-    redirect(`/admin/prospects?error=${encodeURIComponent(t("admin.prospects.not_found"))}`);
+    redirect(withUiMessageCode("/admin/prospects", "error", "prospect_not_found", { lang: language }));
   }
 
-  const ok = readParam(searchParams, "ok");
-  const error = readParam(searchParams, "error");
-  const returnTo = safeReturnPath(readParam(searchParams, "return_to") || "/admin/prospects");
+  const okMessage = resolveUiFlashMessage(searchParams, language, "ok") || readParam(searchParams, "ok");
+  const errorMessage = resolveUiFlashMessage(searchParams, language, "error") || readParam(searchParams, "error");
+  const returnTo = withUiLanguage(safeReturnPath(readParam(searchParams, "return_to") || "/admin/prospects"), language);
 
   const [prospectResult, quotesResult, parentsResult] = await Promise.all([
     backendRequest<ProspectOut>(`/api/v1/prospects/${encodeURIComponent(prospectId)}`, {}, token),
@@ -139,7 +140,7 @@ export default async function AdminProspectDetailPage({ params, searchParams }: 
           <h2>{t("admin.prospects.not_found")}</h2>
           <p className="flash-err">{prospectResult.message}</p>
           <div className="row top-gap-sm">
-            <Link className="ghost" href="/admin/prospects">{t("admin.prospects.back_list")}</Link>
+            <Link className="ghost" href={withUiLanguage("/admin/prospects", language)}>{t("admin.prospects.back_list")}</Link>
           </div>
         </section>
       </section>
@@ -165,6 +166,7 @@ export default async function AdminProspectDetailPage({ params, searchParams }: 
       const right = new Date(b.created_at).getTime();
       return (Number.isFinite(right) ? right : 0) - (Number.isFinite(left) ? left : 0);
     });
+  const createQuoteHref = withUiLanguage(`/admin/quotes/new?prospect_id=${encodeURIComponent(prospect.id)}`, language);
 
   return (
     <section className="admin-page-grid">
@@ -176,13 +178,13 @@ export default async function AdminProspectDetailPage({ params, searchParams }: 
           </div>
           <div className="row wrap gap-sm">
             <Link className="ghost" href={returnTo}>{t("admin.prospects.back")}</Link>
-            <Link className="ghost" href={`/admin/quotes/new?prospect_id=${encodeURIComponent(prospect.id)}`}>{t("admin.prospects.create_quote")}</Link>
+            <Link className="ghost" href={createQuoteHref}>{t("admin.prospects.create_quote")}</Link>
           </div>
         </div>
       </section>
 
-      {ok ? <section className="flash-ok">{ok}</section> : null}
-      {error ? <section className="flash-err">{error}</section> : null}
+      {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
+      {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
       {!quotesResult.ok ? <section className="flash-err">{t("admin.prospects.quotes_error")}: {quotesResult.message}</section> : null}
       {!parentsResult.ok ? <section className="flash-err">{t("admin.prospects.parents_search_error")}: {parentsResult.message}</section> : null}
 
@@ -200,7 +202,7 @@ export default async function AdminProspectDetailPage({ params, searchParams }: 
       <section className="card">
         <div className="row spread wrap gap-sm">
           <h3>{t("admin.prospects.linked_quotes")}</h3>
-          <Link className="ghost" href={`/admin/quotes/new?prospect_id=${encodeURIComponent(prospect.id)}`}>{t("admin.prospects.create_a_quote")}</Link>
+          <Link className="ghost" href={createQuoteHref}>{t("admin.prospects.create_a_quote")}</Link>
         </div>
         <div className="table-wrap top-gap-sm">
           <table className="data-table">
@@ -228,7 +230,7 @@ export default async function AdminProspectDetailPage({ params, searchParams }: 
                     <td>{formatDate(row.created_at, language)}</td>
                     <td>{formatDate(row.expires_at, language)}</td>
                     <td>
-                      <Link className="ghost" href={`/admin/quotes/${row.id}?back=${encodeURIComponent(returnTo)}`}>{uiText(language, "common.open")}</Link>
+                      <Link className="ghost" href={withUiLanguage(`/admin/quotes/${row.id}?back=${encodeURIComponent(returnTo)}`, language)}>{uiText(language, "common.open")}</Link>
                     </td>
                   </tr>
                 ))

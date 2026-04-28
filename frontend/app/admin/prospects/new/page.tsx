@@ -7,6 +7,7 @@ import { createAdminProspectAction } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
 import type { UserOut } from "../../../../lib/types";
 import { normalizeUiLanguage, uiText } from "../../../../lib/ui-i18n";
+import { resolveUiFlashMessage, withUiLanguage } from "../../../../lib/ui-messages";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type ProspectOut = {
@@ -48,7 +49,10 @@ export default async function AdminProspectNewPage({ searchParams }: { searchPar
 
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
-  const returnTo = safeReturnPath(readParam(searchParams, "return_to"));
+  const okMessage = resolveUiFlashMessage(searchParams, language, "ok") || ok;
+  const errorMessage = resolveUiFlashMessage(searchParams, language, "error") || error;
+  const returnTo = withUiLanguage(safeReturnPath(readParam(searchParams, "return_to")), language);
+  const listHref = withUiLanguage("/admin/prospects", language);
   const parentsResult = await backendRequest<ProspectOut[]>("/api/v1/prospects?limit=1000&prospect_type=adult", {}, token);
   const parentCandidates = (parentsResult.ok ? parentsResult.data : [])
     .filter((row) => String(row.meta?.prospect_type || "adult").toLowerCase() !== "child")
@@ -71,13 +75,13 @@ export default async function AdminProspectNewPage({ searchParams }: { searchPar
           </div>
           <div className="row wrap gap-sm">
             <Link className="ghost" href={returnTo}>{t("admin.prospects.back")}</Link>
-            <Link className="ghost" href="/admin/prospects">{t("admin.prospects.back_list")}</Link>
+            <Link className="ghost" href={listHref}>{t("admin.prospects.back_list")}</Link>
           </div>
         </div>
       </section>
 
-      {ok ? <section className="flash-ok">{ok}</section> : null}
-      {error ? <section className="flash-err">{error}</section> : null}
+      {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
+      {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
       {!parentsResult.ok ? <section className="flash-err">{t("admin.prospects.parents_search_error")}: {parentsResult.message}</section> : null}
 
       <section className="card">

@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { backendRequest } from "../../../lib/backend";
 import type { UserOut } from "../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
+import { resolveUiFlashMessage, withUiLanguage } from "../../../lib/ui-messages";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type ProspectStatusFilter = "" | "active" | "archived" | "converted" | "lost" | "new";
@@ -192,6 +193,8 @@ export default async function AdminProspectsPage({ searchParams }: { searchParam
   const createdTo = parseIsoDateOnly(createdToRaw);
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
+  const okMessage = resolveUiFlashMessage(searchParams, language, "ok") || ok;
+  const errorMessage = resolveUiFlashMessage(searchParams, language, "error") || error;
 
   const query = new URLSearchParams();
   if (q) query.set("q", q);
@@ -258,7 +261,7 @@ export default async function AdminProspectsPage({ searchParams }: { searchParam
     return true;
   });
 
-  const currentListHref = buildProspectsListHref({
+  const currentListHref = withUiLanguage(buildProspectsListHref({
     q,
     status,
     prospectType: typeFilter,
@@ -267,7 +270,7 @@ export default async function AdminProspectsPage({ searchParams }: { searchParam
     source: sourceFilter,
     createdFrom: createdFromRaw,
     createdTo: createdToRaw,
-  });
+  }), language);
 
   return (
     <section className="admin-page-grid">
@@ -278,16 +281,16 @@ export default async function AdminProspectsPage({ searchParams }: { searchParam
             <p className="muted">{t("admin.prospects.subtitle")}</p>
           </div>
           <div className="row wrap gap-sm">
-            <Link className="ghost" href="/admin/quotes">{t("admin.prospects.view_quotes")}</Link>
-            <Link className="mode-link" href="/admin/prospects/new">{t("admin.prospects.new_prospect")}</Link>
+            <Link className="ghost" href={withUiLanguage("/admin/quotes", language)}>{t("admin.prospects.view_quotes")}</Link>
+            <Link className="mode-link" href={withUiLanguage("/admin/prospects/new", language)}>{t("admin.prospects.new_prospect")}</Link>
           </div>
         </div>
       </section>
 
       {!prospectsResult.ok ? <section className="flash-err">{t("admin.prospects.prospects_error")}: {prospectsResult.message}</section> : null}
       {!quotesResult.ok ? <section className="flash-err">{t("admin.prospects.quotes_error")}: {quotesResult.message}</section> : null}
-      {ok ? <section className="flash-ok">{ok}</section> : null}
-      {error ? <section className="flash-err">{error}</section> : null}
+      {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
+      {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
 
       <section className="card">
         <h3>{t("admin.prospects.list_title")}</h3>
@@ -345,7 +348,7 @@ export default async function AdminProspectsPage({ searchParams }: { searchParam
           </label>
           <div className="row end cols-span-4 top-gap-sm">
             <button type="submit">{uiText(language, "common.apply")}</button>
-            <a className="ghost" href="/admin/prospects">{uiText(language, "common.reset")}</a>
+            <a className="ghost" href={withUiLanguage("/admin/prospects", language)}>{uiText(language, "common.reset")}</a>
           </div>
         </form>
 
@@ -373,12 +376,12 @@ export default async function AdminProspectsPage({ searchParams }: { searchParam
               ) : (
                 filteredProspects.map((row) => {
                   const type = prospectType(row.meta || {});
-                  const detailHref = `/admin/prospects/${row.id}?return_to=${encodeURIComponent(currentListHref)}`;
-                  const newQuoteHref = `/admin/quotes/new?prospect_id=${encodeURIComponent(row.id)}`;
+                  const detailHref = withUiLanguage(`/admin/prospects/${row.id}?return_to=${encodeURIComponent(currentListHref)}`, language);
+                  const newQuoteHref = withUiLanguage(`/admin/quotes/new?prospect_id=${encodeURIComponent(row.id)}`, language);
                   const quoteMeta = quoteMetaByProspect.get(row.id) ?? { count: 0, lastQuote: null };
                   const lastQuote = quoteMeta.lastQuote;
                   const lastQuoteHref = lastQuote
-                    ? `/admin/quotes/${lastQuote.id}?back=${encodeURIComponent("/admin/quotes")}`
+                    ? withUiLanguage(`/admin/quotes/${lastQuote.id}?back=${encodeURIComponent(withUiLanguage("/admin/quotes", language))}`, language)
                     : "";
                   return (
                     <tr key={row.id}>
