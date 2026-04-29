@@ -272,10 +272,30 @@ class QuotePaymentSchedulePreviewRequest(BaseModel):
     currency: str = Field(default="EUR", min_length=3, max_length=3)
 
 
+class QuotePublicSolfegeSlotOptionOut(BaseModel):
+    key: str
+    label: str
+
+
+class QuotePublicSolfegeSelectionOut(BaseModel):
+    level_code: str | None = None
+    duration_minutes: int | None = None
+    pending_selection: bool = False
+    required: bool = False
+    selected_key: str | None = None
+    selected_label: str | None = None
+    available_slots: list[QuotePublicSolfegeSlotOptionOut] = Field(default_factory=list)
+
+
+class QuotePublicApproveRequest(BaseModel):
+    selected_solfege_slot_key: str | None = Field(default=None, max_length=255)
+
+
 class QuotePublicOut(BaseModel):
     quote: QuoteOut
     lines: list[QuoteLineOut] = Field(default_factory=list)
     payment_schedule: list[dict[str, object]] = Field(default_factory=list)
+    solfege_selection: QuotePublicSolfegeSelectionOut | None = None
 
 
 class QuoteChangeRequestIn(BaseModel):

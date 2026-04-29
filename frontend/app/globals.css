@@ -13714,6 +13714,15 @@ button.danger:focus-visible {
   gap: 0.45rem;
 }
 
+.quote-public-solfege-box {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: #fffaf2;
+}
+
 .quote-public-change-request textarea {
   min-height: 6.25rem;
   resize: vertical;

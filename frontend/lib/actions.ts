@@ -13962,14 +13962,19 @@ export async function approvePublicQuoteAction(formData: FormData): Promise<void
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const token = String(formData.get("public_token") ?? "").trim();
   const returnTo = safeQuotePublicPath(String(formData.get("return_to") ?? `/q/${quoteId}?t=${encodeURIComponent(token)}`), `/q/${quoteId}?t=${encodeURIComponent(token)}`);
+  const solfegeSlotRequired = String(formData.get("solfege_slot_required") ?? "").trim() === "1";
+  const selectedSolfegeSlotKey = String(formData.get("selected_solfege_slot_key") ?? "").trim();
   if (!quoteId || !token) {
     redirect(setQueryParam(returnTo, "error_code", "quote_public_invalid_link"));
+  }
+  if (solfegeSlotRequired && !selectedSolfegeSlotKey) {
+    redirect(setQueryParam(returnTo, "error_code", "quote_public_solfege_slot_required"));
   }
   const result = await runPublicQuoteAction({
     action: "approve",
     quoteId,
     token,
-    body: null,
+    body: selectedSolfegeSlotKey ? { selected_solfege_slot_key: selectedSolfegeSlotKey } : {},
   });
   if (!result.ok) {
     redirect(appendQueryMessage(returnTo, "error", result.message));

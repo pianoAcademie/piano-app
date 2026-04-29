@@ -1,0 +1,124 @@
+from __future__ import annotations
+
+from pathlib import Path
+import sys
+import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+
+from app.api.routes.quotes import _public_quote_solfege_selection
+
+
+class QuotePublicSolfegeSelectionTests(unittest.TestCase):
+    def test_uses_pending_snapshot_options_on_public_quote(self) -> None:
+        quote = SimpleNamespace(
+            language="fr",
+            estimated_solfege_level="2",
+            solfege_duration_minutes=45,
+            selected_solfege_slot={},
+            calendar_snapshot={
+                "blocks": [
+                    {
+                        "activity_label": "Cours de solfège - niveau 2",
+                        "selection_pending": True,
+                        "pending_solfege_level": "2",
+                        "pending_slot_options": [
+                            {
+                                "weekday": 2,
+                                "weekday_label": "Mercredi",
+                                "start_time": "17:15",
+                                "end_time": "18:00",
+                                "location_label": "Online",
+                                "modality": "ONLINE",
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+
+        selection = _public_quote_solfege_selection(object(), quote)
+
+        self.assertIsNotNone(selection)
+        assert selection is not None
+        self.assertTrue(selection.pending_selection)
+        self.assertTrue(selection.required)
+        self.assertEqual(selection.level_code, "2")
+        self.assertEqual(len(selection.available_slots), 1)
+        self.assertIn("Mercredi", selection.available_slots[0].label)
+
+    def test_falls_back_to_active_rule_when_snapshot_has_no_slot_options(self) -> None:
+        quote = SimpleNamespace(
+            language="fr",
+            estimated_solfege_level="2",
+            solfege_duration_minutes=45,
+            selected_solfege_slot={},
+            calendar_snapshot={
+                "blocks": [
+                    {
+                        "activity_label": "Cours de solfège - niveau 2",
+                        "selection_pending": True,
+                        "pending_solfege_level": "2",
+                        "pending_slot_options": [],
+                    }
+                ]
+            },
+        )
+        fake_rule = SimpleNamespace(
+            duration_minutes=45,
+            allowed_time_slots=[
+                {"weekday": 2, "start_time": "17:15", "end_time": "18:00"},
+                {"weekday": 5, "start_time": "10:15", "end_time": "11:00"},
+            ],
+            allowed_weekdays=[],
+            location_id=None,
+            modality="ONLINE",
+        )
+
+        with patch("app.api.routes.quotes._active_solfege_rule_for_level", return_value=fake_rule):
+            selection = _public_quote_solfege_selection(object(), quote)
+
+        self.assertIsNotNone(selection)
+        assert selection is not None
+        self.assertEqual(len(selection.available_slots), 2)
+        self.assertTrue(any("Mercredi 17:15-18:00" in option.label for option in selection.available_slots))
+        self.assertTrue(any("Samedi 10:15-11:00" in option.label for option in selection.available_slots))
+
+    def test_keeps_existing_selected_slot_without_requiring_new_choice(self) -> None:
+        quote = SimpleNamespace(
+            language="fr",
+            estimated_solfege_level="2",
+            solfege_duration_minutes=45,
+            selected_solfege_slot={
+                "weekday": 2,
+                "weekday_label": "Mercredi",
+                "start_time": "17:15",
+                "end_time": "18:00",
+                "location_label": "Online",
+                "modality": "ONLINE",
+                "label": "Mercredi 17:15-18:00 · Online",
+            },
+            calendar_snapshot={"blocks": []},
+        )
+        fake_rule = SimpleNamespace(
+            duration_minutes=45,
+            allowed_time_slots=[{"weekday": 5, "start_time": "10:15", "end_time": "11:00"}],
+            allowed_weekdays=[],
+            location_id=None,
+            modality="ONLINE",
+        )
+
+        with patch("app.api.routes.quotes._active_solfege_rule_for_level", return_value=fake_rule):
+            selection = _public_quote_solfege_selection(object(), quote)
+
+        self.assertIsNotNone(selection)
+        assert selection is not None
+        self.assertFalse(selection.required)
+        self.assertEqual(selection.selected_label, "Mercredi 17:15-18:00 · Online")
+        self.assertTrue(any(option.key == selection.selected_key for option in selection.available_slots))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -8,6 +8,7 @@ import io
 import json
 import re
 import secrets
+import unicodedata
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -90,7 +91,10 @@ from app.schemas.quote import (
     QuoteLineOut,
     QuoteOut,
     QuotePaymentSchedulePreviewRequest,
+    QuotePublicApproveRequest,
     QuotePublicOut,
+    QuotePublicSolfegeSelectionOut,
+    QuotePublicSolfegeSlotOptionOut,
     QuoteSchoolCalendarOut,
     QuoteSchoolCalendarDeploymentActionOut,
     QuoteSchoolCalendarDeploymentPreviewOut,
@@ -2186,6 +2190,365 @@ def _update_public_response_meta(
     quote.meta = next_meta
 
 
+def _public_searchable_text(value: object | None) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    normalized = unicodedata.normalize("NFKD", raw)
+    return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
+def _public_solfege_language(value: object | None) -> str:
+    normalized = str(value or "").strip().lower()
+    return "en" if normalized == "en" else "fr"
+
+
+def _public_solfege_weekday_label(weekday: object | None, *, language: str) -> str:
+    labels = {
+        "fr": ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"],
+        "en": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+    }
+    try:
+        index = int(weekday)
+    except (TypeError, ValueError):
+        return ""
+    if index < 0 or index > 6:
+        return ""
+    return labels["en" if language == "en" else "fr"][index]
+
+
+def _public_solfege_modality_label(value: object | None, *, language: str) -> str:
+    raw = str(value or "").strip().upper()
+    if not raw or raw == "ANY":
+        return ""
+    mapping = {
+        "ONLINE": "Online" if language == "en" else "En ligne",
+        "ONSITE": "On-site" if language == "en" else "Presentiel",
+        "HYBRID": "Hybrid" if language == "en" else "Hybride",
+    }
+    return mapping.get(raw, raw)
+
+
+def _public_solfege_mode_semantic(value: object | None) -> str:
+    normalized = _public_searchable_text(value)
+    if normalized in {"online", "en ligne", "cours en ligne", "mode en ligne"}:
+        return "ONLINE"
+    if normalized in {"presentiel", "onsite", "cours en presentiel", "mode presentiel"}:
+        return "ONSITE"
+    if normalized in {"hybride", "hybrid"}:
+        return "HYBRID"
+    return normalized
+
+
+def _public_solfege_slot_key(slot: dict[str, object]) -> str:
+    parts = [
+        str(slot.get("level_code") or "").strip(),
+        str(slot.get("weekday") if slot.get("weekday") is not None else "").strip(),
+        str(slot.get("date") or "").strip(),
+        str(slot.get("start_time") or "").strip(),
+        str(slot.get("end_time") or "").strip(),
+        str(slot.get("location_id") or "").strip(),
+        str(slot.get("modality") or "").strip().upper(),
+    ]
+    return "|".join(parts)
+
+
+def _public_solfege_slot_payload(
+    slot: dict[str, object],
+    *,
+    level_code: str | None,
+    duration_minutes: int | None,
+    language: str,
+) -> dict[str, object]:
+    raw_weekday = slot.get("weekday")
+    weekday: int | None = None
+    try:
+        if raw_weekday is not None and str(raw_weekday).strip() != "":
+            parsed_weekday = int(raw_weekday)
+            if 0 <= parsed_weekday <= 6:
+                weekday = parsed_weekday
+    except (TypeError, ValueError):
+        weekday = None
+
+    weekday_label = str(slot.get("weekday_label") or "").strip()
+    if not weekday_label and weekday is not None:
+        weekday_label = _public_solfege_weekday_label(weekday, language=language)
+
+    start_time = str(slot.get("start_time") or slot.get("start") or "").strip()
+    end_time = str(slot.get("end_time") or slot.get("end") or "").strip()
+    date_value = str(slot.get("date") or "").strip()
+    location_id = str(slot.get("location_id") or "").strip()
+    location_label = str(slot.get("location_label") or slot.get("location_name") or "").strip()
+    modality = str(slot.get("modality") or "").strip().upper()
+    modality_label = _public_solfege_modality_label(modality, language=language)
+    raw_label = str(slot.get("label") or "").strip()
+
+    time_part = ""
+    if weekday_label and start_time and end_time:
+        time_part = f"{weekday_label} {start_time}-{end_time}"
+    elif weekday_label and start_time:
+        time_part = f"{weekday_label} {start_time}"
+    elif weekday_label:
+        time_part = weekday_label
+    elif start_time and end_time:
+        time_part = f"{start_time}-{end_time}"
+
+    label_parts = [part for part in (time_part, location_label) if part]
+    if modality_label:
+        comparable_location = _public_solfege_mode_semantic(location_label)
+        comparable_modality = _public_solfege_mode_semantic(modality_label)
+        if comparable_location != comparable_modality:
+            label_parts.append(modality_label)
+    label = " · ".join(label_parts) or raw_label
+    if not label:
+        label = "-"
+
+    payload: dict[str, object] = {
+        "label": label,
+        "level_code": str(level_code or slot.get("level_code") or "").strip() or None,
+        "start_time": start_time or None,
+        "end_time": end_time or None,
+        "duration_minutes": duration_minutes if duration_minutes is not None else slot.get("duration_minutes"),
+        "location_id": location_id or None,
+        "location_label": location_label or None,
+        "modality": modality or None,
+        "weekday_label": weekday_label or None,
+        "date": date_value or None,
+    }
+    if weekday is not None:
+        payload["weekday"] = weekday
+    return {key: value for key, value in payload.items() if value not in (None, "")}
+
+
+def _public_quote_solfege_options_from_snapshot(
+    *,
+    calendar_snapshot: dict[str, object],
+    level_code: str | None,
+    duration_minutes: int | None,
+    language: str,
+) -> tuple[list[dict[str, object]], bool]:
+    options: list[dict[str, object]] = []
+    seen: set[str] = set()
+    pending_selection = False
+
+    for raw_block in _json_list(calendar_snapshot.get("blocks")):
+        if not isinstance(raw_block, dict):
+            continue
+        block = dict(raw_block)
+        haystack = " ".join(
+            filter(
+                None,
+                [
+                    _public_searchable_text(block.get("activity_label")),
+                    _public_searchable_text(block.get("activity_name")),
+                ],
+            )
+        )
+        block_level_code = str(block.get("pending_solfege_level") or level_code or "").strip() or None
+        is_solfege_block = bool(block_level_code) or "solfege" in haystack
+        if not is_solfege_block:
+            continue
+        if bool(block.get("selection_pending")) or _json_list(block.get("pending_slot_options")):
+            pending_selection = True
+        for raw_slot in _json_list(block.get("pending_slot_options")):
+            if not isinstance(raw_slot, dict):
+                continue
+            payload = _public_solfege_slot_payload(
+                dict(raw_slot),
+                level_code=block_level_code,
+                duration_minutes=duration_minutes,
+                language=language,
+            )
+            key = _public_solfege_slot_key(payload)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            options.append({"key": key, "label": str(payload.get("label") or key), "slot": payload})
+    return options, pending_selection
+
+
+def _public_quote_solfege_options_from_rule(
+    *,
+    db: Session,
+    level_code: str | None,
+    duration_minutes: int | None,
+    language: str,
+) -> list[dict[str, object]]:
+    if not level_code:
+        return []
+    rule = _active_solfege_rule_for_level(db, level_code=level_code)
+    if rule is None:
+        return []
+
+    location_label = ""
+    if rule.location_id is not None:
+        try:
+            location_label = str(
+                db.scalar(select(Location.name).where(Location.id == rule.location_id).limit(1)) or ""
+            ).strip()
+        except Exception:
+            location_label = ""
+
+    options: list[dict[str, object]] = []
+    seen: set[str] = set()
+    structured_slots = [slot for slot in _json_list(rule.allowed_time_slots) if isinstance(slot, dict)]
+    has_structured_weekdays = any(
+        str(slot.get("weekday") or "").strip() not in {"", "-1"}
+        for slot in structured_slots
+    )
+
+    for raw_slot in structured_slots:
+        weekdays: list[int] = []
+        if has_structured_weekdays:
+            try:
+                parsed = int(raw_slot.get("weekday"))
+            except (TypeError, ValueError):
+                parsed = -1
+            if 0 <= parsed <= 6:
+                weekdays = [parsed]
+        else:
+            weekdays = [
+                int(day)
+                for day in (rule.allowed_weekdays or [])
+                if isinstance(day, int) and 0 <= int(day) <= 6
+            ] or [0, 1, 2, 3, 4, 5, 6]
+
+        for weekday in weekdays:
+            payload = _public_solfege_slot_payload(
+                {
+                    **dict(raw_slot),
+                    "weekday": weekday,
+                    "location_id": str(rule.location_id) if rule.location_id is not None else None,
+                    "location_label": location_label or None,
+                    "modality": rule.modality,
+                },
+                level_code=level_code,
+                duration_minutes=duration_minutes if duration_minutes is not None else int(rule.duration_minutes),
+                language=language,
+            )
+            key = _public_solfege_slot_key(payload)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            options.append({"key": key, "label": str(payload.get("label") or key), "slot": payload})
+    return options
+
+
+def _public_quote_solfege_selection(db: Session, quote: Quote) -> QuotePublicSolfegeSelectionOut | None:
+    language = _public_solfege_language(quote.language)
+    calendar_snapshot = _json_object(quote.calendar_snapshot)
+    calendar_solfege = _json_object(calendar_snapshot.get("solfege"))
+    selected_slot = _json_object(quote.selected_solfege_slot) or _json_object(calendar_solfege.get("selected_slot"))
+    level_code = str(quote.estimated_solfege_level or calendar_solfege.get("level_code") or "").strip() or None
+    duration_minutes = int(quote.solfege_duration_minutes) if quote.solfege_duration_minutes else None
+
+    options, pending_selection = _public_quote_solfege_options_from_snapshot(
+        calendar_snapshot=calendar_snapshot,
+        level_code=level_code,
+        duration_minutes=duration_minutes,
+        language=language,
+    )
+    if not options:
+        options = _public_quote_solfege_options_from_rule(
+            db=db,
+            level_code=level_code,
+            duration_minutes=duration_minutes,
+            language=language,
+        )
+
+    selected_key: str | None = None
+    selected_label: str | None = None
+    if selected_slot:
+        normalized_selected_slot = _public_solfege_slot_payload(
+            selected_slot,
+            level_code=level_code,
+            duration_minutes=duration_minutes,
+            language=language,
+        )
+        selected_key = _public_solfege_slot_key(normalized_selected_slot) or None
+        selected_label = str(normalized_selected_slot.get("label") or "").strip() or None
+        if selected_key and not any(str(item.get("key") or "") == selected_key for item in options):
+            options.insert(
+                0,
+                {
+                    "key": selected_key,
+                    "label": selected_label or selected_key,
+                    "slot": normalized_selected_slot,
+                },
+            )
+
+    if not level_code and not selected_key and not pending_selection and not options:
+        return None
+
+    required = bool((level_code or pending_selection) and not selected_key and options)
+    return QuotePublicSolfegeSelectionOut(
+        level_code=level_code,
+        duration_minutes=duration_minutes,
+        pending_selection=bool(pending_selection or (level_code and not selected_key)),
+        required=required,
+        selected_key=selected_key,
+        selected_label=selected_label,
+        available_slots=[
+            QuotePublicSolfegeSlotOptionOut(key=str(item.get("key") or ""), label=str(item.get("label") or ""))
+            for item in options
+            if str(item.get("key") or "").strip()
+        ],
+    )
+
+
+def _resolve_public_selected_solfege_slot(
+    db: Session,
+    quote: Quote,
+    *,
+    selected_slot_key: str | None,
+) -> tuple[dict[str, object], QuotePublicSolfegeSelectionOut | None]:
+    selection = _public_quote_solfege_selection(db, quote)
+    current_slot = _json_object(quote.selected_solfege_slot) or _json_object(
+        _json_object(_json_object(quote.calendar_snapshot).get("solfege")).get("selected_slot")
+    )
+    normalized_key = str(selected_slot_key or "").strip()
+    if selection is None:
+        return current_slot, None
+    if not normalized_key:
+        return current_slot, selection
+    language = _public_solfege_language(quote.language)
+    if current_slot:
+        normalized_current_slot = _public_solfege_slot_payload(
+            current_slot,
+            level_code=selection.level_code,
+            duration_minutes=selection.duration_minutes,
+            language=language,
+        )
+        if _public_solfege_slot_key(normalized_current_slot) == normalized_key:
+            return normalized_current_slot, selection
+    options, _ = _public_quote_solfege_options_from_snapshot(
+        calendar_snapshot=_json_object(quote.calendar_snapshot),
+        level_code=selection.level_code,
+        duration_minutes=selection.duration_minutes,
+        language=language,
+    )
+    if not options:
+        options = _public_quote_solfege_options_from_rule(
+            db=db,
+            level_code=selection.level_code,
+            duration_minutes=selection.duration_minutes,
+            language=language,
+        )
+    for item in options:
+        if str(item.get("key") or "") == normalized_key:
+            return _json_object(item.get("slot")), selection
+    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid solfege slot selection")
+
+
+def _quote_public_out(db: Session, quote: Quote, lines: list[QuoteLine], payment_schedule: list[dict[str, object]]) -> QuotePublicOut:
+    return QuotePublicOut(
+        quote=_quote_out(quote),
+        lines=[_line_out(row) for row in lines],
+        payment_schedule=payment_schedule,
+        solfege_selection=_public_quote_solfege_selection(db, quote),
+    )
+
+
 def _restore_public_response_target_status(quote: Quote) -> str:
     candidate = str(_quote_meta_dict(quote).get(QUOTE_PUBLIC_RESPONSE_PREVIOUS_STATUS_META_KEY) or "").strip().lower()
     if candidate in {"sent", "change_requested"}:
@@ -4168,11 +4531,7 @@ def public_get_quote(
     preview_bundle = render_quote_document_bundle(db=db, quote=quote, lines=lines, audience=AUDIENCE_PUBLIC_PAGE)
     schedule_flag = bool((preview_bundle.get("display_flags") or {}).get("showPaymentScheduleDetailed"))
     payment_schedule = list((quote.payment_terms_snapshot or {}).get("schedule", [])) if schedule_flag else []
-    return QuotePublicOut(
-        quote=_quote_out(quote),
-        lines=[_line_out(row) for row in lines],
-        payment_schedule=payment_schedule,
-    )
+    return _quote_public_out(db, quote, lines, payment_schedule)
 
 
 @router.get("/public/quotes/{quote_id}/document")
@@ -5276,6 +5635,7 @@ def _rollback_quote_followup_transformation(
 @router.post("/public/quotes/{quote_id}/approve", response_model=QuotePublicOut)
 def public_approve_quote(
     quote_id: UUID,
+    payload: QuotePublicApproveRequest | None = None,
     t: str = Query(..., min_length=10),
     db: Session = Depends(get_db),
 ) -> QuotePublicOut:
@@ -5284,9 +5644,17 @@ def public_approve_quote(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid quote token")
     if quote.status not in {"sent", "change_requested"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote cannot be approved in current status")
+    resolved_selected_slot, solfege_selection = _resolve_public_selected_solfege_slot(
+        db,
+        quote,
+        selected_slot_key=(payload.selected_solfege_slot_key if payload is not None else None),
+    )
+    if solfege_selection is not None and solfege_selection.required and not resolved_selected_slot:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="A solfege slot must be selected before approval")
 
     now = _utcnow()
     previous_status = str(quote.status or "").strip().lower()
+    quote.selected_solfege_slot = resolved_selected_slot or {}
     quote.status = "approved"
     quote.approved_at = now
     quote.rejected_at = None
@@ -5303,6 +5671,9 @@ def public_approve_quote(
     followup = _ensure_followup(db, quote)
     if target_client_id is not None:
         followup.target_client_id = target_client_id
+    if resolved_selected_slot:
+        followup.payload = {**(followup.payload or {}), "selected_solfege_slot": resolved_selected_slot}
+        followup.solfege_slot_status = "chosen"
     followup.status = "pending"
     followup.updated_at = now
     db.add(followup)
@@ -5318,6 +5689,7 @@ def public_approve_quote(
                 "target_client_id": str(target_client_id) if target_client_id else None,
                 "document_snapshot_id": str(snapshot.id),
                 "document_hash": snapshot.document_hash,
+                "selected_solfege_slot": resolved_selected_slot or None,
             },
             created_at=now,
         )
@@ -5338,11 +5710,7 @@ def public_approve_quote(
         if bool((public_bundle.get("display_flags") or {}).get("showPaymentScheduleDetailed"))
         else []
     )
-    return QuotePublicOut(
-        quote=_quote_out(quote),
-        lines=[_line_out(row) for row in lines],
-        payment_schedule=public_schedule,
-    )
+    return _quote_public_out(db, quote, lines, public_schedule)
 
 
 @router.post("/public/quotes/{quote_id}/reject", response_model=QuotePublicOut)
@@ -5396,11 +5764,7 @@ def public_reject_quote(
         if bool((public_bundle.get("display_flags") or {}).get("showPaymentScheduleDetailed"))
         else []
     )
-    return QuotePublicOut(
-        quote=_quote_out(quote),
-        lines=[_line_out(row) for row in lines],
-        payment_schedule=public_schedule,
-    )
+    return _quote_public_out(db, quote, lines, public_schedule)
 
 
 @router.post("/public/quotes/{quote_id}/change-request", response_model=QuotePublicOut)
@@ -5456,11 +5820,7 @@ def public_change_request_quote(
         if bool((public_bundle.get("display_flags") or {}).get("showPaymentScheduleDetailed"))
         else []
     )
-    return QuotePublicOut(
-        quote=_quote_out(quote),
-        lines=[_line_out(row) for row in lines],
-        payment_schedule=public_schedule,
-    )
+    return _quote_public_out(db, quote, lines, public_schedule)
 
 
 @router.post("/quotes/{quote_id}/restore-public-response", response_model=QuoteDetailOut)

@@ -52,6 +52,7 @@ type QuotePublicOut = {
   quote: QuoteOut;
   lines: QuoteLineOut[];
   payment_schedule: Array<Record<string, unknown>>;
+  solfege_selection: QuotePublicSolfegeSelectionOut | null;
 };
 
 type QuotePublicDocumentOut = {
@@ -63,6 +64,21 @@ type QuotePublicDocumentOut = {
   visible_blocks: string[];
   hidden_blocks: string[];
   payment_schedule_compact_notice: string;
+};
+
+type QuotePublicSolfegeSlotOptionOut = {
+  key: string;
+  label: string;
+};
+
+type QuotePublicSolfegeSelectionOut = {
+  level_code: string | null;
+  duration_minutes: number | null;
+  pending_selection: boolean;
+  required: boolean;
+  selected_key: string | null;
+  selected_label: string | null;
+  available_slots: QuotePublicSolfegeSlotOptionOut[];
 };
 
 function readParam(params: SearchParams, key: string): string {
@@ -100,6 +116,9 @@ function resolveQuotePublicErrorMessage(rawError: string, errorCode: string, err
   }
   if (normalized === "quote_public_change_request_required") {
     return uiText(language, "quote_public.change_request_required");
+  }
+  if (normalized === "quote_public_solfege_slot_required") {
+    return uiText(language, "quote_public.solfege_slot_required");
   }
   if (normalized === "quote_pdf_token_invalid") {
     return uiText(language, "quote_public.invalid_pdf_link");
@@ -203,6 +222,16 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
 
   const canAct = payload ? ["sent", "change_requested"].includes(payload.quote.status) : false;
   const selfPath = buildSelfPath(quoteId, token, language);
+  const solfegeSelection = payload?.solfege_selection ?? null;
+  const requiresSolfegeSelection = canAct && Boolean(solfegeSelection?.required);
+  const shouldShowSolfegeSelector = canAct && Boolean(
+    solfegeSelection
+      && (
+        solfegeSelection.pending_selection
+        || solfegeSelection.selected_key
+        || solfegeSelection.available_slots.length > 0
+      ),
+  );
 
   return (
     <main className="quote-public-page">
@@ -279,6 +308,40 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
                   <input type="hidden" name="public_token" value={token} />
                   <input type="hidden" name="return_to" value={selfPath} />
                   <input type="hidden" name="language" value={language} />
+                  {shouldShowSolfegeSelector && solfegeSelection ? (
+                    <section className="quote-public-solfege-box">
+                      <strong>{t("quote_public.solfege_title")}</strong>
+                      <p className="muted">{t("quote_public.solfege_help")}</p>
+                      {solfegeSelection.level_code ? (
+                        <p className="muted">{t("quote_public.solfege_level", { level: solfegeSelection.level_code })}</p>
+                      ) : null}
+                      {solfegeSelection.duration_minutes ? (
+                        <p className="muted">{t("quote_public.solfege_duration", { duration: solfegeSelection.duration_minutes })}</p>
+                      ) : null}
+                      <input type="hidden" name="solfege_slot_required" value={solfegeSelection.required ? "1" : "0"} />
+                      <label>
+                        {t("quote_public.solfege_slot_label")}
+                        <select
+                          name="selected_solfege_slot_key"
+                          defaultValue={solfegeSelection.selected_key ?? ""}
+                          required={solfegeSelection.required}
+                        >
+                          {solfegeSelection.required && !solfegeSelection.selected_key ? (
+                            <option value="">{t("quote_public.solfege_slot_placeholder")}</option>
+                          ) : null}
+                          {solfegeSelection.available_slots.map((option) => (
+                            <option key={option.key} value={option.key}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {solfegeSelection.selected_label ? (
+                        <p className="muted">{t("quote_public.solfege_selected_hint", { slot: solfegeSelection.selected_label })}</p>
+                      ) : null}
+                      <p className="muted">{t("quote_public.solfege_pending_notice")}</p>
+                    </section>
+                  ) : null}
                   <button type="submit" className="quote-cta-success">{t("quote_public.approve_cta")}</button>
                 </form>
 
@@ -314,7 +377,7 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
         </aside>
       </section>
 
-      {canAct ? (
+      {canAct && !requiresSolfegeSelection ? (
         <section className="quote-mobile-sticky-actions">
           <form action={approvePublicQuoteAction}>
             <input type="hidden" name="quote_id" value={quoteId} />
