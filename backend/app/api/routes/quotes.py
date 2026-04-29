@@ -2367,20 +2367,102 @@ def _public_quote_solfege_options_from_snapshot(
     return options, pending_selection
 
 
+def _public_pending_solfege_block_hints(
+    calendar_snapshot: dict[str, object],
+    *,
+    level_code: str | None,
+) -> tuple[str | None, object | None, object | None, str]:
+    resolved_level = str(level_code or "").strip() or None
+    for raw_block in _json_list(calendar_snapshot.get("blocks")):
+        if not isinstance(raw_block, dict):
+            continue
+        block = dict(raw_block)
+        activity_label = str(block.get("activity_label") or "").strip()
+        activity_code = str(block.get("activity_code") or block.get("activity_service_code") or "").strip()
+        haystack = _public_searchable_text(f"{activity_label} {activity_code}")
+        block_level = str(block.get("pending_solfege_level") or "").strip() or None
+        if block_level and not resolved_level:
+            resolved_level = block_level
+        if not (block_level or "solfege" in haystack):
+            continue
+        return (
+            resolved_level,
+            block.get("location_id"),
+            block.get("modality"),
+            str(block.get("location_label") or "").strip(),
+        )
+    return resolved_level, None, None, ""
+
+
+def _public_matching_solfege_rule(
+    db: Session,
+    *,
+    level_code: str | None,
+    location_id: object | None = None,
+    modality: object | None = None,
+) -> SolfegeLevelRule | None:
+    normalized_level = str(level_code or "").strip()
+    if not normalized_level:
+        return None
+    rows = db.scalars(
+        select(SolfegeLevelRule)
+        .where(
+            SolfegeLevelRule.level_code == normalized_level,
+            SolfegeLevelRule.is_active.is_(True),
+        )
+    ).all()
+    if not rows:
+        return None
+
+    expected_location_id = str(location_id or "").strip() or None
+    expected_modality = str(modality or "").strip().upper() or None
+
+    def _score(rule: SolfegeLevelRule) -> tuple[int, int, float]:
+        rule_location_id = str(rule.location_id).strip() if rule.location_id else None
+        rule_modality = str(rule.modality or "").strip().upper() or None
+
+        if expected_location_id and rule_location_id == expected_location_id:
+            location_score = 0
+        elif rule_location_id is None:
+            location_score = 1
+        else:
+            location_score = 3
+
+        if expected_modality and rule_modality == expected_modality:
+            modality_score = 0
+        elif rule_modality is None:
+            modality_score = 1
+        else:
+            modality_score = 3
+
+        created_rank = -(rule.created_at.timestamp() if getattr(rule, "created_at", None) else 0.0)
+        return location_score, modality_score, created_rank
+
+    return min(rows, key=_score)
+
+
 def _public_quote_solfege_options_from_rule(
     *,
     db: Session,
     level_code: str | None,
     duration_minutes: int | None,
     language: str,
+    location_id: object | None = None,
+    modality: object | None = None,
+    fallback_location_label: str = "",
 ) -> list[dict[str, object]]:
     if not level_code:
         return []
-    rule = _active_solfege_rule_for_level(db, level_code=level_code)
+    rule = _public_matching_solfege_rule(
+        db,
+        level_code=level_code,
+        location_id=location_id,
+        modality=modality,
+    )
     if rule is None:
         return []
 
-    location_label = ""
+    location_label = fallback_location_label.strip()
     if rule.location_id is not None:
         try:
             location_label = str(
@@ -2441,6 +2523,10 @@ def _public_quote_solfege_selection(db: Session, quote: Quote) -> QuotePublicSol
     selected_slot = _json_object(quote.selected_solfege_slot) or _json_object(calendar_solfege.get("selected_slot"))
     level_code = str(quote.estimated_solfege_level or calendar_solfege.get("level_code") or "").strip() or None
     duration_minutes = int(quote.solfege_duration_minutes) if quote.solfege_duration_minutes else None
+    level_code, pending_location_id, pending_modality, pending_location_label = _public_pending_solfege_block_hints(
+        calendar_snapshot,
+        level_code=level_code,
+    )
 
     options, pending_selection = _public_quote_solfege_options_from_snapshot(
         calendar_snapshot=calendar_snapshot,
@@ -2454,6 +2540,9 @@ def _public_quote_solfege_selection(db: Session, quote: Quote) -> QuotePublicSol
             level_code=level_code,
             duration_minutes=duration_minutes,
             language=language,
+            location_id=pending_location_id,
+            modality=pending_modality,
+            fallback_location_label=pending_location_label,
         )
 
     selected_key: str | None = None
@@ -2528,11 +2617,18 @@ def _resolve_public_selected_solfege_slot(
         language=language,
     )
     if not options:
+        _, pending_location_id, pending_modality, pending_location_label = _public_pending_solfege_block_hints(
+            _json_object(quote.calendar_snapshot),
+            level_code=selection.level_code,
+        )
         options = _public_quote_solfege_options_from_rule(
             db=db,
             level_code=selection.level_code,
             duration_minutes=selection.duration_minutes,
             language=language,
+            location_id=pending_location_id,
+            modality=pending_modality,
+            fallback_location_label=pending_location_label,
         )
     for item in options:
         if str(item.get("key") or "") == normalized_key:

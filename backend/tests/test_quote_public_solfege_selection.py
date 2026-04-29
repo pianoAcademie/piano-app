@@ -77,7 +77,7 @@ class QuotePublicSolfegeSelectionTests(unittest.TestCase):
             modality="ONLINE",
         )
 
-        with patch("app.api.routes.quotes._active_solfege_rule_for_level", return_value=fake_rule):
+        with patch("app.api.routes.quotes._public_matching_solfege_rule", return_value=fake_rule):
             selection = _public_quote_solfege_selection(object(), quote)
 
         self.assertIsNotNone(selection)
@@ -110,7 +110,7 @@ class QuotePublicSolfegeSelectionTests(unittest.TestCase):
             modality="ONLINE",
         )
 
-        with patch("app.api.routes.quotes._active_solfege_rule_for_level", return_value=fake_rule):
+        with patch("app.api.routes.quotes._public_matching_solfege_rule", return_value=fake_rule):
             selection = _public_quote_solfege_selection(object(), quote)
 
         self.assertIsNotNone(selection)
