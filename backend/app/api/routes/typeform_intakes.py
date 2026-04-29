@@ -1491,6 +1491,7 @@ def _resolve_form_runtime_context(
             "location_id": None,
             "location_code": None,
             "location_name": None,
+            "school_year_label": None,
             "quote_type_id": None,
             "quote_type": None,
             "pricing_catalog_id": None,
@@ -1514,6 +1515,7 @@ def _resolve_form_runtime_context(
         "location_id": config.default_location_id,
         "location_code": config.location_code,
         "location_name": location.name if location is not None else None,
+        "school_year_label": _text(config.school_year_label) or None,
         "quote_type_id": config.default_quote_type_id,
         "quote_type": _text(config.default_quote_type) or None,
         "pricing_catalog_id": config.default_pricing_catalog_id,
@@ -1575,6 +1577,12 @@ def _resolve_form_runtime_context(
 
     runtime_context["quote_type"] = quote_type.name if quote_type is not None else runtime_context.get("quote_type")
     runtime_context["pricing_catalog_name"] = pricing_catalog.name if pricing_catalog is not None else None
+    runtime_context["school_year_label"] = (
+        _text(quote_type.school_year_label if quote_type is not None else None)
+        or _text(pricing_catalog.school_year_label if pricing_catalog is not None else None)
+        or _text(config.school_year_label)
+        or None
+    )
 
     requested_payment_method = _text(normalized.get("requested_payment_method")) or None
     requested_payment_method_code = _requested_payment_method_code(requested_payment_method)
@@ -2175,7 +2183,12 @@ def _build_session_recommendations(
     if not activity_ids:
         return [], [], []
 
-    school_year_bounds = _school_year_bounds_from_label(config.school_year_label if config is not None else None)
+    school_year_bounds = _school_year_bounds_from_label(
+        _text(runtime_context.get("school_year_label"))
+        or _text(runtime_context.get("quote_type"))
+        or _text(runtime_context.get("pricing_catalog_name"))
+        or _text(config.school_year_label if config is not None else None)
+    )
     school_year_start_utc: datetime | None = None
     school_year_end_utc: datetime | None = None
     if school_year_bounds is not None:
@@ -2729,6 +2742,11 @@ def _refresh_intake_analysis(db: Session, intake: TypeformIntake) -> dict[str, o
     analysis = _safe_analysis_for_intake(db, intake)
     intake.intake_status = str(analysis["intake_status"])
     runtime_context = _json_object(analysis.get("runtime_context"))
+    resolved_school_year = (
+        _text(runtime_context.get("school_year_label"))
+        or _text(_json_object(analysis["normalized"]).get("requested_formula_type"))
+        or (analysis["config"].school_year_label if analysis["config"] is not None else None)
+    )
     intake.detected_location = (
         _text(runtime_context.get("location_name"))
         or _text(runtime_context.get("location_code"))
@@ -2736,7 +2754,7 @@ def _refresh_intake_analysis(db: Session, intake: TypeformIntake) -> dict[str, o
         or (analysis["config"].location_code if analysis["config"] is not None else None)
     )
     intake.detected_segment = analysis["config"].audience_segment if analysis["config"] is not None else None
-    intake.detected_school_year = analysis["config"].school_year_label if analysis["config"] is not None else None
+    intake.detected_school_year = resolved_school_year
     intake.warnings_json = [{"message": message} for message in analysis["warnings"]]
     intake.blocking_reasons_json = [{"message": message} for message in analysis["blockages"]]
     intake.updated_at = _utcnow()
@@ -2747,6 +2765,14 @@ def _refresh_intake_analysis(db: Session, intake: TypeformIntake) -> dict[str, o
 def _intake_list_out(intake: TypeformIntake, analysis: dict[str, object]) -> TypeformIntakeListOut:
     normalized = _json_object(analysis["normalized"])
     runtime_context = _json_object(analysis.get("runtime_context"))
+    resolved_school_year = (
+        _text(runtime_context.get("school_year_label"))
+        or (
+            analysis["config"].school_year_label
+            if analysis["config"] is not None
+            else intake.detected_school_year
+        )
+    )
     if _lower(normalized.get("customer_type")) == "child":
         prospect_label = _display_name(normalized.get("parent_first_name"), normalized.get("parent_last_name"), _text(normalized.get("parent_email")) or "-")
         child_label = _display_name(normalized.get("child_first_name"), normalized.get("child_last_name"), "-")
@@ -2772,9 +2798,7 @@ def _intake_list_out(intake: TypeformIntake, analysis: dict[str, object]) -> Typ
             else intake.detected_segment
         ),
         detected_school_year=(
-            analysis["config"].school_year_label
-            if analysis["config"] is not None
-            else intake.detected_school_year
+            resolved_school_year
         ),
         prospect_label=prospect_label,
         child_label=child_label,
@@ -2786,6 +2810,14 @@ def _intake_list_out(intake: TypeformIntake, analysis: dict[str, object]) -> Typ
 
 def _intake_detail_out(intake: TypeformIntake, analysis: dict[str, object]) -> TypeformIntakeDetailOut:
     runtime_context = _json_object(analysis.get("runtime_context"))
+    resolved_school_year = (
+        _text(runtime_context.get("school_year_label"))
+        or (
+            analysis["config"].school_year_label
+            if analysis["config"] is not None
+            else intake.detected_school_year
+        )
+    )
     candidates = [
         TypeformMatchCandidateOut(
             kind=item["kind"],
@@ -2821,9 +2853,7 @@ def _intake_detail_out(intake: TypeformIntake, analysis: dict[str, object]) -> T
             else intake.detected_segment
         ),
         detected_school_year=(
-            analysis["config"].school_year_label
-            if analysis["config"] is not None
-            else intake.detected_school_year
+            resolved_school_year
         ),
         raw_payload_json=_json_object(intake.raw_payload_json),
         normalized_payload_json=_json_object(analysis["normalized"]),
