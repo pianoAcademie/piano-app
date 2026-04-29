@@ -2315,7 +2315,11 @@ def _build_session_recommendations(
         available_options = [item for item in options if not item.is_full]
         option_session_ids = {item.session_id for item in options}
         manual_options: list[TypeformSessionMatchOptionOut] = []
-        if not options or (selected_session_id is not None and selected_session_id not in option_session_ids):
+        has_explicit_slot_request = bool(requested_slot_preferences or requested_days or requested_times)
+        if (
+            not has_explicit_slot_request
+            and (not options or (selected_session_id is not None and selected_session_id not in option_session_ids))
+        ):
             manual_series_rows: dict[str, tuple[CourseSession, CourseType, Location, int]] = {}
             for session_obj, activity, location, booked_count in manual_rows:
                 if activity.id == line.activity_id:
