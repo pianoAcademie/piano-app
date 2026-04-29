@@ -86,6 +86,42 @@ class QuotePublicSolfegeSelectionTests(unittest.TestCase):
         self.assertTrue(any("Mercredi 17:15-18:00" in option.label for option in selection.available_slots))
         self.assertTrue(any("Samedi 10:15-11:00" in option.label for option in selection.available_slots))
 
+    def test_extracts_level_from_activity_label_when_quote_has_no_level(self) -> None:
+        quote = SimpleNamespace(
+            language="fr",
+            estimated_solfege_level=None,
+            solfege_duration_minutes=None,
+            selected_solfege_slot={},
+            calendar_snapshot={
+                "blocks": [
+                    {
+                        "activity_label": "Cours de solfège - niveau 2",
+                        "selection_pending": True,
+                        "pending_solfege_level": None,
+                        "pending_slot_options": [],
+                        "modality": "ONLINE",
+                        "location_label": "Online",
+                    }
+                ]
+            },
+        )
+        fake_rule = SimpleNamespace(
+            duration_minutes=45,
+            allowed_time_slots=[{"weekday": 2, "start_time": "17:15", "end_time": "18:00"}],
+            allowed_weekdays=[],
+            location_id=None,
+            modality="ONLINE",
+        )
+
+        with patch("app.api.routes.quotes._public_matching_solfege_rule", return_value=fake_rule):
+            selection = _public_quote_solfege_selection(object(), quote)
+
+        self.assertIsNotNone(selection)
+        assert selection is not None
+        self.assertEqual(selection.level_code, "2")
+        self.assertEqual(len(selection.available_slots), 1)
+        self.assertIn("Mercredi 17:15-18:00", selection.available_slots[0].label)
+
     def test_keeps_existing_selected_slot_without_requiring_new_choice(self) -> None:
         quote = SimpleNamespace(
             language="fr",

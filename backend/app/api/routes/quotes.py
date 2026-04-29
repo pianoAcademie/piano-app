@@ -2344,7 +2344,12 @@ def _public_quote_solfege_options_from_snapshot(
                 ],
             )
         )
-        block_level_code = str(block.get("pending_solfege_level") or level_code or "").strip() or None
+        block_level_code = (
+            str(block.get("pending_solfege_level") or "").strip()
+            or _public_extract_solfege_level_from_text(block.get("activity_label"))
+            or str(level_code or "").strip()
+            or None
+        )
         is_solfege_block = bool(block_level_code) or "solfege" in haystack
         if not is_solfege_block:
             continue
@@ -2367,6 +2372,14 @@ def _public_quote_solfege_options_from_snapshot(
     return options, pending_selection
 
 
+def _public_extract_solfege_level_from_text(value: object | None) -> str:
+    raw = str(value or "").strip()
+    match = re.search(r"niveau\s*([1-5])", raw, flags=re.IGNORECASE)
+    if match and match.group(1):
+        return match.group(1)
+    return ""
+
+
 def _public_pending_solfege_block_hints(
     calendar_snapshot: dict[str, object],
     *,
@@ -2380,7 +2393,11 @@ def _public_pending_solfege_block_hints(
         activity_label = str(block.get("activity_label") or "").strip()
         activity_code = str(block.get("activity_code") or block.get("activity_service_code") or "").strip()
         haystack = _public_searchable_text(f"{activity_label} {activity_code}")
-        block_level = str(block.get("pending_solfege_level") or "").strip() or None
+        block_level = (
+            str(block.get("pending_solfege_level") or "").strip()
+            or _public_extract_solfege_level_from_text(activity_label)
+            or None
+        )
         if block_level and not resolved_level:
             resolved_level = block_level
         if not (block_level or "solfege" in haystack):
