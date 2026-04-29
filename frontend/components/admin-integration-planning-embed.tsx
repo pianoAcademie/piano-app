@@ -57,6 +57,9 @@ export default function AdminIntegrationPlanningEmbed({
   if (selectedStartDate) {
     embedParams.set("date", selectedStartDate);
   }
+  if (language === "en") {
+    embedParams.set("lang", "en");
+  }
   const embedPath = selectedActivity ? `/embed/planning?${embedParams.toString()}` : "";
   const normalizedBaseUrl = normalizeBaseUrl(accountWebsite);
   const absoluteEmbedUrl = embedPath && normalizedBaseUrl ? `${normalizedBaseUrl}${embedPath}` : "";

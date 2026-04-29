@@ -296,6 +296,9 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
       .filter((booking) => sessionIds.has(booking.session.id))
       .map((booking) => [booking.session.id, booking]),
   );
+  const locationOptions = locations
+    .filter((location) => location.active)
+    .sort((left, right) => left.name.localeCompare(right.name, localeForUiLanguage(language)));
 
   const sessionsByDay = new Map<string, SessionOut[]>();
   for (const session of sessions) {
@@ -379,6 +382,44 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
               <Link className="mode-link" href={nextHref}>→</Link>
             </div>
           </header>
+
+          <form method="get" className="grid cols-2 top-gap-sm">
+            <input type="hidden" name="course_type_id" value={courseTypeId} />
+            {language === "en" ? <input type="hidden" name="lang" value="en" /> : null}
+
+            <label>
+              {uiText(language, "common.location")}
+              <select name="location_id" defaultValue={locationId}>
+                <option value="">{t("embed_planning.all_locations_option")}</option>
+                {locationOptions.map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {location.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              {uiText(language, "common.date")}
+              <input type="date" name="date" defaultValue={anchorDateKey} />
+            </label>
+
+            <div className="row">
+              <button type="submit">{uiText(language, "common.apply")}</button>
+              {(locationId || readParam(searchParams, "date").trim()) ? (
+                <Link
+                  className="ghost small-btn"
+                  href={buildPlanningHref({
+                    courseTypeId,
+                    date: todayKeyInTimezone(timezone),
+                    language,
+                  })}
+                >
+                  {uiText(language, "common.reset")}
+                </Link>
+              ) : null}
+            </div>
+          </form>
 
           {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
           {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
