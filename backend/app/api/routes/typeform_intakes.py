@@ -555,6 +555,39 @@ def _normalize_slot_preferences(
     return out
 
 
+def _slot_preference_like_label(value: object | None) -> bool:
+    token = _normalize_token(value)
+    return "creneau" in token or "slot" in token
+
+
+def _fallback_requested_slot_preferences_from_simplified_answers(
+    simplified_answers: list[dict[str, object]],
+    *,
+    requested_location: str | None,
+    segment: str | None,
+) -> list[dict[str, object]]:
+    out: list[dict[str, object]] = []
+    seen: set[tuple[str | None, str | None]] = set()
+    for item in simplified_answers:
+        if not isinstance(item, dict):
+            continue
+        label = _text(item.get("label"))
+        if not _slot_preference_like_label(label):
+            continue
+        nested = _normalize_slot_preferences(
+            [_text(item.get("value"))],
+            requested_location=requested_location,
+            segment=segment,
+        )
+        for child in nested:
+            key = (_text(child.get("day")) or None, _text(child.get("time")) or None)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(child)
+    return out
+
+
 def _answer_value(answer: dict[str, object]) -> object:
     if "text" in answer:
         return answer.get("text")
@@ -915,6 +948,12 @@ def _normalize_payload(
         requested_location=requested_location,
         segment=config_segment or None,
     )
+    if not requested_slot_preferences:
+        requested_slot_preferences = _fallback_requested_slot_preferences_from_simplified_answers(
+            simplified_answers,
+            requested_location=requested_location,
+            segment=config_segment or None,
+        )
     if requested_slot_preferences:
         requested_days = list(
             dict.fromkeys(
@@ -1887,11 +1926,16 @@ def _typeform_session_option_from_row(
     elif config is not None and config.default_location_id == location.id:
         score += 10
         reasons.append("site par defaut")
-    if requested_location and requested_location in {
-        _lower(config.location_code if config is not None else None),
-        _lower(location.code),
-        _lower(location.name),
-    }:
+    requested_location_token = _normalize_token(requested_location).replace("_", " ")
+    location_tokens = {
+        _normalize_token(location.code).replace("_", " "),
+        _normalize_token(location.name),
+    }
+    if (
+        requested_location_token
+        and resolved_location_id is None
+        and any(token and token in requested_location_token for token in location_tokens)
+    ):
         score += 20
         reasons.append("lieu prefere")
     if requested_slot_preferences:

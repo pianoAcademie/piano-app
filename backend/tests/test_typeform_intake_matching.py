@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
+import unittest
+from types import SimpleNamespace
+from uuid import uuid4
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+
+from app.api.routes.typeform_intakes import _normalize_payload, _typeform_session_option_from_row
+
+
+class TypeformIntakeMatchingTests(unittest.TestCase):
+    def test_normalize_payload_falls_back_to_creneau_label_for_slot_preferences(self) -> None:
+        config = SimpleNamespace(
+            configuration_json={
+                "field_mapping": {
+                    "requested_location": ["requested_location"],
+                },
+                "field_labels": {},
+            },
+            audience_segment="eveil",
+            location_code="paris_richelieu",
+        )
+        payload = {
+            "form_response": {
+                "answers": [
+                    {
+                        "field": {"ref": "requested_location", "title": "Lieu du cours d'initiation"},
+                        "choice": {"label": "Paris 1 - Rue de Richelieu"},
+                    },
+                    {
+                        "field": {"id": "94250c22-17f0-47f1-975c-4dbb18656bd8", "title": "Créneau initiation - Rue Richelieu"},
+                        "choice": {"label": "Mercredi 15h"},
+                    },
+                ]
+            }
+        }
+
+        normalized, _ = _normalize_payload(payload=payload, config=config)
+
+        self.assertEqual(normalized["requested_days"], ["mercredi"])
+        self.assertEqual(normalized["requested_times"], ["15:00"])
+        self.assertEqual(
+            normalized["requested_slot_preferences"],
+            [
+                {
+                    "day": "mercredi",
+                    "time": "15:00",
+                    "location": "Paris 1 - Rue de Richelieu",
+                    "segment": "eveil",
+                }
+            ],
+        )
+
+    def test_option_does_not_mark_other_site_as_preferred_when_location_is_resolved(self) -> None:
+        preferred_location_id = uuid4()
+        option = _typeform_session_option_from_row(
+            session_obj=SimpleNamespace(
+                id=uuid4(),
+                title="Eveil musical",
+                start_at_utc=datetime(2026, 5, 16, 9, 0, tzinfo=timezone.utc),
+                end_at_utc=datetime(2026, 5, 16, 10, 0, tzinfo=timezone.utc),
+                timezone="Europe/Paris",
+                recurrence_rule="WEEKLY",
+                recurrence_group_id=None,
+                capacity_max=12,
+            ),
+            activity=SimpleNamespace(id=uuid4(), name="Eveil musical"),
+            location=SimpleNamespace(id=uuid4(), code="BAR_LE_DUC", name="Bar-le-Duc", timezone="Europe/Paris"),
+            booked_count=0,
+            config=SimpleNamespace(default_location_id=None, location_code="paris_richelieu"),
+            requested_location="paris_richelieu",
+            resolved_location_id=preferred_location_id,
+            requested_slot_preferences=[],
+            requested_days=set(),
+            requested_times=[],
+        )
+
+        self.assertIsNotNone(option)
+        assert option is not None
+        self.assertNotIn("lieu prefere", option.reasons)
+
+
+if __name__ == "__main__":
+    unittest.main()
