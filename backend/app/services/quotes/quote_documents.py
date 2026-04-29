@@ -26,7 +26,7 @@ from xhtml2pdf import pisa
 
 from app.models.ops import AppSetting
 from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct
-from app.models.quote import Prospect, Quote, QuoteLine, QuoteTemplate, QuoteTemplateVersion, TermsTemplateVersion
+from app.models.quote import Prospect, Quote, QuoteLine, QuoteTemplate, QuoteTemplateVersion, SolfegeLevelRule, TermsTemplateVersion
 from app.models.typeform_intake import TypeformIntake
 from app.models.user import User
 from app.services.i18n import normalize_language
@@ -1358,6 +1358,109 @@ def _searchable_text(value: Any) -> str:
     return "".join(char for char in normalized if not unicodedata.combining(char))
 
 
+def _time_slot_parts(slot: dict[str, Any]) -> tuple[str, str] | None:
+    start = str(slot.get("start_time") or slot.get("start") or "").strip()
+    end = str(slot.get("end_time") or slot.get("end") or "").strip()
+    if not start or not end:
+        return None
+    return start, end
+
+
+def _matching_solfege_rule_for_pending_block(
+    db: Session | None,
+    *,
+    level_code: str | None,
+    location_id: Any = None,
+    modality: Any = None,
+) -> SolfegeLevelRule | None:
+    normalized_level = str(level_code or "").strip()
+    if db is None or not normalized_level:
+        return None
+    rows = db.scalars(
+        select(SolfegeLevelRule)
+        .where(
+            SolfegeLevelRule.level_code == normalized_level,
+            SolfegeLevelRule.is_active.is_(True),
+        )
+    ).all()
+    if not rows:
+        return None
+
+    expected_location_id = str(location_id or "").strip() or None
+    expected_modality = str(modality or "").strip().upper() or None
+
+    def _score(rule: SolfegeLevelRule) -> tuple[int, int, float]:
+        rule_location_id = str(rule.location_id).strip() if rule.location_id else None
+        rule_modality = str(rule.modality or "").strip().upper() or None
+
+        if expected_location_id and rule_location_id == expected_location_id:
+            location_score = 0
+        elif rule_location_id is None:
+            location_score = 1
+        else:
+            location_score = 3
+
+        if expected_modality and rule_modality == expected_modality:
+            modality_score = 0
+        elif rule_modality is None:
+            modality_score = 1
+        else:
+            modality_score = 3
+
+        created_rank = -(rule.created_at.timestamp() if getattr(rule, "created_at", None) else 0.0)
+        return location_score, modality_score, created_rank
+
+    return min(rows, key=_score)
+
+
+def _solfege_slot_labels_from_rule(
+    rule: SolfegeLevelRule | None,
+    *,
+    location_label: str = "",
+    language: str | None = None,
+) -> list[str]:
+    if rule is None:
+        return []
+
+    slot_dicts = [slot for slot in _json_list(rule.allowed_time_slots) if isinstance(slot, dict)]
+    if not slot_dicts:
+        return []
+
+    labels: list[str] = []
+    has_structured_weekdays = any(
+        isinstance(slot.get("weekday"), int) and 0 <= int(slot.get("weekday")) <= 6
+        for slot in slot_dicts
+    )
+    weekdays = (
+        []
+        if has_structured_weekdays
+        else [day for day in _json_list(rule.allowed_weekdays) if isinstance(day, int) and 0 <= int(day) <= 6]
+    )
+    if not has_structured_weekdays and not weekdays:
+        weekdays = [0, 1, 2, 3, 4, 5, 6]
+
+    for slot in slot_dicts:
+        parts = _time_slot_parts(slot)
+        if parts is None:
+            continue
+        start, end = parts
+        slot_weekdays: list[int]
+        if has_structured_weekdays:
+            weekday = int(slot.get("weekday")) if isinstance(slot.get("weekday"), int) else -1
+            if weekday < 0 or weekday > 6:
+                continue
+            slot_weekdays = [weekday]
+        else:
+            slot_weekdays = [int(day) for day in weekdays]
+        for weekday in slot_weekdays:
+            base_label = f"{_weekday_label(weekday, language=language)} {start}-{end}"
+            if location_label:
+                labels.append(_sanitize_slot_label_text(f"{base_label} · {location_label}", language=language))
+            else:
+                labels.append(_sanitize_slot_label_text(base_label, language=language))
+    return _unique_text_parts(*labels)
+
+
 def _factorize_slot_labels(labels: list[str], *, language: str | None = None) -> tuple[list[str], str]:
     sanitized_labels = [_sanitize_slot_label_text(item, language=language) for item in labels if str(item or "").strip()]
     if not sanitized_labels:
@@ -1921,7 +2024,7 @@ def _extract_solfege_level_from_text(value: Any) -> str:
     return ""
 
 
-def _solfege_pending_block_info(snapshot: dict[str, Any], *, language: str | None = None) -> dict[str, Any]:
+def _solfege_pending_block_info(snapshot: dict[str, Any], *, db: Session | None = None, language: str | None = None) -> dict[str, Any]:
     has_pending_selection = False
     level_code = ""
     slot_labels: list[str] = []
@@ -1943,6 +2046,7 @@ def _solfege_pending_block_info(snapshot: dict[str, Any], *, language: str | Non
             has_pending_selection = True
         if not level_code:
             level_code = str(raw.get("pending_solfege_level") or "").strip() or _extract_solfege_level_from_text(activity_label)
+        slot_count_before = len(slot_labels)
         for raw_slot in _json_list(raw.get("pending_slot_options")):
             if not isinstance(raw_slot, dict):
                 continue
@@ -1955,6 +2059,19 @@ def _solfege_pending_block_info(snapshot: dict[str, Any], *, language: str | Non
             end = str(raw_slot.get("end_time") or raw_slot.get("end") or "").strip()
             if weekday_text and start and end:
                 slot_labels.append(f"{weekday_text} {start}-{end}")
+        if selection_pending and len(slot_labels) == slot_count_before:
+            slot_labels.extend(
+                _solfege_slot_labels_from_rule(
+                    _matching_solfege_rule_for_pending_block(
+                        db,
+                        level_code=level_code,
+                        location_id=raw.get("location_id"),
+                        modality=raw.get("modality"),
+                    ),
+                    location_label=str(raw.get("location_label") or "").strip(),
+                    language=language,
+                )
+            )
 
     for raw_recommendation in _json_list(snapshot.get("typeform_recommendations")):
         recommendation = _json_object(raw_recommendation)
@@ -2045,7 +2162,7 @@ def _extract_document_context(
     if not selected_solfege_slot:
         selected_solfege_slot = solfege_selected_slot
 
-    pending_solfege_info = _solfege_pending_block_info(calendar_snapshot, language=language)
+    pending_solfege_info = _solfege_pending_block_info(calendar_snapshot, db=db, language=language)
     activity_solfege = [item for item in _json_list(meta.get("activity_solfege")) if isinstance(item, dict)]
     masterclass_blocks_meta = [item for item in _json_list(meta.get("masterclass_blocks")) if isinstance(item, dict)]
     masterclass_blocks_calendar = _masterclass_blocks_from_calendar_snapshot(calendar_snapshot, language=language)

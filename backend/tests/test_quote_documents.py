@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph
@@ -61,6 +63,42 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertGreaterEqual(len(info["slot_labels"]), 2)
         self.assertTrue(any("Mercredi" in label for label in info["slot_labels"]))
         self.assertTrue(any("Samedi" in label for label in info["slot_labels"]))
+
+    def test_solfege_pending_info_falls_back_to_rule_slots_when_snapshot_has_none(self) -> None:
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_label": "Cours de solfège - niveau 2",
+                    "location_label": "Online",
+                    "location_id": None,
+                    "weekday": -1,
+                    "selection_pending": True,
+                    "pending_solfege_level": "2",
+                    "modality": "ONLINE",
+                    "pending_slot_options": [],
+                }
+            ]
+        }
+        fake_rule = SimpleNamespace(
+            allowed_time_slots=[
+                {"weekday": 2, "start_time": "17:15", "end_time": "18:00"},
+                {"weekday": 5, "start_time": "10:15", "end_time": "11:00"},
+            ],
+            allowed_weekdays=[],
+            location_id=None,
+            modality="ONLINE",
+            created_at=None,
+        )
+
+        with patch(
+            "app.services.quotes.quote_documents._matching_solfege_rule_for_pending_block",
+            return_value=fake_rule,
+        ):
+            info = _solfege_pending_block_info(snapshot, db=object(), language="fr")
+
+        self.assertTrue(info["has_pending_selection"])
+        self.assertTrue(any("Mercredi 17:15-18:00" in label for label in info["slot_labels"]))
+        self.assertTrue(any("Samedi 10:15-11:00" in label for label in info["slot_labels"]))
 
 
 if __name__ == "__main__":
