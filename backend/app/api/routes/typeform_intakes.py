@@ -1964,7 +1964,7 @@ def _typeform_session_option_from_row(
                 best_bonus = 22
                 best_reason = "horaire acceptable"
         if not slot_match_found:
-            score -= 20
+            return None
         else:
             score += best_bonus
             reasons.append(best_reason)
@@ -2290,6 +2290,8 @@ def _build_session_recommendations(
         activity_rows = by_activity.get(line.activity_id, [])
         option_rows: list[tuple[CourseSession, TypeformSessionMatchOptionOut]] = []
         for session_obj, activity, location, booked_count in activity_rows:
+            if resolved_location_id is not None and location.id != resolved_location_id:
+                continue
             option = _typeform_session_option_from_row(
                 session_obj=session_obj,
                 activity=activity,

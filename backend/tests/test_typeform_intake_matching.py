@@ -83,6 +83,31 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
         assert option is not None
         self.assertNotIn("lieu prefere", option.reasons)
 
+    def test_option_requires_requested_day_when_slot_preferences_are_explicit(self) -> None:
+        option = _typeform_session_option_from_row(
+            session_obj=SimpleNamespace(
+                id=uuid4(),
+                title="Eveil musical",
+                start_at_utc=datetime(2026, 5, 16, 9, 0, tzinfo=timezone.utc),  # Saturday
+                end_at_utc=datetime(2026, 5, 16, 10, 0, tzinfo=timezone.utc),
+                timezone="Europe/Paris",
+                recurrence_rule="WEEKLY",
+                recurrence_group_id=None,
+                capacity_max=12,
+            ),
+            activity=SimpleNamespace(id=uuid4(), name="Eveil musical"),
+            location=SimpleNamespace(id=uuid4(), code="RICHELIEU", name="Rue de Richelieu", timezone="Europe/Paris"),
+            booked_count=0,
+            config=SimpleNamespace(default_location_id=None, location_code="paris_richelieu"),
+            requested_location="Paris 1 - Rue de Richelieu",
+            resolved_location_id=uuid4(),
+            requested_slot_preferences=[{"day": 2, "time": 900}],  # Wednesday 15:00
+            requested_days={2},
+            requested_times=[900],
+        )
+
+        self.assertIsNone(option)
+
 
 if __name__ == "__main__":
     unittest.main()
