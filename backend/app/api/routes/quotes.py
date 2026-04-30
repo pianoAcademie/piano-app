@@ -2405,7 +2405,6 @@ def _public_quote_solfege_options_from_snapshot(
         block_level_code = (
             str(block.get("pending_solfege_level") or "").strip()
             or _public_extract_solfege_level_from_text(block.get("activity_label"))
-            or str(level_code or "").strip()
             or None
         )
         is_solfege_block = bool(block_level_code) or "solfege" in haystack
@@ -2418,7 +2417,7 @@ def _public_quote_solfege_options_from_snapshot(
                 continue
             payload = _public_solfege_slot_payload(
                 dict(raw_slot),
-                level_code=block_level_code,
+                level_code=block_level_code or level_code,
                 duration_minutes=duration_minutes,
                 language=language,
             )
@@ -2461,7 +2460,7 @@ def _public_pending_solfege_block_hints(
         if not (block_level or "solfege" in haystack):
             continue
         return (
-            resolved_level,
+            resolved_level or str(level_code or "").strip() or None,
             block.get("location_id"),
             block.get("modality"),
             str(block.get("location_label") or "").strip(),
@@ -2486,7 +2485,6 @@ def _public_selected_solfege_slot_from_snapshot(
         block_level = (
             str(block.get("pending_solfege_level") or "").strip()
             or _public_extract_solfege_level_from_text(activity_label)
-            or str(level_code or "").strip()
             or None
         )
         if not (block_level or "solfege" in haystack):
@@ -2495,7 +2493,7 @@ def _public_selected_solfege_slot_from_snapshot(
             continue
         payload = _public_solfege_slot_payload(
             block,
-            level_code=block_level,
+            level_code=block_level or level_code,
             duration_minutes=duration_minutes,
             language=language,
         )
