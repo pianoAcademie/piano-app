@@ -1917,12 +1917,34 @@ def _quote_activity_context(
 ) -> tuple[UUID | None, str | None]:
     if not activity_ids:
         return None, None
-    first_activity_id = activity_ids[0]
-    activity = db.scalar(select(CourseType).where(CourseType.id == first_activity_id))
-    if activity is None:
-        return first_activity_id, None
+    rows = db.scalars(select(CourseType).where(CourseType.id.in_(activity_ids))).all()
+    by_id = {row.id: row for row in rows}
+    ordered_activities = [by_id[item] for item in activity_ids if item in by_id]
+    if not ordered_activities:
+        return activity_ids[0], None
+    activity = _choose_primary_quote_activity_for_documents(ordered_activities)
     service_code = (activity.service_code or "").strip().lower() or None
-    return first_activity_id, service_code
+    return activity.id, service_code
+
+
+def _is_solfege_activity_for_documents(activity: CourseType | object | None) -> bool:
+    if activity is None:
+        return False
+    service_code = str(getattr(activity, "service_code", "") or "").strip().upper()
+    if service_code == "SOLFEGE":
+        return True
+    haystack = " ".join(
+        str(getattr(activity, field, "") or "").strip().lower()
+        for field in ("code", "name", "service_code")
+    )
+    return "solf" in haystack
+
+
+def _choose_primary_quote_activity_for_documents(activities: list[CourseType | object]) -> CourseType | object:
+    if not activities:
+        raise ValueError("activities must not be empty")
+    non_solfege = [item for item in activities if not _is_solfege_activity_for_documents(item)]
+    return non_solfege[0] if non_solfege else activities[0]
 
 
 def _active_solfege_rule_for_level(db: Session, *, level_code: str | None) -> SolfegeLevelRule | None:
@@ -1962,6 +1984,7 @@ def _resolve_document_binding(
         .where(QuoteDocumentBinding.is_active.is_(True))
         .order_by(QuoteDocumentBinding.priority.asc(), QuoteDocumentBinding.created_at.desc())
     ).all()
+    matches: list[QuoteDocumentBinding] = []
     for row in rows:
         if row.prospect_type and _normalized_match_value(row.prospect_type) != normalized_prospect_type:
             continue
@@ -1977,8 +2000,43 @@ def _resolve_document_binding(
             continue
         if row.currency and _normalized_match_value(row.currency) != normalized_currency:
             continue
-        return row
-    return None
+        matches.append(row)
+    return _pick_best_document_binding(matches)
+
+
+def _document_binding_specificity_key(row: QuoteDocumentBinding | object) -> tuple[int, int, int, int, int, int, int]:
+    return (
+        1 if getattr(row, "activity_id", None) is not None else 0,
+        1 if getattr(row, "quote_type_id", None) is not None else 0,
+        1 if _normalized_match_value(getattr(row, "activity_family", None)) else 0,
+        1 if _normalized_match_value(getattr(row, "prospect_type", None)) else 0,
+        1 if _normalized_match_value(getattr(row, "context_type", None)) else 0,
+        1 if _normalized_match_value(getattr(row, "language", None)) else 0,
+        1 if _normalized_match_value(getattr(row, "currency", None)) else 0,
+    )
+
+
+def _document_binding_sort_key(row: QuoteDocumentBinding | object) -> tuple[int, int, int, int, int, int, int, int, float]:
+    specificity = _document_binding_specificity_key(row)
+    updated_at = getattr(row, "updated_at", None) or getattr(row, "created_at", None)
+    updated_at_ts = updated_at.timestamp() if updated_at is not None else 0.0
+    return (
+        -specificity[0],
+        -specificity[1],
+        -specificity[2],
+        -specificity[3],
+        -specificity[4],
+        -specificity[5],
+        -specificity[6],
+        int(getattr(row, "priority", 100) or 100),
+        -updated_at_ts,
+    )
+
+
+def _pick_best_document_binding(matches: list[QuoteDocumentBinding | object]) -> QuoteDocumentBinding | object | None:
+    if not matches:
+        return None
+    return min(matches, key=_document_binding_sort_key)
 
 
 def _resolve_document_templates(

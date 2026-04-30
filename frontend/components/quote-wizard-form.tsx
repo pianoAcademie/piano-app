@@ -481,7 +481,6 @@ export default function QuoteWizardForm({
 }: QuoteWizardFormProps): JSX.Element {
   const t = (key: string, values?: Record<string, string | number>) => uiText(uiLanguage, key, values);
   const createDraftFormId = "quote-wizard-create-draft-form";
-  const defaultTemplate = quoteTemplates.find((item) => item.is_default) ?? quoteTemplates[0] ?? null;
   const defaultLegalEntity =
     legalEntities.find((item) => item.name.toUpperCase().includes("PIANO ACADEMIE")) ?? legalEntities[0] ?? null;
   const initialQuoteTypeId = quoteTypes[0]?.id ?? "";
@@ -492,8 +491,9 @@ export default function QuoteWizardForm({
   const [selectedQuoteTypeId, setSelectedQuoteTypeId] = useState<string>(initialQuoteTypeId);
   const [expiryDaysInput, setExpiryDaysInput] = useState<string>(String(initialQuoteType?.default_expiry_days ?? 10));
   const [schoolYearLabelInput, setSchoolYearLabelInput] = useState<string>(initialQuoteType?.school_year_label ?? "");
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(defaultTemplate?.id ?? "");
-  const [language, setLanguage] = useState<UiLanguage>(normalizeLang(defaultTemplate?.language));
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
+  const [selectedTermsTemplateId, setSelectedTermsTemplateId] = useState<string>("");
+  const [language, setLanguage] = useState<UiLanguage>(normalizeLang(uiLanguage));
   const [currency, setCurrency] = useState<string>("EUR");
   const [preRegistrationDepositEnabled, setPreRegistrationDepositEnabled] = useState<"no" | "yes">("no");
   const [preRegistrationDepositAmount, setPreRegistrationDepositAmount] = useState<string>("200.00");
@@ -533,6 +533,10 @@ export default function QuoteWizardForm({
   const languageTemplates = useMemo(
     () => quoteTemplates.filter((item) => normalizeLang(item.language) === normalizeLang(language)),
     [quoteTemplates, language],
+  );
+  const languageTermsTemplates = useMemo(
+    () => termsTemplates.filter((item) => normalizeLang(item.language) === normalizeLang(language)),
+    [termsTemplates, language],
   );
 
   const planningBlocksJson = useMemo(
@@ -834,13 +838,14 @@ export default function QuoteWizardForm({
                   setLanguage(normalizeLang(template.language));
                 }
               }}>
-                <option value="">{t("admin.quote_new.none")}</option>
+                <option value="">{t("admin.quote_new.document_rule_auto")}</option>
                 {languageTemplates.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name}
                   </option>
                 ))}
               </select>
+              <small className="muted">{t("admin.quote_new.document_rule_hint")}</small>
             </label>
             <label>
               {t("admin.quote_new.payment_plan")}
@@ -866,14 +871,26 @@ export default function QuoteWizardForm({
             </label>
             <label>
               {t("admin.quote_new.terms_template")}
-              <select name="terms_template_id" defaultValue={termsTemplates[0]?.id ?? ""}>
-                <option value="">{t("admin.quote_new.none_feminine")}</option>
-                {termsTemplates.map((item) => (
+              <select
+                name="terms_template_id"
+                value={selectedTermsTemplateId}
+                onChange={(event) => {
+                  const nextId = event.target.value;
+                  setSelectedTermsTemplateId(nextId);
+                  const template = termsTemplates.find((item) => item.id === nextId);
+                  if (template?.language) {
+                    setLanguage(normalizeLang(template.language));
+                  }
+                }}
+              >
+                <option value="">{t("admin.quote_new.document_rule_auto")}</option>
+                {languageTermsTemplates.map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.name} ({normalizeLang(item.language) === "en" ? t("common.english") : t("common.french")})
                   </option>
                 ))}
               </select>
+              <small className="muted">{t("admin.quote_new.document_rule_hint")}</small>
             </label>
             <label>
               {t("admin.quote_new.school_year")}
@@ -903,13 +920,17 @@ export default function QuoteWizardForm({
                   setLanguage(nextLanguage);
                   const currentTemplate = quoteTemplates.find((item) => item.id === selectedTemplateId);
                   if (currentTemplate && normalizeLang(currentTemplate.language) === nextLanguage) {
-                    return;
+                    const currentTermsTemplate = termsTemplates.find((item) => item.id === selectedTermsTemplateId);
+                    if (currentTermsTemplate && normalizeLang(currentTermsTemplate.language) === nextLanguage) {
+                      return;
+                    }
+                  } else {
+                    setSelectedTemplateId("");
                   }
-                  const fallbackTemplate =
-                    quoteTemplates.find((item) => item.is_default && normalizeLang(item.language) === nextLanguage) ??
-                    quoteTemplates.find((item) => normalizeLang(item.language) === nextLanguage) ??
-                    null;
-                  setSelectedTemplateId(fallbackTemplate?.id ?? "");
+                  const currentTermsTemplate = termsTemplates.find((item) => item.id === selectedTermsTemplateId);
+                  if (!currentTermsTemplate || normalizeLang(currentTermsTemplate.language) !== nextLanguage) {
+                    setSelectedTermsTemplateId("");
+                  }
                 }}
               >
                 <option value="fr">{t("common.french")}</option>
