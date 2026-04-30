@@ -2,6 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
+import { normalizeUiLanguage, uiText } from "../lib/ui-i18n";
 
 type AdultCandidate = {
   id: string;
@@ -24,9 +25,9 @@ type Props = {
 
 export default function AdultLinkSelector({ adults, language }: Props): JSX.Element {
   const searchParams = useSearchParams();
-  const resolvedLanguage = language ?? (searchParams?.get("lang") === "en" ? "en" : "fr");
-  const isEnglish = resolvedLanguage === "en";
+  const resolvedLanguage = language ?? normalizeUiLanguage(searchParams?.get("lang"));
   const [selectedId, setSelectedId] = useState<string>("");
+  const t = (key: string, values?: Record<string, string | number>) => uiText(resolvedLanguage, key, values);
   const selected = useMemo(
     () => adults.find((adult) => adult.id === selectedId) ?? null,
     [adults, selectedId],
@@ -35,9 +36,9 @@ export default function AdultLinkSelector({ adults, language }: Props): JSX.Elem
   return (
     <div className="grid">
       <label>
-        {isEnglish ? "Existing adult to link" : "Adulte existant a rattacher"}
+        {t("admin.clients.existing_adult_to_link")}
         <select name="existing_adult_id" value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
-          <option value="">{isEnglish ? "None" : "Aucun"}</option>
+          <option value="">{t("admin.clients.no_existing_adult")}</option>
           {adults.map((adult) => (
             <option key={adult.id} value={adult.id}>
               {adult.display_name}
@@ -50,11 +51,11 @@ export default function AdultLinkSelector({ adults, language }: Props): JSX.Elem
         <article className="item">
           <strong>{selected.display_name}</strong>
           <p className="muted">
-            {selected.email} | {isEnglish ? "Mobile 1" : "Mobile 1"}: {selected.mobile_phone_1 ?? "-"} | {isEnglish ? "Mobile 2" : "Mobile 2"}: {selected.mobile_phone_2 ?? "-"} | {isEnglish ? "Home" : "Domicile"}:{" "}
+            {selected.email} | {t("client.mobile_phone_1")}: {selected.mobile_phone_1 ?? "-"} | {t("client.mobile_phone_2")}: {selected.mobile_phone_2 ?? "-"} | {t("client.home_phone_label")}:{" "}
             {selected.home_phone ?? "-"}
           </p>
           <p className="muted">
-            {isEnglish ? "Address" : "Adresse"}: {selected.address_line ?? "-"}, {selected.postal_code ?? "-"} {selected.city ?? "-"} ({selected.address_country}) | {isEnglish ? "Residence" : "Residence"}:{" "}
+            {t("admin.client_detail.address")}: {selected.address_line ?? "-"}, {selected.postal_code ?? "-"} {selected.city ?? "-"} ({selected.address_country}) | {t("admin.client_detail.country_residence")}:{" "}
             {selected.residence_country}
           </p>
         </article>

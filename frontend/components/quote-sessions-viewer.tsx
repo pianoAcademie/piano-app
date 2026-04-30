@@ -2,6 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
+import { normalizeUiLanguage, uiText } from "../lib/ui-i18n";
 
 type QuoteSession = {
   date: string;
@@ -17,13 +18,13 @@ type QuoteSessionsViewerProps = {
   sessions: QuoteSession[];
 };
 
-function modalityLabel(value: string, isEnglish: boolean): string {
+function modalityLabel(value: string, language: "fr" | "en"): string {
   const normalized = value.trim().toUpperCase();
   if (normalized === "ONLINE") {
-    return isEnglish ? "Online" : "En ligne";
+    return uiText(language, "admin.quote_planning.modality_online");
   }
   if (normalized === "ONSITE") {
-    return isEnglish ? "On-site" : "Presentiel";
+    return uiText(language, "admin.quote_planning.modality_onsite");
   }
   return normalized || "-";
 }
@@ -33,17 +34,18 @@ function csvEscapeCell(value: string): string {
   return `"${normalized}"`;
 }
 
-function toCsv(sessions: QuoteSession[], isEnglish: boolean): string {
-  const header = isEnglish
-    ? ["Date", "Start time", "End time", "Activity", "Location", "Modality"]
-    : ["Date", "Heure debut", "Heure fin", "Activite", "Lieu", "Modalite"];
+function toCsv(sessions: QuoteSession[], language: "fr" | "en"): string {
+  const header =
+    language === "en"
+      ? ["Date", "Start time", "End time", "Activity", "Location", "Modality"]
+      : ["Date", "Heure debut", "Heure fin", "Activite", "Lieu", "Modalite"];
   const lines = sessions.map((row) => [
     row.date,
     row.start_time,
     row.end_time,
     row.activity_label,
     row.location_label,
-    modalityLabel(row.modality, isEnglish),
+    modalityLabel(row.modality, language),
   ]);
   return [header, ...lines]
     .map((line) => line.map((item) => csvEscapeCell(String(item))).join(";"))
@@ -57,8 +59,9 @@ function safeFileNamePart(value: string): string {
 
 export default function QuoteSessionsViewer({ quoteNumber, sessions }: QuoteSessionsViewerProps): JSX.Element {
   const searchParams = useSearchParams();
-  const isEnglish = searchParams?.get("lang") === "en";
+  const language = normalizeUiLanguage(searchParams?.get("lang"));
   const [open, setOpen] = useState(false);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const normalized = useMemo(
     () =>
@@ -68,8 +71,8 @@ export default function QuoteSessionsViewer({ quoteNumber, sessions }: QuoteSess
           date: String(row.date || "").trim(),
           start_time: String(row.start_time || "").trim(),
           end_time: String(row.end_time || "").trim(),
-          activity_label: String(row.activity_label || (isEnglish ? "Activity" : "Activite")),
-          location_label: String(row.location_label || (isEnglish ? "Location not defined" : "Lieu non defini")),
+          activity_label: String(row.activity_label || uiText(language, "client.activity")),
+          location_label: String(row.location_label || uiText(language, "admin.planning.location_undefined")),
           modality: String(row.modality || ""),
         }))
         .sort((a, b) => {
@@ -79,37 +82,37 @@ export default function QuoteSessionsViewer({ quoteNumber, sessions }: QuoteSess
           if (a.start_time > b.start_time) return 1;
           return 0;
         }),
-    [isEnglish, sessions],
+    [language, sessions],
   );
 
   const csvHref = useMemo(() => {
-    const csv = toCsv(normalized, isEnglish);
+    const csv = toCsv(normalized, language);
     return `data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`;
-  }, [isEnglish, normalized]);
+  }, [language, normalized]);
 
-  const downloadName = `devis-${safeFileNamePart(quoteNumber)}-seances.csv`;
+  const downloadName = `${t("admin.quote_sessions.file_prefix")}-${safeFileNamePart(quoteNumber)}-${t("admin.quote_sessions.file_suffix")}.csv`;
 
   if (normalized.length === 0) {
-    return <p className="muted top-gap-sm">{isEnglish ? "No detailed sessions." : "Aucune seance detaillee."}</p>;
+    return <p className="muted top-gap-sm">{t("admin.quote_sessions.empty")}</p>;
   }
 
   return (
     <>
       <div className="row wrap gap-sm top-gap-sm">
         <button type="button" className="ghost" onClick={() => setOpen(true)}>
-          {isEnglish ? `View details (${normalized.length} sessions)` : `Voir le detail (${normalized.length} seances)`}
+          {t("admin.quote_sessions.show_detail", { count: normalized.length })}
         </button>
         <a className="ghost" href={csvHref} download={downloadName}>
-          {isEnglish ? "Download CSV" : "Telecharger CSV"}
+          {t("admin.quote_sessions.download_csv")}
         </a>
       </div>
 
       {open ? (
-        <section className="modal-overlay modal-overlay-front" role="dialog" aria-modal="true" aria-label={isEnglish ? "Session details" : "Detail des seances"}>
+        <section className="modal-overlay modal-overlay-front" role="dialog" aria-modal="true" aria-label={t("admin.quote_sessions.detail_aria")}>
           <article className="modal-panel quote-sessions-modal">
             <div className="row spread wrap gap-sm">
-              <h3 className="modal-title">{isEnglish ? `Session details (${normalized.length})` : `Detail des seances (${normalized.length})`}</h3>
-              <button type="button" className="modal-close-x" onClick={() => setOpen(false)} aria-label={isEnglish ? "Close" : "Fermer"}>
+              <h3 className="modal-title">{t("admin.quote_sessions.detail_title", { count: normalized.length })}</h3>
+              <button type="button" className="modal-close-x" onClick={() => setOpen(false)} aria-label={t("common.close")}>
                 x
               </button>
             </div>
@@ -124,7 +127,7 @@ export default function QuoteSessionsViewer({ quoteNumber, sessions }: QuoteSess
                     {" · "}
                     {session.location_label}
                     {" · "}
-                    {modalityLabel(session.modality, isEnglish)}
+                    {modalityLabel(session.modality, language)}
                   </small>
                 </article>
               ))}
@@ -132,10 +135,10 @@ export default function QuoteSessionsViewer({ quoteNumber, sessions }: QuoteSess
 
             <div className="row wrap gap-sm top-gap-sm">
               <a className="ghost" href={csvHref} download={downloadName}>
-                {isEnglish ? "Download CSV" : "Telecharger CSV"}
+                {t("admin.quote_sessions.download_csv")}
               </a>
               <button type="button" className="ghost" onClick={() => setOpen(false)}>
-                {isEnglish ? "Close" : "Fermer"}
+                {t("common.close")}
               </button>
             </div>
           </article>

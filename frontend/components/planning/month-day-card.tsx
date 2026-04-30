@@ -1,4 +1,4 @@
-import type { UiLanguage } from "../../lib/ui-messages";
+import { uiText, type UiLanguage } from "../../lib/ui-i18n";
 import MonthEventChip, { type PlanningEventChipData } from "./month-event-chip";
 
 type MonthDayCardProps = {
@@ -24,6 +24,7 @@ export default function MonthDayCard({
 }: MonthDayCardProps): JSX.Element {
   const visibleEvents = events.slice(0, maxVisibleEvents);
   const remainingCount = Math.max(events.length - visibleEvents.length, 0);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   return (
     <article className={`agenda-day month-day-card ${expanded ? "expanded" : ""} ${isToday ? "today" : ""}`}>
@@ -51,7 +52,7 @@ export default function MonthDayCard({
           </div>
           {remainingCount > 0 ? (
             <a className="month-day-card-more" href={dayDetailsHref}>
-              +{remainingCount} {language === "en" ? "more" : "autres"}
+              {t("admin.planning.more_events", { count: remainingCount })}
             </a>
           ) : null}
         </div>
