@@ -70,23 +70,23 @@ export default function SearchMultiSelect({
   const resolvedLanguage: UiLanguage = language ?? (searchParams?.get("lang") === "en" ? "en" : "fr");
   const text = resolvedLanguage === "en"
     ? {
-        emptySelection: "No selection.",
+        emptySelection: "Nothing selected.",
         requiredSelection: "Selection required.",
         selectedCount: (count: number) => `${count} selected`,
-        emptyState: "Empty selection",
+        emptyState: "Nothing selected",
         remove: (optionLabel: string) => `Remove ${optionLabel}`,
-        clear: "Clear",
-        available: `${label} available`,
-        noResult: "No result.",
+        clear: "Clear all",
+        available: `Available ${label.toLowerCase()}`,
+        noResult: "No results.",
         resultLimit: "Display limited to 120 results.",
       }
     : {
         emptySelection: "Aucune selection.",
         requiredSelection: "Selection obligatoire.",
         selectedCount: (count: number) => `${count} selection(s)`,
-        emptyState: "Selection vide",
+        emptyState: "Aucune selection",
         remove: (optionLabel: string) => `Retirer ${optionLabel}`,
-        clear: "Vider",
+        clear: "Tout effacer",
         available: `${label} disponibles`,
         noResult: "Aucun resultat.",
         resultLimit: "Affichage limite a 120 resultats.",

@@ -1464,35 +1464,124 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const editRecurrenceUntilDate = selectedSession
     ? toDateInputInTimezone(addUtcDays(new Date(selectedSession.start_at_utc), 84).toISOString(), selectedSession.timezone)
     : agendaDate;
+  const planningText = isEnglish
+    ? {
+        backendError: "Backend error:",
+        schedule: "Schedule",
+        view: "View",
+        edit: "Edit",
+        addSlot: "Add slot",
+        settings: "Settings",
+        location: "Location",
+        calendarView: "Calendar view",
+        timezone: "Timezone",
+        reset: "Reset",
+        advancedFilters: "Advanced filters",
+        activities: "Activities",
+        type: "Type",
+        locations: "Locations",
+        teachers: "Teachers",
+        students: "Students",
+        sessionStatus: "Session status",
+        clientStatus: "Client status",
+        noAdvancedFilters: "No advanced filters active.",
+        filtersTitle: "Schedule filters",
+        filtersHelp: "You can filter by multiple activities, rooms, teachers and students.",
+        courseType: "Course type",
+        byActivities: "By activities",
+        byRooms: "By rooms",
+        byTeachers: "By teachers",
+        byStudents: "By students",
+        searchActivity: "Search an activity...",
+        searchRoom: "Search a room...",
+        searchTeacher: "Search a teacher...",
+        searchStudent: "Search a student...",
+        noActivitySelected: "No activity selected.",
+        noRoomSelected: "No room selected.",
+        noTeacherSelected: "No teacher selected.",
+        noStudentSelected: "No student selected.",
+        close: "Close",
+        addSlotTitle: "Add a slot",
+        addSlotHelp: "A slot happens on a single local day. Capacity 0 is allowed for slots without students.",
+        createFailed: "Could not create slot",
+        createDone: "Slot created",
+        fixForm: "Fix the form",
+        mainInformation: "Main information",
+        required: "Required",
+      }
+    : {
+        backendError: "Erreur backend :",
+        schedule: "Planning",
+        view: "Vue",
+        edit: "Edition",
+        addSlot: "Ajouter un creneau",
+        settings: "Parametres",
+        location: "Lieu",
+        calendarView: "Vue agenda",
+        timezone: "Fuseau horaire",
+        reset: "Reinitialiser",
+        advancedFilters: "Filtres avances",
+        activities: "Activites",
+        type: "Type",
+        locations: "Lieux",
+        teachers: "Professeurs",
+        students: "Eleves",
+        sessionStatus: "Statut cours",
+        clientStatus: "Statut adherent",
+        noAdvancedFilters: "Aucun filtre avance actif.",
+        filtersTitle: "Filtres planning",
+        filtersHelp: "Vous pouvez filtrer sur plusieurs activites, salles, professeurs et eleves.",
+        courseType: "Type de cours",
+        byActivities: "Par activites",
+        byRooms: "Par salles",
+        byTeachers: "Par professeurs",
+        byStudents: "Par eleves",
+        searchActivity: "Rechercher une activite...",
+        searchRoom: "Rechercher une salle...",
+        searchTeacher: "Rechercher un professeur...",
+        searchStudent: "Rechercher un eleve...",
+        noActivitySelected: "Aucune activite selectionnee.",
+        noRoomSelected: "Aucune salle selectionnee.",
+        noTeacherSelected: "Aucun professeur selectionne.",
+        noStudentSelected: "Aucun eleve selectionne.",
+        close: "Fermer",
+        addSlotTitle: "Ajouter un creneau",
+        addSlotHelp: "Un creneau est sur un seul jour local. Capacite 0 autorisee pour les creneaux sans eleve.",
+        createFailed: "Creation impossible",
+        createDone: "Creation terminee",
+        fixForm: "Corriger la saisie",
+        mainInformation: "Informations principales",
+        required: "Obligatoire",
+      };
 
   return (
     <section className="admin-page-grid">
       {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
       {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
-      {errors.length > 0 ? <section className="flash-err">{isEnglish ? "Backend error:" : "Erreur backend:"} {errors.join(" | ")}</section> : null}
+      {errors.length > 0 ? <section className="flash-err">{planningText.backendError} {errors.join(" | ")}</section> : null}
 
       <section className="card planning-header-card">
         <div className="row spread planning-header-row">
           <div className="stack-xs">
-            <h2>{isEnglish ? "Schedule" : "Planning"}</h2>
+            <h2>{planningText.schedule}</h2>
             <p className="muted planning-subtitle">{planningSubtitle}</p>
           </div>
           <div className="row planning-header-actions">
             <a className={`mode-link ${!createOpen ? "mode-active" : ""}`} href={lectureHref}>
-              {isEnglish ? "View" : "Lecture"}
+              {planningText.view}
             </a>
             <a className={`mode-link ${createOpen ? "mode-active" : ""}`} href={createHref}>
-              {isEnglish ? "Edit" : "Edition"}
+              {planningText.edit}
             </a>
             <a className="icon-add-button" href={createHref}>
               <span className="icon-add-button-plus" aria-hidden="true">
                 +
               </span>
-              {isEnglish ? "Add slot" : "Ajouter un creneau"}
+              {planningText.addSlot}
             </a>
             {focusedLocationId ? (
               <Link className="mode-link" href={withUiLanguage(`/admin/plannings/${focusedLocationId}/settings`, language)}>
-                {isEnglish ? "Settings" : "Parametres"}
+                {planningText.settings}
               </Link>
             ) : null}
           </div>
@@ -1522,7 +1611,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
           {dayDetails ? <input type="hidden" name="day_details" value={dayDetails} /> : null}
 
           <label>
-            {isEnglish ? "Location" : "Lieu"}
+            {planningText.location}
             <AutoSubmitSelect
               name="location_id"
               defaultValue={focusedLocationId}
@@ -1531,7 +1620,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
           </label>
 
           <label>
-            {isEnglish ? "Calendar view" : "Vue agenda"}
+            {planningText.calendarView}
             <AutoSubmitSelect
               name="agenda_view"
               defaultValue={agendaView}
@@ -1554,33 +1643,33 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
           <div className="row">
             <a className="planning-reset-link" href={filtersResetHref}>
-              {isEnglish ? "Reset" : "Reinitialiser"}
+              {planningText.reset}
             </a>
             <a className="mode-link planning-advanced-link" href={filtersHref}>
-              {isEnglish ? "Advanced filters" : "Filtres avances"}
+              {planningText.advancedFilters}
             </a>
           </div>
         </form>
         <div className="row planning-active-filters">
           {selectedActivityLabels.length > 0 ? (
-            <span className="badge">{isEnglish ? "Activities" : "Activites"}: {compactList(selectedActivityLabels)}</span>
+            <span className="badge">{planningText.activities}: {compactList(selectedActivityLabels)}</span>
           ) : null}
           {selectedCourseType ? (
-            <span className="badge">{isEnglish ? "Type" : "Type"}: {courseTypeById.get(selectedCourseType)?.name ?? pickText(language, "Selection", "Selection")}</span>
+            <span className="badge">{planningText.type}: {courseTypeById.get(selectedCourseType)?.name ?? pickText(language, "Selection", "Selection")}</span>
           ) : null}
           {selectedLocationLabels.length > 0 ? (
-            <span className="badge">{isEnglish ? "Locations" : "Lieux"}: {compactList(selectedLocationLabels)}</span>
+            <span className="badge">{planningText.locations}: {compactList(selectedLocationLabels)}</span>
           ) : null}
           {selectedProfessorLabels.length > 0 ? (
-            <span className="badge">{isEnglish ? "Teachers" : "Professeurs"}: {compactList(selectedProfessorLabels)}</span>
+            <span className="badge">{planningText.teachers}: {compactList(selectedProfessorLabels)}</span>
           ) : null}
           {selectedClientLabels.length > 0 ? (
-            <span className="badge">{isEnglish ? "Students" : "Etudiants"}: {compactList(selectedClientLabels)}</span>
+            <span className="badge">{planningText.students}: {compactList(selectedClientLabels)}</span>
           ) : null}
-          {selectedStatus !== "ALL" ? <span className="badge">{isEnglish ? "Session status" : "Statut cours"}: {selectedStatus}</span> : null}
-          {selectedClientStatus !== "ALL" ? <span className="badge">{isEnglish ? "Client status" : "Statut adherent"}: {selectedClientStatus}</span> : null}
+          {selectedStatus !== "ALL" ? <span className="badge">{planningText.sessionStatus}: {selectedStatus}</span> : null}
+          {selectedClientStatus !== "ALL" ? <span className="badge">{planningText.clientStatus}: {selectedClientStatus}</span> : null}
           {!hasAdvancedFilters ? (
-            <span className="muted">{isEnglish ? "No advanced filters active." : "Aucun filtre avance actif."}</span>
+            <span className="muted">{planningText.noAdvancedFilters}</span>
           ) : null}
         </div>
       </section>
@@ -1588,11 +1677,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       {filtersOpen ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-compact planning-filters-modal">
-            <a className="modal-close-x" href={filtersCloseHref} aria-label={isEnglish ? "Close" : "Fermer"}>
+            <a className="modal-close-x" href={filtersCloseHref} aria-label={planningText.close}>
               ×
             </a>
-            <h2 className="modal-title">{isEnglish ? "Schedule filters" : "Filtres planning"}</h2>
-            <p className="muted">{isEnglish ? "You can filter by multiple locations, teachers and students." : "Vous pouvez filtrer sur plusieurs lieux, professeurs et etudiants."}</p>
+            <h2 className="modal-title">{planningText.filtersTitle}</h2>
+            <p className="muted">{planningText.filtersHelp}</p>
             <form method="get" className="grid cols-2">
               {language === "en" ? <input type="hidden" name="lang" value="en" /> : null}
               <input type="hidden" name="location_id" value={focusedLocationId} />
@@ -1602,7 +1691,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               {dayDetails ? <input type="hidden" name="day_details" value={dayDetails} /> : null}
 
               <label className="span-2">
-                {isEnglish ? "Course type" : "Type de cours"}
+                {planningText.courseType}
                 <select name="course_type_id" defaultValue={selectedCourseType}>
                   <option value="">{isEnglish ? "All" : "Tous"}</option>
                   {courseTypes.map((row) => (
@@ -1615,44 +1704,44 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
               <SearchMultiSelect
                 className="span-2"
-                label={isEnglish ? "By activities" : "Par activites"}
+                label={planningText.byActivities}
                 name="activity_ids"
                 options={courseTypes.map((row) => ({ id: row.id, label: row.name }))}
                 selectedIds={selectedActivityIds}
-                placeholder={isEnglish ? "Search an activity..." : "Rechercher une activite..."}
-                emptySelectionLabel={isEnglish ? "No activity selected." : "Aucune activite selectionnee."}
+                placeholder={planningText.searchActivity}
+                emptySelectionLabel={planningText.noActivitySelected}
               />
 
               <SearchMultiSelect
-                label={isEnglish ? "By rooms" : "Par salles"}
+                label={planningText.byRooms}
                 name="location_ids"
                 options={locationFilterOptions}
                 selectedIds={selectedLocationIdsFromQuery}
-                placeholder={isEnglish ? "Search a room..." : "Rechercher une salle..."}
-                emptySelectionLabel={isEnglish ? "No room selected." : "Aucune salle selectionnee."}
+                placeholder={planningText.searchRoom}
+                emptySelectionLabel={planningText.noRoomSelected}
               />
 
               <SearchMultiSelect
-                label={isEnglish ? "By teachers" : "Par enseignants"}
+                label={planningText.byTeachers}
                 name="professor_ids"
                 options={professorFilterOptions}
                 selectedIds={selectedProfessorIds}
-                placeholder={isEnglish ? "Search a teacher..." : "Rechercher un enseignant..."}
-                emptySelectionLabel={isEnglish ? "No teacher selected." : "Aucun enseignant selectionne."}
+                placeholder={planningText.searchTeacher}
+                emptySelectionLabel={planningText.noTeacherSelected}
               />
 
               <SearchMultiSelect
                 className="span-2"
-                label={isEnglish ? "By students" : "Par etudiants"}
+                label={planningText.byStudents}
                 name="client_ids"
                 options={clientFilterOptions}
                 selectedIds={selectedClientIds}
-                placeholder={isEnglish ? "Search a student..." : "Rechercher un etudiant..."}
-                emptySelectionLabel={isEnglish ? "No student selected." : "Aucun etudiant selectionne."}
+                placeholder={planningText.searchStudent}
+                emptySelectionLabel={planningText.noStudentSelected}
               />
 
               <label>
-                {isEnglish ? "Session status" : "Statut cours"}
+                {planningText.sessionStatus}
                 <select name="status" defaultValue={selectedStatus}>
                   <option value="ALL">{t("common.all")}</option>
                   <option value="SCHEDULED">{t("admin.planning.status.scheduled")}</option>
@@ -1662,7 +1751,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               </label>
 
               <label>
-                {isEnglish ? "Client status" : "Statut adherent"}
+                {planningText.clientStatus}
                 <select name="client_status" defaultValue={selectedClientStatus}>
                   <option value="ALL">{t("common.all")}</option>
                   <option value="ACTIVE">{t("admin.clients.status_active")}</option>
@@ -1675,9 +1764,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               </label>
 
               <div className="row span-2">
-                <button type="submit">{isEnglish ? "Apply" : "Appliquer"}</button>
+                <button type="submit">{t("common.apply")}</button>
                 <a className="reset-link" href={filtersResetHref}>
-                  {isEnglish ? "Reset" : "Reinitialiser"}
+                  {planningText.reset}
                 </a>
               </div>
             </form>
@@ -1688,40 +1777,34 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       {createOpen && !filtersOpen && !selectedDayDetails && !selectedSession ? (
         <section className="modal-overlay">
           <article className="modal-panel modal-create-session">
-            <a className="modal-close-x" href={createCloseHref} aria-label={language === "en" ? "Close" : "Fermer"}>
+            <a className="modal-close-x" href={createCloseHref} aria-label={planningText.close}>
               ×
             </a>
-            <h2 className="modal-title">{language === "en" ? "Add a slot" : "Ajouter un creneau"}</h2>
-            <p className="muted">
-              {language === "en"
-                ? "A slot happens on a single local day. Capacity 0 is allowed for slots without students."
-                : "Un creneau est sur un seul jour local. Capacite 0 autorisee pour les creneaux sans eleve."}
-            </p>
+            <h2 className="modal-title">{planningText.addSlotTitle}</h2>
+            <p className="muted">{planningText.addSlotHelp}</p>
             {(okMessage || errorMessage) ? (
               <section className="modal-overlay modal-overlay-front">
                 <article className="modal-panel modal-compact">
                   <a
                     className="modal-close-x"
                     href={errorMessage ? createFeedbackDismissHref : createCloseHref}
-                    aria-label={language === "en" ? "Close" : "Fermer"}
+                    aria-label={planningText.close}
                   >
                     ×
                   </a>
                   <h3 className="modal-title">
-                    {errorMessage
-                      ? (language === "en" ? "Could not create slot" : "Creation impossible")
-                      : (language === "en" ? "Slot created" : "Creation terminee")}
+                    {errorMessage ? planningText.createFailed : planningText.createDone}
                   </h3>
                   {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
                   {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
                   <div className="row modal-actions-end">
                     {errorMessage ? (
                       <a className="ghost" href={createFeedbackDismissHref}>
-                        {language === "en" ? "Fix the form" : "Corriger la saisie"}
+                        {planningText.fixForm}
                       </a>
                     ) : null}
                     <a className="mode-link" href={createCloseHref}>
-                      {language === "en" ? "Close" : "Fermer"}
+                      {planningText.close}
                     </a>
                   </div>
                 </article>
@@ -1731,8 +1814,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               <input type="hidden" name="return_to" value={createHref} />
               <section className="create-session-section">
                 <div className="row spread">
-                  <h3 className="create-session-section-title">{language === "en" ? "Main information" : "Informations principales"}</h3>
-                  <span className="badge">{language === "en" ? "Required" : "Obligatoire"}</span>
+                  <h3 className="create-session-section-title">{planningText.mainInformation}</h3>
+                  <span className="badge">{planningText.required}</span>
                 </div>
                 <SessionCreateMainFields
                   language={language}
