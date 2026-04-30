@@ -38,6 +38,7 @@ from app.schemas.plan import (
 )
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, with_webhook_secret
 from app.services.messaging_templates import resolve_frontend_base_url
+from app.services.payment_provider import resolve_webhook_secret
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.client_status import promote_client_to_active_student
 from app.services.subscriptions import add_months_utc, reconcile_subscription_status
@@ -739,7 +740,7 @@ def purchase_plan(
                 customer_email=owner.email,
                 success_return_url=success_url,
                 cancel_return_url=cancel_url,
-                webhook_url=with_webhook_secret(webhook_url, settings.payment_webhook_secret),
+                webhook_url=with_webhook_secret(webhook_url, resolve_webhook_secret(db)),
                 metadata={
                     "client_id": str(owner.id),
                     "subscription_id": str(subscription.id),

@@ -118,7 +118,7 @@ from app.services.payment_receipts import (
     remaining_booking_amount_due,
     should_defer_booking_invoice,
 )
-from app.services.payment_provider import detect_provider_from_reference, resolve_provider
+from app.services.payment_provider import detect_provider_from_reference, resolve_provider, resolve_webhook_secret
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.session_audience import (
     allowed_plan_kinds_for_scopes,
@@ -2533,7 +2533,7 @@ def create_client_payment_checkout(
             customer_email=owner.email,
             success_return_url=success_url,
             cancel_return_url=cancel_url,
-            webhook_url=with_webhook_secret(webhook_url, settings.payment_webhook_secret),
+            webhook_url=with_webhook_secret(webhook_url, resolve_webhook_secret(db)),
             metadata={
                 "client_id": str(owner.id),
                 "subscription_id": str(subscription.id),

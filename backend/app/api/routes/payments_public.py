@@ -20,12 +20,11 @@ from app.api.routes.admin_clients import (
     start_admin_client_payment_receipt_public_payment,
     start_admin_client_range_invoice_public_payment,
 )
-from app.core.config import settings
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind, SubscriptionStatus
 from app.models.user import User
 from app.services.client_purchase_notifications import send_client_payment_success_notifications
 from app.services.payment_checkout import lookup_payment
-from app.services.payment_provider import detect_provider_from_reference, resolve_provider
+from app.services.payment_provider import detect_provider_from_reference, resolve_provider, resolve_webhook_secret
 
 router = APIRouter(prefix="/public/payments")
 logger = logging.getLogger(__name__)
@@ -59,32 +58,32 @@ def _extract_reference(request: Request, payload: object) -> str | None:
     return None
 
 
-@router.api_route("/webhook", methods=["POST", "GET"])
+@router.post("/webhook")
 async def payment_webhook(
     request: Request,
     client_id: UUID | None = Query(default=None),
     subscription_id: UUID | None = Query(default=None),
     token: str | None = Query(default=None),
 ) -> dict[str, object]:
-    configured = (settings.payment_webhook_secret or "").strip()
-    if configured and token != configured:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid webhook token")
-
-    raw_body = await request.body()
-    payload: object = {}
-    if raw_body:
-        body_text = raw_body.decode("utf-8", errors="ignore")
-        try:
-            payload = json.loads(body_text)
-        except Exception:
-            payload = {}
-
-    payment_reference = _extract_reference(request, payload)
-    if subscription_id is None:
-        return {"ok": True, "processed": False, "reason": "missing_subscription_id"}
-
     db: Session = SessionLocal()
     try:
+        configured = resolve_webhook_secret(db)
+        if token != configured:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid webhook token")
+
+        raw_body = await request.body()
+        payload: object = {}
+        if raw_body:
+            body_text = raw_body.decode("utf-8", errors="ignore")
+            try:
+                payload = json.loads(body_text)
+            except Exception:
+                payload = {}
+
+        payment_reference = _extract_reference(request, payload)
+        if subscription_id is None:
+            return {"ok": True, "processed": False, "reason": "missing_subscription_id"}
+
         sub = db.scalar(select(ClientPlanSubscription).where(ClientPlanSubscription.id == subscription_id).with_for_update())
         if sub is None:
             return {"ok": True, "processed": False, "reason": "subscription_not_found"}
@@ -96,7 +95,10 @@ async def payment_webhook(
         if plan is None:
             return {"ok": True, "processed": False, "reason": "plan_not_found"}
 
-        if payment_reference:
+        current_reference = (sub.payment_provider_subscription_ref or "").strip()
+        if current_reference and payment_reference and payment_reference != current_reference:
+            return {"ok": True, "processed": False, "reason": "reference_mismatch"}
+        if not current_reference and payment_reference:
             sub.payment_provider_subscription_ref = payment_reference
 
         reference = (sub.payment_provider_subscription_ref or "").strip()

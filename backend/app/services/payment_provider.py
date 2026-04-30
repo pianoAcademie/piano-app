@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from enum import Enum
@@ -154,6 +155,18 @@ def resolve_secret_values(db: Session) -> dict[str, str]:
         "stripe_live_secret": stripe_live_secret,
         "webhook_secret": webhook_secret,
     }
+
+
+def resolve_webhook_secret(db: Session | None = None) -> str:
+    if db is not None:
+        explicit = resolve_secret_values(db)["webhook_secret"].strip()
+        if explicit:
+            return explicit
+    elif settings.payment_webhook_secret.strip():
+        return settings.payment_webhook_secret.strip()
+
+    seed = f"{settings.jwt_secret_key}|payment-webhook|{settings.frontend_base_url}".encode("utf-8")
+    return hashlib.sha256(seed).hexdigest()
 
 
 def resolve_active_secret(db: Session, *, provider: PaymentProvider | None = None) -> str:

@@ -183,7 +183,7 @@ from app.services.payment_receipts import (
 )
 from app.services.session_teachers import effective_teacher_id_for_session, professor_display_name
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
-from app.services.payment_provider import detect_provider_from_reference, parse_provider, resolve_provider
+from app.services.payment_provider import detect_provider_from_reference, parse_provider, resolve_provider, resolve_webhook_secret
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.reminders import skip_pending_reminders_for_booking
 from app.services.security import create_access_token, hash_password
@@ -3068,7 +3068,7 @@ def _create_checkout_for_subscription(
             customer_email=client.email,
             success_return_url=success_url,
             cancel_return_url=cancel_url,
-            webhook_url=with_webhook_secret(webhook_url, settings.payment_webhook_secret),
+            webhook_url=with_webhook_secret(webhook_url, resolve_webhook_secret(db)),
             metadata={
                 "client_id": str(client.id),
                 "subscription_id": str(subscription.id),
@@ -8300,7 +8300,7 @@ def start_admin_client_range_invoice_public_payment(
     )
     webhook_url = with_webhook_secret(
         f"{base_url}/api/v1/public/payments/invoices/range/{client_id}/{note_id}/webhook?token={urlencode({'token': token}).split('=', 1)[1]}",
-        settings.payment_webhook_secret,
+        resolve_webhook_secret(db),
     )
 
     checkout = create_checkout_session(
@@ -8349,7 +8349,7 @@ def handle_admin_client_range_invoice_public_payment_webhook(
     secret: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    if settings.payment_webhook_secret and secret != settings.payment_webhook_secret:
+    if secret != resolve_webhook_secret(db):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook secret")
 
     _require_client(db, client_id)

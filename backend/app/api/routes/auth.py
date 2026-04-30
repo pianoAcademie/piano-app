@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -35,6 +35,7 @@ from app.schemas.auth import (
 from app.schemas.user import UserOut
 from app.services.email_delivery import send_email
 from app.services.i18n import normalize_language
+from app.services.shared.rate_limit import consume_rate_limit
 from app.services.messaging_templates import (
     PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET,
     resolve_frontend_base_url,
@@ -60,6 +61,7 @@ DEFAULT_PASSWORD_RESET_BODY = (
     "Bien a vous,\n\n"
     "L equipe Piano Academie"
 )
+AUTH_RATE_LIMIT_MESSAGE = "Trop de tentatives. Veuillez reessayer plus tard."
 
 
 class _SafeTemplateContext(dict[str, str]):
@@ -166,6 +168,95 @@ def _ensure_group_membership(db: Session, *, user_id: UUID, group_id: UUID) -> N
 
 def _hash_reset_token(raw_token: str) -> str:
     return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+def _hash_rate_limit_identifier(raw_value: str) -> str:
+    return hashlib.sha256(raw_value.encode("utf-8")).hexdigest()
+
+
+def _request_client_ip(request: Request) -> str:
+    forwarded_for = str(request.headers.get("x-forwarded-for") or "").strip()
+    if forwarded_for:
+        first_ip = forwarded_for.split(",", 1)[0].strip()
+        if first_ip:
+            return first_ip
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _enforce_auth_rate_limit(*, request: Request, bucket: str, identifier: str, limit: int, window_seconds: int) -> None:
+    allowed, retry_after = consume_rate_limit(
+        bucket=bucket,
+        key=identifier,
+        limit=limit,
+        window_seconds=window_seconds,
+    )
+    if allowed:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=AUTH_RATE_LIMIT_MESSAGE,
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def _enforce_login_rate_limits(request: Request, normalized_email: str) -> None:
+    client_ip = _request_client_ip(request)
+    email_hash = _hash_rate_limit_identifier(normalized_email)
+    _enforce_auth_rate_limit(request=request, bucket="auth-login-ip", identifier=client_ip, limit=25, window_seconds=900)
+    _enforce_auth_rate_limit(
+        request=request,
+        bucket="auth-login-account",
+        identifier=email_hash,
+        limit=12,
+        window_seconds=900,
+    )
+    _enforce_auth_rate_limit(
+        request=request,
+        bucket="auth-login-pair",
+        identifier=f"{client_ip}:{email_hash}",
+        limit=8,
+        window_seconds=900,
+    )
+
+
+def _enforce_forgot_password_rate_limits(request: Request, normalized_email: str) -> None:
+    client_ip = _request_client_ip(request)
+    email_hash = _hash_rate_limit_identifier(normalized_email)
+    _enforce_auth_rate_limit(request=request, bucket="auth-forgot-ip", identifier=client_ip, limit=20, window_seconds=3600)
+    _enforce_auth_rate_limit(
+        request=request,
+        bucket="auth-forgot-account",
+        identifier=email_hash,
+        limit=4,
+        window_seconds=3600,
+    )
+
+
+def _enforce_lookup_rate_limits(request: Request, normalized_email: str) -> None:
+    client_ip = _request_client_ip(request)
+    _enforce_auth_rate_limit(request=request, bucket="auth-lookup-ip", identifier=client_ip, limit=15, window_seconds=3600)
+    _enforce_auth_rate_limit(
+        request=request,
+        bucket="auth-lookup-account",
+        identifier=_hash_rate_limit_identifier(normalized_email),
+        limit=6,
+        window_seconds=3600,
+    )
+
+
+def _enforce_reset_password_rate_limits(request: Request, token: str) -> None:
+    client_ip = _request_client_ip(request)
+    token_hash = _hash_rate_limit_identifier(token)
+    _enforce_auth_rate_limit(request=request, bucket="auth-reset-ip", identifier=client_ip, limit=20, window_seconds=3600)
+    _enforce_auth_rate_limit(
+        request=request,
+        bucket="auth-reset-token",
+        identifier=token_hash,
+        limit=10,
+        window_seconds=3600,
+    )
 
 
 def _render_template(template: str, context: dict[str, str]) -> str:
@@ -412,8 +503,9 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
+def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)) -> TokenResponse:
     normalized_email = payload.email.strip().lower()
+    _enforce_login_rate_limits(request, normalized_email)
     user = db.scalar(select(User).where(User.email == normalized_email))
 
     if user is None or not verify_password(payload.password, user.hashed_password):
@@ -444,15 +536,16 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
 
 
 @router.post("/email-lookup", response_model=EmailLookupResponse)
-def email_lookup(payload: EmailLookupRequest, db: Session = Depends(get_db)) -> EmailLookupResponse:
+def email_lookup(payload: EmailLookupRequest, request: Request, db: Session = Depends(get_db)) -> EmailLookupResponse:
     normalized_email = payload.email.strip().lower()
-    user = db.scalar(select(User.id).where(User.email == normalized_email))
-    return EmailLookupResponse(email=normalized_email, exists=user is not None)
+    _enforce_lookup_rate_limits(request, normalized_email)
+    return EmailLookupResponse(email=normalized_email, exists=False)
 
 
 @router.post("/forgot-password", response_model=ForgotPasswordResponse)
-def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)) -> ForgotPasswordResponse:
+def forgot_password(payload: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)) -> ForgotPasswordResponse:
     normalized_email = payload.email.strip().lower()
+    _enforce_forgot_password_rate_limits(request, normalized_email)
     user = db.scalar(select(User).where(User.email == normalized_email))
     if user is None or not user.is_active:
         return ForgotPasswordResponse(message=DEFAULT_FORGOT_PASSWORD_MESSAGE)
@@ -518,8 +611,9 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
 
 
 @router.post("/reset-password", response_model=ResetPasswordResponse)
-def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)) -> ResetPasswordResponse:
+def reset_password(payload: ResetPasswordRequest, request: Request, db: Session = Depends(get_db)) -> ResetPasswordResponse:
     token = payload.token.strip()
+    _enforce_reset_password_rate_limits(request, token)
     now = datetime.now(timezone.utc)
     token_hash = _hash_reset_token(token)
 
