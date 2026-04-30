@@ -1605,8 +1605,47 @@ def _is_adjustment_line(line: QuoteLine) -> bool:
     return line_type in {"discount", "surcharge"} or master_item_type in {"discount_rule", "surcharge_rule"}
 
 
+def _line_catalog_product_nature(line: QuoteLine) -> str:
+    meta = line.meta if isinstance(line.meta, dict) else {}
+    value = str(meta.get("catalog_product_nature") or meta.get("product_nature") or "").strip().lower()
+    return value if value in {"material", "service"} else ""
+
+
+def _service_product_ids_for_lines(*, db: Session | None, lines: list[QuoteLine]) -> set[UUID]:
+    service_ids: set[UUID] = set()
+    unresolved_ids: set[UUID] = set()
+    for line in lines:
+        if line.product_id is None:
+            continue
+        if _line_catalog_product_nature(line) == "service":
+            service_ids.add(line.product_id)
+            continue
+        unresolved_ids.add(line.product_id)
+
+    if db is not None and unresolved_ids:
+        rows = db.execute(
+            select(CatalogProduct.id).where(
+                CatalogProduct.id.in_(list(unresolved_ids)),
+                CatalogProduct.nature == "service",
+            )
+        ).all()
+        service_ids.update(product_id for product_id, in rows if product_id is not None)
+    return service_ids
+
+
+def _line_is_service_fee(line: QuoteLine, *, service_product_ids: set[UUID] | None = None) -> bool:
+    if _line_matches_pass_recup(line):
+        return True
+    if line.product_id is not None and service_product_ids and line.product_id in service_product_ids:
+        return True
+    category = (line.line_category or "").strip().lower()
+    return category in {"other_fee", "fee", "immaterial_fee"}
+
+
 def _line_groups(
     lines: list[QuoteLine],
+    *,
+    service_product_ids: set[UUID] | None = None,
 ) -> tuple[list[QuoteLine], list[QuoteLine], list[QuoteLine], list[QuoteLine], list[QuoteLine]]:
     services: list[QuoteLine] = []
     products: list[QuoteLine] = []
@@ -1617,8 +1656,7 @@ def _line_groups(
         if _is_adjustment_line(line):
             adjustments.append(line)
             continue
-        category = (line.line_category or "").strip().lower()
-        if _line_matches_pass_recup(line) or category in {"other_fee", "fee", "immaterial_fee"}:
+        if _line_is_service_fee(line, service_product_ids=service_product_ids):
             other_fees.append(line)
             continue
         if (line.line_category or "").strip().lower() == "service":
@@ -2799,7 +2837,8 @@ def _build_template_values(
 ) -> tuple[dict[str, str], set[str], dict[str, Any]]:
     language = _quote_doc_language(quote=quote)
     currency = (quote.currency or "EUR").upper()
-    services, products, kits, adjustments, other_fees = _line_groups(lines)
+    service_product_ids = _service_product_ids_for_lines(db=db, lines=lines)
+    services, products, kits, adjustments, other_fees = _line_groups(lines, service_product_ids=service_product_ids)
     document_context = build_quote_document_context(db=db, quote=quote, lines=lines, audience=audience)
     display_flags = document_context["display_flags"]
     total_ttc = Decimal(quote.total_ttc or 0).quantize(Decimal("0.01"))
@@ -3140,7 +3179,7 @@ def _build_template_values(
                 if (line.line_type or "").strip().lower() == "surcharge"
                 else (
                     _quote_doc_text("fee_service", language=language)
-                    if (line.line_category or "").lower() == "service"
+                    if ((line.line_category or "").lower() == "service" or _line_is_service_fee(line, service_product_ids=service_product_ids))
                     else (_quote_doc_text("fee_kit", language=language) if line.kit_id else _quote_doc_text("fee_material", language=language))
                 ),
                 _harmonize_display_text(line.title or "-"),
@@ -4532,7 +4571,8 @@ def _render_quote_pdf_blocks(
     calendar_snapshot = _json_object(quote.calendar_snapshot)
     sessions = [item for item in _json_list(calendar_snapshot.get("sessions")) if isinstance(item, dict)]
     planning_blocks = [item for item in _json_list(calendar_snapshot.get("blocks")) if isinstance(item, dict)]
-    services, products, kits, adjustments, other_fees = _line_groups(lines)
+    service_product_ids = _service_product_ids_for_lines(db=db, lines=lines)
+    services, products, kits, adjustments, other_fees = _line_groups(lines, service_product_ids=service_product_ids)
     product_long_descriptions = _product_long_descriptions_by_id(db=db, products=products)
     kit_long_descriptions = _kit_long_descriptions_by_id(db=db, kits=kits)
     kit_composition = _kit_composition_by_id(db=db, kits=kits, language=language)

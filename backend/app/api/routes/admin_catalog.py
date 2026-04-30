@@ -222,6 +222,7 @@ def _product_out(
         short_description=row.short_description,
         long_description=row.long_description,
         web_link=row.web_link,
+        nature=row.nature,
         is_virtual=bool(row.is_virtual),
         purchasable_online=bool(row.purchasable_online),
         is_public=bool(row.is_public),
@@ -625,6 +626,7 @@ def create_admin_catalog_product(
         short_description=normalize_optional(payload.short_description),
         long_description=normalize_optional(payload.long_description),
         web_link=normalize_optional(payload.web_link),
+        nature=payload.nature,
         is_virtual=is_virtual,
         purchasable_online=payload.purchasable_online,
         is_public=payload.is_public,
@@ -675,6 +677,7 @@ def update_admin_catalog_product(
     row.short_description = normalize_optional(payload.short_description)
     row.long_description = normalize_optional(payload.long_description)
     row.web_link = normalize_optional(payload.web_link)
+    row.nature = payload.nature
     row.purchasable_online = payload.purchasable_online
     row.is_public = payload.is_public
     row.active = payload.active

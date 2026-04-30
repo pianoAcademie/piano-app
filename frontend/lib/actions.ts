@@ -8334,6 +8334,7 @@ export async function createAdminCatalogProductAction(formData: FormData): Promi
   const vatRate = vatRateInput ?? 20;
   const reserveStock = reserveStockInput ?? 0;
   const reorderStatus = String(formData.get("reorder_status") ?? "NORMAL").trim().toUpperCase();
+  const nature = String(formData.get("nature") ?? "material").trim().toLowerCase() === "service" ? "service" : "material";
   const isVirtual = String(formData.get("is_virtual") ?? "false").trim().toLowerCase() === "true";
   if (!title || !categoryId || priceInclVat === null) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.product_required_fields")));
@@ -8368,6 +8369,7 @@ export async function createAdminCatalogProductAction(formData: FormData): Promi
     short_description: optionalField(formData, "short_description"),
     long_description: optionalField(formData, "long_description"),
     web_link: optionalField(formData, "web_link"),
+    nature,
     is_virtual: isVirtual,
     purchasable_online: checkboxField(formData, "purchasable_online"),
     is_public: checkboxFieldWithDefault(formData, "is_public", true),
@@ -8426,6 +8428,7 @@ export async function updateAdminCatalogProductAction(formData: FormData): Promi
   const vatRate = parseNonNegativeDecimal(String(formData.get("vat_rate") ?? "20"));
   const reserveStock = parseNonNegativeInt(String(formData.get("reserve_stock") ?? "0"));
   const reorderStatus = String(formData.get("reorder_status") ?? "NORMAL").trim().toUpperCase();
+  const nature = String(formData.get("nature") ?? "material").trim().toLowerCase() === "service" ? "service" : "material";
   const isVirtual = String(formData.get("is_virtual") ?? "false").trim().toLowerCase() === "true";
   if (!productId || !title || priceExclVat === null || priceInclVat === null || vatRate === null || reserveStock === null) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_product")));
@@ -8445,6 +8448,7 @@ export async function updateAdminCatalogProductAction(formData: FormData): Promi
     short_description: optionalField(formData, "short_description"),
     long_description: optionalField(formData, "long_description"),
     web_link: optionalField(formData, "web_link"),
+    nature,
     is_virtual: isVirtual,
     purchasable_online: checkboxField(formData, "purchasable_online"),
     is_public: checkboxFieldWithDefault(formData, "is_public", true),

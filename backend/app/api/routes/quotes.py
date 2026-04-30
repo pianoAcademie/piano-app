@@ -3097,6 +3097,7 @@ def _effective_item_price(
         code = code or product.barcode
         title = product.title
         description = line.description or product.short_description or product.long_description
+        meta["catalog_product_nature"] = str(product.nature or "material").strip().lower() or "material"
         if pricing_catalog_id is not None:
             product_price = db.scalar(
                 select(PricingProductPrice)

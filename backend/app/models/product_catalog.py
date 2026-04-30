@@ -55,6 +55,11 @@ class ProductTransferStatus(str, enum.Enum):
     CANCELLED = "CANCELLED"
 
 
+class CatalogProductNature(str, enum.Enum):
+    MATERIAL = "material"
+    SERVICE = "service"
+
+
 class StockMovementType(str, enum.Enum):
     STOCK_IN = "STOCK_IN"
     ADJUSTMENT = "ADJUSTMENT"
@@ -153,6 +158,18 @@ class CatalogProduct(Base):
     short_description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     long_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     web_link: Mapped[str | None] = mapped_column(Text, nullable=True)
+    nature: Mapped[CatalogProductNature] = mapped_column(
+        Enum(
+            CatalogProductNature,
+            name="catalog_product_nature",
+            native_enum=False,
+            values_callable=_enum_values,
+            validate_strings=True,
+            create_constraint=False,
+        ),
+        nullable=False,
+        server_default=text("'material'"),
+    )
     is_virtual: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     purchasable_online: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))

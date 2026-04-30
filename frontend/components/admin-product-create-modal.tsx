@@ -208,6 +208,15 @@ export default function AdminProductCreateModal({
                   </div>
                 </fieldset>
 
+                <label className="span-3">
+                  {t("admin.products.nature_label")}
+                  <select name="nature" defaultValue="material">
+                    <option value="material">{t("admin.products.nature_material")}</option>
+                    <option value="service">{t("admin.products.nature_service")}</option>
+                  </select>
+                  <small className="muted">{t("admin.products.nature_help")}</small>
+                </label>
+
                 <section className="span-3 product-image-uploader">
                   <div className="product-image-preview" aria-hidden="true">
                     {displayedImage ? <img src={displayedImage} alt={t("admin.products.image_preview_alt")} /> : <span>{t("admin.products.image_preview_label")}</span>}

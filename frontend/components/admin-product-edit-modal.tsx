@@ -70,6 +70,7 @@ export default function AdminProductEditModal({
   const categoryLabel = useMemo(() => product.category_name || t("admin.products.no_category"), [product.category_name, language]);
 
   const subtypeLabel = isVirtual ? t("admin.products.subtype_virtual") : t("admin.products.subtype_physical");
+  const natureLabel = product.nature === "service" ? t("admin.products.subtype_service") : t("admin.products.subtype_material");
 
   const toggleSection = (tab: ProductTab): void => {
     setOpenSections((current) => ({ ...current, [tab]: !current[tab] }));
@@ -182,6 +183,15 @@ export default function AdminProductEditModal({
               {t("admin.products.product_virtual")}
             </label>
           </fieldset>
+
+          <label className="span-3">
+            {t("admin.products.nature_label")}
+            <select name="nature" defaultValue={product.nature || "material"}>
+              <option value="material">{t("admin.products.nature_material")}</option>
+              <option value="service">{t("admin.products.nature_service")}</option>
+            </select>
+            <small className="muted">{t("admin.products.nature_help")}</small>
+          </label>
 
           <section className="span-3 product-image-uploader">
             <div className="product-image-preview" aria-hidden="true">
@@ -308,7 +318,7 @@ export default function AdminProductEditModal({
           <div>
             <h3 className="modal-title">{t("admin.products.edit_product_modal_title")}</h3>
             <p className="muted">
-              {categoryLabel} · {subtypeLabel}
+              {categoryLabel} · {subtypeLabel} · {natureLabel}
             </p>
           </div>
           <Link href={closeHref} className="ghost" aria-label={t("common.close")}>

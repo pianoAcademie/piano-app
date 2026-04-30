@@ -1351,6 +1351,7 @@ export type AdminCatalogProductOut = {
   short_description: string | null;
   long_description: string | null;
   web_link: string | null;
+  nature: "material" | "service" | string;
   is_virtual: boolean;
   purchasable_online: boolean;
   is_public: boolean;

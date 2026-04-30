@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.models.product_catalog import ProductRequestSource, ProductRequestStatus
+from app.models.product_catalog import CatalogProductNature, ProductRequestSource, ProductRequestStatus
 from app.models.product_catalog import ProductReorderStatus, ProductTransferStatus
 from app.models.product_catalog import StockMovementSourceType, StockMovementType
 
@@ -61,6 +61,7 @@ class AdminCatalogProductOut(BaseModel):
     short_description: str | None
     long_description: str | None
     web_link: str | None
+    nature: CatalogProductNature
     is_virtual: bool
     purchasable_online: bool
     is_public: bool
@@ -83,6 +84,7 @@ class AdminCatalogProductCreateRequest(BaseModel):
     short_description: str | None = Field(default=None, max_length=500)
     long_description: str | None = Field(default=None, max_length=12000)
     web_link: str | None = Field(default=None, max_length=4000)
+    nature: CatalogProductNature = CatalogProductNature.MATERIAL
     is_virtual: bool = False
     purchasable_online: bool = False
     is_public: bool = True

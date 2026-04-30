@@ -156,6 +156,7 @@ def list_professor_catalog_products(
             short_description=row.short_description,
             long_description=row.long_description,
             web_link=row.web_link,
+            nature=row.nature,
             is_virtual=bool(row.is_virtual),
             purchasable_online=bool(row.purchasable_online),
             is_public=bool(row.is_public),
