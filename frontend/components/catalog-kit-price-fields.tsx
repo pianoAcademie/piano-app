@@ -1,6 +1,9 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
+
+type UiLanguage = "fr" | "en";
 
 type Props = {
   computedPrice: string | null;
@@ -8,9 +11,10 @@ type Props = {
   currency: string;
   initialPriceMode: string;
   initialForcedPrice: string | null;
+  language?: UiLanguage;
 };
 
-function formatMoney(amountRaw: string | null, currency: string): string {
+function formatMoney(amountRaw: string | null, currency: string, language: UiLanguage): string {
   if (!amountRaw) {
     return "-";
   }
@@ -19,7 +23,7 @@ function formatMoney(amountRaw: string | null, currency: string): string {
     return `${amountRaw} ${currency}`;
   }
   try {
-    return new Intl.NumberFormat("fr-FR", {
+    return new Intl.NumberFormat(language === "en" ? "en-GB" : "fr-FR", {
       style: "currency",
       currency,
       maximumFractionDigits: 2,
@@ -35,25 +39,55 @@ export default function CatalogKitPriceFields({
   currency,
   initialPriceMode,
   initialForcedPrice,
+  language,
 }: Props): JSX.Element {
+  const searchParams = useSearchParams();
+  const resolvedLanguage = language ?? (searchParams?.get("lang") === "en" ? "en" : "fr");
   const initialMode = initialPriceMode.trim().toLowerCase() === "forced" ? "forced" : "calculated";
   const [priceMode, setPriceMode] = useState<"calculated" | "forced">(initialMode);
   const normalizedCurrency = useMemo(() => {
     const value = currency.trim().toUpperCase();
     return /^[A-Z]{3}$/.test(value) ? value : "EUR";
   }, [currency]);
+  const text = resolvedLanguage === "en"
+    ? {
+        title: "Price",
+        automaticPrice: "Calculated price (automatic)",
+        priceMode: "Price mode",
+        useCalculatedPrice: "Use the calculated price",
+        forcePrice: "Set a manual price",
+        invoicePrice: "Invoice price incl. tax",
+        currency: "Currency",
+        currentInvoicePrice: "Current invoice price",
+        mode: "Mode",
+        forced: "Manual",
+        automatic: "Automatic",
+      }
+    : {
+        title: "Prix",
+        automaticPrice: "Prix calcule (automatique)",
+        priceMode: "Mode de prix",
+        useCalculatedPrice: "Utiliser le prix calcule",
+        forcePrice: "Forcer un prix",
+        invoicePrice: "Prix TTC facture",
+        currency: "Devise",
+        currentInvoicePrice: "Prix facture actuel",
+        mode: "Mode",
+        forced: "Force",
+        automatic: "Automatique",
+      };
 
   return (
     <article className="card">
-      <h4>Prix</h4>
+      <h4>{text.title}</h4>
       <div className="grid cols-2 config-form-grid">
         <article className="span-2 catalog-kit-price-readonly">
-          <span className="muted">Prix calcule (automatique)</span>
-          <strong>{formatMoney(computedPrice, normalizedCurrency)}</strong>
+          <span className="muted">{text.automaticPrice}</span>
+          <strong>{formatMoney(computedPrice, normalizedCurrency, resolvedLanguage)}</strong>
         </article>
 
         <fieldset className="span-2 catalog-kit-price-mode-group">
-          <legend>Mode de prix</legend>
+          <legend>{text.priceMode}</legend>
           <label className="checkline">
             <input
               type="radio"
@@ -62,7 +96,7 @@ export default function CatalogKitPriceFields({
               checked={priceMode === "calculated"}
               onChange={() => setPriceMode("calculated")}
             />
-            Utiliser le prix calcule
+            {text.useCalculatedPrice}
           </label>
           <label className="checkline">
             <input
@@ -72,12 +106,12 @@ export default function CatalogKitPriceFields({
               checked={priceMode === "forced"}
               onChange={() => setPriceMode("forced")}
             />
-            Forcer un prix
+            {text.forcePrice}
           </label>
         </fieldset>
 
         <label>
-          Prix TTC facture
+          {text.invoicePrice}
           <input
             type="number"
             name="forced_price"
@@ -89,7 +123,7 @@ export default function CatalogKitPriceFields({
           />
         </label>
         <label>
-          Devise
+          {text.currency}
           <select name="currency" defaultValue={normalizedCurrency}>
             <option value="EUR">EUR</option>
             <option value="USD">USD</option>
@@ -97,8 +131,8 @@ export default function CatalogKitPriceFields({
         </label>
 
         <p className="span-2 muted">
-          Prix facture actuel: {formatMoney(effectivePrice, normalizedCurrency)} | Mode:{" "}
-          {priceMode === "forced" ? "Force" : "Automatique"}
+          {text.currentInvoicePrice}: {formatMoney(effectivePrice, normalizedCurrency, resolvedLanguage)} | {text.mode}:{" "}
+          {priceMode === "forced" ? text.forced : text.automatic}
         </p>
       </div>
     </article>

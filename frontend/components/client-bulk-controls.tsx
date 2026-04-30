@@ -63,6 +63,23 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
   const searchParams = useSearchParams();
   const resolvedLanguage = language ?? (searchParams?.get("lang") === "en" ? "en" : "fr");
   const isEnglish = resolvedLanguage === "en";
+  const statusOptions = isEnglish
+    ? [
+        { value: "ACTIVE", label: "Active" },
+        { value: "TRIAL", label: "Trial" },
+        { value: "PENDING", label: "Pending" },
+        { value: "RESPONSABLE", label: "Responsible" },
+        { value: "INACTIVE", label: "Inactive" },
+        { value: "ARCHIVED", label: "Archived" },
+      ]
+    : [
+        { value: "ACTIVE", label: "Actif" },
+        { value: "TRIAL", label: "Essai" },
+        { value: "PENDING", label: "En attente" },
+        { value: "RESPONSABLE", label: "Responsable" },
+        { value: "INACTIVE", label: "Inactif" },
+        { value: "ARCHIVED", label: "Archive" },
+      ];
   const text = isEnglish
     ? {
         action: "Action",
@@ -90,7 +107,7 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
         selectPage: `Select page (${pageCount})`,
         selectFiltered: `Select all filtered (${filteredCount})`,
         clearSelection: "Clear selection",
-        filteredScope: `Selection scope: all filtered clients (${filteredCount}).`,
+        filteredScope: `Selection scope: all filtered results (${filteredCount}).`,
         pageScope: (selectedCount: number) => `Selection scope: current page (${selectedCount}/${pageCount}).`,
         apply: "Apply",
         pageSelectionRequired: "Select at least one client on the page.",
@@ -124,17 +141,17 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
         message: "Message",
         messagePlaceholder: "Contenu du message...",
         selectPage: `Selectionner la page (${pageCount})`,
-        selectFiltered: `Selectionner tous les filtres (${filteredCount})`,
+        selectFiltered: `Selectionner tous les resultats filtres (${filteredCount})`,
         clearSelection: "Effacer la selection",
-        filteredScope: `Portee selection: tous les clients filtres (${filteredCount}).`,
-        pageScope: (selectedCount: number) => `Portee selection: page courante (${selectedCount}/${pageCount}).`,
+        filteredScope: `Portee de selection : tous les resultats filtres (${filteredCount}).`,
+        pageScope: (selectedCount: number) => `Portee de selection : page courante (${selectedCount}/${pageCount}).`,
         apply: "Appliquer",
-        pageSelectionRequired: "Selectionnez au moins un adherent de la page.",
-        noFilteredClient: "Aucun adherent ne correspond au filtre.",
+        pageSelectionRequired: "Selectionnez au moins un client de la page.",
+        noFilteredClient: "Aucun client ne correspond au filtre.",
         groupRequired: "Selectionnez un groupe.",
         smsRequired: "Message SMS obligatoire.",
         subjectMessageRequired: "Sujet et message obligatoires.",
-        deleteConfirm: (total: number) => `Confirmer la suppression definitive de ${total} adherent(s) ? Cette action est irreversible.`,
+        deleteConfirm: (total: number) => `Confirmer la suppression definitive de ${total} client(s) ? Cette action est irreversible.`,
       };
   const [action, setAction] = useState("UPDATE_STATUS");
   const [selectionScope, setSelectionScope] = useState<SelectionScope>("PAGE");
@@ -203,12 +220,11 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
         <label className="bulk-inline-field">
           {text.newStatus}
           <select name="target_status" defaultValue="ACTIVE" disabled={!canPickStatus}>
-            <option value="ACTIVE">ACTIF</option>
-            <option value="TRIAL">ESSAI</option>
-            <option value="PENDING">EN ATTENTE</option>
-            <option value="RESPONSABLE">RESPONSABLE</option>
-            <option value="INACTIVE">INACTIF</option>
-            <option value="ARCHIVED">ARCHIVE</option>
+            {statusOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </label>
 

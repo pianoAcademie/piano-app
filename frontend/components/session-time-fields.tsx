@@ -70,9 +70,20 @@ export default function SessionTimeFields({
   requiredStart = true,
   labelClassName = "session-time-field",
 }: SessionTimeFieldsProps) {
-  const resolvedStartLabel = startLabel ?? (language === "en" ? "Start time" : "Heure debut");
-  const resolvedEndLabel = endLabel ?? (language === "en" ? "End time" : "Heure fin");
-  const resolvedDurationLabel = durationLabel ?? (language === "en" ? "Duration (minutes)" : "Duree (minutes)");
+  const text = language === "en"
+    ? {
+        start: "Start time",
+        end: "End time",
+        duration: "Duration (minutes)",
+      }
+    : {
+        start: "Heure debut",
+        end: "Heure fin",
+        duration: "Duree (minutes)",
+      };
+  const resolvedStartLabel = startLabel ?? text.start;
+  const resolvedEndLabel = endLabel ?? text.end;
+  const resolvedDurationLabel = durationLabel ?? text.duration;
 
   const normalizedDuration = useMemo(() => {
     if (typeof defaultDurationMinutes === "number" && Number.isFinite(defaultDurationMinutes) && defaultDurationMinutes > 0) {
