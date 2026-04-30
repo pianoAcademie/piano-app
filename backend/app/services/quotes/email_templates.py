@@ -194,7 +194,7 @@ def build_quote_email_context(
     if not pdf_url and quote.pdf_token:
         frontend_base = str(load_messaging_settings(db)[0].get("frontend_base_url") or "").rstrip("/")
         if frontend_base:
-            pdf_url = f"{frontend_base}/api/v1/public/quotes/{quote.id}/pdf?t={quote.pdf_token}"
+            pdf_url = f"{frontend_base}/q/{quote.id}/pdf?t={quote.pdf_token}"
 
     context = dict(values)
     context.update(

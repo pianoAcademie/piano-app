@@ -1536,7 +1536,7 @@ def _quote_out(row: Quote) -> QuoteOut:
     fallback_vat = _extract_vat_rate(meta)
     frontend_base = resolve_frontend_base_url().rstrip("/")
     public_url = f"{frontend_base}/q/{row.id}?t={row.public_token}" if row.public_token else None
-    public_pdf_url = f"{frontend_base}/api/v1/public/quotes/{row.id}/pdf?t={row.pdf_token}" if row.pdf_token else None
+    public_pdf_url = f"{frontend_base}/q/{row.id}/pdf?t={row.pdf_token}" if row.pdf_token else None
     return QuoteOut(
         id=row.id,
         quote_number=row.quote_number,
@@ -2469,6 +2469,41 @@ def _public_pending_solfege_block_hints(
     return resolved_level, None, None, ""
 
 
+def _public_selected_solfege_slot_from_snapshot(
+    calendar_snapshot: dict[str, object],
+    *,
+    level_code: str | None,
+    duration_minutes: int | None,
+    language: str,
+) -> dict[str, object]:
+    for raw_block in _json_list(calendar_snapshot.get("blocks")):
+        if not isinstance(raw_block, dict):
+            continue
+        block = dict(raw_block)
+        activity_label = str(block.get("activity_label") or "").strip()
+        activity_code = str(block.get("activity_code") or block.get("activity_service_code") or "").strip()
+        haystack = _public_searchable_text(f"{activity_label} {activity_code}")
+        block_level = (
+            str(block.get("pending_solfege_level") or "").strip()
+            or _public_extract_solfege_level_from_text(activity_label)
+            or str(level_code or "").strip()
+            or None
+        )
+        if not (block_level or "solfege" in haystack):
+            continue
+        if bool(block.get("selection_pending")) or _json_list(block.get("pending_slot_options")):
+            continue
+        payload = _public_solfege_slot_payload(
+            block,
+            level_code=block_level,
+            duration_minutes=duration_minutes,
+            language=language,
+        )
+        if _public_solfege_slot_key(payload):
+            return payload
+    return {}
+
+
 def _public_matching_solfege_rule(
     db: Session,
     *,
@@ -2602,6 +2637,13 @@ def _public_quote_solfege_selection(db: Session, quote: Quote) -> QuotePublicSol
         calendar_snapshot,
         level_code=level_code,
     )
+    if not selected_slot:
+        selected_slot = _public_selected_solfege_slot_from_snapshot(
+            calendar_snapshot,
+            level_code=level_code,
+            duration_minutes=duration_minutes,
+            language=language,
+        )
 
     options, pending_selection = _public_quote_solfege_options_from_snapshot(
         calendar_snapshot=calendar_snapshot,
@@ -2609,7 +2651,7 @@ def _public_quote_solfege_selection(db: Session, quote: Quote) -> QuotePublicSol
         duration_minutes=duration_minutes,
         language=language,
     )
-    if not options:
+    if not options and not selected_slot:
         options = _public_quote_solfege_options_from_rule(
             db=db,
             level_code=level_code,
@@ -2670,6 +2712,13 @@ def _resolve_public_selected_solfege_slot(
     current_slot = _json_object(quote.selected_solfege_slot) or _json_object(
         _json_object(_json_object(quote.calendar_snapshot).get("solfege")).get("selected_slot")
     )
+    if not current_slot and selection is not None:
+        current_slot = _public_selected_solfege_slot_from_snapshot(
+            _json_object(quote.calendar_snapshot),
+            level_code=selection.level_code,
+            duration_minutes=selection.duration_minutes,
+            language=_public_solfege_language(quote.language),
+        )
     normalized_key = str(selected_slot_key or "").strip()
     if selection is None:
         return current_slot, None

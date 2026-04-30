@@ -155,6 +155,39 @@ class QuotePublicSolfegeSelectionTests(unittest.TestCase):
         self.assertEqual(selection.selected_label, "Mercredi 17:15-18:00 · Online")
         self.assertTrue(any(option.key == selection.selected_key for option in selection.available_slots))
 
+    def test_infers_selected_slot_from_non_pending_calendar_block(self) -> None:
+        quote = SimpleNamespace(
+            language="fr",
+            estimated_solfege_level=None,
+            solfege_duration_minutes=None,
+            selected_solfege_slot={},
+            calendar_snapshot={
+                "blocks": [
+                    {
+                        "activity_label": "Cours de solfège - niveau 1",
+                        "selection_pending": False,
+                        "pending_slot_options": [],
+                        "weekday": 1,
+                        "weekday_label": "Mardi",
+                        "start_time": "17:05",
+                        "end_time": "17:35",
+                        "location_id": "90e90b51-e74a-4d94-86e7-7e2f132aa537",
+                        "location_label": "Online",
+                        "modality": "ONLINE",
+                    }
+                ]
+            },
+        )
+
+        selection = _public_quote_solfege_selection(object(), quote)
+
+        self.assertIsNotNone(selection)
+        assert selection is not None
+        self.assertFalse(selection.pending_selection)
+        self.assertFalse(selection.required)
+        self.assertIsNotNone(selection.selected_key)
+        self.assertEqual(selection.selected_label, "Mardi 17:05-17:35 · Online")
+
 
 if __name__ == "__main__":
     unittest.main()

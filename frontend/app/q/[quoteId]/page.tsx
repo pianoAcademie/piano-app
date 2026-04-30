@@ -227,9 +227,8 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
   const shouldShowSolfegeSelector = canAct && Boolean(
     solfegeSelection
       && (
-        solfegeSelection.pending_selection
-        || solfegeSelection.selected_key
-        || solfegeSelection.available_slots.length > 0
+        solfegeSelection.required
+        || (solfegeSelection.pending_selection && solfegeSelection.available_slots.length > 0)
       ),
   );
 
