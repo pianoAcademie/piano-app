@@ -4,6 +4,8 @@ import type { AdminActivityOut, LocationOut } from "../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
 import CopyLinkButton from "./copy-link-button";
 
+const VIRTUAL_PARIS_LOCATION_ID = "__virtual_paris__";
+
 function normalizeBaseUrl(raw: string | null | undefined): string {
   const value = (raw ?? "").trim();
   if (!value) {
@@ -15,13 +17,31 @@ function normalizeBaseUrl(raw: string | null | undefined): string {
   return `https://${value.replace(/\/+$/, "")}`;
 }
 
+function normalizeLocationName(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[^a-zA-Z0-9]+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function isParisAggregateLocation(location: LocationOut): boolean {
+  const normalized = normalizeLocationName(location.name);
+  return ["scheffer", "pompe", "richelieu", "assas"].some((token) => normalized.includes(token));
+}
+
+function isIsoDate(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
+}
+
 type AdminIntegrationPlanningEmbedProps = {
   accountWebsite?: string | null;
   activities: AdminActivityOut[];
   locations: LocationOut[];
   selectedActivityId?: string;
   selectedLocationId?: string;
-  selectedStartDate?: string;
+  selectedDisplayDate?: string;
   language?: UiLanguage | string;
 };
 
@@ -31,7 +51,7 @@ export default function AdminIntegrationPlanningEmbed({
   locations,
   selectedActivityId = "",
   selectedLocationId = "",
-  selectedStartDate = "",
+  selectedDisplayDate = "",
   language: languageProp = "fr",
 }: AdminIntegrationPlanningEmbedProps): JSX.Element {
   const language = normalizeUiLanguage(languageProp);
@@ -43,29 +63,52 @@ export default function AdminIntegrationPlanningEmbed({
   const activeLocations = [...locations]
     .filter((location) => location.active)
     .sort((left, right) => left.name.localeCompare(right.name, locale));
+  const parisLocations = activeLocations.filter(isParisAggregateLocation);
+  const selectableLocations = [
+    ...(parisLocations.length > 0
+      ? [
+          {
+            id: VIRTUAL_PARIS_LOCATION_ID,
+            name: "Paris (Scheffer, Pompe, Richelieu, Assas)",
+          },
+        ]
+      : []),
+    ...activeLocations.map((location) => ({
+      id: location.id,
+      name: location.name,
+    })),
+  ];
 
   const selectedActivity = eligibleActivities.find((activity) => activity.id === selectedActivityId) ?? null;
   const selectedLocation = activeLocations.find((location) => location.id === selectedLocationId) ?? null;
-  const allLocationsLabel = t("admin.integration_embed.all_locations");
-  const embedParams = new URLSearchParams();
-  if (selectedActivity) {
-    embedParams.set("course_type_id", selectedActivity.id);
-  }
-  if (selectedLocation) {
-    embedParams.set("location_id", selectedLocation.id);
-  }
-  if (selectedStartDate) {
-    embedParams.set("date", selectedStartDate);
-  }
-  if (language === "en") {
-    embedParams.set("lang", "en");
-  }
-  const embedPath = selectedActivity ? `/embed/planning?${embedParams.toString()}` : "";
+  const isParisVirtualLocation = selectedLocationId === VIRTUAL_PARIS_LOCATION_ID && parisLocations.length > 0;
+  const selectedLocationLabel = isParisVirtualLocation
+    ? "Paris (Scheffer, Pompe, Richelieu, Assas)"
+    : (selectableLocations.find((location) => location.id === selectedLocationId)?.name ?? "");
+  const embedPath = (() => {
+    if (!selectedActivity || (!selectedLocation && !isParisVirtualLocation)) {
+      return "";
+    }
+    const params = new URLSearchParams();
+    params.set("course_type_id", selectedActivity.id);
+    if (isParisVirtualLocation) {
+      params.set("location_group", "paris");
+    } else if (selectedLocation) {
+      params.set("location_id", selectedLocation.id);
+    }
+    if (isIsoDate(selectedDisplayDate)) {
+      params.set("date", selectedDisplayDate.trim());
+    }
+    if (language === "en") {
+      params.set("lang", "en");
+    }
+    return `/embed/planning?${params.toString()}`;
+  })();
   const normalizedBaseUrl = normalizeBaseUrl(accountWebsite);
   const absoluteEmbedUrl = embedPath && normalizedBaseUrl ? `${normalizedBaseUrl}${embedPath}` : "";
   const iframeTitle =
     selectedActivity
-      ? `${t("admin.integration_embed.iframe_title_prefix")} ${selectedActivity.name}${selectedLocation ? ` - ${selectedLocation.name}` : ` - ${allLocationsLabel}`}`
+      ? `${t("admin.integration_embed.iframe_title_prefix")} ${selectedActivity.name}${selectedLocationLabel ? ` - ${selectedLocationLabel}` : ""}`
       : t("admin.integration_embed.external_planning");
   const iframeHtml = absoluteEmbedUrl
     ? `<iframe src="${absoluteEmbedUrl}" title="${iframeTitle}" width="100%" height="840" style="width:100%;min-height:840px;border:0;border-radius:16px;overflow:hidden;" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`
@@ -94,8 +137,8 @@ export default function AdminIntegrationPlanningEmbed({
         <label>
           {t("common.location")}
           <select name="integration_location_id" defaultValue={selectedLocationId}>
-            <option value="">{allLocationsLabel}</option>
-            {activeLocations.map((location) => (
+            <option value="">{language === "en" ? "Choose a location" : "Choisir un lieu"}</option>
+            {selectableLocations.map((location) => (
               <option key={location.id} value={location.id}>
                 {location.name}
               </option>
@@ -104,13 +147,13 @@ export default function AdminIntegrationPlanningEmbed({
         </label>
 
         <label>
-          {t("admin.integration_embed.start_date_optional")}
-          <input type="date" name="integration_date" defaultValue={selectedStartDate} />
+          {language === "en" ? "Display date" : "Date d affichage"}
+          <input type="date" name="integration_date" defaultValue={isIsoDate(selectedDisplayDate) ? selectedDisplayDate : ""} />
         </label>
 
         <div className="row span-2">
           <button type="submit">{t("admin.integration_embed.generate_iframe")}</button>
-          {selectedActivity || selectedLocation || selectedStartDate ? (
+          {selectedActivity || selectedLocationId || selectedDisplayDate ? (
             <Link className="ghost small-btn" href="/admin/config?section=integrations">
               {t("common.reset")}
             </Link>
@@ -138,9 +181,8 @@ export default function AdminIntegrationPlanningEmbed({
             <div>
               <h4>{t("admin.integration_embed.result")}</h4>
               <p className="muted">
-                {selectedActivity?.name}
-                {selectedLocation ? ` · ${selectedLocation.name}` : ` · ${allLocationsLabel}`}
-                {selectedStartDate ? ` · ${t("admin.integration_embed.start_prefix")} ${selectedStartDate}` : ""}
+                {selectedActivity?.name} · {selectedLocationLabel}
+                {isIsoDate(selectedDisplayDate) ? ` · ${t("admin.integration_embed.start_prefix")} ${selectedDisplayDate}` : ""}
               </p>
             </div>
             <div className="row">

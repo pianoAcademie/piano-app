@@ -15,6 +15,8 @@ type EmbedDay = {
   sessions: SessionOut[];
 };
 
+const PARIS_LOCATION_GROUP = "paris";
+
 function readParam(params: SearchParams | undefined, key: string): string {
   const value = params?.[key];
   if (Array.isArray(value)) {
@@ -147,22 +149,44 @@ function formatMoney(amountRaw: string | null, currencyRaw: string | null, langu
   }
 }
 
+function normalizeLocationName(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[^a-zA-Z0-9]+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function resolveParisLocationIds(locations: LocationOut[]): string[] {
+  return locations
+    .filter((location) => {
+      const normalized = normalizeLocationName(location.name);
+      return ["scheffer", "pompe", "richelieu", "assas"].some((token) => normalized.includes(token));
+    })
+    .map((location) => location.id);
+}
+
 function buildPlanningHref({
   courseTypeId,
   locationId,
+  locationGroup,
   date,
   sessionId,
   language,
 }: {
   courseTypeId: string;
   locationId?: string | null;
+  locationGroup?: string | null;
   date: string;
   sessionId?: string | null;
   language: UiLanguage;
 }): string {
   const params = new URLSearchParams();
   params.set("course_type_id", courseTypeId);
-  if (locationId) {
+  if (locationGroup) {
+    params.set("location_group", locationGroup);
+  } else if (locationId) {
     params.set("location_id", locationId);
   }
   params.set("date", date);
@@ -211,6 +235,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const courseTypeId = readParam(searchParams, "course_type_id").trim();
   const locationId = readParam(searchParams, "location_id").trim();
+  const locationGroup = readParam(searchParams, "location_group").trim().toLowerCase();
   const selectedSessionId = readParam(searchParams, "session_id").trim();
   const okMessage = resolveAuthOkMessage(readParam(searchParams, "ok"), readParam(searchParams, "ok_code"), language);
   const errorMessage = resolveAuthErrorMessage(readParam(searchParams, "error"), readParam(searchParams, "error_code"), language);
@@ -221,7 +246,13 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
     language,
   );
 
-  if (!courseTypeId) {
+  const locationsResult = await backendRequest<LocationOut[]>("/api/v1/locations?active=true");
+  const locations = locationsResult.ok ? locationsResult.data : [];
+  const parisLocationIds = resolveParisLocationIds(locations);
+  const usesParisLocationGroup = locationGroup === PARIS_LOCATION_GROUP && parisLocationIds.length > 0;
+  const effectiveLocationIds = usesParisLocationGroup ? parisLocationIds : locationId ? [locationId] : [];
+
+  if (!courseTypeId || effectiveLocationIds.length === 0) {
     return (
       <main className="embed-planning-page">
         <section className="embed-planning-shell">
@@ -234,20 +265,26 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
     );
   }
 
-  const [courseTypesResult, locationsResult] = await Promise.all([
-    backendRequest<CourseTypeOut[]>(
-      `/api/v1/course-types?active=true${locationId ? `&location_id=${encodeURIComponent(locationId)}` : ""}`,
+  const courseTypesResults = await Promise.all(
+    effectiveLocationIds.map((currentLocationId) =>
+      backendRequest<CourseTypeOut[]>(`/api/v1/course-types?active=true&location_id=${encodeURIComponent(currentLocationId)}`),
     ),
-    backendRequest<LocationOut[]>("/api/v1/locations?active=true"),
-  ]);
-
-  const courseTypes = courseTypesResult.ok ? courseTypesResult.data : [];
-  const locations = locationsResult.ok ? locationsResult.data : [];
-  const selectedCourseType = courseTypes.find((row) => row.id === courseTypeId) ?? null;
-  const selectedLocation = locations.find((row) => row.id === locationId) ?? null;
+  );
+  const courseTypeById = new Map<string, CourseTypeOut>();
+  for (const result of courseTypesResults) {
+    if (!result.ok) {
+      continue;
+    }
+    for (const row of result.data) {
+      courseTypeById.set(row.id, row);
+    }
+  }
+  const selectedCourseType = courseTypeById.get(courseTypeId) ?? null;
+  const selectedLocation = usesParisLocationGroup ? null : locations.find((row) => row.id === locationId) ?? null;
+  const selectedLocationName = usesParisLocationGroup ? "Paris" : (selectedLocation?.name ?? "");
   const timezone = resolveTimezone(selectedLocation?.timezone || "Europe/Paris");
 
-  if (!selectedCourseType || (locationId && !selectedLocation)) {
+  if (!selectedCourseType || (!usesParisLocationGroup && !selectedLocation)) {
     return (
       <main className="embed-planning-page">
         <section className="embed-planning-shell">
@@ -275,19 +312,38 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const queryTo = addUtcDays(weekStart, 8).toISOString();
 
   const portalToken = getPortalToken();
-  const [sessionsResult, bookingsResult] = await Promise.all([
-    backendRequest<SessionOut[]>(
-      `/api/v1/sessions?course_type_id=${encodeURIComponent(courseTypeId)}${locationId ? `&location_id=${encodeURIComponent(locationId)}` : ""}&timezone=${encodeURIComponent(timezone)}&from=${encodeURIComponent(queryFrom)}&to=${encodeURIComponent(queryTo)}`,
+  const [sessionResults, bookingsResult] = await Promise.all([
+    Promise.all(
+      effectiveLocationIds.map((currentLocationId) =>
+        backendRequest<SessionOut[]>(
+          `/api/v1/sessions?course_type_id=${encodeURIComponent(courseTypeId)}&location_id=${encodeURIComponent(currentLocationId)}&timezone=${encodeURIComponent(timezone)}&from=${encodeURIComponent(queryFrom)}&to=${encodeURIComponent(queryTo)}`,
+        ),
+      ),
     ),
     portalToken ? backendRequest<ClientBookingOut[]>("/api/v1/clients/me/bookings", {}, portalToken) : Promise.resolve(null),
   ]);
 
-  const sessionsRaw = sessionsResult.ok ? sessionsResult.data : [];
+  const sessionById = new Map<string, SessionOut>();
+  for (const result of sessionResults) {
+    if (!result.ok) {
+      continue;
+    }
+    for (const session of result.data) {
+      sessionById.set(session.id, session);
+    }
+  }
+  const sessionsRaw = [...sessionById.values()];
   const sessions = sessionsRaw
     .filter((session) => session.online_booking_enabled)
     .filter((session) => session.booking_scopes.includes("EXTERNAL"))
     .filter((session) => session.external_booking_price_ttc !== null)
-    .sort((left, right) => left.start_at_utc.localeCompare(right.start_at_utc));
+    .sort((left, right) => {
+      const byStart = left.start_at_utc.localeCompare(right.start_at_utc);
+      if (byStart !== 0) {
+        return byStart;
+      }
+      return left.location.name.localeCompare(right.location.name, "fr");
+    });
 
   const sessionIds = new Set(sessions.map((session) => session.id));
   const ownBookings = bookingsResult && bookingsResult.ok ? bookingsResult.data : [];
@@ -322,32 +378,37 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const selectedSessionIsFull = selectedSession ? selectedSession.seats_remaining <= 0 : false;
   const selectedSessionReturnTo = buildPlanningHref({
     courseTypeId,
-    locationId,
+    locationId: usesParisLocationGroup ? null : locationId,
+    locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
     date: weekStartKey,
     sessionId: selectedSession?.id ?? null,
     language,
   });
   const previousHref = buildPlanningHref({
     courseTypeId,
-    locationId,
+    locationId: usesParisLocationGroup ? null : locationId,
+    locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
     date: utcDateToKey(addUtcDays(weekStart, -7)),
     language,
   });
   const nextHref = buildPlanningHref({
     courseTypeId,
-    locationId,
+    locationId: usesParisLocationGroup ? null : locationId,
+    locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
     date: utcDateToKey(addUtcDays(weekStart, 7)),
     language,
   });
   const todayHref = buildPlanningHref({
     courseTypeId,
-    locationId,
+    locationId: usesParisLocationGroup ? null : locationId,
+    locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
     date: todayKeyInTimezone(timezone),
     language,
   });
   const closeSessionHref = buildPlanningHref({
     courseTypeId,
-    locationId,
+    locationId: usesParisLocationGroup ? null : locationId,
+    locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
     date: weekStartKey,
     language,
   });
@@ -371,8 +432,8 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
               />
               <h1>{selectedCourseType.name}</h1>
               <p className="muted">
-                {selectedLocation
-                  ? t("embed_planning.week_view_location", { location: selectedLocation.name })
+                {selectedLocationName
+                  ? t("embed_planning.week_view_location", { location: selectedLocationName })
                   : t("embed_planning.week_view_all_locations")}
               </p>
             </div>
@@ -387,17 +448,27 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
             <input type="hidden" name="course_type_id" value={courseTypeId} />
             {language === "en" ? <input type="hidden" name="lang" value="en" /> : null}
 
-            <label>
-              {uiText(language, "common.location")}
-              <select name="location_id" defaultValue={locationId}>
-                <option value="">{t("embed_planning.all_locations_option")}</option>
-                {locationOptions.map((location) => (
-                  <option key={location.id} value={location.id}>
-                    {location.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            {usesParisLocationGroup ? (
+              <>
+                <input type="hidden" name="location_group" value={PARIS_LOCATION_GROUP} />
+                <label>
+                  {uiText(language, "common.location")}
+                  <input type="text" value={selectedLocationName} readOnly />
+                </label>
+              </>
+            ) : (
+              <label>
+                {uiText(language, "common.location")}
+                <select name="location_id" defaultValue={locationId}>
+                  <option value="">{t("embed_planning.all_locations_option")}</option>
+                  {locationOptions.map((location) => (
+                    <option key={location.id} value={location.id}>
+                      {location.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
 
             <label>
               {uiText(language, "common.date")}
@@ -411,6 +482,8 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
                   className="ghost small-btn"
                   href={buildPlanningHref({
                     courseTypeId,
+                    locationId: usesParisLocationGroup ? null : locationId,
+                    locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
                     date: todayKeyInTimezone(timezone),
                     language,
                   })}
@@ -441,7 +514,8 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
                       const isReserved = booking !== null && ["BOOKED", "WAITLISTED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"].includes(booking.status);
                       const detailHref = buildPlanningHref({
                         courseTypeId,
-                        locationId,
+                        locationId: usesParisLocationGroup ? null : locationId,
+                        locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
                         date: weekStartKey,
                         sessionId: session.id,
                         language,
@@ -453,7 +527,8 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
                             {isReserved ? <span className="badge">{t("embed_planning.reserved_badge")}</span> : null}
                           </div>
                           <p>{session.title}</p>
-                          {!selectedLocation ? <small>{session.location?.name || t("embed_planning.location_to_confirm")}</small> : null}
+                          {usesParisLocationGroup ? <small>{session.location.name}</small> : null}
+                          {!usesParisLocationGroup && !selectedLocation ? <small>{session.location?.name || t("embed_planning.location_to_confirm")}</small> : null}
                           <small>{formatMoney(session.external_booking_price_ttc, session.external_booking_currency, language)}</small>
                           <small>{externalAvailabilityLabel(session, language)}</small>
                         </Link>
@@ -474,7 +549,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
             </div>
 
             <p className="muted">
-              {formatDateTime(selectedSession.start_at_utc, timezone, language)} · {selectedLocation?.name || selectedSession.location?.name || t("embed_planning.location_to_confirm")}
+              {formatDateTime(selectedSession.start_at_utc, timezone, language)} · {usesParisLocationGroup ? selectedSession.location.name : selectedLocationName || t("embed_planning.location_to_confirm")}
             </p>
 
             <div className="embed-planning-detail-grid">

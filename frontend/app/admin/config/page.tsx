@@ -4556,7 +4556,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               locations={integrationLocations}
               selectedActivityId={selectedIntegrationActivityId}
               selectedLocationId={selectedIntegrationLocationId}
-              selectedStartDate={selectedIntegrationDate}
+              selectedDisplayDate={selectedIntegrationDate}
               language={language}
             />
           ) : null}
