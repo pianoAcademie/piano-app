@@ -37,7 +37,7 @@ from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType
 from app.models.client_record import ClientManualTransaction
 from app.models.family import ClientFamilyLink
 from app.models.ops import AppSetting, LegalEntity
-from app.models.plan import ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, SubscriptionStatus
+from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, SubscriptionStatus
 from app.models.product_catalog import CatalogKit, CatalogProduct
 from app.models.quote import (
     PaymentPlan,
@@ -4879,6 +4879,27 @@ def _parse_uuid_value(value: object | None) -> UUID | None:
         return None
 
 
+def _normalize_discount_label(value: object | None) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    return "".join(
+        character
+        for character in unicodedata.normalize("NFD", raw)
+        if unicodedata.category(character) != "Mn"
+    )
+
+
+def _source_line_id_from_billing_row(row: dict[str, object]) -> UUID | None:
+    direct = _parse_uuid_value(row.get("sourceLineId"))
+    if direct is not None:
+        return direct
+    row_id = str(row.get("rowId") or "").strip()
+    if row_id.startswith("extra-"):
+        return _parse_uuid_value(row_id[6:])
+    return None
+
+
 def _safe_zoneinfo(value: str | None) -> ZoneInfo:
     try:
         return ZoneInfo((value or "").strip() or "Europe/Paris")
@@ -5548,6 +5569,135 @@ def _create_followup_booking(
     return booking
 
 
+def _apply_followup_forfait_discount_rows(
+    db: Session,
+    *,
+    quote: Quote,
+    subscription: ClientPlanSubscription | None,
+    plan: Plan | None,
+    transformation_payload: dict[str, object],
+) -> set[str]:
+    if subscription is None or plan is None or plan.kind != PlanKind.FORFAIT:
+        return set()
+
+    billing_resolution = _json_object(transformation_payload.get("billingResolution"))
+    rows = _json_list(billing_resolution.get("rows"))
+    if not rows:
+        return set()
+
+    activity_resolution = _json_object(transformation_payload.get("activityResolution"))
+    off_planning_activity_ids = {
+        str(item).strip()
+        for item in _json_list(activity_resolution.get("offPlanningActivityIds"))
+        if str(item).strip()
+    }
+
+    quote_lines = db.scalars(select(QuoteLine).where(QuoteLine.quote_id == quote.id)).all()
+    line_by_id = {line.id: line for line in quote_lines}
+    service_lines = [
+        line
+        for line in quote_lines
+        if line.activity_id is not None
+        and str(line.activity_id) not in off_planning_activity_ids
+        and (line.line_category or "").strip().lower() == "service"
+        and (line.line_type or "").strip().lower() == "item"
+    ]
+
+    adjustments_by_activity: dict[UUID, dict[str, Decimal]] = {}
+    consumed_row_ids: set[str] = set()
+
+    for raw in rows:
+        row = _json_object(raw)
+        row_type = str(row.get("type") or "").strip().lower()
+        if row_type != "discount":
+            continue
+        amount_ttc = _q2(abs(_decimal_or_none(row.get("amountTtc")) or Decimal("0.00")))
+        if amount_ttc <= Decimal("0.00"):
+            continue
+
+        source_line = line_by_id.get(_source_line_id_from_billing_row(row))
+        normalized_label = _normalize_discount_label(source_line.title if source_line is not None else row.get("label"))
+        if "famille" in normalized_label:
+            target_bucket = "family"
+        elif "fidel" in normalized_label:
+            target_bucket = "loyalty"
+        else:
+            continue
+
+        target_service_line: QuoteLine | None = None
+        if source_line is not None and source_line.activity_id is not None:
+            target_service_line = next((line for line in service_lines if line.activity_id == source_line.activity_id), None)
+        if target_service_line is None and source_line is not None:
+            source_quantity = _q2(Decimal(source_line.quantity or 0))
+            quantity_matches = [
+                line
+                for line in service_lines
+                if _q2(Decimal(line.quantity or 0)) == source_quantity
+            ]
+            if len(quantity_matches) == 1:
+                target_service_line = quantity_matches[0]
+        if target_service_line is None and len(service_lines) == 1:
+            target_service_line = service_lines[0]
+        if target_service_line is None or target_service_line.activity_id is None:
+            continue
+
+        quantity = _q2(Decimal(target_service_line.quantity or 0))
+        duration_minutes = int(target_service_line.duration_minutes or 0)
+        if quantity <= Decimal("0.00") or duration_minutes <= 0:
+            continue
+        total_hours = (quantity * Decimal(duration_minutes)) / Decimal("60")
+        if total_hours <= Decimal("0.00"):
+            continue
+
+        hourly_discount_ttc = _q2(amount_ttc / total_hours)
+        bucket = adjustments_by_activity.setdefault(
+            target_service_line.activity_id,
+            {
+                "loyalty": Decimal("0.00"),
+                "family": Decimal("0.00"),
+            },
+        )
+        bucket[target_bucket] = _q2(bucket[target_bucket] + hourly_discount_ttc)
+        row_id = str(row.get("rowId") or "").strip()
+        if row_id:
+            consumed_row_ids.add(row_id)
+
+    if not adjustments_by_activity:
+        return set()
+
+    now = _utcnow()
+    for activity_id, values in adjustments_by_activity.items():
+        pricing_row = db.scalar(
+            select(ClientForfaitActivityPricing)
+            .where(
+                ClientForfaitActivityPricing.subscription_id == subscription.id,
+                ClientForfaitActivityPricing.course_type_id == activity_id,
+            )
+            .with_for_update()
+            .limit(1)
+        )
+        if pricing_row is None:
+            pricing_row = ClientForfaitActivityPricing(
+                subscription_id=subscription.id,
+                course_type_id=activity_id,
+                loyalty_discount_per_hour_ttc=values["loyalty"],
+                family_discount_per_hour_ttc=values["family"],
+                short_commitment_supplement_per_hour_ttc=Decimal("0.00"),
+                second_course_weekly_discount_per_hour_ttc=Decimal("0.00"),
+                updated_at=now,
+            )
+        else:
+            pricing_row.loyalty_discount_per_hour_ttc = values["loyalty"]
+            pricing_row.family_discount_per_hour_ttc = values["family"]
+            pricing_row.updated_at = now
+        db.add(pricing_row)
+
+    subscription.forfait_loyalty_discount_per_hour_ttc = Decimal("0.00")
+    subscription.forfait_family_discount_per_hour_ttc = Decimal("0.00")
+    db.add(subscription)
+    return consumed_row_ids
+
+
 def _create_followup_manual_transactions(
     db: Session,
     *,
@@ -5557,12 +5707,16 @@ def _create_followup_manual_transactions(
     transformation_payload: dict[str, object],
     actor_user_id: UUID | None,
     created_transaction_ids: list[UUID],
+    skip_row_ids: set[str] | None = None,
 ) -> None:
     billing_resolution = _json_object(transformation_payload.get("billingResolution"))
     rows = _json_list(billing_resolution.get("rows"))
     now = _utcnow()
     for raw in rows:
         row = _json_object(raw)
+        row_id = str(row.get("rowId") or "").strip()
+        if row_id and skip_row_ids and row_id in skip_row_ids:
+            continue
         amount_ttc = _q2(_decimal_or_none(row.get("amountTtc")) or Decimal("0"))
         amount_ht = _q2(_decimal_or_none(row.get("amountHt")) or amount_ttc)
         vat_rate = _q3(_decimal_or_none(row.get("vatRate")) or Decimal("0"))
@@ -5632,6 +5786,13 @@ def _execute_quote_followup_transformation(
         transformation_payload=transformation_payload,
         created_subscription_ids=created_subscription_ids,
     )
+    forfait_discount_row_ids = _apply_followup_forfait_discount_rows(
+        db,
+        quote=quote,
+        subscription=subscription,
+        plan=plan,
+        transformation_payload=transformation_payload,
+    )
 
     schedule_resolution = _json_object(transformation_payload.get("scheduleResolution"))
     assigned_session_by_activity = _json_object(schedule_resolution.get("assignedSessionByActivityId"))
@@ -5688,6 +5849,7 @@ def _execute_quote_followup_transformation(
         transformation_payload=transformation_payload,
         actor_user_id=current_user.id,
         created_transaction_ids=created_transaction_ids,
+        skip_row_ids=forfait_discount_row_ids,
     )
 
     followup.status = "completed"
