@@ -21,9 +21,13 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_roles
 from app.core.config import settings
 from app.api.routes.admin_clients import (
+    _allocate_invoice_number_for_seller_entity,
+    _build_invoice_range_note_message,
+    _create_client_note,
     _default_subscription_billing_method,
     _effective_pack_credits_for_plan,
     _forfait_period_bounds,
+    _invoice_issued_at_for_date,
 )
 from app.api.routes.bookings import (
     _count_booked,
@@ -34,7 +38,7 @@ from app.api.routes.bookings import (
     _restore_pack_credit,
 )
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, SessionStatus
-from app.models.client_record import ClientManualTransaction
+from app.models.client_record import ClientInvoiceLine, ClientManualTransaction, ClientNoteEntry
 from app.models.family import ClientFamilyLink
 from app.models.ops import AppSetting, LegalEntity
 from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, SubscriptionStatus
@@ -5765,6 +5769,155 @@ def _create_followup_manual_transactions(
         created_transaction_ids.append(transaction.id)
 
 
+def _quote_deposit_invoice_breakdown(
+    db: Session,
+    *,
+    quote: Quote,
+) -> tuple[Decimal, Decimal, Decimal, Decimal] | None:
+    normalized_deposit = _normalize_quote_deposit(quote.meta or {})
+    if not _bool_or_default(normalized_deposit.get("enabled"), False):
+        return None
+
+    deposit_amount_ttc = _q2(abs(_decimal_or_none(normalized_deposit.get("amount_ttc")) or Decimal("0.00")))
+    if deposit_amount_ttc <= Decimal("0.00"):
+        return None
+
+    quote_total_ttc = _q2(Decimal(quote.total_ttc or 0))
+    if quote_total_ttc > Decimal("0.00") and deposit_amount_ttc > quote_total_ttc:
+        deposit_amount_ttc = quote_total_ttc
+    if deposit_amount_ttc <= Decimal("0.00"):
+        return None
+
+    vat_rate = _q3(_decimal_or_none(quote.vat_rate) or Decimal("0.00"))
+    if vat_rate > Decimal("0.00"):
+        amount_ht, vat_amount = _split_ttc(deposit_amount_ttc, vat_rate)
+        return deposit_amount_ttc, amount_ht, vat_rate, vat_amount
+
+    total_amounts = db.execute(
+        select(
+            func.coalesce(func.sum(QuoteLine.amount_ht), Decimal("0.00")),
+            func.coalesce(func.sum(QuoteLine.amount_ttc), Decimal("0.00")),
+        ).where(QuoteLine.quote_id == quote.id)
+    ).first()
+    total_ht = _q2(Decimal(total_amounts[0] or 0)) if total_amounts is not None else Decimal("0.00")
+    total_ttc = _q2(Decimal(total_amounts[1] or 0)) if total_amounts is not None else Decimal("0.00")
+    if total_ttc <= Decimal("0.00") or total_ht <= Decimal("0.00"):
+        return deposit_amount_ttc, deposit_amount_ttc, Decimal("0.00"), Decimal("0.00")
+
+    amount_ht = _q2(deposit_amount_ttc * total_ht / total_ttc)
+    vat_amount = _q2(deposit_amount_ttc - amount_ht)
+    if amount_ht <= Decimal("0.00") or vat_amount <= Decimal("0.00"):
+        return deposit_amount_ttc, deposit_amount_ttc, Decimal("0.00"), Decimal("0.00")
+    vat_rate = _q3((vat_amount / amount_ht) * Decimal("100"))
+    return deposit_amount_ttc, amount_ht, vat_rate, vat_amount
+
+
+def _create_followup_deposit_invoice(
+    db: Session,
+    *,
+    quote: Quote,
+    student: User,
+    billing: User,
+    current_user: User,
+    created_transaction_ids: list[UUID],
+    created_invoice_note_ids: list[UUID],
+) -> UUID | None:
+    breakdown = _quote_deposit_invoice_breakdown(db, quote=quote)
+    if breakdown is None:
+        return None
+
+    deposit_amount_ttc, deposit_amount_ht, deposit_vat_rate, deposit_vat_amount = breakdown
+    now = _utcnow()
+    issued_date = (quote.approved_at or now).astimezone(timezone.utc).date()
+    issued_at = _invoice_issued_at_for_date(issued_date=issued_date, now=now)
+    invoice_number = _allocate_invoice_number_for_seller_entity(
+        db,
+        seller_legal_entity_id=quote.legal_entity_id,
+        issued_at=issued_at,
+    )
+
+    legal_entity = db.scalar(select(LegalEntity).where(LegalEntity.id == quote.legal_entity_id)) if quote.legal_entity_id else None
+    billing_entity = normalize_billing_entity(legal_entity.name if legal_entity is not None else None)
+    currency = (quote.currency or "EUR").upper()
+
+    transaction = ClientManualTransaction(
+        user_id=billing.id,
+        student_user_id=student.id,
+        actor_user_id=current_user.id,
+        transaction_type="CHARGE",
+        status="PENDING",
+        label=f"Acompte preinscription - {quote.quote_number}",
+        description=f"Acompte preinscription genere a la transformation du devis {quote.quote_number}",
+        category="PRE_REGISTRATION_DEPOSIT",
+        occurred_at=issued_at,
+        amount_excl_vat=deposit_amount_ht,
+        vat_rate=deposit_vat_rate,
+        vat_amount=deposit_vat_amount,
+        total_incl_vat=deposit_amount_ttc,
+        currency=currency,
+        reference=f"QUOTE:{quote.id}:DEPOSIT",
+        legal_entity_id=quote.legal_entity_id,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(transaction)
+    db.flush()
+    created_transaction_ids.append(transaction.id)
+
+    metadata: dict[str, object] = {
+        "kind": "INVOICE_RANGE",
+        "invoice_number": invoice_number,
+        "issued_date": issued_date.isoformat(),
+        "issued_at": issued_at.isoformat(),
+        "due_date": issued_date.isoformat(),
+        "no_due_date": False,
+        "start_date": issued_date.isoformat(),
+        "end_date": issued_date.isoformat(),
+        "layout": "DETAILED",
+        "billing_entity": billing_entity,
+        "seller_legal_entity_id": str(quote.legal_entity_id) if quote.legal_entity_id is not None else None,
+        "generation_mode": "MANUAL",
+        "group_adjustments_by_type": False,
+        "include_discount_adjustments": True,
+        "include_supplement_adjustments": True,
+        "auto_exclude_pack_subscription_lines": True,
+        "include_pending": True,
+        "include_cancelled": False,
+        "included_payment_keys": [f"MANUAL:{transaction.id}"],
+        "totals_by_currency": {currency: f"{deposit_amount_ttc:.2f}"},
+        "invoice_status": "ISSUED",
+        "public_note": f"Facture d acompte liee au devis {quote.quote_number}.",
+        "private_note": f"Transformation devis {quote.quote_number} - acompte preinscription.",
+    }
+    note = _create_client_note(
+        db,
+        client_id=billing.id,
+        author_user_id=current_user.id,
+        entry_type="MANUAL",
+        message=_build_invoice_range_note_message(metadata),
+    )
+    db.flush()
+    db.add(
+        ClientInvoiceLine(
+            note_id=note.id,
+            user_id=billing.id,
+            source="MANUAL",
+            source_payment_id=transaction.id,
+            occurred_at=issued_at,
+            label=transaction.label,
+            amount_excl_vat=deposit_amount_ht,
+            vat_rate=deposit_vat_rate,
+            vat_amount=deposit_vat_amount,
+            total_incl_vat=deposit_amount_ttc,
+            currency=currency,
+            billing_entity=billing_entity,
+            seller_legal_entity_id=quote.legal_entity_id,
+        )
+    )
+    created_invoice_note_ids.append(note.id)
+    return note.id
+
+
 def _execute_quote_followup_transformation(
     db: Session,
     *,
@@ -5783,6 +5936,7 @@ def _execute_quote_followup_transformation(
     created_subscription_ids: list[UUID] = []
     created_booking_ids: list[UUID] = []
     created_transaction_ids: list[UUID] = []
+    created_invoice_note_ids: list[UUID] = []
     quote_snapshot = _snapshot_quote_state(quote)
     followup_snapshot = _snapshot_quote_followup(followup)
 
@@ -5869,6 +6023,15 @@ def _execute_quote_followup_transformation(
         created_transaction_ids=created_transaction_ids,
         skip_row_ids=forfait_discount_row_ids,
     )
+    _create_followup_deposit_invoice(
+        db,
+        quote=quote,
+        student=student,
+        billing=billing,
+        current_user=current_user,
+        created_transaction_ids=created_transaction_ids,
+        created_invoice_note_ids=created_invoice_note_ids,
+    )
 
     followup.status = "completed"
     if followup.payment_method_status in {"pending", "changed"}:
@@ -5907,6 +6070,7 @@ def _execute_quote_followup_transformation(
         "created_subscription_ids": _serialize_uuid_list(created_subscription_ids),
         "created_booking_ids": _serialize_uuid_list(created_booking_ids),
         "created_transaction_ids": _serialize_uuid_list(created_transaction_ids),
+        "created_invoice_note_ids": _serialize_uuid_list(created_invoice_note_ids),
         "user_snapshots": _serialize_snapshot_map(user_snapshots),
         "prospect_snapshots": _serialize_snapshot_map(prospect_snapshots),
         "quote_snapshot": quote_snapshot,
@@ -5925,6 +6089,7 @@ def _execute_quote_followup_transformation(
                 "billing_client_id": str(billing.id),
                 "booking_count": len(created_booking_ids),
                 "transaction_count": len(created_transaction_ids),
+                "invoice_count": len(created_invoice_note_ids),
             },
             created_at=now,
         )
@@ -5945,6 +6110,7 @@ def _rollback_quote_followup_transformation(
 
     created_booking_ids = [_parse_uuid_value(item) for item in _json_list(execution.get("created_booking_ids"))]
     created_transaction_ids = [_parse_uuid_value(item) for item in _json_list(execution.get("created_transaction_ids"))]
+    created_invoice_note_ids = [_parse_uuid_value(item) for item in _json_list(execution.get("created_invoice_note_ids"))]
     created_subscription_ids = [_parse_uuid_value(item) for item in _json_list(execution.get("created_subscription_ids"))]
     created_family_link_ids = [_parse_uuid_value(item) for item in _json_list(execution.get("created_family_link_ids"))]
     created_user_ids = [_parse_uuid_value(item) for item in _json_list(execution.get("created_user_ids"))]
@@ -5971,6 +6137,13 @@ def _rollback_quote_followup_transformation(
                 _restore_pack_credit(subscription, plan)
                 db.add(subscription)
         db.delete(booking)
+
+    for note_id in created_invoice_note_ids:
+        if note_id is None:
+            continue
+        note = db.scalar(select(ClientNoteEntry).where(ClientNoteEntry.id == note_id).with_for_update())
+        if note is not None:
+            db.delete(note)
 
     for transaction_id in created_transaction_ids:
         if transaction_id is None:
