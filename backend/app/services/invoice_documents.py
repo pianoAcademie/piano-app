@@ -735,6 +735,20 @@ COMPANY_IDENTITY_SNAPSHOT_FIELDS = (
 )
 
 
+def serialize_company_identity_snapshot(identity: CompanyIdentity) -> dict[str, str | None]:
+    return {
+        "company_name": identity.company_name,
+        "company_email": identity.company_email,
+        "company_phone": identity.company_phone,
+        "company_siren": identity.company_siren,
+        "company_siret": identity.company_siret,
+        "company_vat_number": identity.company_vat_number,
+        "company_address": identity.company_address,
+        "company_legal_form": identity.company_legal_form,
+        "company_share_capital": identity.company_share_capital,
+    }
+
+
 def _decode_jpeg_data_url(value: str | None) -> bytes | None:
     raw = (value or "").strip()
     if not raw:
@@ -875,10 +889,12 @@ def _company_identity(
     if address and entity.country_code:
         address = f"{address} ({_country_display_name(entity.country_code)})"
     company_address = address or "-"
+    company_email = (entity.accounting_email or "").strip() or legacy_identity.company_email or "-"
+    company_phone = (entity.phone or "").strip() or legacy_identity.company_phone or "-"
     return CompanyIdentity(
         company_name=(entity.name or "").strip() or "Societe",
-        company_email=(entity.accounting_email or "").strip() or legacy_identity.company_email,
-        company_phone=(entity.phone or "").strip() or legacy_identity.company_phone,
+        company_email=company_email,
+        company_phone=company_phone,
         company_siren=(entity.siren or "").strip() or "-",
         company_siret=(entity.siret or "").strip() or "-",
         company_vat_number=(entity.vat_number or "").strip() or "-",
@@ -897,18 +913,9 @@ def build_company_identity_snapshot(
     legal_entity_id: UUID | None = None,
     billing_entity: str | None = None,
 ) -> dict[str, str | None]:
-    identity = _company_identity(db, legal_entity_id=legal_entity_id, billing_entity=billing_entity)
-    return {
-        "company_name": identity.company_name,
-        "company_email": identity.company_email,
-        "company_phone": identity.company_phone,
-        "company_siren": identity.company_siren,
-        "company_siret": identity.company_siret,
-        "company_vat_number": identity.company_vat_number,
-        "company_address": identity.company_address,
-        "company_legal_form": identity.company_legal_form,
-        "company_share_capital": identity.company_share_capital,
-    }
+    return serialize_company_identity_snapshot(
+        _company_identity(db, legal_entity_id=legal_entity_id, billing_entity=billing_entity)
+    )
 
 
 def company_identity_from_snapshot(snapshot: object) -> CompanyIdentity | None:
@@ -1007,11 +1014,16 @@ def render_invoice_period_pdf(
     billing_entity: str | None = None,
     language: str | None = None,
     company_identity_override: CompanyIdentity | None = None,
+    company_identity_snapshot: dict[str, object] | None = None,
 ) -> bytes:
-    identity = company_identity_override or _company_identity(
-        db,
-        legal_entity_id=legal_entity_id,
-        billing_entity=billing_entity,
+    identity = (
+        company_identity_override
+        or company_identity_from_snapshot(company_identity_snapshot)
+        or _company_identity(
+            db,
+            legal_entity_id=legal_entity_id,
+            billing_entity=billing_entity,
+        )
     )
     normalized_language = normalize_language(language)
     pdf = _SimplePdfDocument()

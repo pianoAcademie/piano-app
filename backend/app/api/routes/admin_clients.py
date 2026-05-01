@@ -1931,6 +1931,8 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
         normalized["client_billing_address"] = client_billing_address
 
     issuer_snapshot_raw = payload.get("issuer_snapshot")
+    if not isinstance(issuer_snapshot_raw, dict):
+        issuer_snapshot_raw = payload.get("issuer_identity")
     if isinstance(issuer_snapshot_raw, dict):
         issuer_snapshot: dict[str, str | None] = {}
         for field in (
@@ -7889,8 +7891,28 @@ def download_admin_client_range_invoice(
     client_billing_address_live = _billing_address_label(billing_profile)
     client_label = client_name_snapshot or client_label_live
     client_billing_address = client_billing_address_snapshot or client_billing_address_live
-    frozen_company_identity = company_identity_from_snapshot(issuer_snapshot)
     persisted_note_id = note_id
+    issuer_identity_snapshot: dict[str, object] | None = None
+    if not persist_note and note_id is not None:
+        try:
+            _, existing_metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=False)
+        except HTTPException:
+            existing_metadata = {}
+        existing_snapshot = existing_metadata.get("issuer_snapshot")
+        if not isinstance(existing_snapshot, dict):
+            existing_snapshot = existing_metadata.get("issuer_identity")
+        if isinstance(existing_snapshot, dict):
+            issuer_identity_snapshot = existing_snapshot
+    if issuer_identity_snapshot is None:
+        issuer_identity_snapshot = build_company_identity_snapshot(
+            db,
+            legal_entity_id=resolved_seller_legal_entity_id,
+            billing_entity=resolved_billing_entity,
+        )
+    frozen_company_identity = (
+        company_identity_from_snapshot(issuer_snapshot)
+        or company_identity_from_snapshot(issuer_identity_snapshot)
+    )
 
     if persist_note:
         totals_payload = {
@@ -7944,6 +7966,7 @@ def download_admin_client_range_invoice(
                 legal_entity_id=resolved_seller_legal_entity_id,
                 billing_entity=resolved_billing_entity,
             ),
+            "issuer_identity": issuer_identity_snapshot,
         }
         if normalized_auto_footer_note:
             metadata["auto_footer_note"] = normalized_auto_footer_note
