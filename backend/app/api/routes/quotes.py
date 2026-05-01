@@ -129,6 +129,11 @@ from app.services.email_delivery import email_delivery_disabled_reason
 from app.services.invoice_documents import normalize_billing_entity
 from app.services.messaging_templates import resolve_frontend_base_url
 from app.services.notifications.application.orchestrator import enqueue_notifications, schedule_booking_created_notifications
+from app.services.client_status import (
+    client_status_keeps_portal_enabled,
+    promote_client_to_active_student,
+    refresh_responsable_status,
+)
 from app.services.quotes.calendar_engine import CalendarGenerationInput, generate_calendar_snapshot
 from app.services.quotes.email_templates import (
     USAGE_CONTEXT_QUOTE_APPROVED,
@@ -5095,7 +5100,7 @@ def _create_quote_client(
         birth_date=birth_date,
         client_kind=client_kind,
         client_status=status,
-        is_active=True,
+        is_active=client_status_keeps_portal_enabled(status),
         created_at=_utcnow(),
         updated_at=_utcnow(),
     )
@@ -5106,9 +5111,7 @@ def _create_quote_client(
 
 def _promote_client_active(user: User, user_snapshots: dict[str, dict[str, object]]) -> None:
     _remember_user_snapshot(user_snapshots, user)
-    user.client_status = ClientStatus.ACTIVE
-    user.is_active = True
-    user.updated_at = _utcnow()
+    promote_client_to_active_student(user)
 
 
 def _resolve_quote_parent_prospect(
@@ -5390,6 +5393,15 @@ def _resolve_followup_clients(
         db.add(client)
         return client
 
+    def ensure_existing_billing_client(user_id: UUID | None) -> User:
+        client = _load_user_for_update(db, user_id)
+        if client is None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Client responsable introuvable")
+        _remember_user_snapshot(user_snapshots, client)
+        refresh_responsable_status(db, client)
+        db.add(client)
+        return client
+
     if mode == "existing":
         student = ensure_existing_client(selected_client_id or followup.target_client_id or quote.client_id)
         quote_prospect_type = str(_json_object(quote_prospect.meta).get("prospect_type") or "").strip().lower() if quote_prospect is not None else ""
@@ -5398,9 +5410,13 @@ def _resolve_followup_clients(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Pour un prospect enfant, la fiche cible doit etre une fiche enfant. Utilisez creation parent + enfant ou selectionnez un enfant existant.",
             )
-        billing = ensure_existing_client(selected_parent_client_id) if selected_parent_client_id else resolve_billing_profile(db, student)
+        billing = ensure_existing_billing_client(selected_parent_client_id) if selected_parent_client_id else resolve_billing_profile(db, student)
         if billing is None:
             billing = student
+        elif billing.id != student.id:
+            _remember_user_snapshot(user_snapshots, billing)
+            refresh_responsable_status(db, billing)
+            db.add(billing)
         if quote_prospect_type == "child":
             if billing.id == student.id or billing.client_kind != ClientKind.ADULT:
                 raise HTTPException(
@@ -5500,12 +5516,21 @@ def _resolve_followup_clients(
             phone=_normalized_phone(parent_contact.get("phone")),
             birth_date=None,
             client_kind=ClientKind.ADULT,
-            status=ClientStatus.ACTIVE,
+            status=ClientStatus.RESPONSABLE,
         )
         created_user_ids.append(billing.id)
     else:
-        _promote_client_active(billing, user_snapshots)
+        _remember_user_snapshot(user_snapshots, billing)
         billing.client_kind = ClientKind.ADULT
+        _apply_quote_client_contact_defaults(
+            billing,
+            phone=_normalized_phone(parent_contact.get("phone")),
+            address_line=parent_address_fields.get("address_line"),
+            postal_code=parent_address_fields.get("postal_code"),
+            city=parent_address_fields.get("city"),
+            address_country=parent_address_fields.get("country_code"),
+        )
+        refresh_responsable_status(db, billing)
 
     child_email = _normalized_email(quote_prospect.email)
     if child_email == _normalized_email(parent_contact.get("email")):
@@ -5571,6 +5596,7 @@ def _resolve_followup_clients(
         link.updated_at = _utcnow()
         db.add(link)
 
+    refresh_responsable_status(db, billing)
     db.add_all([billing, student, quote_prospect, quote, followup])
     return student, billing
 
@@ -5613,6 +5639,7 @@ def _resolve_followup_subscription(
         existing.payer_contact_id = billing.id
         if followup.payment_method_status != "validated":
             existing.billing_method_code = existing.billing_method_code or _default_subscription_billing_method(plan)
+        promote_client_to_active_student(student)
         db.add(existing)
         return existing, plan
 
@@ -5662,6 +5689,7 @@ def _resolve_followup_subscription(
     )
     db.add(subscription)
     db.flush()
+    promote_client_to_active_student(student)
     created_subscription_ids.append(subscription.id)
     return subscription, plan
 

@@ -24,6 +24,7 @@ export default function ClientKindCreateSync({ formId }: ClientKindCreateSyncPro
     if (!(kindSelect instanceof HTMLSelectElement)) {
       return;
     }
+    const statusSelect = form.querySelector('select[name="client_status"]');
 
     const checkboxes = COMMUNICATION_FIELD_NAMES.map((fieldName) =>
       form.querySelector(`input[name="${fieldName}"]`),
@@ -31,6 +32,16 @@ export default function ClientKindCreateSync({ formId }: ClientKindCreateSyncPro
 
     const applyRules = (): void => {
       const isChild = kindSelect.value.trim().toUpperCase() === "CHILD";
+      if (statusSelect instanceof HTMLSelectElement) {
+        for (const option of Array.from(statusSelect.options)) {
+          if (option.value.trim().toUpperCase() === "RESPONSABLE") {
+            option.disabled = isChild;
+            if (isChild && statusSelect.value.trim().toUpperCase() === "RESPONSABLE") {
+              statusSelect.value = "ACTIVE";
+            }
+          }
+        }
+      }
       for (const checkbox of checkboxes) {
         checkbox.disabled = isChild;
         if (isChild) {

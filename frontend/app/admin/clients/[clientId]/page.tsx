@@ -384,6 +384,9 @@ function paymentStatusLabel(status: string, language: UiLanguage = "fr"): string
   if (normalized === "PENDING" || normalized === "PENDING_PAYMENT" || normalized === "WAITLISTED" || normalized === "TRIAL") {
     return uiText(language, "admin.client_detail.payment_status.pending");
   }
+  if (normalized === "RESPONSABLE") {
+    return "Responsable";
+  }
   if (normalized === "ACTIVE") {
     return uiText(language, "admin.client_detail.payment_status.active");
   }
@@ -3895,7 +3898,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       {t("admin.client_detail.status")}
                       <select name="client_status" defaultValue={client.client_status || "ACTIVE"} required>
                         <option value="ACTIVE">{uiText(language, "admin.clients.status_active")}</option>
-                        <option value="RESPONSABLE">{uiText(language, "admin.clients.status_responsable")}</option>
+                        {client.client_kind === "ADULT" ? <option value="RESPONSABLE">{uiText(language, "admin.clients.status_responsable")}</option> : null}
                         <option value="TRIAL">{uiText(language, "admin.clients.status_trial")}</option>
                         <option value="PENDING">{uiText(language, "admin.clients.status_pending")}</option>
                         <option value="INACTIVE">{uiText(language, "admin.clients.status_inactive")}</option>
@@ -4395,7 +4398,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 </label>
                 <label>
                   {t("admin.client_detail.status")}
-                  <select name="adult_client_status" defaultValue="ACTIVE">
+                  <select name="adult_client_status" defaultValue="RESPONSABLE">
                     {CLIENT_STATUS_OPTIONS.map((status) => (
                       <option key={status} value={status}>
                         {clientStatusLabel(status, language)}

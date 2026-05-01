@@ -39,6 +39,7 @@ from app.schemas.plan import (
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, with_webhook_secret
 from app.services.messaging_templates import resolve_frontend_base_url
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
+from app.services.client_status import promote_client_to_active_student
 from app.services.subscriptions import add_months_utc, reconcile_subscription_status
 
 router = APIRouter()
@@ -719,6 +720,8 @@ def purchase_plan(
     )
     db.add(subscription)
     db.flush()
+    promote_client_to_active_student(owner)
+    db.add(owner)
 
     checkout_url: str | None = None
     if should_start_pending and method_code is not None:

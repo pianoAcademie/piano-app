@@ -206,6 +206,7 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
             <option value="ACTIVE">ACTIF</option>
             <option value="TRIAL">ESSAI</option>
             <option value="PENDING">EN ATTENTE</option>
+            <option value="RESPONSABLE">RESPONSABLE</option>
             <option value="INACTIVE">INACTIF</option>
             <option value="ARCHIVED">ARCHIVE</option>
           </select>

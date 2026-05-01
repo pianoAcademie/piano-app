@@ -127,6 +127,17 @@ from app.services.client_password_email import (
     send_client_password_email,
 )
 from app.services.booking_confirmation_templates import render_booking_confirmation_email
+from app.services.client_email import (
+    deliverable_client_email,
+    is_generated_client_email,
+    normalize_contact_email,
+    visible_client_email,
+)
+from app.services.client_status import (
+    client_status_keeps_portal_enabled,
+    promote_client_to_active_student,
+    refresh_responsable_status,
+)
 from app.services.client_payment_email import (
     render_client_payment_email,
     send_client_payment_email,
@@ -821,15 +832,15 @@ def _main_phone(client: User) -> str | None:
 
 
 def _status_implies_active(client_status: ClientStatus) -> bool:
-    return client_status in {ClientStatus.ACTIVE, ClientStatus.RESPONSABLE, ClientStatus.TRIAL}
+    return client_status_keeps_portal_enabled(client_status)
 
 
 def _client_status_sort_value(client_status: ClientStatus) -> int:
     order = {
         ClientStatus.ACTIVE: 0,
-        ClientStatus.RESPONSABLE: 1,
-        ClientStatus.TRIAL: 2,
-        ClientStatus.PENDING: 3,
+        ClientStatus.TRIAL: 1,
+        ClientStatus.PENDING: 2,
+        ClientStatus.RESPONSABLE: 3,
         ClientStatus.INACTIVE: 4,
         ClientStatus.ARCHIVED: 5,
     }
@@ -4384,6 +4395,9 @@ def create_admin_client(
         updated_at=now,
     )
     db.add(client)
+    db.flush()
+    if client.client_kind == ClientKind.ADULT:
+        refresh_responsable_status(db, client)
     db.commit()
     db.refresh(client)
     return _client_out(client)
@@ -4524,6 +4538,9 @@ def patch_admin_client(
         if not desired_active and client.client_status in {ClientStatus.ACTIVE, ClientStatus.RESPONSABLE, ClientStatus.TRIAL, ClientStatus.PENDING}:
             client.client_status = ClientStatus.INACTIVE
 
+    if client.client_kind == ClientKind.ADULT:
+        refresh_responsable_status(db, client)
+
     client.updated_at = _utcnow()
     db.add(client)
     db.commit()
@@ -4597,9 +4614,10 @@ def send_admin_client_password_email(
         message=f"Email d'activation envoye a {client.email} (message id: {message_id}).",
     )
     client.hashed_password = hash_password(temporary_password)
-    if client.client_status != ClientStatus.RESPONSABLE:
+    if client.client_status in {ClientStatus.INACTIVE, ClientStatus.ARCHIVED, ClientStatus.PENDING}:
         client.client_status = ClientStatus.ACTIVE
     client.is_active = True
+    refresh_responsable_status(db, client)
     client.updated_at = now
     db.add(client)
     db.commit()
@@ -4697,6 +4715,9 @@ def create_admin_client_family_link(
     if payload.is_billing_recipient or has_existing_billing is None:
         _set_billing_recipient(db, child_user_id=child.id, chosen_adult_user_id=adult.id)
 
+    refresh_responsable_status(db, adult)
+    db.add(adult)
+
     db.commit()
     db.refresh(link)
 
@@ -4730,6 +4751,9 @@ def patch_admin_client_family_link(
         elif target is False:
             link.is_billing_recipient = False
 
+    adult = _require_client(db, link.adult_user_id)
+    refresh_responsable_status(db, adult)
+    db.add(adult)
     link.updated_at = _utcnow()
     db.add(link)
     db.commit()
@@ -4767,7 +4791,11 @@ def delete_admin_client_family_link(
             chosen_adult_user_id=replacement.adult_user_id,
         )
 
+    adult = _require_client(db, link.adult_user_id)
     db.delete(link)
+    db.flush()
+    refresh_responsable_status(db, adult)
+    db.add(adult)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -9081,6 +9109,8 @@ def admin_purchase_plan_for_client(
 
     db.add(subscription)
     db.flush()
+    promote_client_to_active_student(client)
+    db.add(client)
 
     checkout_url: str | None = None
     if should_start_pending and method_code is not None:

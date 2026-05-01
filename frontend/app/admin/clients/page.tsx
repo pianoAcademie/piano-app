@@ -180,6 +180,7 @@ function countByStatus(clients: AdminClientOut[]): Record<string, number> {
     RESPONSABLE: 0,
     TRIAL: 0,
     PENDING: 0,
+    RESPONSABLE: 0,
     INACTIVE: 0,
     ARCHIVED: 0,
   };
@@ -928,7 +929,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
 
                     <label>
                       {t("admin.clients.parent_status")}
-                      <select name="adult_client_status" defaultValue="ACTIVE">
+                      <select name="adult_client_status" defaultValue="RESPONSABLE">
                         {CLIENT_STATUS_OPTIONS.map((statusValue) => (
                           <option key={statusValue} value={statusValue}>
                             {statusLabel(statusValue, language)}

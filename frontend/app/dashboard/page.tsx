@@ -319,6 +319,9 @@ function statusLabel(value: string, language: UiLanguage = "fr"): string {
   if (normalized === "ACTIVE") {
     return uiText(language, "client.status_active");
   }
+  if (normalized === "RESPONSABLE") {
+    return "RESPONSABLE";
+  }
   if (normalized === "PAID") {
     return uiText(language, "client.status_paid");
   }
