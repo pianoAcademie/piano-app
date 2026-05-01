@@ -4774,7 +4774,7 @@ def public_get_quote_document(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid quote token")
     lines = _load_quote_lines(db, quote.id)
     resolved_audience = audience.strip().lower() if audience else AUDIENCE_PUBLIC_PAGE
-    if resolved_audience not in {AUDIENCE_ADMIN_PREVIEW, AUDIENCE_PUBLIC_PAGE, AUDIENCE_CLIENT_PDF}:
+    if resolved_audience not in {AUDIENCE_PUBLIC_PAGE, AUDIENCE_CLIENT_PDF}:
         resolved_audience = AUDIENCE_PUBLIC_PAGE
     bundle = render_quote_document_bundle(db=db, quote=quote, lines=lines, audience=resolved_audience)
     combined_html = str(bundle["combined_html"])
