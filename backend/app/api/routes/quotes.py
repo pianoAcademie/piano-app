@@ -5720,22 +5720,40 @@ def _create_followup_manual_transactions(
         amount_ttc = _q2(_decimal_or_none(row.get("amountTtc")) or Decimal("0"))
         amount_ht = _q2(_decimal_or_none(row.get("amountHt")) or amount_ttc)
         vat_rate = _q3(_decimal_or_none(row.get("vatRate")) or Decimal("0"))
-        if amount_ttc <= Decimal("0"):
+        row_type = str(row.get("type") or "").strip().lower()
+        if row_type == "discount":
+            signed_total_ttc = _q2(Decimal("0.00") - abs(amount_ttc))
+            signed_amount_ht = _q2(Decimal("0.00") - abs(amount_ht))
+            if signed_total_ttc == Decimal("0.00"):
+                continue
+            transaction_type = "DISCOUNT"
+            status_value = "COMPLETED"
+        else:
+            if amount_ttc <= Decimal("0"):
+                continue
+            signed_total_ttc = amount_ttc
+            signed_amount_ht = amount_ht
+            transaction_type = "CHARGE"
+            status_value = "PENDING"
+        signed_vat_amount = _q2(signed_total_ttc - signed_amount_ht)
+        if signed_vat_amount > Decimal("0.00") and transaction_type == "DISCOUNT":
+            signed_vat_amount = _q2(Decimal("0.00") - abs(signed_vat_amount))
+        if transaction_type != "DISCOUNT" and signed_vat_amount < Decimal("0.00"):
             continue
         transaction = ClientManualTransaction(
             user_id=billing.id,
             student_user_id=student.id,
             actor_user_id=actor_user_id,
-            transaction_type="CHARGE",
-            status="PENDING",
+            transaction_type=transaction_type,
+            status=status_value,
             label=str(row.get("label") or "Montant facture").strip() or "Montant facture",
             description=f"Transformation devis {quote.quote_number}",
             category=str(row.get("type") or "quote_transformation").strip() or "quote_transformation",
             occurred_at=now,
-            amount_excl_vat=amount_ht,
+            amount_excl_vat=signed_amount_ht,
             vat_rate=vat_rate,
-            vat_amount=_q2(amount_ttc - amount_ht),
-            total_incl_vat=amount_ttc,
+            vat_amount=signed_vat_amount,
+            total_incl_vat=signed_total_ttc,
             currency=(quote.currency or "EUR").upper(),
             reference=f"QUOTE:{quote.id}:ROW:{str(row.get('rowId') or uuid4())}",
             legal_entity_id=quote.legal_entity_id,

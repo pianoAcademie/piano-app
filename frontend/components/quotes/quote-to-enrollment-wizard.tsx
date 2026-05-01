@@ -296,13 +296,15 @@ export default function QuoteToEnrollmentWizard({
   );
 
   const [billingRows, setBillingRows] = useState<BillingExtraRow[]>(() => {
+    const suggestedById = new Map(suggestedBillingRows.map((row) => [row.rowId, row]));
     if (restoredDraft?.billingResolution.rows && restoredDraft.billingResolution.rows.length > 0) {
       return restoredDraft.billingResolution.rows.map((row) => {
+        const suggested = suggestedById.get(row.rowId);
         const amountVat = Number((row.amountTtc - row.amountHt).toFixed(2));
         const mapped: BillingExtraRow = {
           rowId: row.rowId,
-          sourceLineId: null,
-          type: row.type,
+          sourceLineId: suggested?.sourceLineId || null,
+          type: suggested?.type || row.type,
           label: row.label,
           amountHt: row.amountHt,
           vatRate: row.vatRate,
@@ -1224,7 +1226,7 @@ export default function QuoteToEnrollmentWizard({
                           <input
                             type="number"
                             step="0.01"
-                            min="0"
+                            min={row.type === "discount" ? undefined : "0"}
                             value={row.amountHt}
                             onChange={(event) => {
                               const nextHt = Number(event.target.value || "0");
@@ -1252,7 +1254,7 @@ export default function QuoteToEnrollmentWizard({
                           <input
                             type="number"
                             step="0.01"
-                            min="0"
+                            min={row.type === "discount" ? undefined : "0"}
                             value={row.amountTtc}
                             onChange={(event) => updateBillingRow(row.rowId, { amountTtc: Number(event.target.value || "0") })}
                           />

@@ -1035,7 +1035,40 @@ export function buildSessionMatches(
   return options;
 }
 
+function billingRowTypeFromLine(line: QuoteTransformLine): string {
+  const lineType = normalizeText(line.lineType);
+  const masterItemType = normalizeText(line.masterItemType);
+  if (lineType === "discount" || masterItemType === "discount_rule") {
+    return "discount";
+  }
+  if (lineType === "surcharge" || masterItemType === "surcharge_rule") {
+    return "surcharge";
+  }
+  if (masterItemType === "kit") {
+    return "kit";
+  }
+  if (masterItemType === "option") {
+    return "option";
+  }
+  if (masterItemType === "product") {
+    return "product";
+  }
+  if (masterItemType === "activity") {
+    return "service";
+  }
+  return line.lineCategory || line.lineType || "extra";
+}
+
 function rowStatusFromBilling(row: BillingExtraRow): QuoteTransformStatus {
+  if (row.type === "discount") {
+    if (row.amountTtc >= 0) {
+      return "blocked";
+    }
+    if (row.vatRate < 0) {
+      return "blocked";
+    }
+    return "ok";
+  }
   if (row.amountTtc <= 0) {
     return "blocked";
   }
@@ -1060,7 +1093,7 @@ export function buildBillingExtraRows(
       const amountTtc = Number(line.amountTtc.toFixed(2));
       const vatRate = Number(line.vatRate.toFixed(2));
       const amountVat = Number((amountTtc - amountHt).toFixed(2));
-      const type = line.lineCategory || line.lineType || "extra";
+      const type = billingRowTypeFromLine(line);
       const row: BillingExtraRow = {
         rowId: `extra-${line.id}`,
         sourceLineId: line.id,
