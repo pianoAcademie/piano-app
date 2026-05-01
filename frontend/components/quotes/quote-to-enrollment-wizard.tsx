@@ -97,10 +97,16 @@ function isSupportedStep(step: number): step is 1 | 2 | 3 | 4 | 5 {
 }
 
 function billingStatus(row: BillingExtraRow): QuoteTransformStatus {
+  if (row.type === "discount") {
+    if (row.amountTtc >= 0 || row.vatRate < 0) {
+      return "blocked";
+    }
+    return "ok";
+  }
   if (row.amountTtc <= 0 || row.vatRate < 0) {
     return "blocked";
   }
-  if (row.vatRate === 0 && row.type !== "discount") {
+  if (row.vatRate === 0) {
     return "warning";
   }
   return "ok";
