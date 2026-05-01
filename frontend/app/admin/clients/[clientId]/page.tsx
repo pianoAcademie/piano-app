@@ -923,6 +923,9 @@ function rangeInvoicePdfHref(clientId: string, noteId: string, inline = false): 
     inline: inline ? "true" : "false",
     payment_return_tab: "factures",
   });
+  if (inline) {
+    params.set("raw", "1");
+  }
   return `/admin/clients/${clientId}/invoices/range/${noteId}/pdf?${params.toString()}`;
 }
 
