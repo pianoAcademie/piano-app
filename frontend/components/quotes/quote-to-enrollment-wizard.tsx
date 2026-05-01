@@ -179,15 +179,17 @@ export default function QuoteToEnrollmentWizard({
 
   const initialClientMode =
     restoredDraft?.clientResolution.mode
-    ?? (scenario === "A"
-      ? "new_adult"
-      : scenario === "C"
-      ? "new_parent_child"
-      : hasStrongClientCandidate
-      ? "existing"
-      : prospect?.prospectType === "child"
-      ? "new_parent_child"
-      : "existing");
+    ?? (
+      prospect?.prospectType === "child"
+        ? "new_parent_child"
+        : scenario === "A"
+          ? "new_adult"
+          : scenario === "C"
+            ? "new_parent_child"
+            : hasStrongClientCandidate
+              ? "existing"
+              : "existing"
+    );
 
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4 | 5>(() => {
     const stepCandidate = Number(preferredStep ?? restoredDraft?.currentStep ?? 1);
@@ -366,6 +368,17 @@ export default function QuoteToEnrollmentWizard({
           step: 1,
           level: "blocked",
           message: t("admin.quote_transform.issue_selected_client_invalid"),
+          canOverride: false,
+        });
+      } else if (
+        prospect?.prospectType === "child"
+        && String(clientsById.get(selectedClientId)?.clientKind || "").toUpperCase() !== "CHILD"
+      ) {
+        issues.push({
+          issueId: "step1-child-must-target-child-client",
+          step: 1,
+          level: "blocked",
+          message: "Pour un prospect enfant, la fiche selectionnee doit etre une fiche enfant. Utilisez creation parent + enfant ou selectionnez un enfant existant.",
           canOverride: false,
         });
       }

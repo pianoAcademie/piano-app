@@ -5207,9 +5207,21 @@ def _resolve_followup_clients(
 
     if mode == "existing":
         student = ensure_existing_client(selected_client_id or followup.target_client_id or quote.client_id)
+        quote_prospect_type = str(_json_object(quote_prospect.meta).get("prospect_type") or "").strip().lower() if quote_prospect is not None else ""
+        if quote_prospect_type == "child" and student.client_kind != ClientKind.CHILD:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Pour un prospect enfant, la fiche cible doit etre une fiche enfant. Utilisez creation parent + enfant ou selectionnez un enfant existant.",
+            )
         billing = ensure_existing_client(selected_parent_client_id) if selected_parent_client_id else resolve_billing_profile(db, student)
         if billing is None:
             billing = student
+        if quote_prospect_type == "child":
+            if billing.id == student.id or billing.client_kind != ClientKind.ADULT:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Aucun parent responsable n'est rattache a cette fiche enfant. Utilisez creation parent + enfant ou selectionnez un parent existant.",
+                )
         if student.client_kind == ClientKind.CHILD and billing.id != student.id:
             link = _find_family_link_for_update(db, adult_user_id=billing.id, child_user_id=student.id)
             if link is None:
