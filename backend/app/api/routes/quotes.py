@@ -5142,7 +5142,167 @@ def _resolve_parent_contact_data(
         "phone": _normalized_phone(parent_referent.get("phone")),
     }
 
+def _typeform_quote_normalized_payload(quote: Quote) -> dict[str, object]:
+    meta = _quote_meta_dict(quote)
+    typeform_meta = _json_object(meta.get("typeform_intake"))
+    return _json_object(typeform_meta.get("normalized_payload"))
 
+
+def _normalized_country_code(value: object | None) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    normalized = raw.upper()
+    if len(normalized) == 2 and normalized.isalpha():
+        return normalized
+    return {
+        "france": "FR",
+        "belgique": "BE",
+        "suisse": "CH",
+        "luxembourg": "LU",
+        "espagne": "ES",
+    }.get(raw.casefold())
+
+
+def _has_useful_address_fields(fields: dict[str, str | None]) -> bool:
+    return any(str(fields.get(key) or "").strip() for key in ("address_line", "postal_code", "city"))
+
+
+def _typeform_parent_address_fields_from_normalized_payload(normalized: dict[str, object]) -> dict[str, str | None]:
+    address_line = str(normalized.get("parent_address_line_1") or "").strip()
+    line_2 = str(normalized.get("parent_address_line_2") or "").strip()
+    if line_2:
+        address_line = " - ".join(part for part in [address_line, line_2] if part).strip()
+    if not address_line:
+        address_line = str(normalized.get("parent_address") or "").strip()
+    return {
+        "address_line": address_line or None,
+        "postal_code": str(normalized.get("parent_postal_code") or "").strip() or None,
+        "city": str(normalized.get("parent_city") or "").strip() or None,
+        "country_code": _normalized_country_code(normalized.get("parent_country")) or "FR",
+    }
+
+
+def _typeform_parent_address_fields_from_intake(intake: TypeformIntake | None) -> dict[str, str | None]:
+    if intake is None:
+        return {"address_line": None, "postal_code": None, "city": None, "country_code": "FR"}
+    fields = _typeform_parent_address_fields_from_normalized_payload(_json_object(intake.normalized_payload_json))
+    simplified_answers = _json_list(intake.simplified_response_json)
+    if not fields.get("address_line"):
+        line_1 = _typeform_simplified_answer_value(simplified_answers, "Address", "address", "Adresse", "adresse")
+        line_2 = _typeform_simplified_answer_value(
+            simplified_answers,
+            "Address line 2",
+            "address line 2",
+            "Adresse ligne 2",
+            "Complement d'adresse",
+            "Complément d'adresse",
+        )
+        address_line = str(line_1 or "").strip()
+        if line_2:
+            address_line = " - ".join(part for part in [address_line, str(line_2).strip()] if part).strip()
+        if address_line:
+            fields["address_line"] = address_line
+    if not fields.get("city"):
+        fields["city"] = _typeform_simplified_answer_value(simplified_answers, "City/Town", "city/town", "Ville", "ville")
+    if not fields.get("postal_code"):
+        fields["postal_code"] = _typeform_simplified_answer_value(
+            simplified_answers,
+            "Zip/Post Code",
+            "zip/post code",
+            "Code postal",
+            "code postal",
+        )
+    country_value = _typeform_simplified_answer_value(simplified_answers, "Country", "country", "Pays", "pays")
+    fields["country_code"] = _normalized_country_code(fields.get("country_code") or country_value) or "FR"
+    return fields
+
+
+def _address_fields_from_prospect_meta(meta: dict[str, object]) -> dict[str, str | None]:
+    parent_referent = _json_object(meta.get("parent_referent"))
+    if parent_referent:
+        return {
+            "address_line": str(parent_referent.get("address") or "").strip() or None,
+            "postal_code": str(parent_referent.get("postal_code") or "").strip() or None,
+            "city": str(parent_referent.get("city") or "").strip() or None,
+            "country_code": _normalized_country_code(parent_referent.get("country_code") or parent_referent.get("country")) or "FR",
+        }
+    return {
+        "address_line": str(meta.get("adult_address") or "").strip() or None,
+        "postal_code": str(meta.get("adult_postal_code") or "").strip() or None,
+        "city": str(meta.get("adult_city") or "").strip() or None,
+        "country_code": _normalized_country_code(meta.get("adult_country_code") or meta.get("adult_country")) or "FR",
+    }
+
+
+def _quote_parent_address_fields(
+    db: Session,
+    *,
+    quote: Quote,
+    quote_prospect: Prospect | None = None,
+    parent_prospect: Prospect | None = None,
+) -> dict[str, str | None]:
+    fields = _typeform_parent_address_fields_from_normalized_payload(_typeform_quote_normalized_payload(quote))
+    if _has_useful_address_fields(fields):
+        return fields
+
+    for prospect in (parent_prospect, quote_prospect):
+        if prospect is None:
+            continue
+        meta = _prospect_meta_with_typeform_fallback(db, prospect)
+        intake_id = _parse_uuid_value(meta.get("typeform_intake_id"))
+        if intake_id is None:
+            prospect_fields = _address_fields_from_prospect_meta(meta)
+            if _has_useful_address_fields(prospect_fields):
+                return prospect_fields
+            continue
+        intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == intake_id).limit(1))
+        intake_fields = _typeform_parent_address_fields_from_intake(intake)
+        if _has_useful_address_fields(intake_fields):
+            return intake_fields
+        prospect_fields = _address_fields_from_prospect_meta(meta)
+        if _has_useful_address_fields(prospect_fields):
+            return prospect_fields
+
+    return fields
+
+
+def _quote_child_birth_date(quote: Quote) -> date | None:
+    normalized = _typeform_quote_normalized_payload(quote)
+    raw = str(normalized.get("child_birth_date") or "").strip()
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _apply_quote_client_contact_defaults(
+    user: User,
+    *,
+    phone: str | None = None,
+    birth_date: date | None = None,
+    address_line: str | None = None,
+    postal_code: str | None = None,
+    city: str | None = None,
+    address_country: str | None = None,
+) -> None:
+    if phone and not str(user.phone or "").strip():
+        user.phone = phone
+    if phone and not str(user.mobile_phone_1 or "").strip():
+        user.mobile_phone_1 = phone
+    if birth_date is not None and user.birth_date is None:
+        user.birth_date = birth_date
+    if address_line and not str(user.address_line or "").strip():
+        user.address_line = address_line
+    if postal_code and not str(user.postal_code or "").strip():
+        user.postal_code = postal_code
+    if city and not str(user.city or "").strip():
+        user.city = city
+    if address_country and not str(user.address_country or "").strip():
+        user.address_country = address_country
+    user.updated_at = _utcnow()
 def _expected_activity_dates_from_snapshot(
     quote: Quote,
     *,
@@ -5273,6 +5433,7 @@ def _resolve_followup_clients(
     if mode == "new_adult":
         if quote_prospect is None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Prospect devis manquant pour creer le client")
+        address_fields = _quote_parent_address_fields(db, quote=quote, quote_prospect=quote_prospect)
         student = _load_user_for_update(db, quote.client_id or quote_prospect.linked_client_id)
         if student is None:
             student = _find_user_by_email_for_update(db, quote_prospect.email)
@@ -5284,6 +5445,10 @@ def _resolve_followup_clients(
                 last_name=quote_prospect.last_name,
                 phone=quote_prospect.phone,
                 birth_date=None,
+                address_line=address_fields.get("address_line"),
+                postal_code=address_fields.get("postal_code"),
+                city=address_fields.get("city"),
+                address_country=address_fields.get("country_code"),
                 client_kind=ClientKind.ADULT,
                 status=ClientStatus.ACTIVE,
             )
@@ -5291,6 +5456,14 @@ def _resolve_followup_clients(
         else:
             _promote_client_active(student, user_snapshots)
             student.client_kind = ClientKind.ADULT
+            _apply_quote_client_contact_defaults(
+                student,
+                phone=_normalized_phone(quote_prospect.phone),
+                address_line=address_fields.get("address_line"),
+                postal_code=address_fields.get("postal_code"),
+                city=address_fields.get("city"),
+                address_country=address_fields.get("country_code"),
+            )
         quote_prospect.linked_client_id = student.id
         quote_prospect.status = "converted"
         quote_prospect.updated_at = _utcnow()
@@ -5306,6 +5479,13 @@ def _resolve_followup_clients(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Prospect enfant requis pour la transformation parent/enfant")
 
     parent_contact = _resolve_parent_contact_data(quote_prospect=quote_prospect, parent_prospect=parent_prospect)
+    parent_address_fields = _quote_parent_address_fields(
+        db,
+        quote=quote,
+        quote_prospect=quote_prospect,
+        parent_prospect=parent_prospect,
+    )
+    child_birth_date = _quote_child_birth_date(quote)
     billing = _load_user_for_update(db, selected_parent_client_id)
     if billing is None and parent_prospect is not None:
         billing = _load_user_for_update(db, parent_prospect.linked_client_id)
@@ -5339,8 +5519,12 @@ def _resolve_followup_clients(
             email=child_email or _synthetic_quote_client_email(prefix="child"),
             first_name=quote_prospect.first_name,
             last_name=quote_prospect.last_name,
-            phone=quote_prospect.phone,
-            birth_date=None,
+            phone=child_phone,
+            birth_date=child_birth_date,
+            address_line=parent_address_fields.get("address_line"),
+            postal_code=parent_address_fields.get("postal_code"),
+            city=parent_address_fields.get("city"),
+            address_country=parent_address_fields.get("country_code"),
             client_kind=ClientKind.CHILD,
             status=ClientStatus.ACTIVE,
         )
@@ -5348,6 +5532,15 @@ def _resolve_followup_clients(
     else:
         _promote_client_active(student, user_snapshots)
         student.client_kind = ClientKind.CHILD
+        _apply_quote_client_contact_defaults(
+            student,
+            phone=child_phone,
+            birth_date=child_birth_date,
+            address_line=parent_address_fields.get("address_line"),
+            postal_code=parent_address_fields.get("postal_code"),
+            city=parent_address_fields.get("city"),
+            address_country=parent_address_fields.get("country_code"),
+        )
 
     if parent_prospect is not None:
         parent_prospect.linked_client_id = billing.id
@@ -5829,6 +6022,7 @@ def _create_followup_deposit_invoice(
     deposit_amount_ttc, deposit_amount_ht, deposit_vat_rate, deposit_vat_amount = breakdown
     now = _utcnow()
     issued_date = (quote.approved_at or now).astimezone(timezone.utc).date()
+    due_date = issued_date + timedelta(days=7)
     issued_at = _invoice_issued_at_for_date(issued_date=issued_date, now=now)
     invoice_number = _allocate_invoice_number_for_seller_entity(
         db,
@@ -5869,7 +6063,7 @@ def _create_followup_deposit_invoice(
         "invoice_number": invoice_number,
         "issued_date": issued_date.isoformat(),
         "issued_at": issued_at.isoformat(),
-        "due_date": issued_date.isoformat(),
+        "due_date": due_date.isoformat(),
         "no_due_date": False,
         "start_date": issued_date.isoformat(),
         "end_date": issued_date.isoformat(),
