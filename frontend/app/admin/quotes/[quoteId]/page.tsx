@@ -1697,6 +1697,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const canSendQuote = quoteStatus === "created";
   const canResendQuote = ["sent", "approved", "rejected", "expired", "change_requested"].includes(quoteStatus);
   const canCancelQuote = !["cancelled", "approved"].includes(quoteStatus);
+  const canReopenCancelledQuote = quoteStatus === "cancelled";
   const canRestorePublicResponse = ["approved", "rejected", "change_requested"].includes(quoteStatus);
   const canResendPublicConfirmation = ["approved", "rejected", "change_requested"].includes(quoteStatus);
   const restoreTargetStatusRaw = readStringMeta(detail.quote.meta || {}, "public_response_previous_status", "").trim().toLowerCase();
@@ -2557,6 +2558,20 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                       ) : null}
                     </div>
                   </>
+                ) : canReopenCancelledQuote ? (
+                  <div className="card" style={{ minWidth: 360, flex: "1 1 360px" }}>
+                    <h4>{t("admin.quote_detail.reopen_cancelled_quote_title")}</h4>
+                    <p className="muted top-gap-sm">
+                      {t("admin.quote_detail.reopen_cancelled_quote_help")}
+                    </p>
+                    <form action={duplicateQuoteAction} className="top-gap-sm">
+                      <input type="hidden" name="quote_id" value={detail.quote.id} />
+                      <input type="hidden" name="return_to" value={selfPath} />
+                      <button type="submit" className="ghost">
+                        {t("admin.quote_detail.reopen_new_version")}
+                      </button>
+                    </form>
+                  </div>
                 ) : (
                   <small className="muted">
                     {t("admin.quote_detail.send_unavailable_status")}
@@ -2702,11 +2717,13 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                   </div>
                 ) : null}
 
-	                <form action={duplicateQuoteAction}>
-                  <input type="hidden" name="quote_id" value={detail.quote.id} />
-                  <input type="hidden" name="return_to" value={selfPath} />
-	                  <button type="submit" className="ghost">{t("admin.quote_detail.duplicate_new_version")}</button>
-	                </form>
+                {!canReopenCancelledQuote ? (
+                  <form action={duplicateQuoteAction}>
+                    <input type="hidden" name="quote_id" value={detail.quote.id} />
+                    <input type="hidden" name="return_to" value={selfPath} />
+	                    <button type="submit" className="ghost">{t("admin.quote_detail.duplicate_new_version")}</button>
+	                  </form>
+                ) : null}
 
                 {detail.quote.public_token ? (
                   <>
