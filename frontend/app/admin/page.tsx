@@ -1383,6 +1383,29 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const selectedSessionSubtitle = selectedSession
     ? `${formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)} · ${sessionTimeRangeLabel(selectedSession, language)} · ${selectedSession.timezone} · ${pickText(language, "Prof:", "Teacher:")} ${selectedEffectiveProfessorLabel || pickText(language, "Non requis", "Not required")}`
     : "";
+  const selectedSessionDurationValue = selectedSession ? sessionDurationMinutes(selectedSession) : null;
+  const selectedSessionDurationLabel = !selectedSession
+    ? ""
+    : selectedSessionDurationValue === null
+      ? pickText(language, "Toute la journee", "All day")
+      : `${selectedSessionDurationValue} min`;
+  const selectedSessionRecurrenceLabel = selectedSession ? recurrenceLabel(selectedSession, language) : "";
+  const selectedSessionCapacityLabel = !selectedSession
+    ? ""
+    : !selectedSessionAllowsStudentBookings
+      ? pickText(language, "Sans eleve", "No student")
+      : `${selectedSession.booked_count}/${selectedSession.capacity_max}`;
+  const selectedSessionEnrollmentSummary = !selectedSession
+    ? ""
+    : !selectedSessionAllowsStudentBookings
+      ? pickText(language, "Aucune inscription possible", "Bookings disabled")
+      : selectedSessionBookings.length === 0
+        ? pickText(language, "Aucun eleve inscrit", "No student booked")
+        : pickText(
+            language,
+            `${selectedSessionBookings.length} eleve${selectedSessionBookings.length > 1 ? "s" : ""} inscrit${selectedSessionBookings.length > 1 ? "s" : ""}`,
+            `${selectedSessionBookings.length} attendee${selectedSessionBookings.length > 1 ? "s" : ""}`,
+          );
   const timezoneOptionValues = new Set(PLANNING_TIMEZONES.map((option) => option.value));
   const translatedPlanningTimezones = PLANNING_TIMEZONES.map((option) => ({
     value: option.value,
@@ -1422,6 +1445,18 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         [selectedSession.allow_online_booking ? "EXTERNAL" : "PRIVATE"],
       )
     : ["PRIVATE"];
+  const selectedSessionBookingLabel = selectedSessionAllowsStudentBookings
+    ? sessionAudienceScopesLabel(selectedBookingScopes, language)
+    : pickText(language, "Fermee", "Closed");
+  const selectedSessionPublicationSummary = !selectedSession
+    ? ""
+    : `${pickText(language, "Reservation", "Booking")}: ${selectedSessionBookingLabel}${selectedSession.external_booking_price_ttc ? ` · ${pickText(language, "Tarif ext.", "External price")}: ${selectedSession.external_booking_price_ttc} EUR TTC` : ""}`;
+  const selectedSessionHasNotesSection = Boolean(
+    selectedSession?.group_note ||
+      selectedSession?.public_description ||
+      selectedSession?.private_description ||
+      selectedSession?.professor_reminder_note,
+  );
   const createDraftDuration = createDraft ? draftPositiveInteger(createDraft.duration_minutes) : null;
   const createDraftCapacity = createDraft ? draftNonNegativeInteger(createDraft.capacity_max) : null;
   const createRecurrenceMode = createDraft?.recurrence_mode?.trim().toUpperCase() === "RECURRING" ? "RECURRING" : "NONE";
@@ -1971,12 +2006,49 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               </details>
             </div>
 
+            <div className="session-slot-overview-grid">
+              <section className="session-slot-overview-card session-slot-overview-card-highlight">
+                <span className="session-slot-overview-label">{isEnglish ? "Schedule" : "Horaire"}</span>
+                <strong>{sessionTimeRangeLabel(selectedSession, language)}</strong>
+                <small>
+                  {formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)} · {selectedSession.timezone} · {selectedSessionDurationLabel}
+                </small>
+              </section>
+
+              <section className="session-slot-overview-card">
+                <span className="session-slot-overview-label">{isEnglish ? "Teacher" : "Professeur"}</span>
+                <strong>{selectedEffectiveProfessorLabel || pickText(language, "Non requis", "Not required")}</strong>
+                <small>
+                  {isEnglish ? "Usual" : "Habituel"}: {selectedHabitualProfessorLabel}
+                  {selectedSessionIsSubstituted ? ` · ${isEnglish ? "Substitute" : "Remplacant"}: ${selectedSubstituteProfessorLabel}` : ""}
+                </small>
+              </section>
+
+              <section className="session-slot-overview-card">
+                <span className="session-slot-overview-label">{isEnglish ? "Recurrence" : "Recurrence"}</span>
+                <strong>{selectedSessionRecurrenceLabel}</strong>
+                <small>{selectedSession.recurrence_group_id ? pickText(language, "Serie active", "Recurring series") : pickText(language, "Creneau ponctuel", "Single slot")}</small>
+              </section>
+
+              <section className="session-slot-overview-card">
+                <span className="session-slot-overview-label">{isEnglish ? "Publication" : "Publication"}</span>
+                <strong>{sessionAudienceScopesLabel(selectedVisibilityScopes, language)}</strong>
+                <small>{selectedSessionPublicationSummary}</small>
+              </section>
+
+              <section className="session-slot-overview-card">
+                <span className="session-slot-overview-label">{isEnglish ? "Attendees" : "Inscrits"}</span>
+                <strong>{selectedSessionCapacityLabel}</strong>
+                <small>{selectedSessionEnrollmentSummary}</small>
+              </section>
+            </div>
+
             <div className="session-slot-body">
               <details className="session-slot-section session-slot-section-attendees" open>
                 <summary>{isEnglish ? "Attendees" : "Inscrits"} ({selectedSessionBookings.length})</summary>
                 <div className="session-slot-section-body">
                   {selectedSessionBookings.length === 0 ? (
-                    <p className="muted">{isEnglish ? "No student booked." : "Aucun eleve inscrit."}</p>
+                    <p className="muted session-slot-empty-state">{isEnglish ? "No student booked." : "Aucun eleve inscrit."}</p>
                   ) : (
                     <div className="session-bookings-summary-list session-slot-attendees-list">
                       {selectedSessionBookings.map((booking, index) => {
@@ -2048,16 +2120,81 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       })}
                     </div>
                   )}
-                  {selectedSession.group_note ? (
-                    <p className="muted top-gap-sm">
-                      <strong>{isEnglish ? "Group note:" : "Note de groupe:"}</strong> {stripHtml(selectedSession.group_note)}
-                    </p>
-                  ) : null}
                 </div>
               </details>
 
               <aside className="session-slot-right">
-                <details className="session-slot-section session-slot-section-enroll" open>
+                <details className="session-slot-section session-slot-section-details" open>
+                  <summary>{isEnglish ? "Details" : "Details"}</summary>
+                  <div className="session-slot-section-body session-slot-details-list">
+                    <div className="session-slot-fact-list">
+                      <div className="session-slot-fact-row">
+                        <span className="session-slot-fact-label">{isEnglish ? "Activity" : "Activite"}</span>
+                        <span className="session-slot-fact-value">{selectedCourseTypeName}</span>
+                      </div>
+                      <div className="session-slot-fact-row">
+                        <span className="session-slot-fact-label">{isEnglish ? "Location" : "Lieu"}</span>
+                        <span className="session-slot-fact-value">{selectedLocationName}</span>
+                      </div>
+                      <div className="session-slot-fact-row">
+                        <span className="session-slot-fact-label">{isEnglish ? "Usual teacher" : "Professeur habituel"}</span>
+                        <span className="session-slot-fact-value">{selectedHabitualProfessorLabel}</span>
+                      </div>
+                      <div className="session-slot-fact-row">
+                        <span className="session-slot-fact-label">{isEnglish ? "Substitute" : "Remplacant"}</span>
+                        <span className="session-slot-fact-value">{selectedSubstituteProfessorLabel}</span>
+                      </div>
+                      <div className="session-slot-fact-row">
+                        <span className="session-slot-fact-label">{isEnglish ? "Effective teacher" : "Professeur effectif"}</span>
+                        <span className="session-slot-fact-value">{selectedEffectiveProfessorLabel || pickText(language, "Non requis", "Not required")}</span>
+                      </div>
+                      {selectedSessionZoomLink ? (
+                        <div className="session-slot-fact-row">
+                          <span className="session-slot-fact-label">Zoom</span>
+                          <span className="session-slot-fact-value">
+                            <a href={selectedSessionZoomLink} target="_blank" rel="noreferrer">
+                              {isEnglish ? "Open link" : "Ouvrir le lien"}
+                            </a>
+                          </span>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </details>
+
+                {selectedSessionHasNotesSection ? (
+                  <details className="session-slot-section session-slot-section-notes">
+                    <summary>{isEnglish ? "Notes & messages" : "Notes & messages"}</summary>
+                    <div className="session-slot-section-body session-slot-details-list">
+                      {selectedSession.group_note ? (
+                        <section className="session-slot-note-block">
+                          <span className="session-slot-fact-label">{isEnglish ? "Group note" : "Note de groupe"}</span>
+                          <p>{stripHtml(selectedSession.group_note)}</p>
+                        </section>
+                      ) : null}
+                      {selectedSession.public_description ? (
+                        <section className="session-slot-note-block">
+                          <span className="session-slot-fact-label">{isEnglish ? "Public description" : "Description publique"}</span>
+                          <p>{selectedSession.public_description}</p>
+                        </section>
+                      ) : null}
+                      {selectedSession.private_description ? (
+                        <section className="session-slot-note-block">
+                          <span className="session-slot-fact-label">{isEnglish ? "Private description" : "Description privee"}</span>
+                          <p>{selectedSession.private_description}</p>
+                        </section>
+                      ) : null}
+                      {selectedSession.professor_reminder_note ? (
+                        <section className="session-slot-note-block">
+                          <span className="session-slot-fact-label">{isEnglish ? "Teacher note (24h reminder)" : "Note professeur (rappel 24h)"}</span>
+                          <p>{stripHtml(selectedSession.professor_reminder_note)}</p>
+                        </section>
+                      ) : null}
+                    </div>
+                  </details>
+                ) : null}
+
+                <details className="session-slot-section session-slot-section-enroll">
                   <summary>{selectedSessionAllowsStudentBookings ? (isEnglish ? "Add a student" : "Inscrire un eleve") : (isEnglish ? "Student bookings" : "Inscriptions eleves")}</summary>
                   <div className="session-slot-section-body">
                     {!selectedSessionAllowsStudentBookings ? (
@@ -2109,49 +2246,6 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         </div>
                       </form>
                     )}
-                  </div>
-                </details>
-
-                <details className="session-slot-section session-slot-section-details" open>
-                  <summary>{isEnglish ? "Details" : "Details"}</summary>
-                  <div className="session-slot-section-body session-slot-details-list">
-                    <p className="muted">
-                      <strong>{isEnglish ? "Activity:" : "Activite:"}</strong> {selectedCourseTypeName}
-                    </p>
-                    <p className="muted">
-                      <strong>{isEnglish ? "Usual teacher:" : "Professeur habituel:"}</strong> {selectedHabitualProfessorLabel}
-                    </p>
-                    <p className="muted">
-                      <strong>{isEnglish ? "Substitute teacher:" : "Professeur remplacant:"}</strong> {selectedSubstituteProfessorLabel}
-                    </p>
-                    <p className="muted">
-                      <strong>{isEnglish ? "Effective teacher:" : "Professeur effectif:"}</strong> {selectedEffectiveProfessorLabel || pickText(language, "Non requis", "Not required")}
-                    </p>
-                    <p className="muted">
-                      <strong>{isEnglish ? "Location:" : "Lieu:"}</strong> {selectedLocationName}
-                    </p>
-                    {selectedSessionZoomLink ? (
-                      <p>
-                        <a href={selectedSessionZoomLink} target="_blank" rel="noreferrer">
-                          {isEnglish ? "Zoom link" : "Lien Zoom"}
-                        </a>
-                      </p>
-                    ) : null}
-                    {selectedSession.public_description ? (
-                      <p className="muted">
-                        <strong>{isEnglish ? "Public description:" : "Description publique:"}</strong> {selectedSession.public_description}
-                      </p>
-                    ) : null}
-                    {selectedSession.private_description ? (
-                      <p className="muted">
-                        <strong>{isEnglish ? "Private description:" : "Description privee:"}</strong> {selectedSession.private_description}
-                      </p>
-                    ) : null}
-                    {selectedSession.professor_reminder_note ? (
-                      <p className="muted">
-                        <strong>{isEnglish ? "Teacher note (24h reminder):" : "Note professeur (rappel 24h):"}</strong> {stripHtml(selectedSession.professor_reminder_note)}
-                      </p>
-                    ) : null}
                   </div>
                 </details>
               </aside>

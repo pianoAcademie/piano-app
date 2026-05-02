@@ -4211,7 +4211,7 @@ button.danger:focus-visible {
 }
 
 .session-slot-modal {
-  width: min(1140px, 96vw);
+  width: min(1180px, 96vw);
   max-height: 92vh;
   border: 1px solid #e6e8ee;
   background: #ffffff;
@@ -4339,9 +4339,51 @@ button.danger:focus-visible {
   margin-left: auto;
 }
 
+.session-slot-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.session-slot-overview-card {
+  border: 1px solid #e6e8ee;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 12px 14px;
+  display: grid;
+  gap: 6px;
+  min-height: 96px;
+  align-content: start;
+}
+
+.session-slot-overview-card-highlight {
+  border-color: rgba(212, 175, 55, 0.44);
+  background: linear-gradient(180deg, rgba(255, 248, 235, 0.96), #ffffff);
+}
+
+.session-slot-overview-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #7a8798;
+}
+
+.session-slot-overview-card strong {
+  font-size: 17px;
+  line-height: 1.25;
+  color: #1f3045;
+}
+
+.session-slot-overview-card small {
+  font-size: 13px;
+  line-height: 1.45;
+  color: #5d6a79;
+}
+
 .session-slot-body {
   display: grid;
-  grid-template-columns: minmax(0, 1.8fr) minmax(300px, 1fr);
+  grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.95fr);
   gap: 12px;
   align-items: start;
 }
@@ -4349,6 +4391,7 @@ button.danger:focus-visible {
 .session-slot-right {
   display: grid;
   gap: 12px;
+  align-content: start;
 }
 
 .session-slot-section {
@@ -4379,6 +4422,14 @@ button.danger:focus-visible {
   padding: 12px;
   display: grid;
   gap: 10px;
+}
+
+.session-slot-empty-state {
+  margin: 0;
+  border: 1px dashed #d9e0ea;
+  border-radius: 12px;
+  background: #fafbfd;
+  padding: 14px;
 }
 
 .session-slot-attendees-list {
@@ -4606,8 +4657,51 @@ button.danger:focus-visible {
   padding: 0 18px;
 }
 
-.session-slot-details-list p {
+.session-slot-details-list {
+  gap: 12px;
+}
+
+.session-slot-fact-list {
+  display: grid;
+  gap: 10px;
+}
+
+.session-slot-fact-row {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.session-slot-fact-label {
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+  color: #66758a;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.session-slot-fact-value {
+  min-width: 0;
+  color: #1f3045;
+  line-height: 1.45;
+}
+
+.session-slot-note-block {
+  border: 1px solid #edf0f5;
+  border-radius: 12px;
+  background: #fcfdff;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.session-slot-note-block p {
   margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  color: #33475b;
 }
 
 .session-attendance-modal-v2 {
@@ -5337,6 +5431,10 @@ button.danger:focus-visible {
     grid-template-columns: 1fr;
   }
 
+  .session-slot-overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .teacher-attendance-body {
     grid-template-columns: 1fr;
   }
@@ -5508,6 +5606,14 @@ button.danger:focus-visible {
     font-size: 18px;
   }
 
+  .session-slot-overview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .session-slot-overview-card {
+    min-height: 0;
+  }
+
   .session-slot-badges {
     margin-top: 4px;
   }
@@ -5538,6 +5644,11 @@ button.danger:focus-visible {
 
   .session-slot-overflow-panel {
     max-width: min(300px, 86vw);
+  }
+
+  .session-slot-fact-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
   }
 
   .session-enroll-submit {
