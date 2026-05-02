@@ -2865,10 +2865,12 @@ def _build_template_values(
 ) -> tuple[dict[str, str], set[str], dict[str, Any]]:
     language = _quote_doc_language(quote=quote)
     currency = (quote.currency or "EUR").upper()
+    calendar_snapshot = _json_object(quote.calendar_snapshot)
     service_product_ids = _service_product_ids_for_lines(db=db, lines=lines)
     services, products, kits, adjustments, other_fees = _line_groups(lines, service_product_ids=service_product_ids)
     document_context = build_quote_document_context(db=db, quote=quote, lines=lines, audience=audience)
     display_flags = document_context["display_flags"]
+    selected_solfege_slot = _json_object(document_context.get("solfege_selected_slot"))
     total_ttc = Decimal(quote.total_ttc or 0).quantize(Decimal("0.01"))
     total_ht_before_from_lines = sum(
         (Decimal(getattr(line, "amount_ht", Decimal("0")) or Decimal("0")) for line in lines),
