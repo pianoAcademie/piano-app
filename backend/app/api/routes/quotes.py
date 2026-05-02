@@ -5881,8 +5881,6 @@ def _create_followup_booking(
         vat_amount_snapshot=vat_amount,
         total_incl_vat_snapshot=total_ttc,
         currency_snapshot=currency,
-        created_at=now,
-        updated_at=now,
     )
     db.add(booking)
     db.flush()
