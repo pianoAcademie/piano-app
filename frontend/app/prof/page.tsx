@@ -10,6 +10,7 @@ import {
   professorUpdateAttendanceAction,
 } from "../../lib/actions";
 import { backendRequest } from "../../lib/backend";
+import AutoSubmitInput from "../../components/auto-submit-input";
 import AutoSubmitSelect from "../../components/auto-submit-select";
 import DayEventsDrawer from "../../components/planning/day-events-drawer";
 import MonthDayCard from "../../components/planning/month-day-card";
@@ -835,10 +836,14 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
             </label>
             <label>
               {t("teacher.reference_date_utc")}
-              <input type="date" name="agenda_date" defaultValue={agendaDate} />
+              <AutoSubmitInput
+                type="date"
+                name="agenda_date"
+                defaultValue={agendaDate}
+                ariaLabel={t("teacher.reference_date_utc")}
+              />
             </label>
             <div className="row teacher-planning-controls-actions">
-              <button type="submit" className="ghost">{t("teacher.go")}</button>
               <Link className="reset-link" href={todayAgendaHref}>
                 {uiText(language, "client.today")}
               </Link>

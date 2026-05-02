@@ -25,6 +25,7 @@ import SessionVisibilityFields from "../../components/session-visibility-fields"
 import ModalA11yFrame from "../../components/modal-a11y-frame";
 import PresenceButtonsGroup from "../../components/presence-buttons-group";
 import DayEventsDrawer from "../../components/planning/day-events-drawer";
+import SessionEditModalBridge from "../../components/planning/session-edit-modal-bridge";
 import MonthDayCard from "../../components/planning/month-day-card";
 import SessionCreateMainFields from "../../components/planning/session-create-main-fields";
 import SessionCreateSubmitButton from "../../components/planning/session-create-submit-button";
@@ -1289,13 +1290,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const editTabHref = (tab: SlotEditTab): string => withQueryParam(editSessionHref, "edit_tab", tab);
   const notesAdvancedHref = withQueryParam(editTabHref("notes"), "notes_mode", "advanced");
   const notesSimpleHref = removeQueryParam(editTabHref("notes"), "notes_mode");
-  const activeEditTabHref = (() => {
-    const base = editTabHref(editTab);
-    if (editTab === "notes" && notesAdvancedMode) {
-      return withQueryParam(base, "notes_mode", "advanced");
-    }
-    return removeQueryParam(base, "notes_mode");
-  })();
+  const editTabReturnHrefs: Record<SlotEditTab, string> = {
+    general: editTabHref("general"),
+    schedule: editTabHref("schedule"),
+    visibility: editTabHref("visibility"),
+    notes: notesAdvancedMode ? notesAdvancedHref : notesSimpleHref,
+  };
+  const activeEditTabHref = editTabReturnHrefs[editTab];
   const attendanceBookingHref = (bookingId: string): string =>
     withQueryParam(attendanceFilteredHref(attendanceFilter), "booking_focus", bookingId);
   const confirmCloseHref = selectedSession ? withSessionInHref(baseHref, selectedSession.id) : baseHref;
@@ -1406,14 +1407,6 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             `${selectedSessionBookings.length} eleve${selectedSessionBookings.length > 1 ? "s" : ""} inscrit${selectedSessionBookings.length > 1 ? "s" : ""}`,
             `${selectedSessionBookings.length} attendee${selectedSessionBookings.length > 1 ? "s" : ""}`,
           );
-  const timezoneOptionValues = new Set(PLANNING_TIMEZONES.map((option) => option.value));
-  const translatedPlanningTimezones = PLANNING_TIMEZONES.map((option) => ({
-    value: option.value,
-    label: planningTimezoneLabel(option.value, language),
-  }));
-  const timezoneOptions = timezoneOptionValues.has(timezone)
-    ? translatedPlanningTimezones
-    : [{ value: timezone, label: planningTimezoneLabel(timezone, language) }, ...translatedPlanningTimezones];
   const sessionTimezoneValues = new Set<string>([
     ...PLANNING_TIMEZONES.map((option) => option.value),
     ...locations.map((row) => row.timezone),
@@ -1525,6 +1518,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
           {selectedClientIds.map((clientId) => (
             <input key={`quick-client-${clientId}`} type="hidden" name="client_ids" value={clientId} />
           ))}
+          <input type="hidden" name="timezone" value={timezone} />
           {dayDetails ? <input type="hidden" name="day_details" value={dayDetails} /> : null}
 
           <label>
@@ -1550,11 +1544,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
           </label>
 
           <label>
-            {isEnglish ? "Timezone" : "Fuseau horaire"}
+            {isEnglish ? "Course type" : "Type de cours"}
             <AutoSubmitSelect
-              name="timezone"
-              defaultValue={timezone}
-              options={timezoneOptions.map((option) => ({ value: option.value, label: option.label }))}
+              name="course_type_id"
+              defaultValue={selectedCourseType}
+              options={[{ value: "", label: isEnglish ? "-- All types --" : "-- Tous les types --" }, ...courseTypes.map((row) => ({ value: row.id, label: row.name }))]}
             />
           </label>
 
@@ -1866,11 +1860,43 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       <section className="card">
         <div className="row spread">
           <h2>{isEnglish ? "Calendar" : "Agenda"}</h2>
-          <div className="row">
+          <div className="row planning-agenda-nav">
             <a className="mode-link" href={previousHref}>
               ←
             </a>
-            <span className="badge">{agendaRange.title}</span>
+            <details className="planning-jump-menu">
+              <summary className="badge planning-jump-trigger">{agendaRange.title}</summary>
+              <form method="get" className="planning-jump-form">
+                <input type="hidden" name="agenda_view" value={agendaView} />
+                <input type="hidden" name="timezone" value={timezone} />
+                {focusedLocationId ? <input type="hidden" name="location_id" value={focusedLocationId} /> : null}
+                {selectedActivityIds.map((activityId) => (
+                  <input key={`jump-activity-${activityId}`} type="hidden" name="activity_ids" value={activityId} />
+                ))}
+                {selectedLocationIdsFromQuery.map((locationId) => (
+                  <input key={`jump-location-${locationId}`} type="hidden" name="location_ids" value={locationId} />
+                ))}
+                {selectedProfessorIds.map((professorId) => (
+                  <input key={`jump-professor-${professorId}`} type="hidden" name="professor_ids" value={professorId} />
+                ))}
+                {selectedClientIds.map((clientId) => (
+                  <input key={`jump-client-${clientId}`} type="hidden" name="client_ids" value={clientId} />
+                ))}
+                {selectedCourseType ? <input type="hidden" name="course_type_id" value={selectedCourseType} /> : null}
+                {selectedStatus !== "ALL" ? <input type="hidden" name="status" value={selectedStatus} /> : null}
+                {selectedClientStatus !== "ALL" ? <input type="hidden" name="client_status" value={selectedClientStatus} /> : null}
+                {filtersOpen ? <input type="hidden" name="filters" value="1" /> : null}
+                <label className="planning-jump-field">
+                  <span>{isEnglish ? "Display date" : "Date d affichage"}</span>
+                  <input type="date" name="agenda_date" defaultValue={agendaDate} />
+                </label>
+                <div className="row planning-jump-actions">
+                  <button type="submit" className="mode-link planning-advanced-link">
+                    {isEnglish ? "Go" : "Aller"}
+                  </button>
+                </div>
+              </form>
+            </details>
             <a className="mode-link" href={nextHref}>
               →
             </a>
@@ -2290,35 +2316,60 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             {okMessage ? <section className="flash-ok modal-flash">{okMessage}</section> : null}
             {errorMessage ? <section className="flash-err modal-flash">{errorMessage}</section> : null}
 
-            <form action={updateAdminSessionAction} className="session-edit-shell-form" noValidate>
-              <input type="hidden" name="session_id" value={selectedSession.id} />
-              <input type="hidden" name="return_to" value={activeEditTabHref} />
-              <input type="hidden" name="has_recurrence_group" value={selectedSession.recurrence_group_id ? "1" : "0"} />
+            <SessionEditModalBridge initialActiveTab={editTab} tabReturnHrefs={editTabReturnHrefs}>
+              <form action={updateAdminSessionAction} className="session-edit-shell-form" noValidate>
+                <input type="hidden" name="session_id" value={selectedSession.id} />
+                <input type="hidden" name="return_to" value={activeEditTabHref} data-session-edit-return-to />
+                <input type="hidden" name="has_recurrence_group" value={selectedSession.recurrence_group_id ? "1" : "0"} />
 
-              <nav className="session-edit-tabs" aria-label={isEnglish ? "Edit slot sections" : "Sections modification creneau"}>
-                <a className={`session-edit-tab ${editTab === "general" ? "active" : ""}`} href={editTabHref("general")}>
-                  <span>{isEnglish ? "General" : "General"}</span>
-                  <small>{selectedEffectiveProfessorLabel || pickText(language, "Non requis", "Not required")} · {selectedSession.capacity_max} {isEnglish ? "seats" : "places"}</small>
-                </a>
-                <a className={`session-edit-tab ${editTab === "schedule" ? "active" : ""}`} href={editTabHref("schedule")}>
-                  <span>{isEnglish ? "Schedule & recurrence" : "Horaire & recurrence"}</span>
-                  <small>{isEnglish ? "Saved" : "Enregistre"}: {sessionTimeRangeLabel(selectedSession, language)}</small>
-                </a>
-                <a className={`session-edit-tab ${editTab === "visibility" ? "active" : ""}`} href={editTabHref("visibility")}>
-                  <span>{isEnglish ? "Visibility" : "Visibilite"}</span>
-                  <small>
-                    {sessionAudienceScopesLabel(selectedVisibilityScopes, language)} ·{" "}
-                    {selectedSessionAllowsStudentBookings ? sessionAudienceScopesLabel(selectedBookingScopes, language) : pickText(language, "Fermee", "Closed")}
-                  </small>
-                </a>
-                <a className={`session-edit-tab ${editTab === "notes" ? "active" : ""}`} href={editTabHref("notes")}>
-                  <span>{isEnglish ? "Notes & messages" : "Notes & messages"}</span>
-                  <small>{selectedSession.professor_reminder_note ? pickText(language, "Renseignee", "Filled in") : pickText(language, "Vide", "Empty")}</small>
-                </a>
-              </nav>
+                <nav className="session-edit-tabs" aria-label={isEnglish ? "Edit slot sections" : "Sections modification creneau"}>
+                  <a
+                    className={`session-edit-tab ${editTab === "general" ? "active" : ""}`}
+                    href={editTabReturnHrefs.general}
+                    data-session-edit-tab="general"
+                    aria-current={editTab === "general" ? "page" : undefined}
+                  >
+                    <span>{isEnglish ? "General" : "General"}</span>
+                    <small>{selectedEffectiveProfessorLabel || pickText(language, "Non requis", "Not required")} · {selectedSession.capacity_max} {isEnglish ? "seats" : "places"}</small>
+                  </a>
+                  <a
+                    className={`session-edit-tab ${editTab === "schedule" ? "active" : ""}`}
+                    href={editTabReturnHrefs.schedule}
+                    data-session-edit-tab="schedule"
+                    aria-current={editTab === "schedule" ? "page" : undefined}
+                  >
+                    <span>{isEnglish ? "Schedule & recurrence" : "Horaire & recurrence"}</span>
+                    <small>{isEnglish ? "Saved" : "Enregistre"}: {sessionTimeRangeLabel(selectedSession, language)}</small>
+                  </a>
+                  <a
+                    className={`session-edit-tab ${editTab === "visibility" ? "active" : ""}`}
+                    href={editTabReturnHrefs.visibility}
+                    data-session-edit-tab="visibility"
+                    aria-current={editTab === "visibility" ? "page" : undefined}
+                  >
+                    <span>{isEnglish ? "Visibility" : "Visibilite"}</span>
+                    <small>
+                      {sessionAudienceScopesLabel(selectedVisibilityScopes, language)} ·{" "}
+                      {selectedSessionAllowsStudentBookings ? sessionAudienceScopesLabel(selectedBookingScopes, language) : pickText(language, "Fermee", "Closed")}
+                    </small>
+                  </a>
+                  <a
+                    className={`session-edit-tab ${editTab === "notes" ? "active" : ""}`}
+                    href={editTabReturnHrefs.notes}
+                    data-session-edit-tab="notes"
+                    aria-current={editTab === "notes" ? "page" : undefined}
+                  >
+                    <span>{isEnglish ? "Notes & messages" : "Notes & messages"}</span>
+                    <small>{selectedSession.professor_reminder_note ? pickText(language, "Renseignee", "Filled in") : pickText(language, "Vide", "Empty")}</small>
+                  </a>
+                </nav>
 
-              <div className="session-edit-shell-body">
-                <section className={`session-edit-panel ${editTab === "general" ? "active" : ""}`}>
+                <div className="session-edit-shell-body">
+                  <section
+                    className={`session-edit-panel ${editTab === "general" ? "active" : ""}`}
+                    data-session-edit-panel="general"
+                    hidden={editTab !== "general"}
+                  >
                   <div className="grid cols-2">
                     <label>
                       {isEnglish ? "Title" : "Titre"}
@@ -2401,9 +2452,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       <textarea name="substitute_note" rows={2} defaultValue={selectedSession.substitute_note ?? ""} />
                     </label>
                   </div>
-                </section>
+                  </section>
 
-                <section className={`session-edit-panel ${editTab === "schedule" ? "active" : ""}`}>
+                  <section
+                    className={`session-edit-panel ${editTab === "schedule" ? "active" : ""}`}
+                    data-session-edit-panel="schedule"
+                    hidden={editTab !== "schedule"}
+                  >
                   <div className="grid cols-2">
                     <label>
                       {isEnglish ? "Start date" : "Jour debut"}
@@ -2515,9 +2570,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       )}
                     </div>
                   </fieldset>
-                </section>
+                  </section>
 
-                <section className={`session-edit-panel ${editTab === "visibility" ? "active" : ""}`}>
+                  <section
+                    className={`session-edit-panel ${editTab === "visibility" ? "active" : ""}`}
+                    data-session-edit-panel="visibility"
+                    hidden={editTab !== "visibility"}
+                  >
                   <div className="grid cols-2">
                     <SessionVisibilityFields
                       language={language}
@@ -2558,9 +2617,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       <textarea name="private_description" rows={4} defaultValue={selectedSession.private_description ?? ""} />
                     </label>
                   </details>
-                </section>
+                  </section>
 
-                <section className={`session-edit-panel ${editTab === "notes" ? "active" : ""}`}>
+                  <section
+                    className={`session-edit-panel ${editTab === "notes" ? "active" : ""}`}
+                    data-session-edit-panel="notes"
+                    hidden={editTab !== "notes"}
+                  >
                   <div className="row spread">
                     <p className="muted">{isEnglish ? "Note for the teacher (sent 24h before)." : "Note pour le professeur (envoyee 24h avant)."}</p>
                     {notesAdvancedMode ? (
@@ -2594,21 +2657,25 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       />
                     </label>
                   )}
-                </section>
-              </div>
+                  </section>
+                </div>
 
-              <footer className="session-edit-shell-footer">
-                <a className="reset-link" href={modalHref}>
-                  {isEnglish ? "Cancel" : "Annuler"}
-                </a>
-                <button type="submit">{isEnglish ? "Save" : "Enregistrer"}</button>
-              </footer>
-            </form>
+                <footer className="session-edit-shell-footer">
+                  <a className="reset-link" href={modalHref}>
+                    {isEnglish ? "Cancel" : "Annuler"}
+                  </a>
+                  <button type="submit">{isEnglish ? "Save" : "Enregistrer"}</button>
+                </footer>
+              </form>
 
-            {editTab === "schedule" ? (
-              <form action={shiftAdminSessionAction} className="row quick-shift-row">
+              <form
+                action={shiftAdminSessionAction}
+                className="row quick-shift-row"
+                data-session-edit-schedule-only
+                hidden={editTab !== "schedule"}
+              >
                 <input type="hidden" name="session_id" value={selectedSession.id} />
-                <input type="hidden" name="return_to" value={activeEditTabHref} />
+                <input type="hidden" name="return_to" value={activeEditTabHref} data-session-edit-return-to />
                 <input type="hidden" name="current_start_at_utc" value={toDateTimeLocalUtcValue(selectedSession.start_at_utc)} />
                 <input type="hidden" name="current_end_at_utc" value={toDateTimeLocalUtcValue(selectedSession.end_at_utc)} />
 
@@ -2633,7 +2700,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   +1j
                 </button>
               </form>
-            ) : null}
+            </SessionEditModalBridge>
           </article>
         </section>
       ) : null}

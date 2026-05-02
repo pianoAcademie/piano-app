@@ -590,6 +590,18 @@ button.danger:focus-visible {
   outline-offset: 1px;
 }
 
+.month-event-chip.cancelled {
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      rgba(197, 60, 40, 0.08) 0,
+      rgba(197, 60, 40, 0.08) 8px,
+      rgba(255, 255, 255, 0.96) 8px,
+      rgba(255, 255, 255, 0.96) 16px
+    );
+  border-color: #e2b8b1;
+}
+
 .month-event-chip-meta {
   display: flex;
   align-items: center;
@@ -755,6 +767,14 @@ button.danger:focus-visible {
 }
 
 .agenda-grid-month .month-event-chip.compact .month-event-chip-sub {
+  display: block;
+  font-size: 10px;
+  line-height: 1.15;
+}
+
+.agenda-grid-month .month-event-chip.compact .month-event-chip-prof,
+.agenda-grid-month .month-event-chip.compact .month-event-chip-sep,
+.agenda-grid-month .month-event-chip.compact .month-event-chip-warn {
   display: none;
 }
 

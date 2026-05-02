@@ -109,6 +109,18 @@ function typeLabelFromKey(typeKey: "PRIVATE" | "ONLINE" | "HOME" | "GROUP", lang
   return pickText(language, "Collectif", "Group");
 }
 
+function isAdministrativeClosure(title: string): boolean {
+  const normalized = (title || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  return (
+    normalized.includes("vacances scolaires") ||
+    normalized.includes("jour ferie") ||
+    normalized.includes("fermeture exceptionnelle")
+  );
+}
+
 function defaultTitleFromType(typeLabel: string, language: UiLanguage): string {
   const typeKey = normalizedTypeKey(typeLabel);
   if (typeKey === "PRIVATE") {
@@ -140,7 +152,7 @@ function sanitizeTitle(value: string, typeLabel: string, language: UiLanguage): 
 
 function shouldShowStatusBadge(status: string): boolean {
   const normalized = (status || "").toUpperCase();
-  return !(normalized === "SCHEDULED" || normalized === "PLANNED");
+  return !(normalized === "SCHEDULED" || normalized === "PLANNED" || normalized === "CANCELLED");
 }
 
 function resolveCapacityUsed(event: PlanningEventChipData): number {
@@ -207,6 +219,7 @@ export default function MonthEventChip({
   const typeKey = normalizedTypeKey(event.type_label);
   const typeLabel = typeLabelFromKey(typeKey, language);
   const displayTitle = sanitizeTitle(event.title, event.type_label, language);
+  const administrativeClosure = isAdministrativeClosure(displayTitle);
   const timezone = (event.timezone || "").trim() || "Europe/Paris";
   const startTime = formatEventTime(event.start_at_utc, language, timezone);
   const endTime = formatEventTime(event.end_at_utc, language, timezone);
@@ -224,28 +237,37 @@ export default function MonthEventChip({
     .filter((line): line is string => Boolean(line))
     .join("\n");
   const showStatusBadge = shouldShowStatusBadge(event.status);
+  const isCancelled = (event.status || "").toUpperCase() === "CANCELLED";
+  const shouldHatchCancelled = isCancelled && !administrativeClosure;
   const capacityUsed = resolveCapacityUsed(event);
   const capacityMax = Math.max(0, Math.floor(event.capacity_max || 0));
   const capacityLabel = event.capacity_label?.trim() || `${capacityUsed}/${capacityMax}`;
 
   return (
-    <a className={`month-event-chip ${expanded ? "expanded" : ""} ${compact ? "compact" : ""}`} href={href} title={tooltip}>
+    <a
+      className={`month-event-chip ${expanded ? "expanded" : ""} ${compact ? "compact" : ""} ${shouldHatchCancelled ? "cancelled" : ""}`}
+      href={href}
+      title={tooltip}
+    >
       <div className="month-event-chip-meta">
         <span className="month-event-chip-time">{startTime}</span>
         <span className="month-event-chip-badges">
           <span className={`month-badge month-badge-capacity ${capacityBadgeClass(capacityUsed, capacityMax)}`}>{capacityLabel}</span>
-          <span className="month-badge month-badge-type">{typeLabel}</span>
           {showStatusBadge ? <span className={`month-badge ${statusBadgeClass(event.status)}`}>{statusLabel}</span> : null}
         </span>
       </div>
       <p className="month-event-chip-title">{displayTitle}</p>
       <p className="month-event-chip-sub">
-        <span className={`month-event-chip-prof ${teacherMissing ? "missing" : ""}`}>{pickText(language, "Prof", "Teacher")}: {teacherCompact}</span>
-        {teacherMissing ? <span className="month-event-chip-warn" aria-hidden="true">⚠</span> : null}
-        <span className="month-event-chip-sep" aria-hidden="true">
-          ·
-        </span>
         <span className="month-event-chip-location">{locationLabel}</span>
+        {!compact ? (
+          <>
+            <span className="month-event-chip-sep" aria-hidden="true">
+              ·
+            </span>
+            <span className={`month-event-chip-prof ${teacherMissing ? "missing" : ""}`}>{pickText(language, "Prof", "Teacher")}: {teacherCompact}</span>
+            {teacherMissing ? <span className="month-event-chip-warn" aria-hidden="true">⚠</span> : null}
+          </>
+        ) : null}
       </p>
     </a>
   );
