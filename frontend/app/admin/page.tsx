@@ -1391,6 +1391,10 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       ? pickText(language, "Toute la journee", "All day")
       : `${selectedSessionDurationValue} min`;
   const selectedSessionRecurrenceLabel = selectedSession ? recurrenceLabel(selectedSession, language) : "";
+  const selectedSessionRecurrenceEndLabel =
+    selectedSession?.recurrence_end_date && selectedSession.recurrence_group_id
+      ? formatDateKeyFr(selectedSession.recurrence_end_date, language)
+      : "";
   const selectedSessionCapacityLabel = !selectedSession
     ? ""
     : !selectedSessionAllowsStudentBookings
@@ -1591,7 +1595,6 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       <section className="card planning-filters-card">
         <form method="get" className="planning-quick-form">
           {language === "en" ? <input type="hidden" name="lang" value="en" /> : null}
-          <input type="hidden" name="course_type_id" value={selectedCourseType} />
           <input type="hidden" name="status" value={selectedStatus} />
           <input type="hidden" name="client_status" value={selectedClientStatus} />
           <input type="hidden" name="agenda_date" value={agendaDate} />
@@ -2136,7 +2139,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
               <section className="session-slot-overview-card">
                 <span className="session-slot-overview-label">{isEnglish ? "Recurrence" : "Recurrence"}</span>
                 <strong>{selectedSessionRecurrenceLabel}</strong>
-                <small>{selectedSession.recurrence_group_id ? pickText(language, "Serie active", "Recurring series") : pickText(language, "Creneau ponctuel", "Single slot")}</small>
+                <small>
+                  {selectedSession.recurrence_group_id
+                    ? selectedSessionRecurrenceEndLabel
+                      ? pickText(language, `Serie active jusqu au ${selectedSessionRecurrenceEndLabel}`, `Recurring series until ${selectedSessionRecurrenceEndLabel}`)
+                      : pickText(language, "Serie active", "Recurring series")
+                    : pickText(language, "Creneau ponctuel", "Single slot")}
+                </small>
               </section>
 
               <section className="session-slot-overview-card">
@@ -2257,6 +2266,12 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         <span className="session-slot-fact-label">{isEnglish ? "Effective teacher" : "Professeur effectif"}</span>
                         <span className="session-slot-fact-value">{selectedEffectiveProfessorLabel || pickText(language, "Non requis", "Not required")}</span>
                       </div>
+                      {selectedSession.recurrence_group_id && selectedSessionRecurrenceEndLabel ? (
+                        <div className="session-slot-fact-row">
+                          <span className="session-slot-fact-label">{isEnglish ? "Series end" : "Fin de serie"}</span>
+                          <span className="session-slot-fact-value">{selectedSessionRecurrenceEndLabel}</span>
+                        </div>
+                      ) : null}
                       {selectedSessionZoomLink ? (
                         <div className="session-slot-fact-row">
                           <span className="session-slot-fact-label">Zoom</span>
