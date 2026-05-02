@@ -659,7 +659,7 @@ class QuoteEmailOutbox(Base):
         ForeignKey("quotes.id", ondelete="CASCADE"),
         nullable=False,
     )
-    kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    kind: Mapped[str] = mapped_column(String(80), nullable=False)
     message_key: Mapped[str] = mapped_column(String(200), nullable=False)
     recipient_email: Mapped[str] = mapped_column(String(255), nullable=False)
     subject: Mapped[str] = mapped_column(String(255), nullable=False)

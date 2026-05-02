@@ -10,7 +10,7 @@ from uuid import uuid4
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.quotes import _try_send_public_quote_confirmation_email
-from app.models.quote import QuoteEvent
+from app.models.quote import QuoteEmailOutbox, QuoteEvent
 
 
 class _FakeSession:
@@ -30,6 +30,16 @@ class _FakeSession:
 
 
 class QuotePublicConfirmationEmailTests(unittest.TestCase):
+    def test_confirmation_kinds_fit_quote_email_outbox_column(self) -> None:
+        max_len = int(QuoteEmailOutbox.__table__.c.kind.type.length or 0)
+        kinds = [
+            "quote_public_approved_confirmation",
+            "quote_public_rejected_confirmation",
+            "quote_public_change_requested_confirmation",
+        ]
+
+        self.assertGreaterEqual(max_len, max(len(kind) for kind in kinds))
+
     def test_records_failed_event_when_confirmation_email_send_fails(self) -> None:
         db = _FakeSession()
         quote = SimpleNamespace(id=uuid4(), meta={})
