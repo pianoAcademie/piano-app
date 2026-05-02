@@ -9,8 +9,8 @@ from uuid import uuid4
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.api.routes.quotes import _resolve_followup_clients
-from app.models.user import ClientKind
+from app.api.routes.quotes import _create_quote_client, _resolve_followup_clients
+from app.models.user import ClientKind, ClientStatus
 
 
 class _FakeSession:
@@ -29,6 +29,30 @@ class _FakeSession:
 
 
 class QuoteFollowupClientsTests(unittest.TestCase):
+    def test_create_quote_client_accepts_address_fields(self) -> None:
+        db = _FakeSession()
+
+        client = _create_quote_client(
+            db,
+            email="child@example.com",
+            first_name="Raphael",
+            last_name="Boisnard",
+            phone="+33638151506",
+            birth_date=None,
+            address_line="12 rue d'Assas",
+            postal_code="75006",
+            city="Paris",
+            address_country="FR",
+            client_kind=ClientKind.CHILD,
+            status=ClientStatus.ACTIVE,
+        )
+
+        self.assertEqual(client.address_line, "12 rue d'Assas")
+        self.assertEqual(client.postal_code, "75006")
+        self.assertEqual(client.city, "Paris")
+        self.assertEqual(client.address_country, "FR")
+        self.assertEqual(db.flush_count, 1)
+
     def test_new_parent_child_uses_child_phone_without_name_error(self) -> None:
         db = _FakeSession()
         quote = SimpleNamespace(prospect_id=uuid4(), client_id=None)
