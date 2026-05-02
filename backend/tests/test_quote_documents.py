@@ -15,6 +15,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.services.quotes.quote_documents import (
     _line_groups,
     _pass_recup_compact_notice_markup,
+    _planning_blocks_table_html,
     _solfege_pending_block_info,
 )
 
@@ -101,6 +102,51 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertTrue(info["has_pending_selection"])
         self.assertTrue(any("Mercredi 17:15-18:00" in label for label in info["slot_labels"]))
         self.assertTrue(any("Samedi 10:15-11:00" in label for label in info["slot_labels"]))
+
+    def test_planning_blocks_table_uses_selected_solfege_slot_when_pending_block_was_chosen(self) -> None:
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_label": "Cours de solfège - niveau 1",
+                    "location_label": "Online",
+                    "weekday": -1,
+                    "weekday_label": "Selection a faire",
+                    "start_time": "",
+                    "end_time": "",
+                    "duration_minutes": 30,
+                    "selection_pending": True,
+                    "pending_solfege_level": "1",
+                    "pending_slot_options": [
+                        {
+                            "weekday_label": "Mardi",
+                            "start_time": "17:05",
+                            "end_time": "17:35",
+                            "location_label": "Online",
+                        }
+                    ],
+                }
+            ]
+        }
+        selected_slot = {
+            "weekday": 1,
+            "weekday_label": "Mardi",
+            "start_time": "17:05",
+            "end_time": "17:35",
+            "duration_minutes": 30,
+            "location_label": "Online",
+            "label": "Mardi 17:05-17:35 · Online",
+        }
+
+        html, count = _planning_blocks_table_html(
+            snapshot,
+            selected_solfege_slot=selected_slot,
+            language="fr",
+        )
+
+        self.assertEqual(count, 1)
+        self.assertIn("Mardi", html)
+        self.assertIn("17:05 - 17:35", html)
+        self.assertNotIn("à choisir", html)
 
     def test_line_groups_route_service_products_to_other_fees(self) -> None:
         product_id = uuid4()

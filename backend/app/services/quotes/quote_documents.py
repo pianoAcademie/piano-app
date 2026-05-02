@@ -1536,9 +1536,15 @@ def _pending_planning_block_display(block: dict[str, Any], *, language: str | No
     )
 
 
-def _planning_blocks_table_html(snapshot: dict[str, Any], *, language: str | None = None) -> tuple[str, int]:
+def _planning_blocks_table_html(
+    snapshot: dict[str, Any],
+    *,
+    selected_solfege_slot: dict[str, Any] | None = None,
+    language: str | None = None,
+) -> tuple[str, int]:
     blocks = [item for item in _json_list(snapshot.get("blocks")) if isinstance(item, dict)]
     rows: list[list[str]] = []
+    normalized_selected_solfege_slot = _json_object(selected_solfege_slot)
     for block in blocks:
         pending_slot_labels: list[str] = []
         for raw_slot in _json_list(block.get("pending_slot_options")):
@@ -1566,8 +1572,30 @@ def _planning_blocks_table_html(snapshot: dict[str, Any], *, language: str | Non
         activity_type = _harmonize_display_text(activity_type)
         location_label = str(block.get("location_label") or "-").strip() or "-"
         if selection_pending:
-            activity_label, weekday, time_range, duration = _pending_planning_block_display(block, language=language)
-            if _is_solfege_planning_block(block):
+            is_solfege_block = _is_solfege_planning_block(block)
+            if is_solfege_block and normalized_selected_solfege_slot:
+                activity_label, _, _, _ = _pending_planning_block_display(block, language=language)
+                weekday = (
+                    str(normalized_selected_solfege_slot.get("weekday_label") or "").strip()
+                    or _weekday_label(normalized_selected_solfege_slot.get("weekday"), language=language)
+                )
+                start_time = str(normalized_selected_solfege_slot.get("start_time") or normalized_selected_solfege_slot.get("start") or "").strip()
+                end_time = str(normalized_selected_solfege_slot.get("end_time") or normalized_selected_solfege_slot.get("end") or "").strip()
+                time_range = f"{start_time} - {end_time}" if start_time and end_time else "-"
+                duration = _duration_label(
+                    start_time=start_time,
+                    end_time=end_time,
+                    fallback_minutes=normalized_selected_solfege_slot.get("duration_minutes") or block.get("duration_minutes"),
+                )
+                location_label = str(
+                    normalized_selected_solfege_slot.get("location_label")
+                    or block.get("location_label")
+                    or "-"
+                ).strip() or "-"
+                activity_type = _quote_doc_text("course_solfege", language=language)
+            else:
+                activity_label, weekday, time_range, duration = _pending_planning_block_display(block, language=language)
+            if is_solfege_block:
                 activity_type = _quote_doc_text("course_solfege", language=language)
             elif deduped_pending_slots:
                 time_range = _quote_doc_text("to_select", language=language)
@@ -3245,8 +3273,12 @@ def _build_template_values(
         else:
             payment_schedule_table_html = ""
 
-    sessions = [item for item in _json_list(_json_object(quote.calendar_snapshot).get("sessions")) if isinstance(item, dict)]
-    planning_blocks_table_html, _ = _planning_blocks_table_html(_json_object(quote.calendar_snapshot), language=language)
+    sessions = [item for item in _json_list(calendar_snapshot.get("sessions")) if isinstance(item, dict)]
+    planning_blocks_table_html, _ = _planning_blocks_table_html(
+        calendar_snapshot,
+        selected_solfege_slot=selected_solfege_slot,
+        language=language,
+    )
     calendar_sessions_table_html = _table_html(
         [
             _quote_doc_text("calendar_date", language=language),

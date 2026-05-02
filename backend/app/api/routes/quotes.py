@@ -2511,6 +2511,67 @@ def _public_selected_solfege_slot_from_snapshot(
     return {}
 
 
+def _apply_selected_solfege_slot_to_calendar_snapshot(
+    calendar_snapshot: dict[str, object],
+    *,
+    selected_slot: dict[str, object],
+    language: str | None = None,
+) -> dict[str, object]:
+    normalized_slot = _json_object(selected_slot)
+    if not normalized_slot:
+        return _json_object(calendar_snapshot)
+
+    snapshot = deepcopy(_json_object(calendar_snapshot))
+    next_blocks: list[object] = []
+    selected_weekday = normalized_slot.get("weekday")
+    selected_weekday_label = str(normalized_slot.get("weekday_label") or "").strip() or _weekday_label(selected_weekday, language=language)
+    selected_start = str(normalized_slot.get("start_time") or normalized_slot.get("start") or "").strip()
+    selected_end = str(normalized_slot.get("end_time") or normalized_slot.get("end") or "").strip()
+    selected_location_id = normalized_slot.get("location_id")
+    selected_location_label = str(normalized_slot.get("location_label") or "").strip()
+    selected_modality = normalized_slot.get("modality")
+    selected_duration_minutes = normalized_slot.get("duration_minutes")
+
+    for raw_block in _json_list(snapshot.get("blocks")):
+        if not isinstance(raw_block, dict):
+            next_blocks.append(raw_block)
+            continue
+        block = dict(raw_block)
+        activity_label = str(block.get("activity_label") or "").strip()
+        activity_code = str(block.get("activity_code") or block.get("activity_service_code") or "").strip()
+        haystack = _public_searchable_text(f"{activity_label} {activity_code}")
+        block_level = (
+            str(block.get("pending_solfege_level") or "").strip()
+            or _public_extract_solfege_level_from_text(activity_label)
+            or None
+        )
+        weekday_value = int(block.get("weekday") or -99) if str(block.get("weekday") or "").strip() else -99
+        selection_pending = bool(block.get("selection_pending")) or weekday_value == -1 or bool(_json_list(block.get("pending_slot_options")))
+        is_solfege_block = bool(block_level) or "solfege" in haystack
+        if is_solfege_block and selection_pending:
+            block["weekday"] = selected_weekday
+            block["weekday_label"] = selected_weekday_label or block.get("weekday_label")
+            block["start_time"] = selected_start
+            block["end_time"] = selected_end
+            if selected_duration_minutes is not None:
+                block["duration_minutes"] = selected_duration_minutes
+            if selected_location_id is not None:
+                block["location_id"] = selected_location_id
+            if selected_location_label:
+                block["location_label"] = selected_location_label
+            if selected_modality is not None:
+                block["modality"] = selected_modality
+            block["selection_pending"] = False
+            block["pending_slot_options"] = []
+        next_blocks.append(block)
+
+    snapshot["blocks"] = next_blocks
+    snapshot_solfege = _json_object(snapshot.get("solfege"))
+    snapshot_solfege["selected_slot"] = normalized_slot
+    snapshot["solfege"] = snapshot_solfege
+    return snapshot
+
+
 def _public_matching_solfege_rule(
     db: Session,
     *,
@@ -6504,6 +6565,12 @@ def public_approve_quote(
     now = _utcnow()
     previous_status = str(quote.status or "").strip().lower()
     quote.selected_solfege_slot = resolved_selected_slot or {}
+    if resolved_selected_slot:
+        quote.calendar_snapshot = _apply_selected_solfege_slot_to_calendar_snapshot(
+            _json_object(quote.calendar_snapshot),
+            selected_slot=resolved_selected_slot,
+            language=_public_solfege_language(quote.language),
+        )
     quote.status = "approved"
     quote.approved_at = now
     quote.rejected_at = None
@@ -6821,6 +6888,11 @@ def select_quote_followup_solfege_slot(
 
     quote = _load_quote(db, row.quote_id, lock=True)
     quote.selected_solfege_slot = payload.slot
+    quote.calendar_snapshot = _apply_selected_solfege_slot_to_calendar_snapshot(
+        _json_object(quote.calendar_snapshot),
+        selected_slot=payload.slot,
+        language=_public_solfege_language(quote.language),
+    )
     quote.updated_at = _utcnow()
     db.add_all([row, quote])
     db.commit()

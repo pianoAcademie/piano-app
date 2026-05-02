@@ -9,9 +9,56 @@ from unittest.mock import patch
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.quotes import _public_quote_solfege_selection
+from app.api.routes.quotes import _apply_selected_solfege_slot_to_calendar_snapshot
 
 
 class QuotePublicSolfegeSelectionTests(unittest.TestCase):
+    def test_apply_selected_solfege_slot_updates_pending_block_in_snapshot(self) -> None:
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_label": "Cours de solfège - niveau 1",
+                    "selection_pending": True,
+                    "pending_solfege_level": "1",
+                    "pending_slot_options": [
+                        {
+                            "weekday": 1,
+                            "weekday_label": "Mardi",
+                            "start_time": "17:05",
+                            "end_time": "17:35",
+                            "location_label": "Online",
+                        }
+                    ],
+                    "weekday": -1,
+                    "weekday_label": "Selection a faire",
+                    "start_time": "",
+                    "end_time": "",
+                    "location_label": "Online",
+                }
+            ]
+        }
+        selected_slot = {
+            "weekday": 1,
+            "weekday_label": "Mardi",
+            "start_time": "17:05",
+            "end_time": "17:35",
+            "duration_minutes": 30,
+            "location_label": "Online",
+            "label": "Mardi 17:05-17:35 · Online",
+        }
+
+        updated = _apply_selected_solfege_slot_to_calendar_snapshot(snapshot, selected_slot=selected_slot, language="fr")
+
+        block = updated["blocks"][0]
+        assert isinstance(block, dict)
+        self.assertFalse(block["selection_pending"])
+        self.assertEqual(block["weekday_label"], "Mardi")
+        self.assertEqual(block["start_time"], "17:05")
+        self.assertEqual(block["end_time"], "17:35")
+        self.assertEqual(block["pending_slot_options"], [])
+        assert isinstance(updated["solfege"], dict)
+        self.assertEqual(updated["solfege"]["selected_slot"]["label"], "Mardi 17:05-17:35 · Online")
+
     def test_uses_pending_snapshot_options_on_public_quote(self) -> None:
         quote = SimpleNamespace(
             language="fr",
