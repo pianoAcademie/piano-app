@@ -11,6 +11,7 @@ import {
   buildIdempotencyKey,
   buildSessionMatches,
   coerceQuoteToEnrollmentDraft,
+  deriveActivityLocationIdById,
   deriveActivityLocationNameById,
   deriveScheduleHints,
   displayName,
@@ -237,6 +238,10 @@ export default function QuoteToEnrollmentWizard({
     () => deriveActivityLocationNameById(calendarSnapshot),
     [calendarSnapshot],
   );
+  const activityLocationIdById = useMemo(
+    () => deriveActivityLocationIdById(calendarSnapshot),
+    [calendarSnapshot],
+  );
 
   const baseActivityRows = useMemo(
     () => buildActivityPricingRows(lines, activitiesById, activityLocationNameById, quote.locationName, scenario),
@@ -265,11 +270,20 @@ export default function QuoteToEnrollmentWizard({
     const output = new Map<string, SessionMatchOption[]>();
     for (const row of activityRows) {
       const sessions = sessionsByActivityId[row.activityId] || [];
-      const options = buildSessionMatches(row, sessions, quote.locationId, scheduleHints, scenario, localeForUiLanguage(language), language);
+      const expectedLocationId = activityLocationIdById.get(row.activityId) || quote.locationId;
+      const options = buildSessionMatches(
+        row,
+        sessions,
+        expectedLocationId,
+        scheduleHints,
+        scenario,
+        localeForUiLanguage(language),
+        language,
+      );
       output.set(row.activityId, options);
     }
     return output;
-  }, [activityRows, sessionsByActivityId, quote.locationId, scheduleHints, scenario, language]);
+  }, [activityRows, sessionsByActivityId, activityLocationIdById, quote.locationId, scheduleHints, scenario, language]);
 
   const [assignedSessionByActivityId, setAssignedSessionByActivityId] = useState<Record<string, string>>(() => {
     const restored = restoredDraft?.scheduleResolution.assignedSessionByActivityId || {};
@@ -278,13 +292,12 @@ export default function QuoteToEnrollmentWizard({
     }
 
     const defaults: Record<string, string> = {};
-    if (scenario === "A") {
-      for (const row of baseActivityRows) {
-        const options = sessionOptionsByActivityId.get(row.activityId) || [];
-        const firstUsable = options.find((option) => option.seatsRemaining > 0) || options[0];
-        if (firstUsable) {
-          defaults[row.activityId] = firstUsable.sessionId;
-        }
+    for (const row of baseActivityRows) {
+      const options = sessionOptionsByActivityId.get(row.activityId) || [];
+      const firstUsable = options.find((option) => option.seatsRemaining > 0) || options[0];
+      const shouldAutoAssign = scenario === "A" || options.length === 1;
+      if (shouldAutoAssign && firstUsable) {
+        defaults[row.activityId] = firstUsable.sessionId;
       }
     }
     return defaults;

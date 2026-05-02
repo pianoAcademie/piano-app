@@ -1265,6 +1265,32 @@ export function deriveActivityLocationNameById(calendarSnapshot: Record<string, 
   return output;
 }
 
+export function deriveActivityLocationIdById(calendarSnapshot: Record<string, unknown>): Map<string, string> {
+  const output = new Map<string, string>();
+
+  const feed = (items: unknown[]): void => {
+    for (const raw of items) {
+      const row = readObject(raw);
+      if (!row) {
+        continue;
+      }
+      const activityId = readString(row.activity_id);
+      const locationId = readString(row.location_id);
+      if (!activityId || !locationId || output.has(activityId)) {
+        continue;
+      }
+      output.set(activityId, locationId);
+    }
+  };
+
+  const blocksRaw = Array.isArray(calendarSnapshot.blocks) ? calendarSnapshot.blocks : [];
+  const sessionsRaw = Array.isArray(calendarSnapshot.sessions) ? calendarSnapshot.sessions : [];
+  feed(blocksRaw);
+  feed(sessionsRaw);
+
+  return output;
+}
+
 export function sumBillingRows(rows: BillingExtraRow[]): { totalHt: number; totalTtc: number } {
   return rows.reduce(
     (acc, row) => ({
@@ -1383,6 +1409,7 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
   }
 
   const activityLocationNameById = deriveActivityLocationNameById(input.calendarSnapshot);
+  const activityLocationIdById = deriveActivityLocationIdById(input.calendarSnapshot);
   const activityRows = buildActivityPricingRows(
     input.lines,
     activitiesById,
@@ -1424,7 +1451,8 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
 
   for (const row of activityRows) {
     const sessions = input.sessionsByActivityId[row.activityId] || [];
-    const options = buildSessionMatches(row, sessions, input.quote.locationId, scheduleHints, scenario);
+    const expectedLocationId = activityLocationIdById.get(row.activityId) || input.quote.locationId;
+    const options = buildSessionMatches(row, sessions, expectedLocationId, scheduleHints, scenario);
     if (options.length > 0) {
       slotsFoundCount += 1;
     }
