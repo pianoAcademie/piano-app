@@ -180,7 +180,6 @@ function countByStatus(clients: AdminClientOut[]): Record<string, number> {
     RESPONSABLE: 0,
     TRIAL: 0,
     PENDING: 0,
-    RESPONSABLE: 0,
     INACTIVE: 0,
     ARCHIVED: 0,
   };
