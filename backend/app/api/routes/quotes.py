@@ -5547,9 +5547,32 @@ def _resolve_followup_clients(
     child_email = _normalized_email(quote_prospect.email)
     if child_email == _normalized_email(parent_contact.get("email")):
         child_email = None
-    student = _load_user_for_update(db, selected_client_id or quote.client_id or quote_prospect.linked_client_id)
+
+    student = None
+    candidate_student_ids: list[UUID] = []
+    for candidate_id in (selected_client_id, quote_prospect.linked_client_id, quote.client_id):
+        if candidate_id is None or candidate_id in candidate_student_ids:
+            continue
+        candidate_student_ids.append(candidate_id)
+    for candidate_id in candidate_student_ids:
+        candidate_student = _load_user_for_update(db, candidate_id)
+        if candidate_student is None:
+            continue
+        if candidate_student.id == billing.id:
+            continue
+        if candidate_student.client_kind != ClientKind.CHILD:
+            continue
+        student = candidate_student
+        break
+
     if student is None and child_email:
-        student = _find_user_by_email_for_update(db, child_email)
+        candidate_student = _find_user_by_email_for_update(db, child_email)
+        if (
+            candidate_student is not None
+            and candidate_student.id != billing.id
+            and candidate_student.client_kind == ClientKind.CHILD
+        ):
+            student = candidate_student
     if student is None:
         student = _create_quote_client(
             db,
