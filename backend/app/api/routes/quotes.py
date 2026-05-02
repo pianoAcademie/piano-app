@@ -5513,6 +5513,7 @@ def _resolve_followup_clients(
         parent_prospect=parent_prospect,
     )
     child_birth_date = _quote_child_birth_date(quote)
+    child_phone = _normalized_phone(quote_prospect.phone)
     billing = _load_user_for_update(db, selected_parent_client_id)
     if billing is None and parent_prospect is not None:
         billing = _load_user_for_update(db, parent_prospect.linked_client_id)
