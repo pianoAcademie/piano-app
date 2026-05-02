@@ -258,6 +258,7 @@ EMAIL_RECIPIENT_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PHONE_CLEAN_RE = re.compile(r"[^\d+]+")
 INVOICE_RANGE_PUBLIC_TOKEN_SCOPE = "INVOICE_RANGE_PUBLIC_DOWNLOAD"
 INVOICE_RANGE_PUBLIC_PAYMENT_TOKEN_SCOPE = "INVOICE_RANGE_PUBLIC_PAY"
+INVOICE_RENDER_TIMEZONE_NAME = "Europe/Paris"
 WEEKDAY_LABELS_FR = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
 
 COUNTRY_NAME_BY_CODE = {
@@ -872,6 +873,19 @@ def _billing_address_label(user: User) -> str:
     country = _country_display_name(user.address_country or user.residence_country)
     parts = [line_1, city_line, country]
     return ", ".join(part for part in parts if part) or "-"
+
+
+def _invoice_render_timezone() -> ZoneInfo:
+    try:
+        return ZoneInfo(INVOICE_RENDER_TIMEZONE_NAME)
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("UTC")
+
+
+def _invoice_issued_at_for_date(*, issued_date: date, now: datetime | None = None) -> datetime:
+    reference = (now or _utcnow()).astimezone(_invoice_render_timezone())
+    local_time = reference.timetz().replace(tzinfo=None)
+    return datetime.combine(issued_date, local_time, tzinfo=_invoice_render_timezone()).astimezone(timezone.utc)
 
 
 def _invoice_recipient_snapshot_for_client(db: Session, client: User) -> dict[str, str]:
