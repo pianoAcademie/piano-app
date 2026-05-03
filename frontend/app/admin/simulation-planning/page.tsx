@@ -19,6 +19,20 @@ type PlanningLocationSummary = {
   activitiesError: string | null;
 };
 
+async function loadPlanningSimulationLocations(
+  token: string,
+): Promise<{ ok: true; data: LocationOut[] } | { ok: false; message: string }> {
+  const directResult = await backendRequest<LocationOut[]>("/api/v1/locations?active=true", {}, token);
+  if (directResult.ok) {
+    return directResult;
+  }
+  const legacyResult = await backendRequest<LocationOut[]>("/api/v1/catalogue/locations?active=true", {}, token);
+  if (legacyResult.ok) {
+    return legacyResult;
+  }
+  return { ok: false, message: `${directResult.message} | ${legacyResult.message}` };
+}
+
 function text(language: UiLanguage, fr: string, en: string): string {
   return language === "en" ? en : fr;
 }
@@ -57,7 +71,7 @@ export default async function AdminSimulationPlanningPage(): Promise<JSX.Element
   }
 
   const language = normalizeUiLanguage(meResult.data.preferred_language);
-  const locationsResult = await backendRequest<LocationOut[]>("/api/v1/catalog/locations?active=true", {}, token);
+  const locationsResult = await loadPlanningSimulationLocations(token);
 
   const locationSummaries: PlanningLocationSummary[] = locationsResult.ok
     ? await Promise.all(
