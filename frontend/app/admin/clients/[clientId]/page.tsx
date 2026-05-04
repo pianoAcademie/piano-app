@@ -472,6 +472,34 @@ function shouldCountInClientBalance(row: AdminClientPaymentOut): boolean {
   return PENDING_PAYMENT_STATUSES.has(status);
 }
 
+function isManualPaymentMovement(row: AdminClientPaymentOut): boolean {
+  if ((row.source || "").trim().toUpperCase() !== "MANUAL") {
+    return false;
+  }
+  const status = normalizePaymentStatus(row.status);
+  if (!PAID_PAYMENT_STATUSES.has(status)) {
+    return false;
+  }
+  const manualType = (row.manual_transaction_type || "").trim().toUpperCase();
+  if (manualType === "PAYMENT") {
+    return true;
+  }
+  return false;
+}
+
+function isPaidPreRegistrationDepositCharge(row: AdminClientPaymentOut): boolean {
+  if ((row.source || "").trim().toUpperCase() !== "MANUAL") {
+    return false;
+  }
+  const status = normalizePaymentStatus(row.status);
+  if (!PAID_PAYMENT_STATUSES.has(status)) {
+    return false;
+  }
+  const manualType = (row.manual_transaction_type || "").trim().toUpperCase();
+  const category = (row.category || "").trim().toUpperCase();
+  return manualType === "CHARGE" && category === "PRE_REGISTRATION_DEPOSIT";
+}
+
 function invoiceStatusLabel(status: string | null, language: UiLanguage = "fr"): string {
   const normalized = (status ?? "").trim().toUpperCase();
   if (normalized === "PAID") {
@@ -2197,29 +2225,41 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     errors.push(`invoice_email_preview: ${invoiceEmailPreviewResultRecord.message ?? "Erreur preview courriel"}`);
   }
 
+  const settledManualPaymentInvoiceNumbers = new Set(
+    paymentsAsOfDate
+      .filter((row) => isManualPaymentMovement(row))
+      .map((row) => (row.invoice_number || "").trim())
+      .filter((value) => value.length > 0),
+  );
+
   const totalsByCurrency = new Map<string, number>();
   const paidTotalsByCurrency = new Map<string, number>();
-  const pendingTotalsByCurrency = new Map<string, number>();
   const cancelledOrNotBillableTotalsByCurrency = new Map<string, number>();
   for (const row of paymentsAsOfDate) {
     const currency = row.currency || "EUR";
     const amount = Number(row.total_incl_vat || "0");
     const status = normalizePaymentStatus(row.status);
+    const excludePaidDepositCharge =
+      isPaidPreRegistrationDepositCharge(row) &&
+      settledManualPaymentInvoiceNumbers.has((row.invoice_number || "").trim());
 
     const dueCurrent = totalsByCurrency.get(currency) ?? 0;
-    totalsByCurrency.set(currency, dueCurrent + (shouldCountInClientBalance(row) ? amount : 0));
+    totalsByCurrency.set(
+      currency,
+      dueCurrent + (shouldCountInClientBalance(row) && !excludePaidDepositCharge ? amount : 0),
+    );
 
     if (status === "NOT_BILLABLE" || status === "REFUNDED" || CANCELLED_PAYMENT_STATUSES.has(status)) {
       const current = cancelledOrNotBillableTotalsByCurrency.get(currency) ?? 0;
       cancelledOrNotBillableTotalsByCurrency.set(currency, current + amount);
-    } else if (PAID_PAYMENT_STATUSES.has(status)) {
+    } else if (isManualPaymentMovement(row)) {
       const current = paidTotalsByCurrency.get(currency) ?? 0;
-      paidTotalsByCurrency.set(currency, current + amount);
-    } else {
-      const current = pendingTotalsByCurrency.get(currency) ?? 0;
-      pendingTotalsByCurrency.set(currency, current + amount);
+      paidTotalsByCurrency.set(currency, current + Math.abs(amount));
     }
   }
+  const pendingTotalsByCurrency = new Map(
+    [...totalsByCurrency.entries()].filter(([, total]) => total > 0.009),
+  );
 
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error");
