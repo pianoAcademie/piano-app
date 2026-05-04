@@ -7195,6 +7195,7 @@ def send_admin_client_range_invoice_email(
 
     pdf_response = download_admin_client_range_invoice(
         client_id=client_id,
+        note_id=note.id,
         start_date=_parse_invoice_range_metadata_date(metadata, "start_date"),
         end_date=_parse_invoice_range_metadata_date(metadata, "end_date"),
         issued_date=_parse_invoice_range_metadata_date(metadata, "issued_date"),
@@ -7596,6 +7597,7 @@ def download_admin_client_range_invoice(
     actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> Response:
     client = _require_client(db, client_id)
+    normalized_note_id = note_id if isinstance(note_id, UUID) else None
     normalized_layout = _normalize_invoice_layout(layout)
     normalized_generation_mode = _normalize_invoice_generation_mode(generation_mode)
     normalized_auto_layout_style = "CONDENSED" if auto_layout_style.strip().upper() == "CONDENSED" else "NORMAL"
@@ -7933,11 +7935,16 @@ def download_admin_client_range_invoice(
     client_billing_address_live = _billing_address_label(billing_profile)
     client_label = client_name_snapshot or client_label_live
     client_billing_address = client_billing_address_snapshot or client_billing_address_live
-    persisted_note_id = note_id
+    persisted_note_id = normalized_note_id
     issuer_identity_snapshot: dict[str, object] | None = None
-    if not persist_note and note_id is not None:
+    if not persist_note and normalized_note_id is not None:
         try:
-            _, existing_metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=False)
+            _, existing_metadata = _load_range_invoice_note(
+                db,
+                client_id=client_id,
+                note_id=normalized_note_id,
+                for_update=False,
+            )
         except HTTPException:
             existing_metadata = {}
         existing_snapshot = existing_metadata.get("issuer_snapshot")

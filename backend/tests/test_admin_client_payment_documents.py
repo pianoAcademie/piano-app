@@ -13,6 +13,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.api.routes.admin_clients import (
     _apply_invoice_presentation_to_payment_item,
     _should_count_in_client_balance,
+    send_admin_client_range_invoice_email,
     download_admin_client_payment_invoice,
 )
 from app.schemas.admin import AdminClientPaymentOut
@@ -26,7 +27,74 @@ class _FakeScalarDb:
         return self._scalar_value
 
 
+class _FakeMutationDb:
+    def add(self, _value: object) -> None:
+        return None
+
+    def commit(self) -> None:
+        return None
+
+
 class AdminClientPaymentDocumentTests(unittest.TestCase):
+    def test_send_range_invoice_email_passes_note_id_to_pdf_generation(self) -> None:
+        client_id = uuid4()
+        note_id = uuid4()
+        note = SimpleNamespace(id=note_id, message="")
+        metadata = {
+            "start_date": "2026-04-01",
+            "end_date": "2026-04-30",
+            "issued_date": "2026-04-30",
+            "due_date": "2026-04-30",
+            "invoice_number": "PA26-0037",
+            "issuer_snapshot": {},
+        }
+        payload = SimpleNamespace(
+            kind="INVOICE",
+            to_emails=None,
+            subject=None,
+            body=None,
+            body_format="TEXT",
+        )
+        db = _FakeMutationDb()
+
+        with patch("app.api.routes.admin_clients._require_client", return_value=SimpleNamespace(id=client_id)), patch(
+            "app.api.routes.admin_clients._load_range_invoice_note",
+            return_value=(note, metadata),
+        ), patch(
+            "app.api.routes.admin_clients._frozen_invoice_selection_for_note",
+            return_value=([], None, None),
+        ), patch(
+            "app.api.routes.admin_clients._build_range_invoice_email_defaults",
+            return_value=(["parent@example.com"], "Sujet", "Corps", "TEXT"),
+        ), patch(
+            "app.api.routes.admin_clients.download_admin_client_range_invoice",
+            return_value=SimpleNamespace(body=b"%PDF-1.4"),
+        ) as download_pdf, patch(
+            "app.api.routes.admin_clients.resolve_sender_profile",
+            return_value=SimpleNamespace(
+                from_email="studio@example.com",
+                from_name="Piano Academie",
+                reply_to=None,
+                subject_prefix=None,
+            ),
+        ), patch(
+            "app.api.routes.admin_clients.send_email",
+            return_value="message-id",
+        ), patch(
+            "app.api.routes.admin_clients._build_invoice_range_note_message",
+            return_value="note message",
+        ):
+            response = send_admin_client_range_invoice_email(
+                client_id=client_id,
+                note_id=note_id,
+                payload=payload,
+                db=db,
+                actor=SimpleNamespace(),
+            )
+
+        self.assertEqual(response.note_id, note_id)
+        self.assertEqual(download_pdf.call_args.kwargs["note_id"], note_id)
+
     def test_booking_payment_receipt_manual_row_is_not_counted_in_opening_balance(self) -> None:
         row = AdminClientPaymentOut(
             id=uuid4(),
