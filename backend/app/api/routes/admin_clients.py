@@ -1356,7 +1356,22 @@ def _select_reusable_pre_registration_deposit_payment_ids(
     manual_charge_rows_by_id: dict[UUID, ClientManualTransaction],
     manual_payment_rows_by_id: dict[UUID, ClientManualTransaction],
 ) -> list[UUID]:
+    reusable_ids, _ = _select_reusable_pre_registration_deposit_reconciliation(
+        invoice_metadatas=invoice_metadatas,
+        manual_charge_rows_by_id=manual_charge_rows_by_id,
+        manual_payment_rows_by_id=manual_payment_rows_by_id,
+    )
+    return reusable_ids
+
+
+def _select_reusable_pre_registration_deposit_reconciliation(
+    *,
+    invoice_metadatas: list[dict[str, object]],
+    manual_charge_rows_by_id: dict[UUID, ClientManualTransaction],
+    manual_payment_rows_by_id: dict[UUID, ClientManualTransaction],
+) -> tuple[list[UUID], set[UUID]]:
     paid_deposit_payment_ids: list[UUID] = []
+    paired_charge_ids_by_payment_id: dict[UUID, set[UUID]] = {}
     consumed_elsewhere: set[UUID] = set()
 
     for metadata in invoice_metadatas:
@@ -1370,12 +1385,21 @@ def _select_reusable_pre_registration_deposit_payment_ids(
             metadata,
             manual_transactions_by_id=manual_charge_rows_by_id,
         ):
+            charge_ids = {
+                manual_transaction_id
+                for key in _normalize_invoice_range_payment_keys(metadata.get("included_payment_keys"))
+                for manual_transaction_id in [_manual_transaction_id_from_payment_key(key)]
+                if manual_transaction_id is not None
+            }
             if invoice_status == "PAID":
-                paid_deposit_payment_ids.extend(reconciled_ids)
+                for payment_id in reconciled_ids:
+                    paid_deposit_payment_ids.append(payment_id)
+                    paired_charge_ids_by_payment_id.setdefault(payment_id, set()).update(charge_ids)
             continue
         consumed_elsewhere.update(reconciled_ids)
 
     reusable_ids: list[UUID] = []
+    reusable_charge_ids: set[UUID] = set()
     seen: set[UUID] = set()
     for payment_id in paid_deposit_payment_ids:
         if payment_id in seen or payment_id in consumed_elsewhere:
@@ -1389,7 +1413,8 @@ def _select_reusable_pre_registration_deposit_payment_ids(
             continue
         seen.add(payment_id)
         reusable_ids.append(payment_id)
-    return reusable_ids
+        reusable_charge_ids.update(paired_charge_ids_by_payment_id.get(payment_id, set()))
+    return reusable_ids, reusable_charge_ids
 
 
 def _auto_reconciled_pre_registration_deposit_payment_ids(
@@ -1397,13 +1422,25 @@ def _auto_reconciled_pre_registration_deposit_payment_ids(
     *,
     client_id: UUID,
 ) -> list[UUID]:
+    reusable_ids, _ = _auto_reconciled_pre_registration_deposit_reconciliation(
+        db,
+        client_id=client_id,
+    )
+    return reusable_ids
+
+
+def _auto_reconciled_pre_registration_deposit_reconciliation(
+    db: Session,
+    *,
+    client_id: UUID,
+) -> tuple[list[UUID], set[UUID]]:
     notes = db.scalars(
         select(ClientNoteEntry)
         .where(ClientNoteEntry.user_id == client_id)
         .order_by(ClientNoteEntry.created_at.asc(), ClientNoteEntry.id.asc())
     ).all()
     if not notes:
-        return []
+        return [], set()
 
     invoice_metadatas: list[dict[str, object]] = []
     manual_charge_ids: set[UUID] = set()
@@ -1421,7 +1458,7 @@ def _auto_reconciled_pre_registration_deposit_payment_ids(
         manual_payment_ids.update(_invoice_range_reconciled_manual_payment_ids(metadata))
 
     if not invoice_metadatas or not manual_payment_ids:
-        return []
+        return [], set()
 
     manual_charge_rows = db.scalars(
         select(ClientManualTransaction).where(ClientManualTransaction.id.in_(manual_charge_ids))
@@ -1430,7 +1467,7 @@ def _auto_reconciled_pre_registration_deposit_payment_ids(
         select(ClientManualTransaction).where(ClientManualTransaction.id.in_(manual_payment_ids))
     ).all()
 
-    return _select_reusable_pre_registration_deposit_payment_ids(
+    return _select_reusable_pre_registration_deposit_reconciliation(
         invoice_metadatas=invoice_metadatas,
         manual_charge_rows_by_id={row.id: row for row in manual_charge_rows},
         manual_payment_rows_by_id={row.id: row for row in manual_payment_rows},
@@ -7171,10 +7208,10 @@ def create_admin_client_range_invoice(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="invoice_number cannot be forced when invoice split by legal entity",
         )
-    auto_reconciled_payment_ids = (
-        _auto_reconciled_pre_registration_deposit_payment_ids(db, client_id=client_id)
+    auto_reconciled_payment_ids, auto_reconciled_charge_ids = (
+        _auto_reconciled_pre_registration_deposit_reconciliation(db, client_id=client_id)
         if generation_mode == "MANUAL" and split_part_count == 1
-        else []
+        else ([], set())
     )
     auto_reconciled_payment_id_set = set(auto_reconciled_payment_ids)
 
@@ -7204,7 +7241,10 @@ def create_admin_client_range_invoice(
             for row in all_payments:
                 if row.occurred_at >= start_at:
                     continue
-                if (row.source or "").strip().upper() == "MANUAL" and row.id in auto_reconciled_payment_id_set:
+                if (
+                    (row.source or "").strip().upper() == "MANUAL"
+                    and (row.id in auto_reconciled_payment_id_set or row.id in auto_reconciled_charge_ids)
+                ):
                     continue
                 if not _should_count_in_client_balance(row):
                     continue

@@ -12,6 +12,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.admin_clients import (
     _apply_invoice_presentation_to_payment_item,
+    _select_reusable_pre_registration_deposit_reconciliation,
     _select_reusable_pre_registration_deposit_payment_ids,
     _resolve_public_payment_webhook_query_credentials,
     _should_count_in_client_balance,
@@ -49,6 +50,29 @@ class _FakeQueryParams:
 
 
 class AdminClientPaymentDocumentTests(unittest.TestCase):
+    def test_select_reusable_pre_registration_deposit_reconciliation_returns_charge_and_payment_ids(self) -> None:
+        deposit_charge_id = uuid4()
+        deposit_payment_id = uuid4()
+
+        selected_payments, selected_charges = _select_reusable_pre_registration_deposit_reconciliation(
+            invoice_metadatas=[
+                {
+                    "invoice_status": "PAID",
+                    "included_payment_keys": [f"MANUAL:{deposit_charge_id}"],
+                    "reconciled_manual_payment_ids": [str(deposit_payment_id)],
+                },
+            ],
+            manual_charge_rows_by_id={
+                deposit_charge_id: SimpleNamespace(category="PRE_REGISTRATION_DEPOSIT"),
+            },
+            manual_payment_rows_by_id={
+                deposit_payment_id: SimpleNamespace(transaction_type="PAYMENT", status="COMPLETED"),
+            },
+        )
+
+        self.assertEqual(selected_payments, [deposit_payment_id])
+        self.assertEqual(selected_charges, {deposit_charge_id})
+
     def test_select_reusable_pre_registration_deposit_payment_ids_returns_paid_deposit_payment(self) -> None:
         deposit_charge_id = uuid4()
         deposit_payment_id = uuid4()
