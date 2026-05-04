@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 import jwt
 from jwt import PyJWTError
@@ -358,6 +358,34 @@ def _normalize_optional(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _resolve_public_payment_webhook_query_credentials(
+    request: Request | None,
+    *,
+    token: str,
+    secret: str | None,
+    expected_secret: str,
+) -> tuple[str, str | None]:
+    if request is None or not expected_secret:
+        return token, secret
+    token_values = request.query_params.getlist("token")
+    if len(token_values) < 2:
+        return token, secret
+
+    resolved_secret = secret
+    non_secret_tokens: list[str] = []
+    for candidate in token_values:
+        normalized = (candidate or "").strip()
+        if not normalized:
+            continue
+        if normalized == expected_secret and resolved_secret is None:
+            resolved_secret = normalized
+            continue
+        non_secret_tokens.append(normalized)
+
+    resolved_token = non_secret_tokens[0] if non_secret_tokens else token
+    return resolved_token, resolved_secret
 
 
 def _parse_optional_datetime(raw: object) -> datetime | None:
@@ -8322,6 +8350,7 @@ def start_admin_client_range_invoice_public_payment(
     webhook_url = with_webhook_secret(
         f"{base_url}/api/v1/public/payments/invoices/range/{client_id}/{note_id}/webhook?token={urlencode({'token': token}).split('=', 1)[1]}",
         resolve_webhook_secret(db),
+        param_name="secret",
     )
 
     checkout = create_checkout_session(
@@ -8366,11 +8395,19 @@ def start_admin_client_range_invoice_public_payment(
 def handle_admin_client_range_invoice_public_payment_webhook(
     client_id: UUID,
     note_id: UUID,
+    request: Request,
     token: str = Query(min_length=24, max_length=4096),
     secret: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    if secret != resolve_webhook_secret(db):
+    configured_secret = resolve_webhook_secret(db)
+    token, secret = _resolve_public_payment_webhook_query_credentials(
+        request,
+        token=token,
+        secret=secret,
+        expected_secret=configured_secret,
+    )
+    if secret != configured_secret:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook secret")
 
     _require_client(db, client_id)
@@ -8570,7 +8607,7 @@ def start_admin_client_payment_receipt_public_payment(
             customer_email=client.email,
             success_return_url=success_return_url,
             cancel_return_url=cancel_return_url,
-            webhook_url=with_webhook_secret(webhook_url, settings.payment_webhook_secret),
+            webhook_url=with_webhook_secret(webhook_url, settings.payment_webhook_secret, param_name="secret"),
             metadata={
                 "client_id": str(client_id),
                 "receipt_id": str(receipt_id),
@@ -8604,11 +8641,19 @@ def start_admin_client_payment_receipt_public_payment(
 def handle_admin_client_payment_receipt_public_payment_webhook(
     client_id: UUID,
     receipt_id: UUID,
+    request: Request,
     token: str = Query(min_length=24, max_length=4096),
     secret: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    if settings.payment_webhook_secret and secret != settings.payment_webhook_secret:
+    configured_secret = settings.payment_webhook_secret.strip()
+    token, secret = _resolve_public_payment_webhook_query_credentials(
+        request,
+        token=token,
+        secret=secret,
+        expected_secret=configured_secret,
+    )
+    if configured_secret and secret != configured_secret:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook secret")
     _require_client(db, client_id)
     receipt = _load_payment_receipt(db, client_id=client_id, receipt_id=receipt_id, for_update=True)

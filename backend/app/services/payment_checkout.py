@@ -548,9 +548,9 @@ def lookup_payment(db: Session, *, provider: PaymentProvider, payment_reference:
     return _payplug_lookup_payment(secret, payment_reference)
 
 
-def with_webhook_secret(url: str, webhook_secret: str) -> str:
+def with_webhook_secret(url: str, webhook_secret: str, *, param_name: str = "token") -> str:
     token = webhook_secret.strip()
     if not token:
         return url
     separator = "&" if "?" in url else "?"
-    return f"{url}{separator}{urlencode({'token': token})}"
+    return f"{url}{separator}{urlencode({param_name: token})}"

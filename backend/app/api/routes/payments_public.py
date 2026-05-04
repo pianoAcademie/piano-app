@@ -197,6 +197,7 @@ def start_invoice_range_public_payment(
 
 @router.post("/invoices/range/{client_id}/{note_id}/webhook")
 def handle_invoice_range_public_payment_webhook(
+    request: Request,
     client_id: UUID,
     note_id: UUID,
     token: str = Query(min_length=24, max_length=4096),
@@ -206,6 +207,7 @@ def handle_invoice_range_public_payment_webhook(
     return handle_admin_client_range_invoice_public_payment_webhook(
         client_id=client_id,
         note_id=note_id,
+        request=request,
         token=token,
         secret=secret,
         db=db,
@@ -246,6 +248,7 @@ def start_booking_public_payment(
 
 @router.post("/bookings/{client_id}/{receipt_id}/webhook")
 def handle_booking_public_payment_webhook(
+    request: Request,
     client_id: UUID,
     receipt_id: UUID,
     token: str = Query(min_length=24, max_length=4096),
@@ -255,6 +258,7 @@ def handle_booking_public_payment_webhook(
     return handle_admin_client_payment_receipt_public_payment_webhook(
         client_id=client_id,
         receipt_id=receipt_id,
+        request=request,
         token=token,
         secret=secret,
         db=db,

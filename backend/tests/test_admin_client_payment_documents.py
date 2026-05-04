@@ -12,11 +12,13 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.admin_clients import (
     _apply_invoice_presentation_to_payment_item,
+    _resolve_public_payment_webhook_query_credentials,
     _should_count_in_client_balance,
     send_admin_client_range_invoice_email,
     download_admin_client_payment_invoice,
 )
 from app.schemas.admin import AdminClientPaymentOut
+from app.services.payment_checkout import with_webhook_secret
 
 
 class _FakeScalarDb:
@@ -35,7 +37,40 @@ class _FakeMutationDb:
         return None
 
 
+class _FakeQueryParams:
+    def __init__(self, values: list[str]) -> None:
+        self._values = values
+
+    def getlist(self, key: str) -> list[str]:
+        if key != "token":
+            return []
+        return list(self._values)
+
+
 class AdminClientPaymentDocumentTests(unittest.TestCase):
+    def test_with_webhook_secret_supports_explicit_param_name(self) -> None:
+        url = "https://app.piano-academie.com/api/v1/public/payments/invoices/range/client/note/webhook?token=public-jwt"
+
+        signed = with_webhook_secret(url, "webhook-secret", param_name="secret")
+
+        self.assertIn("token=public-jwt", signed)
+        self.assertIn("secret=webhook-secret", signed)
+
+    def test_legacy_public_payment_webhook_uses_second_token_as_secret(self) -> None:
+        public_token = "public-jwt"
+        webhook_secret = "webhook-secret"
+        request = SimpleNamespace(query_params=_FakeQueryParams([public_token, webhook_secret]))
+
+        normalized_token, normalized_secret = _resolve_public_payment_webhook_query_credentials(
+            request,
+            token=public_token,
+            secret=None,
+            expected_secret=webhook_secret,
+        )
+
+        self.assertEqual(normalized_token, public_token)
+        self.assertEqual(normalized_secret, webhook_secret)
+
     def test_send_range_invoice_email_passes_note_id_to_pdf_generation(self) -> None:
         client_id = uuid4()
         note_id = uuid4()
