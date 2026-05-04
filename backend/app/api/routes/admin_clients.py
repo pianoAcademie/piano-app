@@ -1312,6 +1312,131 @@ def _invoice_range_reconciled_manual_payment_ids(metadata: dict[str, object]) ->
     return out
 
 
+def _manual_transaction_id_from_payment_key(raw_key: object) -> UUID | None:
+    key = _normalize_optional(str(raw_key))
+    if key is None:
+        return None
+    if not key.upper().startswith("MANUAL:"):
+        return None
+    _, _, raw_id = key.partition(":")
+    candidate = _normalize_optional(raw_id)
+    if candidate is None:
+        return None
+    try:
+        return UUID(candidate)
+    except ValueError:
+        return None
+
+
+def _is_pre_registration_deposit_invoice_metadata(
+    metadata: dict[str, object],
+    *,
+    manual_transactions_by_id: dict[UUID, ClientManualTransaction],
+) -> bool:
+    keys = _normalize_invoice_range_payment_keys(metadata.get("included_payment_keys"))
+    if not keys:
+        return False
+    matched = False
+    for key in keys:
+        manual_transaction_id = _manual_transaction_id_from_payment_key(key)
+        if manual_transaction_id is None:
+            return False
+        transaction = manual_transactions_by_id.get(manual_transaction_id)
+        if transaction is None:
+            return False
+        if (transaction.category or "").strip().upper() != "PRE_REGISTRATION_DEPOSIT":
+            return False
+        matched = True
+    return matched
+
+
+def _select_reusable_pre_registration_deposit_payment_ids(
+    *,
+    invoice_metadatas: list[dict[str, object]],
+    manual_charge_rows_by_id: dict[UUID, ClientManualTransaction],
+    manual_payment_rows_by_id: dict[UUID, ClientManualTransaction],
+) -> list[UUID]:
+    paid_deposit_payment_ids: list[UUID] = []
+    consumed_elsewhere: set[UUID] = set()
+
+    for metadata in invoice_metadatas:
+        invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
+        if invoice_status == "CANCELLED":
+            continue
+        reconciled_ids = _invoice_range_reconciled_manual_payment_ids(metadata)
+        if not reconciled_ids:
+            continue
+        if _is_pre_registration_deposit_invoice_metadata(
+            metadata,
+            manual_transactions_by_id=manual_charge_rows_by_id,
+        ):
+            if invoice_status == "PAID":
+                paid_deposit_payment_ids.extend(reconciled_ids)
+            continue
+        consumed_elsewhere.update(reconciled_ids)
+
+    reusable_ids: list[UUID] = []
+    seen: set[UUID] = set()
+    for payment_id in paid_deposit_payment_ids:
+        if payment_id in seen or payment_id in consumed_elsewhere:
+            continue
+        payment_row = manual_payment_rows_by_id.get(payment_id)
+        if payment_row is None:
+            continue
+        if (payment_row.transaction_type or "").strip().upper() != "PAYMENT":
+            continue
+        if (payment_row.status or "").strip().upper() not in {"COMPLETED", "PAID"}:
+            continue
+        seen.add(payment_id)
+        reusable_ids.append(payment_id)
+    return reusable_ids
+
+
+def _auto_reconciled_pre_registration_deposit_payment_ids(
+    db: Session,
+    *,
+    client_id: UUID,
+) -> list[UUID]:
+    notes = db.scalars(
+        select(ClientNoteEntry)
+        .where(ClientNoteEntry.user_id == client_id)
+        .order_by(ClientNoteEntry.created_at.asc(), ClientNoteEntry.id.asc())
+    ).all()
+    if not notes:
+        return []
+
+    invoice_metadatas: list[dict[str, object]] = []
+    manual_charge_ids: set[UUID] = set()
+    manual_payment_ids: set[UUID] = set()
+
+    for note in notes:
+        metadata = _parse_invoice_range_note_entry(note)
+        if metadata is None:
+            continue
+        invoice_metadatas.append(metadata)
+        for key in _normalize_invoice_range_payment_keys(metadata.get("included_payment_keys")):
+            manual_transaction_id = _manual_transaction_id_from_payment_key(key)
+            if manual_transaction_id is not None:
+                manual_charge_ids.add(manual_transaction_id)
+        manual_payment_ids.update(_invoice_range_reconciled_manual_payment_ids(metadata))
+
+    if not invoice_metadatas or not manual_payment_ids:
+        return []
+
+    manual_charge_rows = db.scalars(
+        select(ClientManualTransaction).where(ClientManualTransaction.id.in_(manual_charge_ids))
+    ).all() if manual_charge_ids else []
+    manual_payment_rows = db.scalars(
+        select(ClientManualTransaction).where(ClientManualTransaction.id.in_(manual_payment_ids))
+    ).all()
+
+    return _select_reusable_pre_registration_deposit_payment_ids(
+        invoice_metadatas=invoice_metadatas,
+        manual_charge_rows_by_id={row.id: row for row in manual_charge_rows},
+        manual_payment_rows_by_id={row.id: row for row in manual_payment_rows},
+    )
+
+
 def _invoice_range_reconciled_manual_payment_totals(
     all_payments: list[AdminClientPaymentOut],
     *,
@@ -6998,9 +7123,10 @@ def create_admin_client_range_invoice(
 
     start_at = datetime.combine(payload.start_date, datetime.min.time(), tzinfo=timezone.utc)
     end_at_exclusive = datetime.combine(payload.end_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+    all_payments = _build_admin_client_payments(db, client_id=client_id)
     payments = [
         row
-        for row in _build_admin_client_payments(db, client_id=client_id)
+        for row in all_payments
         if start_at <= row.occurred_at < end_at_exclusive
     ]
     if not payload.include_pending:
@@ -7045,6 +7171,12 @@ def create_admin_client_range_invoice(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="invoice_number cannot be forced when invoice split by legal entity",
         )
+    auto_reconciled_payment_ids = (
+        _auto_reconciled_pre_registration_deposit_payment_ids(db, client_id=client_id)
+        if generation_mode == "MANUAL" and split_part_count == 1
+        else []
+    )
+    auto_reconciled_payment_id_set = set(auto_reconciled_payment_ids)
 
     created_notes: list[tuple[ClientNoteEntry, dict[str, object]]] = []
     ordered_entity_groups = sorted(
@@ -7066,6 +7198,43 @@ def create_admin_client_range_invoice(
             totals_precise[currency] = _quantize_money(current + Decimal(row.total_incl_vat))
         for currency, total in sorted(totals_precise.items()):
             totals_by_currency[currency] = f"{_quantize_money(total):.2f}"
+
+        opening_balance_by_currency: dict[str, Decimal] = {}
+        if split_part_count == 1:
+            for row in all_payments:
+                if row.occurred_at >= start_at:
+                    continue
+                if (row.source or "").strip().upper() == "MANUAL" and row.id in auto_reconciled_payment_id_set:
+                    continue
+                if not _should_count_in_client_balance(row):
+                    continue
+                currency = _normalize_currency(row.currency, fallback="EUR")
+                opening_balance_by_currency[currency] = _quantize_money(
+                    opening_balance_by_currency.get(currency, Decimal("0.00")) + Decimal(row.total_incl_vat)
+                )
+
+        applied_payment_totals_by_currency = (
+            _invoice_range_reconciled_manual_payment_totals(
+                all_payments,
+                reconciled_payment_ids=auto_reconciled_payment_id_set,
+            )
+            if split_part_count == 1 and auto_reconciled_payment_id_set
+            else {}
+        )
+        total_to_pay_by_currency: dict[str, Decimal] = {}
+        if split_part_count == 1:
+            for currency in sorted(
+                set(totals_precise.keys())
+                | set(opening_balance_by_currency.keys())
+                | set(applied_payment_totals_by_currency.keys())
+            ):
+                period_total = _quantize_money(Decimal(totals_precise.get(currency, Decimal("0.00"))))
+                opening_balance = _quantize_money(Decimal(opening_balance_by_currency.get(currency, Decimal("0.00"))))
+                applied_payments = _quantize_money(
+                    Decimal(applied_payment_totals_by_currency.get(currency, Decimal("0.00")))
+                )
+                carry_balance = opening_balance if payload.auto_include_previous_balance else Decimal("0.00")
+                total_to_pay_by_currency[currency] = _quantize_money(period_total + carry_balance + applied_payments)
 
         if requested_invoice_number is not None:
             resolved_invoice_number = requested_invoice_number
@@ -7116,6 +7285,23 @@ def create_admin_client_range_invoice(
                 billing_entity=billing_entity,
             ),
         }
+        if split_part_count == 1 and auto_reconciled_payment_ids:
+            metadata["reconciled_manual_payment_ids"] = [str(value) for value in auto_reconciled_payment_ids]
+        if split_part_count == 1 and opening_balance_by_currency:
+            metadata["opening_balance_by_currency"] = {
+                currency: f"{_quantize_money(amount):.2f}"
+                for currency, amount in sorted(opening_balance_by_currency.items())
+            }
+        if split_part_count == 1 and applied_payment_totals_by_currency:
+            metadata["applied_payment_totals_by_currency"] = {
+                currency: f"{_quantize_money(amount):.2f}"
+                for currency, amount in sorted(applied_payment_totals_by_currency.items())
+            }
+        if split_part_count == 1 and total_to_pay_by_currency:
+            metadata["total_to_pay_by_currency"] = {
+                currency: f"{_quantize_money(amount):.2f}"
+                for currency, amount in sorted(total_to_pay_by_currency.items())
+            }
         if split_group_id is not None:
             metadata["split_group_id"] = split_group_id
         if auto_footer_note:
