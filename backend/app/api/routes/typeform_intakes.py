@@ -581,13 +581,28 @@ def _fallback_requested_slot_preferences_from_simplified_answers(
                 segment=segment,
             )
         else:
-            fallback_day = _extract_weekday_label(value) or _extract_weekday_label(label)
-            fallback_times = _extract_time_tokens(label) or _extract_time_tokens(value)
-            if fallback_day and fallback_times:
+            label_day = _extract_weekday_label(label)
+            value_day = _extract_weekday_label(value)
+            label_times = _extract_time_tokens(label)
+            value_times = _extract_time_tokens(value)
+
+            # Keep only cross-signals between label and value so age ranges like
+            # "Débutants (5 - 6 ans)" do not get misread as a requested slot.
+            if label_day and value_times:
                 nested = [
                     {
-                        "day": fallback_day,
-                        "time": fallback_times[0],
+                        "day": label_day,
+                        "time": time_value,
+                        "location": requested_location,
+                        "segment": segment,
+                    }
+                    for time_value in value_times
+                ]
+            elif value_day and label_times:
+                nested = [
+                    {
+                        "day": value_day,
+                        "time": label_times[0],
                         "location": requested_location,
                         "segment": segment,
                     }

@@ -137,6 +137,71 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
             ],
         )
 
+    def test_normalize_payload_does_not_mix_solfege_choice_into_main_requested_slots(self) -> None:
+        config = SimpleNamespace(
+            configuration_json={
+                "field_mapping": {
+                    "requested_location": ["requested_location"],
+                    "requested_days": ["obsolete-requested-days-id"],
+                    "requested_times": ["obsolete-requested-times-id"],
+                    "requested_slot_preferences": ["obsolete-slot-pref-id"],
+                },
+                "field_labels": {},
+            },
+            audience_segment="enfants",
+            location_code="paris_richelieu",
+        )
+        payload = {
+            "form_response": {
+                "answers": [
+                    {
+                        "field": {"ref": "requested_location", "title": "Lieu du cours souhaité"},
+                        "choice": {"label": "Paris 01 - Rue Richelieu"},
+                    },
+                    {
+                        "field": {"id": "course-day", "title": "Quel jour souhaitez vous prendre des cours"},
+                        "choice": {"label": "samedi"},
+                    },
+                    {
+                        "field": {"id": "course-saturday-hours", "title": "Horaire de nos cours le samedi"},
+                        "choices": {"labels": ["14h", "12h", "11h"]},
+                    },
+                    {
+                        "field": {"id": "solfege-level", "title": "Débutants (5 - 6 ans)"},
+                        "choice": {"label": "mercredi - 18h05"},
+                    },
+                ]
+            }
+        }
+
+        normalized, _ = _normalize_payload(payload=payload, config=config)
+
+        self.assertEqual(normalized["requested_days"], ["samedi"])
+        self.assertEqual(normalized["requested_times"], ["14:00", "12:00", "11:00"])
+        self.assertEqual(
+            normalized["requested_slot_preferences"],
+            [
+                {
+                    "day": "samedi",
+                    "time": "14:00",
+                    "location": "Paris 01 - Rue Richelieu",
+                    "segment": "enfants",
+                },
+                {
+                    "day": "samedi",
+                    "time": "12:00",
+                    "location": "Paris 01 - Rue Richelieu",
+                    "segment": "enfants",
+                },
+                {
+                    "day": "samedi",
+                    "time": "11:00",
+                    "location": "Paris 01 - Rue Richelieu",
+                    "segment": "enfants",
+                },
+            ],
+        )
+
     def test_option_does_not_mark_other_site_as_preferred_when_location_is_resolved(self) -> None:
         preferred_location_id = uuid4()
         option = _typeform_session_option_from_row(
