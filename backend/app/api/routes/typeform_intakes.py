@@ -572,13 +572,26 @@ def _fallback_requested_slot_preferences_from_simplified_answers(
         if not isinstance(item, dict):
             continue
         label = _text(item.get("label"))
-        if not _slot_preference_like_label(label):
-            continue
-        nested = _normalize_slot_preferences(
-            [_text(item.get("value"))],
-            requested_location=requested_location,
-            segment=segment,
-        )
+        value = _text(item.get("value"))
+        nested: list[dict[str, object]] = []
+        if _slot_preference_like_label(label):
+            nested = _normalize_slot_preferences(
+                [value],
+                requested_location=requested_location,
+                segment=segment,
+            )
+        else:
+            fallback_day = _extract_weekday_label(value) or _extract_weekday_label(label)
+            fallback_times = _extract_time_tokens(label) or _extract_time_tokens(value)
+            if fallback_day and fallback_times:
+                nested = [
+                    {
+                        "day": fallback_day,
+                        "time": fallback_times[0],
+                        "location": requested_location,
+                        "segment": segment,
+                    }
+                ]
         for child in nested:
             key = (_text(child.get("day")) or None, _text(child.get("time")) or None)
             if key in seen:

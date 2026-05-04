@@ -55,6 +55,82 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
             ],
         )
 
+    def test_normalize_payload_falls_back_to_time_row_labels_when_mapping_is_stale(self) -> None:
+        config = SimpleNamespace(
+            configuration_json={
+                "field_mapping": {
+                    "requested_location": ["requested_location"],
+                    # Simulate stale stored field ids that no longer match the live Typeform fields.
+                    "requested_days": ["obsolete-requested-days-id"],
+                    "requested_times": ["obsolete-requested-times-id"],
+                    "requested_slot_preferences": ["obsolete-slot-pref-id"],
+                },
+                "field_labels": {},
+            },
+            audience_segment="enfants",
+            location_code="paris_richelieu",
+        )
+        payload = {
+            "form_response": {
+                "answers": [
+                    {
+                        "field": {"ref": "requested_location", "title": "Lieu du cours souhaite"},
+                        "choice": {"label": "Paris 01 - Rue Richelieu"},
+                    },
+                    {
+                        "field": {"id": "000338cf-1", "title": "14h-15h"},
+                        "choice": {"label": "Mercredi"},
+                    },
+                    {
+                        "field": {"id": "000338cf-2", "title": "15h-16h"},
+                        "choice": {"label": "Mercredi"},
+                    },
+                    {
+                        "field": {"id": "000338cf-3", "title": "16h-17h"},
+                        "choice": {"label": "Mercredi"},
+                    },
+                    {
+                        "field": {"id": "000338cf-4", "title": "17h-18h"},
+                        "choice": {"label": "Mercredi"},
+                    },
+                ]
+            }
+        }
+
+        normalized, _ = _normalize_payload(payload=payload, config=config)
+
+        self.assertEqual(normalized["requested_days"], ["mercredi"])
+        self.assertEqual(normalized["requested_times"], ["14:00", "15:00", "16:00", "17:00"])
+        self.assertEqual(
+            normalized["requested_slot_preferences"],
+            [
+                {
+                    "day": "mercredi",
+                    "time": "14:00",
+                    "location": "Paris 01 - Rue Richelieu",
+                    "segment": "enfants",
+                },
+                {
+                    "day": "mercredi",
+                    "time": "15:00",
+                    "location": "Paris 01 - Rue Richelieu",
+                    "segment": "enfants",
+                },
+                {
+                    "day": "mercredi",
+                    "time": "16:00",
+                    "location": "Paris 01 - Rue Richelieu",
+                    "segment": "enfants",
+                },
+                {
+                    "day": "mercredi",
+                    "time": "17:00",
+                    "location": "Paris 01 - Rue Richelieu",
+                    "segment": "enfants",
+                },
+            ],
+        )
+
     def test_option_does_not_mark_other_site_as_preferred_when_location_is_resolved(self) -> None:
         preferred_location_id = uuid4()
         option = _typeform_session_option_from_row(
