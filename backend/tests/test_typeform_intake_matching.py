@@ -9,7 +9,13 @@ from uuid import uuid4
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.api.routes.typeform_intakes import _normalize_payload, _typeform_session_option_from_row
+from app.api.routes.typeform_intakes import (
+    _future_school_year_candidate_configs,
+    _normalize_payload,
+    _session_recommendations_have_options,
+    _should_try_future_school_year_config,
+    _typeform_session_option_from_row,
+)
 
 
 class TypeformIntakeMatchingTests(unittest.TestCase):
@@ -183,6 +189,81 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
         )
 
         self.assertIsNone(option)
+
+    def test_should_try_future_school_year_config_when_slots_are_requested_but_no_option_matches(self) -> None:
+        should_try = _should_try_future_school_year_config(
+            config=SimpleNamespace(source_code="typeform_paris_child_2025_2026_multisite", school_year_label="2025-2026"),
+            normalized={
+                "requested_slot_preferences": [{"day": "mercredi", "time": "14:00"}],
+                "requested_days": ["mercredi"],
+                "requested_times": ["14:00"],
+            },
+            session_recommendations=[],
+        )
+
+        self.assertTrue(should_try)
+
+    def test_session_recommendations_have_options_detects_model_options(self) -> None:
+        recommendations = [
+            SimpleNamespace(
+                options=[SimpleNamespace(selection_label="Chaque mercredi · 14:00-15:00")],
+                manual_options=[],
+            )
+        ]
+
+        self.assertTrue(_session_recommendations_have_options(recommendations))
+
+    def test_future_school_year_candidate_configs_prefers_same_family_and_next_year(self) -> None:
+        current = SimpleNamespace(
+            id=uuid4(),
+            source_code="typeform_paris_child_2025_2026_multisite",
+            school_year_label="2025-2026",
+            location_code="RICHELIEU",
+            audience_segment="child",
+        )
+        next_year = SimpleNamespace(
+            id=uuid4(),
+            source_code="typeform_paris_child_2026_2027_multisite",
+            school_year_label="2026-2027",
+            location_code="RICHELIEU",
+            audience_segment="child",
+            is_active=True,
+        )
+        wrong_family = SimpleNamespace(
+            id=uuid4(),
+            source_code="typeform_paris_eveil_2026_2027_multisite",
+            school_year_label="2026-2027",
+            location_code="RICHELIEU",
+            audience_segment="child",
+            is_active=True,
+        )
+        wrong_location = SimpleNamespace(
+            id=uuid4(),
+            source_code="typeform_paris_child_2026_2027_multisite",
+            school_year_label="2026-2027",
+            location_code="POMPE",
+            audience_segment="child",
+            is_active=True,
+        )
+
+        class _FakeScalars:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def all(self):
+                return list(self._rows)
+
+        class _FakeDb:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def scalars(self, _stmt):
+                return _FakeScalars(self._rows)
+
+        rows = [wrong_family, wrong_location, next_year]
+        selected = _future_school_year_candidate_configs(_FakeDb(rows), current_config=current)
+
+        self.assertEqual(selected, [next_year])
 
 
 if __name__ == "__main__":

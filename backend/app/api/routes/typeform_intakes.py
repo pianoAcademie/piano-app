@@ -1829,6 +1829,83 @@ def _school_year_bounds_from_label(label: object | None) -> tuple[date, date] | 
     return date(start_year, 9, 1), date(end_year, 8, 31)
 
 
+def _school_year_start_year(label: object | None) -> int | None:
+    bounds = _school_year_bounds_from_label(label)
+    if bounds is None:
+        return None
+    return bounds[0].year
+
+
+def _source_code_school_year_family(source_code: object | None) -> str:
+    normalized = _text(source_code).strip().lower()
+    return re.sub(r"20\d{2}_20\d{2}", "{school_year}", normalized)
+
+
+def _session_recommendations_have_options(
+    recommendations: list[TypeformSessionRecommendationOut] | list[dict[str, object]] | None,
+) -> bool:
+    for recommendation in recommendations or []:
+        if isinstance(recommendation, dict):
+            options = _json_list(recommendation.get("options"))
+            manual_options = _json_list(recommendation.get("manual_options"))
+        else:
+            options = list(getattr(recommendation, "options", []) or [])
+            manual_options = list(getattr(recommendation, "manual_options", []) or [])
+        if options or manual_options:
+            return True
+    return False
+
+
+def _should_try_future_school_year_config(
+    *,
+    config: TypeformFormConfig | None,
+    normalized: dict[str, object],
+    session_recommendations: list[TypeformSessionRecommendationOut],
+) -> bool:
+    if config is None:
+        return False
+    has_requested_slots = bool(
+        _json_list(normalized.get("requested_slot_preferences"))
+        or _json_list(normalized.get("requested_days"))
+        or _json_list(normalized.get("requested_times"))
+    )
+    if not has_requested_slots:
+        return False
+    return not _session_recommendations_have_options(session_recommendations)
+
+
+def _future_school_year_candidate_configs(
+    db: Session,
+    *,
+    current_config: TypeformFormConfig,
+) -> list[TypeformFormConfig]:
+    current_start_year = _school_year_start_year(current_config.school_year_label)
+    if current_start_year is None:
+        return []
+
+    family = _source_code_school_year_family(current_config.source_code)
+    rows = db.scalars(
+        select(TypeformFormConfig).where(
+            TypeformFormConfig.is_active.is_(True),
+            TypeformFormConfig.id != current_config.id,
+            TypeformFormConfig.location_code == current_config.location_code,
+            TypeformFormConfig.audience_segment == current_config.audience_segment,
+        )
+    ).all()
+
+    candidates: list[tuple[int, str, TypeformFormConfig]] = []
+    for row in rows:
+        candidate_start_year = _school_year_start_year(row.school_year_label)
+        if candidate_start_year is None or candidate_start_year <= current_start_year:
+            continue
+        if _source_code_school_year_family(row.source_code) != family:
+            continue
+        candidates.append((candidate_start_year, row.source_code, row))
+
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    return [row for _, _, row in candidates]
+
+
 def _grouped_occurrence_label(option: TypeformSessionMatchOptionOut) -> str:
     return f"Chaque {option.weekday_label.lower()} · {option.start_time_label}-{option.end_time_label}"
 
@@ -2600,6 +2677,7 @@ def _analysis_for_intake(
     config = db.scalar(select(TypeformFormConfig).where(TypeformFormConfig.id == intake.form_config_id)) if intake.form_config_id else None
     normalized = _json_object(intake.normalized_payload_json)
     raw_payload = _json_object(intake.raw_payload_json)
+    simplified_answers = _json_list(intake.simplified_response_json)
     if not normalized and config is not None:
         normalized, simplified_answers = _normalize_payload(payload=raw_payload, config=config)
         intake.normalized_payload_json = normalized
@@ -2609,83 +2687,119 @@ def _analysis_for_intake(
         if refreshed_normalized != normalized:
             normalized = refreshed_normalized
             intake.normalized_payload_json = refreshed_normalized
-        if refreshed_simplified_answers != _json_list(intake.simplified_response_json):
+        if refreshed_simplified_answers != simplified_answers:
+            simplified_answers = refreshed_simplified_answers
             intake.simplified_response_json = refreshed_simplified_answers
 
-    client_candidates = _collect_client_candidates(db, normalized)
-    family_candidates = _collect_family_candidates(db, normalized)
-    effective_resolution = _default_resolution(
-        normalized=normalized,
-        stored_resolution=_json_object(intake.resolution_json),
-        client_candidates=client_candidates,
-        family_candidates=family_candidates,
-    )
+    def _run_analysis(active_config: TypeformFormConfig | None, active_normalized: dict[str, object]) -> dict[str, object]:
+        client_candidates = _collect_client_candidates(db, active_normalized)
+        family_candidates = _collect_family_candidates(db, active_normalized)
+        effective_resolution = _default_resolution(
+            normalized=active_normalized,
+            stored_resolution=_json_object(intake.resolution_json),
+            client_candidates=client_candidates,
+            family_candidates=family_candidates,
+        )
 
-    runtime_context = _resolve_form_runtime_context(db, config=config, normalized=normalized)
-    preview_lines, quote_lines, line_warnings, line_blockages = _build_preview_lines(
-        db,
+        runtime_context = _resolve_form_runtime_context(db, config=active_config, normalized=active_normalized)
+        preview_lines, quote_lines, line_warnings, line_blockages = _build_preview_lines(
+            db,
+            config=active_config,
+            normalized=active_normalized,
+            runtime_context=runtime_context,
+        )
+        session_recommendations, session_warnings, session_blockages = _build_session_recommendations(
+            db,
+            config=active_config,
+            normalized=active_normalized,
+            preview_lines=preview_lines,
+            resolution=effective_resolution,
+            runtime_context=runtime_context,
+        )
+        preview_quote = _build_preview(
+            db,
+            config=active_config,
+            normalized=active_normalized,
+            resolution=effective_resolution,
+            preview_lines=preview_lines,
+            session_recommendations=session_recommendations,
+            runtime_context=runtime_context,
+        )
+
+        warnings = list(dict.fromkeys(_json_list(runtime_context.get("warnings")) + line_warnings + session_warnings))
+        blockages = list(dict.fromkeys(_json_list(runtime_context.get("blockages")) + line_blockages + session_blockages))
+
+        if active_config is None:
+            blockages.insert(0, "Aucune configuration active ne correspond au formulaire Typeform.")
+
+        if _needs_client_arbitrage(client_candidates, family_candidates, effective_resolution):
+            warnings.append("Plusieurs correspondances client ou famille doivent etre arbitrees.")
+        if _needs_session_arbitrage(session_recommendations):
+            warnings.append("Plusieurs creneaux compatibles demandent un arbitrage.")
+
+        admin_state = _lower(effective_resolution.get("admin_state"))
+        if intake.related_quote_id is not None:
+            intake_status = INTAKE_STATUS_PROCESSED
+        elif admin_state == "ignored":
+            intake_status = INTAKE_STATUS_IGNORED
+        elif blockages:
+            intake_status = INTAKE_STATUS_BLOCKED
+        elif _needs_client_arbitrage(client_candidates, family_candidates, effective_resolution) or _needs_session_arbitrage(session_recommendations):
+            intake_status = INTAKE_STATUS_MATCHING_REQUIRED
+        elif active_normalized:
+            intake_status = INTAKE_STATUS_READY
+        else:
+            intake_status = INTAKE_STATUS_NORMALIZED
+
+        return {
+            "config": active_config,
+            "normalized": active_normalized,
+            "answers": _coerce_typeform_answers(intake.simplified_response_json),
+            "client_candidates": client_candidates,
+            "family_candidates": family_candidates,
+            "effective_resolution": effective_resolution,
+            "preview_quote": preview_quote,
+            "preview_quote_lines_in": quote_lines,
+            "session_recommendations": session_recommendations,
+            "runtime_context": runtime_context,
+            "warnings": list(dict.fromkeys(warnings)),
+            "blockages": list(dict.fromkeys(blockages)),
+            "intake_status": intake_status,
+        }
+
+    analysis = _run_analysis(config, normalized)
+    if config is not None and raw_payload and _should_try_future_school_year_config(
         config=config,
         normalized=normalized,
-        runtime_context=runtime_context,
-    )
-    session_recommendations, session_warnings, session_blockages = _build_session_recommendations(
-        db,
-        config=config,
-        normalized=normalized,
-        preview_lines=preview_lines,
-        resolution=effective_resolution,
-        runtime_context=runtime_context,
-    )
-    preview_quote = _build_preview(
-        db,
-        config=config,
-        normalized=normalized,
-        resolution=effective_resolution,
-        preview_lines=preview_lines,
-        session_recommendations=session_recommendations,
-        runtime_context=runtime_context,
-    )
+        session_recommendations=_json_list(analysis.get("session_recommendations")),
+    ):
+        current_school_year_label = config.school_year_label
+        for candidate_config in _future_school_year_candidate_configs(db, current_config=config):
+            candidate_normalized, candidate_simplified_answers = _normalize_payload(payload=raw_payload, config=candidate_config)
+            candidate_analysis = _run_analysis(candidate_config, candidate_normalized)
+            if not _session_recommendations_have_options(_json_list(candidate_analysis.get("session_recommendations"))):
+                continue
+            config = candidate_config
+            normalized = candidate_normalized
+            simplified_answers = candidate_simplified_answers
+            intake.form_config_id = candidate_config.id
+            intake.normalized_payload_json = candidate_normalized
+            intake.simplified_response_json = candidate_simplified_answers
+            candidate_warnings = _json_list(candidate_analysis.get("warnings"))
+            candidate_warnings.insert(
+                0,
+                (
+                    "Le formulaire initial a ete reroute vers l annee scolaire "
+                    f"{candidate_config.school_year_label} car aucun creneau pertinent n etait disponible "
+                    f"sur {current_school_year_label}."
+                ),
+            )
+            candidate_analysis["warnings"] = list(dict.fromkeys(candidate_warnings))
+            candidate_analysis["answers"] = _coerce_typeform_answers(candidate_simplified_answers)
+            analysis = candidate_analysis
+            break
 
-    warnings = list(dict.fromkeys(_json_list(runtime_context.get("warnings")) + line_warnings + session_warnings))
-    blockages = list(dict.fromkeys(_json_list(runtime_context.get("blockages")) + line_blockages + session_blockages))
-
-    if config is None:
-        blockages.insert(0, "Aucune configuration active ne correspond au formulaire Typeform.")
-
-    if _needs_client_arbitrage(client_candidates, family_candidates, effective_resolution):
-        warnings.append("Plusieurs correspondances client ou famille doivent etre arbitrees.")
-    if _needs_session_arbitrage(session_recommendations):
-        warnings.append("Plusieurs creneaux compatibles demandent un arbitrage.")
-
-    admin_state = _lower(effective_resolution.get("admin_state"))
-    if intake.related_quote_id is not None:
-        intake_status = INTAKE_STATUS_PROCESSED
-    elif admin_state == "ignored":
-        intake_status = INTAKE_STATUS_IGNORED
-    elif blockages:
-        intake_status = INTAKE_STATUS_BLOCKED
-    elif _needs_client_arbitrage(client_candidates, family_candidates, effective_resolution) or _needs_session_arbitrage(session_recommendations):
-        intake_status = INTAKE_STATUS_MATCHING_REQUIRED
-    elif normalized:
-        intake_status = INTAKE_STATUS_READY
-    else:
-        intake_status = INTAKE_STATUS_NORMALIZED
-
-    return {
-        "config": config,
-        "normalized": normalized,
-        "answers": _coerce_typeform_answers(intake.simplified_response_json),
-        "client_candidates": client_candidates,
-        "family_candidates": family_candidates,
-        "effective_resolution": effective_resolution,
-        "preview_quote": preview_quote,
-        "preview_quote_lines_in": quote_lines,
-        "session_recommendations": session_recommendations,
-        "runtime_context": runtime_context,
-        "warnings": list(dict.fromkeys(warnings)),
-        "blockages": list(dict.fromkeys(blockages)),
-        "intake_status": intake_status,
-    }
+    return analysis
 
 
 def _safe_analysis_for_intake(
