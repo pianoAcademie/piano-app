@@ -389,6 +389,7 @@ def _weekday_from_label(value: object | None) -> int | None:
 
 _DAY_TOKEN_RE = re.compile(r"\b(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b", re.IGNORECASE)
 _TIME_TOKEN_RE = re.compile(r"(?<!\d)(\d{1,2})(?:[:h](\d{1,2}))?(?!\d)")
+_EXPLICIT_TIME_HINT_RE = re.compile(r"\d{1,2}\s*(?:h|:)\s*\d{0,2}", re.IGNORECASE)
 
 
 def _extract_weekday_label(value: object | None) -> str | None:
@@ -449,6 +450,13 @@ def _extract_time_tokens(value: object | None) -> list[str]:
             seen.add(token)
             out.append(token)
     return out
+
+
+def _extract_explicit_time_tokens(value: object | None) -> list[str]:
+    raw = _text(value)
+    if not raw or _EXPLICIT_TIME_HINT_RE.search(raw) is None:
+        return []
+    return _extract_time_tokens(value)
 
 
 def _normalize_time_token(value: object | None) -> str | None:
@@ -583,7 +591,7 @@ def _fallback_requested_slot_preferences_from_simplified_answers(
         else:
             label_day = _extract_weekday_label(label)
             value_day = _extract_weekday_label(value)
-            label_times = _extract_time_tokens(label)
+            label_times = _extract_explicit_time_tokens(label)
             value_times = _extract_time_tokens(value)
 
             # Keep only cross-signals between label and value so age ranges like
