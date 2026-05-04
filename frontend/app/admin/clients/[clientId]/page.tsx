@@ -430,10 +430,35 @@ function isIncludedPlanBooking(row: AdminClientPaymentOut): boolean {
   return Number.isFinite(total) && Math.abs(total) < 0.01 && Boolean(row.reference);
 }
 
+function isManualChargeAwaitingInvoice(row: AdminClientPaymentOut): boolean {
+  const source = (row.source || "").trim().toUpperCase();
+  if (source !== "MANUAL") {
+    return false;
+  }
+  const status = normalizePaymentStatus(row.status);
+  if (status !== "PENDING") {
+    return false;
+  }
+  const manualType = (row.manual_transaction_type || "").trim().toUpperCase();
+  if (manualType !== "CHARGE") {
+    return false;
+  }
+  const invoiceNumber = (row.invoice_number || "").trim();
+  if (invoiceNumber) {
+    return false;
+  }
+  const total = Number(row.total_incl_vat || "0");
+  return Number.isFinite(total) && total > 0;
+}
+
 function paymentStatusDisplayLabel(row: AdminClientPaymentOut, language: UiLanguage = "fr"): string {
-  return isIncludedPlanBooking(row)
-    ? uiText(language, "admin.client_detail.payment_status.included_plan")
-    : paymentStatusLabel(row.status, language);
+  if (isIncludedPlanBooking(row)) {
+    return uiText(language, "admin.client_detail.payment_status.included_plan");
+  }
+  if (isManualChargeAwaitingInvoice(row)) {
+    return uiText(language, "admin.client_detail.payment_status.to_bill");
+  }
+  return paymentStatusLabel(row.status, language);
 }
 
 const PAID_PAYMENT_STATUSES = new Set(["PAID", "SUCCEEDED", "COMPLETED"]);
