@@ -5409,8 +5409,50 @@ def _load_live_series_sessions(
     selected_session: CourseSession,
     expected_dates: list[date],
 ) -> list[CourseSession]:
+    expected_date_set = set(expected_dates)
+    selected_zone = _safe_zoneinfo(selected_session.timezone)
+    selected_local_start = selected_session.start_at_utc.astimezone(selected_zone)
+    selected_local_end = selected_session.end_at_utc.astimezone(selected_zone)
+    selected_local_start_time = selected_local_start.timetz().replace(second=0, microsecond=0, tzinfo=None)
+    selected_local_end_time = selected_local_end.timetz().replace(second=0, microsecond=0, tzinfo=None)
+
+    def _matches_selected_series(session_obj: CourseSession) -> bool:
+        if session_obj.course_type_id != selected_session.course_type_id:
+            return False
+        if session_obj.location_id != selected_session.location_id:
+            return False
+        zone = _safe_zoneinfo(session_obj.timezone)
+        local_start = session_obj.start_at_utc.astimezone(zone)
+        local_end = session_obj.end_at_utc.astimezone(zone)
+        local_start_time = local_start.timetz().replace(second=0, microsecond=0, tzinfo=None)
+        local_end_time = local_end.timetz().replace(second=0, microsecond=0, tzinfo=None)
+        if expected_date_set and local_start.date() not in expected_date_set:
+            return False
+        return (
+            local_start_time == selected_local_start_time
+            and local_end_time == selected_local_end_time
+        )
+
     if selected_session.recurrence_group_id is None:
-        return [selected_session]
+        if not expected_dates:
+            return [selected_session]
+
+        start_floor_local = datetime.combine(min(expected_dates), time.min, tzinfo=selected_zone)
+        end_ceil_local = datetime.combine(max(expected_dates), time.max, tzinfo=selected_zone)
+        rows = db.scalars(
+            select(CourseSession)
+            .where(
+                CourseSession.course_type_id == selected_session.course_type_id,
+                CourseSession.location_id == selected_session.location_id,
+                CourseSession.status == SessionStatus.SCHEDULED,
+                CourseSession.start_at_utc >= start_floor_local.astimezone(timezone.utc),
+                CourseSession.start_at_utc <= end_ceil_local.astimezone(timezone.utc),
+            )
+            .order_by(CourseSession.start_at_utc.asc())
+            .with_for_update()
+        ).all()
+        filtered = [session_obj for session_obj in rows if _matches_selected_series(session_obj)]
+        return filtered or [selected_session]
 
     rows = db.scalars(
         select(CourseSession)
@@ -5424,13 +5466,7 @@ def _load_live_series_sessions(
     if not expected_dates:
         return rows
 
-    expected_date_set = set(expected_dates)
-    filtered: list[CourseSession] = []
-    for session_obj in rows:
-        zone = _safe_zoneinfo(session_obj.timezone)
-        local_date = session_obj.start_at_utc.astimezone(zone).date()
-        if local_date in expected_date_set:
-            filtered.append(session_obj)
+    filtered: list[CourseSession] = [session_obj for session_obj in rows if _matches_selected_series(session_obj)]
     return filtered
 
 
