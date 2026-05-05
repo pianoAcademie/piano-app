@@ -1804,6 +1804,22 @@ def _build_preview_lines(
     return preview_lines, quote_lines, warnings, blockages
 
 
+_EMPTY_PREQUOTE_BLOCKAGES = {
+    "Aucune ligne de pre-devis n est configuree pour ce formulaire.",
+    "Aucune ligne de pre-devis ne correspond aux choix du formulaire.",
+    "Le pre-devis est vide car aucune ligne exploitable n a ete resolue.",
+}
+
+
+def _can_force_empty_draft_quote(*, blockages: list[object], preview_lines_in: list[QuoteLineIn]) -> bool:
+    if preview_lines_in:
+        return False
+    normalized_blockages = [_text(item) for item in blockages if _text(item)]
+    if not normalized_blockages:
+        return False
+    return all(message in _EMPTY_PREQUOTE_BLOCKAGES for message in normalized_blockages)
+
+
 def _safe_zoneinfo(value: str | None) -> ZoneInfo:
     try:
         return ZoneInfo(_text(value) or "Europe/Paris")
@@ -3935,6 +3951,7 @@ def update_typeform_intake_normalized_payload(
 @router.post("/intakes/{intake_id}/draft-quote", response_model=TypeformDraftQuoteResultOut, status_code=status.HTTP_201_CREATED)
 def create_draft_quote_from_typeform_intake(
     intake_id: UUID,
+    allow_empty_quote: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> TypeformDraftQuoteResultOut:
@@ -3966,10 +3983,18 @@ def create_draft_quote_from_typeform_intake(
         )
     if intake.intake_status == INTAKE_STATUS_BLOCKED:
         blocking_messages = [message for message in analysis["blockages"] if _text(message)]
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=" ; ".join(blocking_messages) or "Cette intake comporte encore des blocages.",
-        )
+        preview_lines_in = analysis["preview_quote_lines_in"]
+        if not (
+            allow_empty_quote
+            and _can_force_empty_draft_quote(
+                blockages=blocking_messages,
+                preview_lines_in=preview_lines_in,
+            )
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=" ; ".join(blocking_messages) or "Cette intake comporte encore des blocages.",
+            )
     config = analysis["config"]
     if config is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Configuration formulaire introuvable")
@@ -3977,7 +4002,7 @@ def create_draft_quote_from_typeform_intake(
     resolution = _json_object(analysis["effective_resolution"])
     client_resolution = _json_object(resolution.get("client_resolution"))
     preview_lines_in = analysis["preview_quote_lines_in"]
-    if not preview_lines_in:
+    if not preview_lines_in and not allow_empty_quote:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Pre-devis vide")
 
     created_entities = _json_object(resolution.get("created_entities"))
@@ -4046,6 +4071,13 @@ def create_draft_quote_from_typeform_intake(
     if mode == CLIENT_MODE_EXISTING_FAMILY:
         quote_meta["typeform_selected_family_adult_client_id"] = client_resolution.get("selected_family_adult_client_id")
         quote_meta["typeform_selected_family_child_client_id"] = client_resolution.get("selected_family_child_client_id")
+    if allow_empty_quote and not preview_lines_in:
+        quote_meta["typeform_empty_quote_created"] = True
+        quote_meta["typeform_empty_quote_reason"] = [
+            _text(message)
+            for message in _json_list(analysis.get("blockages"))
+            if _text(message)
+        ]
 
     calendar_snapshot = _calendar_snapshot_from_analysis(
         db,

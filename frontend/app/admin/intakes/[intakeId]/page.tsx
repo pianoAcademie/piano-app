@@ -259,6 +259,12 @@ function manualProposalLabel(index: number, language: UiLanguage): string {
   return uiText(language, "admin.intakes.manual_choice", { index: index + 1 });
 }
 
+const EMPTY_PREQUOTE_BLOCKAGES = [
+  "Aucune ligne de pre-devis n est configuree pour ce formulaire.",
+  "Aucune ligne de pre-devis ne correspond aux choix du formulaire.",
+  "Le pre-devis est vide car aucune ligne exploitable n a ete resolue.",
+];
+
 function slotBadgeLabel(option: TypeformSessionMatchOptionOut, language: UiLanguage): string {
   return option.recurrence_label || uiText(language, "admin.intakes.punctual");
 }
@@ -371,9 +377,14 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
   const showResolutionSavedModal = successModal === "resolution_saved" && Boolean(ok);
   const normalizedPayload = detail.normalized_payload_json || {};
   const draftQuoteNeedsArbitrage = detail.intake_status === "MATCHING_REQUIRED";
+  const emptyPreviewOnlyBlockage =
+    !detail.related_quote_id
+    && detail.preview_quote === null
+    && detail.blockages.length > 0
+    && detail.blockages.every((message) => EMPTY_PREQUOTE_BLOCKAGES.includes(message));
   const draftQuoteBlocked =
     Boolean(detail.related_quote_id)
-    || detail.blockages.length > 0
+    || (detail.blockages.length > 0 && !emptyPreviewOnlyBlockage)
     || detail.intake_status === "IGNORED";
 
   return (
@@ -923,6 +934,17 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
           {draftQuoteNeedsArbitrage && !detail.related_quote_id ? (
             <section className="flash-warn top-gap-sm">
               {t("admin.intakes.quote_generation_warning")}
+            </section>
+          ) : null}
+          {emptyPreviewOnlyBlockage ? (
+            <section className="flash-warn top-gap-sm">
+              <div>{t("admin.intakes.empty_quote_warning")}</div>
+              <form action={generateTypeformDraftQuoteAction} className="top-gap-sm">
+                <input type="hidden" name="intake_id" value={detail.id} />
+                <input type="hidden" name="return_to" value={`/admin/intakes/${encodeURIComponent(detail.id)}`} />
+                <input type="hidden" name="allow_empty_quote" value="1" />
+                <button type="submit">{t("admin.intakes.generate_empty_quote")}</button>
+              </form>
             </section>
           ) : null}
 
