@@ -24,7 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from xhtml2pdf import pisa
 
-from app.models.ops import AppSetting
+from app.models.ops import AppSetting, LegalEntity
 from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct
 from app.models.quote import Prospect, Quote, QuoteLine, QuoteTemplate, QuoteTemplateVersion, SolfegeLevelRule, TermsTemplateVersion
 from app.models.typeform_intake import TypeformIntake
@@ -62,6 +62,9 @@ QUOTE_DOC_TEXT = {
         "payment_method_check_many": "cheques",
         "payment_method_card": "reglement par carte bancaire",
         "payment_method_generic": "reglement",
+        "check_instruction_order": "Les chèques doivent être émis à l’ordre de {payee}.",
+        "check_instruction_send": "Merci de ne pas oublier de signer vos chèques et de les envoyer à l’adresse : Piano Academie, 1 rue de Richelieu 75001 PARIS.",
+        "check_instruction_deposit_card": "Lorsqu’un acompte est demandé, il doit être payé par carte bancaire : une facture sera envoyée uniquement pour l’acompte, avec le lien de paiement.",
         "deposit_bank_line_1": "Afin de bloquer définitivement le créneau, un acompte de {deposit_amount} devra être réglé par virement bancaire dès validation du devis.",
         "deposit_bank_line_2": "Une facture d’acompte sera émise après validation du devis.",
         "deposit_bank_line_3": "Le solde de {remaining_amount} devra être réglé par virement bancaire à réception de la facture de solde, avant le démarrage des cours.",
@@ -258,6 +261,9 @@ QUOTE_DOC_TEXT = {
         "payment_method_check_many": "checks",
         "payment_method_card": "card payment",
         "payment_method_generic": "payment",
+        "check_instruction_order": "Checks must be made payable to {payee}.",
+        "check_instruction_send": "Please remember to sign your checks and send them to: Piano Academie, 1 rue de Richelieu 75001 PARIS.",
+        "check_instruction_deposit_card": "When a deposit is required, it must be paid by card: an invoice will be sent only for the deposit, with the payment link.",
         "deposit_bank_line_1": "To secure the slot, a deposit of {deposit_amount} must be paid by bank transfer as soon as the quote is approved.",
         "deposit_bank_line_2": "A deposit invoice will be issued after the quote is approved.",
         "deposit_bank_line_3": "The remaining balance of {remaining_amount} must be paid by bank transfer upon receipt of the balance invoice, before lessons begin.",
@@ -688,6 +694,54 @@ def _is_bank_transfer_payment_method(method_label: str) -> bool:
 
 def _is_card_payment_method(method_label: str) -> bool:
     return "carte" in str(method_label or "").strip().lower()
+
+
+def _is_check_payment_method(method_label: str) -> bool:
+    normalized = _searchable_text(method_label)
+    return bool(re.search(r"\b(?:cheques?|checks?)\b", normalized))
+
+
+def _quote_legal_entity_name(*, db: Session | None, quote: Quote) -> str:
+    if db is not None and getattr(quote, "legal_entity_id", None) is not None:
+        entity = db.scalar(select(LegalEntity).where(LegalEntity.id == quote.legal_entity_id))
+        if entity is not None:
+            name = str(entity.name or "").strip()
+            if name:
+                return name
+    meta = _json_object(getattr(quote, "meta", None))
+    for key in ("legal_entity_name", "seller_legal_entity_name", "billing_entity_name", "billing_entity"):
+        name = str(meta.get(key) or "").strip()
+        if name:
+            return name
+    return ""
+
+
+def _check_payee_for_legal_entity(legal_entity_name: str) -> str:
+    normalized = _searchable_text(legal_entity_name)
+    if "services" in normalized:
+        return "PIANO ACADEMIE SERVICES"
+    return "PIANO ACADEMIE"
+
+
+def _check_payment_instruction_lines(
+    *,
+    payment_method_label: str,
+    schedule: list[dict[str, Any]],
+    legal_entity_name: str,
+    has_deposit: bool,
+    language: str | None = None,
+) -> list[str]:
+    method_labels = [payment_method_label, *(str(item.get("payment_method") or "") for item in schedule)]
+    if not any(_is_check_payment_method(label) for label in method_labels):
+        return []
+    payee = _check_payee_for_legal_entity(legal_entity_name)
+    lines = [
+        _quote_doc_text("check_instruction_order", language=language, payee=payee),
+        _quote_doc_text("check_instruction_send", language=language),
+    ]
+    if has_deposit:
+        lines.append(_quote_doc_text("check_instruction_deposit_card", language=language))
+    return lines
 
 
 def _bank_transfer_deposit_schedule_lines(
@@ -3243,6 +3297,13 @@ def _build_template_values(
         language=language,
     )
     special_deposit_lines = special_bank_transfer_deposit_lines or special_card_deposit_lines
+    check_payment_instruction_lines = _check_payment_instruction_lines(
+        payment_method_label=str(document_context.get("payment_method_label") or _resolve_payment_method_label(quote=quote)),
+        schedule=schedule,
+        legal_entity_name=_quote_legal_entity_name(db=db, quote=quote),
+        has_deposit=has_deposit,
+        language=language,
+    )
     payment_schedule_rows = [
         [
             str(item.get("label") or "-"),
@@ -3527,6 +3588,8 @@ def _build_template_values(
     payment_method_block_html = f"<p><strong>{escape(_quote_doc_text('payment_method', language=language))} :</strong> {escape(payment_method_display_label)}</p>"
     if special_deposit_lines:
         payment_method_block_html += "".join(f"<p>{escape(line)}</p>" for line in special_deposit_lines)
+    if check_payment_instruction_lines:
+        payment_method_block_html += "".join(f"<p>{escape(line)}</p>" for line in check_payment_instruction_lines)
     if payment_instruction:
         payment_method_block_html = (
             f"{payment_method_block_html}<p><strong>{escape(_quote_doc_text('payment_instructions', language=language))} :</strong> {escape(payment_instruction)}</p>"
@@ -4953,6 +5016,13 @@ def _render_quote_pdf_blocks(
         language=language,
     )
     special_deposit_lines = special_bank_transfer_deposit_lines or special_card_deposit_lines
+    check_payment_instruction_lines = _check_payment_instruction_lines(
+        payment_method_label=str(values.get("payment_method_label") or "-"),
+        schedule=schedule,
+        legal_entity_name=_quote_legal_entity_name(db=db, quote=quote),
+        has_deposit=bool(context.get("deposit_enabled")),
+        language=language,
+    )
     payment_method_display_label = (
         str(values.get("payment_method_label", "-")).lower()
         if special_bank_transfer_deposit_lines
@@ -4962,7 +5032,9 @@ def _render_quote_pdf_blocks(
     if special_deposit_lines:
         for line in special_deposit_lines:
             story.append(Paragraph(escape(line), styles["text"]))
-    else:
+    for line in check_payment_instruction_lines:
+        story.append(Paragraph(escape(line), styles["text"]))
+    if not special_deposit_lines:
         story.append(Paragraph(escape(values.get("payment_schedule_summary", _quote_doc_text("payment_not_scheduled", language=language))), styles["text"]))
     if not special_deposit_lines and len(schedule) > 1:
         schedule_rows = [

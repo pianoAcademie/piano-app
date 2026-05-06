@@ -13,6 +13,7 @@ from reportlab.platypus import Paragraph
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.services.quotes.quote_documents import (
+    _check_payment_instruction_lines,
     _line_groups,
     _pass_recup_compact_notice_markup,
     _planning_blocks_table_html,
@@ -167,6 +168,34 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertEqual(kits, [])
         self.assertEqual(adjustments, [])
         self.assertEqual(other_fees, [line])
+
+    def test_check_payment_instructions_use_piano_academie_payee(self) -> None:
+        lines = _check_payment_instruction_lines(
+            payment_method_label="Cheque",
+            schedule=[],
+            legal_entity_name="Piano Academie SAS",
+            has_deposit=False,
+            language="fr",
+        )
+
+        self.assertIn("à l’ordre de PIANO ACADEMIE", " ".join(lines))
+        self.assertTrue(any("signer vos chèques" in line for line in lines))
+        self.assertTrue(any("1 rue de Richelieu 75001 PARIS" in line for line in lines))
+        self.assertFalse(any("facture sera envoyée uniquement pour l’acompte" in line for line in lines))
+
+    def test_check_payment_instructions_use_services_payee_and_deposit_card_notice(self) -> None:
+        lines = _check_payment_instruction_lines(
+            payment_method_label="",
+            schedule=[{"payment_method": "Chèque"}],
+            legal_entity_name="Piano Academie Services SAS",
+            has_deposit=True,
+            language="fr",
+        )
+
+        joined = " ".join(lines)
+        self.assertIn("à l’ordre de PIANO ACADEMIE SERVICES", joined)
+        self.assertIn("doit être payé par carte bancaire", joined)
+        self.assertIn("avec le lien de paiement", joined)
 
 
 if __name__ == "__main__":
