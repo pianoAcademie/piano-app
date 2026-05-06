@@ -7,7 +7,7 @@ import unittest
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.api.routes.admin import _parse_school_year_bounds
+from app.api.routes.admin import _parse_school_year_bounds, _safe_zoneinfo
 
 
 class AdminPlanningSimulationTests(unittest.TestCase):
@@ -21,6 +21,11 @@ class AdminPlanningSimulationTests(unittest.TestCase):
         self.assertIsNone(_parse_school_year_bounds(""))
         self.assertIsNone(_parse_school_year_bounds("2027-2026"))
         self.assertIsNone(_parse_school_year_bounds("saison"))
+
+    def test_safe_zoneinfo_falls_back_for_missing_or_invalid_timezone(self) -> None:
+        self.assertEqual(_safe_zoneinfo(None).key, "Europe/Paris")
+        self.assertEqual(_safe_zoneinfo("not-a-timezone").key, "Europe/Paris")
+        self.assertEqual(_safe_zoneinfo("UTC").key, "UTC")
 
 
 if __name__ == "__main__":

@@ -673,6 +673,14 @@ def _normalize_session_timezone(value: str) -> str:
     return timezone_name
 
 
+def _safe_zoneinfo(value: str | None) -> ZoneInfo:
+    timezone_name = (value or "").strip() or "Europe/Paris"
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("Europe/Paris")
+
+
 def _start_of_utc_day(moment: datetime) -> datetime:
     return moment.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
