@@ -47,6 +47,7 @@ from app.models.ops import (
     CommunicationSenderCategory,
     MessageFormat,
 )
+from app.models.quote import Quote, QuoteAcceptanceFollowup
 from app.models.user import ClientStatus, User, UserRole
 from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
 from app.services.invoice_documents import normalize_billing_entity
@@ -86,6 +87,9 @@ from app.schemas.admin import (
     AdminPlanningActivitiesOut,
     AdminPlanningActivitiesUpdateRequest,
     AdminPlanningActivityOut,
+    AdminPlanningSimulationOut,
+    AdminPlanningSimulationSlotOut,
+    AdminPlanningSimulationSummaryOut,
     AdminPlanningSettingsUpdateRequest,
     AdminProfessorOut,
     AdminSessionBookingCreateRequest,
@@ -141,6 +145,14 @@ BOOKING_STATUSES_ACTIVE = (
     BookingStatus.ATTENDED,
     BookingStatus.NO_SHOW,
     BookingStatus.EXCUSED_ABSENCE,
+)
+PLANNING_SIMULATION_QUOTE_APPROVED_STATUSES = {"approved"}
+PLANNING_SIMULATION_QUOTE_PENDING_STATUSES = {"sent", "change_requested"}
+PLANNING_SIMULATION_QUOTE_DRAFT_STATUSES = {"created"}
+PLANNING_SIMULATION_QUOTE_RELEVANT_STATUSES = (
+    PLANNING_SIMULATION_QUOTE_APPROVED_STATUSES
+    | PLANNING_SIMULATION_QUOTE_PENDING_STATUSES
+    | PLANNING_SIMULATION_QUOTE_DRAFT_STATUSES
 )
 VACATION_COURSE_TYPE_CODE = "VACATION_DAY"
 QUOTE_SCHOOL_CALENDARS_SETTING_KEY = "quote_school_calendars_v1"
@@ -936,6 +948,99 @@ def _parse_school_year_bounds(label: str) -> tuple[date, date] | None:
         return None
     # School year in France: Sep 1 -> Aug 31.
     return (date(start_year, 9, 1), date(end_year, 8, 31))
+
+
+def _school_year_label_for_day(day: date) -> str:
+    start_year = day.year if day.month >= 9 else day.year - 1
+    return f"{start_year}-{start_year + 1}"
+
+
+def _default_school_year_label() -> str:
+    try:
+        today = datetime.now(ZoneInfo("Europe/Paris")).date()
+    except Exception:
+        today = datetime.now(timezone.utc).date()
+    return _school_year_label_for_day(today)
+
+
+def _available_school_year_labels(db: Session) -> list[str]:
+    labels: set[str] = {_default_school_year_label()}
+
+    quote_labels = db.scalars(select(Quote.school_year_label).where(Quote.school_year_label.is_not(None))).all()
+    for value in quote_labels:
+        raw = str(value or "").strip()
+        if _parse_school_year_bounds(raw) is not None:
+            labels.add(raw)
+
+    session_month_rows = db.execute(
+        select(
+            func.extract("year", CourseSession.start_at_utc),
+            func.extract("month", CourseSession.start_at_utc),
+        )
+        .where(CourseSession.status != SessionStatus.CANCELLED)
+        .distinct()
+    ).all()
+    for year_raw, month_raw in session_month_rows:
+        try:
+            year_value = int(year_raw)
+            month_value = int(month_raw)
+            labels.add(_school_year_label_for_day(date(year_value, month_value, 1)))
+        except Exception:
+            continue
+
+    return sorted(labels, key=lambda item: int(item.split("-", 1)[0]), reverse=True)
+
+
+def _weekday_label(value: int) -> str:
+    labels = [
+        "Lundi",
+        "Mardi",
+        "Mercredi",
+        "Jeudi",
+        "Vendredi",
+        "Samedi",
+        "Dimanche",
+    ]
+    if 0 <= value < len(labels):
+        return labels[value]
+    return f"Jour {value}"
+
+
+def _json_object_local(value: object | None) -> dict[str, object]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _json_list_local(value: object | None) -> list[object]:
+    return list(value) if isinstance(value, list) else []
+
+
+def _parse_uuid_local(value: object | None) -> UUID | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return UUID(raw)
+    except Exception:
+        return None
+
+
+def _planning_simulation_signature(
+    *,
+    location_id: UUID | None,
+    course_type_id: UUID | None,
+    weekday: int,
+    start_time: str,
+    end_time: str,
+) -> str:
+    return "|".join(
+        [
+            str(location_id or ""),
+            str(course_type_id or ""),
+            str(weekday),
+            start_time.strip(),
+            end_time.strip(),
+        ]
+    )
 
 
 def _school_calendar_updated_at(raw: dict[str, object]) -> datetime:
@@ -1825,6 +1930,375 @@ def update_planning_settings(
     db.commit()
     db.refresh(config)
     return _to_planning_settings_out(config, location_name=location.name)
+
+
+@router.get("/plannings/simulation", response_model=AdminPlanningSimulationOut)
+def get_planning_simulation(
+    school_year_label: str | None = Query(default=None),
+    location_id: UUID | None = Query(default=None),
+    activity_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminPlanningSimulationOut:
+    available_school_years = _available_school_year_labels(db)
+    requested_school_year = (school_year_label or "").strip() or _default_school_year_label()
+    bounds = _parse_school_year_bounds(requested_school_year)
+    if bounds is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid school year label")
+    season_start, season_end = bounds
+    if requested_school_year not in available_school_years:
+        available_school_years = sorted(
+            {requested_school_year, *available_school_years},
+            key=lambda item: int(item.split("-", 1)[0]),
+            reverse=True,
+        )
+
+    if location_id is not None:
+        _get_location_or_404(db, location_id)
+    if activity_id is not None:
+        exists = db.scalar(select(CourseType.id).where(CourseType.id == activity_id).limit(1))
+        if exists is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course type not found")
+
+    slot_entries: dict[str, dict[str, object]] = {}
+    session_slot_by_id: dict[UUID, str] = {}
+    live_slot_keys_by_signature: dict[str, set[str]] = {}
+
+    def ensure_slot(
+        *,
+        slot_key: str,
+        slot_label_location_id: UUID | None,
+        slot_label_location_name: str,
+        slot_label_timezone: str | None,
+        slot_label_activity_id: UUID | None,
+        slot_label_activity_name: str,
+        slot_label_activity_color: str | None,
+        slot_label_activity_mode: DeliveryMode | None,
+        weekday: int,
+        start_time: str,
+        end_time: str,
+        quote_only: bool,
+        note: str | None = None,
+    ) -> dict[str, object]:
+        existing = slot_entries.get(slot_key)
+        if existing is not None:
+            if note and note not in existing["notes"]:
+                existing["notes"].append(note)
+            if quote_only:
+                existing["quote_only"] = bool(existing["quote_only"]) and True
+            return existing
+        payload = {
+            "slot_key": slot_key,
+            "location_id": slot_label_location_id,
+            "location_name": slot_label_location_name,
+            "location_timezone": slot_label_timezone,
+            "course_type_id": slot_label_activity_id,
+            "course_type_name": slot_label_activity_name,
+            "course_type_color_hex": slot_label_activity_color,
+            "course_type_mode": slot_label_activity_mode,
+            "weekday": weekday,
+            "weekday_label": _weekday_label(weekday),
+            "start_time": start_time,
+            "end_time": end_time,
+            "first_date": None,
+            "last_date": None,
+            "occurrence_count": 0,
+            "live_session_count": 0,
+            "capacity_min": None,
+            "capacity_max": None,
+            "_booked_user_ids": set(),
+            "_approved_quote_ids": set(),
+            "_pending_quote_ids": set(),
+            "_draft_quote_ids": set(),
+            "quote_only": quote_only,
+            "notes": [note] if note else [],
+        }
+        slot_entries[slot_key] = payload
+        return payload
+
+    session_query_start = datetime(season_start.year, 1, 1, tzinfo=timezone.utc)
+    session_query_end = datetime(season_end.year + 1, 1, 1, tzinfo=timezone.utc)
+    session_stmt = (
+        select(CourseSession, CourseType, Location)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .where(
+            CourseSession.start_at_utc >= session_query_start,
+            CourseSession.start_at_utc < session_query_end,
+            CourseSession.status != SessionStatus.CANCELLED,
+        )
+        .order_by(Location.name.asc(), CourseType.name.asc(), CourseSession.start_at_utc.asc())
+    )
+    if location_id is not None:
+        session_stmt = session_stmt.where(CourseSession.location_id == location_id)
+    if activity_id is not None:
+        session_stmt = session_stmt.where(CourseSession.course_type_id == activity_id)
+
+    session_rows = db.execute(session_stmt).all()
+    for session_obj, course_type, location in session_rows:
+        zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
+        local_start = session_obj.start_at_utc.astimezone(zone)
+        local_end = session_obj.end_at_utc.astimezone(zone)
+        local_day = local_start.date()
+        if local_day < season_start or local_day > season_end:
+            continue
+
+        weekday = local_start.weekday()
+        start_time = local_start.strftime("%H:%M")
+        end_time = local_end.strftime("%H:%M")
+        slot_key = f"series::{session_obj.recurrence_group_id or session_obj.id}"
+        signature = _planning_simulation_signature(
+            location_id=location.id,
+            course_type_id=course_type.id,
+            weekday=weekday,
+            start_time=start_time,
+            end_time=end_time,
+        )
+        live_slot_keys_by_signature.setdefault(signature, set()).add(slot_key)
+        session_slot_by_id[session_obj.id] = slot_key
+
+        entry = ensure_slot(
+            slot_key=slot_key,
+            slot_label_location_id=location.id,
+            slot_label_location_name=location.name,
+            slot_label_timezone=session_obj.timezone or location.timezone,
+            slot_label_activity_id=course_type.id,
+            slot_label_activity_name=course_type.name,
+            slot_label_activity_color=course_type.color_hex,
+            slot_label_activity_mode=course_type.mode,
+            weekday=weekday,
+            start_time=start_time,
+            end_time=end_time,
+            quote_only=False,
+            note=None if session_obj.recurrence_group_id is not None else "Creation ponctuelle",
+        )
+
+        entry["occurrence_count"] = int(entry["occurrence_count"]) + 1
+        entry["live_session_count"] = int(entry["live_session_count"]) + 1
+        if entry["first_date"] is None or local_day < entry["first_date"]:
+            entry["first_date"] = local_day
+        if entry["last_date"] is None or local_day > entry["last_date"]:
+            entry["last_date"] = local_day
+        capacity_value = int(session_obj.capacity_max)
+        current_min = entry["capacity_min"]
+        current_max = entry["capacity_max"]
+        entry["capacity_min"] = capacity_value if current_min is None else min(int(current_min), capacity_value)
+        entry["capacity_max"] = capacity_value if current_max is None else max(int(current_max), capacity_value)
+
+    if session_slot_by_id:
+        booking_rows = db.execute(
+            select(Booking.session_id, Booking.user_id).where(
+                Booking.session_id.in_(list(session_slot_by_id.keys())),
+                Booking.status.in_(BOOKING_STATUSES_COUNTED_AS_RESERVED),
+            )
+        ).all()
+        for session_id, user_id in booking_rows:
+            slot_key = session_slot_by_id.get(session_id)
+            if slot_key is None:
+                continue
+            slot_entries[slot_key]["_booked_user_ids"].add(str(user_id))
+
+    quote_rows = db.execute(
+        select(Quote, QuoteAcceptanceFollowup)
+        .outerjoin(QuoteAcceptanceFollowup, QuoteAcceptanceFollowup.quote_id == Quote.id)
+        .where(
+            Quote.school_year_label == requested_school_year,
+            Quote.status.in_(tuple(sorted(PLANNING_SIMULATION_QUOTE_RELEVANT_STATUSES))),
+        )
+    ).all()
+
+    for quote, followup in quote_rows:
+        normalized_status = str(quote.status or "").strip().lower()
+        if normalized_status in PLANNING_SIMULATION_QUOTE_APPROVED_STATUSES and followup is not None and followup.status == "completed":
+            continue
+
+        if normalized_status in PLANNING_SIMULATION_QUOTE_APPROVED_STATUSES:
+            bucket_name = "_approved_quote_ids"
+        elif normalized_status in PLANNING_SIMULATION_QUOTE_PENDING_STATUSES:
+            bucket_name = "_pending_quote_ids"
+        else:
+            bucket_name = "_draft_quote_ids"
+
+        snapshot = _json_object_local(quote.calendar_snapshot)
+        for raw_block in _json_list_local(snapshot.get("blocks")):
+            block = _json_object_local(raw_block)
+            if not block:
+                continue
+            if bool(block.get("selection_pending")):
+                continue
+
+            block_weekday_raw = block.get("weekday")
+            try:
+                block_weekday = int(block_weekday_raw)
+            except Exception:
+                continue
+            if block_weekday < 0 or block_weekday > 6:
+                continue
+
+            block_start_time = str(block.get("start_time") or "").strip()
+            block_end_time = str(block.get("end_time") or "").strip()
+            if not block_start_time or not block_end_time:
+                continue
+
+            block_location_id = _parse_uuid_local(block.get("location_id"))
+            block_activity_id = _parse_uuid_local(block.get("activity_id"))
+            if location_id is not None and block_location_id != location_id:
+                continue
+            if activity_id is not None and block_activity_id != activity_id:
+                continue
+
+            block_start_date = _safe_parse_iso_date(block.get("start_date"))
+            block_end_date = _safe_parse_iso_date(block.get("end_date"))
+            if block_start_date is not None and block_start_date > season_end:
+                continue
+            if block_end_date is not None and block_end_date < season_start:
+                continue
+
+            signature = _planning_simulation_signature(
+                location_id=block_location_id,
+                course_type_id=block_activity_id,
+                weekday=block_weekday,
+                start_time=block_start_time,
+                end_time=block_end_time,
+            )
+            block_series_key = str(block.get("series_key") or "").strip()
+            resolved_slot_key: str | None = None
+            if block_series_key:
+                candidate_key = f"series::{block_series_key}"
+                if candidate_key in slot_entries:
+                    resolved_slot_key = candidate_key
+            if resolved_slot_key is None:
+                matching_live_keys = sorted(live_slot_keys_by_signature.get(signature, set()))
+                if len(matching_live_keys) == 1:
+                    resolved_slot_key = matching_live_keys[0]
+            slot_note: str | None = None
+            if resolved_slot_key is None:
+                resolved_slot_key = f"quote::{signature}"
+                matching_live_keys = sorted(live_slot_keys_by_signature.get(signature, set()))
+                if len(matching_live_keys) > 1:
+                    slot_note = "Serie live ambigue pour ce devis"
+                else:
+                    slot_note = "Aucun creneau live correspondant"
+
+            entry = ensure_slot(
+                slot_key=resolved_slot_key,
+                slot_label_location_id=block_location_id,
+                slot_label_location_name=str(block.get("location_label") or quote.location_id or "Lieu inconnu"),
+                slot_label_timezone=None,
+                slot_label_activity_id=block_activity_id,
+                slot_label_activity_name=str(block.get("activity_label") or "Activite"),
+                slot_label_activity_color=None,
+                slot_label_activity_mode=None,
+                weekday=block_weekday,
+                start_time=block_start_time,
+                end_time=block_end_time,
+                quote_only=resolved_slot_key.startswith("quote::"),
+                note=slot_note,
+            )
+            if entry["first_date"] is None and block_start_date is not None:
+                entry["first_date"] = block_start_date
+            if entry["last_date"] is None and block_end_date is not None:
+                entry["last_date"] = block_end_date
+            entry[bucket_name].add(str(quote.id))
+
+    slot_payloads: list[AdminPlanningSimulationSlotOut] = []
+    location_ids_seen: set[UUID] = set()
+    course_type_ids_seen: set[UUID] = set()
+    total_booked = 0
+    total_approved = 0
+    total_pending = 0
+    total_draft = 0
+    quote_only_slot_count = 0
+
+    sorted_entries = sorted(
+        slot_entries.values(),
+        key=lambda item: (
+            str(item["location_name"]).casefold(),
+            int(item["weekday"]),
+            str(item["start_time"]),
+            str(item["course_type_name"]).casefold(),
+            str(item["end_time"]),
+        ),
+    )
+
+    for entry in sorted_entries:
+        booked_count = len(entry["_booked_user_ids"])
+        approved_quotes_count = len(entry["_approved_quote_ids"])
+        pending_quotes_count = len(entry["_pending_quote_ids"])
+        draft_quotes_count = len(entry["_draft_quote_ids"])
+        projected_count = booked_count + approved_quotes_count + pending_quotes_count + draft_quotes_count
+        capacity_min = entry["capacity_min"]
+        capacity_max = entry["capacity_max"]
+        capacity_value = int(capacity_max) if capacity_max is not None else None
+        remaining_capacity = (capacity_value - projected_count) if capacity_value is not None else None
+        fill_rate = None if capacity_value in {None, 0} else round(booked_count / capacity_value, 4)
+        projected_fill_rate = None if capacity_value in {None, 0} else round(projected_count / capacity_value, 4)
+
+        location_uuid = entry["location_id"]
+        activity_uuid = entry["course_type_id"]
+        if isinstance(location_uuid, UUID):
+            location_ids_seen.add(location_uuid)
+        if isinstance(activity_uuid, UUID):
+            course_type_ids_seen.add(activity_uuid)
+        total_booked += booked_count
+        total_approved += approved_quotes_count
+        total_pending += pending_quotes_count
+        total_draft += draft_quotes_count
+        if bool(entry["quote_only"]):
+            quote_only_slot_count += 1
+
+        slot_payloads.append(
+            AdminPlanningSimulationSlotOut(
+                slot_key=str(entry["slot_key"]),
+                location_id=location_uuid if isinstance(location_uuid, UUID) else None,
+                location_name=str(entry["location_name"]),
+                location_timezone=str(entry["location_timezone"]) if entry["location_timezone"] else None,
+                course_type_id=activity_uuid if isinstance(activity_uuid, UUID) else None,
+                course_type_name=str(entry["course_type_name"]),
+                course_type_color_hex=str(entry["course_type_color_hex"]) if entry["course_type_color_hex"] else None,
+                course_type_mode=entry["course_type_mode"] if isinstance(entry["course_type_mode"], DeliveryMode) else None,
+                weekday=int(entry["weekday"]),
+                weekday_label=str(entry["weekday_label"]),
+                start_time=str(entry["start_time"]),
+                end_time=str(entry["end_time"]),
+                first_date=entry["first_date"] if isinstance(entry["first_date"], date) else None,
+                last_date=entry["last_date"] if isinstance(entry["last_date"], date) else None,
+                occurrence_count=int(entry["occurrence_count"]),
+                live_session_count=int(entry["live_session_count"]),
+                capacity=capacity_value,
+                capacity_min=int(capacity_min) if capacity_min is not None else None,
+                capacity_max=int(capacity_max) if capacity_max is not None else None,
+                booked_count=booked_count,
+                approved_quotes_count=approved_quotes_count,
+                pending_quotes_count=pending_quotes_count,
+                draft_quotes_count=draft_quotes_count,
+                projected_count=projected_count,
+                remaining_capacity=remaining_capacity,
+                fill_rate=fill_rate,
+                projected_fill_rate=projected_fill_rate,
+                quote_only=bool(entry["quote_only"]),
+                notes=[str(item) for item in entry["notes"]],
+            )
+        )
+
+    return AdminPlanningSimulationOut(
+        school_year_label=requested_school_year,
+        available_school_years=available_school_years,
+        location_filter_id=location_id,
+        activity_filter_id=activity_id,
+        generated_at=_utcnow(),
+        summary=AdminPlanningSimulationSummaryOut(
+            location_count=len(location_ids_seen),
+            slot_count=len(slot_payloads),
+            course_type_count=len(course_type_ids_seen),
+            booked_count=total_booked,
+            approved_quotes_count=total_approved,
+            pending_quotes_count=total_pending,
+            draft_quotes_count=total_draft,
+            quote_only_slot_count=quote_only_slot_count,
+        ),
+        slots=slot_payloads,
+    )
 
 
 @router.post("/sessions", response_model=AdminSessionOut, status_code=status.HTTP_201_CREATED)

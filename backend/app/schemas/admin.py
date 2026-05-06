@@ -2160,3 +2160,56 @@ class AdminPlanningActivitiesOut(BaseModel):
 
 class AdminPlanningActivitiesUpdateRequest(BaseModel):
     activity_ids: list[UUID] = Field(default_factory=list)
+
+
+class AdminPlanningSimulationSlotOut(BaseModel):
+    slot_key: str
+    location_id: UUID | None = None
+    location_name: str
+    location_timezone: str | None = None
+    course_type_id: UUID | None = None
+    course_type_name: str
+    course_type_color_hex: str | None = None
+    course_type_mode: DeliveryMode | None = None
+    weekday: int
+    weekday_label: str
+    start_time: str
+    end_time: str
+    first_date: date | None = None
+    last_date: date | None = None
+    occurrence_count: int = 0
+    live_session_count: int = 0
+    capacity: int | None = None
+    capacity_min: int | None = None
+    capacity_max: int | None = None
+    booked_count: int = 0
+    approved_quotes_count: int = 0
+    pending_quotes_count: int = 0
+    draft_quotes_count: int = 0
+    projected_count: int = 0
+    remaining_capacity: int | None = None
+    fill_rate: float | None = None
+    projected_fill_rate: float | None = None
+    quote_only: bool = False
+    notes: list[str] = Field(default_factory=list)
+
+
+class AdminPlanningSimulationSummaryOut(BaseModel):
+    location_count: int
+    slot_count: int
+    course_type_count: int
+    booked_count: int
+    approved_quotes_count: int
+    pending_quotes_count: int
+    draft_quotes_count: int
+    quote_only_slot_count: int
+
+
+class AdminPlanningSimulationOut(BaseModel):
+    school_year_label: str
+    available_school_years: list[str] = Field(default_factory=list)
+    location_filter_id: UUID | None = None
+    activity_filter_id: UUID | None = None
+    generated_at: datetime
+    summary: AdminPlanningSimulationSummaryOut
+    slots: list[AdminPlanningSimulationSlotOut] = Field(default_factory=list)

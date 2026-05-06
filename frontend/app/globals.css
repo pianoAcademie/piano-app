@@ -15496,3 +15496,339 @@ button.danger:focus-visible {
     grid-template-columns: 1fr;
   }
 }
+
+.simulation-planning-toolbar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  gap: 16px;
+  align-items: end;
+}
+
+.simulation-planning-toolbar label {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.simulation-planning-toolbar span {
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: #55432f;
+}
+
+.simulation-planning-toolbar select {
+  min-width: 0;
+  width: 100%;
+  padding: 11px 14px;
+  border-radius: 14px;
+  border: 1px solid #ddceb7;
+  background: #fffdfa;
+  color: #382b1b;
+}
+
+.simulation-planning-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.simulation-planning-submit {
+  min-width: 150px;
+}
+
+.simulation-planning-summary-grid {
+  align-items: stretch;
+}
+
+.simulation-planning-summary-grid .card strong {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 1.9rem;
+  line-height: 1;
+  color: #342513;
+}
+
+.simulation-planning-legend {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) auto;
+  gap: 18px 24px;
+  align-items: center;
+}
+
+.simulation-planning-legend > p {
+  margin: 0;
+  grid-column: 1 / -1;
+}
+
+.simulation-planning-legend-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.simulation-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+
+.simulation-chip-live {
+  background: #e7f6ee;
+  border-color: #b8dfc7;
+  color: #1f6f46;
+}
+
+.simulation-chip-approved {
+  background: #eef2ff;
+  border-color: #c9d2ff;
+  color: #3550b8;
+}
+
+.simulation-chip-pending {
+  background: #fff3de;
+  border-color: #efd4a5;
+  color: #8a5a10;
+}
+
+.simulation-chip-draft {
+  background: #f6ebff;
+  border-color: #e1c7fb;
+  color: #7e44b4;
+}
+
+.simulation-location-card {
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+  border-radius: 28px;
+  border: 1px solid #eadcc8;
+  background:
+    radial-gradient(circle at top right, rgba(214, 163, 74, 0.08), transparent 32%),
+    linear-gradient(180deg, #fffdfa 0%, #fff8ef 100%);
+  box-shadow: 0 16px 34px rgba(78, 55, 23, 0.06);
+}
+
+.simulation-location-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.simulation-location-header h3 {
+  margin: 0;
+  font-size: 1.45rem;
+  color: #24170a;
+}
+
+.simulation-location-header .muted {
+  margin-top: 4px;
+}
+
+.simulation-activity-stack {
+  display: grid;
+  gap: 18px;
+}
+
+.simulation-activity-block {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid #eadcc8;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.simulation-activity-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.simulation-activity-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.simulation-activity-label strong {
+  color: #2e2214;
+}
+
+.simulation-activity-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 4px rgba(214, 163, 74, 0.14);
+  flex: 0 0 auto;
+}
+
+.simulation-planning-table {
+  width: 100%;
+  min-width: 1120px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.simulation-planning-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 12px 10px;
+  text-align: left;
+  font-size: 0.88rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #5f4a34;
+  background: #f6ead4;
+  border-bottom: 1px solid #e7d8c2;
+}
+
+.simulation-planning-table thead th:first-child {
+  border-top-left-radius: 16px;
+}
+
+.simulation-planning-table thead th:last-child {
+  border-top-right-radius: 16px;
+}
+
+.simulation-planning-table tbody td {
+  padding: 14px 10px;
+  vertical-align: top;
+  border-bottom: 1px solid #f0e5d4;
+  color: #302112;
+  background: #fffdf9;
+}
+
+.simulation-planning-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.simulation-planning-table tbody tr:hover td {
+  background: #fffcf4;
+}
+
+.simulation-inline-note {
+  margin-top: 5px;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  color: #6d5a45;
+}
+
+.simulation-tone-critical {
+  color: #a03b2d;
+}
+
+.simulation-tone-warning {
+  color: #8a5a10;
+}
+
+.simulation-tone-ok {
+  color: #256947;
+}
+
+.simulation-fill {
+  display: grid;
+  gap: 8px;
+  min-width: 170px;
+}
+
+.simulation-fill-track {
+  position: relative;
+  overflow: hidden;
+  height: 14px;
+  border-radius: 999px;
+  background: #f0e7d9;
+}
+
+.simulation-fill-live,
+.simulation-fill-projected {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+}
+
+.simulation-fill-live {
+  background: linear-gradient(90deg, #8ed0a6 0%, #57ae79 100%);
+  opacity: 0.9;
+  z-index: 1;
+}
+
+.simulation-fill-projected {
+  z-index: 2;
+  opacity: 0.42;
+}
+
+.simulation-fill-projected-critical {
+  background: linear-gradient(90deg, #ee9d90 0%, #da5340 100%);
+}
+
+.simulation-fill-projected-warning {
+  background: linear-gradient(90deg, #f6d488 0%, #d7a13b 100%);
+}
+
+.simulation-fill-projected-ok {
+  background: linear-gradient(90deg, #c3e5ce 0%, #73bf8e 100%);
+}
+
+@media (max-width: 1240px) {
+  .simulation-planning-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .simulation-planning-toolbar-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .simulation-planning-legend {
+    grid-template-columns: 1fr;
+  }
+
+  .simulation-planning-legend-chips {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 900px) {
+  .simulation-planning-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .simulation-location-card {
+    padding: 18px;
+  }
+
+  .simulation-activity-block {
+    padding: 14px;
+  }
+}
+
+@media (max-width: 720px) {
+  .simulation-planning-toolbar,
+  .simulation-planning-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .simulation-location-header,
+  .simulation-activity-heading {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .simulation-fill {
+    min-width: 0;
+  }
+}

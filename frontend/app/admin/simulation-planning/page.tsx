@@ -4,20 +4,37 @@ import { redirect } from "next/navigation";
 
 import { backendRequest } from "../../../lib/backend";
 import type {
-  AdminPlanningActivitiesOut,
-  AdminPlanningSettingsOut,
+  AdminPlanningSimulationOut,
+  AdminPlanningSimulationSlotOut,
+  CourseTypeOut,
   LocationOut,
   UserOut,
 } from "../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage } from "../../../lib/ui-i18n";
 
-type PlanningLocationSummary = {
-  location: LocationOut;
-  settings: AdminPlanningSettingsOut | null;
-  settingsError: string | null;
-  activities: AdminPlanningActivitiesOut | null;
-  activitiesError: string | null;
+type SearchParams = Record<string, string | string[] | undefined>;
+
+type LocationGroup = {
+  locationId: string;
+  locationName: string;
+  timezone: string | null;
+  slots: AdminPlanningSimulationSlotOut[];
 };
+
+type ActivityGroup = {
+  courseTypeId: string;
+  courseTypeName: string;
+  colorHex: string | null;
+  slots: AdminPlanningSimulationSlotOut[];
+};
+
+function readParam(params: SearchParams, key: string): string {
+  const raw = params[key];
+  if (Array.isArray(raw)) {
+    return raw[0] ?? "";
+  }
+  return raw ?? "";
+}
 
 async function loadPlanningSimulationLocations(
   token: string,
@@ -37,9 +54,20 @@ function text(language: UiLanguage, fr: string, en: string): string {
   return language === "en" ? en : fr;
 }
 
+function formatDateOnly(value: string | null, language: UiLanguage): string {
+  if (!value) {
+    return "-";
+  }
+  const parsed = new Date(`${value}T12:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleDateString(localeForUiLanguage(language), { dateStyle: "medium" });
+}
+
 function formatDateTime(value: string | null, language: UiLanguage): string {
   if (!value) {
-    return text(language, "Non disponible", "Unavailable");
+    return "-";
   }
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
@@ -51,15 +79,106 @@ function formatDateTime(value: string | null, language: UiLanguage): string {
   });
 }
 
-function locationSubtitle(location: LocationOut, language: UiLanguage): string {
-  const parts = [location.city, location.timezone].filter(Boolean);
-  if (parts.length > 0) {
-    return parts.join(" · ");
-  }
-  return text(language, "Lieu sans adresse detaillee", "Location without detailed address");
+function formatSeasonWindow(slot: AdminPlanningSimulationSlotOut, language: UiLanguage): string {
+  const datesCount = slot.occurrence_count;
+  const seasonSpan =
+    slot.first_date && slot.last_date
+      ? `${text(language, "du", "from")} ${formatDateOnly(slot.first_date, language)} ${text(language, "au", "to")} ${formatDateOnly(slot.last_date, language)}`
+      : text(language, "Periode non renseignee", "Missing season range");
+  return `${datesCount} ${text(language, "date(s)", "occurrence(s)")} · ${seasonSpan}`;
 }
 
-export default async function AdminSimulationPlanningPage(): Promise<JSX.Element> {
+function formatCapacity(slot: AdminPlanningSimulationSlotOut): string {
+  if (slot.capacity_min === null && slot.capacity_max === null) {
+    return "-";
+  }
+  if (slot.capacity_min !== null && slot.capacity_max !== null && slot.capacity_min !== slot.capacity_max) {
+    return `${slot.capacity_min}-${slot.capacity_max}`;
+  }
+  return String(slot.capacity ?? slot.capacity_max ?? slot.capacity_min ?? "-");
+}
+
+function fillPercent(value: number | null): number {
+  if (value === null || !Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round(value * 100)));
+}
+
+function projectionTone(slot: AdminPlanningSimulationSlotOut): "critical" | "warning" | "ok" {
+  if (slot.remaining_capacity !== null && slot.remaining_capacity < 0) {
+    return "critical";
+  }
+  if (slot.projected_fill_rate !== null && slot.projected_fill_rate >= 0.9) {
+    return "warning";
+  }
+  return "ok";
+}
+
+function noteList(slot: AdminPlanningSimulationSlotOut, language: UiLanguage): string[] {
+  const notes = [...slot.notes];
+  if (slot.quote_only) {
+    notes.unshift(text(language, "Pas de serie live raccordee a ce creneau devis.", "No live series is linked to this quote slot."));
+  }
+  if (slot.remaining_capacity !== null && slot.remaining_capacity < 0) {
+    notes.unshift(
+      text(
+        language,
+        "Projection au-dessus de la capacite. Arbitrage ou ouverture de place a prevoir.",
+        "Projected occupancy exceeds capacity. Arbitration or additional seats are required.",
+      ),
+    );
+  }
+  return notes;
+}
+
+function groupByLocation(slots: AdminPlanningSimulationSlotOut[]): LocationGroup[] {
+  const grouped = new Map<string, LocationGroup>();
+  for (const slot of slots) {
+    const locationId = slot.location_id || "__unknown__";
+    const current = grouped.get(locationId);
+    if (current) {
+      current.slots.push(slot);
+      continue;
+    }
+    grouped.set(locationId, {
+      locationId,
+      locationName: slot.location_name,
+      timezone: slot.location_timezone,
+      slots: [slot],
+    });
+  }
+  return Array.from(grouped.values()).sort((a, b) => a.locationName.localeCompare(b.locationName, "fr"));
+}
+
+function groupByActivity(slots: AdminPlanningSimulationSlotOut[]): ActivityGroup[] {
+  const grouped = new Map<string, ActivityGroup>();
+  for (const slot of slots) {
+    const activityId = slot.course_type_id || `__${slot.course_type_name}`;
+    const current = grouped.get(activityId);
+    if (current) {
+      current.slots.push(slot);
+      continue;
+    }
+    grouped.set(activityId, {
+      courseTypeId: activityId,
+      courseTypeName: slot.course_type_name,
+      colorHex: slot.course_type_color_hex,
+      slots: [slot],
+    });
+  }
+  return Array.from(grouped.values()).sort((a, b) => a.courseTypeName.localeCompare(b.courseTypeName, "fr"));
+}
+
+function sumPipeline(summary: AdminPlanningSimulationOut["summary"]): number {
+  return summary.approved_quotes_count + summary.pending_quotes_count + summary.draft_quotes_count;
+}
+
+export default async function AdminSimulationPlanningPage({
+  searchParams,
+}: {
+  searchParams?: SearchParams;
+}): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
     redirect("/login?error_code=session_expired");
@@ -71,46 +190,34 @@ export default async function AdminSimulationPlanningPage(): Promise<JSX.Element
   }
 
   const language = normalizeUiLanguage(meResult.data.preferred_language);
-  const locationsResult = await loadPlanningSimulationLocations(token);
+  const requestedSchoolYear = readParam(searchParams ?? {}, "school_year").trim();
+  const requestedLocationId = readParam(searchParams ?? {}, "location_id").trim();
+  const requestedActivityId = readParam(searchParams ?? {}, "activity_id").trim();
 
-  const locationSummaries: PlanningLocationSummary[] = locationsResult.ok
-    ? await Promise.all(
-        locationsResult.data.map(async (location) => {
-          const [settingsResult, activitiesResult] = await Promise.all([
-            backendRequest<AdminPlanningSettingsOut>(
-              `/api/v1/admin/plannings/${encodeURIComponent(location.id)}/settings`,
-              {},
-              token,
-            ),
-            backendRequest<AdminPlanningActivitiesOut>(
-              `/api/v1/admin/plannings/${encodeURIComponent(location.id)}/activities`,
-              {},
-              token,
-            ),
-          ]);
+  const simulationQuery = new URLSearchParams();
+  if (requestedSchoolYear) simulationQuery.set("school_year_label", requestedSchoolYear);
+  if (requestedLocationId) simulationQuery.set("location_id", requestedLocationId);
+  if (requestedActivityId) simulationQuery.set("activity_id", requestedActivityId);
+  const simulationPath = simulationQuery.size
+    ? `/api/v1/admin/plannings/simulation?${simulationQuery.toString()}`
+    : "/api/v1/admin/plannings/simulation";
 
-          return {
-            location,
-            settings: settingsResult.ok ? settingsResult.data : null,
-            settingsError: settingsResult.ok ? null : settingsResult.message,
-            activities: activitiesResult.ok ? activitiesResult.data : null,
-            activitiesError: activitiesResult.ok ? null : activitiesResult.message,
-          };
-        }),
-      )
-    : [];
+  const [locationsResult, courseTypesResult, simulationResult] = await Promise.all([
+    loadPlanningSimulationLocations(token),
+    backendRequest<CourseTypeOut[]>("/api/v1/course-types?active=true", {}, token),
+    backendRequest<AdminPlanningSimulationOut>(simulationPath, {}, token),
+  ]);
 
-  const configuredLocations = locationSummaries.filter((summary) => summary.settings).length;
-  const totalSelectedActivities = locationSummaries.reduce(
-    (total, summary) => total + (summary.activities?.selected_activity_ids.length ?? 0),
-    0,
-  );
-  const onlineLocations = locationSummaries.filter((summary) => summary.location.is_online).length;
-  const lastUpdatedAt = locationSummaries
-    .map((summary) => summary.settings?.updated_at ?? null)
-    .filter((value): value is string => Boolean(value))
-    .sort()
-    .at(-1) ?? null;
+  const locations = locationsResult.ok ? locationsResult.data : [];
+  const courseTypes = courseTypesResult.ok ? courseTypesResult.data : [];
+  const simulation = simulationResult.ok ? simulationResult.data : null;
+  const locationsError = locationsResult.ok ? null : locationsResult.message;
+  const courseTypesError = courseTypesResult.ok ? null : courseTypesResult.message;
+  const simulationError = simulationResult.ok ? null : simulationResult.message;
+
+  const effectiveSchoolYear = simulation?.school_year_label || requestedSchoolYear || "";
+  const availableSchoolYears = simulation?.available_school_years ?? [effectiveSchoolYear].filter(Boolean);
+  const groupedLocations = simulation ? groupByLocation(simulation.slots) : [];
 
   return (
     <section className="admin-page-grid">
@@ -121,8 +228,8 @@ export default async function AdminSimulationPlanningPage(): Promise<JSX.Element
             <p className="muted">
               {text(
                 language,
-                "Point d'entree pour preparer les regles de capacite par lieu et retrouver rapidement les reglages de planning utiles aux simulations.",
-                "Hub to prepare per-location capacity rules and quickly reach the planning settings used by simulations.",
+                "Lecture de charge par saison : capacite live, inscriptions reelles et pression devis sur chaque creneau d'une semaine type.",
+                "Season-based capacity view: live capacity, real enrollments, and quote pressure on each slot of a typical week.",
               )}
             </p>
           </div>
@@ -137,152 +244,284 @@ export default async function AdminSimulationPlanningPage(): Promise<JSX.Element
         </div>
       </section>
 
-      {!locationsResult.ok ? (
+      <section className="card">
+        <form className="simulation-planning-toolbar" method="get">
+          <label>
+            <span>{text(language, "Saison", "Season")}</span>
+            <select name="school_year" defaultValue={effectiveSchoolYear}>
+              {availableSchoolYears.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            <span>{text(language, "Local", "Location")}</span>
+            <select name="location_id" defaultValue={requestedLocationId}>
+              <option value="">{text(language, "Tous les locaux", "All locations")}</option>
+              {locations
+                .slice()
+                .sort((a, b) => a.name.localeCompare(b.name, "fr"))
+                .map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {location.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+
+          <label>
+            <span>{text(language, "Type de cours", "Course type")}</span>
+            <select name="activity_id" defaultValue={requestedActivityId}>
+              <option value="">{text(language, "Tous les types", "All course types")}</option>
+              {courseTypes
+                .slice()
+                .sort((a, b) => a.name.localeCompare(b.name, "fr"))
+                .map((courseType) => (
+                  <option key={courseType.id} value={courseType.id}>
+                    {courseType.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+
+          <div className="simulation-planning-toolbar-actions">
+            <button type="submit" className="simulation-planning-submit">
+              {text(language, "Mettre a jour", "Refresh")}
+            </button>
+            <Link className="ghost" href="/admin/simulation-planning">
+              {text(language, "Reinitialiser", "Reset")}
+            </Link>
+          </div>
+        </form>
+      </section>
+
+      {locationsError ? (
         <section className="flash-err">
           {text(language, "Impossible de charger les lieux : ", "Unable to load locations: ")}
-          {locationsResult.message}
+          {locationsError}
         </section>
       ) : null}
 
-      <section className="grid cols-4">
-        <article className="card">
-          <h3>{text(language, "Lieux actifs", "Active locations")}</h3>
-          <p className="muted">
-            {text(language, "Lieux disponibles dans le module.", "Locations available in the module.")}
-          </p>
-          <strong>{locationSummaries.length}</strong>
-        </article>
+      {courseTypesError ? (
+        <section className="flash-err">
+          {text(language, "Impossible de charger les activites : ", "Unable to load activities: ")}
+          {courseTypesError}
+        </section>
+      ) : null}
 
-        <article className="card">
-          <h3>{text(language, "Lieux configures", "Configured locations")}</h3>
-          <p className="muted">
-            {text(language, "Reglages planning joignables.", "Planning settings reachable.")}
-          </p>
-          <strong>{configuredLocations}</strong>
-        </article>
-
-        <article className="card">
-          <h3>{text(language, "Activites rattachees", "Assigned activities")}</h3>
-          <p className="muted">
-            {text(language, "Total des activites autorisees sur les lieux.", "Total activities enabled across locations.")}
-          </p>
-          <strong>{totalSelectedActivities}</strong>
-        </article>
-
-        <article className="card">
-          <h3>{text(language, "Derniere mise a jour", "Last update")}</h3>
-          <p className="muted">
-            {text(language, "Dernier reglage planning modifie.", "Most recent planning settings update.")}
-          </p>
-          <strong>{formatDateTime(lastUpdatedAt, language)}</strong>
-        </article>
-      </section>
-
-      <section className="card">
-        <div className="row spread">
-          <div>
-            <h3>{text(language, "Lecture rapide", "Quick read")}</h3>
-            <p className="muted">
-              {text(
-                language,
-                "Le moteur de simulation s'appuie sur les activites autorisees par lieu, les capacites et les regles d'affectation utilisees ensuite dans les parcours devis et planning.",
-                "The simulation engine relies on per-location allowed activities, capacities, and assignment rules later reused in quote and planning flows.",
-              )}
-            </p>
-          </div>
-          <strong>
-            {onlineLocations} {text(language, "lieu(x) en ligne", "online location(s)")}
-          </strong>
-        </div>
-      </section>
-
-      <section className="grid cols-2">
-        {locationSummaries.map((summary) => {
-          const settings = summary.settings;
-          const activities = summary.activities;
-
-          return (
-            <article className="card" key={summary.location.id}>
-              <div className="row spread">
-                <div>
-                  <h3>{summary.location.name}</h3>
-                  <p className="muted">{locationSubtitle(summary.location, language)}</p>
-                </div>
-                <strong>
-                  {summary.location.is_online
-                    ? text(language, "En ligne", "Online")
-                    : text(language, "Presentiel", "Onsite")}
-                </strong>
-              </div>
-
-              {settings ? (
-                <div className="grid cols-2">
-                  <article className="item">
-                    <strong>{text(language, "Preavis mini", "Min notice")}</strong>
-                    <p className="muted">
-                      {settings.min_booking_notice_hours} {text(language, "h", "h")}
-                    </p>
-                  </article>
-                  <article className="item">
-                    <strong>{text(language, "Horizon de reservation", "Booking horizon")}</strong>
-                    <p className="muted">
-                      {settings.max_booking_horizon_months} {text(language, "mois", "months")}
-                    </p>
-                  </article>
-                  <article className="item">
-                    <strong>{text(language, "Liste d'attente", "Waitlist")}</strong>
-                    <p className="muted">
-                      {settings.waitlist_capacity} {text(language, "place(s)", "seat(s)")}
-                    </p>
-                  </article>
-                  <article className="item">
-                    <strong>{text(language, "Activites autorisees", "Allowed activities")}</strong>
-                    <p className="muted">{activities?.selected_activity_ids.length ?? 0}</p>
-                  </article>
-                </div>
-              ) : (
-                <p className="flash-err">
-                  {text(language, "Reglages indisponibles : ", "Settings unavailable: ")}
-                  {summary.settingsError}
-                </p>
-              )}
-
-              {activities && activities.activities.length > 0 ? (
-                <p className="muted">
-                  {text(language, "Exemples : ", "Examples: ")}
-                  {activities.activities
-                    .filter((activity) => activity.selected)
-                    .slice(0, 3)
-                    .map((activity) => activity.name)
-                    .join(", ") || text(language, "Aucune activite selectionnee", "No selected activity")}
-                </p>
-              ) : summary.activitiesError ? (
-                <p className="flash-err">
-                  {text(language, "Activites indisponibles : ", "Activities unavailable: ")}
-                  {summary.activitiesError}
-                </p>
-              ) : null}
-
-              {settings?.description ? <p className="muted">{settings.description}</p> : null}
-
-              <div className="row">
-                <Link className="ghost" href={`/admin?location_id=${encodeURIComponent(summary.location.id)}`}>
-                  {text(language, "Ouvrir le planning", "Open planning")}
-                </Link>
-                <Link className="ghost" href={`/admin?location_id=${encodeURIComponent(summary.location.id)}&edit=1`}>
-                  {text(language, "Ouvrir en edition", "Open in edit mode")}
-                </Link>
-                <Link
-                  className="ghost"
-                  href={`/admin/plannings/${encodeURIComponent(summary.location.id)}/settings`}
-                >
-                  {text(language, "Reglages du lieu", "Location settings")}
-                </Link>
-              </div>
+      {!simulation ? (
+        <section className="flash-err">
+          {text(language, "Impossible de charger la simulation : ", "Unable to load the simulation: ")}
+          {simulationError}
+        </section>
+      ) : (
+        <>
+          <section className="grid cols-5 simulation-planning-summary-grid">
+            <article className="card">
+              <h3>{text(language, "Creneaux suivis", "Tracked slots")}</h3>
+              <p className="muted">
+                {text(language, "Semaine type consolidee sur la saison.", "Typical week consolidated over the season.")}
+              </p>
+              <strong>{simulation.summary.slot_count}</strong>
             </article>
-          );
-        })}
-      </section>
+
+            <article className="card">
+              <h3>{text(language, "Locaux visibles", "Visible locations")}</h3>
+              <p className="muted">
+                {text(language, "Locaux avec un creneau ou une pression devis.", "Locations with slots or quote pressure.")}
+              </p>
+              <strong>{simulation.summary.location_count}</strong>
+            </article>
+
+            <article className="card">
+              <h3>{text(language, "Inscriptions reelles", "Live enrollments")}</h3>
+              <p className="muted">
+                {text(language, "Eleves deja presents sur les series live.", "Students already present on live series.")}
+              </p>
+              <strong>{simulation.summary.booked_count}</strong>
+            </article>
+
+            <article className="card">
+              <h3>{text(language, "Pipeline devis", "Quote pipeline")}</h3>
+              <p className="muted">
+                {text(language, "Valides, en attente de validation et en cours.", "Approved, pending validation, and in progress.")}
+              </p>
+              <strong>{sumPipeline(simulation.summary)}</strong>
+            </article>
+
+            <article className="card">
+              <h3>{text(language, "Sans serie live", "Without live series")}</h3>
+              <p className="muted">
+                {text(language, "Creneaux devis non relies a une serie existante.", "Quote slots not linked to an existing live series.")}
+              </p>
+              <strong>{simulation.summary.quote_only_slot_count}</strong>
+            </article>
+          </section>
+
+          <section className="card simulation-planning-legend">
+            <div>
+              <h3>{text(language, "Lecture de la charge", "How to read the load")}</h3>
+              <p className="muted">
+                {text(
+                  language,
+                  "Reel = eleves deja inscrits. Valides = devis approuves non integres. En attente = devis envoyes. En cours = brouillons admin.",
+                  "Live = already enrolled students. Approved = approved quotes not integrated yet. Pending = sent quotes. In progress = admin drafts.",
+                )}
+              </p>
+            </div>
+            <div className="simulation-planning-legend-chips">
+              <span className="simulation-chip simulation-chip-live">{text(language, "Reel", "Live")}</span>
+              <span className="simulation-chip simulation-chip-approved">{text(language, "Valide", "Approved")}</span>
+              <span className="simulation-chip simulation-chip-pending">{text(language, "En attente", "Pending")}</span>
+              <span className="simulation-chip simulation-chip-draft">{text(language, "En cours", "In progress")}</span>
+            </div>
+            <p className="muted">
+              {text(language, "Mise a jour :", "Updated:")} {formatDateTime(simulation.generated_at, language)}
+            </p>
+          </section>
+
+          {groupedLocations.length === 0 ? (
+            <section className="card">
+              <h3>{text(language, "Aucun creneau visible", "No visible slot")}</h3>
+              <p className="muted">
+                {text(
+                  language,
+                  "Aucun creneau n'entre dans les filtres de cette saison. Elargissez le filtre lieu ou type de cours.",
+                  "No slot matches the current filters for this season. Broaden the location or course type filter.",
+                )}
+              </p>
+            </section>
+          ) : (
+            groupedLocations.map((locationGroup) => (
+              <section className="card simulation-location-card" key={locationGroup.locationId}>
+                <div className="simulation-location-header">
+                  <div>
+                    <h3>{locationGroup.locationName}</h3>
+                    <p className="muted">
+                      {locationGroup.slots.length} {text(language, "creneau(x) suivi(s)", "tracked slot(s)")}
+                      {locationGroup.timezone ? ` · ${locationGroup.timezone}` : ""}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="simulation-activity-stack">
+                  {groupByActivity(locationGroup.slots).map((activityGroup) => (
+                    <section className="simulation-activity-block" key={activityGroup.courseTypeId}>
+                      <div className="simulation-activity-heading">
+                        <div className="simulation-activity-label">
+                          <span
+                            className="simulation-activity-swatch"
+                            style={{ backgroundColor: activityGroup.colorHex || "#D6A34A" }}
+                          />
+                          <strong>{activityGroup.courseTypeName}</strong>
+                        </div>
+                        <span className="muted">
+                          {activityGroup.slots.length} {text(language, "creneau(x)", "slot(s)")}
+                        </span>
+                      </div>
+
+                      <div className="table-wrap">
+                        <table className="simulation-planning-table">
+                          <thead>
+                            <tr>
+                              <th>{text(language, "Creneau", "Slot")}</th>
+                              <th>{text(language, "Serie active", "Live series")}</th>
+                              <th>{text(language, "Capacite", "Capacity")}</th>
+                              <th>{text(language, "Reel", "Live")}</th>
+                              <th>{text(language, "Valides", "Approved")}</th>
+                              <th>{text(language, "Attente", "Pending")}</th>
+                              <th>{text(language, "En cours", "In progress")}</th>
+                              <th>{text(language, "Projection", "Projection")}</th>
+                              <th>{text(language, "Lecture", "Readout")}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {activityGroup.slots.map((slot) => {
+                              const notes = noteList(slot, language);
+                              const tone = projectionTone(slot);
+                              const projectedPercent = fillPercent(slot.projected_fill_rate);
+                              const livePercent = fillPercent(slot.fill_rate);
+                              const capacity = formatCapacity(slot);
+                              const projectedLabel =
+                                slot.capacity !== null
+                                  ? `${slot.projected_count}/${slot.capacity}`
+                                  : String(slot.projected_count);
+                              return (
+                                <tr key={slot.slot_key}>
+                                  <td>
+                                    <strong>
+                                      {slot.weekday_label} · {slot.start_time}-{slot.end_time}
+                                    </strong>
+                                  </td>
+                                  <td>
+                                    <div>{formatSeasonWindow(slot, language)}</div>
+                                    {slot.quote_only ? (
+                                      <div className="simulation-inline-note">
+                                        {text(language, "Devis sans serie live", "Quote without live series")}
+                                      </div>
+                                    ) : null}
+                                  </td>
+                                  <td>{capacity}</td>
+                                  <td>{slot.booked_count}</td>
+                                  <td>{slot.approved_quotes_count}</td>
+                                  <td>{slot.pending_quotes_count}</td>
+                                  <td>{slot.draft_quotes_count}</td>
+                                  <td>
+                                    <strong>{projectedLabel}</strong>
+                                    {slot.remaining_capacity !== null ? (
+                                      <div className={`simulation-inline-note simulation-tone-${tone}`}>
+                                        {slot.remaining_capacity >= 0
+                                          ? text(language, `{count} place(s) restante(s)`, `{count} seat(s) left`).replace(
+                                              "{count}",
+                                              String(slot.remaining_capacity),
+                                            )
+                                          : text(language, `{count} place(s) en surcharge`, `{count} seat(s) over`).replace(
+                                              "{count}",
+                                              String(Math.abs(slot.remaining_capacity)),
+                                            )}
+                                      </div>
+                                    ) : null}
+                                  </td>
+                                  <td>
+                                    <div className="simulation-fill">
+                                      <div className="simulation-fill-track">
+                                        <span
+                                          className="simulation-fill-live"
+                                          style={{ width: `${livePercent}%` }}
+                                        />
+                                        <span
+                                          className={`simulation-fill-projected simulation-fill-projected-${tone}`}
+                                          style={{ width: `${projectedPercent}%` }}
+                                        />
+                                      </div>
+                                      <div className="simulation-inline-note">
+                                        {text(language, "Reel", "Live")} {livePercent}% · {text(language, "Projete", "Projected")}{" "}
+                                        {projectedPercent}%
+                                      </div>
+                                      {notes.map((note) => (
+                                        <div className="simulation-inline-note" key={note}>
+                                          {note}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              </section>
+            ))
+          )}
+        </>
+      )}
     </section>
   );
 }

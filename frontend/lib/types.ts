@@ -2010,6 +2010,59 @@ export type AdminPlanningActivitiesOut = {
   activities: AdminPlanningActivityOut[];
 };
 
+export type AdminPlanningSimulationSlotOut = {
+  slot_key: string;
+  location_id: string | null;
+  location_name: string;
+  location_timezone: string | null;
+  course_type_id: string | null;
+  course_type_name: string;
+  course_type_color_hex: string | null;
+  course_type_mode: "ONLINE" | "ONSITE" | "ANY" | string | null;
+  weekday: number;
+  weekday_label: string;
+  start_time: string;
+  end_time: string;
+  first_date: string | null;
+  last_date: string | null;
+  occurrence_count: number;
+  live_session_count: number;
+  capacity: number | null;
+  capacity_min: number | null;
+  capacity_max: number | null;
+  booked_count: number;
+  approved_quotes_count: number;
+  pending_quotes_count: number;
+  draft_quotes_count: number;
+  projected_count: number;
+  remaining_capacity: number | null;
+  fill_rate: number | null;
+  projected_fill_rate: number | null;
+  quote_only: boolean;
+  notes: string[];
+};
+
+export type AdminPlanningSimulationSummaryOut = {
+  location_count: number;
+  slot_count: number;
+  course_type_count: number;
+  booked_count: number;
+  approved_quotes_count: number;
+  pending_quotes_count: number;
+  draft_quotes_count: number;
+  quote_only_slot_count: number;
+};
+
+export type AdminPlanningSimulationOut = {
+  school_year_label: string;
+  available_school_years: string[];
+  location_filter_id: string | null;
+  activity_filter_id: string | null;
+  generated_at: string;
+  summary: AdminPlanningSimulationSummaryOut;
+  slots: AdminPlanningSimulationSlotOut[];
+};
+
 export type ReservationReportRow = {
   session_id: string;
   start_at_utc: string;
