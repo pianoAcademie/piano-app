@@ -183,11 +183,12 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertTrue(any("signer vos chèques" in line or "signez vos chèques" in line.lower() for line in lines))
         self.assertTrue(any("1 rue de Richelieu, 75001 PARIS" in line for line in lines))
         self.assertFalse(any("acompte" in line.lower() for line in lines))
+        self.assertFalse(any("l’ensemble des chèques" in line for line in lines))
 
     def test_check_payment_instructions_use_services_payee_and_deposit_card_notice(self) -> None:
         lines = _check_payment_instruction_lines(
             payment_method_label="",
-            schedule=[{"payment_method": "Chèque"}],
+            schedule=[{"payment_method": "Chèque"}, {"payment_method": "Chèque"}],
             legal_entity_name="Piano Academie Services SAS",
             has_deposit=True,
             deposit_amount_ttc=Decimal("200.00"),
@@ -200,6 +201,7 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertIn("L’acompte de 200,00 EUR", joined)
         self.assertIn("doit être réglé par carte bancaire", joined)
         self.assertIn("avec le lien de paiement", joined)
+        self.assertIn("l’ensemble des chèques doit être envoyé avant le démarrage des cours", joined)
         self.assertNotIn("Lorsqu’un acompte est demandé", joined)
 
 

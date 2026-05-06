@@ -64,6 +64,7 @@ QUOTE_DOC_TEXT = {
         "payment_method_generic": "reglement",
         "check_instruction_order": "Les chèques doivent être émis à l’ordre de {payee}.",
         "check_instruction_send": "Merci de signer vos chèques et de les envoyer à l’adresse suivante : Piano Academie, 1 rue de Richelieu, 75001 PARIS.",
+        "check_instruction_split_send_all": "En cas de règlement en plusieurs fois par chèque, l’ensemble des chèques doit être envoyé avant le démarrage des cours.",
         "check_instruction_deposit_card": "L’acompte de {deposit_amount} doit être réglé par carte bancaire dès validation du devis. Une facture d’acompte vous sera envoyée avec le lien de paiement.",
         "deposit_bank_line_1": "Afin de bloquer définitivement le créneau, un acompte de {deposit_amount} devra être réglé par virement bancaire dès validation du devis.",
         "deposit_bank_line_2": "Une facture d’acompte sera émise après validation du devis.",
@@ -263,6 +264,7 @@ QUOTE_DOC_TEXT = {
         "payment_method_generic": "payment",
         "check_instruction_order": "Checks must be made payable to {payee}.",
         "check_instruction_send": "Please sign your checks and send them to: Piano Academie, 1 rue de Richelieu, 75001 PARIS.",
+        "check_instruction_split_send_all": "When paying in several installments by check, all checks must be sent before lessons begin.",
         "check_instruction_deposit_card": "The deposit of {deposit_amount} must be paid by card when the quote is approved. A deposit invoice will be sent to you with the payment link.",
         "deposit_bank_line_1": "To secure the slot, a deposit of {deposit_amount} must be paid by bank transfer as soon as the quote is approved.",
         "deposit_bank_line_2": "A deposit invoice will be issued after the quote is approved.",
@@ -736,11 +738,18 @@ def _check_payment_instruction_lines(
     method_labels = [payment_method_label, *(str(item.get("payment_method") or "") for item in schedule)]
     if not any(_is_check_payment_method(label) for label in method_labels):
         return []
+    check_installment_count = sum(
+        1
+        for item in schedule
+        if _is_check_payment_method(str(item.get("payment_method") or payment_method_label or ""))
+    )
     payee = _check_payee_for_legal_entity(legal_entity_name)
     lines = [
         _quote_doc_text("check_instruction_order", language=language, payee=payee),
         _quote_doc_text("check_instruction_send", language=language),
     ]
+    if check_installment_count > 1:
+        lines.append(_quote_doc_text("check_instruction_split_send_all", language=language))
     if has_deposit:
         lines.insert(
             0,
