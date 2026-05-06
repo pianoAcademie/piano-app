@@ -9,7 +9,7 @@ from uuid import uuid4
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.api.routes.quotes import _create_quote_client, _resolve_followup_clients
+from app.api.routes.quotes import _create_quote_client, _resolve_followup_clients, _resolve_parent_contact_data
 from app.models.user import ClientKind, ClientStatus
 
 
@@ -142,6 +142,41 @@ class QuoteFollowupClientsTests(unittest.TestCase):
         self.assertEqual(create_calls[1]["phone"], "06 12 34 56 78")
         self.assertEqual(create_calls[1]["address_line"], "12 rue d'Assas")
         self.assertEqual(created_user_ids, [billing.id, student.id])
+
+    def test_parent_contact_prefers_quote_normalized_parent_fields(self) -> None:
+        quote = SimpleNamespace(
+            meta={
+                "typeform_intake": {
+                    "normalized_payload": {
+                        "parent_first_name": "Julie",
+                        "parent_last_name": "Germain",
+                        "parent_email": "julie.germain@example.com",
+                        "parent_phone": "06 11 22 33 44",
+                    }
+                }
+            }
+        )
+        quote_prospect = SimpleNamespace(
+            meta={
+                "parent_referent": {
+                    "first_name": "Maxime",
+                    "last_name": "Germain",
+                    "email": "maxime.germain@example.com",
+                    "phone": "06 00 00 00 00",
+                }
+            }
+        )
+
+        parent_contact = _resolve_parent_contact_data(
+            quote=quote,
+            quote_prospect=quote_prospect,
+            parent_prospect=None,
+        )
+
+        self.assertEqual(parent_contact["first_name"], "Julie")
+        self.assertEqual(parent_contact["last_name"], "Germain")
+        self.assertEqual(parent_contact["email"], "julie.germain@example.com")
+        self.assertEqual(parent_contact["phone"], "06 11 22 33 44")
 
     def test_new_parent_child_ignores_pending_adult_placeholder_for_child(self) -> None:
         db = _FakeSession()

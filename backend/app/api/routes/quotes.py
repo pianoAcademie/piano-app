@@ -5206,6 +5206,7 @@ def _resolve_quote_parent_prospect(
 
 def _resolve_parent_contact_data(
     *,
+    quote: Quote | None = None,
     quote_prospect: Prospect | None,
     parent_prospect: Prospect | None,
 ) -> dict[str, object]:
@@ -5216,6 +5217,16 @@ def _resolve_parent_contact_data(
             "email": parent_prospect.email,
             "phone": parent_prospect.phone,
         }
+    normalized = _typeform_quote_normalized_payload(quote) if quote is not None else {}
+    normalized_parent = {
+        "first_name": str(normalized.get("parent_first_name") or "").strip() or None,
+        "last_name": str(normalized.get("parent_last_name") or "").strip() or None,
+        "email": _normalized_email(normalized.get("parent_email")),
+        "phone": _normalized_phone(normalized.get("parent_phone")),
+    }
+    if any(normalized_parent.values()):
+        return normalized_parent
+
     meta = _json_object(quote_prospect.meta) if quote_prospect is not None else {}
     parent_referent = _json_object(meta.get("parent_referent"))
     return {
@@ -5630,7 +5641,7 @@ def _resolve_followup_clients(
     if quote_prospect is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Prospect enfant requis pour la transformation parent/enfant")
 
-    parent_contact = _resolve_parent_contact_data(quote_prospect=quote_prospect, parent_prospect=parent_prospect)
+    parent_contact = _resolve_parent_contact_data(quote=quote, quote_prospect=quote_prospect, parent_prospect=parent_prospect)
     parent_address_fields = _quote_parent_address_fields(
         db,
         quote=quote,
