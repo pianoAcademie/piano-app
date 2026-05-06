@@ -939,7 +939,7 @@ def _safe_parse_iso_date(value: object | None) -> date | None:
 
 def _parse_school_year_bounds(label: str) -> tuple[date, date] | None:
     normalized = (label or "").strip()
-    match = re.fullmatch(r"(\\d{4})\\s*[-/]\\s*(\\d{4})", normalized)
+    match = re.fullmatch(r"(\d{4})\s*[-/]\s*(\d{4})", normalized)
     if match is None:
         return None
     start_year = int(match.group(1))
