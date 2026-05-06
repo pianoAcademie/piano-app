@@ -34,6 +34,8 @@ type CalendarDayGroup = {
   slots: AdminPlanningSimulationSlotOut[];
 };
 
+const VACATION_COURSE_TYPE_CODE = "VACATION_DAY";
+
 function readParam(params: SearchParams, key: string): string {
   const raw = params[key];
   if (Array.isArray(raw)) {
@@ -301,7 +303,9 @@ export default async function AdminSimulationPlanningPage({
   ]);
 
   const locations = locationsResult.ok ? locationsResult.data : [];
-  const courseTypes = courseTypesResult.ok ? courseTypesResult.data : [];
+  const courseTypes = courseTypesResult.ok
+    ? courseTypesResult.data.filter((courseType) => courseType.code.toUpperCase() !== VACATION_COURSE_TYPE_CODE)
+    : [];
   const simulation = simulationResult.ok ? simulationResult.data : null;
   const locationsError = locationsResult.ok ? null : locationsResult.message;
   const courseTypesError = courseTypesResult.ok ? null : courseTypesResult.message;

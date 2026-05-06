@@ -1964,9 +1964,15 @@ def get_planning_simulation(
     if location_id is not None:
         _get_location_or_404(db, location_id)
     if activity_id is not None:
-        exists = db.scalar(select(CourseType.id).where(CourseType.id == activity_id).limit(1))
-        if exists is None:
+        requested_activity_code = db.scalar(select(CourseType.code).where(CourseType.id == activity_id).limit(1))
+        if requested_activity_code is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course type not found")
+        if requested_activity_code.upper() == VACATION_COURSE_TYPE_CODE:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Vacation course types are excluded")
+
+    vacation_course_type_ids = set(
+        db.scalars(select(CourseType.id).where(func.upper(CourseType.code) == VACATION_COURSE_TYPE_CODE)).all()
+    )
 
     slot_entries: dict[str, dict[str, object]] = {}
     session_slot_by_id: dict[UUID, str] = {}
@@ -2034,6 +2040,7 @@ def get_planning_simulation(
             CourseSession.start_at_utc >= session_query_start,
             CourseSession.start_at_utc < session_query_end,
             CourseSession.status != SessionStatus.CANCELLED,
+            func.upper(CourseType.code) != VACATION_COURSE_TYPE_CODE,
         )
         .order_by(Location.name.asc(), CourseType.name.asc(), CourseSession.start_at_utc.asc())
     )
@@ -2153,6 +2160,8 @@ def get_planning_simulation(
             if location_id is not None and block_location_id != location_id:
                 continue
             if activity_id is not None and block_activity_id != activity_id:
+                continue
+            if block_activity_id in vacation_course_type_ids:
                 continue
 
             block_start_date = _safe_parse_iso_date(block.get("start_date"))
