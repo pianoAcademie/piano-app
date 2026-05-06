@@ -206,7 +206,7 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
         "key": "payment_schedule_summary",
         "label": "Resume echeancier",
         "description": "Resume des echeances de paiement.",
-        "example": "2 cheques: inscription + fevrier",
+        "example": "2 cheques: inscription + decembre",
     },
     {
         "key": "financial_adjustment_type_label",

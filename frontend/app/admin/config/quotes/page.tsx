@@ -1339,7 +1339,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
             </label>
             <label>
               {t("admin.quote_config.due_month_2")}
-              <select name="due_month_2" defaultValue="2">
+              <select name="due_month_2" defaultValue="12">
                 <option value="">{t("admin.quote_config.auto_option")}</option>
                 {paymentMonthOptions.map((option) => (
                   <option key={`create-month2-${option.value}`} value={option.value}>{option.label}</option>

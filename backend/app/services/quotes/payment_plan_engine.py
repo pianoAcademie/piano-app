@@ -84,7 +84,7 @@ def _legacy_installments_from_method_code(method_code: str) -> int:
 def _default_deferred_months(schedule_type: str, installments: int) -> list[int]:
     normalized = schedule_type.strip().lower()
     if normalized == "split_2":
-        return [2]
+        return [12]
     if normalized == "split_3":
         return [12, 2]
     if normalized == "split_4":
@@ -101,7 +101,7 @@ def _default_deferred_months(schedule_type: str, installments: int) -> list[int]
 def _legacy_deferred_months_from_method_code(method_code: str, installments: int) -> list[int]:
     normalized = method_code.strip().upper()
     if normalized in {"CHECK_2", "CHEQUE_2", "CHEQUE_X2"}:
-        return [2]
+        return [12]
     if normalized in {"CHECK_3", "CHEQUE_3", "CHEQUE_X3"}:
         return [12, 2]
     if normalized in {"CHECK_4", "CHEQUE_4", "CHEQUE_X4", "CARD_4X_FEES"}:
@@ -147,9 +147,24 @@ def build_payment_schedule(payload: PaymentPlanScheduleInput) -> list[dict[str, 
     if not deferred_months:
         deferred_months = _legacy_deferred_months_from_method_code(method_code, installments)
     deferred_months = deferred_months[: max(0, installments - 1)]
+    check_method_codes = {
+        "CHECK",
+        "CHEQUE",
+        "CHECK_2",
+        "CHECK_3",
+        "CHECK_4",
+        "CHEQUE_2",
+        "CHEQUE_3",
+        "CHEQUE_4",
+        "CHEQUE_X2",
+        "CHEQUE_X3",
+        "CHEQUE_X4",
+    }
+    if method_code in check_method_codes and len(deferred_months) >= 1:
+        deferred_months[0] = 12
 
     parts = _split_amount(total, installments)
-    is_check = method_code in {"CHECK", "CHEQUE", "CHECK_2", "CHECK_4", "CHEQUE_2", "CHEQUE_4", "CHEQUE_X2", "CHEQUE_X4"}
+    is_check = method_code in check_method_codes
     out: list[dict[str, object]] = []
     for index, amount in enumerate(parts):
         item: dict[str, object] = {

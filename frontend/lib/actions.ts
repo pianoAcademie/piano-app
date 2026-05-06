@@ -11999,7 +11999,7 @@ function defaultInstallmentsForScheduleType(scheduleType: "single" | "split_2" |
 }
 
 function defaultDeferredMonthsForScheduleType(scheduleType: "single" | "split_2" | "split_3" | "split_4" | "monthly"): number[] {
-  if (scheduleType === "split_2") return [2];
+  if (scheduleType === "split_2") return [12];
   if (scheduleType === "split_3") return [12, 2];
   if (scheduleType === "split_4") return [12, 2, 4];
   return [];

@@ -703,6 +703,29 @@ def _is_check_payment_method(method_label: str) -> bool:
     return bool(re.search(r"\b(?:cheques?|checks?)\b", normalized))
 
 
+def _normalise_check_schedule_deposit_months(
+    schedule: list[dict[str, Any]],
+    *,
+    language: str | None = None,
+) -> list[dict[str, Any]]:
+    normalised = [dict(item) for item in schedule]
+    if len(normalised) <= 1:
+        return normalised
+    has_check_installments = any(
+        _is_check_payment_method(str(item.get("payment_method") or item.get("label") or ""))
+        for item in normalised
+    )
+    if not has_check_installments:
+        return normalised
+    second = normalised[1]
+    second_label = _searchable_text(second.get("label"))
+    if "cheque" not in second_label and "check" not in second_label:
+        return normalised
+    second["due_month"] = 12
+    second["due_label"] = _quote_doc_text("calendar_month_12", language=language).lower()
+    return normalised
+
+
 def _quote_legal_entity_name(*, db: Session | None, quote: Quote) -> str:
     if db is not None and getattr(quote, "legal_entity_id", None) is not None:
         entity = db.scalar(select(LegalEntity).where(LegalEntity.id == quote.legal_entity_id))
@@ -2269,6 +2292,7 @@ def _extract_document_context(
 
     payment_snapshot = _json_object(quote.payment_terms_snapshot)
     schedule = [item for item in _json_list(payment_snapshot.get("schedule")) if isinstance(item, dict)]
+    schedule = _normalise_check_schedule_deposit_months(schedule, language=language)
     has_installment_schedule = len(schedule) > 1
     schedule_visibility = _resolve_schedule_visibility_by_audience(quote=quote)
     deposit_data = _json_object(payment_snapshot.get("deposit"))
