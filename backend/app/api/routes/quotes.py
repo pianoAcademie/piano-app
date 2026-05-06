@@ -5433,7 +5433,7 @@ def _load_live_series_sessions(
             and local_end_time == selected_local_end_time
         )
 
-    if selected_session.recurrence_group_id is None:
+    def _load_signature_matches() -> list[CourseSession]:
         if not expected_dates:
             return [selected_session]
 
@@ -5451,7 +5451,10 @@ def _load_live_series_sessions(
             .order_by(CourseSession.start_at_utc.asc())
             .with_for_update()
         ).all()
-        filtered = [session_obj for session_obj in rows if _matches_selected_series(session_obj)]
+        return [session_obj for session_obj in rows if _matches_selected_series(session_obj)]
+
+    if selected_session.recurrence_group_id is None:
+        filtered = _load_signature_matches()
         return filtered or [selected_session]
 
     rows = db.scalars(
@@ -5467,6 +5470,11 @@ def _load_live_series_sessions(
         return rows
 
     filtered: list[CourseSession] = [session_obj for session_obj in rows if _matches_selected_series(session_obj)]
+    if len(filtered) < len(expected_date_set):
+        merged_by_id = {session_obj.id: session_obj for session_obj in filtered}
+        for session_obj in _load_signature_matches():
+            merged_by_id.setdefault(session_obj.id, session_obj)
+        filtered = sorted(merged_by_id.values(), key=lambda session_obj: session_obj.start_at_utc)
     return filtered
 
 
