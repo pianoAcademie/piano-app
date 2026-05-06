@@ -63,8 +63,8 @@ QUOTE_DOC_TEXT = {
         "payment_method_card": "reglement par carte bancaire",
         "payment_method_generic": "reglement",
         "check_instruction_order": "Les chèques doivent être émis à l’ordre de {payee}.",
-        "check_instruction_send": "Merci de ne pas oublier de signer vos chèques et de les envoyer à l’adresse : Piano Academie, 1 rue de Richelieu 75001 PARIS.",
-        "check_instruction_deposit_card": "Lorsqu’un acompte est demandé, il doit être payé par carte bancaire : une facture sera envoyée uniquement pour l’acompte, avec le lien de paiement.",
+        "check_instruction_send": "Merci de signer vos chèques et de les envoyer à l’adresse suivante : Piano Academie, 1 rue de Richelieu, 75001 PARIS.",
+        "check_instruction_deposit_card": "L’acompte de {deposit_amount} doit être réglé par carte bancaire dès validation du devis. Une facture d’acompte vous sera envoyée avec le lien de paiement.",
         "deposit_bank_line_1": "Afin de bloquer définitivement le créneau, un acompte de {deposit_amount} devra être réglé par virement bancaire dès validation du devis.",
         "deposit_bank_line_2": "Une facture d’acompte sera émise après validation du devis.",
         "deposit_bank_line_3": "Le solde de {remaining_amount} devra être réglé par virement bancaire à réception de la facture de solde, avant le démarrage des cours.",
@@ -73,10 +73,10 @@ QUOTE_DOC_TEXT = {
         "deposit_card_line_3": "Le solde de {remaining_amount} devra être réglé par carte bancaire à réception de la facture correspondante, avant le démarrage des cours.",
         "payment_balance_bank_invoice": "reglement du solde de {amount} par virement bancaire à réception de votre facture, avant le démarrage des cours",
         "payment_sentence_generic": "{method_subject} de {amount} à regler {due_label}",
-        "payment_deposit_then": "Paiement de l acompte de {deposit_amount} {currency} dès validation du devis pour bloquer le créneau, puis {remaining_sentence}.",
-        "payment_installments_after_deposit": "Paiement de l acompte de {deposit_amount} {currency} dès validation du devis pour bloquer le créneau, puis echeancier de {count} échéances selon le detail ci-dessous.",
-        "payment_installments": "Echeancier de {count} échéances selon le detail ci-dessous.",
-        "payment_deposit_only": "Paiement de l acompte de {deposit_amount} {currency} dès validation du devis pour bloquer le créneau (solde regle).",
+        "payment_deposit_then": "Après paiement de l’acompte de {deposit_amount} {currency} par carte bancaire, {remaining_sentence}.",
+        "payment_installments_after_deposit": "Après paiement de l’acompte de {deposit_amount} {currency} par carte bancaire, le solde est à régler en {count} échéances selon le détail ci-dessous.",
+        "payment_installments": "Le règlement est prévu en {count} échéances selon le détail ci-dessous.",
+        "payment_deposit_only": "L’acompte de {deposit_amount} {currency} est à régler par carte bancaire dès validation du devis afin de bloquer le créneau.",
         "payment_not_scheduled": "Paiement non planifié",
         "quote_status_approved": "Approuvé le",
         "quote_status_validity": "Validité",
@@ -262,8 +262,8 @@ QUOTE_DOC_TEXT = {
         "payment_method_card": "card payment",
         "payment_method_generic": "payment",
         "check_instruction_order": "Checks must be made payable to {payee}.",
-        "check_instruction_send": "Please remember to sign your checks and send them to: Piano Academie, 1 rue de Richelieu 75001 PARIS.",
-        "check_instruction_deposit_card": "When a deposit is required, it must be paid by card: an invoice will be sent only for the deposit, with the payment link.",
+        "check_instruction_send": "Please sign your checks and send them to: Piano Academie, 1 rue de Richelieu, 75001 PARIS.",
+        "check_instruction_deposit_card": "The deposit of {deposit_amount} must be paid by card when the quote is approved. A deposit invoice will be sent to you with the payment link.",
         "deposit_bank_line_1": "To secure the slot, a deposit of {deposit_amount} must be paid by bank transfer as soon as the quote is approved.",
         "deposit_bank_line_2": "A deposit invoice will be issued after the quote is approved.",
         "deposit_bank_line_3": "The remaining balance of {remaining_amount} must be paid by bank transfer upon receipt of the balance invoice, before lessons begin.",
@@ -272,10 +272,10 @@ QUOTE_DOC_TEXT = {
         "deposit_card_line_3": "The remaining balance of {remaining_amount} must be paid by card upon receipt of the corresponding invoice, before lessons begin.",
         "payment_balance_bank_invoice": "payment of the remaining balance of {amount} by bank transfer upon receipt of your invoice, before lessons begin",
         "payment_sentence_generic": "{method_subject} of {amount} due {due_label}",
-        "payment_deposit_then": "Payment of the deposit of {deposit_amount} {currency} upon quote approval to secure the slot, then {remaining_sentence}.",
-        "payment_installments_after_deposit": "Payment of the deposit of {deposit_amount} {currency} upon quote approval to secure the slot, then a schedule of {count} installments as detailed below.",
-        "payment_installments": "Schedule of {count} installments as detailed below.",
-        "payment_deposit_only": "Payment of the deposit of {deposit_amount} {currency} upon quote approval to secure the slot (balance already settled).",
+        "payment_deposit_then": "After the deposit of {deposit_amount} {currency} is paid by card, {remaining_sentence}.",
+        "payment_installments_after_deposit": "After the deposit of {deposit_amount} {currency} is paid by card, the balance is due in {count} installments as detailed below.",
+        "payment_installments": "Payment is scheduled in {count} installments as detailed below.",
+        "payment_deposit_only": "The deposit of {deposit_amount} {currency} must be paid by card when the quote is approved in order to secure the slot.",
         "payment_not_scheduled": "Payment schedule not specified",
         "quote_status_approved": "Approved on",
         "quote_status_validity": "Validity",
@@ -729,6 +729,8 @@ def _check_payment_instruction_lines(
     schedule: list[dict[str, Any]],
     legal_entity_name: str,
     has_deposit: bool,
+    deposit_amount_ttc: Decimal = Decimal("0.00"),
+    currency: str = "EUR",
     language: str | None = None,
 ) -> list[str]:
     method_labels = [payment_method_label, *(str(item.get("payment_method") or "") for item in schedule)]
@@ -740,7 +742,14 @@ def _check_payment_instruction_lines(
         _quote_doc_text("check_instruction_send", language=language),
     ]
     if has_deposit:
-        lines.append(_quote_doc_text("check_instruction_deposit_card", language=language))
+        lines.insert(
+            0,
+            _quote_doc_text(
+                "check_instruction_deposit_card",
+                language=language,
+                deposit_amount=_money(deposit_amount_ttc, currency),
+            ),
+        )
     return lines
 
 
@@ -3302,6 +3311,8 @@ def _build_template_values(
         schedule=schedule,
         legal_entity_name=_quote_legal_entity_name(db=db, quote=quote),
         has_deposit=has_deposit,
+        deposit_amount_ttc=deposit_amount_ttc,
+        currency=currency,
         language=language,
     )
     payment_schedule_rows = [
@@ -5021,6 +5032,8 @@ def _render_quote_pdf_blocks(
         schedule=schedule,
         legal_entity_name=_quote_legal_entity_name(db=db, quote=quote),
         has_deposit=bool(context.get("deposit_enabled")),
+        deposit_amount_ttc=_decimal_from_any(context.get("deposit_amount_ttc"), Decimal("0.00")),
+        currency=str(values.get("currency") or "EUR"),
         language=language,
     )
     payment_method_display_label = (

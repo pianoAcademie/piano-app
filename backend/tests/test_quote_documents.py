@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 import unittest
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
@@ -179,9 +180,9 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         )
 
         self.assertIn("à l’ordre de PIANO ACADEMIE", " ".join(lines))
-        self.assertTrue(any("signer vos chèques" in line for line in lines))
-        self.assertTrue(any("1 rue de Richelieu 75001 PARIS" in line for line in lines))
-        self.assertFalse(any("facture sera envoyée uniquement pour l’acompte" in line for line in lines))
+        self.assertTrue(any("signer vos chèques" in line or "signez vos chèques" in line.lower() for line in lines))
+        self.assertTrue(any("1 rue de Richelieu, 75001 PARIS" in line for line in lines))
+        self.assertFalse(any("acompte" in line.lower() for line in lines))
 
     def test_check_payment_instructions_use_services_payee_and_deposit_card_notice(self) -> None:
         lines = _check_payment_instruction_lines(
@@ -189,13 +190,17 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
             schedule=[{"payment_method": "Chèque"}],
             legal_entity_name="Piano Academie Services SAS",
             has_deposit=True,
+            deposit_amount_ttc=Decimal("200.00"),
+            currency="EUR",
             language="fr",
         )
 
         joined = " ".join(lines)
         self.assertIn("à l’ordre de PIANO ACADEMIE SERVICES", joined)
-        self.assertIn("doit être payé par carte bancaire", joined)
+        self.assertIn("L’acompte de 200,00 EUR", joined)
+        self.assertIn("doit être réglé par carte bancaire", joined)
         self.assertIn("avec le lien de paiement", joined)
+        self.assertNotIn("Lorsqu’un acompte est demandé", joined)
 
 
 if __name__ == "__main__":
