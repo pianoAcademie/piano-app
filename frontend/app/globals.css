@@ -15549,7 +15549,7 @@ button.danger:focus-visible {
 
 .simulation-overview-metrics {
   display: grid;
-  grid-template-columns: repeat(5, minmax(90px, 1fr));
+  grid-template-columns: repeat(7, minmax(82px, 1fr));
   gap: 10px;
   flex: 1 1 auto;
 }
@@ -16016,10 +16016,36 @@ button.danger:focus-visible {
 .simulation-calendar-slot-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  font-size: 0.74rem;
+  gap: 4px;
+  font-size: 0.68rem;
   font-weight: 700;
   opacity: 0.82;
+}
+
+.simulation-calendar-slot-meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.56);
+  white-space: nowrap;
+}
+
+.simulation-slot-meta-live {
+  color: #1f6f46;
+}
+
+.simulation-slot-meta-approved {
+  color: #3550b8;
+}
+
+.simulation-slot-meta-pending {
+  color: #8a5a10;
+}
+
+.simulation-slot-meta-draft {
+  color: #7e44b4;
 }
 
 .simulation-calendar-slot-detail {

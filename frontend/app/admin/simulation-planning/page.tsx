@@ -231,6 +231,15 @@ function slotHoverTitle(slot: AdminPlanningSimulationSlotOut, language: UiLangua
   return sections.map((section) => `${section.label}: ${section.people.join(", ")}`).join("\n");
 }
 
+function slotStatusBreakdown(slot: AdminPlanningSimulationSlotOut, language: UiLanguage): Array<{ label: string; count: number; className: string }> {
+  return [
+    { label: text(language, "Reel", "Live"), count: slot.booked_count, className: "simulation-slot-meta-live" },
+    { label: text(language, "Valide", "Approved"), count: slot.approved_quotes_count, className: "simulation-slot-meta-approved" },
+    { label: text(language, "Attente", "Pending"), count: slot.pending_quotes_count, className: "simulation-slot-meta-pending" },
+    { label: text(language, "Brouillon", "Draft"), count: slot.draft_quotes_count, className: "simulation-slot-meta-draft" },
+  ];
+}
+
 function noteList(slot: AdminPlanningSimulationSlotOut, language: UiLanguage): string[] {
   const notes = [...slot.notes];
   if (slot.quote_only) {
@@ -284,10 +293,6 @@ function groupByActivity(slots: AdminPlanningSimulationSlotOut[]): ActivityGroup
     });
   }
   return Array.from(grouped.values()).sort((a, b) => a.courseTypeName.localeCompare(b.courseTypeName, "fr"));
-}
-
-function sumPipeline(summary: AdminPlanningSimulationOut["summary"]): number {
-  return summary.approved_quotes_count + summary.pending_quotes_count + summary.draft_quotes_count;
 }
 
 export default async function AdminSimulationPlanningPage({
@@ -452,8 +457,16 @@ export default async function AdminSimulationPlanningPage({
                 <strong>{simulation.summary.booked_count}</strong>
               </div>
               <div>
-                <span>{text(language, "Pipeline", "Pipeline")}</span>
-                <strong>{sumPipeline(simulation.summary)}</strong>
+                <span>{text(language, "Valides", "Approved")}</span>
+                <strong>{simulation.summary.approved_quotes_count}</strong>
+              </div>
+              <div>
+                <span>{text(language, "En attente", "Pending")}</span>
+                <strong>{simulation.summary.pending_quotes_count}</strong>
+              </div>
+              <div>
+                <span>{text(language, "Brouillons", "Drafts")}</span>
+                <strong>{simulation.summary.draft_quotes_count}</strong>
               </div>
               <div>
                 <span>{text(language, "Sans live", "Without live")}</span>
@@ -598,13 +611,11 @@ export default async function AdminSimulationPlanningPage({
                                       <span style={{ width: `${percent}%` }} />
                                     </div>
                                     <div className="simulation-calendar-slot-meta">
-                                      <span>
-                                        {text(language, "Reel", "Live")} {slot.booked_count}
-                                      </span>
-                                      <span>
-                                        {text(language, "Pipeline", "Pipeline")}{" "}
-                                        {slot.approved_quotes_count + slot.pending_quotes_count + slot.draft_quotes_count}
-                                      </span>
+                                      {slotStatusBreakdown(slot, language).map((item) => (
+                                        <span className={item.className} key={`${slot.slot_key}-${item.className}`}>
+                                          {item.label} {item.count}
+                                        </span>
+                                      ))}
                                     </div>
                                     <div className="simulation-calendar-slot-detail" role="tooltip">
                                       {peopleSections.length === 0 ? (
