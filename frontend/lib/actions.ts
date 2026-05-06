@@ -11315,7 +11315,10 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
       if (!selectionPending && (!Number.isFinite(weekday) || weekday < 0 || weekday > 6)) {
         return null;
       }
-      if (!activityIdRaw || !startDate || !endDate) {
+      if (!activityIdRaw) {
+        return null;
+      }
+      if (!selectionPending && (!startDate || !endDate)) {
         return null;
       }
       if (!selectionPending && (!startTime || !endTime)) {

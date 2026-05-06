@@ -835,8 +835,8 @@ export default function QuotePlanningEditor({
             weekday: row.weekday,
             weekday_label: row.weekday === WEEKDAY_UNSET ? null : weekdayLabel(row.weekday, language),
             recurrence_frequency: row.recurrence_frequency,
-            start_date: row.start_date,
-            end_date: row.end_date,
+            start_date: selectionPending ? "" : row.start_date,
+            end_date: selectionPending ? "" : row.end_date,
             start_time: selectionPending ? "" : row.start_time,
             end_time: selectionPending ? "" : row.end_time,
             modality: row.modality || null,
@@ -1199,6 +1199,8 @@ export default function QuotePlanningEditor({
                           if (parsed === WEEKDAY_UNSET) {
                             updateEditor({
                               weekday: WEEKDAY_UNSET,
+                              start_date: "",
+                              end_date: "",
                               start_time: "",
                               end_time: "",
                             });
@@ -1258,7 +1260,7 @@ export default function QuotePlanningEditor({
                         type="date"
                         value={editorBlock.start_date}
                         onChange={(event) => updateEditor({ start_date: event.target.value })}
-                        disabled={!editable}
+                        disabled={!editable || selectionPending}
                       />
                     </label>
                     <label>
@@ -1267,7 +1269,7 @@ export default function QuotePlanningEditor({
                         type="date"
                         value={editorBlock.end_date}
                         onChange={(event) => updateEditor({ end_date: event.target.value })}
-                        disabled={!editable}
+                        disabled={!editable || selectionPending}
                       />
                     </label>
                     <label>
