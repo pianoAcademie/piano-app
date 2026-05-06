@@ -28,6 +28,12 @@ type ActivityGroup = {
   slots: AdminPlanningSimulationSlotOut[];
 };
 
+type CalendarDayGroup = {
+  weekday: number;
+  weekdayLabel: string;
+  slots: AdminPlanningSimulationSlotOut[];
+};
+
 function readParam(params: SearchParams, key: string): string {
   const raw = params[key];
   if (Array.isArray(raw)) {
@@ -113,6 +119,92 @@ function projectionTone(slot: AdminPlanningSimulationSlotOut): "critical" | "war
     return "warning";
   }
   return "ok";
+}
+
+function parseTimeToMinutes(value: string): number | null {
+  const [hoursRaw, minutesRaw = "0"] = value.split(":");
+  const hours = Number(hoursRaw);
+  const minutes = Number(minutesRaw);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return null;
+  }
+  return hours * 60 + minutes;
+}
+
+function formatMinutes(value: number): string {
+  const hours = Math.floor(value / 60);
+  const minutes = value % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function calendarBounds(slots: AdminPlanningSimulationSlotOut[]): { start: number; end: number; height: number } {
+  const starts = slots
+    .map((slot) => parseTimeToMinutes(slot.start_time))
+    .filter((value): value is number => value !== null);
+  const ends = slots
+    .map((slot) => parseTimeToMinutes(slot.end_time))
+    .filter((value): value is number => value !== null);
+  const first = starts.length ? Math.min(...starts) : 8 * 60;
+  const last = ends.length ? Math.max(...ends) : 20 * 60;
+  const start = Math.max(7 * 60, Math.floor(first / 60) * 60);
+  const end = Math.min(23 * 60, Math.ceil(last / 60) * 60);
+  const duration = Math.max(60, end - start);
+  return { start, end, height: Math.max(360, Math.round(duration * 0.9)) };
+}
+
+function calendarHourTicks(bounds: { start: number; end: number }): number[] {
+  const ticks: number[] = [];
+  for (let cursor = bounds.start; cursor <= bounds.end; cursor += 60) {
+    ticks.push(cursor);
+  }
+  return ticks;
+}
+
+function groupByWeekday(slots: AdminPlanningSimulationSlotOut[]): CalendarDayGroup[] {
+  const grouped = new Map<number, CalendarDayGroup>();
+  for (const slot of slots) {
+    const current = grouped.get(slot.weekday);
+    if (current) {
+      current.slots.push(slot);
+      continue;
+    }
+    grouped.set(slot.weekday, {
+      weekday: slot.weekday,
+      weekdayLabel: slot.weekday_label,
+      slots: [slot],
+    });
+  }
+  return Array.from(grouped.values())
+    .sort((a, b) => a.weekday - b.weekday)
+    .map((dayGroup) => ({
+      ...dayGroup,
+      slots: dayGroup.slots
+        .slice()
+        .sort(
+          (a, b) =>
+            (parseTimeToMinutes(a.start_time) ?? 0) - (parseTimeToMinutes(b.start_time) ?? 0) ||
+            a.course_type_name.localeCompare(b.course_type_name, "fr"),
+        ),
+    }));
+}
+
+function calendarSlotStyle(
+  slot: AdminPlanningSimulationSlotOut,
+  bounds: { start: number; end: number; height: number },
+): { top: string; height: string } {
+  const start = parseTimeToMinutes(slot.start_time) ?? bounds.start;
+  const end = parseTimeToMinutes(slot.end_time) ?? start + 60;
+  const total = Math.max(60, bounds.end - bounds.start);
+  const top = ((Math.max(bounds.start, start) - bounds.start) / total) * 100;
+  const height = (Math.max(30, end - start) / total) * 100;
+  return {
+    top: `${Math.max(0, Math.min(100, top))}%`,
+    height: `${Math.max(8, height)}%`,
+  };
+}
+
+function projectedSlotLabel(slot: AdminPlanningSimulationSlotOut): string {
+  return slot.capacity !== null ? `${slot.projected_count}/${slot.capacity}` : String(slot.projected_count);
 }
 
 function noteList(slot: AdminPlanningSimulationSlotOut, language: UiLanguage): string[] {
@@ -407,6 +499,123 @@ export default async function AdminSimulationPlanningPage({
                   </div>
                 </div>
 
+                <section className="simulation-calendar-view">
+                  <div className="simulation-calendar-heading">
+                    <div>
+                      <h4>{text(language, "Vue calendrier - semaine type", "Calendar view - typical week")}</h4>
+                      <p className="muted">
+                        {text(
+                          language,
+                          "Chaque bloc represente un creneau. La couleur indique l'etat de remplissage projete.",
+                          "Each block represents a slot. The color shows the projected occupancy status.",
+                        )}
+                      </p>
+                    </div>
+                    <div className="simulation-calendar-scale" aria-label={text(language, "Legende calendrier", "Calendar legend")}>
+                      <span>
+                        <i className="simulation-calendar-dot simulation-calendar-dot-ok" />{" "}
+                        {text(language, "Disponible", "Available")}
+                      </span>
+                      <span>
+                        <i className="simulation-calendar-dot simulation-calendar-dot-warning" />{" "}
+                        {text(language, "Presque plein", "Nearly full")}
+                      </span>
+                      <span>
+                        <i className="simulation-calendar-dot simulation-calendar-dot-critical" />{" "}
+                        {text(language, "Surcharge", "Over capacity")}
+                      </span>
+                    </div>
+                  </div>
+
+                  {(() => {
+                    const bounds = calendarBounds(locationGroup.slots);
+                    const ticks = calendarHourTicks(bounds);
+                    const dayGroups = groupByWeekday(locationGroup.slots);
+                    return (
+                      <div className="simulation-calendar-scroll">
+                        <div
+                          className="simulation-calendar-grid"
+                          style={{
+                            gridTemplateColumns: `72px repeat(${Math.max(1, dayGroups.length)}, minmax(190px, 1fr))`,
+                          }}
+                        >
+                          <div className="simulation-calendar-corner" />
+                          {dayGroups.map((dayGroup) => (
+                            <div className="simulation-calendar-day-head" key={dayGroup.weekday}>
+                              <strong>{dayGroup.weekdayLabel}</strong>
+                              <span>
+                                {dayGroup.slots.length} {text(language, "creneau(x)", "slot(s)")}
+                              </span>
+                            </div>
+                          ))}
+
+                          <div className="simulation-calendar-hours" style={{ height: `${bounds.height}px` }}>
+                            {ticks.map((tick) => (
+                              <span
+                                key={tick}
+                                style={{
+                                  top: `${((tick - bounds.start) / Math.max(60, bounds.end - bounds.start)) * 100}%`,
+                                }}
+                              >
+                                {formatMinutes(tick)}
+                              </span>
+                            ))}
+                          </div>
+
+                          {dayGroups.map((dayGroup) => (
+                            <div
+                              className="simulation-calendar-day"
+                              key={dayGroup.weekday}
+                              style={{ height: `${bounds.height}px` }}
+                            >
+                              {ticks.map((tick) => (
+                                <span
+                                  className="simulation-calendar-rule"
+                                  key={tick}
+                                  style={{
+                                    top: `${((tick - bounds.start) / Math.max(60, bounds.end - bounds.start)) * 100}%`,
+                                  }}
+                                />
+                              ))}
+                              {dayGroup.slots.map((slot) => {
+                                const tone = projectionTone(slot);
+                                const percent = fillPercent(slot.projected_fill_rate);
+                                return (
+                                  <article
+                                    className={`simulation-calendar-slot simulation-calendar-slot-${tone}`}
+                                    key={slot.slot_key}
+                                    style={calendarSlotStyle(slot, bounds)}
+                                  >
+                                    <div className="simulation-calendar-slot-top">
+                                      <strong>
+                                        {slot.start_time}-{slot.end_time}
+                                      </strong>
+                                      <span>{projectedSlotLabel(slot)}</span>
+                                    </div>
+                                    <p>{slot.course_type_name}</p>
+                                    <div className="simulation-calendar-slot-fill" aria-hidden="true">
+                                      <span style={{ width: `${percent}%` }} />
+                                    </div>
+                                    <div className="simulation-calendar-slot-meta">
+                                      <span>
+                                        {text(language, "Reel", "Live")} {slot.booked_count}
+                                      </span>
+                                      <span>
+                                        {text(language, "Pipeline", "Pipeline")}{" "}
+                                        {slot.approved_quotes_count + slot.pending_quotes_count + slot.draft_quotes_count}
+                                      </span>
+                                    </div>
+                                  </article>
+                                );
+                              })}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </section>
+
                 <div className="simulation-activity-stack">
                   {groupByActivity(locationGroup.slots).map((activityGroup) => (
                     <section className="simulation-activity-block" key={activityGroup.courseTypeId}>
@@ -445,10 +654,7 @@ export default async function AdminSimulationPlanningPage({
                               const projectedPercent = fillPercent(slot.projected_fill_rate);
                               const livePercent = fillPercent(slot.fill_rate);
                               const capacity = formatCapacity(slot);
-                              const projectedLabel =
-                                slot.capacity !== null
-                                  ? `${slot.projected_count}/${slot.capacity}`
-                                  : String(slot.projected_count);
+                              const projectedLabel = projectedSlotLabel(slot);
                               return (
                                 <tr key={slot.slot_key}>
                                   <td>
