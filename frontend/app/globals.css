@@ -15539,28 +15539,52 @@ button.danger:focus-visible {
   min-width: 150px;
 }
 
-.simulation-planning-summary-grid {
-  align-items: stretch;
+.simulation-planning-overview {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: center;
+  padding: 14px 16px;
 }
 
-.simulation-planning-summary-grid .card strong {
-  display: inline-block;
-  margin-top: 8px;
-  font-size: 1.9rem;
+.simulation-overview-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(90px, 1fr));
+  gap: 10px;
+  flex: 1 1 auto;
+}
+
+.simulation-overview-metrics div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: #fff8ed;
+  border: 1px solid #efdfc8;
+}
+
+.simulation-overview-metrics span {
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: #6a5640;
+}
+
+.simulation-overview-metrics strong {
+  font-size: 1.35rem;
   line-height: 1;
   color: #342513;
 }
 
-.simulation-planning-legend {
+.simulation-overview-side {
   display: grid;
-  grid-template-columns: minmax(0, 1.5fr) auto;
-  gap: 18px 24px;
-  align-items: center;
+  gap: 6px;
+  justify-items: end;
 }
 
-.simulation-planning-legend > p {
+.simulation-overview-side .muted {
   margin: 0;
-  grid-column: 1 / -1;
+  font-size: 0.86rem;
 }
 
 .simulation-planning-legend-chips {
@@ -15608,8 +15632,8 @@ button.danger:focus-visible {
 
 .simulation-location-card {
   display: grid;
-  gap: 18px;
-  padding: 24px;
+  gap: 14px;
+  padding: 18px;
   border-radius: 28px;
   border: 1px solid #eadcc8;
   background:
@@ -15785,8 +15809,8 @@ button.danger:focus-visible {
 
 .simulation-calendar-view {
   display: grid;
-  gap: 16px;
-  padding: 18px;
+  gap: 12px;
+  padding: 14px;
   border: 1px solid #d9e3d7;
   border-radius: 22px;
   background: #f8fbf7;
@@ -15922,11 +15946,19 @@ button.danger:focus-visible {
   display: grid;
   gap: 4px;
   min-height: 54px;
-  overflow: hidden;
+  overflow: visible;
   padding: 8px 10px;
   border: 1px solid transparent;
   border-radius: 14px;
   box-shadow: 0 8px 18px rgba(36, 52, 36, 0.08);
+  z-index: 2;
+}
+
+.simulation-calendar-slot:hover,
+.simulation-calendar-slot:focus-visible,
+.simulation-calendar-slot:focus-within {
+  z-index: 20;
+  box-shadow: 0 14px 28px rgba(36, 52, 36, 0.18);
 }
 
 .simulation-calendar-slot-ok {
@@ -15990,6 +16022,56 @@ button.danger:focus-visible {
   opacity: 0.82;
 }
 
+.simulation-calendar-slot-detail {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  display: none;
+  min-width: 230px;
+  max-width: 310px;
+  max-height: 280px;
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #d8c8b2;
+  background: #fffdfa;
+  color: #302112;
+  box-shadow: 0 18px 36px rgba(44, 34, 22, 0.22);
+}
+
+.simulation-calendar-slot:hover .simulation-calendar-slot-detail,
+.simulation-calendar-slot:focus-visible .simulation-calendar-slot-detail,
+.simulation-calendar-slot:focus-within .simulation-calendar-slot-detail {
+  display: grid;
+  gap: 8px;
+}
+
+.simulation-calendar-slot-detail p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #6d5a45;
+}
+
+.simulation-calendar-people-section {
+  display: grid;
+  gap: 4px;
+}
+
+.simulation-calendar-people-section strong {
+  font-size: 0.78rem;
+  color: #5a3d19;
+}
+
+.simulation-calendar-people-section ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.simulation-calendar-people-section li {
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
 @media (max-width: 1240px) {
   .simulation-planning-toolbar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -16000,8 +16082,9 @@ button.danger:focus-visible {
     justify-content: flex-start;
   }
 
-  .simulation-planning-legend {
-    grid-template-columns: 1fr;
+  .simulation-planning-overview {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .simulation-planning-legend-chips {
@@ -16010,7 +16093,7 @@ button.danger:focus-visible {
 }
 
 @media (max-width: 900px) {
-  .simulation-planning-summary-grid {
+  .simulation-overview-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -16029,7 +16112,7 @@ button.danger:focus-visible {
 
 @media (max-width: 720px) {
   .simulation-planning-toolbar,
-  .simulation-planning-summary-grid {
+  .simulation-overview-metrics {
     grid-template-columns: 1fr;
   }
 

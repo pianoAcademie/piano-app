@@ -47,7 +47,7 @@ from app.models.ops import (
     CommunicationSenderCategory,
     MessageFormat,
 )
-from app.models.quote import Quote, QuoteAcceptanceFollowup
+from app.models.quote import Prospect, Quote, QuoteAcceptanceFollowup
 from app.models.user import ClientStatus, User, UserRole
 from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
 from app.services.invoice_documents import normalize_billing_entity
@@ -1051,6 +1051,44 @@ def _planning_simulation_signature(
     )
 
 
+def _planning_simulation_person_name(
+    *,
+    first_name: str | None,
+    last_name: str | None,
+    fallback: str | None = None,
+) -> str:
+    full_name = " ".join(part for part in [(last_name or "").strip(), (first_name or "").strip()] if part).strip()
+    return full_name or (fallback or "").strip() or "Sans nom"
+
+
+def _planning_simulation_user_name(user: User | None) -> str | None:
+    if user is None:
+        return None
+    return _planning_simulation_person_name(
+        first_name=user.first_name,
+        last_name=user.last_name,
+        fallback=user.email,
+    )
+
+
+def _planning_simulation_quote_student_name(
+    *,
+    quote: Quote,
+    prospect: Prospect | None,
+    client: User | None,
+) -> str:
+    client_name = _planning_simulation_user_name(client)
+    if client_name:
+        return client_name
+    if prospect is not None:
+        return _planning_simulation_person_name(
+            first_name=prospect.first_name,
+            last_name=prospect.last_name,
+            fallback=prospect.email,
+        )
+    return f"Devis {quote.quote_number}"
+
+
 def _school_calendar_updated_at(raw: dict[str, object]) -> datetime:
     value = str(raw.get("updated_at") or "").strip()
     if not value:
@@ -2021,9 +2059,13 @@ def get_planning_simulation(
             "capacity_min": None,
             "capacity_max": None,
             "_booked_user_ids": set(),
+            "_booked_students": {},
             "_approved_quote_ids": set(),
+            "_approved_quote_students": {},
             "_pending_quote_ids": set(),
+            "_pending_quote_students": {},
             "_draft_quote_ids": set(),
+            "_draft_quote_students": {},
             "quote_only": quote_only,
             "notes": [note] if note else [],
         }
@@ -2102,37 +2144,50 @@ def get_planning_simulation(
 
     if session_slot_by_id:
         booking_rows = db.execute(
-            select(Booking.session_id, Booking.user_id).where(
+            select(Booking.session_id, User.id, User.first_name, User.last_name, User.email)
+            .join(User, User.id == Booking.user_id)
+            .where(
                 Booking.session_id.in_(list(session_slot_by_id.keys())),
                 Booking.status.in_(BOOKING_STATUSES_COUNTED_AS_RESERVED),
             )
         ).all()
-        for session_id, user_id in booking_rows:
+        for session_id, user_id, first_name, last_name, email in booking_rows:
             slot_key = session_slot_by_id.get(session_id)
             if slot_key is None:
                 continue
             slot_entries[slot_key]["_booked_user_ids"].add(str(user_id))
+            slot_entries[slot_key]["_booked_students"][str(user_id)] = _planning_simulation_person_name(
+                first_name=first_name,
+                last_name=last_name,
+                fallback=email,
+            )
 
+    quote_client_alias = aliased(User)
     quote_rows = db.execute(
-        select(Quote, QuoteAcceptanceFollowup)
+        select(Quote, QuoteAcceptanceFollowup, Prospect, quote_client_alias)
         .outerjoin(QuoteAcceptanceFollowup, QuoteAcceptanceFollowup.quote_id == Quote.id)
+        .outerjoin(Prospect, Prospect.id == Quote.prospect_id)
+        .outerjoin(quote_client_alias, quote_client_alias.id == Quote.client_id)
         .where(
             Quote.school_year_label == requested_school_year,
             Quote.status.in_(tuple(sorted(PLANNING_SIMULATION_QUOTE_RELEVANT_STATUSES))),
         )
     ).all()
 
-    for quote, followup in quote_rows:
+    for quote, followup, prospect, quote_client in quote_rows:
         normalized_status = str(quote.status or "").strip().lower()
         if normalized_status in PLANNING_SIMULATION_QUOTE_APPROVED_STATUSES and followup is not None and followup.status == "completed":
             continue
 
         if normalized_status in PLANNING_SIMULATION_QUOTE_APPROVED_STATUSES:
             bucket_name = "_approved_quote_ids"
+            bucket_people_name = "_approved_quote_students"
         elif normalized_status in PLANNING_SIMULATION_QUOTE_PENDING_STATUSES:
             bucket_name = "_pending_quote_ids"
+            bucket_people_name = "_pending_quote_students"
         else:
             bucket_name = "_draft_quote_ids"
+            bucket_people_name = "_draft_quote_students"
 
         snapshot = _json_object_local(quote.calendar_snapshot)
         for raw_block in _json_list_local(snapshot.get("blocks")):
@@ -2217,6 +2272,11 @@ def get_planning_simulation(
             if entry["last_date"] is None and block_end_date is not None:
                 entry["last_date"] = block_end_date
             entry[bucket_name].add(str(quote.id))
+            entry[bucket_people_name][str(quote.id)] = _planning_simulation_quote_student_name(
+                quote=quote,
+                prospect=prospect,
+                client=quote_client,
+            )
 
     slot_payloads: list[AdminPlanningSimulationSlotOut] = []
     location_ids_seen: set[UUID] = set()
@@ -2294,6 +2354,10 @@ def get_planning_simulation(
                 fill_rate=fill_rate,
                 projected_fill_rate=projected_fill_rate,
                 quote_only=bool(entry["quote_only"]),
+                booked_students=sorted(str(item) for item in entry["_booked_students"].values()),
+                approved_quote_students=sorted(str(item) for item in entry["_approved_quote_students"].values()),
+                pending_quote_students=sorted(str(item) for item in entry["_pending_quote_students"].values()),
+                draft_quote_students=sorted(str(item) for item in entry["_draft_quote_students"].values()),
                 notes=[str(item) for item in entry["notes"]],
             )
         )

@@ -2039,6 +2039,10 @@ export type AdminPlanningSimulationSlotOut = {
   fill_rate: number | null;
   projected_fill_rate: number | null;
   quote_only: boolean;
+  booked_students: string[];
+  approved_quote_students: string[];
+  pending_quote_students: string[];
+  draft_quote_students: string[];
   notes: string[];
 };
 

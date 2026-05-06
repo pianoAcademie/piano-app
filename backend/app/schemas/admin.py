@@ -2191,6 +2191,10 @@ class AdminPlanningSimulationSlotOut(BaseModel):
     fill_rate: float | None = None
     projected_fill_rate: float | None = None
     quote_only: bool = False
+    booked_students: list[str] = Field(default_factory=list)
+    approved_quote_students: list[str] = Field(default_factory=list)
+    pending_quote_students: list[str] = Field(default_factory=list)
+    draft_quote_students: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 
 

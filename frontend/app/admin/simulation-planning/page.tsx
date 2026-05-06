@@ -36,6 +36,11 @@ type CalendarDayGroup = {
 
 const VACATION_COURSE_TYPE_CODE = "VACATION_DAY";
 
+type SlotPeopleSection = {
+  label: string;
+  people: string[];
+};
+
 function readParam(params: SearchParams, key: string): string {
   const raw = params[key];
   if (Array.isArray(raw)) {
@@ -207,6 +212,23 @@ function calendarSlotStyle(
 
 function projectedSlotLabel(slot: AdminPlanningSimulationSlotOut): string {
   return slot.capacity !== null ? `${slot.projected_count}/${slot.capacity}` : String(slot.projected_count);
+}
+
+function slotPeopleSections(slot: AdminPlanningSimulationSlotOut, language: UiLanguage): SlotPeopleSection[] {
+  return [
+    { label: text(language, "Inscrits", "Enrolled"), people: slot.booked_students },
+    { label: text(language, "Devis valides", "Approved quotes"), people: slot.approved_quote_students },
+    { label: text(language, "En attente", "Pending"), people: slot.pending_quote_students },
+    { label: text(language, "Brouillons", "Drafts"), people: slot.draft_quote_students },
+  ].filter((section) => section.people.length > 0);
+}
+
+function slotHoverTitle(slot: AdminPlanningSimulationSlotOut, language: UiLanguage): string {
+  const sections = slotPeopleSections(slot, language);
+  if (sections.length === 0) {
+    return text(language, "Aucun eleve inscrit ou devis en attente sur ce creneau.", "No enrolled student or pending quote on this slot.");
+  }
+  return sections.map((section) => `${section.label}: ${section.people.join(", ")}`).join("\n");
 }
 
 function noteList(slot: AdminPlanningSimulationSlotOut, language: UiLanguage): string[] {
@@ -415,68 +437,40 @@ export default async function AdminSimulationPlanningPage({
         </section>
       ) : (
         <>
-          <section className="grid cols-5 simulation-planning-summary-grid">
-            <article className="card">
-              <h3>{text(language, "Creneaux suivis", "Tracked slots")}</h3>
+          <section className="card simulation-planning-overview">
+            <div className="simulation-overview-metrics" aria-label={text(language, "Synthese simulation", "Simulation summary")}>
+              <div>
+                <span>{text(language, "Creneaux", "Slots")}</span>
+                <strong>{simulation.summary.slot_count}</strong>
+              </div>
+              <div>
+                <span>{text(language, "Locaux", "Locations")}</span>
+                <strong>{simulation.summary.location_count}</strong>
+              </div>
+              <div>
+                <span>{text(language, "Inscrits", "Enrolled")}</span>
+                <strong>{simulation.summary.booked_count}</strong>
+              </div>
+              <div>
+                <span>{text(language, "Pipeline", "Pipeline")}</span>
+                <strong>{sumPipeline(simulation.summary)}</strong>
+              </div>
+              <div>
+                <span>{text(language, "Sans live", "Without live")}</span>
+                <strong>{simulation.summary.quote_only_slot_count}</strong>
+              </div>
+            </div>
+            <div className="simulation-overview-side">
+              <div className="simulation-planning-legend-chips">
+                <span className="simulation-chip simulation-chip-live">{text(language, "Reel", "Live")}</span>
+                <span className="simulation-chip simulation-chip-approved">{text(language, "Valide", "Approved")}</span>
+                <span className="simulation-chip simulation-chip-pending">{text(language, "En attente", "Pending")}</span>
+                <span className="simulation-chip simulation-chip-draft">{text(language, "En cours", "In progress")}</span>
+              </div>
               <p className="muted">
-                {text(language, "Semaine type consolidee sur la saison.", "Typical week consolidated over the season.")}
-              </p>
-              <strong>{simulation.summary.slot_count}</strong>
-            </article>
-
-            <article className="card">
-              <h3>{text(language, "Locaux visibles", "Visible locations")}</h3>
-              <p className="muted">
-                {text(language, "Locaux avec un creneau ou une pression devis.", "Locations with slots or quote pressure.")}
-              </p>
-              <strong>{simulation.summary.location_count}</strong>
-            </article>
-
-            <article className="card">
-              <h3>{text(language, "Inscriptions reelles", "Live enrollments")}</h3>
-              <p className="muted">
-                {text(language, "Eleves deja presents sur les series live.", "Students already present on live series.")}
-              </p>
-              <strong>{simulation.summary.booked_count}</strong>
-            </article>
-
-            <article className="card">
-              <h3>{text(language, "Pipeline devis", "Quote pipeline")}</h3>
-              <p className="muted">
-                {text(language, "Valides, en attente de validation et en cours.", "Approved, pending validation, and in progress.")}
-              </p>
-              <strong>{sumPipeline(simulation.summary)}</strong>
-            </article>
-
-            <article className="card">
-              <h3>{text(language, "Sans serie live", "Without live series")}</h3>
-              <p className="muted">
-                {text(language, "Creneaux devis non relies a une serie existante.", "Quote slots not linked to an existing live series.")}
-              </p>
-              <strong>{simulation.summary.quote_only_slot_count}</strong>
-            </article>
-          </section>
-
-          <section className="card simulation-planning-legend">
-            <div>
-              <h3>{text(language, "Lecture de la charge", "How to read the load")}</h3>
-              <p className="muted">
-                {text(
-                  language,
-                  "Reel = eleves deja inscrits. Valides = devis approuves non integres. En attente = devis envoyes. En cours = brouillons admin.",
-                  "Live = already enrolled students. Approved = approved quotes not integrated yet. Pending = sent quotes. In progress = admin drafts.",
-                )}
+                {text(language, "Mise a jour :", "Updated:")} {formatDateTime(simulation.generated_at, language)}
               </p>
             </div>
-            <div className="simulation-planning-legend-chips">
-              <span className="simulation-chip simulation-chip-live">{text(language, "Reel", "Live")}</span>
-              <span className="simulation-chip simulation-chip-approved">{text(language, "Valide", "Approved")}</span>
-              <span className="simulation-chip simulation-chip-pending">{text(language, "En attente", "Pending")}</span>
-              <span className="simulation-chip simulation-chip-draft">{text(language, "En cours", "In progress")}</span>
-            </div>
-            <p className="muted">
-              {text(language, "Mise a jour :", "Updated:")} {formatDateTime(simulation.generated_at, language)}
-            </p>
           </section>
 
           {groupedLocations.length === 0 ? (
@@ -584,11 +578,14 @@ export default async function AdminSimulationPlanningPage({
                               {dayGroup.slots.map((slot) => {
                                 const tone = projectionTone(slot);
                                 const percent = fillPercent(slot.projected_fill_rate);
+                                const peopleSections = slotPeopleSections(slot, language);
                                 return (
                                   <article
                                     className={`simulation-calendar-slot simulation-calendar-slot-${tone}`}
                                     key={slot.slot_key}
                                     style={calendarSlotStyle(slot, bounds)}
+                                    tabIndex={0}
+                                    title={slotHoverTitle(slot, language)}
                                   >
                                     <div className="simulation-calendar-slot-top">
                                       <strong>
@@ -608,6 +605,29 @@ export default async function AdminSimulationPlanningPage({
                                         {text(language, "Pipeline", "Pipeline")}{" "}
                                         {slot.approved_quotes_count + slot.pending_quotes_count + slot.draft_quotes_count}
                                       </span>
+                                    </div>
+                                    <div className="simulation-calendar-slot-detail" role="tooltip">
+                                      {peopleSections.length === 0 ? (
+                                        <p>
+                                          {text(
+                                            language,
+                                            "Aucun eleve inscrit ou devis en attente.",
+                                            "No enrolled student or pending quote.",
+                                          )}
+                                        </p>
+                                      ) : (
+                                        peopleSections.map((section) => (
+                                          <div className="simulation-calendar-people-section" key={section.label}>
+                                            <strong>{section.label}</strong>
+                                            <ul>
+                                              {section.people.slice(0, 8).map((person) => (
+                                                <li key={person}>{person}</li>
+                                              ))}
+                                              {section.people.length > 8 ? <li>+{section.people.length - 8}</li> : null}
+                                            </ul>
+                                          </div>
+                                        ))
+                                      )}
                                     </div>
                                   </article>
                                 );
