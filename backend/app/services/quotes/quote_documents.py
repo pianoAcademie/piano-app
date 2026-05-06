@@ -57,6 +57,7 @@ QUOTE_DOC_TEXT = {
     "fr": {
         "schedule_due_invoice": "à réception de votre facture",
         "schedule_due_validation": "à la validation du devis, avant votre 1er cours",
+        "schedule_due_before_first_course": "avant le démarrage du 1er cours",
         "payment_method_bank": "virement bancaire",
         "payment_method_check_one": "cheque",
         "payment_method_check_many": "cheques",
@@ -257,6 +258,7 @@ QUOTE_DOC_TEXT = {
     "en": {
         "schedule_due_invoice": "upon receipt of your invoice",
         "schedule_due_validation": "when the quote is approved, before your first lesson",
+        "schedule_due_before_first_course": "before the first lesson starts",
         "payment_method_bank": "bank transfer",
         "payment_method_check_one": "check",
         "payment_method_check_many": "checks",
@@ -657,6 +659,8 @@ def _schedule_due_label(item: dict[str, Any], *, language: str | None = None) ->
         return _quote_doc_text("schedule_due_invoice", language=language)
     if due_type == "on_quote_validation_before_first_course":
         return _quote_doc_text("schedule_due_validation", language=language)
+    if due_type == "before_first_course":
+        return _quote_doc_text("schedule_due_before_first_course", language=language)
     if normalized in {
         "a reception",
         "a reception du dossier",
@@ -717,6 +721,10 @@ def _normalise_check_schedule_deposit_months(
     )
     if not has_check_installments:
         return normalised
+    first = normalised[0]
+    first["due_type"] = "before_first_course"
+    first["due_label"] = _quote_doc_text("schedule_due_before_first_course", language=language)
+
     second = normalised[1]
     second_label = _searchable_text(second.get("label"))
     if "cheque" not in second_label and "check" not in second_label:
