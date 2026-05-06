@@ -22,6 +22,7 @@ import {
   summarizeStatus,
   translateQuoteTransformMessage,
   type BillingExtraRow,
+  type QuoteTransformClientResolutionMode,
   type QuoteToEnrollmentDraft,
   type QuoteTransformActivityCatalog,
   type QuoteTransformClient,
@@ -164,6 +165,9 @@ export default function QuoteToEnrollmentWizard({
   const bestClientCandidate = clientCandidates[0] || null;
   const bestCandidateClient = bestClientCandidate ? clientsById.get(bestClientCandidate.clientId) || null : null;
   const hasStrongClientCandidate = (bestClientCandidate?.confidence || 0) >= 80;
+  const bestAdultCandidate = clientCandidates
+    .map((candidate) => ({ candidate, client: clientsById.get(candidate.clientId) || null }))
+    .find((entry) => entry.client && String(entry.client.clientKind || "").toUpperCase() === "ADULT" && entry.candidate.confidence >= 70) || null;
   const existingClientOptions = useMemo(() => {
     const output = new Map<string, { id: string; label: string }>();
     for (const candidate of clientCandidates) {
@@ -184,11 +188,13 @@ export default function QuoteToEnrollmentWizard({
     return Array.from(output.values());
   }, [clientCandidates, clients, language]);
 
-  const initialClientMode =
+  const initialClientMode: QuoteTransformClientResolutionMode =
     restoredDraft?.clientResolution.mode
     ?? (
       prospect?.prospectType === "child"
-        ? "new_parent_child"
+        ? bestAdultCandidate
+          ? "new_child_existing_parent"
+          : "new_parent_child"
         : scenario === "A"
           ? "new_adult"
           : scenario === "C"
@@ -202,20 +208,18 @@ export default function QuoteToEnrollmentWizard({
     const stepCandidate = Number(preferredStep ?? restoredDraft?.currentStep ?? 1);
     return isSupportedStep(stepCandidate) ? stepCandidate : 1;
   });
-  const [clientMode, setClientMode] = useState<"existing" | "new_adult" | "new_parent_child">(
-    initialClientMode === "existing" || initialClientMode === "new_parent_child" ? initialClientMode : "new_adult",
-  );
+  const [clientMode, setClientMode] = useState<QuoteTransformClientResolutionMode>(initialClientMode);
   const [selectedClientId, setSelectedClientId] = useState<string>(
     restoredDraft?.clientResolution.selectedClientId
     || (initialClientMode === "existing" ? bestClientCandidate?.clientId || "" : ""),
   );
   const [selectedParentClientId, setSelectedParentClientId] = useState<string>(
     restoredDraft?.clientResolution.selectedParentClientId
+    || (initialClientMode === "new_child_existing_parent" ? bestAdultCandidate?.candidate.clientId || "" : "")
     || (
-      initialClientMode === "new_parent_child"
-      && String(bestCandidateClient?.clientKind || "").toUpperCase() === "ADULT"
-      ? bestClientCandidate?.clientId || ""
-      : ""
+      initialClientMode === "new_parent_child" && String(bestCandidateClient?.clientKind || "").toUpperCase() === "ADULT"
+        ? bestClientCandidate?.clientId || ""
+        : ""
     ),
   );
   const [clientNotes, setClientNotes] = useState<string>(restoredDraft?.clientResolution.notes || "");
@@ -411,6 +415,16 @@ export default function QuoteToEnrollmentWizard({
         step: 1,
         level: "warning",
         message: t("admin.quote_transform.issue_multiple_probable_matches"),
+        canOverride: false,
+      });
+    }
+
+    if (clientMode === "new_child_existing_parent" && !selectedParentClientId) {
+      issues.push({
+        issueId: "step1-existing-parent-required",
+        step: 1,
+        level: "blocked",
+        message: t("admin.quote_transform.issue_existing_parent_required"),
         canOverride: false,
       });
     }
@@ -638,6 +652,14 @@ export default function QuoteToEnrollmentWizard({
 
   const selectedClientName = useMemo(() => {
     if (clientMode !== "existing") {
+      if (clientMode === "new_child_existing_parent") {
+        const parent = clientsById.get(selectedParentClientId);
+        return parent
+          ? t("admin.quote_transform.selected_client_create_child_existing_parent_named", {
+            parent: displayName(parent.firstName, parent.lastName, parent.email),
+          })
+          : t("admin.quote_transform.selected_client_create_child_existing_parent");
+      }
       return clientMode === "new_parent_child"
         ? t("admin.quote_transform.selected_client_create_parent_child")
         : t("admin.quote_transform.selected_client_create_new_client");
@@ -651,7 +673,7 @@ export default function QuoteToEnrollmentWizard({
       return t("admin.quote_transform.selected_client_none");
     }
     return displayName(selectedClient.firstName, selectedClient.lastName, selectedClient.email);
-  }, [clientMode, clientCandidates, selectedClientId, clientsById, language]);
+  }, [clientMode, clientCandidates, selectedClientId, selectedParentClientId, clientsById, language]);
 
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) || null;
   const selectedLegalEntity = legalEntities.find((entity) => entity.id === quote.legalEntityId) || null;
@@ -964,6 +986,22 @@ export default function QuoteToEnrollmentWizard({
                     />
                     {t("admin.quote_transform.create_parent_child")}
                   </label>
+                  {prospect?.prospectType === "child" ? (
+                    <label className="quote-transform-radio">
+                      <input
+                        type="radio"
+                        name="client_mode"
+                        value="new_child_existing_parent"
+                        checked={clientMode === "new_child_existing_parent"}
+                        onChange={() => {
+                          setClientMode("new_child_existing_parent");
+                          setSelectedClientId("");
+                          setSelectedParentClientId((current) => current || bestAdultCandidate?.candidate.clientId || "");
+                        }}
+                      />
+                      {t("admin.quote_transform.create_child_existing_parent")}
+                    </label>
+                  ) : null}
                 </article>
               </div>
 
@@ -984,7 +1022,10 @@ export default function QuoteToEnrollmentWizard({
                         </tr>
                       </thead>
                       <tbody>
-                        {clientCandidates.map((candidate) => (
+                        {clientCandidates.map((candidate) => {
+                          const candidateClientKind = String(clientsById.get(candidate.clientId)?.clientKind || "").toUpperCase();
+                          const candidateIsAdultForChildProspect = prospect?.prospectType === "child" && candidateClientKind === "ADULT";
+                          return (
                           <tr key={candidate.clientId}>
                             <td>
                               <strong>{candidate.displayName}</strong>
@@ -999,16 +1040,31 @@ export default function QuoteToEnrollmentWizard({
                             </td>
                             <td>
                               <div className="row wrap gap-sm">
-                                <button
-                                  type="button"
-                                  className="ghost"
-                                  onClick={() => {
-                                    setClientMode("existing");
-                                    setSelectedClientId(candidate.clientId);
-                                  }}
-                                >
-                                  {t("admin.quote_transform.use_record")}
-                                </button>
+                                {!candidateIsAdultForChildProspect ? (
+                                  <button
+                                    type="button"
+                                    className="ghost"
+                                    onClick={() => {
+                                      setClientMode("existing");
+                                      setSelectedClientId(candidate.clientId);
+                                    }}
+                                  >
+                                    {t("admin.quote_transform.use_record")}
+                                  </button>
+                                ) : null}
+                                {candidateIsAdultForChildProspect ? (
+                                  <button
+                                    type="button"
+                                    className="ghost"
+                                    onClick={() => {
+                                      setClientMode("new_child_existing_parent");
+                                      setSelectedParentClientId(candidate.clientId);
+                                      setSelectedClientId("");
+                                    }}
+                                  >
+                                    {t("admin.quote_transform.create_child_here")}
+                                  </button>
+                                ) : null}
                                 {clientsById.has(candidate.clientId) ? (
                                   <Link className="ghost" href={`/admin/clients/${encodeURIComponent(candidate.clientId)}`} target="_blank">
                                     {t("admin.quote_transform.view_detail")}
@@ -1019,7 +1075,8 @@ export default function QuoteToEnrollmentWizard({
                               </div>
                             </td>
                           </tr>
-                        ))}
+                        );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -1040,11 +1097,17 @@ export default function QuoteToEnrollmentWizard({
                 </label>
               ) : null}
 
-              {clientMode === "new_parent_child" ? (
+              {clientMode === "new_parent_child" || clientMode === "new_child_existing_parent" ? (
                 <label className="top-gap-sm">
-                  {t("admin.quote_transform.existing_parent_optional")}
+                  {clientMode === "new_child_existing_parent"
+                    ? t("admin.quote_transform.existing_parent_required")
+                    : t("admin.quote_transform.existing_parent_optional")}
                   <select value={selectedParentClientId} onChange={(event) => setSelectedParentClientId(event.target.value)}>
-                    <option value="">{t("admin.quote_transform.create_new_parent")}</option>
+                    <option value="">
+                      {clientMode === "new_child_existing_parent"
+                        ? t("admin.quote_transform.select_existing_parent")
+                        : t("admin.quote_transform.create_new_parent")}
+                    </option>
                     {clients
                       .filter((client) => String(client.clientKind || "").toUpperCase() === "ADULT")
                       .slice(0, 60)

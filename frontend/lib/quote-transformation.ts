@@ -6,6 +6,8 @@ export type QuoteTransformStatus = "ok" | "warning" | "blocked";
 
 export type QuoteTransformStep = 1 | 2 | 3 | 4 | 5;
 
+export type QuoteTransformClientResolutionMode = "existing" | "new_adult" | "new_parent_child" | "new_child_existing_parent";
+
 export type QuoteTransformProspect = {
   id: string;
   firstName: string | null;
@@ -193,7 +195,7 @@ export type QuoteToEnrollmentDraft = {
   scenario: QuoteTransformScenario;
   currentStep: QuoteTransformStep;
   clientResolution: {
-    mode: "existing" | "new_adult" | "new_parent_child";
+    mode: QuoteTransformClientResolutionMode;
     selectedClientId: string | null;
     selectedParentClientId: string | null;
     notes: string;
@@ -1837,7 +1839,7 @@ export function coerceQuoteToEnrollmentDraft(raw: unknown): QuoteToEnrollmentDra
   const clientResolutionRaw = readObject(root.clientResolution) || {};
   const modeRaw = readString(clientResolutionRaw.mode);
   const mode =
-    modeRaw === "existing" || modeRaw === "new_parent_child"
+    modeRaw === "existing" || modeRaw === "new_parent_child" || modeRaw === "new_child_existing_parent"
       ? modeRaw
       : "new_adult";
 

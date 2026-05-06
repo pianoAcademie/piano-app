@@ -5635,11 +5635,13 @@ def _resolve_followup_clients(
         db.add_all([student, quote_prospect, quote, followup])
         return student, student
 
-    if mode != "new_parent_child":
+    if mode not in {"new_parent_child", "new_child_existing_parent"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Mode de transformation client non supporte")
 
     if quote_prospect is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Prospect enfant requis pour la transformation parent/enfant")
+    if mode == "new_child_existing_parent" and selected_parent_client_id is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Selectionnez le responsable existant auquel rattacher le nouvel enfant.")
 
     parent_contact = _resolve_parent_contact_data(quote=quote, quote_prospect=quote_prospect, parent_prospect=parent_prospect)
     parent_address_fields = _quote_parent_address_fields(
@@ -5686,7 +5688,8 @@ def _resolve_followup_clients(
 
     student = None
     candidate_student_ids: list[UUID] = []
-    for candidate_id in (selected_client_id, quote_prospect.linked_client_id, quote.client_id):
+    candidate_ids_to_reuse = () if mode == "new_child_existing_parent" else (selected_client_id, quote_prospect.linked_client_id, quote.client_id)
+    for candidate_id in candidate_ids_to_reuse:
         if candidate_id is None or candidate_id in candidate_student_ids:
             continue
         candidate_student_ids.append(candidate_id)
