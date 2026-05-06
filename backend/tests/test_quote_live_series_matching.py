@@ -176,6 +176,53 @@ class QuoteLiveSeriesMatchingTests(unittest.TestCase):
         self.assertEqual(db.scalar_calls, 2)
         self.assertEqual([row.id for row in rows], ["selected", "regen-2", "regen-3"])
 
+    def test_recurrence_group_uses_current_live_series_when_quote_snapshot_has_extra_dates(self) -> None:
+        course_type_id = uuid4()
+        location_id = uuid4()
+        recurrence_group_id = uuid4()
+        selected = _session(
+            session_id="selected",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2026, 9, 19, 8, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 19, 9, 0, tzinfo=timezone.utc),
+            recurrence_group_id=recurrence_group_id,
+        )
+        current_2 = _session(
+            session_id="current-2",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2026, 9, 26, 8, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 26, 9, 0, tzinfo=timezone.utc),
+            recurrence_group_id=recurrence_group_id,
+        )
+        current_3 = _session(
+            session_id="current-3",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2026, 10, 10, 8, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 10, 10, 9, 0, tzinfo=timezone.utc),
+            recurrence_group_id=recurrence_group_id,
+        )
+        db = _FakeSequentialSession([
+            [selected, current_2, current_3],
+            [selected, current_2, current_3],
+        ])
+
+        rows = _load_live_series_sessions(
+            db,
+            selected_session=selected,
+            expected_dates=[
+                date(2026, 9, 19),
+                date(2026, 9, 26),
+                date(2026, 10, 3),
+                date(2026, 10, 10),
+            ],
+        )
+
+        self.assertEqual(db.scalar_calls, 2)
+        self.assertEqual([row.id for row in rows], ["selected", "current-2", "current-3"])
+
 
 if __name__ == "__main__":
     unittest.main()

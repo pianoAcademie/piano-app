@@ -5415,8 +5415,10 @@ def _load_live_series_sessions(
     selected_local_end = selected_session.end_at_utc.astimezone(selected_zone)
     selected_local_start_time = selected_local_start.timetz().replace(second=0, microsecond=0, tzinfo=None)
     selected_local_end_time = selected_local_end.timetz().replace(second=0, microsecond=0, tzinfo=None)
+    expected_start = min(expected_date_set) if expected_date_set else None
+    expected_end = max(expected_date_set) if expected_date_set else None
 
-    def _matches_selected_series(session_obj: CourseSession) -> bool:
+    def _matches_selected_series(session_obj: CourseSession, *, require_expected_date: bool = True) -> bool:
         if session_obj.course_type_id != selected_session.course_type_id:
             return False
         if session_obj.location_id != selected_session.location_id:
@@ -5426,14 +5428,17 @@ def _load_live_series_sessions(
         local_end = session_obj.end_at_utc.astimezone(zone)
         local_start_time = local_start.timetz().replace(second=0, microsecond=0, tzinfo=None)
         local_end_time = local_end.timetz().replace(second=0, microsecond=0, tzinfo=None)
-        if expected_date_set and local_start.date() not in expected_date_set:
+        if require_expected_date and expected_date_set and local_start.date() not in expected_date_set:
             return False
+        if not require_expected_date and expected_start is not None and expected_end is not None:
+            if local_start.date() < expected_start or local_start.date() > expected_end:
+                return False
         return (
             local_start_time == selected_local_start_time
             and local_end_time == selected_local_end_time
         )
 
-    def _load_signature_matches() -> list[CourseSession]:
+    def _load_signature_matches(*, require_expected_date: bool = True) -> list[CourseSession]:
         if not expected_dates:
             return [selected_session]
 
@@ -5451,7 +5456,7 @@ def _load_live_series_sessions(
             .order_by(CourseSession.start_at_utc.asc())
             .with_for_update()
         ).all()
-        return [session_obj for session_obj in rows if _matches_selected_series(session_obj)]
+        return [session_obj for session_obj in rows if _matches_selected_series(session_obj, require_expected_date=require_expected_date)]
 
     if selected_session.recurrence_group_id is None:
         filtered = _load_signature_matches()
@@ -5471,8 +5476,15 @@ def _load_live_series_sessions(
 
     filtered: list[CourseSession] = [session_obj for session_obj in rows if _matches_selected_series(session_obj)]
     if len(filtered) < len(expected_date_set):
-        merged_by_id = {session_obj.id: session_obj for session_obj in filtered}
-        for session_obj in _load_signature_matches():
+        # Prefer the current live series over a stale quote snapshot when the series
+        # has been regenerated, holidays have been resynced, or occurrences changed.
+        current_series_rows = [
+            session_obj
+            for session_obj in rows
+            if _matches_selected_series(session_obj, require_expected_date=False)
+        ]
+        merged_by_id = {session_obj.id: session_obj for session_obj in current_series_rows or filtered}
+        for session_obj in _load_signature_matches(require_expected_date=False):
             merged_by_id.setdefault(session_obj.id, session_obj)
         filtered = sorted(merged_by_id.values(), key=lambda session_obj: session_obj.start_at_utc)
     return filtered
@@ -6365,7 +6377,7 @@ def _execute_quote_followup_transformation(
             selected_session=selected_session,
             expected_dates=expected_dates,
         )
-        if expected_dates and len(live_sessions) < len(expected_dates):
+        if expected_dates and not live_sessions:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Certains creneaux du devis n'ont plus de correspondance live",
