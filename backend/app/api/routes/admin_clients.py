@@ -3028,6 +3028,27 @@ def _invoice_compact_detail(value: str | None, *, max_length: int = 220) -> str 
     return normalized[: max_length - 3].rstrip() + "..."
 
 
+def _invoice_detail_lines(value: str | None, *, max_lines: int = 4, max_chars_per_line: int = 120) -> list[str]:
+    raw = (value or "").strip()
+    if not raw:
+        return []
+    lines: list[str] = []
+    for chunk in raw.splitlines():
+        normalized = re.sub(r"\s+", " ", chunk).strip()
+        if not normalized:
+            continue
+        if len(normalized) > max_chars_per_line:
+            normalized = normalized[: max_chars_per_line - 3].rstrip() + "..."
+        lines.append(normalized)
+        if len(lines) >= max_lines:
+            break
+    if not lines:
+        fallback = _invoice_compact_detail(raw, max_length=max_chars_per_line)
+        if fallback:
+            lines.append(fallback)
+    return lines
+
+
 def _invoice_kit_details_by_quote_line_id(
     db: Session,
     *,
@@ -3068,14 +3089,19 @@ def _invoice_kit_details_by_quote_line_id(
         if kit_id is None:
             continue
         parts: list[str] = []
-        description = _invoice_compact_detail(quote_line_description) or kit_descriptions.get(kit_id)
-        if description:
-            parts.append(f"Description: {description}")
-        composition = _invoice_compact_detail("; ".join(kit_items.get(kit_id, [])), max_length=260)
+        description_lines = _invoice_detail_lines(quote_line_description, max_lines=3) or _invoice_detail_lines(
+            kit_descriptions.get(kit_id),
+            max_lines=3,
+        )
+        if description_lines:
+            parts.append("Description:")
+            parts.extend(f"- {line}" for line in description_lines)
+        composition = kit_items.get(kit_id, [])
         if composition:
-            parts.append(f"Contenu: {composition}")
+            parts.append("Contenu:")
+            parts.extend(f"- {item}" for item in composition)
         if parts:
-            details_by_line_id[line_id] = " | ".join(parts)
+            details_by_line_id[line_id] = "\n".join(parts)
     return details_by_line_id
 
 
@@ -8115,10 +8141,22 @@ def download_admin_client_range_invoice(
         carry_balance = opening_balance if auto_include_previous_balance else Decimal("0.00")
         total_to_pay_by_currency[currency] = _quantize_money(period_total + carry_balance + applied_payments)
 
+    manual_quote_line_id_by_payment_id = {
+        row.id: quote_line_id
+        for row in payments
+        if (row.source or "").strip().upper() == "MANUAL"
+        if (quote_line_id := _invoice_quote_row_line_id_from_reference(row.reference)) is not None
+    }
+    kit_details_by_quote_line_id = _invoice_kit_details_by_quote_line_id(
+        db,
+        quote_line_ids=set(manual_quote_line_id_by_payment_id.values()),
+    )
+
     invoice_lines: list[InvoicePeriodLine] = []
     if normalized_layout == "DETAILED":
         for row in payments:
             currency = _normalize_currency(row.currency, fallback="EUR")
+            quote_line_id = manual_quote_line_id_by_payment_id.get(row.id)
             invoice_lines.append(
                 InvoicePeriodLine(
                     date_label=row.occurred_at.strftime("%d/%m/%Y"),
@@ -8130,6 +8168,7 @@ def download_admin_client_range_invoice(
                     vat_amount=_quantize_money(Decimal(row.vat_amount)),
                     total_incl_vat=_quantize_money(Decimal(row.total_incl_vat)),
                     currency=currency,
+                    detail_label=kit_details_by_quote_line_id.get(quote_line_id) if quote_line_id is not None else None,
                 )
             )
     else:
@@ -8193,27 +8232,15 @@ def download_admin_client_range_invoice(
                     "timezone": str(session_timezone or "UTC"),
                 }
 
-        grouped_bookings: dict[str, dict[tuple[int, str, str, int, str, str, str, str, Decimal], dict[str, Decimal | int]]] = {}
-        grouped_student_others: dict[str, dict[tuple[str, str, str, Decimal], dict[str, Decimal | int]]] = {}
-        grouped_others: dict[tuple[str, str, str, Decimal], dict[str, Decimal | int]] = {}
-        manual_quote_line_id_by_payment_id = {
-            row.id: quote_line_id
-            for row in payments
-            if (row.source or "").strip().upper() == "MANUAL"
-            if (quote_line_id := _invoice_quote_row_line_id_from_reference(row.reference)) is not None
-        }
-        kit_details_by_quote_line_id = _invoice_kit_details_by_quote_line_id(
-            db,
-            quote_line_ids=set(manual_quote_line_id_by_payment_id.values()),
-        )
+        grouped_bookings: dict[str, dict[tuple[int, str, str, int, str, str, str, str, Decimal], dict[str, Decimal | int | str]]] = {}
+        grouped_student_others: dict[str, dict[tuple[str, str, str, Decimal], dict[str, Decimal | int | str]]] = {}
+        grouped_others: dict[tuple[str, str, str, Decimal], dict[str, Decimal | int | str]] = {}
         for row in payments:
             currency = _normalize_currency(row.currency, fallback="EUR")
             type_label = _payment_source_label(row.source)
             base_label = row.label
             quote_line_id = manual_quote_line_id_by_payment_id.get(row.id)
             kit_detail = kit_details_by_quote_line_id.get(quote_line_id) if quote_line_id is not None else None
-            if kit_detail and kit_detail not in base_label:
-                base_label = f"{base_label} - {kit_detail}"
             vat_rate_key = Decimal(row.vat_rate).quantize(Decimal("0.001"))
             if row.source.strip().upper() == "BOOKING" and " - " in base_label:
                 base_label = base_label.split(" - ", maxsplit=1)[0]
@@ -8269,6 +8296,12 @@ def download_admin_client_range_invoice(
                         "total_incl_vat": Decimal("0.00"),
                     },
                 )
+                if kit_detail:
+                    existing_detail = str(bucket.get("detail_label") or "").strip()
+                    if not existing_detail:
+                        bucket["detail_label"] = kit_detail
+                    elif kit_detail not in existing_detail:
+                        bucket["detail_label"] = f"{existing_detail}\n{kit_detail}"
             bucket["quantity"] = int(bucket["quantity"]) + 1
             bucket["amount_excl_vat"] = _quantize_money(
                 Decimal(bucket["amount_excl_vat"]) + Decimal(row.amount_excl_vat)
@@ -8296,7 +8329,7 @@ def download_admin_client_range_invoice(
                     is_section_header=True,
                 )
             )
-            student_groups = grouped_bookings[student_name]
+            student_groups = grouped_bookings.get(student_name, {})
             for key in sorted(student_groups.keys(), key=lambda item: (item[0], item[2], item[4], item[5], item[6], item[7], item[8])):
                 (
                     _weekday_index,
@@ -8328,6 +8361,7 @@ def download_admin_client_range_invoice(
                         vat_amount=vat_amount,
                         total_incl_vat=_quantize_money(Decimal(values["total_incl_vat"])),
                         currency=currency,
+                        detail_label=str(values.get("detail_label") or "").strip() or None,
                     )
                 )
             student_other_groups = grouped_student_others.get(student_name, {})
@@ -8383,6 +8417,7 @@ def download_admin_client_range_invoice(
                     vat_amount=vat_amount,
                     total_incl_vat=_quantize_money(Decimal(values["total_incl_vat"])),
                     currency=currency,
+                    detail_label=str(values.get("detail_label") or "").strip() or None,
                 )
             )
 

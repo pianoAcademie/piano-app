@@ -281,6 +281,64 @@ class InvoicePeriodTotalsTests(unittest.TestCase):
         self.assertIn("Piano Academie Figee", payload)
         self.assertNotIn("Piano Academie Modifiee", payload)
 
+    def test_render_invoice_period_pdf_renders_line_detail_with_preserved_breaks(self) -> None:
+        identity = CompanyIdentity(
+            company_name="Piano Academie",
+            company_email="compta@example.com",
+            company_phone=None,
+            company_siren=None,
+            company_siret=None,
+            company_vat_number=None,
+            company_address="1 rue de Richelieu, 75001 Paris",
+            company_legal_form=None,
+            company_share_capital=None,
+            company_logo_jpeg=None,
+            company_logo_width_px=None,
+            company_logo_height_px=None,
+        )
+        lines = [
+            InvoicePeriodLine(
+                date_label="01/05/2026 - 30/06/2027",
+                type_label="Produit",
+                label="Kit de demarrage - Gustave Guisnel",
+                quantity=1,
+                amount_excl_vat=Decimal("225.00"),
+                vat_rate=Decimal("20.00"),
+                vat_amount=Decimal("45.00"),
+                total_incl_vat=Decimal("270.00"),
+                currency="EUR",
+                detail_label="Contenu:\n- 2 x Cours de controle\n- Jeu de Notes",
+            )
+        ]
+
+        with patch("app.services.invoice_documents._company_identity", return_value=identity):
+            pdf = render_invoice_period_pdf(
+                db=object(),
+                invoice_number="PA26-0042",
+                issued_at=datetime(2026, 5, 7, 0, 0, tzinfo=timezone.utc),
+                client_id="client-1",
+                client_name="Coraline Schnee",
+                period_label="01/05/2026 - 30/06/2027",
+                lines=lines,
+                totals_by_currency={
+                    "EUR": {
+                        "amount_excl_vat": Decimal("225.00"),
+                        "vat_amount": Decimal("45.00"),
+                        "total_incl_vat": Decimal("270.00"),
+                    }
+                },
+                note=None,
+                client_billing_address="France",
+                due_date=date(2026, 9, 1),
+            )
+
+        payload = pdf.decode("latin-1", errors="ignore")
+        self.assertIn("Kit de demarrage - Gustave Guisnel", payload)
+        self.assertIn("Contenu:", payload)
+        self.assertIn("2 x Cours de controle", payload)
+        self.assertIn("Jeu de Notes", payload)
+        self.assertIn("Date d echeance: 01/09/2026", payload)
+
     def test_normalize_invoice_range_metadata_preserves_frozen_snapshots(self) -> None:
         payload = {
             "kind": "INVOICE_RANGE",

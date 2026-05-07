@@ -286,6 +286,7 @@ class InvoicePeriodLine:
     total_incl_vat: Decimal
     currency: str
     is_section_header: bool = False
+    detail_label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -601,6 +602,20 @@ def _wrap_text(value: str, max_chars: int) -> list[str]:
         lines.append(current)
         current = word
     lines.append(current)
+    return lines
+
+
+def _wrap_text_preserving_breaks(value: str, max_chars: int) -> list[str]:
+    safe = _ascii_safe(value)
+    if not safe.strip():
+        return []
+    lines: list[str] = []
+    for raw_line in safe.splitlines():
+        wrapped = _wrap_text(raw_line, max_chars)
+        if wrapped == [""] and lines:
+            lines.append("")
+            continue
+        lines.extend(wrapped)
     return lines
 
 
@@ -1224,8 +1239,11 @@ def render_invoice_period_pdf(
 
         date_lines = _wrap_text(row.date_label, 18)
         label_lines = _wrap_text(row.label, 44)
-        max_lines = max(len(date_lines), len(label_lines))
-        row_height = max(20.0, (max_lines * 12.0) + 8.0)
+        detail_lines = _wrap_text_preserving_breaks(row.detail_label or "", 56)
+        date_height = len(date_lines) * 12.0
+        label_height = len(label_lines) * 12.0
+        detail_height = len(detail_lines) * 8.5
+        row_height = max(20.0, date_height + 8.0, label_height + detail_height + 8.0)
         if current_row_top + row_height > 760.0:
             pdf.new_page()
             current_row_top = draw_table_header_for_new_page()
@@ -1235,6 +1253,15 @@ def render_invoice_period_pdf(
             pdf.text(x=col_date_x, top_y=current_row_top + 14 + (idx * 12), value=chunk, size=9)
         for idx, chunk in enumerate(label_lines):
             pdf.text(x=col_label_x, top_y=current_row_top + 14 + (idx * 12), value=chunk, size=9)
+        detail_top_y = current_row_top + 14 + (len(label_lines) * 12)
+        for idx, chunk in enumerate(detail_lines):
+            pdf.text(
+                x=col_label_x,
+                top_y=detail_top_y + (idx * 8.5),
+                value=chunk,
+                size=7,
+                color=(0.39, 0.45, 0.54),
+            )
         pdf.text_right(right_x=col_qty_right, top_y=current_row_top + 14, value=str(row.quantity), size=9)
         pdf.text_right(right_x=col_ht_right, top_y=current_row_top + 14, value=_format_amount(row.amount_excl_vat), size=9)
         pdf.text_right(right_x=col_vat_rate_right, top_y=current_row_top + 14, value=f"{Decimal(row.vat_rate).quantize(Decimal('0.01'))}%", size=9)
