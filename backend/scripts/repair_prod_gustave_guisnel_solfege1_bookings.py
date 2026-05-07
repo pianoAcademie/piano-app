@@ -150,8 +150,10 @@ def main() -> None:
             return
 
         signatures = {_session_signature(session_obj) for _, session_obj, _, _ in source_rows}
+        source_weekdays = {signature[2] for signature in signatures}
         recurrence_group_ids = {session_obj.recurrence_group_id for _, session_obj, _, _ in source_rows if session_obj.recurrence_group_id}
         course_type_ids = {session_obj.course_type_id for _, session_obj, _, _ in source_rows}
+        location_ids = {session_obj.location_id for _, session_obj, _, _ in source_rows}
 
         print(f"[{SCRIPT_PREFIX}] source_level_1_bookings={len(source_rows)}")
         print(f"[{SCRIPT_PREFIX}] source_signatures={len(signatures)}")
@@ -161,8 +163,12 @@ def main() -> None:
             print(f"[{SCRIPT_PREFIX}] abort=ambiguous_solfege_level_1_course_type")
             db.rollback()
             return
-        if len(signatures) != 1 and len(recurrence_group_ids) != 1:
-            print(f"[{SCRIPT_PREFIX}] abort=ambiguous_solfege_level_1_series")
+        if len(location_ids) != 1:
+            print(f"[{SCRIPT_PREFIX}] abort=ambiguous_solfege_level_1_location")
+            db.rollback()
+            return
+        if len(source_weekdays) != 1:
+            print(f"[{SCRIPT_PREFIX}] abort=ambiguous_solfege_level_1_weekday")
             db.rollback()
             return
 
@@ -176,10 +182,9 @@ def main() -> None:
         if len(recurrence_group_ids) == 1:
             target_stmt = target_stmt.where(CourseSession.recurrence_group_id == next(iter(recurrence_group_ids)))
         else:
-            signature = next(iter(signatures))
             target_stmt = target_stmt.where(
-                CourseSession.course_type_id == signature[0],
-                CourseSession.location_id == signature[1],
+                CourseSession.course_type_id == next(iter(course_type_ids)),
+                CourseSession.location_id == next(iter(location_ids)),
             )
 
         target_rows = db.execute(
@@ -191,11 +196,11 @@ def main() -> None:
         ).all()
 
         if len(recurrence_group_ids) != 1:
-            signature = next(iter(signatures))
+            source_weekday = next(iter(source_weekdays))
             target_rows = [
                 row
                 for row in target_rows
-                if _session_signature(row[0]) == signature
+                if _session_signature(row[0])[2] == source_weekday
             ]
 
         target_session_ids = [session_obj.id for session_obj, _, _ in target_rows]
