@@ -39,7 +39,7 @@ from app.models.catalog import (
     SessionAudienceScope,
     SessionStatus,
 )
-from app.models.client_record import ClientInvoiceLine, ClientManualCreditBalance, ClientNoteEntry
+from app.models.client_record import ClientInvoiceLine, ClientManualCreditBalance, ClientManualTransaction, ClientNoteEntry
 from app.models.external_content import (
     CourseTypeContentMapping,
     ExternalContentCourse,
@@ -67,6 +67,8 @@ from app.models.ops import (
     LegalEntity,
     MessageFormat,
 )
+from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct
+from app.models.quote import QuoteLine
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.catalog import SessionCourseTypeOut, SessionLocationOut, SessionOut, SessionProfessorOut
 from app.schemas.booking import BookingCreateRequest
@@ -782,6 +784,152 @@ def _invoice_period_line_from_invoice_line(line: ClientInvoiceLine) -> InvoicePe
         total_incl_vat=Decimal(line.total_incl_vat).quantize(Decimal("0.01")),
         currency=(line.currency or "EUR").upper(),
     )
+
+
+def _client_invoice_quote_row_line_id_from_reference(reference: str | None) -> UUID | None:
+    raw = (reference or "").strip()
+    if raw.upper().startswith("MODE:") and "|REF:" in raw:
+        raw = raw.split("|REF:", maxsplit=1)[1].strip()
+    match = re.match(r"^QUOTE:[0-9a-fA-F-]{36}:ROW:(?P<row_id>.+)$", raw)
+    if match is None:
+        return None
+    row_id = match.group("row_id").strip()
+    if row_id.startswith("extra-"):
+        row_id = row_id[6:].strip()
+    try:
+        return UUID(row_id)
+    except ValueError:
+        return None
+
+
+def _client_invoice_compact_detail(value: str | None, *, max_length: int = 220) -> str | None:
+    normalized = re.sub(r"\s+", " ", (value or "").strip())
+    if not normalized:
+        return None
+    if len(normalized) <= max_length:
+        return normalized
+    return normalized[: max_length - 3].rstrip() + "..."
+
+
+def _client_invoice_detail_lines(value: str | None, *, max_lines: int = 4, max_chars_per_line: int = 120) -> list[str]:
+    raw = (value or "").strip()
+    if not raw:
+        return []
+    lines: list[str] = []
+    for chunk in raw.splitlines():
+        normalized = re.sub(r"\s+", " ", chunk).strip()
+        if not normalized:
+            continue
+        if len(normalized) > max_chars_per_line:
+            normalized = normalized[: max_chars_per_line - 3].rstrip() + "..."
+        lines.append(normalized)
+        if len(lines) >= max_lines:
+            break
+    if not lines:
+        fallback = _client_invoice_compact_detail(raw, max_length=max_chars_per_line)
+        if fallback:
+            lines.append(fallback)
+    return lines
+
+
+def _client_invoice_kit_details_by_quote_line_id(
+    db: Session,
+    *,
+    quote_line_ids: set[UUID],
+) -> dict[UUID, str]:
+    if not quote_line_ids:
+        return {}
+
+    quote_lines = db.execute(
+        select(QuoteLine.id, QuoteLine.kit_id, QuoteLine.description)
+        .where(QuoteLine.id.in_(quote_line_ids), QuoteLine.kit_id.is_not(None))
+    ).all()
+    kit_ids = {kit_id for _line_id, kit_id, _description in quote_lines if kit_id is not None}
+    if not kit_ids:
+        return {}
+
+    kit_descriptions = {
+        kit_id: _client_invoice_compact_detail(long_description) or _client_invoice_compact_detail(short_description)
+        for kit_id, short_description, long_description in db.execute(
+            select(CatalogKit.id, CatalogKit.short_description, CatalogKit.long_description).where(CatalogKit.id.in_(kit_ids))
+        ).all()
+    }
+    kit_items: dict[UUID, list[str]] = {}
+    item_rows = db.execute(
+        select(CatalogKitItem.kit_id, CatalogKitItem.quantity, CatalogProduct.title)
+        .select_from(CatalogKitItem)
+        .join(CatalogProduct, CatalogProduct.id == CatalogKitItem.product_id)
+        .where(CatalogKitItem.kit_id.in_(kit_ids))
+        .order_by(CatalogKitItem.kit_id.asc(), CatalogKitItem.display_order.asc(), CatalogKitItem.created_at.asc())
+    ).all()
+    for kit_id, quantity, product_title in item_rows:
+        quantity_value = int(quantity or 1)
+        prefix = f"{quantity_value} x " if quantity_value > 1 else ""
+        kit_items.setdefault(kit_id, []).append(f"{prefix}{product_title}")
+
+    details_by_line_id: dict[UUID, str] = {}
+    for line_id, kit_id, quote_line_description in quote_lines:
+        if kit_id is None:
+            continue
+        parts: list[str] = []
+        description_lines = _client_invoice_detail_lines(
+            quote_line_description,
+            max_lines=3,
+        ) or _client_invoice_detail_lines(kit_descriptions.get(kit_id), max_lines=3)
+        if description_lines:
+            parts.append("Description:")
+            parts.extend(f"- {line}" for line in description_lines)
+        composition = kit_items.get(kit_id, [])
+        if composition:
+            parts.append("Contenu:")
+            parts.extend(f"- {item}" for item in composition)
+        if parts:
+            details_by_line_id[line_id] = "\n".join(parts)
+    return details_by_line_id
+
+
+def _invoice_period_lines_from_invoice_lines(db: Session, rows: list[ClientInvoiceLine]) -> list[InvoicePeriodLine]:
+    manual_line_ids = [
+        row.source_payment_id
+        for row in rows
+        if (row.source or "").strip().upper() == "MANUAL"
+    ]
+    manual_rows_by_id = {
+        row.id: row
+        for row in db.scalars(select(ClientManualTransaction).where(ClientManualTransaction.id.in_(manual_line_ids))).all()
+    } if manual_line_ids else {}
+    quote_line_id_by_invoice_line_id: dict[UUID, UUID] = {}
+    for row in rows:
+        manual_row = manual_rows_by_id.get(row.source_payment_id)
+        if manual_row is None:
+            continue
+        quote_line_id = _client_invoice_quote_row_line_id_from_reference(manual_row.reference)
+        if quote_line_id is not None:
+            quote_line_id_by_invoice_line_id[row.id] = quote_line_id
+    kit_details_by_quote_line_id = _client_invoice_kit_details_by_quote_line_id(
+        db,
+        quote_line_ids=set(quote_line_id_by_invoice_line_id.values()),
+    )
+    invoice_lines: list[InvoicePeriodLine] = []
+    for row in rows:
+        quote_line_id = quote_line_id_by_invoice_line_id.get(row.id)
+        base_line = _invoice_period_line_from_invoice_line(row)
+        invoice_lines.append(
+            InvoicePeriodLine(
+                date_label=base_line.date_label,
+                type_label=base_line.type_label,
+                label=base_line.label,
+                quantity=base_line.quantity,
+                amount_excl_vat=base_line.amount_excl_vat,
+                vat_rate=base_line.vat_rate,
+                vat_amount=base_line.vat_amount,
+                total_incl_vat=base_line.total_incl_vat,
+                currency=base_line.currency,
+                is_section_header=base_line.is_section_header,
+                detail_label=kit_details_by_quote_line_id.get(quote_line_id) if quote_line_id is not None else None,
+            )
+        )
+    return invoice_lines
 
 
 def _invoice_period_totals_from_lines_or_metadata(
@@ -3513,7 +3661,7 @@ def download_client_invoice(
             .where(ClientInvoiceLine.note_id == note.id)
             .order_by(ClientInvoiceLine.occurred_at.asc(), ClientInvoiceLine.id.asc())
         ).all()
-        invoice_lines = [_invoice_period_line_from_invoice_line(row) for row in invoice_lines_rows]
+        invoice_lines = _invoice_period_lines_from_invoice_lines(db, invoice_lines_rows)
 
         totals_by_currency = _invoice_period_totals_from_lines_or_metadata(invoice_lines, metadata)
 
