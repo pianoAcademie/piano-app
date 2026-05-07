@@ -1125,7 +1125,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                         </td>
                         <td>{dateTimeLabel(row.updated_at, language)}</td>
                         <td>
-                          <details>
+                          <details open={row.is_default}>
                             <summary className="mode-link">{t("common.edit")}</summary>
                             <form action={updateAdminPricingCatalogConfigAction} className="grid config-form-grid top-gap-sm">
                               <input type="hidden" name="catalog_id" value={row.id} />
@@ -1160,9 +1160,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                             </form>
 
                             <div className="top-gap-sm">
-                              <h4>{t("admin.quote_config.pricing_sources_diagnostics_title")}</h4>
-                              <p className="muted">{t("admin.quote_config.pricing_sources_diagnostics_help")}</p>
-
+                              <h4>{t("admin.quote_config.activity_price_title")}</h4>
                               <form action={upsertAdminPricingActivityPriceConfigAction} className="grid cols-4 config-form-grid top-gap-sm">
                                 <input type="hidden" name="catalog_id" value={row.id} />
                                 <input type="hidden" name="return_to" value={buildQuotesConfigHref("catalogs")} />
@@ -1205,6 +1203,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                   <button type="submit">{t("admin.quote_config.activity_price_save")}</button>
                                 </div>
                               </form>
+
+                              <h4 className="top-gap">{t("admin.quote_config.pricing_sources_diagnostics_title")}</h4>
+                              <p className="muted">{t("admin.quote_config.pricing_sources_diagnostics_help")}</p>
 
                               <div className="table-wrap top-gap-sm">
                                 <table className="data-table">
@@ -1298,12 +1299,13 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                       <th>{t("admin.quote_config.mode")}</th>
                                       <th>{t("admin.quote_config.fallback")}</th>
                                       <th>{t("admin.quote_config.fallback_amount")}</th>
+                                      <th>{t("common.actions")}</th>
                                     </tr>
                                   </thead>
                                   <tbody>
                                     {fallbackActivities.length === 0 ? (
                                       <tr>
-                                        <td colSpan={4}>
+                                        <td colSpan={5}>
                                           <p className="muted">{t("admin.quote_config.all_activities_priced")}</p>
                                         </td>
                                       </tr>
@@ -1321,6 +1323,21 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                             </span>
                                           </td>
                                           <td>{fallback.amountTtc === null ? "-" : moneyLabel(fallback.amountTtc)}</td>
+                                          <td>
+                                            {fallback.amountTtc === null ? (
+                                              <span className="muted">{t("admin.quote_config.activity_price_unavailable")}</span>
+                                            ) : (
+                                              <form action={upsertAdminPricingActivityPriceConfigAction} className="row">
+                                                <input type="hidden" name="catalog_id" value={row.id} />
+                                                <input type="hidden" name="activity_id" value={activity.id} />
+                                                <input type="hidden" name="location_id" value="" />
+                                                <input type="hidden" name="pricing_unit" value="per_session" />
+                                                <input type="hidden" name="unit_price_ttc" value={fallback.amountTtc.toFixed(2)} />
+                                                <input type="hidden" name="return_to" value={buildQuotesConfigHref("catalogs")} />
+                                                <button type="submit" className="ghost">{t("admin.quote_config.activity_price_quick_save")}</button>
+                                              </form>
+                                            )}
+                                          </td>
                                         </tr>
                                       ))
                                     )}
