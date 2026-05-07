@@ -55,7 +55,8 @@ from app.models.plan import (
     PlanPriceTaxMode,
     SubscriptionStatus,
 )
-from app.models.product_catalog import ProductCategory
+from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct, ProductCategory
+from app.models.quote import QuoteLine
 from app.models.notification_engine import ContactDeliveryStatus
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.schemas.admin import (
@@ -3002,6 +3003,80 @@ def _invoice_student_match_text(value: str | None) -> str:
     normalized = unicodedata.normalize("NFKD", value or "")
     ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
     return re.sub(r"\s+", " ", ascii_text.casefold()).strip()
+
+
+def _invoice_quote_row_line_id_from_reference(reference: str | None) -> UUID | None:
+    raw = (reference or "").strip()
+    match = re.match(r"^QUOTE:[0-9a-fA-F-]{36}:ROW:(?P<row_id>.+)$", raw)
+    if match is None:
+        return None
+    row_id = match.group("row_id").strip()
+    if row_id.startswith("extra-"):
+        row_id = row_id[6:].strip()
+    try:
+        return UUID(row_id)
+    except ValueError:
+        return None
+
+
+def _invoice_compact_detail(value: str | None, *, max_length: int = 220) -> str | None:
+    normalized = re.sub(r"\s+", " ", (value or "").strip())
+    if not normalized:
+        return None
+    if len(normalized) <= max_length:
+        return normalized
+    return normalized[: max_length - 3].rstrip() + "..."
+
+
+def _invoice_kit_details_by_quote_line_id(
+    db: Session,
+    *,
+    quote_line_ids: set[UUID],
+) -> dict[UUID, str]:
+    if not quote_line_ids:
+        return {}
+
+    quote_lines = db.execute(
+        select(QuoteLine.id, QuoteLine.kit_id, QuoteLine.description)
+        .where(QuoteLine.id.in_(quote_line_ids), QuoteLine.kit_id.is_not(None))
+    ).all()
+    kit_ids = {kit_id for _line_id, kit_id, _description in quote_lines if kit_id is not None}
+    if not kit_ids:
+        return {}
+
+    kit_descriptions = {
+        kit_id: _invoice_compact_detail(long_description) or _invoice_compact_detail(short_description)
+        for kit_id, short_description, long_description in db.execute(
+            select(CatalogKit.id, CatalogKit.short_description, CatalogKit.long_description).where(CatalogKit.id.in_(kit_ids))
+        ).all()
+    }
+    kit_items: dict[UUID, list[str]] = {}
+    item_rows = db.execute(
+        select(CatalogKitItem.kit_id, CatalogKitItem.quantity, CatalogProduct.title)
+        .select_from(CatalogKitItem)
+        .join(CatalogProduct, CatalogProduct.id == CatalogKitItem.product_id)
+        .where(CatalogKitItem.kit_id.in_(kit_ids))
+        .order_by(CatalogKitItem.kit_id.asc(), CatalogKitItem.display_order.asc(), CatalogKitItem.created_at.asc())
+    ).all()
+    for kit_id, quantity, product_title in item_rows:
+        quantity_value = int(quantity or 1)
+        prefix = f"{quantity_value} x " if quantity_value > 1 else ""
+        kit_items.setdefault(kit_id, []).append(f"{prefix}{product_title}")
+
+    details_by_line_id: dict[UUID, str] = {}
+    for line_id, kit_id, quote_line_description in quote_lines:
+        if kit_id is None:
+            continue
+        parts: list[str] = []
+        description = _invoice_compact_detail(quote_line_description) or kit_descriptions.get(kit_id)
+        if description:
+            parts.append(f"Description: {description}")
+        composition = _invoice_compact_detail("; ".join(kit_items.get(kit_id, [])), max_length=260)
+        if composition:
+            parts.append(f"Contenu: {composition}")
+        if parts:
+            details_by_line_id[line_id] = " | ".join(parts)
+    return details_by_line_id
 
 
 def _linked_plan_label(plan: Plan | None) -> str | None:
@@ -8121,10 +8196,24 @@ def download_admin_client_range_invoice(
         grouped_bookings: dict[str, dict[tuple[int, str, str, int, str, str, str, str, Decimal], dict[str, Decimal | int]]] = {}
         grouped_student_others: dict[str, dict[tuple[str, str, str, Decimal], dict[str, Decimal | int]]] = {}
         grouped_others: dict[tuple[str, str, str, Decimal], dict[str, Decimal | int]] = {}
+        manual_quote_line_id_by_payment_id = {
+            row.id: quote_line_id
+            for row in payments
+            if (row.source or "").strip().upper() == "MANUAL"
+            if (quote_line_id := _invoice_quote_row_line_id_from_reference(row.reference)) is not None
+        }
+        kit_details_by_quote_line_id = _invoice_kit_details_by_quote_line_id(
+            db,
+            quote_line_ids=set(manual_quote_line_id_by_payment_id.values()),
+        )
         for row in payments:
             currency = _normalize_currency(row.currency, fallback="EUR")
             type_label = _payment_source_label(row.source)
             base_label = row.label
+            quote_line_id = manual_quote_line_id_by_payment_id.get(row.id)
+            kit_detail = kit_details_by_quote_line_id.get(quote_line_id) if quote_line_id is not None else None
+            if kit_detail and kit_detail not in base_label:
+                base_label = f"{base_label} - {kit_detail}"
             vat_rate_key = Decimal(row.vat_rate).quantize(Decimal("0.001"))
             if row.source.strip().upper() == "BOOKING" and " - " in base_label:
                 base_label = base_label.split(" - ", maxsplit=1)[0]
