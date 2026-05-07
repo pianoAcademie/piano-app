@@ -8382,6 +8382,7 @@ def download_admin_client_range_invoice(
                         vat_amount=vat_amount,
                         total_incl_vat=_quantize_money(Decimal(values["total_incl_vat"])),
                         currency=currency,
+                        detail_label=str(values.get("detail_label") or "").strip() or None,
                     )
                 )
 
