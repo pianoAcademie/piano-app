@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import re
+import unicodedata
 from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -2944,6 +2945,12 @@ def _payment_source_label(source: str) -> str:
     if normalized == "MANUAL":
         return "Transaction manuelle"
     return normalized or "Paiement"
+
+
+def _invoice_student_match_text(value: str | None) -> str:
+    normalized = unicodedata.normalize("NFKD", value or "")
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"\s+", " ", ascii_text.casefold()).strip()
 
 
 def _linked_plan_label(plan: Plan | None) -> str | None:
@@ -7985,6 +7992,24 @@ def download_admin_client_range_invoice(
             )
     else:
         booking_ids = {row.id for row in payments if row.source.strip().upper() == "BOOKING"}
+        scoped_users = _payment_scope_users(db, client=client)
+        student_match_candidates: list[tuple[str, str]] = []
+        for scoped_user in scoped_users.values():
+            candidate_name = _display_name(scoped_user.first_name, scoped_user.last_name, scoped_user.email)
+            normalized_candidate = _invoice_student_match_text(candidate_name)
+            if normalized_candidate:
+                student_match_candidates.append((normalized_candidate, candidate_name))
+        student_match_candidates.sort(key=lambda item: len(item[0]), reverse=True)
+
+        def _student_name_from_line_label(label: str) -> str | None:
+            normalized_label = _invoice_student_match_text(label)
+            if not normalized_label:
+                return None
+            for candidate_token, candidate_name in student_match_candidates:
+                if candidate_token in normalized_label:
+                    return candidate_name
+            return None
+
         booking_context_by_id: dict[UUID, dict[str, object]] = {}
         if booking_ids:
             booking_rows = db.execute(
@@ -8002,7 +8027,6 @@ def download_admin_client_range_invoice(
                 .join(Location, Location.id == CourseSession.location_id)
                 .where(Booking.id.in_(booking_ids))
             ).all()
-            scoped_users = _payment_scope_users(db, client=client)
             for (
                 booking_id,
                 booking_user_id,
@@ -8028,6 +8052,7 @@ def download_admin_client_range_invoice(
                 }
 
         grouped_bookings: dict[str, dict[tuple[int, str, str, int, str, str, str, str, Decimal], dict[str, Decimal | int]]] = {}
+        grouped_student_others: dict[str, dict[tuple[str, str, str, Decimal], dict[str, Decimal | int]]] = {}
         grouped_others: dict[tuple[str, str, str, Decimal], dict[str, Decimal | int]] = {}
         for row in payments:
             currency = _normalize_currency(row.currency, fallback="EUR")
@@ -8073,7 +8098,13 @@ def download_admin_client_range_invoice(
                 )
             else:
                 key = (base_label, type_label, currency, vat_rate_key)
-                bucket = grouped_others.setdefault(
+                matched_student_name = _student_name_from_line_label(base_label)
+                target_group = (
+                    grouped_student_others.setdefault(matched_student_name, {})
+                    if matched_student_name is not None
+                    else grouped_others
+                )
+                bucket = target_group.setdefault(
                     key,
                     {
                         "quantity": 0,
@@ -8090,7 +8121,10 @@ def download_admin_client_range_invoice(
             bucket["total_incl_vat"] = _quantize_money(Decimal(bucket["total_incl_vat"]) + Decimal(row.total_incl_vat))
 
         period_label = f"{start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')}"
-        sorted_students = sorted(grouped_bookings.keys(), key=lambda value: value.casefold())
+        sorted_students = sorted(
+            set(grouped_bookings.keys()) | set(grouped_student_others.keys()),
+            key=lambda value: value.casefold(),
+        )
         for student_name in sorted_students:
             invoice_lines.append(
                 InvoicePeriodLine(
@@ -8140,6 +8174,42 @@ def download_admin_client_range_invoice(
                         currency=currency,
                     )
                 )
+            student_other_groups = grouped_student_others.get(student_name, {})
+            for key in sorted(student_other_groups.keys(), key=lambda item: (item[1], item[0], item[2], item[3])):
+                base_label, type_label, currency, vat_rate_raw = key
+                values = student_other_groups[key]
+                amount_excl_vat = _quantize_money(Decimal(values["amount_excl_vat"]))
+                vat_amount = _quantize_money(Decimal(values["vat_amount"]))
+                vat_rate = Decimal(vat_rate_raw).quantize(Decimal("0.01"))
+                invoice_lines.append(
+                    InvoicePeriodLine(
+                        date_label=period_label,
+                        type_label=type_label,
+                        label=base_label,
+                        quantity=int(values["quantity"]),
+                        amount_excl_vat=amount_excl_vat,
+                        vat_rate=vat_rate,
+                        vat_amount=vat_amount,
+                        total_incl_vat=_quantize_money(Decimal(values["total_incl_vat"])),
+                        currency=currency,
+                    )
+                )
+
+        if grouped_others and sorted_students:
+            invoice_lines.append(
+                InvoicePeriodLine(
+                    date_label="",
+                    type_label="",
+                    label="Produits et autres lignes",
+                    quantity=0,
+                    amount_excl_vat=Decimal("0.00"),
+                    vat_rate=Decimal("0.00"),
+                    vat_amount=Decimal("0.00"),
+                    total_incl_vat=Decimal("0.00"),
+                    currency="EUR",
+                    is_section_header=True,
+                )
+            )
 
         for (base_label, type_label, currency, vat_rate_raw) in sorted(grouped_others.keys(), key=lambda item: (item[1], item[0], item[2], item[3])):
             values = grouped_others[(base_label, type_label, currency, vat_rate_raw)]

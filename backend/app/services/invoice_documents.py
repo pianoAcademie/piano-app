@@ -1062,7 +1062,9 @@ def render_invoice_period_pdf(
     totals_col_vat_right = right - 86
     totals_col_ttc_right = right - 6
 
-    def draw_header() -> None:
+    summary_page_row_top = 236.0
+
+    def draw_header(*, include_table_header: bool = True) -> None:
         pdf.rect(
             x=0.0,
             top_y=0.0,
@@ -1151,6 +1153,9 @@ def render_invoice_period_pdf(
             size=10,
             bold=True,
         )
+
+        if not include_table_header:
+            return
 
         pdf.rect(
             x=left,
@@ -1290,8 +1295,8 @@ def render_invoice_period_pdf(
     reserved_note_space = 80.0 if normalized_note else 0.0
     if current_row_top + 140 + reserved_adjustment_space + reserved_balance_space + reserved_note_space > 780:
         pdf.new_page()
-        draw_header()
-        current_row_top = 140.0
+        draw_header(include_table_header=False)
+        current_row_top = summary_page_row_top
 
     current_row_top += 20
     pdf.text(x=left, top_y=current_row_top, value=_invoice_text(normalized_language, "totals_title"), size=11, bold=True)
@@ -1490,8 +1495,8 @@ def render_invoice_period_pdf(
     if normalized_adjustments:
         if current_row_top + 34.0 + (len(normalized_adjustments) * 18.0) + reserved_note_space > 780:
             pdf.new_page()
-            draw_header()
-            current_row_top = 140.0
+            draw_header(include_table_header=False)
+            current_row_top = summary_page_row_top
         current_row_top += 16.0
         pdf.text(
             x=left,
