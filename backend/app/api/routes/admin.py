@@ -295,7 +295,7 @@ def _to_admin_session_out(
     location: Location | None = None,
     professor: Professor | None = None,
     substitute_professor: Professor | None = None,
-    recurrence_end_at_utc: datetime | None = None,
+    recurrence_end_date: date | None = None,
 ) -> AdminSessionOut:
     habitual_teacher_display_name = _session_teacher_display_name(professor)
     substitute_teacher_display_name = _session_teacher_display_name(substitute_professor) if substitute_professor is not None else None
@@ -314,6 +314,7 @@ def _to_admin_session_out(
     location_label = _session_location_label(location)
     type_label = _session_type_label(session_obj, course_type=course_type, location=location)
     status_label = _session_status_label(session_obj.status)
+    resolved_recurrence_end_date = recurrence_end_date or session_obj.recurrence_until_date
 
     return AdminSessionOut(
         id=session_obj.id,
@@ -363,8 +364,8 @@ def _to_admin_session_out(
         recurrence_group_id=session_obj.recurrence_group_id,
         recurrence_rule=session_obj.recurrence_rule,
         recurrence_end_date=(
-            _local_date_in_timezone(recurrence_end_at_utc, session_obj.timezone)
-            if recurrence_end_at_utc is not None and session_obj.recurrence_group_id is not None
+            resolved_recurrence_end_date
+            if resolved_recurrence_end_date is not None and session_obj.recurrence_group_id is not None
             else None
         ),
         created_at=session_obj.created_at,
@@ -372,26 +373,36 @@ def _to_admin_session_out(
     )
 
 
-def _recurrence_end_at_map(
+def _recurrence_end_date_map(
     db: Session,
     *,
     recurrence_group_ids: list[UUID | None],
-) -> dict[UUID, datetime]:
+) -> dict[UUID, date]:
     filtered_ids = [group_id for group_id in recurrence_group_ids if group_id is not None]
     if not filtered_ids:
         return {}
 
     rows = db.execute(
-        select(CourseSession.recurrence_group_id, func.max(CourseSession.start_at_utc))
+        select(
+            CourseSession.recurrence_group_id,
+            func.max(CourseSession.recurrence_until_date),
+            func.max(CourseSession.start_at_utc),
+            func.max(CourseSession.timezone),
+        )
         .where(CourseSession.recurrence_group_id.in_(filtered_ids))
         .group_by(CourseSession.recurrence_group_id)
     ).all()
 
-    result: dict[UUID, datetime] = {}
-    for group_id, end_at in rows:
-        if group_id is None or end_at is None:
+    result: dict[UUID, date] = {}
+    for group_id, explicit_until_date, end_at, timezone_name in rows:
+        if group_id is None:
             continue
-        result[group_id] = end_at
+        if explicit_until_date is not None:
+            result[group_id] = explicit_until_date
+            continue
+        if end_at is None:
+            continue
+        result[group_id] = _local_date_in_timezone(end_at, _normalize_session_timezone(timezone_name or "UTC"))
     return result
 
 
@@ -743,9 +754,9 @@ def _serialize_recurrence_rule(*, frequency: str, interval: int, time_basis: str
 def _parse_recurrence_rule(value: str | None) -> tuple[str, int, str]:
     raw = str(value or "").strip().upper()
     if not raw:
-        return ("WEEKLY", 1, "UTC")
+        return ("WEEKLY", 1, "LOCAL")
 
-    time_basis = "UTC"
+    time_basis = "LOCAL"
     if "@" in raw:
         raw, time_basis_raw = raw.split("@", 1)
         time_basis = _normalize_recurrence_time_basis(time_basis_raw or "LOCAL")
@@ -2441,10 +2452,12 @@ def create_session(
     recurrence_frequency = "WEEKLY"
     recurrence_interval = 1
     recurrence_time_basis = "LOCAL"
+    recurrence_until_date: date | None = None
     if payload.recurrence is not None:
         recurrence_frequency = _normalize_recurrence_frequency(payload.recurrence.frequency)
         recurrence_interval = _normalize_recurrence_interval(payload.recurrence.interval)
         recurrence_time_basis = _normalize_recurrence_time_basis(payload.recurrence.time_basis)
+        recurrence_until_date = payload.recurrence.until_date
         recurrence_rule = _serialize_recurrence_rule(
             frequency=recurrence_frequency,
             interval=recurrence_interval,
@@ -2562,6 +2575,7 @@ def create_session(
                 timezone=session_timezone,
                 recurrence_group_id=recurrence_group_id,
                 recurrence_rule=recurrence_rule,
+                recurrence_until_date=recurrence_until_date if recurrence_group_id is not None else None,
                 updated_at=now,
             )
         )
@@ -2666,7 +2680,7 @@ def list_admin_sessions(
     rows = db.execute(stmt.order_by(CourseSession.start_at_utc.desc())).all()
     session_ids = [session_obj.id for session_obj, _, _, _, _ in rows]
     counts = _booked_counts_map(db, session_ids)
-    recurrence_end_map = _recurrence_end_at_map(
+    recurrence_end_map = _recurrence_end_date_map(
         db,
         recurrence_group_ids=[session_obj.recurrence_group_id for session_obj, _, _, _, _ in rows],
     )
@@ -2679,7 +2693,7 @@ def list_admin_sessions(
             location=location,
             professor=professor,
             substitute_professor=substitute_professor_row,
-            recurrence_end_at_utc=recurrence_end_map.get(session_obj.recurrence_group_id) if session_obj.recurrence_group_id else None,
+            recurrence_end_date=recurrence_end_map.get(session_obj.recurrence_group_id) if session_obj.recurrence_group_id else None,
         )
         for session_obj, course_type, location, professor, substitute_professor_row in rows
     ]
@@ -2704,8 +2718,8 @@ def get_admin_session(
         location=location,
         professor=professor,
         substitute_professor=substitute_professor,
-        recurrence_end_at_utc=(
-            _recurrence_end_at_map(db, recurrence_group_ids=[session_obj.recurrence_group_id]).get(session_obj.recurrence_group_id)
+        recurrence_end_date=(
+            _recurrence_end_date_map(db, recurrence_group_ids=[session_obj.recurrence_group_id]).get(session_obj.recurrence_group_id)
             if session_obj.recurrence_group_id is not None
             else None
         ),
@@ -3800,6 +3814,8 @@ def update_session(
         if recurrence_group_id is not None and recurrence_rule is not None:
             target.recurrence_group_id = recurrence_group_id
             target.recurrence_rule = recurrence_rule
+            if recurrence_until_date is not None:
+                target.recurrence_until_date = recurrence_until_date
         target.updated_at = now
         if previous_status != SessionStatus.COMPLETED and target.status == SessionStatus.COMPLETED:
             sessions_completed_for_invoicing.add(target.id)
@@ -3920,6 +3936,7 @@ def update_session(
                     timezone=session_obj.timezone,
                     recurrence_group_id=recurrence_group_id,
                     recurrence_rule=recurrence_rule,
+                    recurrence_until_date=recurrence_until_date,
                     updated_at=now,
                 )
             )
@@ -3984,6 +4001,7 @@ def update_session(
                     timezone=session_obj.timezone,
                     recurrence_group_id=recurrence_group_id,
                     recurrence_rule=recurrence_rule,
+                    recurrence_until_date=recurrence_until_date,
                     updated_at=now,
                 )
             )
@@ -4120,6 +4138,7 @@ def duplicate_session_operation(
                 else None
             )
             recurrence_rule = target.recurrence_rule if recurrence_group_id is not None else None
+            recurrence_until_date = target.recurrence_until_date if recurrence_group_id is not None else None
 
             duplicate_session = CourseSession(
                 course_type_id=target.course_type_id,
@@ -4150,6 +4169,7 @@ def duplicate_session_operation(
                 timezone=target_timezone,
                 recurrence_group_id=recurrence_group_id,
                 recurrence_rule=recurrence_rule,
+                recurrence_until_date=recurrence_until_date,
                 updated_at=now,
             )
             db.add(duplicate_session)

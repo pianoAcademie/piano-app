@@ -183,7 +183,7 @@ def main() -> None:
     )
     ensure(create_res.status == 201 and isinstance(create_res.data, dict), f"create recurring session failed: {create_res.status} {create_res.data}")
     ensure(create_res.data.get("is_private") is True, "created recurring session should be private")
-    ensure(create_res.data.get("recurrence_rule") == "WEEKLY", "recurrence rule should be WEEKLY")
+    ensure(create_res.data.get("recurrence_rule") == "WEEKLY@LOCAL", "recurrence rule should be WEEKLY@LOCAL")
 
     session_id = str(create_res.data["id"])
     recurrence_group_id = create_res.data.get("recurrence_group_id")

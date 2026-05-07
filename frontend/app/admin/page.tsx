@@ -869,12 +869,12 @@ function parseRecurrenceRuleDefaults(
   if (!raw) {
     return { frequency: "WEEKLY", interval: 1, timeBasis: "LOCAL" };
   }
-  const [rulePart, basisPart] = raw.includes("@") ? raw.split("@", 2) : [raw, "UTC"];
+  const [rulePart, basisPart] = raw.includes("@") ? raw.split("@", 2) : [raw, "LOCAL"];
   const [frequencyRaw, intervalRaw] = rulePart.includes(":") ? rulePart.split(":", 2) : [rulePart, "1"];
   const frequency = frequencyRaw === "DAILY" || frequencyRaw === "MONTHLY" ? frequencyRaw : "WEEKLY";
   const intervalParsed = Number.parseInt(intervalRaw || "1", 10);
   const interval = Number.isFinite(intervalParsed) && intervalParsed > 0 ? intervalParsed : 1;
-  const timeBasis = basisPart === "LOCAL" ? "LOCAL" : "UTC";
+  const timeBasis = basisPart === "UTC" ? "UTC" : "LOCAL";
   return { frequency, interval, timeBasis };
 }
 
@@ -1466,7 +1466,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const createRecurrenceTimeBasis = createDraft?.recurrence_time_basis?.trim().toUpperCase() === "UTC" ? "UTC" : "LOCAL";
   const editRecurrenceDefaults = parseRecurrenceRuleDefaults(selectedSession?.recurrence_rule);
   const editRecurrenceUntilDate = selectedSession
-    ? toDateInputInTimezone(addUtcDays(new Date(selectedSession.start_at_utc), 84).toISOString(), selectedSession.timezone)
+    ? selectedSession.recurrence_end_date || toDateInputInTimezone(addUtcDays(new Date(selectedSession.start_at_utc), 84).toISOString(), selectedSession.timezone)
     : agendaDate;
   const planningText = isEnglish
     ? {

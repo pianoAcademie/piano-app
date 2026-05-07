@@ -245,6 +245,7 @@ def main() -> None:
                     timezone=session_timezone,
                     recurrence_group_id=recurrence_group_id,
                     recurrence_rule=recurrence_rule,
+                    recurrence_until_date=DATE_END,
                 )
                 if args.apply:
                     db.add(session_obj)

@@ -371,6 +371,7 @@ class CourseSession(Base):
     timezone: Mapped[str] = mapped_column(String(100), nullable=False, server_default=text("'UTC'"))
     recurrence_group_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     recurrence_rule: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    recurrence_until_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
