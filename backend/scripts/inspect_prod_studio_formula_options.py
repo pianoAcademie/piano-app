@@ -2,172 +2,177 @@ from __future__ import annotations
 
 import os
 import sys
-from collections import defaultdict
-from datetime import datetime, time, timezone
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from sqlalchemy import func, select
+from sqlalchemy import false, func, or_, select
 
+from app.api.routes.clients import _active_formula_options_for_course_type, _session_purchase_catalog
 from app.db.session import SessionLocal
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location
-from app.models.user import User
+from app.models.catalog import CourseSession, CourseType, CreditType, Location
+from app.models.plan import Plan, PlanCreditGrant, PlanEntitlement, PlanKind
+from app.services.session_audience import resolve_session_booking_scopes
 
-SCRIPT_PREFIX = "PROD_INITIATION_RICHELIEU_15H_INSPECT"
-
-COUNTED_STATUSES = {
-    BookingStatus.BOOKED,
-    BookingStatus.PENDING_PAYMENT,
-    BookingStatus.ATTENDED,
-    BookingStatus.NO_SHOW,
-    BookingStatus.EXCUSED_ABSENCE,
-}
-ACTIVE_STATUSES = {
-    BookingStatus.BOOKED,
-    BookingStatus.WAITLISTED,
-    BookingStatus.ATTENDED,
-    BookingStatus.NO_SHOW,
-    BookingStatus.EXCUSED_ABSENCE,
-}
+SCRIPT_PREFIX = "PROD_STUDIO_FORMULA_INSPECT"
 
 
 def _print(line: str) -> None:
     print(f"[{SCRIPT_PREFIX}] {line}")
 
 
-def _status_value(value: object) -> str:
-    return getattr(value, "value", str(value))
-
-
-def _display_name(user: User) -> str:
-    full_name = f"{(user.first_name or '').strip()} {(user.last_name or '').strip()}".strip()
-    return full_name or user.email
-
-
-def _local_dt(session_obj: CourseSession) -> datetime:
-    return session_obj.start_at_utc.astimezone(ZoneInfo(session_obj.timezone or "Europe/Paris"))
-
-
-def _local_time_in_window(local_moment: datetime) -> bool:
-    return time(14, 30) <= local_moment.time().replace(second=0, microsecond=0) <= time(15, 30)
-
-
 def main() -> None:
-    period_start = datetime(2026, 9, 1, tzinfo=timezone.utc)
-    period_end = datetime(2026, 12, 1, tzinfo=timezone.utc)
-
     with SessionLocal() as db:
-        rows = db.execute(
+        studio_course_types = db.execute(
+            select(
+                CourseType.id,
+                CourseType.name,
+                CourseType.service_code,
+                CourseType.credit_type_id,
+                CreditType.code,
+                CreditType.name,
+            )
+            .join(CreditType, CreditType.id == CourseType.credit_type_id, isouter=True)
+            .where(func.lower(CourseType.name).like("%studio%"))
+            .order_by(CourseType.name.asc())
+        ).all()
+
+        if not studio_course_types:
+            _print("no studio course types found")
+            return
+
+        _print(f"studio_course_types={len(studio_course_types)}")
+        for row in studio_course_types:
+            course_type_id, name, service_code, credit_type_id, credit_code, credit_name = row
+            _print(
+                "course_type="
+                f"{course_type_id}|name={name}|service_code={service_code or '-'}|"
+                f"credit_type_id={credit_type_id or '-'}|credit_type_code={credit_code or '-'}|credit_type_name={credit_name or '-'}"
+            )
+
+            exact_public_plans = db.execute(
+                select(
+                    Plan.id,
+                    Plan.code,
+                    Plan.name,
+                    Plan.kind,
+                    Plan.active,
+                    Plan.is_private,
+                )
+                .select_from(Plan)
+                .join(PlanEntitlement, PlanEntitlement.plan_id == Plan.id)
+                .where(
+                    PlanEntitlement.course_type_id == course_type_id,
+                    Plan.active.is_(True),
+                    Plan.is_private.is_(False),
+                )
+                .order_by(Plan.name.asc())
+            ).all()
+            _print(f"exact_public_plans_for_{name}={len(exact_public_plans)}")
+            for plan_id, plan_code, plan_name, kind, active, is_private in exact_public_plans:
+                _print(
+                    "exact_public_plan="
+                    f"{plan_id}|code={plan_code}|name={plan_name}|kind={getattr(kind, 'value', kind)}|"
+                    f"active={active}|private={is_private}"
+                )
+
+            entitlement_rows = db.execute(
+                select(
+                    Plan.id,
+                    Plan.code,
+                    Plan.name,
+                    Plan.kind,
+                    Plan.active,
+                    Plan.is_private,
+                    Plan.options_json,
+                    PlanEntitlement.course_type_id,
+                    PlanCreditGrant.credit_type_id,
+                    PlanCreditGrant.credits_count,
+                )
+                .select_from(Plan)
+                .join(PlanEntitlement, PlanEntitlement.plan_id == Plan.id, isouter=True)
+                .join(PlanCreditGrant, PlanCreditGrant.plan_id == Plan.id, isouter=True)
+                .where(
+                    or_(
+                        PlanEntitlement.course_type_id == course_type_id,
+                        PlanCreditGrant.credit_type_id == credit_type_id if credit_type_id is not None else false(),
+                        func.lower(Plan.name).like("%studio%"),
+                        func.lower(Plan.code).like("%studio%"),
+                    )
+                )
+                .order_by(Plan.name.asc())
+            ).all()
+            _print(f"matching_plan_rows_for_{name}={len(entitlement_rows)}")
+            for prow in entitlement_rows:
+                (
+                    plan_id,
+                    plan_code,
+                    plan_name,
+                    kind,
+                    active,
+                    is_private,
+                    options_json,
+                    entitlement_course_type_id,
+                    grant_credit_type_id,
+                    grant_credits_count,
+                ) = prow
+                _print(
+                    "plan_row="
+                    f"{plan_id}|code={plan_code}|name={plan_name}|kind={getattr(kind, 'value', kind)}|"
+                    f"active={active}|private={is_private}|options={options_json}|"
+                    f"entitlement_course_type_id={entitlement_course_type_id or '-'}|"
+                    f"grant_credit_type_id={grant_credit_type_id or '-'}|grant_credits_count={grant_credits_count or 0}"
+                )
+
+            formula_options = _active_formula_options_for_course_type(
+                db,
+                course_type_id=course_type_id,
+                course_type_name=name,
+                course_type_service_code=service_code,
+                credit_type_id=credit_type_id,
+                allowed_plan_kinds={PlanKind.PACK, PlanKind.SUBSCRIPTION, PlanKind.FORFAIT},
+            )
+            _print(
+                f"formula_options_for_{name}="
+                + (
+                    ",".join(
+                        f"{option.formula_code}:{option.name}:{getattr(option.formula_type, 'value', option.formula_type)}"
+                        for option in formula_options
+                    )
+                    or "-"
+                )
+            )
+
+        now = datetime.now(timezone.utc)
+        upcoming_sessions = db.execute(
             select(CourseSession, CourseType, Location)
             .join(CourseType, CourseType.id == CourseSession.course_type_id)
             .join(Location, Location.id == CourseSession.location_id)
             .where(
-                CourseSession.start_at_utc >= period_start,
-                CourseSession.start_at_utc < period_end,
-                func.lower(CourseType.name).like("%initiation%"),
-                func.lower(Location.name).like("%richelieu%"),
+                func.lower(CourseType.name).like("%studio%"),
+                CourseSession.start_at_utc >= now - timedelta(days=3),
+                CourseSession.start_at_utc <= now + timedelta(days=30),
             )
             .order_by(CourseSession.start_at_utc.asc())
         ).all()
-
-        _print(f"candidate_initiation_richelieu_sessions_sep_to_nov={len(rows)}")
-        target_rows = [
-            (session_obj, course_type, location, _local_dt(session_obj))
-            for session_obj, course_type, location in rows
-            if _local_time_in_window(_local_dt(session_obj))
-        ]
-        _print(f"target_sessions_around_15h={len(target_rows)}")
-
-        if not target_rows:
-            for session_obj, course_type, location in rows:
-                local_moment = _local_dt(session_obj)
-                _print(
-                    "available_initiation_session="
-                    f"{local_moment:%Y-%m-%d %H:%M}|session={session_obj.id}|"
-                    f"group={session_obj.recurrence_group_id or '-'}|type={course_type.name}|"
-                    f"location={location.name}|status={_status_value(session_obj.status)}"
-                )
-            return
-
-        session_ids = [session_obj.id for session_obj, _, _, _ in target_rows]
-        booking_rows = db.execute(
-            select(Booking, User)
-            .join(User, User.id == Booking.user_id)
-            .where(Booking.session_id.in_(session_ids))
-            .order_by(User.last_name.asc(), User.first_name.asc(), Booking.booked_at.asc())
-        ).all()
-        bookings_by_session = defaultdict(list)
-        for booking, user in booking_rows:
-            bookings_by_session[booking.session_id].append((booking, user))
-
-        target_group_ids = sorted({str(session_obj.recurrence_group_id) for session_obj, _, _, _ in target_rows if session_obj.recurrence_group_id})
-
-        for session_obj, course_type, location, local_moment in target_rows:
-            session_bookings = bookings_by_session.get(session_obj.id, [])
-            counted = [(booking, user) for booking, user in session_bookings if booking.status in COUNTED_STATUSES]
-            waitlisted = [(booking, user) for booking, user in session_bookings if booking.status == BookingStatus.WAITLISTED]
-            cancelled = [(booking, user) for booking, user in session_bookings if booking.status == BookingStatus.CANCELLED]
-            _print(
-                "slot="
-                f"{local_moment:%Y-%m-%d %H:%M}|session={session_obj.id}|"
-                f"group={session_obj.recurrence_group_id or '-'}|rule={session_obj.recurrence_rule or '-'}|"
-                f"until={session_obj.recurrence_until_date or '-'}|type={course_type.name}|location={location.name}|"
-                f"status={_status_value(session_obj.status)}|capacity={session_obj.capacity_max}|"
-                f"counted={len(counted)}|waitlisted={len(waitlisted)}|cancelled={len(cancelled)}"
+        _print(f"upcoming_studio_sessions={len(upcoming_sessions)}")
+        for session_obj, course_type, location in upcoming_sessions:
+            formula_options, direct_payment_amount, direct_payment_currency, session_booking_scopes = _session_purchase_catalog(
+                db,
+                session_obj=session_obj,
+                course_type=course_type,
             )
-            for label, items in (("counted", counted), ("waitlisted", waitlisted), ("cancelled", cancelled)):
-                names = ", ".join(f"{_display_name(user)} [{_status_value(booking.status)}]" for booking, user in items)
-                _print(f"slot_{label}={local_moment:%Y-%m-%d}|{names or '-'}")
-
-        for group_id in target_group_ids:
-            group_sessions = db.execute(
-                select(CourseSession, CourseType, Location)
-                .join(CourseType, CourseType.id == CourseSession.course_type_id)
-                .join(Location, Location.id == CourseSession.location_id)
-                .where(
-                    CourseSession.recurrence_group_id == group_id,
-                    CourseSession.start_at_utc >= period_start,
-                    CourseSession.start_at_utc < period_end,
-                )
-                .order_by(CourseSession.start_at_utc.asc())
-            ).all()
-            group_session_ids = [session_obj.id for session_obj, _, _ in group_sessions]
-            group_bookings = db.execute(
-                select(Booking, User)
-                .join(User, User.id == Booking.user_id)
-                .where(Booking.session_id.in_(group_session_ids))
-                .order_by(User.last_name.asc(), User.first_name.asc(), Booking.booked_at.asc())
-            ).all()
-            by_user: dict[str, list[str]] = defaultdict(list)
-            by_user_statuses: dict[str, set[str]] = defaultdict(set)
-            by_session = defaultdict(list)
-            for booking, user in group_bookings:
-                session_local = next(
-                    _local_dt(session_obj)
-                    for session_obj, _, _ in group_sessions
-                    if session_obj.id == booking.session_id
-                )
-                key = f"{_display_name(user)} <{user.email}>"
-                by_user[key].append(f"{session_local:%Y-%m-%d}:{_status_value(booking.status)}")
-                by_user_statuses[key].add(_status_value(booking.status))
-                by_session[booking.session_id].append((booking, user))
-
-            _print(f"group_summary={group_id}|sessions={len(group_sessions)}|distinct_students={len(by_user)}")
-            for session_obj, _, _ in group_sessions:
-                local_moment = _local_dt(session_obj)
-                counted = [
-                    (booking, user)
-                    for booking, user in by_session.get(session_obj.id, [])
-                    if booking.status in COUNTED_STATUSES
-                ]
-                _print(
-                    "group_slot_count="
-                    f"{local_moment:%Y-%m-%d %H:%M}|session={session_obj.id}|"
-                    f"counted={len(counted)}|students={', '.join(_display_name(user) for _, user in counted) or '-'}"
-                )
-            for user_key, dates in sorted(by_user.items()):
-                _print(f"group_student={group_id}|{user_key}|{';'.join(dates)}")
+            _print(
+                "session="
+                f"{session_obj.id}|start_at_utc={session_obj.start_at_utc.isoformat()}|location={location.name}|"
+                f"course_type={course_type.name}|course_type_id={course_type.id}|"
+                f"credit_type_id={course_type.credit_type_id or '-'}|status={getattr(session_obj.status, 'value', session_obj.status)}|"
+                f"price={session_obj.external_booking_price_ttc or '-'} {session_obj.external_booking_currency or '-'}|"
+                f"booking_scopes={','.join(scope.value for scope in resolve_session_booking_scopes(session_obj, allows_student_bookings=bool(course_type.allows_student_bookings)))}|"
+                f"catalog_scopes={','.join(scope.value for scope in session_booking_scopes)}|"
+                f"catalog_direct_payment={direct_payment_amount or '-'} {direct_payment_currency or '-'}|"
+                f"catalog_formulas={(','.join(option.formula_code for option in formula_options) or '-')}"
+            )
 
 
 if __name__ == "__main__":
