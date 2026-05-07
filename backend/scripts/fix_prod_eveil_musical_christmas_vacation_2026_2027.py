@@ -1,17 +1,5 @@
 from __future__ import annotations
 
-import os
-import sys
-
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from repair_prod_gustave_guisnel_solfege1_bookings import main as _run_guisnel_solfege_repair
-# Temporary runner touch for Guisnel Solfege repair.
-
-if __name__ == "__main__":
-    _run_guisnel_solfege_repair()
-    raise SystemExit(0)
-
-
 import argparse
 import os
 import secrets
