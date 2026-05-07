@@ -167,7 +167,7 @@ def main() -> None:
                 f"{session_obj.id}|start_at_utc={session_obj.start_at_utc.isoformat()}|location={location.name}|"
                 f"course_type={course_type.name}|course_type_id={course_type.id}|"
                 f"credit_type_id={course_type.credit_type_id or '-'}|status={getattr(session_obj.status, 'value', session_obj.status)}|"
-                f"price={session_obj.external_booking_price_ttc or '-'} {session_obj.external_booking_currency or '-'}|"
+                f"price={session_obj.external_booking_price_ttc or '-'} EUR|"
                 f"booking_scopes={','.join(scope.value for scope in resolve_session_booking_scopes(session_obj, allows_student_bookings=bool(course_type.allows_student_bookings)))}|"
                 f"catalog_scopes={','.join(scope.value for scope in session_booking_scopes)}|"
                 f"catalog_direct_payment={direct_payment_amount or '-'} {direct_payment_currency or '-'}|"
