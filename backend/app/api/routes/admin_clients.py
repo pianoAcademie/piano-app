@@ -7143,7 +7143,7 @@ def create_admin_client_range_invoice(
     db: Session = Depends(get_db),
     actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminRangeInvoiceOut:
-    _require_client(db, client_id)
+    client = _require_client(db, client_id)
     normalized_layout = _normalize_invoice_layout(payload.layout)
     generation_mode = _normalize_invoice_generation_mode(payload.generation_mode)
     if generation_mode == "AUTO":
