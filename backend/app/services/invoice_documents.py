@@ -288,6 +288,15 @@ class InvoicePeriodLine:
     is_section_header: bool = False
 
 
+@dataclass(frozen=True)
+class InvoiceAppliedPaymentLine:
+    date_label: str
+    method_label: str
+    reference_label: str
+    amount: Decimal
+    currency: str
+
+
 def summarize_invoice_period_lines(
     lines: list[InvoicePeriodLine],
 ) -> tuple[dict[str, dict[str, Decimal]], dict[str, dict[Decimal, dict[str, Decimal]]]]:
@@ -643,6 +652,11 @@ INVOICE_TEXT: dict[str, dict[str, str]] = {
         "opening_balance_at": "Ancien Solde au {date}",
         "period_amount": "Montant periode facturee ({currency})",
         "applied_payments": "Paiements enregistres ({currency})",
+        "applied_payment_details_title": "Paiements recus / imputes",
+        "payment_table_date": "Date",
+        "payment_table_method": "Mode",
+        "payment_table_reference": "Reference",
+        "payment_table_amount": "Montant",
         "total_to_pay": "Montant total a payer ({currency})",
         "online_payment_title": "Paiement en ligne",
         "online_payment_button": "Payer en ligne",
@@ -677,6 +691,11 @@ INVOICE_TEXT: dict[str, dict[str, str]] = {
         "opening_balance_at": "Previous balance on {date}",
         "period_amount": "Billed period amount ({currency})",
         "applied_payments": "Recorded payments ({currency})",
+        "applied_payment_details_title": "Received / applied payments",
+        "payment_table_date": "Date",
+        "payment_table_method": "Method",
+        "payment_table_reference": "Reference",
+        "payment_table_amount": "Amount",
         "total_to_pay": "Total amount due ({currency})",
         "online_payment_title": "Online payment",
         "online_payment_button": "Pay online",
@@ -1003,6 +1022,7 @@ def render_invoice_period_pdf(
     totals_by_currency: dict[str, dict[str, Decimal]],
     opening_balance_by_currency: dict[str, Decimal] | None = None,
     applied_payment_totals_by_currency: dict[str, Decimal] | None = None,
+    applied_payment_lines: list[InvoiceAppliedPaymentLine] | None = None,
     total_to_pay_by_currency: dict[str, Decimal] | None = None,
     payment_link_url: str | None = None,
     adjustment_summary: list[tuple[str, str, Decimal]] | None = None,
@@ -1259,6 +1279,20 @@ def render_invoice_period_pdf(
     for currency_code, amount in (applied_payment_totals_by_currency or {}).items():
         currency = _ascii_safe(str(currency_code).strip().upper()) or "EUR"
         normalized_applied_payment_totals_by_currency[currency] = Decimal(amount).quantize(Decimal("0.01"))
+    normalized_applied_payment_lines: list[InvoiceAppliedPaymentLine] = []
+    for payment_line in applied_payment_lines or []:
+        amount = Decimal(payment_line.amount).quantize(Decimal("0.01"))
+        if amount == Decimal("0.00"):
+            continue
+        normalized_applied_payment_lines.append(
+            InvoiceAppliedPaymentLine(
+                date_label=_truncate_text(payment_line.date_label, 16),
+                method_label=_truncate_text(payment_line.method_label, 24),
+                reference_label=_truncate_text(payment_line.reference_label, 42),
+                amount=amount,
+                currency=_ascii_safe(str(payment_line.currency).strip().upper()) or "EUR",
+            )
+        )
     normalized_total_to_pay_by_currency: dict[str, Decimal] = {}
     computed_totals_by_currency, totals_by_currency_and_vat_rate = summarize_invoice_period_lines(lines)
     effective_totals_by_currency = computed_totals_by_currency or totals_by_currency
@@ -1281,6 +1315,11 @@ def render_invoice_period_pdf(
         else:
             payment_link_preview = _truncate_text(payment_link_text, 64)
     reserved_adjustment_space = (len(normalized_adjustments) * 18.0) + 34.0 if normalized_adjustments else 0.0
+    reserved_payment_details_space = (
+        42.0 + (len(normalized_applied_payment_lines) * 18.0)
+        if normalized_applied_payment_lines
+        else 0.0
+    )
     reserved_balance_space = 0.0
     if summary_currencies:
         reserved_balance_space = 24.0 + sum(
@@ -1292,6 +1331,7 @@ def render_invoice_period_pdf(
         )
     if payment_link_text:
         reserved_balance_space += 52.0
+    reserved_balance_space += reserved_payment_details_space
     reserved_note_space = 80.0 if normalized_note else 0.0
     if current_row_top + 140 + reserved_adjustment_space + reserved_balance_space + reserved_note_space > 780:
         pdf.new_page()
@@ -1447,7 +1487,64 @@ def render_invoice_period_pdf(
             )
             current_row_top += 26.0
 
+    def ensure_summary_space(required_height: float) -> None:
+        nonlocal current_row_top
+        if current_row_top + required_height <= 780.0:
+            return
+        pdf.new_page()
+        draw_header(include_table_header=False)
+        current_row_top = summary_page_row_top
+
+    def draw_payment_details_header() -> None:
+        nonlocal current_row_top
+        pdf.text(
+            x=left,
+            top_y=current_row_top,
+            value=_invoice_text(normalized_language, "applied_payment_details_title"),
+            size=9,
+            bold=True,
+        )
+        current_row_top += 12.0
+        pdf.rect(
+            x=left,
+            top_y=current_row_top,
+            width=right - left,
+            height=18.0,
+            stroke_color=(0.82, 0.86, 0.91),
+            fill_color=(0.95, 0.96, 0.98),
+        )
+        pdf.text(x=col_date_x, top_y=current_row_top + 12.0, value=_invoice_text(normalized_language, "payment_table_date"), size=8, bold=True)
+        pdf.text(x=col_label_x, top_y=current_row_top + 12.0, value=_invoice_text(normalized_language, "payment_table_method"), size=8, bold=True)
+        pdf.text(x=left + 220.0, top_y=current_row_top + 12.0, value=_invoice_text(normalized_language, "payment_table_reference"), size=8, bold=True)
+        pdf.text_right(right_x=col_ttc_right, top_y=current_row_top + 12.0, value=_invoice_text(normalized_language, "payment_table_amount"), size=8, bold=True)
+        current_row_top += 18.0
+
+    if normalized_applied_payment_lines:
+        ensure_summary_space(42.0)
+        current_row_top += 4.0
+        draw_payment_details_header()
+        for payment_line in normalized_applied_payment_lines:
+            if current_row_top + 18.0 > 780.0:
+                pdf.new_page()
+                draw_header(include_table_header=False)
+                current_row_top = summary_page_row_top
+                draw_payment_details_header()
+            pdf.rect(x=left, top_y=current_row_top, width=right - left, height=18.0, stroke_color=(0.90, 0.92, 0.95))
+            pdf.text(x=col_date_x, top_y=current_row_top + 12.0, value=payment_line.date_label, size=8)
+            pdf.text(x=col_label_x, top_y=current_row_top + 12.0, value=payment_line.method_label, size=8)
+            pdf.text(x=left + 220.0, top_y=current_row_top + 12.0, value=payment_line.reference_label, size=8)
+            pdf.text_right(
+                right_x=col_ttc_right,
+                top_y=current_row_top + 12.0,
+                value=f"{_format_amount(payment_line.amount)} {payment_line.currency}",
+                size=8,
+                bold=True,
+            )
+            current_row_top += 18.0
+        current_row_top += 8.0
+
     if payment_link_text:
+        ensure_summary_space(52.0)
         pdf.text(
             x=col_label_x,
             top_y=current_row_top,

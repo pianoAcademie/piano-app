@@ -149,6 +149,7 @@ from app.services.email_delivery import send_email
 from app.services.family_billing import resolve_billing_profile
 from app.services.i18n import normalize_language
 from app.services.invoice_documents import (
+    InvoiceAppliedPaymentLine,
     InvoicePeriodLine,
     build_company_identity_snapshot,
     company_identity_from_snapshot,
@@ -1495,6 +1496,56 @@ def _invoice_range_reconciled_manual_payment_totals(
             totals_by_currency.get(currency, Decimal("0.00")) + Decimal(row.total_incl_vat)
         )
     return totals_by_currency
+
+
+def _invoice_range_reconciled_manual_payment_lines(
+    all_payments: list[AdminClientPaymentOut],
+    *,
+    reconciled_payment_ids: set[UUID],
+) -> list[InvoiceAppliedPaymentLine]:
+    if not reconciled_payment_ids:
+        return []
+    out: list[InvoiceAppliedPaymentLine] = []
+    for row in sorted(all_payments, key=lambda item: (item.occurred_at, str(item.id))):
+        if (row.source or "").strip().upper() != "MANUAL":
+            continue
+        if row.id not in reconciled_payment_ids:
+            continue
+        if not _should_count_in_client_balance(row):
+            continue
+        amount = Decimal(row.total_incl_vat).quantize(Decimal("0.01"))
+        display_amount = -amount if amount < Decimal("0.00") else amount
+        method_label = (
+            _normalize_optional(row.payment_method_label)
+            or _payment_method_label_client(row.payment_method_code)
+            or "Paiement manuel"
+        )
+        reference_label = _normalize_optional(row.reference) or _normalize_optional(row.label) or "-"
+        out.append(
+            InvoiceAppliedPaymentLine(
+                date_label=row.occurred_at.strftime("%d/%m/%Y"),
+                method_label=method_label,
+                reference_label=reference_label,
+                amount=display_amount,
+                currency=_normalize_currency(row.currency, fallback="EUR"),
+            )
+        )
+    return out
+
+
+def _invoice_range_reconciled_manual_payment_lines_metadata(
+    payment_lines: list[InvoiceAppliedPaymentLine],
+) -> list[dict[str, str]]:
+    return [
+        {
+            "date": line.date_label,
+            "method": line.method_label,
+            "reference": line.reference_label,
+            "amount": f"{Decimal(line.amount).quantize(Decimal('0.01')):.2f}",
+            "currency": _normalize_currency(line.currency, fallback="EUR"),
+        }
+        for line in payment_lines
+    ]
 
 
 def _append_public_payment_reference_to_note(public_note: str | None, provider_reference: str) -> str:
@@ -7268,6 +7319,14 @@ def create_admin_client_range_invoice(
             if split_part_count == 1 and auto_reconciled_payment_id_set
             else {}
         )
+        applied_payment_lines = (
+            _invoice_range_reconciled_manual_payment_lines(
+                all_payments,
+                reconciled_payment_ids=auto_reconciled_payment_id_set,
+            )
+            if split_part_count == 1 and auto_reconciled_payment_id_set
+            else []
+        )
         total_to_pay_by_currency: dict[str, Decimal] = {}
         if split_part_count == 1:
             for currency in sorted(
@@ -7344,6 +7403,10 @@ def create_admin_client_range_invoice(
                 currency: f"{_quantize_money(amount):.2f}"
                 for currency, amount in sorted(applied_payment_totals_by_currency.items())
             }
+        if split_part_count == 1 and applied_payment_lines:
+            metadata["applied_payment_lines"] = _invoice_range_reconciled_manual_payment_lines_metadata(
+                applied_payment_lines
+            )
         if split_part_count == 1 and total_to_pay_by_currency:
             metadata["total_to_pay_by_currency"] = {
                 currency: f"{_quantize_money(amount):.2f}"
@@ -7960,6 +8023,10 @@ def download_admin_client_range_invoice(
         all_payments,
         reconciled_payment_ids=reconciled_payment_id_set,
     )
+    applied_payment_lines = _invoice_range_reconciled_manual_payment_lines(
+        all_payments,
+        reconciled_payment_ids=reconciled_payment_id_set,
+    )
 
     total_to_pay_by_currency: dict[str, Decimal] = {}
     for currency in sorted(
@@ -8400,6 +8467,7 @@ def download_admin_client_range_invoice(
         due_date=(None if no_due_date else due_date_value),
         opening_balance_by_currency=opening_balance_by_currency,
         applied_payment_totals_by_currency=applied_payment_totals_by_currency,
+        applied_payment_lines=applied_payment_lines,
         total_to_pay_by_currency=total_to_pay_by_currency,
         payment_link_url=payment_link_url,
         watermark=(

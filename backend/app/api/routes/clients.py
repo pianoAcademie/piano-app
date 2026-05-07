@@ -100,6 +100,7 @@ from app.services.family_billing import resolve_billing_profile
 from app.services.client_purchase_notifications import send_client_payment_success_notifications
 from app.services.i18n import normalize_language
 from app.services.invoice_documents import (
+    InvoiceAppliedPaymentLine,
     InvoicePeriodLine,
     build_company_identity_snapshot,
     company_identity_from_snapshot,
@@ -367,6 +368,33 @@ def _invoice_recipient_name_from_metadata(metadata: dict[str, object], *, fallba
 
 def _invoice_recipient_address_from_metadata(metadata: dict[str, object], *, fallback: str) -> str:
     return (str(metadata.get("client_billing_address") or "").strip() or fallback)
+
+
+def _invoice_applied_payment_lines_from_metadata(metadata: dict[str, object]) -> list[InvoiceAppliedPaymentLine]:
+    raw_lines = metadata.get("applied_payment_lines")
+    if not isinstance(raw_lines, list):
+        return []
+    out: list[InvoiceAppliedPaymentLine] = []
+    for raw_line in raw_lines:
+        if not isinstance(raw_line, dict):
+            continue
+        try:
+            amount = Decimal(str(raw_line.get("amount") or "0.00")).quantize(Decimal("0.01"))
+        except Exception:
+            continue
+        if amount == Decimal("0.00"):
+            continue
+        currency = str(raw_line.get("currency") or "EUR").strip().upper() or "EUR"
+        out.append(
+            InvoiceAppliedPaymentLine(
+                date_label=str(raw_line.get("date") or "").strip() or "-",
+                method_label=str(raw_line.get("method") or "").strip() or "Paiement",
+                reference_label=str(raw_line.get("reference") or "").strip() or "-",
+                amount=amount,
+                currency=currency,
+            )
+        )
+    return out
 
 
 def _is_failed_payment_status(status_value: str) -> bool:
@@ -3514,6 +3542,7 @@ def download_client_invoice(
                     applied_payment_totals_by_currency[str(currency_code).strip().upper() or "EUR"] = Decimal(str(value)).quantize(Decimal("0.01"))
                 except Exception:
                     continue
+        applied_payment_lines = _invoice_applied_payment_lines_from_metadata(metadata)
 
         public_note = _normalize_optional(str(metadata.get("public_note") or ""))
         legal_entity_id = _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
@@ -3543,6 +3572,7 @@ def download_client_invoice(
             due_date=due_date_value,
             opening_balance_by_currency=opening_balance_by_currency,
             applied_payment_totals_by_currency=applied_payment_totals_by_currency,
+            applied_payment_lines=applied_payment_lines,
             total_to_pay_by_currency=total_to_pay_by_currency,
             payment_link_url=payment_link_url,
             watermark=("PAYE" if invoice_status == "PAID" else None),
