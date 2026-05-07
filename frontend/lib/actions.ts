@@ -12506,6 +12506,52 @@ export async function deleteAdminPricingCatalogConfigAction(formData: FormData):
   redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.catalog_deleted")));
 }
 
+export async function upsertAdminPricingActivityPriceConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=catalogs"));
+  const catalogId = parseUuid(String(formData.get("catalog_id") ?? ""));
+  const activityId = parseUuid(String(formData.get("activity_id") ?? ""));
+  const locationId = parseUuid(String(formData.get("location_id") ?? ""));
+  const pricingUnitRaw = String(formData.get("pricing_unit") ?? "").trim();
+  const pricingUnit = pricingUnitRaw === "hourly" || pricingUnitRaw === "fixed" ? pricingUnitRaw : "per_session";
+  const unitPriceTtc = String(formData.get("unit_price_ttc") ?? "").trim().replace(",", ".");
+
+  if (!catalogId || !activityId || !unitPriceTtc || !Number.isFinite(Number(unitPriceTtc)) || Number(unitPriceTtc) < 0) {
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_activity_price")));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    "/api/v1/pricing-activity-prices",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        catalog_id: catalogId,
+        activity_id: activityId,
+        location_id: locationId,
+        student_category: null,
+        pricing_unit: pricingUnit,
+        unit_price_ttc: unitPriceTtc,
+        currency: "EUR",
+        is_active: true,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  revalidatePath("/admin/intakes");
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.activity_price_saved")));
+}
+
 export async function createAdminPaymentPlanConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

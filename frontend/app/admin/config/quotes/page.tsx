@@ -24,6 +24,7 @@ import {
   updateAdminPaymentPlanConfigAction,
   updateAdminPricingCatalogConfigAction,
   updateAdminQuoteTypeConfigAction,
+  upsertAdminPricingActivityPriceConfigAction,
   upsertAdminSolfegeLevelRuleConfigAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
@@ -1161,6 +1162,49 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                             <div className="top-gap-sm">
                               <h4>{t("admin.quote_config.pricing_sources_diagnostics_title")}</h4>
                               <p className="muted">{t("admin.quote_config.pricing_sources_diagnostics_help")}</p>
+
+                              <form action={upsertAdminPricingActivityPriceConfigAction} className="grid cols-4 config-form-grid top-gap-sm">
+                                <input type="hidden" name="catalog_id" value={row.id} />
+                                <input type="hidden" name="return_to" value={buildQuotesConfigHref("catalogs")} />
+                                <label className="span-2">
+                                  {t("admin.quote_config.activity_price_activity")}
+                                  <select name="activity_id" required>
+                                    <option value="">{t("admin.quote_config.select_option")}</option>
+                                    {activeActivities.map((activity) => (
+                                      <option key={`${row.id}-activity-price-${activity.id}`} value={activity.id}>
+                                        {activity.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label>
+                                  {t("common.location")}
+                                  <select name="location_id" defaultValue="">
+                                    <option value="">{t("admin.quote_config.all_sites")}</option>
+                                    {locations.map((location) => (
+                                      <option key={`${row.id}-activity-location-${location.id}`} value={location.id}>
+                                        {location.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label>
+                                  {t("admin.quote_config.unit")}
+                                  <select name="pricing_unit" defaultValue="per_session" required>
+                                    <option value="per_session">{pricingUnitLabel("per_session", language)}</option>
+                                    <option value="hourly">{pricingUnitLabel("hourly", language)}</option>
+                                    <option value="fixed">{pricingUnitLabel("fixed", language)}</option>
+                                  </select>
+                                </label>
+                                <label>
+                                  {t("admin.quote_config.amount_ttc")}
+                                  <input type="number" name="unit_price_ttc" min="0" step="0.01" placeholder="38.00" required />
+                                </label>
+                                <div className="span-3 muted">{t("admin.quote_config.activity_price_form_help")}</div>
+                                <div className="row align-end">
+                                  <button type="submit">{t("admin.quote_config.activity_price_save")}</button>
+                                </div>
+                              </form>
 
                               <div className="table-wrap top-gap-sm">
                                 <table className="data-table">
