@@ -489,6 +489,9 @@ function shouldCountInClientBalance(row: AdminClientPaymentOut): boolean {
   if (status === "NOT_BILLABLE" || status === "INCLUDED_PLAN" || status === "REFUNDED" || CANCELLED_PAYMENT_STATUSES.has(status)) {
     return false;
   }
+  if (isPaidPreRegistrationDepositCharge(row)) {
+    return false;
+  }
 
   if (row.source.trim().toUpperCase() === "MANUAL") {
     return true;
@@ -812,6 +815,7 @@ type RangeInvoiceNotePayload = {
   include_pending: boolean;
   include_cancelled: boolean;
   totals_by_currency: Record<string, string>;
+  total_to_pay_by_currency?: Record<string, string>;
   seller_legal_entity_id?: string;
   billing_entity?: string;
   invoice_status: "ISSUED" | "PAID" | "CANCELLED";
@@ -948,6 +952,14 @@ function parseRangeInvoiceNote(note: AdminClientNoteOut): RangeInvoiceNotePayloa
       include_pending: Boolean(payload.include_pending),
       include_cancelled: Boolean(payload.include_cancelled),
       totals_by_currency: totals,
+      total_to_pay_by_currency:
+        payload.total_to_pay_by_currency && typeof payload.total_to_pay_by_currency === "object"
+          ? Object.fromEntries(
+              Object.entries(payload.total_to_pay_by_currency)
+                .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+                .map(([currency, amount]) => [currency.toUpperCase(), amount]),
+            )
+          : undefined,
       seller_legal_entity_id: typeof payload.seller_legal_entity_id === "string" ? payload.seller_legal_entity_id : undefined,
       billing_entity: typeof payload.billing_entity === "string" ? payload.billing_entity : undefined,
       invoice_status:
@@ -2199,7 +2211,12 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       status: row.invoice_status,
       emailedAt: row.emailed_at ?? null,
       remindedAt: row.reminded_at ?? null,
-      totalLabel: rangeInvoiceTotalLabel(row.totals_by_currency, language),
+      totalLabel: rangeInvoiceTotalLabel(
+        Object.keys(row.total_to_pay_by_currency || {}).length > 0
+          ? row.total_to_pay_by_currency
+          : row.totals_by_currency,
+        language,
+      ),
       downloadHref: rangeInvoicePdfHref(client.id, row.note_id, false),
       viewHref: rangeInvoicePdfHref(client.id, row.note_id, true),
       sellerLegalEntityId: row.seller_legal_entity_id ?? null,
@@ -2260,10 +2277,30 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const totalsByCurrency = new Map<string, number>();
   const paidTotalsByCurrency = new Map<string, number>();
   const cancelledOrNotBillableTotalsByCurrency = new Map<string, number>();
+  const activeIssuedRangeInvoicesAsOfDate = rangeInvoices.filter((row) => {
+    if ((row.invoice_status || "").trim().toUpperCase() !== "ISSUED") {
+      return false;
+    }
+    return endOfDateUtcMs(row.issued_date) <= selectedBalanceDateEndMs;
+  });
+  const activeIssuedRangeInvoiceNoteIds = new Set(activeIssuedRangeInvoicesAsOfDate.map((row) => row.note_id));
+
+  for (const invoice of activeIssuedRangeInvoicesAsOfDate) {
+    for (const [currency, rawAmount] of Object.entries(invoice.totals_by_currency || {})) {
+      const amount = Number(rawAmount || "0");
+      if (!Number.isFinite(amount)) {
+        continue;
+      }
+      totalsByCurrency.set(currency || "EUR", (totalsByCurrency.get(currency || "EUR") ?? 0) + amount);
+    }
+  }
+
   for (const row of paymentsAsOfDate) {
     const currency = row.currency || "EUR";
     const amount = Number(row.total_incl_vat || "0");
     const status = normalizePaymentStatus(row.status);
+    const coveredByActiveRangeInvoice =
+      Boolean(row.invoice_note_id) && activeIssuedRangeInvoiceNoteIds.has(row.invoice_note_id || "");
     const excludePaidDepositCharge =
       isPaidPreRegistrationDepositCharge(row) &&
       settledManualPaymentInvoiceNumbers.has((row.invoice_number || "").trim());
@@ -2271,7 +2308,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     const dueCurrent = totalsByCurrency.get(currency) ?? 0;
     totalsByCurrency.set(
       currency,
-      dueCurrent + (shouldCountInClientBalance(row) && !excludePaidDepositCharge ? amount : 0),
+      dueCurrent + (!coveredByActiveRangeInvoice && shouldCountInClientBalance(row) && !excludePaidDepositCharge ? amount : 0),
     );
 
     if (status === "NOT_BILLABLE" || status === "REFUNDED" || CANCELLED_PAYMENT_STATUSES.has(status)) {

@@ -2333,6 +2333,8 @@ def _invoice_range_out(
     note_id: UUID,
     metadata: dict[str, object],
     related_invoices: list[AdminRangeInvoiceReferenceOut] | None = None,
+    totals_by_currency: dict[str, str] | None = None,
+    total_to_pay_by_currency: dict[str, str] | None = None,
 ) -> AdminRangeInvoiceOut:
     return AdminRangeInvoiceOut(
         note_id=note_id,
@@ -2386,7 +2388,12 @@ def _invoice_range_out(
         ),
         include_pending=bool(metadata.get("include_pending")),
         include_cancelled=bool(metadata.get("include_cancelled")),
-        totals_by_currency=dict(metadata.get("totals_by_currency") or {}),
+        totals_by_currency=totals_by_currency if totals_by_currency is not None else dict(metadata.get("totals_by_currency") or {}),
+        total_to_pay_by_currency=(
+            total_to_pay_by_currency
+            if total_to_pay_by_currency is not None
+            else dict(metadata.get("total_to_pay_by_currency") or {})
+        ),
         invoice_status=str(metadata.get("invoice_status") or "ISSUED"),
         emailed_at=_parse_iso_datetime(metadata.get("emailed_at")),
         reminded_at=_parse_iso_datetime(metadata.get("reminded_at")),
@@ -2394,6 +2401,88 @@ def _invoice_range_out(
         private_note=_normalize_optional(str(metadata.get("private_note") or "")),
         related_invoices=related_invoices or [],
     )
+
+
+def _invoice_range_decimal_map(raw: object) -> dict[str, Decimal]:
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, Decimal] = {}
+    for raw_currency, raw_amount in raw.items():
+        currency = _normalize_currency(str(raw_currency), fallback="EUR")
+        try:
+            amount = _quantize_money(Decimal(str(raw_amount)))
+        except (InvalidOperation, ValueError):
+            continue
+        out[currency] = amount
+    return out
+
+
+def _invoice_range_money_payload(values: dict[str, Decimal]) -> dict[str, str]:
+    return {
+        currency: f"{_quantize_money(amount):.2f}"
+        for currency, amount in sorted(values.items())
+    }
+
+
+def _computed_invoice_range_display_totals(
+    db: Session,
+    *,
+    client_id: UUID,
+    note_id: UUID,
+    note_created_at: datetime,
+    metadata: dict[str, object],
+) -> tuple[dict[str, str], dict[str, str]]:
+    totals = _invoice_range_decimal_map(metadata.get("totals_by_currency"))
+    total_to_pay = _invoice_range_decimal_map(metadata.get("total_to_pay_by_currency"))
+    if totals and total_to_pay:
+        return _invoice_range_money_payload(totals), _invoice_range_money_payload(total_to_pay)
+
+    all_payments = _build_admin_client_payments(db, client_id=client_id)
+    frozen_payment_keys, _, _ = _frozen_invoice_selection_for_note(
+        db,
+        note_id=note_id,
+        metadata=metadata,
+    )
+    normalized_frozen_keys = _normalize_invoice_range_payment_keys(frozen_payment_keys)
+    frozen_key_set = set(normalized_frozen_keys)
+    payments_by_key = {
+        _payment_key(source=row.source, payment_id=row.id): row
+        for row in all_payments
+    }
+    frozen_rows = [
+        row
+        for key in normalized_frozen_keys
+        if (row := payments_by_key.get(key)) is not None
+        if not _is_booking_payment_receipt_manual_row(row)
+    ]
+    if frozen_rows:
+        totals = {}
+        for row in frozen_rows:
+            currency = _normalize_currency(row.currency, fallback="EUR")
+            totals[currency] = _quantize_money(
+                totals.get(currency, Decimal("0.00")) + Decimal(row.total_incl_vat)
+            )
+
+    if not total_to_pay:
+        total_to_pay = dict(totals)
+        for row in all_payments:
+            key = _payment_key(source=row.source, payment_id=row.id)
+            if key in frozen_key_set:
+                continue
+            if row.occurred_at > note_created_at:
+                continue
+            if (row.source or "").strip().upper() != "MANUAL":
+                continue
+            if (row.manual_transaction_type or "").strip().upper() != "PAYMENT":
+                continue
+            if not _should_count_in_client_balance(row):
+                continue
+            currency = _normalize_currency(row.currency, fallback="EUR")
+            total_to_pay[currency] = _quantize_money(
+                total_to_pay.get(currency, Decimal("0.00")) + Decimal(row.total_incl_vat)
+            )
+
+    return _invoice_range_money_payload(totals), _invoice_range_money_payload(total_to_pay)
 
 
 def _related_invoice_references_for_split_group(
@@ -2675,10 +2764,19 @@ def list_admin_client_range_invoices(
         metadata = _parse_invoice_range_note_entry(note)
         if metadata is None:
             continue
+        totals_by_currency, total_to_pay_by_currency = _computed_invoice_range_display_totals(
+            db,
+            client_id=client_id,
+            note_id=note.id,
+            note_created_at=note.created_at,
+            metadata=metadata,
+        )
         invoices.append(
             _invoice_range_out(
                 note_id=note.id,
                 metadata=metadata,
+                totals_by_currency=totals_by_currency,
+                total_to_pay_by_currency=total_to_pay_by_currency,
                 related_invoices=_related_invoice_references_for_split_group(
                     db,
                     client_id=client_id,
@@ -3200,6 +3298,10 @@ def _should_count_in_client_balance(row: AdminClientPaymentOut) -> bool:
     if _is_booking_payment_receipt_manual_row(row):
         return False
     if (row.source or "").strip().upper() == "MANUAL":
+        manual_type = (row.manual_transaction_type or "").strip().upper()
+        category = (row.category or "").strip().upper()
+        if manual_type == "CHARGE" and category == "PRE_REGISTRATION_DEPOSIT" and status_value in PAID_PAYMENT_STATUSES:
+            return False
         return True
     return status_value in PENDING_PAYMENT_STATUSES
 

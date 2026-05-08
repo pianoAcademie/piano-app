@@ -1260,6 +1260,7 @@ class AdminRangeInvoiceOut(BaseModel):
     include_pending: bool
     include_cancelled: bool
     totals_by_currency: dict[str, str]
+    total_to_pay_by_currency: dict[str, str] = Field(default_factory=dict)
     invoice_status: Literal["ISSUED", "PAID", "CANCELLED"]
     emailed_at: datetime | None = None
     reminded_at: datetime | None = None
