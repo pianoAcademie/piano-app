@@ -132,6 +132,7 @@ from app.services.session_audience import (
     scopes_allow_plan_kind,
     scopes_allow_planless_booking,
 )
+from app.services.subscriptions import reconcile_subscription_status
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -2141,6 +2142,13 @@ def get_client_family_overview(
         .where(ClientPlanSubscription.user_id.in_(managed_client_ids))
         .order_by(ClientPlanSubscription.created_at.desc())
     ).all()
+    now = _utcnow()
+    changed = False
+    for sub, plan, _ in rows_subscriptions:
+        if reconcile_subscription_status(sub, now=now, plan_kind=plan.kind):
+            changed = True
+    if changed:
+        db.commit()
     plan_ids = list({plan.id for _, plan, _ in rows_subscriptions})
     entitlement_rows = db.execute(
         select(PlanEntitlement.plan_id, PlanEntitlement.course_type_id, CourseType.name)

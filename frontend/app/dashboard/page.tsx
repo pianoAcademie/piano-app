@@ -141,6 +141,8 @@ const FINANCE_PENDING_STATUSES = new Set(["PENDING", "OPEN", "CREATED", "PROCESS
 const FINANCE_CANCELLED_STATUSES = new Set(["CANCELLED", "CANCELED", "NOT_BILLABLE", "REFUNDED"]);
 const FINANCE_FAILED_STATUSES = new Set(["FAILED", "ERROR", "DECLINED", "NETWORK_ERROR", "UNEXPECTED_ERROR"]);
 const FAMILY_BOOKING_OWNER = "FAMILY";
+const ACTIVE_CLIENT_BOOKING_STATUSES = new Set(["BOOKED", "WAITLISTED", "PENDING_PAYMENT"]);
+const PORTAL_VISIBLE_SUBSCRIPTION_STATUSES = new Set(["ACTIVE", "PAYMENT_ALERT", "PAUSED", "PRE_TERMINATION"]);
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -639,6 +641,55 @@ function isSubscriptionActiveNow(
   return true;
 }
 
+function isPendingSubscriptionStatus(status: string): boolean {
+  const normalized = normalizeStatus(status);
+  return (
+    normalized === "PENDING" ||
+    normalized === "OPEN" ||
+    normalized === "CREATED" ||
+    normalized === "PROCESSING" ||
+    normalized === "WAITING_PAYMENT"
+  );
+}
+
+function isSubscriptionVisibleInPortal(
+  sub: {
+    status: string;
+    ends_at: string | null;
+    credits_remaining?: number | null;
+    plan: { kind: string };
+  },
+  now: Date,
+): boolean {
+  const normalized = normalizeStatus(sub.status);
+  const isPending = isPendingSubscriptionStatus(normalized);
+  if (!isPending && !PORTAL_VISIBLE_SUBSCRIPTION_STATUSES.has(normalized)) {
+    return false;
+  }
+  const endsAt = safeDate(sub.ends_at);
+  if (endsAt && endsAt <= now) {
+    return false;
+  }
+  if (normalizeStatus(sub.plan.kind) === "PACK" && !isPending && (sub.credits_remaining ?? 0) <= 0) {
+    return false;
+  }
+  return true;
+}
+
+function nextActiveBookingDateKey(
+  bookings: Array<{ status: string; session: { start_at_utc: string } }>,
+  timezone: string,
+  now: Date,
+): string | null {
+  const nextBooking = bookings
+    .filter((booking) => {
+      const sessionStart = safeDate(booking.session.start_at_utc);
+      return sessionStart != null && sessionStart >= now && ACTIVE_CLIENT_BOOKING_STATUSES.has(normalizeStatus(booking.status));
+    })
+    .sort((a, b) => a.session.start_at_utc.localeCompare(b.session.start_at_utc))[0];
+  return nextBooking ? dateKeyInTimezone(nextBooking.session.start_at_utc, timezone) : null;
+}
+
 function resolveTimezone(value: string | null | undefined): string {
   const fallback = DEFAULT_TIMEZONE;
   const candidate = (value ?? "").trim();
@@ -1004,8 +1055,18 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const planningSlotFilter = parsePlanningSlotFilter(readParam(searchParams, "planning_slot_filter"));
   const timezone = resolveTimezone(readParam(searchParams, "timezone") || me.timezone || DEFAULT_TIMEZONE);
   const requestedAgendaView = parseAgendaView(readParam(searchParams, "agenda_view"));
+  const familyResultPromise = backendRequest<ClientFamilyOverviewOut>("/api/v1/clients/me/family", {}, token);
   const inputAgendaDate = readParam(searchParams, "agenda_date");
-  const agendaDate = isDateKey(inputAgendaDate) ? inputAgendaDate : todayKeyInTimezone(timezone);
+  const now = new Date();
+  const defaultAgendaDate = todayKeyInTimezone(timezone);
+  let autoAgendaDate = defaultAgendaDate;
+  if (tab === "planning" && !isDateKey(inputAgendaDate)) {
+    const earlyFamilyResult = await familyResultPromise;
+    if (earlyFamilyResult.ok) {
+      autoAgendaDate = nextActiveBookingDateKey(earlyFamilyResult.data.bookings, timezone, now) ?? defaultAgendaDate;
+    }
+  }
+  const agendaDate = isDateKey(inputAgendaDate) ? inputAgendaDate : autoAgendaDate;
   const agendaView: AgendaView = tab === "planning" ? "week" : requestedAgendaView;
   const agendaRange = buildAgendaRange(agendaView, agendaDate);
 
@@ -1124,7 +1185,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     backendRequest<PlanOut[]>("/api/v1/plans", {}, token),
     backendRequest<SubscriptionOut[]>("/api/v1/clients/me/subscriptions", {}, token),
     backendRequest<ClientBookingOut[]>("/api/v1/clients/me/bookings", {}, token),
-    backendRequest<ClientFamilyOverviewOut>("/api/v1/clients/me/family", {}, token),
+    familyResultPromise,
     backendRequest<ClientContentCourseOut[]>("/api/v1/clients/me/content-courses", {}, token),
     backendRequest<ClientMessageOut[]>(`/api/v1/clients/me/messages?scope=${messageScope}`, {}, token),
     backendRequest<ClientPaymentOut[]>("/api/v1/clients/me/payments", {}, token),
@@ -1352,9 +1413,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
   allBookings.sort((a, b) => b.session.start_at_utc.localeCompare(a.session.start_at_utc));
 
-  const now = new Date();
-  const activeBookingStatuses = new Set(["BOOKED", "WAITLISTED"]);
-
   const bookingsBySessionAndMember = new Map<string, FamilyBookingRow>();
   const bookingsBySession = new Map<string, FamilyBookingRow[]>();
   for (const booking of allBookings) {
@@ -1374,7 +1432,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       if (!sessionStart) {
         return false;
       }
-      return activeBookingStatuses.has(normalizeStatus(booking.status)) && sessionStart >= now;
+      return ACTIVE_CLIENT_BOOKING_STATUSES.has(normalizeStatus(booking.status)) && sessionStart >= now;
     })
     .sort((a, b) => a.session.start_at_utc.localeCompare(b.session.start_at_utc));
 
@@ -1384,7 +1442,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       if (!sessionStart) {
         return true;
       }
-      return sessionStart < now || !activeBookingStatuses.has(normalizeStatus(booking.status));
+      return sessionStart < now || !ACTIVE_CLIENT_BOOKING_STATUSES.has(normalizeStatus(booking.status));
     })
     .sort((a, b) => b.session.start_at_utc.localeCompare(a.session.start_at_utc));
 
@@ -1526,21 +1584,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedOwnerSubscriptions = subscriptionsByOwner.get(selectedPurchaseOwner) ?? [];
   const confirmPlan = confirmPlanId ? plans.find((plan) => plan.id === confirmPlanId) ?? null : null;
   const selectedPurchaseOwnerProfile = members.find((member) => member.id === selectedPurchaseOwner) ?? null;
-  const isPendingSubscription = (sub: { status: string }): boolean => {
-    const normalized = normalizeStatus(sub.status);
-    return (
-      normalized === "PENDING" ||
-      normalized === "OPEN" ||
-      normalized === "CREATED" ||
-      normalized === "PROCESSING" ||
-      normalized === "WAITING_PAYMENT"
-    );
-  };
   const visibleSelectedOwnerSubscriptions = selectedOwnerSubscriptions.filter(
-    (sub) =>
-      (isSubscriptionActiveNow(sub, now) &&
-        (sub.plan.kind === "SUBSCRIPTION" || sub.plan.kind === "FORFAIT" || (sub.credits_remaining ?? 0) > 0)) ||
-      isPendingSubscription(sub),
+    (sub) => isSubscriptionVisibleInPortal(sub, now),
   );
   const selectedOfferSubscription = subscriptions.find((sub) => sub.id === selectedOfferDetailId) ?? null;
   const selectedOfferInvoices = selectedOfferSubscription
@@ -1548,7 +1593,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     : [];
   const homeSubscriptions = subscriptions
     .filter((sub) => selectedMemberFilter === "ALL" || sub.owner_client_id === selectedMemberFilter)
-    .filter((sub) => isSubscriptionActiveNow(sub, now) || isPendingSubscription(sub))
+    .filter((sub) => isSubscriptionVisibleInPortal(sub, now))
     .sort((a, b) => b.started_at.localeCompare(a.started_at));
   const subscriptionAlerts = subscriptions
     .filter((sub) => selectedMemberFilter === "ALL" || sub.owner_client_id === selectedMemberFilter)
@@ -1604,7 +1649,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           }, new Map<string, typeof homeCalendarRows>()),
         )
       : [];
-  const firstHomeBooking = homeCalendarRows[0] ?? upcomingBookings14[0] ?? null;
+  const firstHomeBooking = homeCalendarRows[0] ?? upcomingBookings[0] ?? null;
   const homePlanningHref = withUpdatedQuery(rawParams, {
     tab: "planning",
     agenda_view: "week",
