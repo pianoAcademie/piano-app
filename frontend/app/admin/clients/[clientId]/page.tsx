@@ -2286,7 +2286,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const activeIssuedRangeInvoiceNoteIds = new Set(activeIssuedRangeInvoicesAsOfDate.map((row) => row.note_id));
 
   for (const invoice of activeIssuedRangeInvoicesAsOfDate) {
-    for (const [currency, rawAmount] of Object.entries(invoice.totals_by_currency || {})) {
+    const remainingByCurrency =
+      Object.keys(invoice.total_to_pay_by_currency || {}).length > 0
+        ? invoice.total_to_pay_by_currency
+        : invoice.totals_by_currency;
+    for (const [currency, rawAmount] of Object.entries(remainingByCurrency || {})) {
       const amount = Number(rawAmount || "0");
       if (!Number.isFinite(amount)) {
         continue;
