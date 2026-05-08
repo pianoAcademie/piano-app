@@ -1782,15 +1782,27 @@ def _build_range_invoice_email_defaults(
     if not subject_template or not body_template:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Template incomplet")
 
-    invoice_url = _invoice_range_download_url(client_id=client.id, note_id=note_id, metadata=metadata, inline=True)
+    note = db.get(ClientNoteEntry, note_id)
+    email_metadata = (
+        _invoice_range_metadata_with_display_totals(
+            db,
+            client_id=client.id,
+            note_id=note_id,
+            note_created_at=note.created_at,
+            metadata=metadata,
+        )
+        if note is not None
+        else dict(metadata)
+    )
+    invoice_url = _invoice_range_download_url(client_id=client.id, note_id=note_id, metadata=email_metadata, inline=True)
     payment_url = _invoice_range_payment_url(
         client_id=client.id,
         note_id=note_id,
-        metadata=metadata,
+        metadata=email_metadata,
     )
-    totals_by_currency = dict(metadata.get("totals_by_currency") or {})
-    first_currency = next(iter(sorted(totals_by_currency.keys())), "EUR")
-    amount_due = str(totals_by_currency.get(first_currency) or "0.00")
+    amount_by_currency = dict(email_metadata.get("total_to_pay_by_currency") or email_metadata.get("totals_by_currency") or {})
+    first_currency = next(iter(sorted(amount_by_currency.keys())), "EUR")
+    amount_due = str(amount_by_currency.get(first_currency) or "0.00")
     fallback_first_name = "Customer" if language == "en" else "Client"
     context = {
         "first_name": (billing_profile.first_name or client.first_name or "").strip() or client.email or fallback_first_name,
@@ -2483,6 +2495,29 @@ def _computed_invoice_range_display_totals(
             )
 
     return _invoice_range_money_payload(totals), _invoice_range_money_payload(total_to_pay)
+
+
+def _invoice_range_metadata_with_display_totals(
+    db: Session,
+    *,
+    client_id: UUID,
+    note_id: UUID,
+    note_created_at: datetime,
+    metadata: dict[str, object],
+) -> dict[str, object]:
+    totals_by_currency, total_to_pay_by_currency = _computed_invoice_range_display_totals(
+        db,
+        client_id=client_id,
+        note_id=note_id,
+        note_created_at=note_created_at,
+        metadata=metadata,
+    )
+    enriched = dict(metadata)
+    if totals_by_currency:
+        enriched["totals_by_currency"] = totals_by_currency
+    if total_to_pay_by_currency:
+        enriched["total_to_pay_by_currency"] = total_to_pay_by_currency
+    return enriched
 
 
 def _related_invoice_references_for_split_group(
@@ -8916,6 +8951,13 @@ def start_admin_client_range_invoice_public_payment(
     if invoice_status == "CANCELLED":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Facture annulee")
 
+    metadata = _invoice_range_metadata_with_display_totals(
+        db,
+        client_id=client_id,
+        note_id=note_id,
+        note_created_at=note.created_at,
+        metadata=metadata,
+    )
     amount_due, currency_code = _invoice_range_primary_total(metadata)
     if amount_due <= Decimal("0.00"):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun montant a regler")
@@ -9009,6 +9051,13 @@ def handle_admin_client_range_invoice_public_payment_webhook(
         note_id=note_id,
         metadata=metadata,
     )
+    metadata = _invoice_range_metadata_with_display_totals(
+        db,
+        client_id=client_id,
+        note_id=note_id,
+        note_created_at=note.created_at,
+        metadata=metadata,
+    )
 
     provider_reference = _normalize_optional(str(metadata.get("payment_provider_reference") or ""))
     if not provider_reference:
@@ -9068,6 +9117,13 @@ def return_admin_client_range_invoice_public_payment(
         token=token,
         client_id=client_id,
         note_id=note_id,
+        metadata=metadata,
+    )
+    metadata = _invoice_range_metadata_with_display_totals(
+        db,
+        client_id=client_id,
+        note_id=note_id,
+        note_created_at=note.created_at,
         metadata=metadata,
     )
 

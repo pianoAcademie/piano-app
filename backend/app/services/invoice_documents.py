@@ -531,12 +531,15 @@ class _SimplePdfDocument:
                 ).encode("ascii")
                 annotation_refs.append(f"{annotation_id} 0 R")
             annotation_block = f" /Annots [{' '.join(annotation_refs)}]".encode("ascii") if annotation_refs else b""
+            resource_block = (
+                b"/Resources << /Font << /F1 3 0 R /F2 4 0 R >>"
+                + xobject_resources
+                + b" >>"
+            )
             object_map[page_id] = (
                 b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
-                + b"/Resources << /Font << /F1 3 0 R /F2 4 0 R >>"
-                + xobject_resources
+                + resource_block
                 + annotation_block
-                + b" >> "
                 + f"/Contents {content_id} 0 R >>".encode("ascii")
             )
             page_ids.append(page_id)

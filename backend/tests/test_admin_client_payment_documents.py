@@ -12,6 +12,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.admin_clients import (
     _apply_invoice_presentation_to_payment_item,
+    _build_range_invoice_email_defaults,
     _select_reusable_pre_registration_deposit_reconciliation,
     _select_reusable_pre_registration_deposit_payment_ids,
     _resolve_public_payment_webhook_query_credentials,
@@ -37,6 +38,14 @@ class _FakeMutationDb:
 
     def commit(self) -> None:
         return None
+
+
+class _FakeEmailDefaultDb:
+    def __init__(self, note: object | None) -> None:
+        self._note = note
+
+    def get(self, _model: object, _key: object) -> object | None:
+        return self._note
 
 
 class _FakeQueryParams:
@@ -207,6 +216,82 @@ class AdminClientPaymentDocumentTests(unittest.TestCase):
 
         self.assertEqual(response.note_id, note_id)
         self.assertEqual(download_pdf.call_args.kwargs["note_id"], note_id)
+
+    def test_range_invoice_email_defaults_use_amount_to_pay_for_invoice_and_reminder(self) -> None:
+        client_id = uuid4()
+        note_id = uuid4()
+        note = SimpleNamespace(id=note_id, created_at=datetime(2026, 5, 7, tzinfo=timezone.utc))
+        metadata = {
+            "invoice_number": "PA26-0042",
+            "issued_date": "2026-05-07",
+            "due_date": "2026-09-01",
+            "totals_by_currency": {"EUR": "2700.00"},
+            "total_to_pay_by_currency": {"EUR": "2370.00"},
+        }
+        db = _FakeEmailDefaultDb(note)
+        client = SimpleNamespace(
+            id=client_id,
+            email="client@example.com",
+            first_name="Coraline",
+            last_name="Schnee",
+            preferred_language="fr",
+        )
+
+        def fake_template(_db: object, *, code: str, language: str) -> dict[str, object]:
+            self.assertEqual(language, "fr")
+            return {
+                "active": True,
+                "subject": f"{code} {{invoice_number}} {{amount_due}} {{currency}}",
+                "body": "Montant {total_incl_vat} {currency} - {payment_url}",
+                "body_format": "TEXT",
+            }
+
+        captured_payment_metadata: list[dict[str, object]] = []
+
+        def fake_payment_url(*, client_id: object, note_id: object, metadata: dict[str, object]) -> str:
+            captured_payment_metadata.append(dict(metadata))
+            return "https://pay.example.test"
+
+        with patch(
+            "app.api.routes.admin_clients.resolve_billing_profile",
+            return_value=SimpleNamespace(
+                email="parent@example.com",
+                first_name="Coraline",
+                last_name="Schnee",
+            ),
+        ), patch(
+            "app.api.routes.admin_clients.resolve_predefined_template",
+            side_effect=fake_template,
+        ), patch(
+            "app.api.routes.admin_clients._invoice_range_download_url",
+            return_value="https://invoice.example.test",
+        ), patch(
+            "app.api.routes.admin_clients._invoice_range_payment_url",
+            side_effect=fake_payment_url,
+        ):
+            invoice_defaults = _build_range_invoice_email_defaults(
+                db,
+                client=client,
+                note_id=note_id,
+                metadata=metadata,
+                kind="INVOICE",
+            )
+            reminder_defaults = _build_range_invoice_email_defaults(
+                db,
+                client=client,
+                note_id=note_id,
+                metadata=metadata,
+                kind="REMINDER",
+            )
+
+        self.assertIn("2370.00 EUR", invoice_defaults[1])
+        self.assertIn("Montant 2370.00 EUR", invoice_defaults[2])
+        self.assertIn("2370.00 EUR", reminder_defaults[1])
+        self.assertIn("Montant 2370.00 EUR", reminder_defaults[2])
+        self.assertEqual(
+            [entry.get("total_to_pay_by_currency") for entry in captured_payment_metadata],
+            [{"EUR": "2370.00"}, {"EUR": "2370.00"}],
+        )
 
     def test_booking_payment_receipt_manual_row_is_not_counted_in_opening_balance(self) -> None:
         row = AdminClientPaymentOut(

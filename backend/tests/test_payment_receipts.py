@@ -71,6 +71,7 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
             customer_email="hector@example.com",
             customer_name="Hector Souza",
             customer_billing_address="1 rue de Richelieu 75001 Paris (France)",
+            customer_language="fr",
             student_id=self.student_id,
             student_name="Gabriel TEST01",
             booking_id=self.booking_id,
@@ -401,6 +402,7 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
             email="hector@example.com",
             first_name="Hector",
             last_name="Souza",
+            preferred_language="fr",
         )
         metadata = {
             "invoice_number": "PA26-0006",
@@ -462,20 +464,21 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
             email="albert@example.com",
             first_name="Albert",
             last_name="Einstein",
+            preferred_language="fr",
         )
         note_id = uuid4()
         metadata = {
             "invoice_number": "PA26-0029",
             "invoice_status": "ISSUED",
-            "totals_by_currency": {"EUR": "38.00"},
-            "applied_payment_totals_by_currency": {"EUR": "0.00"},
-            "total_to_pay_by_currency": {"EUR": "38.00"},
+            "totals_by_currency": {"EUR": "2700.00"},
+            "applied_payment_totals_by_currency": {"EUR": "-330.00"},
+            "total_to_pay_by_currency": {"EUR": "2370.00"},
             "due_date": "2026-04-01",
             "issued_date": "2026-04-01",
         }
         template = {
             "subject": "Facture {invoice_number}",
-            "body": "<div><a href=\"{payment_url}\">payer</a> <a href=\"{invoice_url}\">pdf</a></div>",
+            "body": "<div>{amount_due} {currency} <a href=\"{payment_url}\">payer</a> <a href=\"{invoice_url}\">pdf</a></div>",
             "body_format": "HTML",
         }
         sender = SimpleNamespace(
@@ -514,6 +517,8 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
         self.assertEqual(result, "msg-456")
         kwargs = send_email_mock.call_args.kwargs
         self.assertEqual(kwargs["context"], "CLIENT_FINAL_INVOICE")
+        self.assertIn("2370.00 EUR", kwargs["body"])
+        self.assertNotIn("2700.00 EUR", kwargs["body"])
         self.assertIn("/api/v1/public/payments/invoices/range/client-1/note-1?token=pay", kwargs["body"])
         self.assertIn("/public-pdf?token=pdf", kwargs["body"])
         self.assertNotIn("{payment_url}", kwargs["body"])

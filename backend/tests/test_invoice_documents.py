@@ -212,6 +212,63 @@ class InvoicePeriodTotalsTests(unittest.TestCase):
         self.assertIn("Acompte", payload)
         self.assertIn("30.00 EUR", payload)
 
+    def test_render_invoice_period_pdf_payment_button_is_clickable(self) -> None:
+        identity = CompanyIdentity(
+            company_name="Piano Academie",
+            company_email="comptabilite@piano-academie.com",
+            company_phone="+33 1 86 47 60 88",
+            company_siren="828051417",
+            company_siret="82805141700032",
+            company_vat_number="FR74828051417",
+            company_address="1, rue de Richelieu, 75001 Paris (France)",
+            company_legal_form="SAS",
+            company_share_capital="5000 EUR",
+            company_logo_jpeg=None,
+            company_logo_width_px=None,
+            company_logo_height_px=None,
+        )
+        payment_url = "https://app.piano-academie.com/api/v1/public/payments/invoices/range/client/note?token=test"
+
+        with patch("app.services.invoice_documents._company_identity", return_value=identity):
+            pdf = render_invoice_period_pdf(
+                db=object(),
+                invoice_number="PA26-0042",
+                issued_at=datetime(2026, 5, 7, 0, 0, tzinfo=timezone.utc),
+                client_id="client-1",
+                client_name="Coraline Schnee",
+                period_label="01/05/2026 - 30/06/2027",
+                lines=[
+                    InvoicePeriodLine(
+                        date_label="01/05/2026",
+                        type_label="Reservation",
+                        label="Cours collectif",
+                        quantity=1,
+                        amount_excl_vat=Decimal("100.00"),
+                        vat_rate=Decimal("20.00"),
+                        vat_amount=Decimal("20.00"),
+                        total_incl_vat=Decimal("120.00"),
+                        currency="EUR",
+                    )
+                ],
+                totals_by_currency={
+                    "EUR": {
+                        "amount_excl_vat": Decimal("100.00"),
+                        "vat_amount": Decimal("20.00"),
+                        "total_incl_vat": Decimal("120.00"),
+                    }
+                },
+                total_to_pay_by_currency={"EUR": Decimal("120.00")},
+                note=None,
+                client_billing_address="France",
+                due_date=date(2026, 9, 1),
+                payment_link_url=payment_url,
+            )
+
+        payload = pdf.decode("latin-1", errors="ignore")
+        self.assertIn("/Subtype /Link", payload)
+        self.assertIn(f"/S /URI /URI ({payment_url})", payload)
+        self.assertRegex(payload, r"/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Annots \[")
+
     def test_render_invoice_period_pdf_prefers_frozen_company_identity_override(self) -> None:
         frozen_identity = CompanyIdentity(
             company_name="Piano Academie Figee",
