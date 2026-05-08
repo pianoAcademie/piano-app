@@ -160,6 +160,7 @@ from app.services.invoice_documents import (
 from app.services.invoice_number_service import InvoiceNumberService
 from app.services.messaging_templates import (
     PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD,
+    render_template_content,
     resolve_messaging_delivery_config,
     resolve_frontend_base_url,
     resolve_predefined_template,
@@ -1559,6 +1560,18 @@ def _append_public_payment_reference_to_note(public_note: str | None, provider_r
     return f"{base}\n{marker}"
 
 
+def _invoice_range_paid_amount(metadata: dict[str, object]) -> tuple[Decimal, str]:
+    raw_amount = _normalize_optional(str(metadata.get("payment_amount_paid") or ""))
+    raw_currency = _normalize_optional(str(metadata.get("payment_currency") or ""))
+    if raw_amount is not None:
+        try:
+            amount = _quantize_money(Decimal(raw_amount))
+            return amount, _normalize_currency(raw_currency, fallback="EUR")
+        except Exception:
+            pass
+    return _invoice_range_primary_total(metadata)
+
+
 def _record_invoice_range_public_payment(
     db: Session,
     *,
@@ -1631,6 +1644,10 @@ def _record_invoice_range_public_payment(
     metadata["invoice_status"] = "PAID"
     metadata["paid_at"] = now.isoformat()
     metadata["payment_provider_reference"] = provider_reference
+    if _normalize_optional(str(metadata.get("payment_amount_paid") or "")) is None:
+        metadata["payment_amount_paid"] = f"{amount_due:.2f}"
+    if _normalize_optional(str(metadata.get("payment_currency") or "")) is None:
+        metadata["payment_currency"] = currency_code
     metadata["payment_transaction_id"] = transaction_id_str
     metadata["reconciled_manual_payment_ids"] = updated_reconciled_ids
     metadata["public_note"] = _append_public_payment_reference_to_note(
@@ -1661,6 +1678,23 @@ def _record_invoice_range_public_payment(
         except Exception:
             logger.exception(
                 "Unable to send payment success emails for invoice-range payment client=%s note=%s",
+                client_id,
+                note.id,
+            )
+    if not _normalize_optional(str(metadata.get("admin_payment_confirmation_emails_sent_at") or "")):
+        try:
+            client = db.scalar(select(User).where(User.id == client_id, User.role == UserRole.CLIENT))
+            if client is not None and _send_invoice_range_payment_admin_emails(
+                db,
+                client=client,
+                note_id=note.id,
+                metadata=metadata,
+                paid_at=now,
+            ):
+                metadata["admin_payment_confirmation_emails_sent_at"] = now.isoformat()
+        except Exception:
+            logger.exception(
+                "Unable to send admin payment success emails for invoice-range payment client=%s note=%s",
                 client_id,
                 note.id,
             )
@@ -2078,7 +2112,7 @@ def _send_invoice_range_payment_success_emails(
         f"{_frontend_base_url()}/client?tab=finance&finance_view=transactions&invoice_number="
         f"{urlencode({'invoice_number': invoice_number}).split('=', 1)[1]}"
     )
-    amount_paid, currency_code = _invoice_range_primary_total(metadata)
+    amount_paid, currency_code = _invoice_range_paid_amount(metadata)
 
     result = send_payment_success_notifications(
         db,
@@ -2099,6 +2133,80 @@ def _send_invoice_range_payment_success_emails(
         language=client.preferred_language,
     )
     return any(value for value in result.values())
+
+
+def _send_invoice_range_payment_admin_emails(
+    db: Session,
+    *,
+    client: User,
+    note_id: UUID,
+    metadata: dict[str, object],
+    paid_at: datetime,
+) -> bool:
+    try:
+        template = resolve_predefined_template(db, code="INVOICE_PAYMENT_ADMIN", language="fr")
+    except KeyError:
+        logger.warning("Unknown predefined template for invoice payment admin notification")
+        return False
+    if not bool(template.get("active", True)):
+        return False
+
+    subject_template = str(template.get("subject") or "").strip()
+    body_template = str(template.get("body") or "").strip()
+    if not subject_template or not body_template:
+        logger.warning("Template INVOICE_PAYMENT_ADMIN is incomplete (subject/body empty)")
+        return False
+
+    billing_profile = resolve_billing_profile(db, client)
+    invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or str(note_id)
+    invoice_url = _invoice_range_download_url(
+        client_id=client.id,
+        note_id=note_id,
+        metadata=metadata,
+        inline=False,
+    )
+    transactions_url = (
+        f"{_frontend_base_url()}/admin/clients/{client.id}?tab=paiements&payment_filter_q="
+        f"{urlencode({'q': invoice_number}).split('=', 1)[1]}"
+    )
+    amount_paid, currency_code = _invoice_range_paid_amount(metadata)
+    client_name = (
+        _normalize_optional(f"{billing_profile.first_name or ''} {billing_profile.last_name or ''}".strip())
+        or _display_name(client.first_name, client.last_name, client.email)
+        or client.email
+    )
+    context = {
+        "client_name": client_name,
+        "client_email": _normalize_optional(billing_profile.email) or client.email,
+        "invoice_number": invoice_number,
+        "amount_paid": f"{amount_paid.quantize(Decimal('0.01')):.2f}",
+        "currency": currency_code,
+        "paid_at": paid_at.strftime("%d/%m/%Y %H:%M"),
+        "payment_reference": _normalize_optional(str(metadata.get("payment_provider_reference") or "")) or "-",
+        "invoice_url": invoice_url,
+        "transactions_url": transactions_url,
+    }
+    body_format = "HTML" if str(template.get("body_format") or "").strip().upper() == "HTML" else "TEXT"
+    sender = resolve_sender_profile(db, sender_kind="STUDIO")
+    sent_any = False
+    for admin_recipient in resolve_admin_booking_notification_recipients(db, is_cancellation=False):
+        admin_email = _normalize_optional(admin_recipient.email)
+        if admin_email is None:
+            continue
+        send_email(
+            to_email=admin_email,
+            subject=render_template_content(subject_template, context),
+            body=render_template_content(body_template, context),
+            body_format=body_format,
+            context="ADMIN_INVOICE_PAYMENT_CONFIRMED",
+            from_email=sender.from_email,
+            from_name=sender.from_name,
+            reply_to=sender.reply_to,
+            subject_prefix=sender.subject_prefix,
+            communication_type=COMMUNICATION_TYPE_OPERATIONAL,
+        )
+        sent_any = True
+    return sent_any
 
 
 def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, object] | None:

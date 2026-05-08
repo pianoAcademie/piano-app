@@ -1182,6 +1182,29 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         ),
     ),
     MessagingTemplateDefinition(
+        code="INVOICE_PAYMENT_ADMIN",
+        name="Invoice Payment Admin",
+        channel="EMAIL",
+        subject="Paiement facture recu - {invoice_number}",
+        body=(
+            "Un paiement en ligne de facture a ete recu.\n\n"
+            "Client: {client_name}\n"
+            "Email client: {client_email}\n"
+            "Facture: {invoice_number}\n"
+            "Montant recu: {amount_paid} {currency}\n"
+            "Date de paiement: {paid_at}\n"
+            "Reference PSP: {payment_reference}\n\n"
+            "Facture: {invoice_url}\n"
+            "Compte client: {transactions_url}\n\n"
+            "Piano Academie"
+        ),
+        description="Notification interne pour un paiement en ligne recu sur une facture.",
+        variables_hint=(
+            "{client_name} {client_email} {invoice_number} {amount_paid} {currency} "
+            "{paid_at} {payment_reference} {invoice_url} {transactions_url}"
+        ),
+    ),
+    MessagingTemplateDefinition(
         code="REFUND_ISSUED",
         name="Refund Issued",
         channel="EMAIL",

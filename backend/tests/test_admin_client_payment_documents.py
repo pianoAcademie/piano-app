@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -13,6 +14,8 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.api.routes.admin_clients import (
     _apply_invoice_presentation_to_payment_item,
     _build_range_invoice_email_defaults,
+    _send_invoice_range_payment_admin_emails,
+    _send_invoice_range_payment_success_emails,
     _select_reusable_pre_registration_deposit_reconciliation,
     _select_reusable_pre_registration_deposit_payment_ids,
     _resolve_public_payment_webhook_query_credentials,
@@ -371,6 +374,120 @@ class AdminClientPaymentDocumentTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         download_receipt.assert_called_once()
         self.assertEqual(download_receipt.call_args.kwargs["receipt_id"], receipt_id)
+
+    def test_invoice_range_payment_success_email_uses_paid_amount_for_customer(self) -> None:
+        client = SimpleNamespace(
+            id=uuid4(),
+            email="parent@example.com",
+            first_name="Coraline",
+            last_name="Schnee",
+            preferred_language="fr",
+        )
+        note_id = uuid4()
+        metadata = {
+            "invoice_number": "PA26-0042",
+            "payment_amount_paid": "2370.00",
+            "payment_currency": "EUR",
+            "totals_by_currency": {"EUR": "2770.00"},
+            "total_to_pay_by_currency": {"EUR": "2770.00"},
+            "issued_date": "2026-05-07",
+            "due_date": "2026-09-01",
+        }
+        billing_profile = SimpleNamespace(
+            email="billing@example.com",
+            first_name="Coraline",
+            last_name="Schnee",
+        )
+        paid_at = datetime(2026, 5, 8, 9, 30, tzinfo=timezone.utc)
+
+        with patch("app.api.routes.admin_clients.resolve_billing_profile", return_value=billing_profile), patch(
+            "app.api.routes.admin_clients._invoice_range_download_url",
+            return_value="https://app.piano-academie.com/invoice.pdf",
+        ), patch(
+            "app.api.routes.admin_clients.send_payment_success_notifications",
+            return_value={"payment_confirmation_message_id": "client-msg", "invoice_message_id": "invoice-msg"},
+        ) as send_success:
+            result = _send_invoice_range_payment_success_emails(
+                _FakeMutationDb(),
+                client=client,
+                note_id=note_id,
+                metadata=metadata,
+                paid_at=paid_at,
+            )
+
+        self.assertTrue(result)
+        self.assertEqual(send_success.call_args.kwargs["to_email"], "billing@example.com")
+        self.assertEqual(send_success.call_args.kwargs["amount_paid"], Decimal("2370.00"))
+        self.assertEqual(send_success.call_args.kwargs["currency"], "EUR")
+
+    def test_invoice_range_payment_sends_admin_notification(self) -> None:
+        client = SimpleNamespace(
+            id=uuid4(),
+            email="parent@example.com",
+            first_name="Coraline",
+            last_name="Schnee",
+        )
+        note_id = uuid4()
+        metadata = {
+            "invoice_number": "PA26-0042",
+            "payment_amount_paid": "2370.00",
+            "payment_currency": "EUR",
+            "payment_provider_reference": "pay_test_123",
+            "totals_by_currency": {"EUR": "2770.00"},
+            "total_to_pay_by_currency": {"EUR": "2770.00"},
+        }
+        billing_profile = SimpleNamespace(
+            email="billing@example.com",
+            first_name="Coraline",
+            last_name="Schnee",
+        )
+        template = {
+            "subject": "Paiement facture recu - {invoice_number}",
+            "body": "{client_name} {client_email} {amount_paid} {currency} {payment_reference} {invoice_url}",
+            "body_format": "TEXT",
+            "active": True,
+        }
+        sender = SimpleNamespace(
+            from_email="contact@piano-academie.com",
+            from_name="Piano Academie",
+            reply_to=None,
+            subject_prefix=None,
+        )
+        paid_at = datetime(2026, 5, 8, 9, 30, tzinfo=timezone.utc)
+
+        with patch("app.api.routes.admin_clients.resolve_billing_profile", return_value=billing_profile), patch(
+            "app.api.routes.admin_clients._invoice_range_download_url",
+            return_value="https://app.piano-academie.com/invoice.pdf",
+        ), patch(
+            "app.api.routes.admin_clients.resolve_admin_booking_notification_recipients",
+            return_value=[SimpleNamespace(email="admin@example.com")],
+        ), patch(
+            "app.api.routes.admin_clients.resolve_predefined_template",
+            return_value=template,
+        ), patch(
+            "app.api.routes.admin_clients.resolve_sender_profile",
+            return_value=sender,
+        ), patch(
+            "app.api.routes.admin_clients.send_email",
+            return_value="admin-msg",
+        ) as send_email_mock:
+            result = _send_invoice_range_payment_admin_emails(
+                _FakeMutationDb(),
+                client=client,
+                note_id=note_id,
+                metadata=metadata,
+                paid_at=paid_at,
+            )
+
+        self.assertTrue(result)
+        kwargs = send_email_mock.call_args.kwargs
+        self.assertEqual(kwargs["to_email"], "admin@example.com")
+        self.assertEqual(kwargs["context"], "ADMIN_INVOICE_PAYMENT_CONFIRMED")
+        self.assertIn("PA26-0042", kwargs["subject"])
+        self.assertIn("2370.00 EUR", kwargs["body"])
+        self.assertIn("pay_test_123", kwargs["body"])
+        self.assertIn("invoice.pdf", kwargs["body"])
+        self.assertNotIn("2770.00", kwargs["body"])
 
 
 if __name__ == "__main__":
