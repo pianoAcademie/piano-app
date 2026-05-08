@@ -124,6 +124,16 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+function isPreviewableLink(href: string): boolean {
+  const normalized = href.trim().toLowerCase();
+  return (
+    normalized.startsWith("http://")
+    || normalized.startsWith("https://")
+    || normalized.startsWith("mailto:")
+    || normalized.startsWith("tel:")
+  );
+}
+
 export default function RichMessageEditor({
   name,
   formatName = "body_format",
@@ -411,6 +421,20 @@ export default function RichMessageEditor({
             onInput={(event) => {
               const next = (event.currentTarget as HTMLDivElement).innerHTML;
               updateValue(next);
+            }}
+            onClick={(event) => {
+              const target = event.target instanceof HTMLElement ? event.target : null;
+              const link = target?.closest("a[href]") as HTMLAnchorElement | null;
+              if (!link || !editorRef.current?.contains(link)) {
+                return;
+              }
+              const href = link.getAttribute("href") || "";
+              if (!isPreviewableLink(href)) {
+                return;
+              }
+              event.preventDefault();
+              event.stopPropagation();
+              window.open(href, "_blank", "noopener,noreferrer");
             }}
           />
         </div>

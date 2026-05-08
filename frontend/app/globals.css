@@ -6382,6 +6382,10 @@ button.danger:focus-visible {
   white-space: pre-wrap;
 }
 
+.rich-message-surface a[href] {
+  cursor: pointer;
+}
+
 .rich-message-surface:focus {
   box-shadow: inset 0 0 0 1px #d9b98a;
 }
