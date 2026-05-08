@@ -60,6 +60,7 @@ import type {
   AdminClientNoteOut,
   AdminClientOut,
   AdminClientPaymentOut,
+  AdminConfigAccountOut,
   AdminFormulaOut,
   AdminLegalEntityOut,
   AdminRangeInvoiceOut,
@@ -241,6 +242,22 @@ function formatDateForInput(value: string | null | undefined, fallback: string):
 
 function isDateInput(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function dateInputFromMaybeIso(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const datePart = value.slice(0, 10);
+  return isDateInput(datePart) ? datePart : null;
+}
+
+function latestDateInput(values: Array<string | null | undefined>): string | null {
+  const dates = values
+    .map((value) => dateInputFromMaybeIso(value))
+    .filter((value): value is string => Boolean(value))
+    .sort();
+  return dates.length > 0 ? dates[dates.length - 1] : null;
 }
 
 function endOfDateUtcMs(value: string): number {
@@ -1524,6 +1541,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
   const [
     meResult,
+    accountConfigResult,
     clientResult,
     plansResult,
     formulasResult,
@@ -1543,6 +1561,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     notesResult,
   ] = await Promise.all([
     backendRequest<UserOut>("/api/v1/me", {}, token),
+    backendRequest<AdminConfigAccountOut>("/api/v1/admin/config/account", {}, token),
     backendRequest<AdminClientOut>(`/api/v1/admin/clients/${params.clientId}`, {}, token),
     backendRequest<PlanOut[]>("/api/v1/plans", {}, token),
     backendRequest<AdminFormulaOut[]>("/api/v1/admin/formulas", {}, token),
@@ -1578,8 +1597,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const todayInputValue = formatDateInput(new Date());
   const dueDateInputValue = formatDateInput(addDays(new Date(), 10));
   const purchaseStartDateInputValue = isDateInput(purchaseStartDateRaw) ? purchaseStartDateRaw : todayInputValue;
-  const selectedBalanceDate = isDateInput(balanceDateParam) ? balanceDateParam : todayInputValue;
-  const selectedBalanceDateEndMs = endOfDateUtcMs(selectedBalanceDate);
   const monthStartInputValue = `${todayInputValue.slice(0, 8)}01`;
   const nextMonthCycleStartInputValue = formatDateInput(addMonths(new Date(`${monthStartInputValue}T00:00:00.000Z`), 1));
   const invoiceWizardStep = invoiceWizardStepRaw === "2" ? 2 : 1;
@@ -1622,6 +1639,12 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const manualDateInputValue = isDateInput(manualDateRaw) ? manualDateRaw : todayInputValue;
 
   const errors: string[] = [];
+  const accountConfig = accountConfigResult.ok
+    ? accountConfigResult.data
+    : (() => {
+        errors.push(`account_config: ${accountConfigResult.message}`);
+        return null;
+      })();
 
   const plans = plansResult.ok
     ? plansResult.data.filter((plan) => plan.active)
@@ -1670,6 +1693,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         errors.push(`range_invoices: ${rangeInvoicesResult.message}`);
         return [] as AdminRangeInvoiceOut[];
       })();
+  const defaultBalanceDate =
+    accountConfig?.client_balance_default_date_mode === "PACKAGE_END"
+      ? latestDateInput([
+          ...rangeInvoices
+            .filter((row) => (row.invoice_status || "").toUpperCase() !== "CANCELLED")
+            .map((row) => row.end_date),
+          ...subscriptions
+            .filter((row) => row.plan?.kind === "FORFAIT" && (row.status || "").toUpperCase() !== "CANCELLED")
+            .map((row) => row.ends_at),
+          ...payments.map((row) => row.occurred_at),
+        ]) ?? todayInputValue
+      : todayInputValue;
+  const selectedBalanceDate = isDateInput(balanceDateParam) ? balanceDateParam : defaultBalanceDate;
+  const selectedBalanceDateEndMs = endOfDateUtcMs(selectedBalanceDate);
 
   const productCategories = productCategoriesResult.ok
     ? productCategoriesResult.data.categories

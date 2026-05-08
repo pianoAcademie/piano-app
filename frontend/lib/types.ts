@@ -1279,6 +1279,7 @@ export type AdminConfigAccountOut = {
   country: string;
   allowed_currencies: string[];
   default_currency: string;
+  client_balance_default_date_mode: "TODAY" | "PACKAGE_END";
   legal_terms: string;
   logo_data_url: string;
 };

@@ -43,6 +43,7 @@ class AdminConfigAccountOut(BaseModel):
     country: str
     allowed_currencies: list[str] = Field(default_factory=list)
     default_currency: str
+    client_balance_default_date_mode: Literal["TODAY", "PACKAGE_END"] = "TODAY"
     legal_terms: str
     logo_data_url: str = ""
 
@@ -64,6 +65,7 @@ class AdminConfigAccountUpdateRequest(BaseModel):
     country: str = Field(default="", max_length=120)
     allowed_currencies: list[str] = Field(default_factory=list)
     default_currency: str = Field(default="EUR", min_length=3, max_length=3)
+    client_balance_default_date_mode: Literal["TODAY", "PACKAGE_END"] = "TODAY"
     legal_terms: str = Field(default="")
     logo_data_url: str = Field(default="", max_length=2000000)
 

@@ -794,6 +794,8 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const accountAllowedCurrencies = account?.allowed_currencies?.length ? account.allowed_currencies : ["EUR", "USD"];
   const accountDefaultCurrency =
     account && accountAllowedCurrencies.includes(account.default_currency) ? account.default_currency : accountAllowedCurrencies[0] ?? "EUR";
+  const accountClientBalanceDefaultDateMode =
+    account?.client_balance_default_date_mode === "PACKAGE_END" ? "PACKAGE_END" : "TODAY";
   const createActivityModalOpen = readParam(params, "new_activity") === "1";
   const selectedActivityId = readParam(params, "activity_id");
   const selectedActivity = activities.find((activity) => activity.id === selectedActivityId) ?? null;
@@ -1062,6 +1064,15 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   <label className="span-2">
                     {t("admin.config.account.country")}
                     <input type="text" name="country" defaultValue={account.country} maxLength={120} />
+                  </label>
+
+                  <label className="span-2">
+                    {t("admin.config.account.client_balance_default_date_mode")}
+                    <select name="client_balance_default_date_mode" defaultValue={accountClientBalanceDefaultDateMode}>
+                      <option value="TODAY">{t("admin.config.account.client_balance_default_date_today")}</option>
+                      <option value="PACKAGE_END">{t("admin.config.account.client_balance_default_date_package_end")}</option>
+                    </select>
+                    <small className="muted">{t("admin.config.account.client_balance_default_date_help")}</small>
                   </label>
 
                   <fieldset className="span-2 config-currency-fieldset">

@@ -7571,6 +7571,7 @@ export async function updateAdminConfigAccountAction(formData: FormData): Promis
     country: String(formData.get("country") ?? "").trim(),
     allowed_currencies: parseStringList(formData.getAll("allowed_currencies")).map((code) => code.toUpperCase()),
     default_currency: String(formData.get("default_currency") ?? "EUR").trim().toUpperCase(),
+    client_balance_default_date_mode: String(formData.get("client_balance_default_date_mode") ?? "TODAY").trim().toUpperCase(),
     legal_terms: String(formData.get("legal_terms") ?? "").trim(),
     logo_data_url: logoDataUrl,
   };

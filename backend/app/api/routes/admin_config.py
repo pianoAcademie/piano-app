@@ -172,6 +172,8 @@ PAYMENT_METHOD_CODES = {code for code, _ in PAYMENT_METHOD_CATALOG}
 SUPPORTED_CURRENCIES = {"EUR", "USD"}
 ACCOUNT_ALLOWED_CURRENCIES_KEY = "config_account_allowed_currencies"
 ACCOUNT_DEFAULT_CURRENCY_KEY = "config_account_default_currency"
+ACCOUNT_CLIENT_BALANCE_DEFAULT_DATE_MODE_KEY = "config_account_client_balance_default_date_mode"
+ACCOUNT_CLIENT_BALANCE_DEFAULT_DATE_MODES = {"TODAY", "PACKAGE_END"}
 
 ACCOUNT_SETTING_MAP = {
     "contact_first_name": "config_account_contact_first_name",
@@ -2113,6 +2115,13 @@ def get_admin_config_account(
         _get_setting_value(db, ACCOUNT_DEFAULT_CURRENCY_KEY, "EUR"),
         allowed_currencies,
     )
+    client_balance_default_date_mode = _get_setting_value(
+        db,
+        ACCOUNT_CLIENT_BALANCE_DEFAULT_DATE_MODE_KEY,
+        "TODAY",
+    ).strip().upper()
+    if client_balance_default_date_mode not in ACCOUNT_CLIENT_BALANCE_DEFAULT_DATE_MODES:
+        client_balance_default_date_mode = "TODAY"
 
     return AdminConfigAccountOut(
         contact_first_name=_get_setting_value(db, ACCOUNT_SETTING_MAP["contact_first_name"], current_user.first_name or ""),
@@ -2131,6 +2140,7 @@ def get_admin_config_account(
         country=_get_setting_value(db, ACCOUNT_SETTING_MAP["country"], "FRANCE"),
         allowed_currencies=allowed_currencies,
         default_currency=default_currency,
+        client_balance_default_date_mode=client_balance_default_date_mode,
         legal_terms=_get_setting_value(db, ACCOUNT_SETTING_MAP["legal_terms"], ""),
         logo_data_url=_get_setting_value(db, ACCOUNT_SETTING_MAP["logo_data_url"], ""),
     )
@@ -2155,11 +2165,15 @@ def update_admin_config_account(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Default currency must be in allowed currencies",
         )
+    client_balance_default_date_mode = str(values.get("client_balance_default_date_mode") or "TODAY").strip().upper()
+    if client_balance_default_date_mode not in ACCOUNT_CLIENT_BALANCE_DEFAULT_DATE_MODES:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported balance default date mode")
 
     for field_name, setting_key in ACCOUNT_SETTING_MAP.items():
         _set_setting(db, setting_key, values[field_name].strip())
     _set_setting(db, ACCOUNT_ALLOWED_CURRENCIES_KEY, ",".join(allowed_currencies))
     _set_setting(db, ACCOUNT_DEFAULT_CURRENCY_KEY, default_currency)
+    _set_setting(db, ACCOUNT_CLIENT_BALANCE_DEFAULT_DATE_MODE_KEY, client_balance_default_date_mode)
     db.commit()
     return get_admin_config_account(db=db, current_user=current_user)
 
