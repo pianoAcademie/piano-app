@@ -153,7 +153,7 @@ const PARAMS_SUBNAV_ITEMS: SubNavItem[] = [
   { key: "params-account", label: "", labelKey: "admin.breadcrumb.account_info" },
   { key: "params-subscriptions", label: "", labelKey: "admin.breadcrumb.subscription_settings" },
   { key: "params-payments", label: "", labelKey: "admin.breadcrumb.payment_methods" },
-  { key: "params-referrals", label: "Parrainage" },
+  { key: "params-referrals", label: "", labelKey: "admin.config.referrals" },
   { key: "params-messaging", label: "", labelKey: "admin.config.messaging" },
 ];
 
@@ -456,6 +456,53 @@ function yesNoLabel(language: UiLanguage, value: boolean): string {
   return uiText(language, value ? "common.yes" : "common.no");
 }
 
+const REFERRAL_CONFIG_TEXT: Record<UiLanguage, Record<string, string>> = {
+  fr: {
+    load_error: "Parametres de parrainage indisponibles : {message}",
+    title: "Parrainage",
+    load_unavailable: "Impossible de charger les parametres de parrainage.",
+    enabled: "Activer le programme de parrainage",
+    currency: "Devise",
+    threshold: "Seuil d'encaissement",
+    threshold_help: "0.50 = avoir genere lorsque 50% de la facture annuelle est encaisse.",
+    announcement_email: "Email d'information au parrain",
+    credit_email: "Email lors de la generation de l'avoir",
+    category: "Categorie",
+    label: "Libelle",
+    amount: "Montant",
+    active: "Actif",
+    category_online: "En ligne",
+    category_home: "Domicile",
+    help: "Paris regroupe Richelieu, Assas, Pompe et Scheffer. Les inscriptions a domicile, en ligne et Bar-le-Duc peuvent avoir un montant distinct.",
+  },
+  en: {
+    load_error: "Referral settings unavailable: {message}",
+    title: "Referrals",
+    load_unavailable: "Unable to load referral settings.",
+    enabled: "Enable referral program",
+    currency: "Currency",
+    threshold: "Cashing threshold",
+    threshold_help: "0.50 = credit is generated once 50% of the annual invoice has been cashed.",
+    announcement_email: "Information email to the referrer",
+    credit_email: "Email when the credit is generated",
+    category: "Category",
+    label: "Label",
+    amount: "Amount",
+    active: "Active",
+    category_online: "Online",
+    category_home: "Home",
+    help: "Paris includes Richelieu, Assas, Pompe, and Scheffer. Home, online, and Bar-le-Duc registrations can each have a distinct amount.",
+  },
+};
+
+function referralConfigText(language: UiLanguage, key: string, values?: Record<string, string | number>): string {
+  const template = REFERRAL_CONFIG_TEXT[language][key] || REFERRAL_CONFIG_TEXT.fr[key] || key;
+  if (!values) {
+    return template;
+  }
+  return template.replace(/\{(\w+)\}/g, (_match, token) => String(values[token] ?? ""));
+}
+
 function catalogRequestStatusLabel(status: string, language: UiLanguage): string {
   const normalized = status.trim().toUpperCase();
   if (normalized === "PROCESSING") {
@@ -693,7 +740,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const referralProgram = referralProgramResult.ok
     ? referralProgramResult.data
     : (() => {
-        loadErrors.push(`Parametres de parrainage indisponibles : ${referralProgramResult.message}`);
+        loadErrors.push(referralConfigText(language, "load_error", { message: referralProgramResult.message }));
         return null;
       })();
   const productCategories = productCategoriesResult.ok
@@ -1548,21 +1595,21 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
           {section === "params-referrals" ? (
             <section className="card">
-              <h3>Parrainage</h3>
+              <h3>{referralConfigText(language, "title")}</h3>
               {!referralProgram ? (
-                <p className="muted">Impossible de charger les parametres de parrainage.</p>
+                <p className="muted">{referralConfigText(language, "load_unavailable")}</p>
               ) : (
                 <form action={updateAdminConfigReferralProgramAction} className="grid cols-2 config-form-grid">
                   <label className="checkline span-2">
                     <input type="checkbox" name="enabled" defaultChecked={referralProgram.enabled} />
-                    <span>Activer le programme de parrainage</span>
+                    <span>{referralConfigText(language, "enabled")}</span>
                   </label>
                   <label>
-                    Devise
+                    {referralConfigText(language, "currency")}
                     <input type="text" name="currency" defaultValue={referralProgram.currency || "EUR"} maxLength={3} required />
                   </label>
                   <label>
-                    Seuil d'encaissement
+                    {referralConfigText(language, "threshold")}
                     <input
                       type="number"
                       name="trigger_ratio"
@@ -1572,7 +1619,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       step="0.01"
                       required
                     />
-                    <small className="muted">0.50 = avoir genere lorsque 50% de la facture annuelle est encaisse.</small>
+                    <small className="muted">{referralConfigText(language, "threshold_help")}</small>
                   </label>
                   <label className="checkline">
                     <input
@@ -1580,29 +1627,29 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       name="announcement_email_enabled"
                       defaultChecked={referralProgram.announcement_email_enabled}
                     />
-                    <span>Email d'information au parrain</span>
+                    <span>{referralConfigText(language, "announcement_email")}</span>
                   </label>
                   <label className="checkline">
                     <input type="checkbox" name="credit_email_enabled" defaultChecked={referralProgram.credit_email_enabled} />
-                    <span>Email lors de la generation de l'avoir</span>
+                    <span>{referralConfigText(language, "credit_email")}</span>
                   </label>
 
                   <div className="table-wrap span-2">
                     <table className="data-table">
                       <thead>
                         <tr>
-                          <th>Categorie</th>
-                          <th>Libelle</th>
-                          <th>Montant</th>
-                          <th>Actif</th>
+                          <th>{referralConfigText(language, "category")}</th>
+                          <th>{referralConfigText(language, "label")}</th>
+                          <th>{referralConfigText(language, "amount")}</th>
+                          <th>{referralConfigText(language, "active")}</th>
                         </tr>
                       </thead>
                       <tbody>
                         {[
                           ["PARIS", "Paris"],
                           ["BAR_LE_DUC", "Bar-le-Duc"],
-                          ["ONLINE", "En ligne"],
-                          ["DOMICILE", "Domicile"],
+                          ["ONLINE", referralConfigText(language, "category_online")],
+                          ["DOMICILE", referralConfigText(language, "category_home")],
                         ].map(([code, fallbackLabel]) => {
                           const category = referralProgram.categories[code];
                           return (
@@ -1637,8 +1684,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   </div>
 
                   <p className="muted span-2">
-                    Paris regroupe Richelieu, Assas, Pompe et Scheffer. Les inscriptions a domicile, en ligne et Bar-le-Duc
-                    peuvent avoir un montant distinct.
+                    {referralConfigText(language, "help")}
                   </p>
                   <div className="row span-2">
                     <button type="submit">{t("common.save")}</button>

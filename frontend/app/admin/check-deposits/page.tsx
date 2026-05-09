@@ -9,6 +9,117 @@ import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage } from "../..
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
+const CHECK_DEPOSIT_TEXT: Record<UiLanguage, Record<string, string>> = {
+  fr: {
+    empty_status: "Aucun cheque dans ce statut.",
+    deposit: "Depot",
+    family: "Famille",
+    date: "Date",
+    reference: "Reference",
+    invoice: "Facture",
+    amount: "Montant",
+    status: "Statut",
+    status_received: "Recus",
+    status_deposited: "Deposes",
+    status_cashed: "Encaisses",
+    status_refused: "Refuses",
+    title: "Depots de cheques",
+    subtitle: "Traitez les cheques par lot apres scan, controle Excel ou depot banque.",
+    template: "Modele import",
+    export_expected: "Exporter les cheques attendus",
+    client_payments: "Paiements clients",
+    search: "Recherche",
+    search_placeholder: "Rechercher nom, montant, facture, reference...",
+    search_button: "Rechercher",
+    clear: "Effacer",
+    import_title: "Import CSV ou XLSX issu d'Excel",
+    import_help:
+      "Colonnes reconnues: transaction_id ou id, reference/ref/numero_cheque, montant/montant_ttc/amount, nom/payeur/tireur/emetteur/titulaire/nom_sur_cheque. Les fichiers CSV et XLSX sont acceptes. L'export ci-dessus contient le transaction_id: c'est la colonne la plus fiable pour un depot massif.",
+    file: "Fichier CSV ou XLSX",
+    action: "Action",
+    action_deposit: "Passer en deposes",
+    action_cash: "Passer en encaisses",
+    action_refuse: "Passer en refuses",
+    batch_reference: "Reference de lot",
+    batch_reference_placeholder: "Depot banque, bordereau, remise...",
+    operation_date: "Date operation",
+    import_submit: "Importer et mettre a jour",
+    received_title: "Cheques recus a deposer",
+    received_summary: "{count} cheque(s) en attente de depot. Total: {total}.",
+    deposit_reference: "Reference depot",
+    deposit_reference_placeholder: "Depot banque, bordereau...",
+    deposit_date: "Date depot",
+    mark_deposited: "Marquer la selection comme deposee",
+    deposited_title: "Cheques deposes a encaisser",
+    deposited_summary: "{count} cheque(s) deposes mais pas encore encaisses. Total: {total}.",
+    cash_reference: "Reference encaissement",
+    cash_reference_placeholder: "Operation bancaire, releve...",
+    cash_date: "Date encaissement",
+    mark_cashed: "Marquer la selection comme encaissee",
+    refused_title: "Cheques refuses",
+    refused_summary:
+      "{count} cheque(s) refuse(s) par la banque. Ces montants ne comptent plus comme encaisses et doivent etre traites depuis la fiche client.",
+  },
+  en: {
+    empty_status: "No checks in this status.",
+    deposit: "Deposit",
+    family: "Family",
+    date: "Date",
+    reference: "Reference",
+    invoice: "Invoice",
+    amount: "Amount",
+    status: "Status",
+    status_received: "Received",
+    status_deposited: "Deposited",
+    status_cashed: "Cashed",
+    status_refused: "Refused",
+    title: "Check deposits",
+    subtitle: "Process checks in batches after scanning, Excel review, or bank deposit.",
+    template: "Import template",
+    export_expected: "Export expected checks",
+    client_payments: "Client payments",
+    search: "Search",
+    search_placeholder: "Search name, amount, invoice, reference...",
+    search_button: "Search",
+    clear: "Clear",
+    import_title: "CSV or XLSX import from Excel",
+    import_help:
+      "Recognized columns: transaction_id or id, reference/ref/numero_cheque, montant/montant_ttc/amount, nom/payeur/tireur/emetteur/titulaire/nom_sur_cheque. CSV and XLSX files are accepted. The export above includes transaction_id, which is the most reliable column for large deposits.",
+    file: "CSV or XLSX file",
+    action: "Action",
+    action_deposit: "Mark as deposited",
+    action_cash: "Mark as cashed",
+    action_refuse: "Mark as refused",
+    batch_reference: "Batch reference",
+    batch_reference_placeholder: "Bank deposit, slip, remittance...",
+    operation_date: "Operation date",
+    import_submit: "Import and update",
+    received_title: "Received checks to deposit",
+    received_summary: "{count} check(s) awaiting deposit. Total: {total}.",
+    deposit_reference: "Deposit reference",
+    deposit_reference_placeholder: "Bank deposit, slip...",
+    deposit_date: "Deposit date",
+    mark_deposited: "Mark selection as deposited",
+    deposited_title: "Deposited checks to cash",
+    deposited_summary: "{count} check(s) deposited but not yet cashed. Total: {total}.",
+    cash_reference: "Cashing reference",
+    cash_reference_placeholder: "Bank operation, statement...",
+    cash_date: "Cashing date",
+    mark_cashed: "Mark selection as cashed",
+    refused_title: "Refused checks",
+    refused_summary:
+      "{count} check(s) refused by the bank. These amounts no longer count as cashed and must be handled from the client record.",
+  },
+};
+
+function tt(language: UiLanguage, key: string, values?: Record<string, string | number>): string {
+  const template = CHECK_DEPOSIT_TEXT[language][key] || CHECK_DEPOSIT_TEXT.fr[key] || key;
+  if (!values) {
+    return template;
+  }
+  return template.replace(/\{(\w+)\}/g, (_match, token) => String(values[token] ?? ""));
+}
+
 function readParam(params: SearchParams | undefined, key: string): string {
   const value = params?.[key];
   if (Array.isArray(value)) {
@@ -37,18 +148,18 @@ function formatRowsTotal(rows: AdminCheckDepositPaymentOut[], language: UiLangua
   }).format(total);
 }
 
-function statusLabel(status: string): string {
+function statusLabel(status: string, language: UiLanguage): string {
   const normalized = status.trim().toUpperCase();
   if (normalized === "CHECK_DEPOSITED") {
-    return "Deposes";
+    return tt(language, "status_deposited");
   }
   if (normalized === "PAID") {
-    return "Encaisses";
+    return tt(language, "status_cashed");
   }
   if (normalized === "CHECK_REFUSED") {
-    return "Refuses";
+    return tt(language, "status_refused");
   }
-  return "Recus";
+  return tt(language, "status_received");
 }
 
 function statusClass(status: string): string {
@@ -102,20 +213,20 @@ function CheckRowsTable({
   selectable?: boolean;
 }): JSX.Element {
   if (rows.length === 0) {
-    return <p className="muted">Aucun cheque dans ce statut.</p>;
+    return <p className="muted">{tt(language, "empty_status")}</p>;
   }
   return (
     <div className="table-wrap">
       <table className="data-table">
         <thead>
           <tr>
-            {selectable ? <th>Depot</th> : null}
-            <th>Famille</th>
-            <th>Date</th>
-            <th>Reference</th>
-            <th>Facture</th>
-            <th>Montant</th>
-            <th>Statut</th>
+            {selectable ? <th>{tt(language, "deposit")}</th> : null}
+            <th>{tt(language, "family")}</th>
+            <th>{tt(language, "date")}</th>
+            <th>{tt(language, "reference")}</th>
+            <th>{tt(language, "invoice")}</th>
+            <th>{tt(language, "amount")}</th>
+            <th>{tt(language, "status")}</th>
           </tr>
         </thead>
         <tbody>
@@ -137,7 +248,7 @@ function CheckRowsTable({
               <td>{row.invoice_number || "-"}</td>
               <td>{formatMoney(row.amount_incl_vat, row.currency, language)}</td>
               <td>
-                <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
+                <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status, language)}</span>
                 {row.tracking_note ? <small className="muted">{row.tracking_note}</small> : null}
               </td>
             </tr>
@@ -172,30 +283,31 @@ export default async function AdminCheckDepositsPage({ searchParams }: { searchP
   const refused = checks.filter((row) => row.status.trim().toUpperCase() === "CHECK_REFUSED");
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error") || (!checksResult.ok ? checksResult.message : "");
+  const languageQuery = `?lang=${language}`;
 
   return (
     <section className="admin-page-grid">
       <section className="card">
         <div className="row spread wrap gap-sm">
           <div>
-            <h2>Depots de cheques</h2>
-            <p className="muted">Traitez les cheques par lot apres scan, controle Excel ou depot banque.</p>
+            <h2>{tt(language, "title")}</h2>
+            <p className="muted">{tt(language, "subtitle")}</p>
           </div>
           <div className="row wrap gap-sm">
-            <Link className="ghost" href="/admin/check-deposits/template">Modele import</Link>
-            <Link className="ghost" href="/admin/check-deposits/export">Exporter les cheques attendus</Link>
-            <Link className="ghost" href="/admin/clients?tab=paiements">Paiements clients</Link>
+            <Link className="ghost" href={`/admin/check-deposits/template${languageQuery}`}>{tt(language, "template")}</Link>
+            <Link className="ghost" href={`/admin/check-deposits/export${languageQuery}`}>{tt(language, "export_expected")}</Link>
+            <Link className="ghost" href="/admin/clients?tab=paiements">{tt(language, "client_payments")}</Link>
           </div>
         </div>
         <form className="row wrap gap-sm top-gap-sm" action="/admin/check-deposits">
           <input
-            aria-label="Recherche"
+            aria-label={tt(language, "search")}
             name="q"
-            placeholder="Rechercher nom, montant, facture, reference..."
+            placeholder={tt(language, "search_placeholder")}
             defaultValue={readParam(searchParams, "q")}
           />
-          <button type="submit">Rechercher</button>
-          {searchQuery ? <Link className="ghost" href="/admin/check-deposits">Effacer</Link> : null}
+          <button type="submit">{tt(language, "search_button")}</button>
+          {searchQuery ? <Link className="ghost" href="/admin/check-deposits">{tt(language, "clear")}</Link> : null}
         </form>
       </section>
 
@@ -203,36 +315,32 @@ export default async function AdminCheckDepositsPage({ searchParams }: { searchP
       {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
 
       <section className="card span-2">
-        <h3>Import CSV ou XLSX issu d'Excel</h3>
-        <p className="muted">
-          Colonnes reconnues: transaction_id ou id, reference/ref/numero_cheque, montant/montant_ttc/amount,
-          nom/payeur/tireur/emetteur/titulaire/nom_sur_cheque.
-          Les fichiers CSV et XLSX sont acceptes. L'export ci-dessus contient le transaction_id: c'est la colonne la plus fiable pour un depot massif.
-        </p>
+        <h3>{tt(language, "import_title")}</h3>
+        <p className="muted">{tt(language, "import_help")}</p>
         <form action={bulkUpdateAdminCheckDepositStatusAction} className="grid cols-2 config-form-grid top-gap-sm" encType="multipart/form-data">
           <input type="hidden" name="return_to" value={returnTo} />
           <label>
-            Fichier CSV ou XLSX
+            {tt(language, "file")}
             <input type="file" name="deposit_file" accept=".csv,.txt,.tsv,.xlsx" required />
           </label>
           <label>
-            Action
+            {tt(language, "action")}
             <select name="target_status" defaultValue="CHECK_DEPOSITED">
-              <option value="CHECK_DEPOSITED">Passer en deposes</option>
-              <option value="PAID">Passer en encaisses</option>
-              <option value="CHECK_REFUSED">Passer en refuses</option>
+              <option value="CHECK_DEPOSITED">{tt(language, "action_deposit")}</option>
+              <option value="PAID">{tt(language, "action_cash")}</option>
+              <option value="CHECK_REFUSED">{tt(language, "action_refuse")}</option>
             </select>
           </label>
           <label>
-            Reference de lot
-            <input name="batch_reference" placeholder="Depot banque, bordereau, remise..." />
+            {tt(language, "batch_reference")}
+            <input name="batch_reference" placeholder={tt(language, "batch_reference_placeholder")} />
           </label>
           <label>
-            Date operation
+            {tt(language, "operation_date")}
             <input type="date" name="effective_date" defaultValue={todayDateValue()} />
           </label>
           <div className="row span-2">
-            <button type="submit">Importer et mettre a jour</button>
+            <button type="submit">{tt(language, "import_submit")}</button>
           </div>
         </form>
       </section>
@@ -240,8 +348,8 @@ export default async function AdminCheckDepositsPage({ searchParams }: { searchP
       <section className="card span-2">
         <div className="row spread wrap gap-sm">
           <div>
-            <h3>Cheques recus a deposer</h3>
-            <p className="muted">{received.length} cheque(s) en attente de depot. Total: {formatRowsTotal(received, language)}.</p>
+            <h3>{tt(language, "received_title")}</h3>
+            <p className="muted">{tt(language, "received_summary", { count: received.length, total: formatRowsTotal(received, language) })}</p>
           </div>
         </div>
         <form action={bulkUpdateAdminCheckDepositStatusAction} className="top-gap-sm">
@@ -249,53 +357,51 @@ export default async function AdminCheckDepositsPage({ searchParams }: { searchP
           <input type="hidden" name="target_status" value="CHECK_DEPOSITED" />
           <div className="grid cols-2 config-form-grid">
             <label>
-              Reference depot
-              <input name="batch_reference" placeholder="Depot banque, bordereau..." />
+              {tt(language, "deposit_reference")}
+              <input name="batch_reference" placeholder={tt(language, "deposit_reference_placeholder")} />
             </label>
             <label>
-              Date depot
+              {tt(language, "deposit_date")}
               <input type="date" name="effective_date" defaultValue={todayDateValue()} />
             </label>
           </div>
           <CheckRowsTable rows={received} language={language} />
           {received.length > 0 ? (
             <div className="row top-gap-sm">
-              <button type="submit">Marquer la selection comme deposee</button>
+              <button type="submit">{tt(language, "mark_deposited")}</button>
             </div>
           ) : null}
         </form>
       </section>
 
       <section className="card span-2">
-        <h3>Cheques deposes a encaisser</h3>
-        <p className="muted">{deposited.length} cheque(s) deposes mais pas encore encaisses. Total: {formatRowsTotal(deposited, language)}.</p>
+        <h3>{tt(language, "deposited_title")}</h3>
+        <p className="muted">{tt(language, "deposited_summary", { count: deposited.length, total: formatRowsTotal(deposited, language) })}</p>
         <form action={bulkUpdateAdminCheckDepositStatusAction} className="top-gap-sm">
           <input type="hidden" name="return_to" value={returnTo} />
           <input type="hidden" name="target_status" value="PAID" />
           <div className="grid cols-2 config-form-grid">
             <label>
-              Reference encaissement
-              <input name="batch_reference" placeholder="Operation bancaire, releve..." />
+              {tt(language, "cash_reference")}
+              <input name="batch_reference" placeholder={tt(language, "cash_reference_placeholder")} />
             </label>
             <label>
-              Date encaissement
+              {tt(language, "cash_date")}
               <input type="date" name="effective_date" defaultValue={todayDateValue()} />
             </label>
           </div>
           <CheckRowsTable rows={deposited} language={language} />
           {deposited.length > 0 ? (
             <div className="row top-gap-sm">
-              <button type="submit">Marquer la selection comme encaissee</button>
+              <button type="submit">{tt(language, "mark_cashed")}</button>
             </div>
           ) : null}
         </form>
       </section>
 
       <section className="card span-2">
-        <h3>Cheques refuses</h3>
-        <p className="muted">
-          {refused.length} cheque(s) refuse(s) par la banque. Ces montants ne comptent plus comme encaisses et doivent etre traites depuis la fiche client.
-        </p>
+        <h3>{tt(language, "refused_title")}</h3>
+        <p className="muted">{tt(language, "refused_summary", { count: refused.length })}</p>
         <CheckRowsTable rows={refused} language={language} selectable={false} />
       </section>
     </section>

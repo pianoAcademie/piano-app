@@ -196,6 +196,72 @@ function statusLabel(value: string, language: UiLanguage): string {
   return value;
 }
 
+const INTAKE_REFERRAL_TEXT: Record<UiLanguage, Record<string, string>> = {
+  fr: {
+    declared: "Parrainage declare",
+    category: "Categorie parrainage",
+    online: "En ligne",
+    home: "Domicile",
+    title: "Parrainage",
+    valid_referrer: "Parrain valide : {id}",
+    no_match: "Aucune famille trouvee automatiquement.",
+    referrer_family: "Famille marraine",
+    validate_referrer: "Valider le parrain",
+    family: "Famille",
+    email: "Email",
+    score: "Score",
+    status_needs_review: "A verifier",
+    status_awaiting_payment: "En attente paiement",
+    status_credit_granted: "Avoir genere",
+    status_cancelled: "Annule",
+    status_declared: "Declare",
+  },
+  en: {
+    declared: "Declared referral",
+    category: "Referral category",
+    online: "Online",
+    home: "Home",
+    title: "Referral",
+    valid_referrer: "Validated referrer: {id}",
+    no_match: "No family was matched automatically.",
+    referrer_family: "Referrer family",
+    validate_referrer: "Validate referrer",
+    family: "Family",
+    email: "Email",
+    score: "Score",
+    status_needs_review: "To review",
+    status_awaiting_payment: "Awaiting payment",
+    status_credit_granted: "Credit granted",
+    status_cancelled: "Cancelled",
+    status_declared: "Declared",
+  },
+};
+
+function intakeReferralText(language: UiLanguage, key: string, values?: Record<string, string | number>): string {
+  const template = INTAKE_REFERRAL_TEXT[language][key] || INTAKE_REFERRAL_TEXT.fr[key] || key;
+  if (!values) {
+    return template;
+  }
+  return template.replace(/\{(\w+)\}/g, (_match, token) => String(values[token] ?? ""));
+}
+
+function referralCategoryLabel(value: string | null, language: UiLanguage): string {
+  if (value === "PARIS") return "Paris";
+  if (value === "BAR_LE_DUC") return "Bar-le-Duc";
+  if (value === "ONLINE") return intakeReferralText(language, "online");
+  if (value === "DOMICILE") return intakeReferralText(language, "home");
+  return value || "-";
+}
+
+function referralStatusLabel(value: string, language: UiLanguage): string {
+  if (value === "NEEDS_REVIEW") return intakeReferralText(language, "status_needs_review");
+  if (value === "AWAITING_PAYMENT") return intakeReferralText(language, "status_awaiting_payment");
+  if (value === "CREDIT_GRANTED") return intakeReferralText(language, "status_credit_granted");
+  if (value === "CANCELLED") return intakeReferralText(language, "status_cancelled");
+  if (value === "DECLARED") return intakeReferralText(language, "status_declared");
+  return value || "-";
+}
+
 function statusClass(value: string): string {
   if (value === "READY_FOR_DRAFT_QUOTE" || value === "PROCESSED") return "status-ok";
   if (value === "MATCHING_REQUIRED" || value === "NEW" || value === "NORMALIZED") return "status-warn";
@@ -528,17 +594,17 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                     <input name="requested_formula_type" defaultValue={normalizedScalarValue(normalizedPayload, "requested_formula_type")} />
                   </label>
                   <label>
-                    Parrainage declare
+                    {intakeReferralText(language, "declared")}
                     <input name="referral_referrer_name" defaultValue={normalizedScalarValue(normalizedPayload, "referral_referrer_name")} />
                   </label>
                   <label>
-                    Categorie parrainage
+                    {intakeReferralText(language, "category")}
                     <select name="referral_category" defaultValue={normalizedScalarValue(normalizedPayload, "referral_category")}>
                       <option value="">-</option>
                       <option value="PARIS">Paris</option>
                       <option value="BAR_LE_DUC">Bar-le-Duc</option>
-                      <option value="ONLINE">En ligne</option>
-                      <option value="DOMICILE">Domicile</option>
+                      <option value="ONLINE">{intakeReferralText(language, "online")}</option>
+                      <option value="DOMICILE">{intakeReferralText(language, "home")}</option>
                     </select>
                   </label>
                 </section>
@@ -662,26 +728,26 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
           <article className="card span-2">
             <div className="row spread wrap gap-sm">
               <div>
-                <h3>Parrainage</h3>
+                <h3>{intakeReferralText(language, "title")}</h3>
                 <p className="muted">
-                  {detail.referral.declared_referrer_text || "-"} · {detail.referral.category || "-"} · {formatAmount(detail.referral.reward_amount, detail.referral.currency, language)}
+                  {detail.referral.declared_referrer_text || "-"} · {referralCategoryLabel(detail.referral.category, language)} · {formatAmount(detail.referral.reward_amount, detail.referral.currency, language)}
                 </p>
               </div>
               <span className={`status-pill ${detail.referral.status === "CREDIT_GRANTED" ? "status-ok" : detail.referral.status === "NEEDS_REVIEW" ? "status-warn" : "status-off"}`}>
-                {detail.referral.status}
+                {referralStatusLabel(detail.referral.status, language)}
               </span>
             </div>
             <div className={`${styles.candidateStack} top-gap-sm`}>
               {detail.referral.referrer_user_id ? (
-                <p className="muted">Parrain valide : {detail.referral.referrer_user_id}</p>
+                <p className="muted">{intakeReferralText(language, "valid_referrer", { id: detail.referral.referrer_user_id })}</p>
               ) : detail.referral.match_candidates.length === 0 ? (
-                <p className="muted">Aucune famille trouvee automatiquement.</p>
+                <p className="muted">{intakeReferralText(language, "no_match")}</p>
               ) : (
                 <form action={saveTypeformIntakeReferralAction} className="grid cols-2 config-form-grid">
                   <input type="hidden" name="intake_id" value={detail.id} />
                   <input type="hidden" name="return_to" value={intakeHref} />
                   <label>
-                    Famille marraine
+                    {intakeReferralText(language, "referrer_family")}
                     <select name="referrer_user_id" defaultValue={detail.referral.match_candidates[0]?.user_id || ""}>
                       {detail.referral.match_candidates.map((candidate) => (
                         <option key={candidate.user_id} value={candidate.user_id}>
@@ -691,7 +757,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                     </select>
                   </label>
                   <div className="row align-end">
-                    <button type="submit">Valider le parrain</button>
+                    <button type="submit">{intakeReferralText(language, "validate_referrer")}</button>
                   </div>
                 </form>
               )}
@@ -700,9 +766,9 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                   <table className="data-table">
                     <thead>
                       <tr>
-                        <th>Famille</th>
-                        <th>Email</th>
-                        <th>Score</th>
+                        <th>{intakeReferralText(language, "family")}</th>
+                        <th>{intakeReferralText(language, "email")}</th>
+                        <th>{intakeReferralText(language, "score")}</th>
                       </tr>
                     </thead>
                     <tbody>

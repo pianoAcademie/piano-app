@@ -4,6 +4,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { backendUrl } from "../../../../lib/backend";
 import type { AdminCheckDepositPaymentOut } from "../../../../lib/types";
 
+function exportLanguage(request: NextRequest): "fr" | "en" {
+  return request.nextUrl.searchParams.get("lang") === "en" ? "en" : "fr";
+}
+
 function csvCell(value: string | number | null | undefined): string {
   const text = String(value ?? "");
   if (/[;\n\r"]/.test(text)) {
@@ -43,6 +47,7 @@ function rowsToCsv(rows: AdminCheckDepositPaymentOut[]): string {
 }
 
 export async function GET(request: NextRequest): Promise<Response> {
+  const language = exportLanguage(request);
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
     const loginUrl = new URL("/login?error_code=session_expired", request.url);
@@ -62,7 +67,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   if (!response.ok) {
     const fallback = new URL(
-      `/admin/check-deposits?error=${encodeURIComponent(`Export impossible (${response.status})`)}`,
+      `/admin/check-deposits?error=${encodeURIComponent(language === "en" ? `Export unavailable (${response.status})` : `Export impossible (${response.status})`)}`,
       request.url,
     );
     return NextResponse.redirect(fallback, 302);
@@ -75,7 +80,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     status: 200,
     headers: {
       "content-type": "text/csv; charset=utf-8",
-      "content-disposition": 'attachment; filename="cheques_a_deposer.csv"',
+      "content-disposition": `attachment; filename="${language === "en" ? "checks_to_deposit.csv" : "cheques_a_deposer.csv"}"`,
       "cache-control": "no-store",
     },
   });

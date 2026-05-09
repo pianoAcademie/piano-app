@@ -539,10 +539,18 @@ def grant_referral_credit(
         db.add(reward)
         return reward
     now = utcnow()
+    referrer = db.scalar(select(User).where(User.id == reward.referrer_user_id))
     referred = db.scalar(select(User).where(User.id == reward.referred_client_id)) if reward.referred_client_id else None
-    label = "Avoir parrainage"
-    if referred is not None:
-        label = f"Avoir parrainage - {_display_name(referred)}"
+    if _email_language(referrer) == "en":
+        label = "Referral credit"
+        description = "Credit generated automatically once the referred family's cashing threshold was reached."
+        if referred is not None:
+            label = f"Referral credit - {_display_name(referred)}"
+    else:
+        label = "Avoir parrainage"
+        description = "Avoir genere automatiquement apres atteinte du seuil d encaissement du filleul."
+        if referred is not None:
+            label = f"Avoir parrainage - {_display_name(referred)}"
     transaction = ClientManualTransaction(
         user_id=reward.referrer_user_id,
         student_user_id=reward.referrer_user_id,
@@ -550,7 +558,7 @@ def grant_referral_credit(
         transaction_type="DISCOUNT",
         status="COMPLETED",
         label=label[:255],
-        description="Avoir genere automatiquement apres atteinte du seuil d encaissement du filleul.",
+        description=description,
         category="REFERRAL_CREDIT",
         occurred_at=now,
         amount_excl_vat=Decimal("0.00") - amount,
@@ -590,6 +598,10 @@ def _email_context_for_reward(db: Session, reward: ReferralReward) -> tuple[User
     return referrer, referred
 
 
+def _email_language(user: User | None) -> str:
+    return "en" if str(getattr(user, "preferred_language", "") or "").strip().lower() == "en" else "fr"
+
+
 def send_referral_announcement_email(db: Session, *, reward: ReferralReward) -> str | None:
     config = referral_program_config(db)
     if not config.announcement_email_enabled or reward.announcement_email_sent_at is not None:
@@ -599,18 +611,31 @@ def send_referral_announcement_email(db: Session, *, reward: ReferralReward) -> 
         return None
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
     referrer_name = _display_name(referrer)
-    referred_name = _display_name(referred) or "une famille"
+    language = _email_language(referrer)
     amount = Decimal(reward.reward_amount or 0).quantize(Decimal("0.01"))
-    body = (
-        f"Bonjour {referrer_name},\n\n"
-        f"La famille {referred_name} a indique avoir decouvert Piano Academie grace a vous.\n\n"
-        f"Votre parrainage est bien enregistre. Un avoir de {amount:.2f} {reward.currency} sera credite "
-        "sur votre compte lorsque le seuil de reglement prevu aura ete atteint par votre filleul.\n\n"
-        "Merci pour votre confiance."
-    )
+    if language == "en":
+        referred_name = _display_name(referred) or "a family"
+        subject = "Your referral has been recorded"
+        body = (
+            f"Hello {referrer_name},\n\n"
+            f"The {referred_name} family indicated that they discovered Piano Academie thanks to you.\n\n"
+            f"Your referral has been recorded. A credit of {amount:.2f} {reward.currency} will be added "
+            "to your account once your referred family reaches the required payment threshold.\n\n"
+            "Thank you for your trust."
+        )
+    else:
+        referred_name = _display_name(referred) or "une famille"
+        subject = "Votre parrainage a bien ete enregistre"
+        body = (
+            f"Bonjour {referrer_name},\n\n"
+            f"La famille {referred_name} a indique avoir decouvert Piano Academie grace a vous.\n\n"
+            f"Votre parrainage est bien enregistre. Un avoir de {amount:.2f} {reward.currency} sera credite "
+            "sur votre compte lorsque le seuil de reglement prevu aura ete atteint par votre filleul.\n\n"
+            "Merci pour votre confiance."
+        )
     message_id = send_email(
         to_email=referrer.email,
-        subject="Votre parrainage a bien ete enregistre",
+        subject=subject,
         body=body,
         body_format="TEXT",
         context="REFERRAL_RECORDED",
@@ -635,18 +660,31 @@ def send_referral_credit_email(db: Session, *, reward: ReferralReward) -> str | 
         return None
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
     referrer_name = _display_name(referrer)
-    referred_name = _display_name(referred) or "votre filleul"
+    language = _email_language(referrer)
     amount = Decimal(reward.reward_amount or 0).quantize(Decimal("0.01"))
-    body = (
-        f"Bonjour {referrer_name},\n\n"
-        f"Votre parrainage de {referred_name} est desormais valide.\n\n"
-        f"Un avoir de {amount:.2f} {reward.currency} vient d etre credite sur votre compte. "
-        "Il pourra etre utilise sur une prochaine facture Piano Academie.\n\n"
-        "Merci encore pour votre recommandation."
-    )
+    if language == "en":
+        referred_name = _display_name(referred) or "your referred family"
+        subject = "Your referral credit is available"
+        body = (
+            f"Hello {referrer_name},\n\n"
+            f"Your referral for {referred_name} is now validated.\n\n"
+            f"A credit of {amount:.2f} {reward.currency} has been added to your account. "
+            "It can be used on a future Piano Academie invoice.\n\n"
+            "Thank you again for your recommendation."
+        )
+    else:
+        referred_name = _display_name(referred) or "votre filleul"
+        subject = "Votre avoir parrainage est disponible"
+        body = (
+            f"Bonjour {referrer_name},\n\n"
+            f"Votre parrainage de {referred_name} est desormais valide.\n\n"
+            f"Un avoir de {amount:.2f} {reward.currency} vient d etre credite sur votre compte. "
+            "Il pourra etre utilise sur une prochaine facture Piano Academie.\n\n"
+            "Merci encore pour votre recommandation."
+        )
     message_id = send_email(
         to_email=referrer.email,
-        subject="Votre avoir parrainage est disponible",
+        subject=subject,
         body=body,
         body_format="TEXT",
         context="REFERRAL_CREDIT_GRANTED",

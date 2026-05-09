@@ -1198,6 +1198,47 @@ async function ensureAdminAndGetLanguage(token: string): Promise<UiLanguage> {
   return normalizeUiLanguage(me.preferred_language);
 }
 
+const ADMIN_REFERRAL_ACTION_TEXT: Record<UiLanguage, Record<string, string>> = {
+  fr: {
+    invalid_payment_status: "Statut de paiement invalide",
+    payment_status_updated: "Statut du paiement mis a jour",
+    invalid_target_status: "Statut cible invalide",
+    xls_unsupported: "Enregistrez le fichier Excel en .xlsx ou en CSV avant import",
+    select_checks_or_file: "Selectionnez des cheques ou importez un fichier CSV/XLSX",
+    check_rows_unmatched: "{count} ligne(s) non rapprochee(s): {details}{extra}",
+    check_rows_updated: "{count} cheque(s) mis a jour{warning}",
+    referral_incomplete: "Parrainage incomplet",
+    referral_validated: "Parrainage valide",
+    referral_not_found: "Parrainage introuvable",
+    referral_recomputed: "Parrainage recalcule",
+    referrals_recomputed: "{updated} parrainage(s) recalcules, {credits} avoir(s) genere(s)",
+    referral_settings_saved: "Parametres de parrainage enregistres",
+  },
+  en: {
+    invalid_payment_status: "Invalid payment status",
+    payment_status_updated: "Payment status updated",
+    invalid_target_status: "Invalid target status",
+    xls_unsupported: "Save the Excel file as .xlsx or CSV before importing",
+    select_checks_or_file: "Select checks or import a CSV/XLSX file",
+    check_rows_unmatched: "{count} unmatched row(s): {details}{extra}",
+    check_rows_updated: "{count} check(s) updated{warning}",
+    referral_incomplete: "Incomplete referral",
+    referral_validated: "Referral validated",
+    referral_not_found: "Referral not found",
+    referral_recomputed: "Referral recomputed",
+    referrals_recomputed: "{updated} referral(s) recomputed, {credits} credit(s) granted",
+    referral_settings_saved: "Referral settings saved",
+  },
+};
+
+function adminReferralActionText(language: UiLanguage, key: string, values?: Record<string, string | number>): string {
+  const template = ADMIN_REFERRAL_ACTION_TEXT[language][key] || ADMIN_REFERRAL_ACTION_TEXT.fr[key] || key;
+  if (!values) {
+    return template;
+  }
+  return template.replace(/\{(\w+)\}/g, (_match, token) => String(values[token] ?? ""));
+}
+
 async function ensureProfessorAndGetLanguage(token: string): Promise<UiLanguage> {
   const me = await fetchCurrentUser(token);
   if (!me || me.role !== "prof") {
@@ -3935,7 +3976,7 @@ export async function adminViewTeacherPortalAction(formData: FormData): Promise<
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const teacherId = String(formData.get("teacher_id") ?? "").trim();
   const returnTo = String(formData.get("return_to") ?? "").trim() || `/admin/professors/${teacherId}?tab=profil`;
@@ -5368,14 +5409,14 @@ export async function updateAdminClientManualTransactionStatusAction(formData: F
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const transactionId = String(formData.get("transaction_id") ?? "").trim();
   const nextStatus = String(formData.get("status") ?? "").trim().toUpperCase();
   const allowedStatuses = new Set(["CHECK_RECEIVED", "CHECK_DEPOSITED", "CHECK_REFUSED", "PAID", "COMPLETED", "CANCELLED"]);
   if (!clientId || !transactionId || !allowedStatuses.has(nextStatus)) {
-    redirect(appendQueryMessage(clientId ? `/admin/clients/${clientId}?tab=paiements` : "/admin/clients", "error", "Statut de paiement invalide"));
+    redirect(appendQueryMessage(clientId ? `/admin/clients/${clientId}?tab=paiements` : "/admin/clients", "error", adminReferralActionText(language, "invalid_payment_status")));
   }
 
   const result = await backendRequest<AdminClientPaymentOut>(
@@ -5392,7 +5433,7 @@ export async function updateAdminClientManualTransactionStatusAction(formData: F
   }
 
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "ok", "Statut du paiement mis a jour"));
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "ok", adminReferralActionText(language, "payment_status_updated")));
 }
 
 export async function bulkUpdateAdminCheckDepositStatusAction(formData: FormData): Promise<void> {
@@ -5400,13 +5441,13 @@ export async function bulkUpdateAdminCheckDepositStatusAction(formData: FormData
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const requestedReturnTo = String(formData.get("return_to") ?? "").trim();
   const returnTo = requestedReturnTo.startsWith("/admin/check-deposits") ? requestedReturnTo : "/admin/check-deposits";
   const targetStatus = String(formData.get("target_status") ?? "CHECK_DEPOSITED").trim().toUpperCase();
   if (targetStatus !== "CHECK_DEPOSITED" && targetStatus !== "CHECK_REFUSED" && targetStatus !== "PAID") {
-    redirect(appendQueryMessage(returnTo, "error", "Statut cible invalide"));
+    redirect(appendQueryMessage(returnTo, "error", adminReferralActionText(language, "invalid_target_status")));
   }
   const batchReference = String(formData.get("batch_reference") ?? "").trim() || null;
   const effectiveDate = String(formData.get("effective_date") ?? "").trim() || null;
@@ -5422,7 +5463,7 @@ export async function bulkUpdateAdminCheckDepositStatusAction(formData: FormData
     if (name.endsWith(".xlsx")) {
       rows = await checkDepositRowsFromSpreadsheet(rawFile);
     } else if (name.endsWith(".xls")) {
-      redirect(appendQueryMessage(returnTo, "error", "Enregistrez le fichier Excel en .xlsx ou en CSV avant import"));
+      redirect(appendQueryMessage(returnTo, "error", adminReferralActionText(language, "xls_unsupported")));
     } else {
       const text = await rawFile.text();
       rows = checkDepositRowsFromDelimitedText(text);
@@ -5430,7 +5471,7 @@ export async function bulkUpdateAdminCheckDepositStatusAction(formData: FormData
   }
 
   if (transactionIds.length === 0 && rows.length === 0) {
-    redirect(appendQueryMessage(returnTo, "error", "Selectionnez des cheques ou importez un fichier CSV/XLSX"));
+    redirect(appendQueryMessage(returnTo, "error", adminReferralActionText(language, "select_checks_or_file")));
   }
 
   const result = await backendRequest<AdminCheckDepositBulkUpdateOut>(
@@ -5457,9 +5498,13 @@ export async function bulkUpdateAdminCheckDepositStatusAction(formData: FormData
   const unmatchedDetails = result.data.unmatched_rows.slice(0, 4).join(" ; ");
   const extraCount = Math.max(result.data.unmatched_rows.length - 4, 0);
   const warning = result.data.unmatched_rows.length > 0
-    ? ` (${result.data.unmatched_rows.length} ligne(s) non rapprochee(s): ${unmatchedDetails}${extraCount > 0 ? ` ; +${extraCount}` : ""})`
+    ? ` (${adminReferralActionText(language, "check_rows_unmatched", {
+        count: result.data.unmatched_rows.length,
+        details: unmatchedDetails,
+        extra: extraCount > 0 ? ` ; +${extraCount}` : "",
+      })})`
     : "";
-  redirect(appendQueryMessage(returnTo, "ok", `${result.data.updated_count} cheque(s) mis a jour${warning}`));
+  redirect(appendQueryMessage(returnTo, "ok", adminReferralActionText(language, "check_rows_updated", { count: result.data.updated_count, warning })));
 }
 
 export async function validateAdminReferralRewardAction(formData: FormData): Promise<void> {
@@ -5467,14 +5512,14 @@ export async function validateAdminReferralRewardAction(formData: FormData): Pro
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const rewardId = parseUuid(String(formData.get("reward_id") ?? ""));
   const referrerUserId = parseUuid(String(formData.get("referrer_user_id") ?? ""));
   const requestedReturnTo = String(formData.get("return_to") ?? "").trim();
   const returnTo = requestedReturnTo.startsWith("/admin/referrals") ? requestedReturnTo : "/admin/referrals";
   if (!rewardId || !referrerUserId) {
-    redirect(appendQueryMessage(returnTo, "error", "Parrainage incomplet"));
+    redirect(appendQueryMessage(returnTo, "error", adminReferralActionText(language, "referral_incomplete")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -5492,7 +5537,7 @@ export async function validateAdminReferralRewardAction(formData: FormData): Pro
 
   revalidatePath("/admin/referrals");
   revalidatePath("/admin/intakes");
-  redirect(appendQueryMessage(returnTo, "ok", "Parrainage valide"));
+  redirect(appendQueryMessage(returnTo, "ok", adminReferralActionText(language, "referral_validated")));
 }
 
 export async function recomputeAdminReferralRewardAction(formData: FormData): Promise<void> {
@@ -5500,13 +5545,13 @@ export async function recomputeAdminReferralRewardAction(formData: FormData): Pr
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const rewardId = parseUuid(String(formData.get("reward_id") ?? ""));
   const requestedReturnTo = String(formData.get("return_to") ?? "").trim();
   const returnTo = requestedReturnTo.startsWith("/admin/referrals") ? requestedReturnTo : "/admin/referrals";
   if (!rewardId) {
-    redirect(appendQueryMessage(returnTo, "error", "Parrainage introuvable"));
+    redirect(appendQueryMessage(returnTo, "error", adminReferralActionText(language, "referral_not_found")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -5520,7 +5565,7 @@ export async function recomputeAdminReferralRewardAction(formData: FormData): Pr
   }
 
   revalidatePath("/admin/referrals");
-  redirect(appendQueryMessage(returnTo, "ok", "Parrainage recalcule"));
+  redirect(appendQueryMessage(returnTo, "ok", adminReferralActionText(language, "referral_recomputed")));
 }
 
 export async function recomputeAllAdminReferralRewardsAction(formData: FormData): Promise<void> {
@@ -5528,7 +5573,7 @@ export async function recomputeAllAdminReferralRewardsAction(formData: FormData)
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const requestedReturnTo = String(formData.get("return_to") ?? "").trim();
   const returnTo = requestedReturnTo.startsWith("/admin/referrals") ? requestedReturnTo : "/admin/referrals";
@@ -5551,7 +5596,10 @@ export async function recomputeAllAdminReferralRewardsAction(formData: FormData)
     appendQueryMessage(
       returnTo,
       "ok",
-      `${result.data.updated_count} parrainage(s) recalcules, ${result.data.credit_granted_count} avoir(s) genere(s)`,
+      adminReferralActionText(language, "referrals_recomputed", {
+        updated: result.data.updated_count,
+        credits: result.data.credit_granted_count,
+      }),
     ),
   );
 }
@@ -8385,7 +8433,7 @@ export async function updateAdminConfigReferralProgramAction(formData: FormData)
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
   const returnTo = "/admin/config?section=params-referrals";
   const categories: Record<string, { label: string; amount: string; active: boolean }> = {};
   for (const code of ["PARIS", "BAR_LE_DUC", "ONLINE", "DOMICILE"]) {
@@ -8417,7 +8465,7 @@ export async function updateAdminConfigReferralProgramAction(formData: FormData)
   }
 
   revalidatePath("/admin/config");
-  redirect(appendQueryMessage(returnTo, "ok", "Parametres de parrainage enregistres"));
+  redirect(appendQueryMessage(returnTo, "ok", adminReferralActionText(language, "referral_settings_saved")));
 }
 
 export async function updateAdminConfigProductCategoriesAction(formData: FormData): Promise<void> {
@@ -9646,7 +9694,7 @@ export async function updateAdminConfigExternalContentSettingsAction(formData: F
     redirect("/login?error_code=session_expired");
   }
 
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const timeoutSeconds = Number.parseInt(String(formData.get("timeout_seconds") ?? "").trim() || "20", 10);
   const payload = {
@@ -10552,14 +10600,14 @@ export async function saveTypeformIntakeReferralAction(formData: FormData): Prom
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
-  await ensureAdmin(token);
+  const language = await ensureAdminAndGetLanguage(token);
 
   const intakeId = String(formData.get("intake_id") ?? "").trim();
   const returnTo = safeAdminIntakesPath(String(formData.get("return_to") ?? "/admin/intakes"));
   const cleanReturnTo = setQueryParam(setQueryParam(returnTo, "error", null), "ok", null);
   const referrerUserId = parseUuid(String(formData.get("referrer_user_id") ?? ""));
   if (!intakeId || !referrerUserId) {
-    redirect(appendQueryMessage(cleanReturnTo, "error", "Parrainage incomplet"));
+    redirect(appendQueryMessage(cleanReturnTo, "error", adminReferralActionText(language, "referral_incomplete")));
   }
 
   const result = await backendRequest<Record<string, unknown>>(
@@ -10577,7 +10625,7 @@ export async function saveTypeformIntakeReferralAction(formData: FormData): Prom
 
   revalidatePath("/admin/intakes");
   revalidatePath(`/admin/intakes/${intakeId}`);
-  redirect(appendQueryMessage(cleanReturnTo, "ok", "Parrainage valide"));
+  redirect(appendQueryMessage(cleanReturnTo, "ok", adminReferralActionText(language, "referral_validated")));
 }
 
 export async function reanalyzeTypeformIntakeAction(formData: FormData): Promise<void> {

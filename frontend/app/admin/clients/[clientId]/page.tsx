@@ -388,13 +388,13 @@ function paymentStatusLabel(status: string, language: UiLanguage = "fr"): string
     return uiText(language, "admin.client_detail.payment_status.paid");
   }
   if (normalized === "CHECK_RECEIVED") {
-    return "Cheques recus";
+    return uiText(language, "admin.client_detail.payment_status.check_received");
   }
   if (normalized === "CHECK_DEPOSITED") {
-    return "Cheques deposes";
+    return uiText(language, "admin.client_detail.payment_status.check_deposited");
   }
   if (normalized === "CHECK_REFUSED") {
-    return "Cheque refuse";
+    return uiText(language, "admin.client_detail.payment_status.check_refused");
   }
   if (normalized === "INCLUDED_PLAN") {
     return uiText(language, "admin.client_detail.payment_status.included_plan");
@@ -5270,7 +5270,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                         <input type="hidden" name="client_id" value={client.id} />
                                         <input type="hidden" name="transaction_id" value={row.id} />
                                         <input type="hidden" name="status" value="CHECK_RECEIVED" />
-                                        <button type="submit" className="client-action-icon" title="Marquer les cheques comme recus">
+                                        <button type="submit" className="client-action-icon" title={t("admin.client_detail.mark_checks_received")}>
                                           R
                                         </button>
                                       </form>
@@ -5280,7 +5280,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                         <input type="hidden" name="client_id" value={client.id} />
                                         <input type="hidden" name="transaction_id" value={row.id} />
                                         <input type="hidden" name="status" value="CHECK_DEPOSITED" />
-                                        <button type="submit" className="client-action-icon" title="Marquer les cheques comme deposes">
+                                        <button type="submit" className="client-action-icon" title={t("admin.client_detail.mark_checks_deposited")}>
                                           D
                                         </button>
                                       </form>
@@ -5290,7 +5290,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                         <input type="hidden" name="client_id" value={client.id} />
                                         <input type="hidden" name="transaction_id" value={row.id} />
                                         <input type="hidden" name="status" value="PAID" />
-                                        <button type="submit" className="client-action-icon" title="Marquer les cheques comme encaisses">
+                                        <button type="submit" className="client-action-icon" title={t("admin.client_detail.mark_checks_cashed")}>
                                           OK
                                         </button>
                                       </form>
@@ -5300,7 +5300,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                         <input type="hidden" name="client_id" value={client.id} />
                                         <input type="hidden" name="transaction_id" value={row.id} />
                                         <input type="hidden" name="status" value="CHECK_REFUSED" />
-                                        <button type="submit" className="client-action-icon" title="Marquer le cheque comme refuse">
+                                        <button type="submit" className="client-action-icon" title={t("admin.client_detail.mark_check_refused")}>
                                           REF
                                         </button>
                                       </form>

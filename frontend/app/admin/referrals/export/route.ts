@@ -19,12 +19,16 @@ function normalizeSearch(value: string): string {
     .toLowerCase();
 }
 
-function candidateLabel(candidate: Record<string, unknown>): string {
+function exportLanguage(request: NextRequest): "fr" | "en" {
+  return request.nextUrl.searchParams.get("lang") === "en" ? "en" : "fr";
+}
+
+function candidateLabel(candidate: Record<string, unknown>, language: "fr" | "en" = "fr"): string {
   const name = String(candidate.display_name ?? "").trim();
   const email = String(candidate.email ?? "").trim();
   const confidence = Number(candidate.confidence ?? 0);
   const suffix = Number.isFinite(confidence) && confidence > 0 ? ` (${confidence}%)` : "";
-  return `${name || email || "Candidat"}${suffix}`;
+  return `${name || email || (language === "en" ? "Candidate" : "Candidat")}${suffix}`;
 }
 
 function rowMatchesQuery(row: AdminReferralRewardOut, query: string): boolean {
@@ -44,7 +48,7 @@ function rowMatchesQuery(row: AdminReferralRewardOut, query: string): boolean {
     row.invoice_total ?? "",
     row.paid_total ?? "",
     row.threshold_amount ?? "",
-    row.match_candidates.map(candidateLabel).join(" "),
+    row.match_candidates.map((candidate) => candidateLabel(candidate)).join(" "),
   ].join(" "));
   return haystack.includes(query);
 }
@@ -96,12 +100,13 @@ function rowsToCsv(rows: AdminReferralRewardOut[]): string {
     row.typeform_intake_id ?? "",
     row.quote_id ?? "",
     row.credit_transaction_id ?? "",
-    row.match_candidates.map(candidateLabel).join(" | "),
+    row.match_candidates.map((candidate) => candidateLabel(candidate)).join(" | "),
   ]);
   return `${headers.join(";")}\n${lines.map((line) => line.map(csvCell).join(";")).join("\n")}\n`;
 }
 
 export async function GET(request: NextRequest): Promise<Response> {
+  const language = exportLanguage(request);
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
     const loginUrl = new URL("/login?error_code=session_expired", request.url);
@@ -118,7 +123,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   if (!response.ok) {
     const fallback = new URL(
-      `/admin/referrals?error=${encodeURIComponent(`Export impossible (${response.status})`)}`,
+      `/admin/referrals?error=${encodeURIComponent(language === "en" ? `Export unavailable (${response.status})` : `Export impossible (${response.status})`)}`,
       request.url,
     );
     return NextResponse.redirect(fallback, 302);
@@ -134,7 +139,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     status: 200,
     headers: {
       "content-type": "text/csv; charset=utf-8",
-      "content-disposition": 'attachment; filename="parrainages.csv"',
+      "content-disposition": `attachment; filename="${language === "en" ? "referrals.csv" : "parrainages.csv"}"`,
       "cache-control": "no-store",
     },
   });
