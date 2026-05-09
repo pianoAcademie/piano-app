@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+import logging
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -14,6 +15,8 @@ from app.services.messaging_templates import (
     resolve_predefined_template,
     resolve_sender_profile,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _render_template(template: str, context: dict[str, str]) -> str:
@@ -41,6 +44,7 @@ def _send_template_email(
     to_email: str,
     delivery_context: str,
     language: str | None = None,
+    recipient_user_id: UUID | None = None,
 ) -> str | None:
     try:
         template = resolve_predefined_template(db, code=template_code, language=normalize_language(language))
@@ -71,6 +75,7 @@ def _send_template_email(
         from_name=sender.from_name,
         reply_to=sender.reply_to,
         subject_prefix=sender.subject_prefix,
+        recipient_user_id=recipient_user_id,
     )
 
 
@@ -92,6 +97,7 @@ def send_payment_success_notifications(
     issued_date: str | None = None,
     due_date: str | None = None,
     language: str | None = None,
+    recipient_user_id: UUID | None = None,
 ) -> dict[str, str | None]:
     safe_first_name = (first_name or "").strip() or to_email
     safe_last_name = (last_name or "").strip()
@@ -138,6 +144,7 @@ def send_payment_success_notifications(
             to_email=to_email,
             delivery_context="CLIENT_PAYMENT_CONFIRMED",
             language=language,
+            recipient_user_id=recipient_user_id,
         ),
         "invoice_message_id": _send_template_email(
             db,
@@ -146,6 +153,7 @@ def send_payment_success_notifications(
             to_email=to_email,
             delivery_context="CLIENT_INVOICE_PAID",
             language=language,
+            recipient_user_id=recipient_user_id,
         ),
     }
 

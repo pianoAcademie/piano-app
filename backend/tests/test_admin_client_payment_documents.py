@@ -14,6 +14,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.api.routes.admin_clients import (
     _apply_invoice_presentation_to_payment_item,
     _build_range_invoice_email_defaults,
+    _normalize_invoice_range_metadata,
     _send_invoice_range_payment_admin_emails,
     _send_invoice_range_payment_success_emails,
     _select_reusable_pre_registration_deposit_reconciliation,
@@ -394,6 +395,7 @@ class AdminClientPaymentDocumentTests(unittest.TestCase):
             "due_date": "2026-09-01",
         }
         billing_profile = SimpleNamespace(
+            id=uuid4(),
             email="billing@example.com",
             first_name="Coraline",
             last_name="Schnee",
@@ -417,8 +419,34 @@ class AdminClientPaymentDocumentTests(unittest.TestCase):
 
         self.assertTrue(result)
         self.assertEqual(send_success.call_args.kwargs["to_email"], "billing@example.com")
+        self.assertEqual(send_success.call_args.kwargs["recipient_user_id"], billing_profile.id)
         self.assertEqual(send_success.call_args.kwargs["amount_paid"], Decimal("2370.00"))
         self.assertEqual(send_success.call_args.kwargs["currency"], "EUR")
+
+    def test_invoice_range_metadata_preserves_payment_email_markers(self) -> None:
+        metadata = {
+            "kind": "INVOICE_RANGE",
+            "invoice_number": "PA26-0042",
+            "issued_date": "2026-05-07",
+            "due_date": "2026-09-01",
+            "start_date": "2026-05-01",
+            "end_date": "2027-06-30",
+            "layout": "NORMAL",
+            "totals_by_currency": {"EUR": "2770.00"},
+            "payment_amount_paid": "2370.00",
+            "payment_currency": "EUR",
+            "payment_confirmation_emails_sent_at": "2026-05-09T05:09:00+00:00",
+            "admin_payment_confirmation_emails_sent_at": "2026-05-09T05:10:00+00:00",
+        }
+
+        normalized = _normalize_invoice_range_metadata(metadata)
+
+        self.assertIsNotNone(normalized)
+        assert normalized is not None
+        self.assertEqual(normalized["payment_amount_paid"], "2370.00")
+        self.assertEqual(normalized["payment_currency"], "EUR")
+        self.assertEqual(normalized["payment_confirmation_emails_sent_at"], "2026-05-09T05:09:00+00:00")
+        self.assertEqual(normalized["admin_payment_confirmation_emails_sent_at"], "2026-05-09T05:10:00+00:00")
 
     def test_invoice_range_payment_sends_admin_notification(self) -> None:
         client = SimpleNamespace(

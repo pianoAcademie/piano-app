@@ -2131,8 +2131,9 @@ def _send_invoice_range_payment_success_emails(
         issued_date=_normalize_optional(str(metadata.get("issued_date") or "")),
         due_date=_normalize_optional(str(metadata.get("due_date") or "")),
         language=client.preferred_language,
+        recipient_user_id=billing_profile.id,
     )
-    return any(value for value in result.values())
+    return bool(result.get("payment_confirmation_message_id"))
 
 
 def _send_invoice_range_payment_admin_emails(
@@ -2345,6 +2346,8 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
     for field in (
         "payment_provider",
         "payment_provider_reference",
+        "payment_amount_paid",
+        "payment_currency",
         "payment_checkout_status",
         "payment_lookup_status",
         "payment_transaction_id",
@@ -2353,6 +2356,7 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
         "paid_at",
         "booking_confirmation_emails_sent_at",
         "payment_confirmation_emails_sent_at",
+        "admin_payment_confirmation_emails_sent_at",
     ):
         value = _normalize_optional(str(payload.get(field) or ""))
         if value:
