@@ -35,13 +35,14 @@ class _FakeDb:
 
 class ReferralPaymentRuleTests(unittest.TestCase):
     def test_paid_total_counts_only_cashed_payment_statuses(self) -> None:
-        payment_ids = [uuid4(), uuid4(), uuid4(), uuid4()]
+        payment_ids = [uuid4(), uuid4(), uuid4(), uuid4(), uuid4()]
         db = _FakeDb(
             [
                 SimpleNamespace(id=payment_ids[0], status="CHECK_RECEIVED", currency="EUR", total_incl_vat=Decimal("200.00")),
                 SimpleNamespace(id=payment_ids[1], status="CHECK_DEPOSITED", currency="EUR", total_incl_vat=Decimal("300.00")),
-                SimpleNamespace(id=payment_ids[2], status="PAID", currency="EUR", total_incl_vat=Decimal("400.00")),
-                SimpleNamespace(id=payment_ids[3], status="COMPLETED", currency="EUR", total_incl_vat=Decimal("-50.00")),
+                SimpleNamespace(id=payment_ids[2], status="CHECK_REFUSED", currency="EUR", total_incl_vat=Decimal("700.00")),
+                SimpleNamespace(id=payment_ids[3], status="PAID", currency="EUR", total_incl_vat=Decimal("400.00")),
+                SimpleNamespace(id=payment_ids[4], status="COMPLETED", currency="EUR", total_incl_vat=Decimal("-50.00")),
                 SimpleNamespace(id=uuid4(), status="PAID", currency="USD", total_incl_vat=Decimal("999.00")),
             ]
         )

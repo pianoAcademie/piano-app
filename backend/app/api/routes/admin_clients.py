@@ -211,7 +211,7 @@ from app.services.subscriptions import (
 router = APIRouter(prefix="/admin/clients")
 
 PAID_PAYMENT_STATUSES = {"PAID", "SUCCEEDED", "COMPLETED"}
-CHECK_TRACKING_STATUSES = {"CHECK_RECEIVED", "CHECK_DEPOSITED", "PAID"}
+CHECK_TRACKING_STATUSES = {"CHECK_RECEIVED", "CHECK_DEPOSITED", "CHECK_REFUSED", "PAID"}
 PENDING_PAYMENT_STATUSES = {
     "PENDING",
     "PENDING_PAYMENT",
@@ -224,6 +224,7 @@ PENDING_PAYMENT_STATUSES = {
     "PROCESSING",
     "WAITING_PAYMENT",
     "FAILED",
+    "CHECK_REFUSED",
     "BOOKED",
     "ATTENDED",
     "NO_SHOW",
@@ -3094,6 +3095,8 @@ def _recompute_reconciled_invoice_statuses_for_manual_payment_change(
                     if invoice_total is not None and invoice_total > Decimal("0.00"):
                         paid_total = Decimal("0.00")
                         for payment in remaining_rows:
+                            if (payment.status or "").strip().upper() not in PAID_PAYMENT_STATUSES:
+                                continue
                             payment_currency = _normalize_currency(payment.currency, fallback="EUR")
                             if payment_currency != invoice_currency:
                                 continue
@@ -3432,7 +3435,7 @@ def _apply_invoice_presentation_to_payment_item(
         item.invoice_note_id = locked_note_id
         if locked_status == "PAID":
             item.status = "PAID"
-        elif item.source.strip().upper() == "MANUAL" and item.status in {"CHECK_RECEIVED", "CHECK_DEPOSITED"}:
+        elif item.source.strip().upper() == "MANUAL" and item.status in {"CHECK_RECEIVED", "CHECK_DEPOSITED", "CHECK_REFUSED"}:
             pass
         else:
             item.status = "INVOICED"
@@ -3457,6 +3460,8 @@ def _apply_invoice_presentation_to_payment_item(
 
 def _should_count_in_client_balance(row: AdminClientPaymentOut) -> bool:
     status_value = (row.status or "").strip().upper()
+    if status_value == "CHECK_REFUSED":
+        return False
     if status_value in {"NOT_BILLABLE", "INCLUDED_PLAN", "REFUNDED"}:
         return False
     if status_value in CANCELLED_PAYMENT_STATUSES:
@@ -7550,7 +7555,7 @@ def _client_name_for_check(user: User) -> str:
 def _check_tracking_note(description: str | None) -> str | None:
     lines = [line.strip() for line in (description or "").splitlines() if line.strip()]
     for line in reversed(lines):
-        if line.startswith("Depot banque:") or line.startswith("Encaissement banque:"):
+        if line.startswith("Depot banque:") or line.startswith("Encaissement banque:") or line.startswith("Refus banque:"):
             return line
     return None
 
@@ -7676,10 +7681,20 @@ def bulk_update_admin_check_deposit_status(
     actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminCheckDepositBulkUpdateOut:
     target_status = payload.target_status.strip().upper()
-    source_statuses = {"CHECK_RECEIVED"} if target_status == "CHECK_DEPOSITED" else {"CHECK_DEPOSITED", "CHECK_RECEIVED"}
+    if target_status == "CHECK_DEPOSITED":
+        source_statuses = {"CHECK_RECEIVED"}
+    elif target_status == "PAID":
+        source_statuses = {"CHECK_DEPOSITED", "CHECK_RECEIVED"}
+    else:
+        source_statuses = {"PAID", "CHECK_DEPOSITED", "CHECK_RECEIVED"}
     batch_reference = _normalize_optional(payload.batch_reference)
     effective_date = payload.effective_date or _utcnow().date()
-    operation_label = "Depot banque" if target_status == "CHECK_DEPOSITED" else "Encaissement banque"
+    if target_status == "CHECK_DEPOSITED":
+        operation_label = "Depot banque"
+    elif target_status == "PAID":
+        operation_label = "Encaissement banque"
+    else:
+        operation_label = "Refus banque"
     operation_note = (
         f"{operation_label}: {batch_reference or 'sans reference'} le {effective_date.isoformat()}."
     )
@@ -7977,7 +7992,7 @@ def update_admin_client_manual_transaction_status(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Seuls les paiements ont un statut d'encaissement")
     payment_method_code = _manual_payment_method_code(row.reference)
     next_status = payload.status.strip().upper()
-    if next_status in {"CHECK_RECEIVED", "CHECK_DEPOSITED"} and payment_method_code != "CHECK":
+    if next_status in {"CHECK_RECEIVED", "CHECK_DEPOSITED", "CHECK_REFUSED"} and payment_method_code != "CHECK":
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Ce statut est reserve aux paiements par cheque")
     if payment_method_code == "CHECK" and next_status not in CHECK_TRACKING_STATUSES and next_status != "CANCELLED":
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Statut de cheque invalide")

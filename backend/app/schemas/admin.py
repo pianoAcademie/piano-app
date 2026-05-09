@@ -1504,7 +1504,7 @@ class AdminClientManualTransactionUpdateRequest(BaseModel):
 
 
 class AdminClientManualTransactionStatusUpdateRequest(BaseModel):
-    status: Literal["CHECK_RECEIVED", "CHECK_DEPOSITED", "PAID", "COMPLETED", "CANCELLED"]
+    status: Literal["CHECK_RECEIVED", "CHECK_DEPOSITED", "CHECK_REFUSED", "PAID", "COMPLETED", "CANCELLED"]
 
 
 class AdminCheckDepositPaymentOut(BaseModel):
@@ -1534,7 +1534,7 @@ class AdminCheckDepositImportRowIn(BaseModel):
 class AdminCheckDepositBulkUpdateRequest(BaseModel):
     transaction_ids: list[UUID] = Field(default_factory=list)
     rows: list[AdminCheckDepositImportRowIn] = Field(default_factory=list)
-    target_status: Literal["CHECK_DEPOSITED", "PAID"] = "CHECK_DEPOSITED"
+    target_status: Literal["CHECK_DEPOSITED", "CHECK_REFUSED", "PAID"] = "CHECK_DEPOSITED"
     batch_reference: str | None = Field(default=None, max_length=120)
     effective_date: date | None = None
 

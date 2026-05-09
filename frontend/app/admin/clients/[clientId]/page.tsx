@@ -393,6 +393,9 @@ function paymentStatusLabel(status: string, language: UiLanguage = "fr"): string
   if (normalized === "CHECK_DEPOSITED") {
     return "Cheques deposes";
   }
+  if (normalized === "CHECK_REFUSED") {
+    return "Cheque refuse";
+  }
   if (normalized === "INCLUDED_PLAN") {
     return uiText(language, "admin.client_detail.payment_status.included_plan");
   }
@@ -498,6 +501,7 @@ const PENDING_PAYMENT_STATUSES = new Set([
   "FAILED",
   "CHECK_RECEIVED",
   "CHECK_DEPOSITED",
+  "CHECK_REFUSED",
   "BOOKED",
   "ATTENDED",
   "NO_SHOW",
@@ -1293,6 +1297,9 @@ ${content}`;
 
 function paymentStatusClass(status: string): string {
   const normalized = normalizePaymentStatus(status);
+  if (normalized === "CHECK_REFUSED") {
+    return "status-off";
+  }
   if (normalized === "NOT_BILLABLE" || normalized === "REFUNDED" || CANCELLED_PAYMENT_STATUSES.has(normalized)) {
     return "status-off";
   }
@@ -5285,6 +5292,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                         <input type="hidden" name="status" value="PAID" />
                                         <button type="submit" className="client-action-icon" title="Marquer les cheques comme encaisses">
                                           OK
+                                        </button>
+                                      </form>
+                                    ) : null}
+                                    {normalizePaymentStatus(row.status) !== "CHECK_REFUSED" ? (
+                                      <form action={updateAdminClientManualTransactionStatusAction}>
+                                        <input type="hidden" name="client_id" value={client.id} />
+                                        <input type="hidden" name="transaction_id" value={row.id} />
+                                        <input type="hidden" name="status" value="CHECK_REFUSED" />
+                                        <button type="submit" className="client-action-icon" title="Marquer le cheque comme refuse">
+                                          REF
                                         </button>
                                       </form>
                                     ) : null}

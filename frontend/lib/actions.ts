@@ -5373,7 +5373,7 @@ export async function updateAdminClientManualTransactionStatusAction(formData: F
   const clientId = String(formData.get("client_id") ?? "").trim();
   const transactionId = String(formData.get("transaction_id") ?? "").trim();
   const nextStatus = String(formData.get("status") ?? "").trim().toUpperCase();
-  const allowedStatuses = new Set(["CHECK_RECEIVED", "CHECK_DEPOSITED", "PAID", "COMPLETED", "CANCELLED"]);
+  const allowedStatuses = new Set(["CHECK_RECEIVED", "CHECK_DEPOSITED", "CHECK_REFUSED", "PAID", "COMPLETED", "CANCELLED"]);
   if (!clientId || !transactionId || !allowedStatuses.has(nextStatus)) {
     redirect(appendQueryMessage(clientId ? `/admin/clients/${clientId}?tab=paiements` : "/admin/clients", "error", "Statut de paiement invalide"));
   }
@@ -5405,7 +5405,7 @@ export async function bulkUpdateAdminCheckDepositStatusAction(formData: FormData
   const requestedReturnTo = String(formData.get("return_to") ?? "").trim();
   const returnTo = requestedReturnTo.startsWith("/admin/check-deposits") ? requestedReturnTo : "/admin/check-deposits";
   const targetStatus = String(formData.get("target_status") ?? "CHECK_DEPOSITED").trim().toUpperCase();
-  if (targetStatus !== "CHECK_DEPOSITED" && targetStatus !== "PAID") {
+  if (targetStatus !== "CHECK_DEPOSITED" && targetStatus !== "CHECK_REFUSED" && targetStatus !== "PAID") {
     redirect(appendQueryMessage(returnTo, "error", "Statut cible invalide"));
   }
   const batchReference = String(formData.get("batch_reference") ?? "").trim() || null;

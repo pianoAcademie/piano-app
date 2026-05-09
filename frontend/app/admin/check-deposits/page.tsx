@@ -45,6 +45,9 @@ function statusLabel(status: string): string {
   if (normalized === "PAID") {
     return "Encaisses";
   }
+  if (normalized === "CHECK_REFUSED") {
+    return "Refuses";
+  }
   return "Recus";
 }
 
@@ -55,6 +58,9 @@ function statusClass(status: string): string {
   }
   if (normalized === "CHECK_DEPOSITED") {
     return "status-info";
+  }
+  if (normalized === "CHECK_REFUSED") {
+    return "status-off";
   }
   return "status-warn";
 }
@@ -86,7 +92,15 @@ function checkMatchesQuery(row: AdminCheckDepositPaymentOut, query: string): boo
   return haystack.includes(query);
 }
 
-function CheckRowsTable({ rows, language }: { rows: AdminCheckDepositPaymentOut[]; language: UiLanguage }): JSX.Element {
+function CheckRowsTable({
+  rows,
+  language,
+  selectable = true,
+}: {
+  rows: AdminCheckDepositPaymentOut[];
+  language: UiLanguage;
+  selectable?: boolean;
+}): JSX.Element {
   if (rows.length === 0) {
     return <p className="muted">Aucun cheque dans ce statut.</p>;
   }
@@ -95,7 +109,7 @@ function CheckRowsTable({ rows, language }: { rows: AdminCheckDepositPaymentOut[
       <table className="data-table">
         <thead>
           <tr>
-            <th>Depot</th>
+            {selectable ? <th>Depot</th> : null}
             <th>Famille</th>
             <th>Date</th>
             <th>Reference</th>
@@ -107,9 +121,11 @@ function CheckRowsTable({ rows, language }: { rows: AdminCheckDepositPaymentOut[
         <tbody>
           {rows.map((row) => (
             <tr key={row.transaction_id}>
-              <td>
-                <input type="checkbox" name="transaction_ids" value={row.transaction_id} />
-              </td>
+              {selectable ? (
+                <td>
+                  <input type="checkbox" name="transaction_ids" value={row.transaction_id} />
+                </td>
+              ) : null}
               <td>
                 <Link className="mode-link" href={`/admin/clients/${row.client_id}?tab=paiements`}>
                   {row.client_name}
@@ -143,7 +159,7 @@ export default async function AdminCheckDepositsPage({ searchParams }: { searchP
   }
   const language = normalizeUiLanguage(meResult.data.preferred_language);
   const checksResult = await backendRequest<AdminCheckDepositPaymentOut[]>(
-    "/api/v1/admin/clients/check-deposits/pending?statuses=CHECK_RECEIVED,CHECK_DEPOSITED",
+    "/api/v1/admin/clients/check-deposits/pending?statuses=CHECK_RECEIVED,CHECK_DEPOSITED,CHECK_REFUSED",
     {},
     token,
   );
@@ -153,6 +169,7 @@ export default async function AdminCheckDepositsPage({ searchParams }: { searchP
   const checks = allChecks.filter((row) => checkMatchesQuery(row, searchQuery));
   const received = checks.filter((row) => row.status.trim().toUpperCase() === "CHECK_RECEIVED");
   const deposited = checks.filter((row) => row.status.trim().toUpperCase() === "CHECK_DEPOSITED");
+  const refused = checks.filter((row) => row.status.trim().toUpperCase() === "CHECK_REFUSED");
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error") || (!checksResult.ok ? checksResult.message : "");
 
@@ -203,6 +220,7 @@ export default async function AdminCheckDepositsPage({ searchParams }: { searchP
             <select name="target_status" defaultValue="CHECK_DEPOSITED">
               <option value="CHECK_DEPOSITED">Passer en deposes</option>
               <option value="PAID">Passer en encaisses</option>
+              <option value="CHECK_REFUSED">Passer en refuses</option>
             </select>
           </label>
           <label>
@@ -271,6 +289,14 @@ export default async function AdminCheckDepositsPage({ searchParams }: { searchP
             </div>
           ) : null}
         </form>
+      </section>
+
+      <section className="card span-2">
+        <h3>Cheques refuses</h3>
+        <p className="muted">
+          {refused.length} cheque(s) refuse(s) par la banque. Ces montants ne comptent plus comme encaisses et doivent etre traites depuis la fiche client.
+        </p>
+        <CheckRowsTable rows={refused} language={language} selectable={false} />
       </section>
     </section>
   );

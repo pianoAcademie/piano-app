@@ -8,7 +8,7 @@ import unittest
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.admin_clients import _append_check_tracking_note, _check_import_match_note
-from app.schemas.admin import AdminCheckDepositImportRowIn
+from app.schemas.admin import AdminCheckDepositBulkUpdateRequest, AdminCheckDepositImportRowIn
 
 
 class CheckDepositImportTests(unittest.TestCase):
@@ -33,6 +33,11 @@ class CheckDepositImportTests(unittest.TestCase):
         updated = _append_check_tracking_note(description, "Depot banque: bordereau A le 2026-05-09.")
 
         self.assertEqual(updated, description)
+
+    def test_bulk_status_accepts_refused_checks(self) -> None:
+        payload = AdminCheckDepositBulkUpdateRequest(target_status="CHECK_REFUSED")
+
+        self.assertEqual(payload.target_status, "CHECK_REFUSED")
 
 
 if __name__ == "__main__":

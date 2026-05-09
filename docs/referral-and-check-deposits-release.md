@@ -13,7 +13,7 @@ Ce lot ajoute :
 - un tableau de suivi des parrainages et un export CSV ;
 - un menu dedie aux depots de cheques ;
 - l'import CSV/XLSX de remises de cheques ;
-- le passage par lot aux statuts cheque recu, cheque depose, puis encaisse.
+- le passage par lot aux statuts cheque recu, cheque depose, encaisse, puis refuse si la banque rejette le cheque.
 
 ## Regles metier a valider
 
@@ -25,6 +25,7 @@ Ce lot ajoute :
 - Un acompte seul ne declenche pas l'avoir.
 - `CHECK_RECEIVED` ne compte pas comme encaissement.
 - `CHECK_DEPOSITED` ne compte pas comme encaissement.
+- `CHECK_REFUSED` ne compte pas comme encaissement et ne doit pas reduire le solde client.
 - `PAID`, `COMPLETED` et `SUCCEEDED` comptent comme encaissement.
 - Pour les cheques en plusieurs fois et les CB mensuelles, l'avoir est genere quand le seuil d'encaissement est atteint.
 - Un parrainage de soi-meme doit rester en revue manuelle.
@@ -45,7 +46,7 @@ Ce lot ajoute :
 - Generer une facture annuelle.
 - Enregistrer un paiement sous le seuil et verifier qu'aucun avoir n'est genere.
 - Enregistrer un paiement atteignant le seuil et verifier que l'avoir est genere.
-- Tester un cheque recu, puis depose, puis encaisse.
+- Tester un cheque recu, puis depose, puis encaisse, puis refuse.
 - Tester un import CSV de cheques.
 - Tester un import XLSX de cheques.
 - Tester une ligne importee avec un nom sur cheque different du client.
@@ -66,6 +67,7 @@ Ce lot ajoute :
 - Importer le fichier en action `Passer en deposes`.
 - Traiter manuellement les lignes non rapprochees avant de refaire un import ou une selection par lot.
 - Quand la banque confirme l'encaissement, passer les cheques concernes en `PAID`.
+- Si la banque rejette un cheque apres coup, le passer en `CHECK_REFUSED` depuis la fiche client ou par import avec `transaction_id`.
 - Ne jamais utiliser `CHECK_DEPOSITED` comme preuve d'encaissement : l'avoir parrainage attend un vrai statut encaisse.
 
 ## Checklist production

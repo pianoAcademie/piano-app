@@ -50,7 +50,7 @@ export async function GET(request: NextRequest): Promise<Response> {
   }
 
   const response = await fetch(
-    `${backendUrl()}/api/v1/admin/clients/check-deposits/pending?statuses=CHECK_RECEIVED,CHECK_DEPOSITED`,
+    `${backendUrl()}/api/v1/admin/clients/check-deposits/pending?statuses=CHECK_RECEIVED,CHECK_DEPOSITED,CHECK_REFUSED`,
     {
       method: "GET",
       headers: {
