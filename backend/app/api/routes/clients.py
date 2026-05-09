@@ -2645,7 +2645,7 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                 owner_client_id=owner.id,
                 owner_display_name=_display_name(owner),
                 source="BOOKING",
-                occurred_at=booking.booked_at,
+                occurred_at=session_obj.start_at_utc,
                 label=f"{course_type.name} - {location.name}",
                 status=status_value,
                 amount_excl_vat=Decimal("0.00") if not is_billable else amount_excl_vat,

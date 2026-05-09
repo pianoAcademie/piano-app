@@ -31,6 +31,8 @@ from app.services.email_delivery import send_email
 
 logger = logging.getLogger(__name__)
 HTML_TAG_RE = re.compile(r"<\s*[a-z!/][^>]*>", re.IGNORECASE)
+EMAIL_REMINDER_HOURS_BEFORE_START = 24
+SMS_REMINDER_HOURS_BEFORE_START = 1
 
 
 @dataclass(frozen=True)
@@ -70,12 +72,15 @@ def _public_base_url(db: Session) -> str:
 def _resolve_activity_reminder_hours(db: Session, *, course_type_id: UUID, channel: str) -> int:
     if channel == "SMS":
         setting_key = "sms_reminder_hours_before_start"
-        default_hours = 1
+        default_hours = SMS_REMINDER_HOURS_BEFORE_START
         attribute_name = "sms_reminder_hours_before_start"
     else:
         setting_key = "reminder_hours_before_start"
-        default_hours = 24
+        default_hours = EMAIL_REMINDER_HOURS_BEFORE_START
         attribute_name = "email_reminder_hours_before_start"
+
+    if channel != "SMS":
+        return EMAIL_REMINDER_HOURS_BEFORE_START
 
     fallback = get_setting_int(db, setting_key, default_hours)
     if fallback < 0:
@@ -115,10 +120,9 @@ def ensure_booking_reminder(
     scheduled_for = session_obj.start_at_utc - timedelta(hours=reminder_hours)
 
     reminder = db.scalar(
-        select(EmailReminder).where(
-            EmailReminder.booking_id == booking.id,
-            EmailReminder.scheduled_for_utc == scheduled_for,
-        )
+        select(EmailReminder)
+        .where(EmailReminder.booking_id == booking.id)
+        .order_by(EmailReminder.created_at.desc())
     )
 
     if reminder is None:
@@ -129,6 +133,12 @@ def ensure_booking_reminder(
         )
         db.add(reminder)
         return reminder
+
+    if reminder.status == ReminderStatus.SENT:
+        return reminder
+
+    if reminder.scheduled_for_utc != scheduled_for:
+        reminder.scheduled_for_utc = scheduled_for
 
     if reminder.status in (ReminderStatus.SKIPPED, ReminderStatus.FAILED):
         reminder.status = ReminderStatus.PENDING
