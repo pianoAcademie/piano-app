@@ -30,7 +30,7 @@ import {
 import { backendRequest } from "../../../../lib/backend";
 import QuoteTemplateEditor from "../../../../components/quote-template-editor";
 import WysiwygField from "../../../../components/wysiwyg-field";
-import { normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
+import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 import type { AdminActivityOut, AdminFormulaOut, LocationOut, UserOut } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -278,13 +278,13 @@ function uiLanguageLabel(value: string | null, language: UiLanguage): string {
   return normalized ? normalized.toUpperCase() : "-";
 }
 
-function moneyLabel(value: string | number | null | undefined, currency = "EUR"): string {
+function moneyLabel(value: string | number | null | undefined, currency = "EUR", language: UiLanguage = "fr"): string {
   const numeric = typeof value === "number" ? value : Number(String(value ?? "").trim().replace(",", "."));
   if (!Number.isFinite(numeric)) {
     return "-";
   }
   try {
-    return new Intl.NumberFormat("fr-FR", {
+    return new Intl.NumberFormat(localeForUiLanguage(language), {
       style: "currency",
       currency: (currency || "EUR").toUpperCase(),
       minimumFractionDigits: 2,
@@ -1241,7 +1241,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                               {item.mode === "override" ? t("admin.quote_config.typeform_mode_override") : t("admin.quote_config.typeform_mode_fallback")}
                                             </span>
                                           </td>
-                                          <td>{moneyLabel(item.amountTtc)}</td>
+                                          <td>{moneyLabel(item.amountTtc, "EUR", language)}</td>
                                           <td>{item.conditionsLabel}</td>
                                         </tr>
                                       ))
@@ -1282,7 +1282,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                             <td>{locationName}</td>
                                             <td>{pricingUnitLabel(price.pricing_unit, language)}</td>
                                             <td>{sourceLabel}</td>
-                                            <td>{moneyLabel(price.unit_price_ttc, price.currency)}</td>
+                                            <td>{moneyLabel(price.unit_price_ttc, price.currency, language)}</td>
                                           </tr>
                                         );
                                       })
@@ -1322,7 +1322,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                               {fallback.label}
                                             </span>
                                           </td>
-                                          <td>{fallback.amountTtc === null ? "-" : moneyLabel(fallback.amountTtc)}</td>
+                                          <td>{fallback.amountTtc === null ? "-" : moneyLabel(fallback.amountTtc, "EUR", language)}</td>
                                           <td>
                                             {fallback.amountTtc === null ? (
                                               <span className="muted">{t("admin.quote_config.activity_price_unavailable")}</span>

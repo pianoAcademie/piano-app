@@ -63,7 +63,7 @@ import SectionCard from "../../components/ui-client/section-card";
 import TransactionRow from "../../components/ui-client/transaction-row";
 import UpcomingLessonRow from "../../components/ui-client/upcoming-lesson-row";
 import UrgentPayCard from "../../components/ui-client/urgent-pay-card";
-import { normalizeUiLanguage, resolveAuthErrorMessage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
+import { localeForUiLanguage, normalizeUiLanguage, resolveAuthErrorMessage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type AgendaView = "agenda" | "week" | "day";
@@ -494,10 +494,10 @@ function compactId(value: string): string {
   return `${value.slice(0, 8)}…${value.slice(-4)}`;
 }
 
-function paymentMethodLabel(value: string | null | undefined): string {
+function paymentMethodLabel(value: string | null | undefined, language: UiLanguage = "fr"): string {
   const normalized = normalizeStatus(value || "");
   if (!normalized) {
-    return "Mode non renseigne";
+    return language === "en" ? "Not specified" : "Mode non renseigne";
   }
   if (normalized.includes("CARD")) {
     return "CB ••••";
@@ -509,23 +509,23 @@ function paymentMethodLabel(value: string | null | undefined): string {
     return "PayPal";
   }
   if (normalized.includes("CASH")) {
-    return "Especes";
+    return uiText(language, "admin.client_detail.billing.cash");
   }
   if (normalized.includes("TRANSFER")) {
-    return "Virement";
+    return uiText(language, "admin.client_detail.billing.bank_transfer");
   }
   if (normalized.includes("CHECK")) {
-    return "Cheque";
+    return uiText(language, "admin.client_detail.billing.check");
   }
   return normalized;
 }
 
-function formatDate(value: string | null | undefined): string {
+function formatDate(value: string | null | undefined, language: UiLanguage = "fr"): string {
   const parsed = safeDate(value);
   if (!parsed) {
     return "-";
   }
-  return parsed.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
+  return parsed.toLocaleDateString(localeForUiLanguage(language), { day: "2-digit", month: "short", year: "numeric" });
 }
 
 function invoicePeriodSubline(label: string | null | undefined, language: UiLanguage = "fr"): string {
@@ -535,27 +535,27 @@ function invoicePeriodSubline(label: string | null | undefined, language: UiLang
     return value;
   }
   const [, startDate, endDate] = match;
-  const periodLabel = endDate ? `${formatDate(startDate)} - ${formatDate(endDate)}` : formatDate(startDate);
+  const periodLabel = endDate ? `${formatDate(startDate, language)} - ${formatDate(endDate, language)}` : formatDate(startDate, language);
   return `${uiText(language, "client.billed_period")}: ${periodLabel}`;
 }
 
-function formatDateTime(value: string | null | undefined): string {
+function formatDateTime(value: string | null | undefined, language: UiLanguage = "fr"): string {
   const parsed = safeDate(value);
   if (!parsed) {
     return "-";
   }
-  return parsed.toLocaleString("fr-FR", {
+  return parsed.toLocaleString(localeForUiLanguage(language), {
     dateStyle: "medium",
     timeStyle: "short",
   });
 }
 
-function formatDateInTimezone(value: string | null | undefined, timezone: string): string {
+function formatDateInTimezone(value: string | null | undefined, timezone: string, language: UiLanguage = "fr"): string {
   const parsed = safeDate(value);
   if (!parsed) {
     return "-";
   }
-  return parsed.toLocaleDateString("fr-FR", {
+  return parsed.toLocaleDateString(localeForUiLanguage(language), {
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -563,49 +563,49 @@ function formatDateInTimezone(value: string | null | undefined, timezone: string
   });
 }
 
-function formatDateTimeInTimezone(value: string | null | undefined, timezone: string): string {
+function formatDateTimeInTimezone(value: string | null | undefined, timezone: string, language: UiLanguage = "fr"): string {
   const parsed = safeDate(value);
   if (!parsed) {
     return "-";
   }
-  return parsed.toLocaleString("fr-FR", {
+  return parsed.toLocaleString(localeForUiLanguage(language), {
     dateStyle: "medium",
     timeStyle: "short",
     timeZone: resolveTimezone(timezone),
   });
 }
 
-function formatTimeInTimezone(value: string | null | undefined, timezone: string): string {
+function formatTimeInTimezone(value: string | null | undefined, timezone: string, language: UiLanguage = "fr"): string {
   const parsed = safeDate(value);
   if (!parsed) {
     return "--:--";
   }
-  return parsed.toLocaleTimeString("fr-FR", {
+  return parsed.toLocaleTimeString(localeForUiLanguage(language), {
     hour: "2-digit",
     minute: "2-digit",
     timeZone: resolveTimezone(timezone),
   });
 }
 
-function formatTime(value: string | null | undefined): string {
+function formatTime(value: string | null | undefined, language: UiLanguage = "fr"): string {
   const parsed = safeDate(value);
   if (!parsed) {
     return "--:--";
   }
-  return parsed.toLocaleTimeString("fr-FR", {
+  return parsed.toLocaleTimeString(localeForUiLanguage(language), {
     hour: "2-digit",
     minute: "2-digit",
   });
 }
 
-function toMoney(amountRaw: string | null | undefined, currencyRaw: string | null | undefined): string {
+function toMoney(amountRaw: string | null | undefined, currencyRaw: string | null | undefined, language: UiLanguage = "fr"): string {
   const amount = Number(amountRaw ?? "0");
   const currency = (currencyRaw || "EUR").toUpperCase();
   if (!Number.isFinite(amount)) {
     return "-";
   }
   try {
-    return new Intl.NumberFormat("fr-FR", {
+    return new Intl.NumberFormat(localeForUiLanguage(language), {
       style: "currency",
       currency,
       minimumFractionDigits: 2,
@@ -771,10 +771,10 @@ function todayKeyInTimezone(timezone: string): string {
   return dateKeyInTimezone(new Date().toISOString(), resolveTimezone(timezone));
 }
 
-function agendaDayLabel(dayKey: string, view: AgendaView): string {
+function agendaDayLabel(dayKey: string, view: AgendaView, language: UiLanguage): string {
   const date = keyToUtcDate(dayKey);
   if (view === "day") {
-    return new Intl.DateTimeFormat("fr-FR", {
+    return new Intl.DateTimeFormat(localeForUiLanguage(language), {
       weekday: "long",
       day: "2-digit",
       month: "long",
@@ -783,7 +783,7 @@ function agendaDayLabel(dayKey: string, view: AgendaView): string {
     }).format(date);
   }
 
-  return new Intl.DateTimeFormat("fr-FR", {
+  return new Intl.DateTimeFormat(localeForUiLanguage(language), {
     weekday: "short",
     day: "2-digit",
     month: "short",
@@ -791,7 +791,7 @@ function agendaDayLabel(dayKey: string, view: AgendaView): string {
   }).format(date);
 }
 
-function buildAgendaRange(view: AgendaView, focusDayKey: string): AgendaRange {
+function buildAgendaRange(view: AgendaView, focusDayKey: string, language: UiLanguage): AgendaRange {
   const focusDate = keyToUtcDate(focusDayKey);
 
   if (view === "day") {
@@ -803,7 +803,7 @@ function buildAgendaRange(view: AgendaView, focusDayKey: string): AgendaRange {
       from,
       to,
       dayKeys: [focusDayKey],
-      title: new Intl.DateTimeFormat("fr-FR", {
+      title: new Intl.DateTimeFormat(localeForUiLanguage(language), {
         weekday: "long",
         day: "2-digit",
         month: "long",
@@ -829,12 +829,12 @@ function buildAgendaRange(view: AgendaView, focusDayKey: string): AgendaRange {
       from,
       to,
       dayKeys,
-      title: `${new Intl.DateTimeFormat("fr-FR", {
+      title: `${new Intl.DateTimeFormat(localeForUiLanguage(language), {
         day: "2-digit",
         month: "short",
         year: "numeric",
         timeZone: "UTC",
-      }).format(from)} - ${new Intl.DateTimeFormat("fr-FR", {
+      }).format(from)} - ${new Intl.DateTimeFormat(localeForUiLanguage(language), {
         day: "2-digit",
         month: "short",
         year: "numeric",
@@ -861,7 +861,7 @@ function buildAgendaRange(view: AgendaView, focusDayKey: string): AgendaRange {
     from,
     to,
     dayKeys,
-    title: new Intl.DateTimeFormat("fr-FR", {
+    title: new Intl.DateTimeFormat(localeForUiLanguage(language), {
       month: "long",
       year: "numeric",
       timeZone: "UTC",
@@ -1079,7 +1079,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   }
   const agendaDate = isDateKey(inputAgendaDate) ? inputAgendaDate : autoAgendaDate;
   const agendaView: AgendaView = tab === "planning" ? "week" : requestedAgendaView;
-  const agendaRange = buildAgendaRange(agendaView, agendaDate);
+  const agendaRange = buildAgendaRange(agendaView, agendaDate, language);
 
   const reservationScope = readParam(searchParams, "reservation_scope") || "CURRENT";
   const reservationStatusFilter = readParam(searchParams, "reservation_status");
@@ -1694,7 +1694,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
   const agendaDays = agendaRange.dayKeys.map((key) => ({
     key,
-    label: agendaDayLabel(key, agendaView),
+    label: agendaDayLabel(key, agendaView, language),
     sessions: sessionsByDay.get(key) ?? [],
   }));
   const planningStatusLabel = (code: PlanningStatusCode): string => {
@@ -2261,7 +2261,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const reservationOptionSupportLabel = (option: ClientSessionReservationMemberOptionOut): string | null => {
     if (option.action_code === "FINALIZE_PAYMENT" && option.direct_payment_amount_ttc) {
       return t("client.pending_payment_support", {
-        amount: toMoney(option.direct_payment_amount_ttc, option.direct_payment_currency),
+        amount: toMoney(option.direct_payment_amount_ttc, option.direct_payment_currency, language),
       });
     }
     if (option.action_code === "BUY_FORMULA_OR_PAY_UNIT") {
@@ -2273,7 +2273,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       if (option.direct_payment_amount_ttc) {
         parts.push(
           t("client.unit_payment_support", {
-            amount: toMoney(option.direct_payment_amount_ttc, option.direct_payment_currency),
+            amount: toMoney(option.direct_payment_amount_ttc, option.direct_payment_currency, language),
           }),
         );
       }
@@ -2284,7 +2284,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     }
     if (option.action_code === "PAY_UNIT" && option.direct_payment_amount_ttc) {
       return t("client.unit_payment_support", {
-        amount: toMoney(option.direct_payment_amount_ttc, option.direct_payment_currency),
+        amount: toMoney(option.direct_payment_amount_ttc, option.direct_payment_currency, language),
       });
     }
     if (option.action_code === "BOOK_WITH_CREDIT") {
@@ -2676,7 +2676,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   {homeDueTotal > 0 ? (
                     <UrgentPayCard
                       titleLabel={t("client.amount_due")}
-                      amountLabel={toMoney(String(homeDueTotal), me.preferred_currency)}
+                      amountLabel={toMoney(String(homeDueTotal), me.preferred_currency, language)}
                       countLabel={t("client.invoice_count", { count: homeDueInvoices.length })}
                     >
                       <div className="client-home-due-list">
@@ -2688,7 +2688,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               key={`home-due-${invoice.id}`}
                               title={compactId(invoice.invoice_number)}
                               statusBadge={<span className={`status-pill ${statusClass(invoice.status)}`}>{financeStatusLabel(invoice.status, language)}</span>}
-                              meta={`${toMoney(invoice.total_incl_vat, invoice.currency)} · ${formatDate(invoice.issued_at)}`}
+                              meta={`${toMoney(invoice.total_incl_vat, invoice.currency, language)} · ${formatDate(invoice.issued_at, language)}`}
                               subline={invoicePeriodSubline(invoice.label, language)}
                               actions={
                                 <div className="row client-home-due-actions">
@@ -2721,12 +2721,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             {homePrimaryPayUrl ? <input type="hidden" name="payment_url" value={homePrimaryPayUrl} /> : null}
                             <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "home" })} />
                             <button type="submit" className="client-pay-cta">
-                              {t("common.pay")} {toMoney(String(homeDueTotal), me.preferred_currency)}
+                              {t("common.pay")} {toMoney(String(homeDueTotal), me.preferred_currency, language)}
                             </button>
                           </form>
                         ) : (
                           <a className="client-pay-cta" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions", finance_status: "TO_PAY" })}>
-                            {t("common.pay")} {toMoney(String(homeDueTotal), me.preferred_currency)}
+                            {t("common.pay")} {toMoney(String(homeDueTotal), me.preferred_currency, language)}
                           </a>
                         )}
                         <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", finance_status: "TO_PAY" })}>
@@ -2744,9 +2744,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         {upcomingBookings14.slice(0, 3).map((booking) => (
                           <UpcomingLessonRow
                             key={`home-upcoming-${booking.id}`}
-                            timeLabel={formatTimeInTimezone(booking.session.start_at_utc, timezone)}
+                            timeLabel={formatTimeInTimezone(booking.session.start_at_utc, timezone, language)}
                             title={booking.session.title}
-                            subtitle={`${formatDateInTimezone(booking.session.start_at_utc, timezone)} · ${booking.owner_display_name} · ${statusLabel(booking.status, language)}`}
+                            subtitle={`${formatDateInTimezone(booking.session.start_at_utc, timezone, language)} · ${booking.owner_display_name} · ${statusLabel(booking.status, language)}`}
                             action={
                               <a
                                 className="mode-link"
@@ -2783,11 +2783,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           const linkedPlan = plans.find((plan) => plan.id === sub.plan.id);
                           const detailLine = isPack
                             ? t("client.remaining_credits", { remaining: remainingCredits, initial: initialCredits || "?" })
-                            : `${toMoney(sub.plan.kind === "FORFAIT" ? "0" : planDisplayPrice(linkedPlan), me.preferred_currency)} ${language === "en" ? "/ period" : "/ periode"} · ${paymentMethodLabel(sub.billing_method_code)}`;
+                            : `${toMoney(sub.plan.kind === "FORFAIT" ? "0" : planDisplayPrice(linkedPlan), me.preferred_currency, language)} ${language === "en" ? "/ period" : "/ periode"} · ${paymentMethodLabel(sub.billing_method_code, language)}`;
                           const expiryLine = sub.ends_at
-                            ? t("client.expiration", { date: formatDate(sub.ends_at) })
+                            ? t("client.expiration", { date: formatDate(sub.ends_at, language) })
                             : sub.next_payment_at
-                              ? t("client.next_debit", { date: formatDate(sub.next_payment_at) })
+                              ? t("client.next_debit", { date: formatDate(sub.next_payment_at, language) })
                               : t("client.no_end_date");
                           return (
                             <PlanCard
@@ -2817,7 +2817,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             key={`home-last-invoice-${invoice.id}`}
                             title={compactId(invoice.invoice_number)}
                             statusBadge={<span className={`status-pill ${statusClass(invoice.status)}`}>{financeStatusLabel(invoice.status, language)}</span>}
-                            meta={`${toMoney(invoice.total_incl_vat, invoice.currency)} · ${formatDate(invoice.issued_at)} · ${invoice.owner_display_name}`}
+                            meta={`${toMoney(invoice.total_incl_vat, invoice.currency, language)} · ${formatDate(invoice.issued_at, language)} · ${invoice.owner_display_name}`}
                             subline={invoicePeriodSubline(invoice.label, language)}
                             actions={
                               <div className="row client-home-due-actions">
@@ -2870,9 +2870,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           {rows.slice(0, 3).map((booking) => (
                             <UpcomingLessonRow
                               key={`home-booking-group-${booking.id}`}
-                              timeLabel={formatTimeInTimezone(booking.session.start_at_utc, timezone)}
+                              timeLabel={formatTimeInTimezone(booking.session.start_at_utc, timezone, language)}
                               title={booking.session.title}
-                              subtitle={`${formatDateInTimezone(booking.session.start_at_utc, timezone)} · ${statusLabel(booking.status, language)}`}
+                              subtitle={`${formatDateInTimezone(booking.session.start_at_utc, timezone, language)} · ${statusLabel(booking.status, language)}`}
                               action={
                                 <a
                                   className="mode-link"
@@ -2898,9 +2898,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     {homeCalendarRows.slice(0, 6).map((booking) => (
                       <UpcomingLessonRow
                         key={`home-booking-${booking.id}`}
-                        timeLabel={formatTimeInTimezone(booking.session.start_at_utc, timezone)}
+                        timeLabel={formatTimeInTimezone(booking.session.start_at_utc, timezone, language)}
                         title={booking.session.title}
-                        subtitle={`${formatDateInTimezone(booking.session.start_at_utc, timezone)} · ${booking.owner_display_name} · ${statusLabel(booking.status, language)}`}
+                        subtitle={`${formatDateInTimezone(booking.session.start_at_utc, timezone, language)} · ${booking.owner_display_name} · ${statusLabel(booking.status, language)}`}
                         action={
                           <a
                             className="mode-link"
@@ -2929,7 +2929,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     {newsRows.map((message) => (
                       <article key={`home-news-${message.id}`} className="item">
                         <strong>{message.subject_preview || t("client.message_fallback")}</strong>
-                        <p className="muted">{formatDateTime(message.sent_at || message.scheduled_for_utc)} · {message.channel}</p>
+                        <p className="muted">{formatDateTime(message.sent_at || message.scheduled_for_utc, language)} · {message.channel}</p>
                       </article>
                     ))}
                   </div>
@@ -2944,12 +2944,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       {homePrimaryPayUrl ? <input type="hidden" name="payment_url" value={homePrimaryPayUrl} /> : null}
                       <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "home" })} />
                       <button type="submit" className="client-pay-cta">
-                        {t("common.pay")} {toMoney(String(homeDueTotal), me.preferred_currency)}
+                        {t("common.pay")} {toMoney(String(homeDueTotal), me.preferred_currency, language)}
                       </button>
                     </form>
                   ) : (
                     <a className="client-pay-cta" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "transactions", finance_status: "TO_PAY" })}>
-                      {t("common.pay")} {toMoney(String(homeDueTotal), me.preferred_currency)}
+                      {t("common.pay")} {toMoney(String(homeDueTotal), me.preferred_currency, language)}
                     </a>
                   )}
                 </div>
@@ -3266,8 +3266,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   {!compactAgendaCard ? (
                                     <div className="client-session-timebox">
                                       <span aria-hidden="true">🕒</span>
-                                      <strong>{formatTimeInTimezone(session.start_at_utc, timezone)}</strong>
-                                      <small>{formatTimeInTimezone(session.end_at_utc, timezone)}</small>
+                                      <strong>{formatTimeInTimezone(session.start_at_utc, timezone, language)}</strong>
+                                      <small>{formatTimeInTimezone(session.end_at_utc, timezone, language)}</small>
                                     </div>
                                   ) : null}
 
@@ -3280,7 +3280,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                       <h3 className="event-title">{session.title}</h3>
                                       <span className="client-event-color" style={{ backgroundColor: accentColor }} aria-hidden="true" />
                                     </div>
-                                    {compactAgendaCard ? <small className="event-meta">🕒 {formatTimeInTimezone(session.start_at_utc, timezone)} - {formatTimeInTimezone(session.end_at_utc, timezone)}</small> : null}
+                                    {compactAgendaCard ? <small className="event-meta">🕒 {formatTimeInTimezone(session.start_at_utc, timezone, language)} - {formatTimeInTimezone(session.end_at_utc, timezone, language)}</small> : null}
                                     <small className="event-meta">🎵 {session.course_type.name}</small>
                                     <div className="row">
                                       <span className="occ-badge">{session.booked_count}/{session.capacity_max}</span>
@@ -3332,7 +3332,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </a>
                       <h2>{selectedSession.title}</h2>
                       <p className="muted">
-                        {formatDateTimeInTimezone(selectedSession.start_at_utc, timezone)} - {formatTimeInTimezone(selectedSession.end_at_utc, timezone)}
+                        {formatDateTimeInTimezone(selectedSession.start_at_utc, timezone, language)} - {formatTimeInTimezone(selectedSession.end_at_utc, timezone, language)}
                       </p>
                       <div className="row">
                         <span className="occ-badge">
@@ -3546,7 +3546,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   {`${t("client.unit_purchase")} · ${toMoney(
                                     selectedSessionDirectPaymentAmount,
                                     selectedSessionDirectPaymentCurrency,
-                                  )}`}
+                                   language)}`}
                                 </small>
                               </div>
                               <form action={submitPublicSessionCheckoutAction} className="client-session-formula-action">
@@ -3558,7 +3558,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   {`${t("client.pay_unit")} · ${toMoney(
                                     selectedSessionDirectPaymentAmount,
                                     selectedSessionDirectPaymentCurrency,
-                                  )}`}
+                                   language)}`}
                                 </button>
                               </form>
                             </article>
@@ -3586,7 +3586,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 <input type="hidden" name="planning_return_to" value={selectedSessionReturnTo} />
                                 <button type="submit" className="client-session-secondary-button client-session-choice-button">
                                   {formula.price_ttc
-                                    ? `${t("client.buy_for_member", { member: selectedReservationMemberOption.member_display_name })} · ${toMoney(formula.price_ttc, formula.currency)}`
+                                    ? `${t("client.buy_for_member", { member: selectedReservationMemberOption.member_display_name })} · ${toMoney(formula.price_ttc, formula.currency, language)}`
                                     : t("client.buy_plan_for_member", { member: selectedReservationMemberOption.member_display_name })}
                                 </button>
                               </form>
@@ -3628,7 +3628,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                       {`${t("client.unit_purchase")} · ${toMoney(
                                         selectedSessionDirectPaymentAmount,
                                         selectedSessionDirectPaymentCurrency,
-                                      )}`}
+                                       language)}`}
                                     </small>
                                   </div>
                                   <form action={submitPublicSessionCheckoutAction} className="client-session-formula-action">
@@ -3640,7 +3640,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                       {`${t("client.pay_unit")} · ${toMoney(
                                         selectedSessionDirectPaymentAmount,
                                         selectedSessionDirectPaymentCurrency,
-                                      )}`}
+                                       language)}`}
                                     </button>
                                   </form>
                                 </article>
@@ -3668,7 +3668,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     <input type="hidden" name="planning_return_to" value={selectedSessionReturnTo} />
                                     <button type="submit" className="client-session-secondary-button client-session-choice-button">
                                       {formula.price_ttc
-                                        ? `${t("client.buy_for_member", { member: selectedReservationMemberOption.member_display_name })} · ${toMoney(formula.price_ttc, formula.currency)}`
+                                        ? `${t("client.buy_for_member", { member: selectedReservationMemberOption.member_display_name })} · ${toMoney(formula.price_ttc, formula.currency, language)}`
                                         : t("client.buy_plan_for_member", { member: selectedReservationMemberOption.member_display_name })}
                                     </button>
                                   </form>
@@ -3723,7 +3723,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 ? ` · ${toMoney(
                                     selectedSessionDirectPaymentAmount,
                                     selectedSessionDirectPaymentCurrency,
-                                  )}`
+                                   language)}`
                                 : ""}
                             </button>
                           </form>
@@ -3740,7 +3740,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               {`${t("client.pay_unit")} · ${toMoney(
                                 selectedSessionDirectPaymentAmount,
                                 selectedSessionDirectPaymentCurrency,
-                              )}`}
+                               language)}`}
                             </button>
                           </form>
                         ) : null}
@@ -4088,8 +4088,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <tr key={booking.id}>
                             <td>{booking.owner_display_name}</td>
                             <td>{booking.session.title}</td>
-                            <td>{formatDateTimeInTimezone(booking.session.start_at_utc, timezone)}</td>
-                            <td>{toMoney(booking.total_incl_vat_snapshot, booking.currency_snapshot)}</td>
+                            <td>{formatDateTimeInTimezone(booking.session.start_at_utc, timezone, language)}</td>
+                            <td>{toMoney(booking.total_incl_vat_snapshot, booking.currency_snapshot, language)}</td>
                             <td>
                               <span className={`status-pill ${statusClass(booking.status)}`}>{statusLabel(booking.status, language)}</span>
                             </td>
@@ -4122,9 +4122,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <span className={`status-pill ${statusClass(booking.status)}`}>{statusLabel(booking.status, language)}</span>
                         </div>
                         <p className="muted">{booking.session.title}</p>
-                        <p className="muted">{formatDateTimeInTimezone(booking.session.start_at_utc, timezone)}</p>
+                        <p className="muted">{formatDateTimeInTimezone(booking.session.start_at_utc, timezone, language)}</p>
                         <div className="row spread">
-                          <strong>{toMoney(booking.total_incl_vat_snapshot, booking.currency_snapshot)}</strong>
+                          <strong>{toMoney(booking.total_incl_vat_snapshot, booking.currency_snapshot, language)}</strong>
                           {canCancel ? (
                             <form action={cancelBookingAction}>
                               <input type="hidden" name="booking_id" value={booking.id} />
@@ -4187,7 +4187,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </p>
                     </div>
                     <div className="client-offers-confirm-price">
-                      {toMoney(planDisplayPrice(confirmPlan), confirmPlan.currency_code ?? me.preferred_currency)}
+                      {toMoney(planDisplayPrice(confirmPlan), confirmPlan.currency_code ?? me.preferred_currency, language)}
                     </div>
                   </div>
                   <div className="client-offers-confirm-summary">
@@ -4281,11 +4281,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             </>
                           ) : (
                             <p className="muted">
-                              {toMoney(sub.plan.kind === "FORFAIT" ? "0" : planPrice, me.preferred_currency)} {t("client.per_month_suffix")} · {paymentMethodLabel(sub.billing_method_code)}
+                              {toMoney(sub.plan.kind === "FORFAIT" ? "0" : planPrice, me.preferred_currency, language)} {t("client.per_month_suffix")} · {paymentMethodLabel(sub.billing_method_code, language)}
                             </p>
                           )}
                           <p className="muted">
-                            {sub.ends_at ? t("client.expiration", { date: formatDate(sub.ends_at) }) : sub.next_payment_at ? t("client.next_debit", { date: formatDate(sub.next_payment_at) }) : t("client.renewal_in_progress")}
+                            {sub.ends_at ? t("client.expiration", { date: formatDate(sub.ends_at, language) }) : sub.next_payment_at ? t("client.next_debit", { date: formatDate(sub.next_payment_at, language) }) : t("client.renewal_in_progress")}
                           </p>
                         </article>
                       );
@@ -4322,13 +4322,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             ? "0"
                             : planDisplayPrice(plans.find((plan) => plan.id === selectedOfferSubscription.plan.id)),
                           me.preferred_currency,
-                        )}{" "}
+                         language)}{" "}
                         {language === "en" ? "/ period" : "/ periode"}
                       </p>
                     </article>
                     <article className="item">
                       <h4>{t("client.payment_method")}</h4>
-                      <p className="muted">{paymentMethodLabel(selectedOfferSubscription.billing_method_code)}</p>
+                      <p className="muted">{paymentMethodLabel(selectedOfferSubscription.billing_method_code, language)}</p>
                     </article>
                     <article className="item">
                       <h4>{t("client.access_restrictions")}</h4>
@@ -4358,7 +4358,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             <ListRow
                               key={`offer-invoice-${invoice.id}`}
                               title={invoice.invoice_number}
-                              subtitle={`${formatDate(invoice.issued_at)} · ${toMoney(invoice.total_incl_vat, invoice.currency)}`}
+                              subtitle={`${formatDate(invoice.issued_at, language)} · ${toMoney(invoice.total_incl_vat, invoice.currency, language)}`}
                               right={
                                 <div className="row">
                                   <a
@@ -4400,7 +4400,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               ? t("client.plan_actual_billing_label")
                             : t("client.credit_line", { remaining: sub.credits_remaining ?? 0, initial: sub.credits_initial ?? sub.credits_remaining ?? 0 })}
                         </small>
-                        <small className="muted">{t("client.start_date_label", { date: formatDate(sub.started_at) })} {sub.ends_at ? `| ${t("client.end_date_label", { date: formatDate(sub.ends_at) })}` : ""}</small>
+                        <small className="muted">{t("client.start_date_label", { date: formatDate(sub.started_at, language) })} {sub.ends_at ? `| ${t("client.end_date_label", { date: formatDate(sub.ends_at, language) })}` : ""}</small>
                       </article>
                     ))}
                     {selectedOwnerSubscriptions.length === 0 ? (
@@ -4440,7 +4440,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           {plan.kind === "FORFAIT"
                             ? t("client.actual_billing_based_on_schedule")
                             : t("client.credit_line", { remaining: plan.credits_count ?? t("client.unlimited"), initial: plan.credits_count ?? t("client.unlimited") })}{" "}
-                          | {t("client.price")}: {toMoney(planDisplayPrice(plan), plan.currency_code ?? me.preferred_currency)}
+                          | {t("client.price")}: {toMoney(planDisplayPrice(plan), plan.currency_code ?? me.preferred_currency, language)}
                         </p>
                       </div>
                       <form action={purchasePlanAction}>
@@ -4470,27 +4470,27 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         {primaryDuePaymentUrl ? <input type="hidden" name="payment_url" value={primaryDuePaymentUrl} /> : null}
                         <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", finance_status: "TO_PAY" })} />
                         <button type="submit" className="client-pay-cta">
-                          {t("common.pay")} {toMoney(String(financeDueTotal), me.preferred_currency)}
+                          {t("common.pay")} {toMoney(String(financeDueTotal), me.preferred_currency, language)}
                         </button>
                       </form>
                     ) : (
                       <a className="client-pay-cta" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", finance_status: "TO_PAY" })}>
-                        {t("common.pay")} {toMoney(String(financeDueTotal), me.preferred_currency)}
+                        {t("common.pay")} {toMoney(String(financeDueTotal), me.preferred_currency, language)}
                       </a>
                     )
                   ) : null
                 }
               >
                 <section className="client-kpi-grid">
-                  <KPIBlock label={t("client.amount_due")} value={toMoney(String(financeDueTotal), me.preferred_currency)} helper={t("client.pending_invoices")} />
-                  <KPIBlock label={t("client.paid_total")} value={toMoney(String(paidTotal), me.preferred_currency)} helper={t("client.confirmed_payments")} />
+                  <KPIBlock label={t("client.amount_due")} value={toMoney(String(financeDueTotal), me.preferred_currency, language)} helper={t("client.pending_invoices")} />
+                  <KPIBlock label={t("client.paid_total")} value={toMoney(String(paidTotal), me.preferred_currency, language)} helper={t("client.confirmed_payments")} />
                   <KPIBlock
                     label={t("client.pending_transactions")}
-                    value={toMoney(String(pendingTransactionsTotal), me.preferred_currency)}
+                    value={toMoney(String(pendingTransactionsTotal), me.preferred_currency, language)}
                     helper={t("client.unsettled_movements")}
                   />
                 </section>
-                <p className="muted">{t("client.accounts_as_of", { date: formatDate(financeAsOfDateKey) })}</p>
+                <p className="muted">{t("client.accounts_as_of", { date: formatDate(financeAsOfDateKey, language) })}</p>
 
                 <div className="client-finance-toolbar">
                   <div className="client-finance-tab-scroll">
@@ -4620,7 +4620,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   )}
                   {financeStatusFilter !== "ALL" ? <span className="badge">{t("client.status_filter_badge", { status: visibleFinanceStatusOptions.find((item) => item.value === financeStatusFilter)?.label ?? financeStatusFilter })}</span> : null}
                   {financePeriodFilter !== "ALL" ? <span className="badge">{t("client.period_filter_badge", { period: financePeriodLabel(financePeriodFilter, language) })}</span> : null}
-                  <span className="badge">{t("client.as_of_filter_badge", { date: formatDate(financeAsOfDateKey) })}</span>
+                  <span className="badge">{t("client.as_of_filter_badge", { date: formatDate(financeAsOfDateKey, language) })}</span>
                   {financeView === "transactions" && financeSourceFilter !== "ALL" ? <span className="badge">{t("client.type_filter_badge", { type: sourceLabel(financeSourceFilter, language) })}</span> : null}
                 </FilterChipsBar>
               </SectionCard>
@@ -4643,8 +4643,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             key={`tx-${row.id}`}
                             typeBadge={<span className={`status-pill ${isBilled ? "status-ok" : "status-off"}`}>{isBilled ? t("client.billed") : t("client.unbilled")}</span>}
                             label={row.label}
-                            meta={`${formatDateTime(row.occurred_at)} · ${row.owner_display_name} · ${sourceLabel(row.source, language)}`}
-                            amount={toMoney(row.total_incl_vat, row.currency)}
+                            meta={`${formatDateTime(row.occurred_at, language)} · ${row.owner_display_name} · ${sourceLabel(row.source, language)}`}
+                            amount={toMoney(row.total_incl_vat, row.currency, language)}
                             statusBadge={<span className={`status-pill ${statusClass(row.status)}`}>{financeStatusLabel(row.status, language)}</span>}
                             actions={
                               <div className="row client-finance-card-actions">
@@ -4689,7 +4689,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             key={`inv-${row.id}`}
                             title={compactId(row.invoice_number)}
                             statusBadge={<span className={`status-pill ${statusClass(row.status)}`}>{financeStatusLabel(row.status, language)}</span>}
-                            meta={`${toMoney(row.total_incl_vat, row.currency)} · ${formatDate(row.issued_at)} · ${row.owner_display_name}`}
+                            meta={`${toMoney(row.total_incl_vat, row.currency, language)} · ${formatDate(row.issued_at, language)} · ${row.owner_display_name}`}
                             subline={invoicePeriodSubline(row.label, language)}
                             actions={
                               <div className="row client-finance-card-actions">
@@ -4731,10 +4731,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </div>
                       <p className="muted">{invoicePeriodSubline(selectedInvoice.label, language)}</p>
                       <p className="muted">
-                        {t("common.date")}: {formatDateTime(selectedInvoice.issued_at)} · {t("common.member")}: {selectedInvoice.owner_display_name}
+                        {t("common.date")}: {formatDateTime(selectedInvoice.issued_at, language)} · {t("common.member")}: {selectedInvoice.owner_display_name}
                       </p>
                       <p>
-                        <strong>{toMoney(selectedInvoice.total_incl_vat, selectedInvoice.currency)}</strong>
+                        <strong>{toMoney(selectedInvoice.total_incl_vat, selectedInvoice.currency, language)}</strong>
                       </p>
                       <div className="row client-invoice-viewer-actions">
                         <CopyIdButton value={selectedInvoice.invoice_number} label={t("client.copy_number")} />
@@ -4790,12 +4790,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       {primaryDuePaymentUrl ? <input type="hidden" name="payment_url" value={primaryDuePaymentUrl} /> : null}
                       <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", finance_status: "TO_PAY" })} />
                       <button type="submit" className="client-pay-cta">
-                        {t("common.pay")} {toMoney(String(financeDueTotal), me.preferred_currency)}
+                        {t("common.pay")} {toMoney(String(financeDueTotal), me.preferred_currency, language)}
                       </button>
                     </form>
                   ) : (
                     <a className="client-pay-cta" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", finance_status: "TO_PAY" })}>
-                      {t("common.pay")} {toMoney(String(financeDueTotal), me.preferred_currency)}
+                      {t("common.pay")} {toMoney(String(financeDueTotal), me.preferred_currency, language)}
                     </a>
                   )}
                 </div>
@@ -4881,7 +4881,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <tbody>
                       {messageRows.map((msg) => (
                         <tr key={msg.id}>
-                          <td>{formatDateTime(msg.sent_at ?? msg.scheduled_for_utc)}</td>
+                          <td>{formatDateTime(msg.sent_at ?? msg.scheduled_for_utc, language)}</td>
                           <td>{msg.owner_display_name}</td>
                           <td>{msg.channel}</td>
                           <td>{msg.subject_preview}</td>
@@ -4904,7 +4904,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <a key={`${msg.id}-mobile`} href={withUpdatedQuery(rawParams, { tab: "messages", message_id: msg.id })} className="mode-link">
                       <ListRow
                         title={msg.subject_preview || t("client.message_without_subject")}
-                        subtitle={`${formatDateTime(msg.sent_at ?? msg.scheduled_for_utc)} | ${msg.owner_display_name}`}
+                        subtitle={`${formatDateTime(msg.sent_at ?? msg.scheduled_for_utc, language)} | ${msg.owner_display_name}`}
                         right={
                           <div className="stack-xs">
                             <span className="badge">{msg.channel}</span>
@@ -4928,7 +4928,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         </a>
                         <h3>{selectedMessage.subject_preview || t("client.message_without_subject")}</h3>
                         <p className="muted">
-                          {formatDateTime(selectedMessage.sent_at ?? selectedMessage.scheduled_for_utc)} · {selectedMessage.owner_display_name} · {selectedMessage.channel}
+                          {formatDateTime(selectedMessage.sent_at ?? selectedMessage.scheduled_for_utc, language)} · {selectedMessage.owner_display_name} · {selectedMessage.channel}
                         </p>
                       </header>
 
@@ -5060,7 +5060,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <ListRow
                             key={`account-message-${msg.id}`}
                             title={msg.subject_preview || t("client.message_fallback")}
-                            subtitle={`${formatDateTime(msg.sent_at ?? msg.scheduled_for_utc)} · ${msg.owner_display_name}`}
+                            subtitle={`${formatDateTime(msg.sent_at ?? msg.scheduled_for_utc, language)} · ${msg.owner_display_name}`}
                             right={<span className="badge">{msg.channel}</span>}
                           />
                         ))}
@@ -5081,7 +5081,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <ListRow
                             key={`mob-credit-${sub.id}`}
                             title={sub.plan.name}
-                            subtitle={`${t("client.start_date_label", { date: formatDate(sub.started_at) })}${sub.ends_at ? ` | ${t("client.end_date_label", { date: formatDate(sub.ends_at) })}` : ""}`}
+                            subtitle={`${t("client.start_date_label", { date: formatDate(sub.started_at, language) })}${sub.ends_at ? ` | ${t("client.end_date_label", { date: formatDate(sub.ends_at, language) })}` : ""}`}
                             right={`${sub.credits_remaining ?? 0}/${sub.credits_initial ?? sub.credits_remaining ?? 0}`}
                           />
                         ))}
@@ -5169,7 +5169,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <article key={`desktop-account-message-${msg.id}`} className="item row spread">
                         <div>
                           <strong>{msg.subject_preview || t("client.message_fallback")}</strong>
-                          <p className="muted">{formatDateTime(msg.sent_at ?? msg.scheduled_for_utc)} · {msg.owner_display_name}</p>
+                          <p className="muted">{formatDateTime(msg.sent_at ?? msg.scheduled_for_utc, language)} · {msg.owner_display_name}</p>
                         </div>
                         <span className="badge">{msg.channel}</span>
                       </article>
@@ -5195,8 +5195,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           {t("client.credit_line", { remaining: sub.credits_remaining ?? 0, initial: sub.credits_initial ?? sub.credits_remaining ?? 0 })}
                         </p>
                         <p className="muted">
-                          {t("client.start_date_label", { date: formatDate(sub.started_at) })}
-                          {sub.ends_at ? ` | ${t("client.end_date_label", { date: formatDate(sub.ends_at) })}` : ""}
+                          {t("client.start_date_label", { date: formatDate(sub.started_at, language) })}
+                          {sub.ends_at ? ` | ${t("client.end_date_label", { date: formatDate(sub.ends_at, language) })}` : ""}
                         </p>
                       </article>
                     ))}
