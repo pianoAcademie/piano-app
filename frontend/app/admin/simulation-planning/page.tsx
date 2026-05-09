@@ -610,14 +610,14 @@ export default async function AdminSimulationPlanningPage({
                                     <div className="simulation-calendar-slot-fill" aria-hidden="true">
                                       <span style={{ width: `${percent}%` }} />
                                     </div>
-                                    <div className="simulation-calendar-slot-meta">
-                                      {slotStatusBreakdown(slot, language).map((item) => (
-                                        <span className={item.className} key={`${slot.slot_key}-${item.className}`}>
-                                          {item.label} {item.count}
-                                        </span>
-                                      ))}
-                                    </div>
                                     <div className="simulation-calendar-slot-detail" role="tooltip">
+                                      <div className="simulation-calendar-slot-meta simulation-calendar-slot-detail-counts">
+                                        {slotStatusBreakdown(slot, language).map((item) => (
+                                          <span className={item.className} key={`${slot.slot_key}-${item.className}`}>
+                                            {item.label} {item.count}
+                                          </span>
+                                        ))}
+                                      </div>
                                       {peopleSections.length === 0 ? (
                                         <p>
                                           {text(

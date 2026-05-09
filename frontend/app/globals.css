@@ -15875,12 +15875,12 @@ button.danger:focus-visible {
 
 .simulation-calendar-scroll {
   overflow-x: auto;
-  padding-bottom: 4px;
+  padding-bottom: 12px;
 }
 
 .simulation-calendar-grid {
   display: grid;
-  min-width: 760px;
+  min-width: 920px;
   overflow: hidden;
   border: 1px solid #d6e0d3;
   border-radius: 18px;
@@ -15947,11 +15947,12 @@ button.danger:focus-visible {
   position: absolute;
   left: 8px;
   right: 8px;
-  display: grid;
-  gap: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   min-height: 54px;
   overflow: visible;
-  padding: 8px 10px;
+  padding: 7px 10px 6px;
   border: 1px solid transparent;
   border-radius: 14px;
   box-shadow: 0 8px 18px rgba(36, 52, 36, 0.08);
@@ -15989,9 +15990,18 @@ button.danger:focus-visible {
   justify-content: space-between;
   gap: 8px;
   font-size: 0.84rem;
+  min-width: 0;
+}
+
+.simulation-calendar-slot-top strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .simulation-calendar-slot-top span {
+  flex: 0 0 auto;
   font-weight: 800;
 }
 
@@ -15999,12 +16009,17 @@ button.danger:focus-visible {
   margin: 0;
   color: inherit;
   font-size: 0.82rem;
-  line-height: 1.25;
+  line-height: 1.18;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .simulation-calendar-slot-fill {
-  height: 6px;
+  height: 4px;
   overflow: hidden;
+  margin-top: auto;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.65);
 }
@@ -16067,6 +16082,12 @@ button.danger:focus-visible {
   background: #fffdfa;
   color: #302112;
   box-shadow: 0 18px 36px rgba(44, 34, 22, 0.22);
+}
+
+.simulation-calendar-slot-detail-counts {
+  padding-bottom: 8px;
+  border-bottom: 1px solid #eadfcc;
+  opacity: 1;
 }
 
 .simulation-calendar-slot:hover .simulation-calendar-slot-detail,
