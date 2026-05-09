@@ -6,6 +6,7 @@ import {
   generateTypeformDraftQuoteAction,
   reanalyzeTypeformIntakeAction,
   saveTypeformIntakeNormalizedDataAction,
+  saveTypeformIntakeReferralAction,
   saveTypeformIntakeResolutionAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
@@ -135,6 +136,25 @@ type TypeformIntakeDetailOut = {
   preview_quote: TypeformQuotePreviewOut | null;
   related_quote_id: string | null;
   form_config: TypeformFormConfigOut | null;
+  referral: {
+    id: string;
+    declared_referrer_text: string;
+    category: string | null;
+    status: string;
+    match_status: string;
+    referrer_user_id: string | null;
+    reward_amount: string;
+    currency: string;
+    trigger_ratio: string;
+    credit_transaction_id: string | null;
+    match_candidates: Array<{
+      user_id: string;
+      display_name: string;
+      email: string | null;
+      confidence: number;
+      reasons: string[];
+    }>;
+  } | null;
 };
 
 function readParam(params: SearchParams, key: string): string {
@@ -507,6 +527,20 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                     {t("admin.intakes.formula")}
                     <input name="requested_formula_type" defaultValue={normalizedScalarValue(normalizedPayload, "requested_formula_type")} />
                   </label>
+                  <label>
+                    Parrainage declare
+                    <input name="referral_referrer_name" defaultValue={normalizedScalarValue(normalizedPayload, "referral_referrer_name")} />
+                  </label>
+                  <label>
+                    Categorie parrainage
+                    <select name="referral_category" defaultValue={normalizedScalarValue(normalizedPayload, "referral_category")}>
+                      <option value="">-</option>
+                      <option value="PARIS">Paris</option>
+                      <option value="BAR_LE_DUC">Bar-le-Duc</option>
+                      <option value="ONLINE">En ligne</option>
+                      <option value="DOMICILE">Domicile</option>
+                    </select>
+                  </label>
                 </section>
 
                 <section className={styles.editorSection}>
@@ -623,6 +657,69 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
             )}
           </div>
         </article>
+
+        {detail.referral ? (
+          <article className="card span-2">
+            <div className="row spread wrap gap-sm">
+              <div>
+                <h3>Parrainage</h3>
+                <p className="muted">
+                  {detail.referral.declared_referrer_text || "-"} · {detail.referral.category || "-"} · {formatAmount(detail.referral.reward_amount, detail.referral.currency, language)}
+                </p>
+              </div>
+              <span className={`status-pill ${detail.referral.status === "CREDIT_GRANTED" ? "status-ok" : detail.referral.status === "NEEDS_REVIEW" ? "status-warn" : "status-off"}`}>
+                {detail.referral.status}
+              </span>
+            </div>
+            <div className={`${styles.candidateStack} top-gap-sm`}>
+              {detail.referral.referrer_user_id ? (
+                <p className="muted">Parrain valide : {detail.referral.referrer_user_id}</p>
+              ) : detail.referral.match_candidates.length === 0 ? (
+                <p className="muted">Aucune famille trouvee automatiquement.</p>
+              ) : (
+                <form action={saveTypeformIntakeReferralAction} className="grid cols-2 config-form-grid">
+                  <input type="hidden" name="intake_id" value={detail.id} />
+                  <input type="hidden" name="return_to" value={intakeHref} />
+                  <label>
+                    Famille marraine
+                    <select name="referrer_user_id" defaultValue={detail.referral.match_candidates[0]?.user_id || ""}>
+                      {detail.referral.match_candidates.map((candidate) => (
+                        <option key={candidate.user_id} value={candidate.user_id}>
+                          {candidate.display_name} · {candidate.confidence}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="row align-end">
+                    <button type="submit">Valider le parrain</button>
+                  </div>
+                </form>
+              )}
+              {detail.referral.match_candidates.length > 0 ? (
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Famille</th>
+                        <th>Email</th>
+                        <th>Score</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detail.referral.match_candidates.map((candidate) => (
+                        <tr key={`referral-candidate-${candidate.user_id}`}>
+                          <td>{candidate.display_name}</td>
+                          <td>{candidate.email || "-"}</td>
+                          <td>{candidate.confidence}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
+          </article>
+        ) : null}
 
         <article className="card span-2">
           <h3>{t("admin.intakes.response_simplified")}</h3>

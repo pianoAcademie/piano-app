@@ -36,6 +36,8 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/admin/salary-payments", label: { fr: "Paiement des salaires", en: "Salary payments" }, icon: "💶" },
       { href: "/admin/teacher-invoicing", label: { fr: "Facturation professeurs", en: "Teacher invoicing" }, icon: "🧾" },
+      { href: "/admin/check-deposits", label: { fr: "Depots de cheques", en: "Check deposits" }, icon: "🏦" },
+      { href: "/admin/referrals", label: { fr: "Parrainages", en: "Referrals" }, icon: "🤝" },
       { href: "/admin/subscriptions", label: { fr: "Abonnements", en: "Subscriptions" }, icon: "🔁" },
       { href: "/admin/intakes", label: { fr: "Intakes", en: "Intakes" }, icon: "🧠" },
       { href: "/admin/quotes", label: { fr: "Devis", en: "Quotes" }, icon: "📑" },

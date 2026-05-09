@@ -113,6 +113,7 @@ from app.models.product_catalog import (
     StockMovementType,
     ProductTransferStatus,
 )
+from app.models.referral import ReferralReward
 from app.models.quote import (
     CgvVersion,
     PaymentPlan,
@@ -216,6 +217,7 @@ __all__ = [
     "StockMovementSourceType",
     "StockMovementType",
     "ProductTransferStatus",
+    "ReferralReward",
     "Prospect",
     "Quote",
     "QuoteTemplate",

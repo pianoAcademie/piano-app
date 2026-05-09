@@ -144,6 +144,7 @@ class TypeformIntakeListOut(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     blockages: list[str] = Field(default_factory=list)
     related_quote_id: UUID | None = None
+    referral: dict[str, object] | None = None
 
 
 class TypeformIntakeListPageOut(BaseModel):
@@ -174,6 +175,7 @@ class TypeformIntakeDetailOut(BaseModel):
     preview_quote: TypeformQuotePreviewOut | None = None
     related_quote_id: UUID | None = None
     form_config: TypeformFormConfigOut | None = None
+    referral: dict[str, object] | None = None
 
 
 class TypeformIntakeResolutionRequest(BaseModel):
@@ -186,6 +188,10 @@ class TypeformIntakeNormalizedPatchRequest(BaseModel):
 
 class TypeformIntakeAdminStateRequest(BaseModel):
     ignored: bool = False
+
+
+class TypeformIntakeReferralRequest(BaseModel):
+    referrer_user_id: UUID
 
 
 class TypeformWebhookOut(BaseModel):

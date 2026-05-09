@@ -61,6 +61,9 @@ from app.schemas.admin import (
     AdminPaymentMethodsUpdateRequest,
     AdminProductCategoriesOut,
     AdminProductCategoriesUpdateRequest,
+    AdminReferralCategorySettingsOut,
+    AdminReferralProgramSettingsOut,
+    AdminReferralProgramSettingsUpdateRequest,
     AdminPaymentProviderOut,
     AdminPaymentProviderUpdateRequest,
     AdminMessagingChannel,
@@ -137,6 +140,7 @@ from app.services.payment_provider import (
     resolve_secret_values as resolve_payment_secret_values,
     set_setting_value as set_payment_setting_value,
 )
+from app.services.referrals import REFERRAL_CATEGORIES, REFERRAL_PROGRAM_SETTING_KEY, referral_program_config
 from app.services.messaging_templates import (
     create_custom_template,
     delete_custom_template,
@@ -2404,6 +2408,56 @@ def update_admin_product_categories(
     _set_setting(db, PRODUCT_CATEGORIES_SETTING_KEY, "\n".join(categories))
     db.commit()
     return AdminProductCategoriesOut(categories=categories, updated_at=now)
+
+
+@router.get("/config/referral-program", response_model=AdminReferralProgramSettingsOut)
+def get_admin_referral_program(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminReferralProgramSettingsOut:
+    config = referral_program_config(db)
+    return AdminReferralProgramSettingsOut(
+        enabled=config.enabled,
+        currency=config.currency,
+        trigger_ratio=config.trigger_ratio,
+        announcement_email_enabled=config.announcement_email_enabled,
+        credit_email_enabled=config.credit_email_enabled,
+        categories={
+            code: AdminReferralCategorySettingsOut(
+                label=config.category_labels.get(code, code),
+                amount=config.category_amounts.get(code, Decimal("0.00")),
+                active=config.category_active.get(code, True),
+            )
+            for code in REFERRAL_CATEGORIES
+        },
+    )
+
+
+@router.put("/config/referral-program", response_model=AdminReferralProgramSettingsOut)
+def update_admin_referral_program(
+    payload: AdminReferralProgramSettingsUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminReferralProgramSettingsOut:
+    categories: dict[str, dict[str, object]] = {}
+    for code in REFERRAL_CATEGORIES:
+        source = payload.categories.get(code)
+        categories[code] = {
+            "label": (source.label if source is not None and source.label else code),
+            "amount": f"{Decimal(source.amount if source is not None else Decimal('50.00')).quantize(Decimal('0.01')):.2f}",
+            "active": bool(source.active) if source is not None else True,
+        }
+    value = {
+        "enabled": payload.enabled,
+        "currency": payload.currency.strip().upper(),
+        "trigger_ratio": f"{Decimal(payload.trigger_ratio).quantize(Decimal('0.0001')):.4f}",
+        "announcement_email_enabled": payload.announcement_email_enabled,
+        "credit_email_enabled": payload.credit_email_enabled,
+        "categories": categories,
+    }
+    _set_setting(db, REFERRAL_PROGRAM_SETTING_KEY, json.dumps(value, ensure_ascii=True, separators=(",", ":"), sort_keys=True))
+    db.commit()
+    return get_admin_referral_program(db=db)
 
 
 @router.get("/config/payment-provider", response_model=AdminPaymentProviderOut)

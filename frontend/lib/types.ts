@@ -417,6 +417,61 @@ export type AdminClientPaymentOut = {
   locked_by_invoice_number: string | null;
 };
 
+export type AdminCheckDepositPaymentOut = {
+  transaction_id: string;
+  client_id: string;
+  client_name: string;
+  occurred_at: string;
+  label: string;
+  reference: string | null;
+  amount_incl_vat: string;
+  currency: string;
+  status: string;
+  invoice_number: string | null;
+  invoice_note_id: string | null;
+  tracking_note: string | null;
+};
+
+export type AdminCheckDepositBulkUpdateOut = {
+  matched_count: number;
+  updated_count: number;
+  updated_transaction_ids: string[];
+  unmatched_rows: string[];
+};
+
+export type AdminReferralRewardOut = {
+  id: string;
+  typeform_intake_id: string | null;
+  quote_id: string | null;
+  declared_referrer_text: string;
+  category: string | null;
+  status: string;
+  match_status: string;
+  match_confidence: number;
+  referrer_user_id: string | null;
+  referrer_name: string | null;
+  referrer_email: string | null;
+  referred_client_id: string | null;
+  referred_client_name: string | null;
+  referred_student_id: string | null;
+  referred_student_name: string | null;
+  reward_amount: string;
+  currency: string;
+  trigger_ratio: string;
+  invoice_total: string | null;
+  paid_total: string | null;
+  threshold_amount: string | null;
+  payment_progress_ratio: string | null;
+  credit_transaction_id: string | null;
+  trigger_invoice_note_id: string | null;
+  announcement_email_sent_at: string | null;
+  credit_email_sent_at: string | null;
+  validated_at: string | null;
+  credit_granted_at: string | null;
+  updated_at: string;
+  match_candidates: Array<Record<string, unknown>>;
+};
+
 export type AdminClientManualCreditOut = {
   id: string | null;
   credit_type_id: string;
@@ -1320,6 +1375,21 @@ export type AdminPaymentMethodsOut = {
 export type AdminProductCategoriesOut = {
   categories: string[];
   updated_at: string | null;
+};
+
+export type AdminReferralCategorySettingsOut = {
+  label: string;
+  amount: string;
+  active: boolean;
+};
+
+export type AdminReferralProgramSettingsOut = {
+  enabled: boolean;
+  currency: string;
+  trigger_ratio: string;
+  announcement_email_enabled: boolean;
+  credit_email_enabled: boolean;
+  categories: Record<string, AdminReferralCategorySettingsOut>;
 };
 
 export type AdminCatalogCategoryOut = {

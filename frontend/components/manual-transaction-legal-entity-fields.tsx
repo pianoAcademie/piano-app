@@ -62,6 +62,7 @@ export default function ManualTransactionLegalEntityFields({
         legalEntity: "Legal entity",
         noInvoice: "No issued invoice waiting for payment matching.",
         markPaid: "Manually mark selected invoices as paid (if the payment amount is sufficient)",
+        checkHint: "Checks are tracked as received first. Mark them as cashed from the payment list after bank deposit.",
         reconciliationHint:
           "If payment amount < invoice total(s), they remain unpaid. If payment amount >= invoice total(s), you can validate them as paid.",
         legalEntityRequired: "Legal entity *",
@@ -81,6 +82,7 @@ export default function ManualTransactionLegalEntityFields({
         legalEntity: "Entite legale",
         noInvoice: "Aucune facture emise en attente de paiement a rapprocher.",
         markPaid: "Marquer manuellement les factures selectionnees comme payees (si montant regle suffisant)",
+        checkHint: "Les cheques sont d'abord enregistres comme recus. Passez-les en encaisses depuis la liste des paiements apres depot en banque.",
         reconciliationHint:
           "Si le montant du paiement est inferieur au total des factures, elles restent a payer. S il couvre le total, vous pouvez les valider comme payees.",
         legalEntityRequired: "Entite legale *",
@@ -170,6 +172,7 @@ export default function ManualTransactionLegalEntityFields({
 
   const resolvedLegalEntityId = derivedLegalEntityId ?? manualLegalEntityId;
   const showManualSelector = derivedLegalEntityId === null;
+  const isCheckPayment = paymentMethodCode.trim().toUpperCase() === "CHECK";
 
   return (
     <div ref={rootRef} className="span-2 grid">
@@ -242,9 +245,10 @@ export default function ManualTransactionLegalEntityFields({
           )}
           <input type="hidden" name="mark_reconciled_invoices_paid" value="off" />
           <label className="checkline">
-            <input type="checkbox" name="mark_reconciled_invoices_paid" value="on" />
+            <input type="checkbox" name="mark_reconciled_invoices_paid" value="on" disabled={isCheckPayment} />
             {text.markPaid}
           </label>
+          {isCheckPayment ? <p className="muted">{text.checkHint}</p> : null}
           <p className="muted">{text.reconciliationHint}</p>
         </fieldset>
       ) : null}

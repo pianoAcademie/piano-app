@@ -1,0 +1,683 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+import json
+import logging
+import re
+import unicodedata
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models.client_record import ClientManualTransaction, ClientNoteEntry
+from app.models.ops import AppSetting
+from app.models.referral import ReferralReward
+from app.models.typeform_intake import TypeformIntake
+from app.models.user import ClientKind, ClientStatus, User, UserRole
+from app.services.email_delivery import send_email
+from app.services.messaging_templates import resolve_sender_profile
+
+logger = logging.getLogger(__name__)
+
+REFERRAL_PROGRAM_SETTING_KEY = "config_referral_program_v1"
+
+REFERRAL_STATUS_DECLARED = "DECLARED"
+REFERRAL_STATUS_NEEDS_REVIEW = "NEEDS_REVIEW"
+REFERRAL_STATUS_AWAITING_PAYMENT = "AWAITING_PAYMENT"
+REFERRAL_STATUS_CREDIT_GRANTED = "CREDIT_GRANTED"
+REFERRAL_STATUS_CANCELLED = "CANCELLED"
+
+REFERRAL_MATCH_UNMATCHED = "UNMATCHED"
+REFERRAL_MATCH_AMBIGUOUS = "AMBIGUOUS"
+REFERRAL_MATCH_AUTO = "AUTO_MATCHED"
+REFERRAL_MATCH_MANUAL = "MANUAL_MATCHED"
+
+REFERRAL_CATEGORIES = ("PARIS", "BAR_LE_DUC", "ONLINE", "DOMICILE")
+REFERRAL_PAID_STATUSES = {"PAID", "COMPLETED", "SUCCEEDED"}
+
+
+DEFAULT_REFERRAL_PROGRAM_CONFIG: dict[str, object] = {
+    "enabled": True,
+    "currency": "EUR",
+    "trigger_ratio": "0.50",
+    "announcement_email_enabled": True,
+    "credit_email_enabled": True,
+    "categories": {
+        "PARIS": {"label": "Paris", "amount": "50.00", "active": True},
+        "BAR_LE_DUC": {"label": "Bar-le-Duc", "amount": "50.00", "active": True},
+        "ONLINE": {"label": "En ligne", "amount": "50.00", "active": True},
+        "DOMICILE": {"label": "Domicile", "amount": "50.00", "active": True},
+    },
+}
+
+
+@dataclass(frozen=True)
+class ReferralProgramConfig:
+    enabled: bool
+    currency: str
+    trigger_ratio: Decimal
+    announcement_email_enabled: bool
+    credit_email_enabled: bool
+    category_amounts: dict[str, Decimal]
+    category_labels: dict[str, str]
+    category_active: dict[str, bool]
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def normalize_referral_text(value: object | None) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or ""))
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9@+]+", " ", ascii_text.casefold()).strip()
+
+
+def _display_name(user: User | None) -> str:
+    if user is None:
+        return ""
+    return " ".join(part for part in [user.first_name, user.last_name] if part).strip() or user.email or str(user.id)
+
+
+def _decimal(value: object, fallback: Decimal) -> Decimal:
+    try:
+        return Decimal(str(value)).quantize(Decimal("0.01"))
+    except (InvalidOperation, TypeError, ValueError):
+        return fallback
+
+
+def _ratio_decimal(value: object, fallback: Decimal) -> Decimal:
+    try:
+        ratio = Decimal(str(value)).quantize(Decimal("0.0001"))
+    except (InvalidOperation, TypeError, ValueError):
+        return fallback
+    if ratio <= Decimal("0") or ratio > Decimal("1"):
+        return fallback
+    return ratio
+
+
+def referral_program_config(db: Session) -> ReferralProgramConfig:
+    raw = dict(DEFAULT_REFERRAL_PROGRAM_CONFIG)
+    row = db.scalar(select(AppSetting).where(AppSetting.key == REFERRAL_PROGRAM_SETTING_KEY))
+    if row is not None and (row.value or "").strip():
+        try:
+            parsed = json.loads(row.value)
+        except json.JSONDecodeError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            raw.update(parsed)
+            raw_categories = raw.get("categories")
+            parsed_categories = parsed.get("categories")
+            if isinstance(raw_categories, dict) and isinstance(parsed_categories, dict):
+                merged_categories = dict(DEFAULT_REFERRAL_PROGRAM_CONFIG["categories"])  # type: ignore[index]
+                merged_categories.update(parsed_categories)
+                raw["categories"] = merged_categories
+
+    currency = str(raw.get("currency") or "EUR").strip().upper()[:3] or "EUR"
+    categories = raw.get("categories") if isinstance(raw.get("categories"), dict) else {}
+    category_amounts: dict[str, Decimal] = {}
+    category_labels: dict[str, str] = {}
+    category_active: dict[str, bool] = {}
+    for code in REFERRAL_CATEGORIES:
+        item = categories.get(code) if isinstance(categories, dict) else None
+        item = item if isinstance(item, dict) else {}
+        category_amounts[code] = _decimal(item.get("amount"), Decimal("50.00"))
+        category_labels[code] = str(item.get("label") or code).strip() or code
+        category_active[code] = bool(item.get("active", True))
+
+    return ReferralProgramConfig(
+        enabled=bool(raw.get("enabled", True)),
+        currency=currency,
+        trigger_ratio=_ratio_decimal(raw.get("trigger_ratio"), Decimal("0.5000")),
+        announcement_email_enabled=bool(raw.get("announcement_email_enabled", True)),
+        credit_email_enabled=bool(raw.get("credit_email_enabled", True)),
+        category_amounts=category_amounts,
+        category_labels=category_labels,
+        category_active=category_active,
+    )
+
+
+def referral_category_for_location(value: object | None) -> str | None:
+    token = normalize_referral_text(value)
+    if not token:
+        return None
+    if "domicile" in token:
+        return "DOMICILE"
+    if "video" in token or "visio" in token or "online" in token or "ligne" in token or "call" in token:
+        return "ONLINE"
+    if "bar le duc" in token or "barleduc" in token or "bar" in token and "duc" in token:
+        return "BAR_LE_DUC"
+    if any(site in token for site in ("richelieu", "assas", "pompe", "scheffer")):
+        return "PARIS"
+    if "paris" in token:
+        return "PARIS"
+    return None
+
+
+def referral_reward_amount(db: Session, *, category: str | None) -> tuple[Decimal, str, Decimal]:
+    config = referral_program_config(db)
+    normalized_category = (category or "").strip().upper()
+    if normalized_category not in config.category_amounts:
+        normalized_category = "PARIS"
+    amount = config.category_amounts.get(normalized_category, Decimal("50.00"))
+    if not config.category_active.get(normalized_category, True):
+        amount = Decimal("0.00")
+    return amount, config.currency, config.trigger_ratio
+
+
+def _candidate_score(user: User, query: str) -> tuple[int, list[str]]:
+    haystack_values = [
+        user.first_name,
+        user.last_name,
+        user.email,
+        user.phone,
+        user.mobile_phone_1,
+        user.mobile_phone_2,
+        user.home_phone,
+    ]
+    haystack = normalize_referral_text(" ".join(str(value or "") for value in haystack_values))
+    if not query or not haystack:
+        return 0, []
+    query_tokens = [token for token in query.split() if len(token) >= 2]
+    reasons: list[str] = []
+    score = 0
+    email_token = normalize_referral_text(user.email)
+    if "@" in query and email_token and email_token == query:
+        return 100, ["email exact"]
+    last_name = normalize_referral_text(user.last_name)
+    first_name = normalize_referral_text(user.first_name)
+    if last_name and last_name == query:
+        score += 85
+        reasons.append("nom exact")
+    elif last_name and last_name in query_tokens:
+        score += 55
+        reasons.append("nom present")
+    if first_name and first_name in query_tokens:
+        score += 20
+        reasons.append("prenom present")
+    matched_tokens = [token for token in query_tokens if token in haystack]
+    if matched_tokens:
+        score += min(30, 10 * len(set(matched_tokens)))
+        reasons.append("mots retrouves")
+    return min(score, 100), reasons
+
+
+def match_referrer_candidates(
+    db: Session,
+    *,
+    declared_text: str,
+    excluded_user_ids: set[UUID] | None = None,
+) -> list[dict[str, object]]:
+    query = normalize_referral_text(declared_text)
+    if not query:
+        return []
+    excluded = excluded_user_ids or set()
+    users = db.scalars(
+        select(User)
+        .where(
+            User.role == UserRole.CLIENT,
+            User.client_kind == ClientKind.ADULT,
+            User.client_status.in_([ClientStatus.ACTIVE, ClientStatus.RESPONSABLE, ClientStatus.TRIAL, ClientStatus.PENDING]),
+            User.is_active.is_(True),
+        )
+        .order_by(User.last_name.asc().nulls_last(), User.first_name.asc().nulls_last())
+        .limit(1000)
+    ).all()
+    candidates: list[dict[str, object]] = []
+    for user in users:
+        if user.id in excluded:
+            continue
+        score, reasons = _candidate_score(user, query)
+        if score < 35:
+            continue
+        candidates.append(
+            {
+                "user_id": str(user.id),
+                "display_name": _display_name(user),
+                "email": user.email,
+                "confidence": score,
+                "reasons": reasons,
+            }
+        )
+    candidates.sort(key=lambda item: int(item.get("confidence") or 0), reverse=True)
+    return candidates[:8]
+
+
+def _match_status_for_candidates(candidates: list[dict[str, object]]) -> tuple[str, UUID | None, int]:
+    if not candidates:
+        return REFERRAL_MATCH_UNMATCHED, None, 0
+    top = candidates[0]
+    top_score = int(top.get("confidence") or 0)
+    if top_score >= 85 and (len(candidates) == 1 or top_score - int(candidates[1].get("confidence") or 0) >= 20):
+        try:
+            return REFERRAL_MATCH_AUTO, UUID(str(top.get("user_id"))), top_score
+        except (ValueError, TypeError):
+            return REFERRAL_MATCH_AMBIGUOUS, None, top_score
+    return REFERRAL_MATCH_AMBIGUOUS, None, top_score
+
+
+def ensure_referral_for_intake(
+    db: Session,
+    *,
+    intake: TypeformIntake,
+    normalized: dict[str, object],
+) -> ReferralReward | None:
+    declared_text = str(normalized.get("referral_referrer_name") or "").strip()
+    if not declared_text:
+        reward = db.scalar(select(ReferralReward).where(ReferralReward.typeform_intake_id == intake.id).with_for_update())
+        if reward is not None and reward.status != REFERRAL_STATUS_CREDIT_GRANTED:
+            reward.status = REFERRAL_STATUS_CANCELLED
+            reward.updated_at = utcnow()
+            db.add(reward)
+            return reward
+        return None
+    config = referral_program_config(db)
+    if not config.enabled:
+        return None
+    category = str(normalized.get("referral_category") or "").strip().upper() or referral_category_for_location(
+        normalized.get("requested_location")
+    )
+    amount, currency, trigger_ratio = referral_reward_amount(db, category=category)
+    candidates = match_referrer_candidates(db, declared_text=declared_text)
+    match_status, referrer_id, confidence = _match_status_for_candidates(candidates)
+    now = utcnow()
+    reward = db.scalar(select(ReferralReward).where(ReferralReward.typeform_intake_id == intake.id).with_for_update())
+    if reward is None:
+        reward = ReferralReward(
+            typeform_intake_id=intake.id,
+            declared_referrer_text=declared_text,
+            category=category,
+            status=REFERRAL_STATUS_AWAITING_PAYMENT if referrer_id is not None else REFERRAL_STATUS_NEEDS_REVIEW,
+            match_status=match_status,
+            referrer_user_id=referrer_id,
+            match_confidence=confidence,
+            match_candidates_json=candidates,
+            reward_amount=amount,
+            currency=currency,
+            trigger_ratio=trigger_ratio,
+            validated_at=now if referrer_id is not None else None,
+            metadata_json={"source": "typeform"},
+            created_at=now,
+            updated_at=now,
+        )
+    elif reward.status != REFERRAL_STATUS_CREDIT_GRANTED:
+        reward.declared_referrer_text = declared_text
+        reward.category = category
+        reward.reward_amount = amount
+        reward.currency = currency
+        reward.trigger_ratio = trigger_ratio
+        reward.match_candidates_json = candidates
+        reward.match_confidence = confidence
+        if reward.match_status != REFERRAL_MATCH_MANUAL:
+            reward.match_status = match_status
+            reward.referrer_user_id = referrer_id
+            reward.status = REFERRAL_STATUS_AWAITING_PAYMENT if referrer_id is not None else REFERRAL_STATUS_NEEDS_REVIEW
+            reward.validated_at = now if referrer_id is not None else None
+        reward.updated_at = now
+    db.add(reward)
+    return reward
+
+
+def link_referral_to_quote(db: Session, *, intake_id: UUID, quote_id: UUID) -> ReferralReward | None:
+    reward = db.scalar(select(ReferralReward).where(ReferralReward.typeform_intake_id == intake_id).with_for_update())
+    if reward is None:
+        return None
+    reward.quote_id = quote_id
+    reward.updated_at = utcnow()
+    db.add(reward)
+    return reward
+
+
+def bind_referral_after_quote_transformation(
+    db: Session,
+    *,
+    quote_id: UUID,
+    referred_client_id: UUID,
+    referred_student_id: UUID | None,
+) -> ReferralReward | None:
+    reward = db.scalar(select(ReferralReward).where(ReferralReward.quote_id == quote_id).with_for_update())
+    if reward is None:
+        return None
+    reward.referred_client_id = referred_client_id
+    reward.referred_student_id = referred_student_id
+    if reward.referrer_user_id is not None and reward.referrer_user_id in {referred_client_id, referred_student_id}:
+        reward.status = REFERRAL_STATUS_NEEDS_REVIEW
+        reward.match_status = REFERRAL_MATCH_AMBIGUOUS
+        reward.metadata_json = {**(reward.metadata_json or {}), "self_referral_blocked": True}
+    elif reward.referrer_user_id is not None and reward.status in {REFERRAL_STATUS_DECLARED, REFERRAL_STATUS_NEEDS_REVIEW}:
+        reward.status = REFERRAL_STATUS_AWAITING_PAYMENT
+        if reward.validated_at is None:
+            reward.validated_at = utcnow()
+    reward.updated_at = utcnow()
+    db.add(reward)
+    if reward.status == REFERRAL_STATUS_AWAITING_PAYMENT:
+        try:
+            send_referral_announcement_email(db, reward=reward)
+        except Exception:
+            logger.exception("Unable to send referral announcement email for reward=%s", reward.id)
+    return reward
+
+
+def manually_validate_referral(
+    db: Session,
+    *,
+    reward_id: UUID,
+    referrer_user_id: UUID,
+    actor_user_id: UUID | None = None,
+) -> ReferralReward:
+    reward = db.scalar(select(ReferralReward).where(ReferralReward.id == reward_id).with_for_update())
+    if reward is None:
+        raise ValueError("Referral reward not found")
+    if referrer_user_id in {reward.referred_client_id, reward.referred_student_id}:
+        raise ValueError("A family cannot refer itself")
+    referrer = db.scalar(select(User).where(User.id == referrer_user_id, User.role == UserRole.CLIENT))
+    if referrer is None:
+        raise ValueError("Referrer client not found")
+    reward.referrer_user_id = referrer_user_id
+    reward.match_status = REFERRAL_MATCH_MANUAL
+    reward.match_confidence = 100
+    reward.status = REFERRAL_STATUS_AWAITING_PAYMENT
+    reward.validated_at = utcnow()
+    reward.metadata_json = {**(reward.metadata_json or {}), "validated_by": str(actor_user_id) if actor_user_id else None}
+    reward.updated_at = utcnow()
+    db.add(reward)
+    if reward.referred_client_id is not None:
+        try:
+            send_referral_announcement_email(db, reward=reward)
+        except Exception:
+            logger.exception("Unable to send referral announcement email for reward=%s", reward.id)
+    return reward
+
+
+def _invoice_total(metadata: dict[str, object], *, currency: str) -> Decimal:
+    totals = metadata.get("totals_by_currency")
+    if not isinstance(totals, dict):
+        return Decimal("0.00")
+    raw = totals.get(currency) or totals.get(currency.upper()) or totals.get(currency.lower())
+    return _decimal(raw, Decimal("0.00"))
+
+
+def _manual_ids_from_metadata(metadata: dict[str, object], key: str) -> list[UUID]:
+    raw = metadata.get(key)
+    if not isinstance(raw, list):
+        return []
+    out: list[UUID] = []
+    for item in raw:
+        text = str(item or "").strip()
+        if ":" in text:
+            source, value = text.split(":", 1)
+            if source.strip().upper() != "MANUAL":
+                continue
+            text = value.strip()
+        try:
+            out.append(UUID(text))
+        except ValueError:
+            continue
+    return out
+
+
+def quote_ids_from_invoice_metadata(db: Session, metadata: dict[str, object]) -> set[UUID]:
+    manual_charge_ids = _manual_ids_from_metadata(metadata, "included_payment_keys")
+    if not manual_charge_ids:
+        return set()
+    rows = db.scalars(select(ClientManualTransaction).where(ClientManualTransaction.id.in_(manual_charge_ids))).all()
+    quote_ids: set[UUID] = set()
+    for row in rows:
+        if (row.category or "").strip().upper() == "PRE_REGISTRATION_DEPOSIT":
+            continue
+        match = re.match(r"^QUOTE:(?P<quote_id>[0-9a-fA-F-]{36}):", (row.reference or "").strip())
+        if match is None:
+            continue
+        try:
+            quote_ids.add(UUID(match.group("quote_id")))
+        except ValueError:
+            continue
+    return quote_ids
+
+
+def _paid_total_for_invoice(db: Session, metadata: dict[str, object], *, currency: str) -> Decimal:
+    payment_ids = _manual_ids_from_metadata(metadata, "reconciled_manual_payment_ids")
+    if not payment_ids:
+        return Decimal("0.00")
+    rows = db.scalars(
+        select(ClientManualTransaction).where(
+            ClientManualTransaction.id.in_(payment_ids),
+            ClientManualTransaction.transaction_type == "PAYMENT",
+        )
+    ).all()
+    total = Decimal("0.00")
+    for row in rows:
+        if (row.status or "").strip().upper() not in REFERRAL_PAID_STATUSES:
+            continue
+        if (row.currency or "EUR").strip().upper() != currency:
+            continue
+        total += abs(Decimal(row.total_incl_vat or 0))
+    return total.quantize(Decimal("0.01"))
+
+
+def evaluate_referrals_for_invoice(
+    db: Session,
+    *,
+    client_id: UUID,
+    note: ClientNoteEntry,
+    metadata: dict[str, object],
+) -> list[ReferralReward]:
+    quote_ids = quote_ids_from_invoice_metadata(db, metadata)
+    if not quote_ids:
+        return []
+    config = referral_program_config(db)
+    if not config.enabled:
+        return []
+    currency = str(metadata.get("payment_currency") or config.currency or "EUR").strip().upper()[:3] or "EUR"
+    invoice_total = _invoice_total(metadata, currency=currency)
+    if invoice_total <= Decimal("0.00"):
+        return []
+    paid_total = _paid_total_for_invoice(db, metadata, currency=currency)
+    granted: list[ReferralReward] = []
+    for reward in db.scalars(select(ReferralReward).where(ReferralReward.quote_id.in_(quote_ids)).with_for_update()).all():
+        if reward.status == REFERRAL_STATUS_CREDIT_GRANTED or reward.credit_transaction_id is not None:
+            continue
+        if reward.status not in {REFERRAL_STATUS_AWAITING_PAYMENT, REFERRAL_STATUS_DECLARED}:
+            continue
+        if reward.referrer_user_id is None:
+            reward.status = REFERRAL_STATUS_NEEDS_REVIEW
+            reward.updated_at = utcnow()
+            db.add(reward)
+            continue
+        if reward.referred_client_id is None:
+            reward.referred_client_id = client_id
+        if reward.referrer_user_id in {reward.referred_client_id, reward.referred_student_id}:
+            reward.status = REFERRAL_STATUS_NEEDS_REVIEW
+            reward.metadata_json = {**(reward.metadata_json or {}), "self_referral_blocked": True}
+            reward.updated_at = utcnow()
+            db.add(reward)
+            continue
+        threshold_ratio = Decimal(reward.trigger_ratio or config.trigger_ratio).quantize(Decimal("0.0001"))
+        if paid_total < (invoice_total * threshold_ratio).quantize(Decimal("0.01")):
+            reward.trigger_invoice_note_id = note.id
+            reward.metadata_json = {
+                **(reward.metadata_json or {}),
+                "last_invoice_total": f"{invoice_total:.2f}",
+                "last_paid_total": f"{paid_total:.2f}",
+                "last_threshold_ratio": f"{threshold_ratio:.4f}",
+            }
+            reward.updated_at = utcnow()
+            db.add(reward)
+            continue
+        created = grant_referral_credit(
+            db,
+            reward=reward,
+            invoice_note_id=note.id,
+            invoice_total=invoice_total,
+            paid_total=paid_total,
+            currency=currency,
+        )
+        granted.append(created)
+    return granted
+
+
+def grant_referral_credit(
+    db: Session,
+    *,
+    reward: ReferralReward,
+    invoice_note_id: UUID,
+    invoice_total: Decimal,
+    paid_total: Decimal,
+    currency: str,
+) -> ReferralReward:
+    if reward.credit_transaction_id is not None:
+        return reward
+    if reward.referrer_user_id is None:
+        raise ValueError("Referral reward has no referrer")
+    amount = Decimal(reward.reward_amount or 0).quantize(Decimal("0.01"))
+    if amount <= Decimal("0.00"):
+        reward.status = REFERRAL_STATUS_NEEDS_REVIEW
+        reward.updated_at = utcnow()
+        db.add(reward)
+        return reward
+    now = utcnow()
+    referred = db.scalar(select(User).where(User.id == reward.referred_client_id)) if reward.referred_client_id else None
+    label = "Avoir parrainage"
+    if referred is not None:
+        label = f"Avoir parrainage - {_display_name(referred)}"
+    transaction = ClientManualTransaction(
+        user_id=reward.referrer_user_id,
+        student_user_id=reward.referrer_user_id,
+        actor_user_id=None,
+        transaction_type="DISCOUNT",
+        status="COMPLETED",
+        label=label[:255],
+        description="Avoir genere automatiquement apres atteinte du seuil d encaissement du filleul.",
+        category="REFERRAL_CREDIT",
+        occurred_at=now,
+        amount_excl_vat=Decimal("0.00") - amount,
+        vat_rate=Decimal("0.000"),
+        vat_amount=Decimal("0.00"),
+        total_incl_vat=Decimal("0.00") - amount,
+        currency=currency,
+        reference=f"REFERRAL:{reward.id}",
+        legal_entity_id=None,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(transaction)
+    db.flush()
+    reward.credit_transaction_id = transaction.id
+    reward.trigger_invoice_note_id = invoice_note_id
+    reward.status = REFERRAL_STATUS_CREDIT_GRANTED
+    reward.credit_granted_at = now
+    reward.metadata_json = {
+        **(reward.metadata_json or {}),
+        "trigger_invoice_total": f"{invoice_total:.2f}",
+        "trigger_paid_total": f"{paid_total:.2f}",
+        "trigger_currency": currency,
+    }
+    reward.updated_at = now
+    db.add(reward)
+    try:
+        send_referral_credit_email(db, reward=reward)
+    except Exception:
+        logger.exception("Unable to send referral credit email for reward=%s", reward.id)
+    return reward
+
+
+def _email_context_for_reward(db: Session, reward: ReferralReward) -> tuple[User | None, User | None]:
+    referrer = db.scalar(select(User).where(User.id == reward.referrer_user_id)) if reward.referrer_user_id else None
+    referred = db.scalar(select(User).where(User.id == reward.referred_client_id)) if reward.referred_client_id else None
+    return referrer, referred
+
+
+def send_referral_announcement_email(db: Session, *, reward: ReferralReward) -> str | None:
+    config = referral_program_config(db)
+    if not config.announcement_email_enabled or reward.announcement_email_sent_at is not None:
+        return None
+    referrer, referred = _email_context_for_reward(db, reward)
+    if referrer is None or not referrer.email:
+        return None
+    sender = resolve_sender_profile(db, sender_kind="STUDIO")
+    referrer_name = _display_name(referrer)
+    referred_name = _display_name(referred) or "une famille"
+    amount = Decimal(reward.reward_amount or 0).quantize(Decimal("0.01"))
+    body = (
+        f"Bonjour {referrer_name},\n\n"
+        f"La famille {referred_name} a indique avoir decouvert Piano Academie grace a vous.\n\n"
+        f"Votre parrainage est bien enregistre. Un avoir de {amount:.2f} {reward.currency} sera credite "
+        "sur votre compte lorsque le seuil de reglement prevu aura ete atteint par votre filleul.\n\n"
+        "Merci pour votre confiance."
+    )
+    message_id = send_email(
+        to_email=referrer.email,
+        subject="Votre parrainage a bien ete enregistre",
+        body=body,
+        body_format="TEXT",
+        context="REFERRAL_RECORDED",
+        recipient_user_id=referrer.id,
+        from_email=sender.from_email,
+        from_name=sender.from_name,
+        reply_to=sender.reply_to,
+        subject_prefix=sender.subject_prefix,
+    )
+    reward.announcement_email_sent_at = utcnow()
+    reward.updated_at = reward.announcement_email_sent_at
+    db.add(reward)
+    return message_id
+
+
+def send_referral_credit_email(db: Session, *, reward: ReferralReward) -> str | None:
+    config = referral_program_config(db)
+    if not config.credit_email_enabled or reward.credit_email_sent_at is not None:
+        return None
+    referrer, referred = _email_context_for_reward(db, reward)
+    if referrer is None or not referrer.email:
+        return None
+    sender = resolve_sender_profile(db, sender_kind="STUDIO")
+    referrer_name = _display_name(referrer)
+    referred_name = _display_name(referred) or "votre filleul"
+    amount = Decimal(reward.reward_amount or 0).quantize(Decimal("0.01"))
+    body = (
+        f"Bonjour {referrer_name},\n\n"
+        f"Votre parrainage de {referred_name} est desormais valide.\n\n"
+        f"Un avoir de {amount:.2f} {reward.currency} vient d etre credite sur votre compte. "
+        "Il pourra etre utilise sur une prochaine facture Piano Academie.\n\n"
+        "Merci encore pour votre recommandation."
+    )
+    message_id = send_email(
+        to_email=referrer.email,
+        subject="Votre avoir parrainage est disponible",
+        body=body,
+        body_format="TEXT",
+        context="REFERRAL_CREDIT_GRANTED",
+        recipient_user_id=referrer.id,
+        from_email=sender.from_email,
+        from_name=sender.from_name,
+        reply_to=sender.reply_to,
+        subject_prefix=sender.subject_prefix,
+    )
+    reward.credit_email_sent_at = utcnow()
+    reward.updated_at = reward.credit_email_sent_at
+    db.add(reward)
+    return message_id
+
+
+def referral_summary(reward: ReferralReward | None) -> dict[str, object] | None:
+    if reward is None:
+        return None
+    return {
+        "id": str(reward.id),
+        "typeform_intake_id": str(reward.typeform_intake_id) if reward.typeform_intake_id else None,
+        "quote_id": str(reward.quote_id) if reward.quote_id else None,
+        "declared_referrer_text": reward.declared_referrer_text,
+        "category": reward.category,
+        "status": reward.status,
+        "match_status": reward.match_status,
+        "referrer_user_id": str(reward.referrer_user_id) if reward.referrer_user_id else None,
+        "referred_client_id": str(reward.referred_client_id) if reward.referred_client_id else None,
+        "reward_amount": f"{Decimal(reward.reward_amount or 0):.2f}",
+        "currency": reward.currency,
+        "trigger_ratio": f"{Decimal(reward.trigger_ratio or 0):.4f}",
+        "credit_transaction_id": str(reward.credit_transaction_id) if reward.credit_transaction_id else None,
+        "match_candidates": reward.match_candidates_json or [],
+    }

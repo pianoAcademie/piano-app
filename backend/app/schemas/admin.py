@@ -138,6 +138,36 @@ class AdminProductCategoriesUpdateRequest(BaseModel):
     categories: list[str] = Field(default_factory=list)
 
 
+class AdminReferralCategorySettingsOut(BaseModel):
+    label: str
+    amount: Decimal
+    active: bool = True
+
+
+class AdminReferralProgramSettingsOut(BaseModel):
+    enabled: bool
+    currency: str
+    trigger_ratio: Decimal
+    announcement_email_enabled: bool
+    credit_email_enabled: bool
+    categories: dict[str, AdminReferralCategorySettingsOut] = Field(default_factory=dict)
+
+
+class AdminReferralCategorySettingsIn(BaseModel):
+    label: str | None = Field(default=None, max_length=80)
+    amount: Decimal = Field(ge=Decimal("0"))
+    active: bool = True
+
+
+class AdminReferralProgramSettingsUpdateRequest(BaseModel):
+    enabled: bool = True
+    currency: str = Field(default="EUR", min_length=3, max_length=3)
+    trigger_ratio: Decimal = Field(default=Decimal("0.50"), gt=Decimal("0"), le=Decimal("1"))
+    announcement_email_enabled: bool = True
+    credit_email_enabled: bool = True
+    categories: dict[str, AdminReferralCategorySettingsIn] = Field(default_factory=dict)
+
+
 class AdminPaymentProviderOut(BaseModel):
     provider: str
     mode: str
@@ -1471,6 +1501,92 @@ class AdminClientManualTransactionUpdateRequest(BaseModel):
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     payment_method_code: str | None = Field(default=None, max_length=40)
     legal_entity_id: UUID | None = None
+
+
+class AdminClientManualTransactionStatusUpdateRequest(BaseModel):
+    status: Literal["CHECK_RECEIVED", "CHECK_DEPOSITED", "PAID", "COMPLETED", "CANCELLED"]
+
+
+class AdminCheckDepositPaymentOut(BaseModel):
+    transaction_id: UUID
+    client_id: UUID
+    client_name: str
+    occurred_at: datetime
+    label: str
+    reference: str | None = None
+    amount_incl_vat: Decimal
+    currency: str
+    status: str
+    invoice_number: str | None = None
+    invoice_note_id: UUID | None = None
+    tracking_note: str | None = None
+
+
+class AdminCheckDepositImportRowIn(BaseModel):
+    row_number: int | None = None
+    transaction_id: UUID | None = None
+    reference: str | None = Field(default=None, max_length=120)
+    amount_incl_vat: Decimal | None = Field(default=None, gt=Decimal("0"))
+    client_name: str | None = Field(default=None, max_length=255)
+    payer_name: str | None = Field(default=None, max_length=255)
+
+
+class AdminCheckDepositBulkUpdateRequest(BaseModel):
+    transaction_ids: list[UUID] = Field(default_factory=list)
+    rows: list[AdminCheckDepositImportRowIn] = Field(default_factory=list)
+    target_status: Literal["CHECK_DEPOSITED", "PAID"] = "CHECK_DEPOSITED"
+    batch_reference: str | None = Field(default=None, max_length=120)
+    effective_date: date | None = None
+
+
+class AdminCheckDepositBulkUpdateOut(BaseModel):
+    matched_count: int
+    updated_count: int
+    updated_transaction_ids: list[UUID] = Field(default_factory=list)
+    unmatched_rows: list[str] = Field(default_factory=list)
+
+
+class AdminReferralRewardOut(BaseModel):
+    id: UUID
+    typeform_intake_id: UUID | None = None
+    quote_id: UUID | None = None
+    declared_referrer_text: str
+    category: str | None = None
+    status: str
+    match_status: str
+    match_confidence: int
+    referrer_user_id: UUID | None = None
+    referrer_name: str | None = None
+    referrer_email: str | None = None
+    referred_client_id: UUID | None = None
+    referred_client_name: str | None = None
+    referred_student_id: UUID | None = None
+    referred_student_name: str | None = None
+    reward_amount: Decimal
+    currency: str
+    trigger_ratio: Decimal
+    invoice_total: Decimal | None = None
+    paid_total: Decimal | None = None
+    threshold_amount: Decimal | None = None
+    payment_progress_ratio: Decimal | None = None
+    credit_transaction_id: UUID | None = None
+    trigger_invoice_note_id: UUID | None = None
+    announcement_email_sent_at: datetime | None = None
+    credit_email_sent_at: datetime | None = None
+    validated_at: datetime | None = None
+    credit_granted_at: datetime | None = None
+    updated_at: datetime
+    match_candidates: list[dict[str, object]] = Field(default_factory=list)
+
+
+class AdminReferralBulkRecomputeOut(BaseModel):
+    scanned_count: int
+    updated_count: int
+    credit_granted_count: int
+
+
+class AdminReferralRewardManualMatchRequest(BaseModel):
+    referrer_user_id: UUID
 
 
 class AdminClientPaymentRefundRequest(BaseModel):

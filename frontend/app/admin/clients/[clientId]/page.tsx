@@ -17,6 +17,7 @@ import {
   createAdminClientRangeInvoiceAction,
   createAdminClientManualTransactionAction,
   updateAdminClientManualTransactionAction,
+  updateAdminClientManualTransactionStatusAction,
   deleteAdminClientManualTransactionAction,
   generateAdminClientBookingFinalInvoiceAction,
   refundAdminClientPaymentAction,
@@ -386,6 +387,12 @@ function paymentStatusLabel(status: string, language: UiLanguage = "fr"): string
   if (normalized === "PAID") {
     return uiText(language, "admin.client_detail.payment_status.paid");
   }
+  if (normalized === "CHECK_RECEIVED") {
+    return "Cheques recus";
+  }
+  if (normalized === "CHECK_DEPOSITED") {
+    return "Cheques deposes";
+  }
   if (normalized === "INCLUDED_PLAN") {
     return uiText(language, "admin.client_detail.payment_status.included_plan");
   }
@@ -489,6 +496,8 @@ const PENDING_PAYMENT_STATUSES = new Set([
   "PROCESSING",
   "WAITING_PAYMENT",
   "FAILED",
+  "CHECK_RECEIVED",
+  "CHECK_DEPOSITED",
   "BOOKED",
   "ATTENDED",
   "NO_SHOW",
@@ -530,6 +539,14 @@ function isManualPaymentMovement(row: AdminClientPaymentOut): boolean {
     return true;
   }
   return false;
+}
+
+function isTrackedCheckPayment(row: AdminClientPaymentOut): boolean {
+  return (
+    (row.source || "").trim().toUpperCase() === "MANUAL" &&
+    (row.manual_transaction_type || "").trim().toUpperCase() === "PAYMENT" &&
+    (row.payment_method_code || "").trim().toUpperCase() === "CHECK"
+  );
 }
 
 function isPaidPreRegistrationDepositCharge(row: AdminClientPaymentOut): boolean {
@@ -5238,6 +5255,40 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                       ×
                                     </button>
                                   </form>
+                                ) : null}
+                                {isTrackedCheckPayment(row) ? (
+                                  <>
+                                    {normalizePaymentStatus(row.status) !== "CHECK_RECEIVED" ? (
+                                      <form action={updateAdminClientManualTransactionStatusAction}>
+                                        <input type="hidden" name="client_id" value={client.id} />
+                                        <input type="hidden" name="transaction_id" value={row.id} />
+                                        <input type="hidden" name="status" value="CHECK_RECEIVED" />
+                                        <button type="submit" className="client-action-icon" title="Marquer les cheques comme recus">
+                                          R
+                                        </button>
+                                      </form>
+                                    ) : null}
+                                    {normalizePaymentStatus(row.status) !== "CHECK_DEPOSITED" ? (
+                                      <form action={updateAdminClientManualTransactionStatusAction}>
+                                        <input type="hidden" name="client_id" value={client.id} />
+                                        <input type="hidden" name="transaction_id" value={row.id} />
+                                        <input type="hidden" name="status" value="CHECK_DEPOSITED" />
+                                        <button type="submit" className="client-action-icon" title="Marquer les cheques comme deposes">
+                                          D
+                                        </button>
+                                      </form>
+                                    ) : null}
+                                    {normalizePaymentStatus(row.status) !== "PAID" ? (
+                                      <form action={updateAdminClientManualTransactionStatusAction}>
+                                        <input type="hidden" name="client_id" value={client.id} />
+                                        <input type="hidden" name="transaction_id" value={row.id} />
+                                        <input type="hidden" name="status" value="PAID" />
+                                        <button type="submit" className="client-action-icon" title="Marquer les cheques comme encaisses">
+                                          OK
+                                        </button>
+                                      </form>
+                                    ) : null}
+                                  </>
                                 ) : null}
                               </>
                             ) : null}

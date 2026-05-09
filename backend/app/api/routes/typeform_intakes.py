@@ -33,6 +33,7 @@ from app.models.quote import (
     Prospect,
     QuoteType,
 )
+from app.models.referral import ReferralReward
 from app.models.typeform_intake import TypeformFormConfig, TypeformIntake
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.schemas.quote import QuoteCreateRequest, QuoteLineIn
@@ -46,6 +47,7 @@ from app.schemas.typeform_intake import (
     TypeformIntakeListPageOut,
     TypeformIntakeListOut,
     TypeformIntakeNormalizedPatchRequest,
+    TypeformIntakeReferralRequest,
     TypeformIntakeResolutionRequest,
     TypeformMatchCandidateOut,
     TypeformQuotePreviewLineOut,
@@ -56,6 +58,14 @@ from app.schemas.typeform_intake import (
 )
 from app.services.invoice_documents import normalize_billing_entity
 from app.services.professor_activation import generate_temporary_password
+from app.services.referrals import (
+    ensure_referral_for_intake,
+    link_referral_to_quote,
+    manually_validate_referral,
+    normalize_referral_text,
+    referral_category_for_location,
+    referral_summary,
+)
 from app.services.session_audience import resolve_session_visibility_scopes
 from app.services.security import hash_password
 
@@ -891,6 +901,23 @@ def _fallback_requested_payment_method(*, requested_products: list[str]) -> str 
     return None
 
 
+def _fallback_referral_referrer_name(simplified_answers: list[dict[str, object]]) -> str | None:
+    positive_tokens = ("parrain", "recommand", "conseille", "prescrit", "invite")
+    negative_tokens = ("address", "adresse", "city", "ville", "postal")
+    for answer in simplified_answers:
+        label_token = normalize_referral_text(answer.get("label"))
+        if not label_token:
+            continue
+        if any(token in label_token for token in negative_tokens) and not any(token in label_token for token in ("parrain", "recommand")):
+            continue
+        if not any(token in label_token for token in positive_tokens):
+            continue
+        value = _text(answer.get("value"))
+        if value:
+            return value
+    return None
+
+
 def _extract_typeform_form_id(payload: dict[str, object]) -> str:
     form_response = _json_object(payload.get("form_response"))
     return _text(form_response.get("form_id")) or _text(payload.get("form_id"))
@@ -1088,6 +1115,21 @@ def _normalize_payload(
     requested_payment_method = requested_payment_method or _fallback_requested_payment_method(
         requested_products=requested_products,
     )
+    referral_referrer_name = _mapped_scalar_with_fallbacks(
+        answer_map,
+        field_mapping,
+        "referral_referrer_name",
+        fallbacks=[
+            "Famille qui vous a recommandé",
+            "Famille qui vous a recommande",
+            "Famille qui a recommandé",
+            "Famille qui a recommande",
+            "Parrainage",
+            "Parrain",
+            "Recommandation",
+        ],
+    ) or _fallback_referral_referrer_name(simplified_answers)
+    referral_category = referral_category_for_location(requested_location)
     address_parts = [
         part
         for part in [
@@ -1128,6 +1170,8 @@ def _normalize_payload(
         "requested_formula_type": requested_formula_type,
         "requested_payment_method": requested_payment_method,
         "requested_products": requested_products,
+        "referral_referrer_name": referral_referrer_name,
+        "referral_category": referral_category,
         "notes": notes,
     }
     return normalized, simplified_answers
@@ -1934,6 +1978,10 @@ def _future_school_year_candidate_configs(
 
     candidates: list[tuple[int, str, TypeformFormConfig]] = []
     for row in rows:
+        if row.location_code != current_config.location_code:
+            continue
+        if row.audience_segment != current_config.audience_segment:
+            continue
         candidate_start_year = _school_year_start_year(row.school_year_label)
         if candidate_start_year is None or candidate_start_year <= current_start_year:
             continue
@@ -2803,6 +2851,9 @@ def _analysis_for_intake(
             "runtime_context": runtime_context,
             "warnings": list(dict.fromkeys(warnings)),
             "blockages": list(dict.fromkeys(blockages)),
+            "referral": referral_summary(
+                db.scalar(select(ReferralReward).where(ReferralReward.typeform_intake_id == intake.id))
+            ),
             "intake_status": intake_status,
         }
 
@@ -2900,6 +2951,9 @@ def _safe_analysis_for_intake(
             "runtime_context": runtime_context,
             "warnings": list(dict.fromkeys(warnings)),
             "blockages": list(dict.fromkeys(blockages)),
+            "referral": referral_summary(
+                db.scalar(select(ReferralReward).where(ReferralReward.typeform_intake_id == intake.id))
+            ),
             "intake_status": INTAKE_STATUS_BLOCKED,
         }
 
@@ -2971,6 +3025,7 @@ def _intake_list_out(intake: TypeformIntake, analysis: dict[str, object]) -> Typ
         warnings=[_text(item) for item in _json_list(analysis.get("warnings")) if _text(item)],
         blockages=[_text(item) for item in _json_list(analysis.get("blockages")) if _text(item)],
         related_quote_id=intake.related_quote_id,
+        referral=analysis.get("referral") if isinstance(analysis.get("referral"), dict) else None,
     )
 
 
@@ -3032,6 +3087,7 @@ def _intake_detail_out(intake: TypeformIntake, analysis: dict[str, object]) -> T
         preview_quote=analysis["preview_quote"],
         related_quote_id=intake.related_quote_id,
         form_config=config_out,
+        referral=analysis.get("referral") if isinstance(analysis.get("referral"), dict) else None,
     )
 
 
@@ -3108,6 +3164,7 @@ def _ingest_typeform_payload(db: Session, payload: dict[str, object]) -> Typefor
     db.add(intake)
     db.flush()
     _refresh_intake_analysis(db, intake)
+    ensure_referral_for_intake(db, intake=intake, normalized=_json_object(intake.normalized_payload_json))
     db.commit()
     db.refresh(intake)
     return intake
@@ -3942,6 +3999,37 @@ def update_typeform_intake_normalized_payload(
     )
     intake.updated_at = _utcnow()
     db.add(intake)
+    ensure_referral_for_intake(db, intake=intake, normalized=_json_object(intake.normalized_payload_json))
+    analysis = _refresh_intake_analysis(db, intake)
+    db.commit()
+    db.refresh(intake)
+    return _intake_detail_out(intake, analysis)
+
+
+@router.patch("/intakes/{intake_id}/referral", response_model=TypeformIntakeDetailOut)
+def update_typeform_intake_referral(
+    intake_id: UUID,
+    payload: TypeformIntakeReferralRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> TypeformIntakeDetailOut:
+    intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == intake_id).with_for_update())
+    if intake is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Typeform intake not found")
+    reward = db.scalar(select(ReferralReward).where(ReferralReward.typeform_intake_id == intake.id).with_for_update())
+    if reward is None:
+        reward = ensure_referral_for_intake(db, intake=intake, normalized=_json_object(intake.normalized_payload_json))
+    if reward is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun parrainage declare sur cette intake")
+    try:
+        manually_validate_referral(
+            db,
+            reward_id=reward.id,
+            referrer_user_id=payload.referrer_user_id,
+            actor_user_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     analysis = _refresh_intake_analysis(db, intake)
     db.commit()
     db.refresh(intake)
@@ -4113,6 +4201,7 @@ def create_draft_quote_from_typeform_intake(
         lines=preview_lines_in,
     )
     quote_detail = create_quote_from_payload(db, payload=quote_payload, current_user=current_user)
+    link_referral_to_quote(db, intake_id=intake.id, quote_id=quote_detail.quote.id)
 
     intake.related_quote_id = quote_detail.quote.id
     intake.resolution_json = {

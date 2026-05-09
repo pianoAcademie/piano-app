@@ -57,6 +57,7 @@ from app.models.plan import (
 )
 from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct, ProductCategory
 from app.models.quote import QuoteLine
+from app.models.referral import ReferralReward
 from app.models.notification_engine import ContactDeliveryStatus
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.schemas.admin import (
@@ -82,9 +83,16 @@ from app.schemas.admin import (
     AdminClientPasswordResetOut,
     AdminClientPaymentOut,
     AdminClientManualTransactionCreateRequest,
+    AdminClientManualTransactionStatusUpdateRequest,
     AdminClientManualTransactionUpdateRequest,
     AdminClientPaymentRefundOut,
     AdminClientPaymentRefundRequest,
+    AdminCheckDepositBulkUpdateOut,
+    AdminCheckDepositBulkUpdateRequest,
+    AdminCheckDepositPaymentOut,
+    AdminReferralBulkRecomputeOut,
+    AdminReferralRewardOut,
+    AdminReferralRewardManualMatchRequest,
     AdminClientSubscriptionMiniOut,
     AdminClientSubscriptionOut,
     AdminClientSubscriptionSuspendRequest,
@@ -189,6 +197,7 @@ from app.services.session_teachers import effective_teacher_id_for_session, prof
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
 from app.services.payment_provider import detect_provider_from_reference, parse_provider, resolve_provider, resolve_webhook_secret
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
+from app.services.referrals import evaluate_referrals_for_invoice, manually_validate_referral
 from app.services.reminders import skip_pending_reminders_for_booking
 from app.services.security import create_access_token, hash_password
 from app.services.session_audience import resolve_session_booking_scopes, scopes_allow_planless_booking
@@ -202,9 +211,12 @@ from app.services.subscriptions import (
 router = APIRouter(prefix="/admin/clients")
 
 PAID_PAYMENT_STATUSES = {"PAID", "SUCCEEDED", "COMPLETED"}
+CHECK_TRACKING_STATUSES = {"CHECK_RECEIVED", "CHECK_DEPOSITED", "PAID"}
 PENDING_PAYMENT_STATUSES = {
     "PENDING",
     "PENDING_PAYMENT",
+    "CHECK_RECEIVED",
+    "CHECK_DEPOSITED",
     "WAITLISTED",
     "TRIAL",
     "OPEN",
@@ -1700,6 +1712,7 @@ def _record_invoice_range_public_payment(
             )
     note.message = _build_invoice_range_note_message(metadata)
     db.add(note)
+    evaluate_referrals_for_invoice(db, client_id=client_id, note=note, metadata=metadata)
     db.commit()
     return transaction_id, now
 
@@ -3090,6 +3103,7 @@ def _recompute_reconciled_invoice_statuses_for_manual_payment_change(
 
         note.message = _build_invoice_range_note_message(metadata)
         db.add(note)
+        evaluate_referrals_for_invoice(db, client_id=client.id, note=note, metadata=metadata)
 
 
 def _payment_key(*, source: str, payment_id: UUID) -> str:
@@ -3416,7 +3430,12 @@ def _apply_invoice_presentation_to_payment_item(
         item.invoice_number = locked_invoice_number
         item.invoice_status = "PAID" if locked_status == "PAID" else "ISSUED"
         item.invoice_note_id = locked_note_id
-        item.status = "PAID" if locked_status == "PAID" else "INVOICED"
+        if locked_status == "PAID":
+            item.status = "PAID"
+        elif item.source.strip().upper() == "MANUAL" and item.status in {"CHECK_RECEIVED", "CHECK_DEPOSITED"}:
+            pass
+        else:
+            item.status = "INVOICED"
         item.billing_entity = _billing_entity_text(locked_billing_entity)
         if locked_seller_legal_entity_id is not None:
             item.seller_legal_entity_id = locked_seller_legal_entity_id
@@ -7007,6 +7026,8 @@ def create_admin_client_manual_transaction(
     currency = _normalize_currency(payload.currency, fallback=client.preferred_currency or "EUR")
     occurred_at = payload.occurred_at or _utcnow()
     status_value = MANUAL_TRANSACTION_STATUS_BY_TYPE.get(transaction_type, "COMPLETED")
+    if transaction_type == "PAYMENT" and payment_method_code == "CHECK":
+        status_value = "CHECK_RECEIVED"
 
     reconciled_note_ids: list[UUID] = []
     seen_reconciled_note_ids: set[UUID] = set()
@@ -7113,7 +7134,7 @@ def create_admin_client_manual_transaction(
     db.add(row)
     db.flush()
 
-    can_mark_reconciled_invoices_paid = bool(reconciled_invoices) and total_abs >= reconciled_total
+    can_mark_reconciled_invoices_paid = bool(reconciled_invoices) and total_abs >= reconciled_total and status_value in PAID_PAYMENT_STATUSES
     auto_mark_reconciled_invoices_paid = bool(
         transaction_type == "PAYMENT" and payment_method_code == "CARD_ONLINE" and can_mark_reconciled_invoices_paid
     )
@@ -7132,6 +7153,7 @@ def create_admin_client_manual_transaction(
                 metadata["invoice_status"] = "PAID"
             note.message = _build_invoice_range_note_message(metadata)
             db.add(note)
+            evaluate_referrals_for_invoice(db, client_id=client.id, note=note, metadata=metadata)
 
     receipt_recipients: list[str] = []
     receipt_message_id: str | None = None
@@ -7251,6 +7273,530 @@ def _load_manual_transaction_for_client(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction manuelle introuvable")
     return row
+
+
+def _check_deposit_statuses(raw_statuses: str | None) -> set[str]:
+    statuses = {
+        token.strip().upper()
+        for token in re.split(r"[,;\s]+", raw_statuses or "")
+        if token.strip()
+    }
+    allowed = {"CHECK_RECEIVED", "CHECK_DEPOSITED", "PAID"}
+    filtered = statuses & allowed
+    return filtered or {"CHECK_RECEIVED"}
+
+
+def _referral_reward_statuses(raw_statuses: str | None) -> set[str] | None:
+    if raw_statuses is None:
+        return None
+    statuses = {
+        token.strip().upper()
+        for token in re.split(r"[,;\s]+", raw_statuses or "")
+        if token.strip()
+    }
+    allowed = {"DECLARED", "NEEDS_REVIEW", "AWAITING_PAYMENT", "CREDIT_GRANTED", "CANCELLED"}
+    filtered = statuses & allowed
+    return filtered or None
+
+
+def _user_display_for_referral(user: User | None) -> str | None:
+    if user is None:
+        return None
+    return _display_name(user.first_name, user.last_name, user.email)
+
+
+def _decimal_from_referral_metadata(metadata: dict[str, object], *keys: str) -> Decimal | None:
+    for key in keys:
+        value = metadata.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            parsed = Decimal(str(value))
+        except (InvalidOperation, ValueError):
+            continue
+        return parsed.quantize(Decimal("0.01"))
+    return None
+
+
+def _referral_reward_out(row: ReferralReward, users_by_id: dict[UUID, User]) -> AdminReferralRewardOut:
+    referrer = users_by_id.get(row.referrer_user_id) if row.referrer_user_id else None
+    referred = users_by_id.get(row.referred_client_id) if row.referred_client_id else None
+    student = users_by_id.get(row.referred_student_id) if row.referred_student_id else None
+    metadata = row.metadata_json or {}
+    trigger_ratio = Decimal(row.trigger_ratio or 0).quantize(Decimal("0.0001"))
+    invoice_total = _decimal_from_referral_metadata(metadata, "trigger_invoice_total", "last_invoice_total")
+    paid_total = _decimal_from_referral_metadata(metadata, "trigger_paid_total", "last_paid_total")
+    threshold_amount = None
+    payment_progress_ratio = None
+    if invoice_total is not None and invoice_total > Decimal("0.00"):
+        threshold_amount = (invoice_total * trigger_ratio).quantize(Decimal("0.01"))
+        if paid_total is not None:
+            payment_progress_ratio = (paid_total / invoice_total).quantize(Decimal("0.0001"))
+    return AdminReferralRewardOut(
+        id=row.id,
+        typeform_intake_id=row.typeform_intake_id,
+        quote_id=row.quote_id,
+        declared_referrer_text=row.declared_referrer_text,
+        category=row.category,
+        status=row.status,
+        match_status=row.match_status,
+        match_confidence=row.match_confidence,
+        referrer_user_id=row.referrer_user_id,
+        referrer_name=_user_display_for_referral(referrer),
+        referrer_email=referrer.email if referrer is not None else None,
+        referred_client_id=row.referred_client_id,
+        referred_client_name=_user_display_for_referral(referred),
+        referred_student_id=row.referred_student_id,
+        referred_student_name=_user_display_for_referral(student),
+        reward_amount=Decimal(row.reward_amount or 0).quantize(Decimal("0.01")),
+        currency=_normalize_currency(row.currency, fallback="EUR"),
+        trigger_ratio=trigger_ratio,
+        invoice_total=invoice_total,
+        paid_total=paid_total,
+        threshold_amount=threshold_amount,
+        payment_progress_ratio=payment_progress_ratio,
+        credit_transaction_id=row.credit_transaction_id,
+        trigger_invoice_note_id=row.trigger_invoice_note_id,
+        announcement_email_sent_at=row.announcement_email_sent_at,
+        credit_email_sent_at=row.credit_email_sent_at,
+        validated_at=row.validated_at,
+        credit_granted_at=row.credit_granted_at,
+        updated_at=row.updated_at,
+        match_candidates=row.match_candidates_json or [],
+    )
+
+
+def _recompute_referral_reward_payment(db: Session, *, reward: ReferralReward) -> ReferralReward:
+    if reward.referred_client_id is None or reward.status == "CREDIT_GRANTED":
+        return reward
+    note_ids_seen: set[UUID] = set()
+    ordered_notes: list[ClientNoteEntry] = []
+    if reward.trigger_invoice_note_id is not None:
+        note = db.scalar(
+            select(ClientNoteEntry).where(
+                ClientNoteEntry.id == reward.trigger_invoice_note_id,
+                ClientNoteEntry.user_id == reward.referred_client_id,
+            )
+        )
+        if note is not None:
+            ordered_notes.append(note)
+            note_ids_seen.add(note.id)
+    notes = db.scalars(
+        select(ClientNoteEntry)
+        .where(ClientNoteEntry.user_id == reward.referred_client_id)
+        .order_by(ClientNoteEntry.created_at.desc(), ClientNoteEntry.id.desc())
+    ).all()
+    for note in notes:
+        if note.id in note_ids_seen:
+            continue
+        ordered_notes.append(note)
+        note_ids_seen.add(note.id)
+
+    for note in ordered_notes:
+        metadata = _parse_invoice_range_note_entry(note)
+        if metadata is None:
+            continue
+        evaluate_referrals_for_invoice(db, client_id=reward.referred_client_id, note=note, metadata=metadata)
+        db.flush()
+        refreshed = db.get(ReferralReward, reward.id)
+        if refreshed is not None:
+            reward = refreshed
+        if reward.status == "CREDIT_GRANTED":
+            break
+    return reward
+
+
+@router.get("/referrals/rewards", response_model=list[AdminReferralRewardOut])
+def list_admin_referral_rewards(
+    statuses: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[AdminReferralRewardOut]:
+    stmt = select(ReferralReward)
+    filtered_statuses = _referral_reward_statuses(statuses)
+    if filtered_statuses is not None:
+        stmt = stmt.where(ReferralReward.status.in_(sorted(filtered_statuses)))
+    rewards = db.scalars(stmt.order_by(ReferralReward.updated_at.desc()).limit(500)).all()
+    user_ids = {
+        user_id
+        for reward in rewards
+        for user_id in (reward.referrer_user_id, reward.referred_client_id, reward.referred_student_id)
+        if user_id is not None
+    }
+    users_by_id = {
+        user.id: user
+        for user in db.scalars(select(User).where(User.id.in_(list(user_ids)))).all()
+    } if user_ids else {}
+    return [_referral_reward_out(row, users_by_id) for row in rewards]
+
+
+@router.post("/referrals/rewards/recompute", response_model=AdminReferralBulkRecomputeOut)
+def recompute_admin_referral_rewards(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminReferralBulkRecomputeOut:
+    rewards = db.scalars(
+        select(ReferralReward)
+        .where(
+            ReferralReward.status.in_(["AWAITING_PAYMENT", "DECLARED"]),
+            ReferralReward.referrer_user_id.is_not(None),
+            ReferralReward.referred_client_id.is_not(None),
+            ReferralReward.credit_transaction_id.is_(None),
+        )
+        .order_by(ReferralReward.updated_at.asc(), ReferralReward.id.asc())
+        .with_for_update()
+    ).all()
+    updated_count = 0
+    credit_granted_count = 0
+    for reward in rewards:
+        before = (
+            reward.status,
+            reward.credit_transaction_id,
+            reward.credit_granted_at,
+            json.dumps(reward.metadata_json or {}, sort_keys=True, default=str),
+        )
+        recomputed = _recompute_referral_reward_payment(db, reward=reward)
+        after = (
+            recomputed.status,
+            recomputed.credit_transaction_id,
+            recomputed.credit_granted_at,
+            json.dumps(recomputed.metadata_json or {}, sort_keys=True, default=str),
+        )
+        if after != before:
+            updated_count += 1
+        if before[1] is None and recomputed.credit_transaction_id is not None:
+            credit_granted_count += 1
+    db.commit()
+    return AdminReferralBulkRecomputeOut(
+        scanned_count=len(rewards),
+        updated_count=updated_count,
+        credit_granted_count=credit_granted_count,
+    )
+
+
+@router.patch("/referrals/rewards/{reward_id}/referrer", response_model=AdminReferralRewardOut)
+def update_admin_referral_reward_referrer(
+    reward_id: UUID,
+    payload: AdminReferralRewardManualMatchRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminReferralRewardOut:
+    try:
+        reward = manually_validate_referral(
+            db,
+            reward_id=reward_id,
+            referrer_user_id=payload.referrer_user_id,
+            actor_user_id=actor.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(reward)
+    reward = _recompute_referral_reward_payment(db, reward=reward)
+    db.commit()
+    db.refresh(reward)
+    user_ids = {
+        user_id
+        for user_id in (reward.referrer_user_id, reward.referred_client_id, reward.referred_student_id)
+        if user_id is not None
+    }
+    users_by_id = {
+        user.id: user
+        for user in db.scalars(select(User).where(User.id.in_(list(user_ids)))).all()
+    } if user_ids else {}
+    return _referral_reward_out(reward, users_by_id)
+
+
+@router.post("/referrals/rewards/{reward_id}/recompute", response_model=AdminReferralRewardOut)
+def recompute_admin_referral_reward(
+    reward_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminReferralRewardOut:
+    reward = db.scalar(select(ReferralReward).where(ReferralReward.id == reward_id).with_for_update())
+    if reward is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Referral reward not found")
+    reward = _recompute_referral_reward_payment(db, reward=reward)
+    db.commit()
+    db.refresh(reward)
+    user_ids = {
+        user_id
+        for user_id in (reward.referrer_user_id, reward.referred_client_id, reward.referred_student_id)
+        if user_id is not None
+    }
+    users_by_id = {
+        user.id: user
+        for user in db.scalars(select(User).where(User.id.in_(list(user_ids)))).all()
+    } if user_ids else {}
+    return _referral_reward_out(reward, users_by_id)
+
+
+def _check_payment_base_stmt(*, statuses: set[str]):
+    return (
+        select(ClientManualTransaction, User)
+        .join(User, User.id == ClientManualTransaction.user_id)
+        .where(
+            ClientManualTransaction.transaction_type == "PAYMENT",
+            ClientManualTransaction.status.in_(sorted(statuses)),
+            ClientManualTransaction.reference.ilike("MODE:CHECK%"),
+        )
+    )
+
+
+def _client_name_for_check(user: User) -> str:
+    return _display_name(user.first_name, user.last_name, user.email)
+
+
+def _check_tracking_note(description: str | None) -> str | None:
+    lines = [line.strip() for line in (description or "").splitlines() if line.strip()]
+    for line in reversed(lines):
+        if line.startswith("Depot banque:") or line.startswith("Encaissement banque:"):
+            return line
+    return None
+
+
+def _append_check_tracking_note(description: str | None, note: str) -> str:
+    existing = (description or "").strip()
+    if note in existing.splitlines():
+        return existing
+    return f"{existing}\n{note}".strip() if existing else note
+
+
+def _check_import_match_note(item: AdminCheckDepositImportRowIn) -> str | None:
+    parts: list[str] = []
+    if item.row_number is not None:
+        parts.append(f"ligne {item.row_number}")
+    if item.payer_name:
+        parts.append(f"nom cheque: {item.payer_name.strip()[:80]}")
+    if item.reference:
+        parts.append(f"reference scannee: {item.reference.strip()[:80]}")
+    if item.amount_incl_vat is not None:
+        amount = Decimal(item.amount_incl_vat).quantize(Decimal("0.01"))
+        parts.append(f"montant scanne: {amount:.2f}")
+    if not parts:
+        return None
+    return f"Rapprochement import: {', '.join(parts)}."
+
+
+def _check_deposit_payment_out(
+    db: Session,
+    *,
+    row: ClientManualTransaction,
+    client: User,
+) -> AdminCheckDepositPaymentOut:
+    lock = _manual_transaction_lock_info(db, client_id=client.id, transaction_id=row.id)
+    _, invoice_number = lock
+    invoice_note_id = None
+    active_lock = _active_invoice_lock_by_payment_key(db, client_id=client.id).get(_payment_key(source="MANUAL", payment_id=row.id))
+    if active_lock is not None:
+        _, invoice_number, invoice_note_id, _, _ = active_lock
+    return AdminCheckDepositPaymentOut(
+        transaction_id=row.id,
+        client_id=client.id,
+        client_name=_client_name_for_check(client),
+        occurred_at=row.occurred_at,
+        label=row.label,
+        reference=_manual_custom_reference(row.reference) or row.reference,
+        amount_incl_vat=abs(Decimal(row.total_incl_vat or 0)).quantize(Decimal("0.01")),
+        currency=_normalize_currency(row.currency, fallback=client.preferred_currency or "EUR"),
+        status=(row.status or "").strip().upper() or "CHECK_RECEIVED",
+        invoice_number=invoice_number,
+        invoice_note_id=invoice_note_id,
+        tracking_note=_check_tracking_note(row.description),
+    )
+
+
+@router.get("/check-deposits/pending", response_model=list[AdminCheckDepositPaymentOut])
+def list_admin_check_deposit_payments(
+    statuses: str | None = Query(default="CHECK_RECEIVED"),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[AdminCheckDepositPaymentOut]:
+    rows = db.execute(
+        _check_payment_base_stmt(statuses=_check_deposit_statuses(statuses)).order_by(
+            ClientManualTransaction.occurred_at.asc(),
+            User.last_name.asc().nulls_last(),
+            User.first_name.asc().nulls_last(),
+        )
+    ).all()
+    return [_check_deposit_payment_out(db, row=row, client=client) for row, client in rows]
+
+
+def _normalize_check_match_reference(value: str | None) -> str:
+    normalized = unicodedata.normalize("NFKD", value or "")
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", "", ascii_text.casefold())
+
+
+def _normalize_check_name_tokens(value: str | None) -> set[str]:
+    normalized = unicodedata.normalize("NFKD", value or "")
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
+    return {
+        token
+        for token in re.split(r"[^a-z0-9]+", ascii_text.casefold())
+        if len(token) >= 2
+    }
+
+
+def _check_candidate_name_tokens_by_transaction(
+    db: Session,
+    *,
+    rows: list[ClientManualTransaction],
+) -> dict[UUID, set[str]]:
+    client_ids = {row.user_id for row in rows}
+    users_by_id = {
+        user.id: user
+        for user in db.scalars(select(User).where(User.id.in_(list(client_ids)))).all()
+    }
+    child_rows = db.execute(
+        select(ClientFamilyLink.adult_user_id, User)
+        .join(User, User.id == ClientFamilyLink.child_user_id)
+        .where(ClientFamilyLink.adult_user_id.in_(list(client_ids)))
+    ).all()
+    child_names_by_adult_id: dict[UUID, list[str]] = {}
+    for adult_id, child in child_rows:
+        child_names_by_adult_id.setdefault(adult_id, []).append(_client_name_for_check(child))
+
+    out: dict[UUID, set[str]] = {}
+    for row in rows:
+        client = users_by_id.get(row.user_id)
+        names = [_client_name_for_check(client)] if client is not None else []
+        names.extend(child_names_by_adult_id.get(row.user_id, []))
+        tokens: set[str] = set()
+        for name in names:
+            tokens.update(_normalize_check_name_tokens(name))
+        out[row.id] = tokens
+    return out
+
+
+@router.post("/check-deposits/bulk-status", response_model=AdminCheckDepositBulkUpdateOut)
+def bulk_update_admin_check_deposit_status(
+    payload: AdminCheckDepositBulkUpdateRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminCheckDepositBulkUpdateOut:
+    target_status = payload.target_status.strip().upper()
+    source_statuses = {"CHECK_RECEIVED"} if target_status == "CHECK_DEPOSITED" else {"CHECK_DEPOSITED", "CHECK_RECEIVED"}
+    batch_reference = _normalize_optional(payload.batch_reference)
+    effective_date = payload.effective_date or _utcnow().date()
+    operation_label = "Depot banque" if target_status == "CHECK_DEPOSITED" else "Encaissement banque"
+    operation_note = (
+        f"{operation_label}: {batch_reference or 'sans reference'} le {effective_date.isoformat()}."
+    )
+    rows = db.scalars(
+        select(ClientManualTransaction)
+        .where(
+            ClientManualTransaction.transaction_type == "PAYMENT",
+            ClientManualTransaction.status.in_(sorted(source_statuses)),
+            ClientManualTransaction.reference.ilike("MODE:CHECK%"),
+        )
+        .with_for_update()
+    ).all()
+    rows_by_id = {row.id: row for row in rows}
+    rows_by_reference_amount: dict[tuple[str, Decimal], list[ClientManualTransaction]] = {}
+    rows_by_amount: dict[Decimal, list[ClientManualTransaction]] = {}
+    for row in rows:
+        reference_key = _normalize_check_match_reference(_manual_custom_reference(row.reference) or row.reference)
+        amount_key = abs(Decimal(row.total_incl_vat or 0)).quantize(Decimal("0.01"))
+        rows_by_amount.setdefault(amount_key, []).append(row)
+        if reference_key:
+            rows_by_reference_amount.setdefault((reference_key, amount_key), []).append(row)
+    name_tokens_by_transaction = _check_candidate_name_tokens_by_transaction(db, rows=rows)
+
+    selected_ids: set[UUID] = set()
+    import_notes_by_transaction_id: dict[UUID, str] = {}
+    unmatched: list[str] = []
+    for transaction_id in payload.transaction_ids:
+        if transaction_id in rows_by_id:
+            selected_ids.add(transaction_id)
+        else:
+            unmatched.append(f"ID {transaction_id} introuvable ou deja traite")
+
+    for index, item in enumerate(payload.rows, start=1):
+        label = f"ligne {item.row_number or index}"
+        if item.transaction_id is not None:
+            row = rows_by_id.get(item.transaction_id)
+            if row is None:
+                unmatched.append(f"{label}: ID introuvable ou deja traite")
+                continue
+            selected_ids.add(row.id)
+            if note := _check_import_match_note(item):
+                import_notes_by_transaction_id[row.id] = note
+            continue
+        reference_key = _normalize_check_match_reference(item.reference)
+        amount = Decimal(item.amount_incl_vat or 0).quantize(Decimal("0.01"))
+        payer_name = item.payer_name or item.client_name
+        payer_tokens = _normalize_check_name_tokens(payer_name)
+        if amount <= Decimal("0.00"):
+            unmatched.append(f"{label}: montant manquant")
+            continue
+        matches = rows_by_reference_amount.get((reference_key, amount), []) if reference_key else []
+        if len(matches) != 1 and payer_tokens:
+            name_matches: list[ClientManualTransaction] = []
+            for row in rows_by_amount.get(amount, []):
+                candidate_tokens = name_tokens_by_transaction.get(row.id, set())
+                if not candidate_tokens:
+                    continue
+                if payer_tokens.issubset(candidate_tokens) or len(payer_tokens & candidate_tokens) >= min(2, len(payer_tokens)):
+                    name_matches.append(row)
+            matches = name_matches
+        if len(matches) != 1:
+            hint = "aucun cheque trouve" if not matches else "plusieurs cheques possibles"
+            details: list[str] = []
+            if item.reference:
+                details.append(f"ref '{item.reference}'")
+            if payer_name:
+                details.append(f"nom '{payer_name}'")
+            if amount > Decimal("0.00"):
+                details.append(f"montant {amount:.2f}")
+            if details:
+                hint = f"{hint} ({', '.join(details)})"
+            unmatched.append(f"{label}: {hint}")
+            continue
+        selected_ids.add(matches[0].id)
+        if note := _check_import_match_note(item):
+            import_notes_by_transaction_id[matches[0].id] = note
+
+    now = _utcnow()
+    touched_transaction_ids_by_client: dict[UUID, set[UUID]] = {}
+    for transaction_id in selected_ids:
+        row = rows_by_id.get(transaction_id)
+        if row is None:
+            continue
+        row.status = target_status
+        row.description = _append_check_tracking_note(row.description, operation_note)
+        if import_note := import_notes_by_transaction_id.get(row.id):
+            row.description = _append_check_tracking_note(row.description, import_note)
+        row.actor_user_id = actor.id
+        row.updated_at = now
+        touched_transaction_ids_by_client.setdefault(row.user_id, set()).add(row.id)
+        db.add(row)
+
+    for client_id, transaction_ids in touched_transaction_ids_by_client.items():
+        _recompute_reconciled_invoice_statuses_for_manual_payment_change(
+            db,
+            client_id=client_id,
+            transaction_ids=transaction_ids,
+        )
+        _create_client_note(
+            db,
+            client_id=client_id,
+            author_user_id=actor.id,
+            entry_type="AUTO",
+            message=(
+                f"Depot de cheques: {target_status} applique sur {len(transaction_ids)} paiement(s). "
+                f"{operation_note}"
+            ),
+        )
+
+    db.commit()
+    updated_ids = sorted(selected_ids, key=str)
+    return AdminCheckDepositBulkUpdateOut(
+        matched_count=len(selected_ids),
+        updated_count=len(selected_ids),
+        updated_transaction_ids=updated_ids,
+        unmatched_rows=unmatched,
+    )
 
 
 @router.patch("/{client_id}/manual-transactions/{transaction_id}", response_model=AdminClientPaymentOut)
@@ -7400,6 +7946,58 @@ def update_admin_client_manual_transaction(
         author_user_id=actor.id,
         entry_type="AUTO",
         message=note_message,
+    )
+    db.commit()
+
+    updated = next(
+        (
+            item
+            for item in _build_admin_client_payments(db, client_id=client.id)
+            if item.id == row.id and item.source.strip().upper() == "MANUAL"
+        ),
+        None,
+    )
+    if updated is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unable to load updated transaction")
+    return updated
+
+
+@router.patch("/{client_id}/manual-transactions/{transaction_id}/status", response_model=AdminClientPaymentOut)
+def update_admin_client_manual_transaction_status(
+    client_id: UUID,
+    transaction_id: UUID,
+    payload: AdminClientManualTransactionStatusUpdateRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminClientPaymentOut:
+    client = _require_client(db, client_id)
+    row = _load_manual_transaction_for_client(db, client=client, transaction_id=transaction_id, for_update=True)
+    transaction_type = (row.transaction_type or "").strip().upper()
+    if transaction_type != "PAYMENT":
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Seuls les paiements ont un statut d'encaissement")
+    payment_method_code = _manual_payment_method_code(row.reference)
+    next_status = payload.status.strip().upper()
+    if next_status in {"CHECK_RECEIVED", "CHECK_DEPOSITED"} and payment_method_code != "CHECK":
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Ce statut est reserve aux paiements par cheque")
+    if payment_method_code == "CHECK" and next_status not in CHECK_TRACKING_STATUSES and next_status != "CANCELLED":
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Statut de cheque invalide")
+
+    previous_status = (row.status or "").strip().upper()
+    row.status = next_status
+    row.actor_user_id = actor.id
+    row.updated_at = _utcnow()
+    db.add(row)
+    _recompute_reconciled_invoice_statuses_for_manual_payment_change(
+        db,
+        client_id=client.id,
+        transaction_ids={row.id},
+    )
+    _create_client_note(
+        db,
+        client_id=client.id,
+        author_user_id=actor.id,
+        entry_type="AUTO",
+        message=f"Statut du paiement manuel modifie ({row.label}) : {previous_status or '-'} -> {next_status}.",
     )
     db.commit()
 

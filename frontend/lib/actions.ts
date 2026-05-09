@@ -43,6 +43,7 @@ import type {
   AdminClientAutoInvoiceRuleOut,
   AdminRangeInvoiceEmailOut,
   AdminRangeInvoiceOut,
+  AdminCheckDepositBulkUpdateOut,
   AdminClientPaymentOut,
   AdminCreditTypeOut,
   AdminFormulaOut,
@@ -59,6 +60,7 @@ import type {
   AdminCatalogStockOut,
   AdminStockEntryCreateOut,
   AdminProductCategoriesOut,
+  AdminReferralProgramSettingsOut,
   AdminImpersonationStartOut,
   AdminProfessorContractDeleteOut,
   AdminCollaboratorSendPasswordOut,
@@ -706,6 +708,114 @@ function parseUuid(raw: string): string | null {
     return null;
   }
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) ? value : null;
+}
+
+function parseDelimitedRows(text: string): string[][] {
+  const delimiter = text.includes("\t") ? "\t" : ";";
+  const fallbackDelimiter = delimiter === ";" && !text.includes(";") && text.includes(",") ? "," : delimiter;
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (char === '"' && inQuotes && next === '"') {
+      cell += '"';
+      index += 1;
+      continue;
+    }
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (!inQuotes && char === fallbackDelimiter) {
+      row.push(cell.trim());
+      cell = "";
+      continue;
+    }
+    if (!inQuotes && (char === "\n" || char === "\r")) {
+      if (char === "\r" && next === "\n") {
+        index += 1;
+      }
+      row.push(cell.trim());
+      if (row.some((value) => value.length > 0)) {
+        rows.push(row);
+      }
+      row = [];
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+  row.push(cell.trim());
+  if (row.some((value) => value.length > 0)) {
+    rows.push(row);
+  }
+  return rows;
+}
+
+function normalizeCheckDepositHeader(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function checkDepositRowsFromDelimitedText(text: string): Array<Record<string, string | number | null>> {
+  const rows = parseDelimitedRows(text);
+  if (rows.length === 0) {
+    return [];
+  }
+  const headers = rows[0].map(normalizeCheckDepositHeader);
+  const out: Array<Record<string, string | number | null>> = [];
+  rows.slice(1).forEach((row, rowIndex) => {
+    const record: Record<string, string | number | null> = { row_number: rowIndex + 2 };
+    row.forEach((value, index) => {
+      const header = headers[index] || "";
+      if (!header) {
+        return;
+      }
+      record[header] = value;
+    });
+    const transactionId = String(record.transaction_id ?? record.id ?? record.identifiant ?? "").trim();
+    const reference = String(record.reference ?? record.ref ?? record.numero ?? record.numero_cheque ?? record.cheque ?? "").trim();
+    const amountRaw = String(record.amount_incl_vat ?? record.amount ?? record.montant ?? record.montant_ttc ?? "").trim().replace(",", ".");
+    const amount = parseNonNegativeDecimal(amountRaw);
+    const payerName = String(
+      record.payer_name ??
+        record.payeur ??
+        record.tireur ??
+        record.emetteur ??
+        record.emetteur_cheque ??
+        record.nom_emetteur ??
+        record.titulaire ??
+        record.titulaire_compte ??
+        record.nom_sur_cheque ??
+        record.nom_sur_le_cheque ??
+        record.nom_cheque ??
+        record.nom ??
+        "",
+    ).trim();
+    out.push({
+      row_number: rowIndex + 2,
+      transaction_id: parseUuid(transactionId),
+      reference: reference || null,
+      amount_incl_vat: amount && amount > 0 ? amount : null,
+      client_name: String(record.client_name ?? record.client ?? record.famille ?? "").trim() || null,
+      payer_name: payerName || null,
+    });
+  });
+  return out;
+}
+
+async function checkDepositRowsFromSpreadsheet(file: File): Promise<Array<Record<string, string | number | null>>> {
+  const { default: readXlsxFile } = await import("read-excel-file");
+  const rows = await readXlsxFile(file);
+  return checkDepositRowsFromDelimitedText(rows.map((row) => row.join(";")).join("\n"));
 }
 
 function parseDateOnly(raw: string): string | null {
@@ -5253,6 +5363,199 @@ export async function updateAdminClientManualTransactionAction(formData: FormDat
   redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "ok", t("admin.client_action.manual_transaction_updated")));
 }
 
+export async function updateAdminClientManualTransactionStatusAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  await ensureAdmin(token);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const transactionId = String(formData.get("transaction_id") ?? "").trim();
+  const nextStatus = String(formData.get("status") ?? "").trim().toUpperCase();
+  const allowedStatuses = new Set(["CHECK_RECEIVED", "CHECK_DEPOSITED", "PAID", "COMPLETED", "CANCELLED"]);
+  if (!clientId || !transactionId || !allowedStatuses.has(nextStatus)) {
+    redirect(appendQueryMessage(clientId ? `/admin/clients/${clientId}?tab=paiements` : "/admin/clients", "error", "Statut de paiement invalide"));
+  }
+
+  const result = await backendRequest<AdminClientPaymentOut>(
+    `/api/v1/admin/clients/${clientId}/manual-transactions/${transactionId}/status`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status: nextStatus }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", result.message));
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "ok", "Statut du paiement mis a jour"));
+}
+
+export async function bulkUpdateAdminCheckDepositStatusAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  await ensureAdmin(token);
+
+  const requestedReturnTo = String(formData.get("return_to") ?? "").trim();
+  const returnTo = requestedReturnTo.startsWith("/admin/check-deposits") ? requestedReturnTo : "/admin/check-deposits";
+  const targetStatus = String(formData.get("target_status") ?? "CHECK_DEPOSITED").trim().toUpperCase();
+  if (targetStatus !== "CHECK_DEPOSITED" && targetStatus !== "PAID") {
+    redirect(appendQueryMessage(returnTo, "error", "Statut cible invalide"));
+  }
+  const batchReference = String(formData.get("batch_reference") ?? "").trim() || null;
+  const effectiveDate = String(formData.get("effective_date") ?? "").trim() || null;
+  const transactionIds = formData
+    .getAll("transaction_ids")
+    .map((value) => parseUuid(String(value ?? "")))
+    .filter((value): value is string => Boolean(value));
+
+  let rows: Array<Record<string, string | number | null>> = [];
+  const rawFile = formData.get("deposit_file");
+  if (typeof File !== "undefined" && rawFile instanceof File && rawFile.size > 0) {
+    const name = rawFile.name.toLowerCase();
+    if (name.endsWith(".xlsx")) {
+      rows = await checkDepositRowsFromSpreadsheet(rawFile);
+    } else if (name.endsWith(".xls")) {
+      redirect(appendQueryMessage(returnTo, "error", "Enregistrez le fichier Excel en .xlsx ou en CSV avant import"));
+    } else {
+      const text = await rawFile.text();
+      rows = checkDepositRowsFromDelimitedText(text);
+    }
+  }
+
+  if (transactionIds.length === 0 && rows.length === 0) {
+    redirect(appendQueryMessage(returnTo, "error", "Selectionnez des cheques ou importez un fichier CSV/XLSX"));
+  }
+
+  const result = await backendRequest<AdminCheckDepositBulkUpdateOut>(
+    "/api/v1/admin/clients/check-deposits/bulk-status",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        transaction_ids: transactionIds,
+        rows,
+        target_status: targetStatus,
+        batch_reference: batchReference,
+        effective_date: effectiveDate,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/check-deposits");
+  revalidatePath("/admin/clients");
+  const unmatchedDetails = result.data.unmatched_rows.slice(0, 4).join(" ; ");
+  const extraCount = Math.max(result.data.unmatched_rows.length - 4, 0);
+  const warning = result.data.unmatched_rows.length > 0
+    ? ` (${result.data.unmatched_rows.length} ligne(s) non rapprochee(s): ${unmatchedDetails}${extraCount > 0 ? ` ; +${extraCount}` : ""})`
+    : "";
+  redirect(appendQueryMessage(returnTo, "ok", `${result.data.updated_count} cheque(s) mis a jour${warning}`));
+}
+
+export async function validateAdminReferralRewardAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  await ensureAdmin(token);
+
+  const rewardId = parseUuid(String(formData.get("reward_id") ?? ""));
+  const referrerUserId = parseUuid(String(formData.get("referrer_user_id") ?? ""));
+  const requestedReturnTo = String(formData.get("return_to") ?? "").trim();
+  const returnTo = requestedReturnTo.startsWith("/admin/referrals") ? requestedReturnTo : "/admin/referrals";
+  if (!rewardId || !referrerUserId) {
+    redirect(appendQueryMessage(returnTo, "error", "Parrainage incomplet"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/admin/clients/referrals/rewards/${encodeURIComponent(rewardId)}/referrer`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ referrer_user_id: referrerUserId }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/referrals");
+  revalidatePath("/admin/intakes");
+  redirect(appendQueryMessage(returnTo, "ok", "Parrainage valide"));
+}
+
+export async function recomputeAdminReferralRewardAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  await ensureAdmin(token);
+
+  const rewardId = parseUuid(String(formData.get("reward_id") ?? ""));
+  const requestedReturnTo = String(formData.get("return_to") ?? "").trim();
+  const returnTo = requestedReturnTo.startsWith("/admin/referrals") ? requestedReturnTo : "/admin/referrals";
+  if (!rewardId) {
+    redirect(appendQueryMessage(returnTo, "error", "Parrainage introuvable"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/admin/clients/referrals/rewards/${encodeURIComponent(rewardId)}/recompute`,
+    { method: "POST" },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/referrals");
+  redirect(appendQueryMessage(returnTo, "ok", "Parrainage recalcule"));
+}
+
+export async function recomputeAllAdminReferralRewardsAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  await ensureAdmin(token);
+
+  const requestedReturnTo = String(formData.get("return_to") ?? "").trim();
+  const returnTo = requestedReturnTo.startsWith("/admin/referrals") ? requestedReturnTo : "/admin/referrals";
+  const result = await backendRequest<{
+    scanned_count: number;
+    updated_count: number;
+    credit_granted_count: number;
+  }>(
+    "/api/v1/admin/clients/referrals/rewards/recompute",
+    { method: "POST" },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/referrals");
+  redirect(
+    appendQueryMessage(
+      returnTo,
+      "ok",
+      `${result.data.updated_count} parrainage(s) recalcules, ${result.data.credit_granted_count} avoir(s) genere(s)`,
+    ),
+  );
+}
+
 export async function deleteAdminClientManualTransactionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -8076,6 +8379,47 @@ export async function updateAdminConfigPaymentMethodsAction(formData: FormData):
   redirect(appendQueryMessage(returnTo, "ok", t("admin.payment_action.methods_updated")));
 }
 
+export async function updateAdminConfigReferralProgramAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+
+  await ensureAdmin(token);
+  const returnTo = "/admin/config?section=params-referrals";
+  const categories: Record<string, { label: string; amount: string; active: boolean }> = {};
+  for (const code of ["PARIS", "BAR_LE_DUC", "ONLINE", "DOMICILE"]) {
+    categories[code] = {
+      label: String(formData.get(`category_label_${code}`) ?? code).trim() || code,
+      amount: String(formData.get(`category_amount_${code}`) ?? "0").trim() || "0",
+      active: formData.get(`category_active_${code}`) === "on",
+    };
+  }
+
+  const result = await backendRequest<AdminReferralProgramSettingsOut>(
+    "/api/v1/admin/config/referral-program",
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        enabled: formData.get("enabled") === "on",
+        currency: String(formData.get("currency") ?? "EUR").trim().toUpperCase(),
+        trigger_ratio: String(formData.get("trigger_ratio") ?? "0.50").trim() || "0.50",
+        announcement_email_enabled: formData.get("announcement_email_enabled") === "on",
+        credit_email_enabled: formData.get("credit_email_enabled") === "on",
+        categories,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config");
+  redirect(appendQueryMessage(returnTo, "ok", "Parametres de parrainage enregistres"));
+}
+
 export async function updateAdminConfigProductCategoriesAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -10203,6 +10547,39 @@ export async function saveTypeformIntakeResolutionAction(formData: FormData): Pr
   );
 }
 
+export async function saveTypeformIntakeReferralAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  await ensureAdmin(token);
+
+  const intakeId = String(formData.get("intake_id") ?? "").trim();
+  const returnTo = safeAdminIntakesPath(String(formData.get("return_to") ?? "/admin/intakes"));
+  const cleanReturnTo = setQueryParam(setQueryParam(returnTo, "error", null), "ok", null);
+  const referrerUserId = parseUuid(String(formData.get("referrer_user_id") ?? ""));
+  if (!intakeId || !referrerUserId) {
+    redirect(appendQueryMessage(cleanReturnTo, "error", "Parrainage incomplet"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/typeform/intakes/${encodeURIComponent(intakeId)}/referral`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ referrer_user_id: referrerUserId }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(cleanReturnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/intakes");
+  revalidatePath(`/admin/intakes/${intakeId}`);
+  redirect(appendQueryMessage(cleanReturnTo, "ok", "Parrainage valide"));
+}
+
 export async function reanalyzeTypeformIntakeAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -10282,6 +10659,8 @@ export async function saveTypeformIntakeNormalizedDataAction(formData: FormData)
     requested_slot_preferences: multiValueField(formData, "requested_slot_preferences"),
     requested_formula_type: optionalField(formData, "requested_formula_type"),
     requested_products: multiValueField(formData, "requested_products"),
+    referral_referrer_name: optionalField(formData, "referral_referrer_name"),
+    referral_category: optionalField(formData, "referral_category"),
     notes: optionalField(formData, "notes"),
   };
 

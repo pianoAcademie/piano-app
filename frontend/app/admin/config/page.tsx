@@ -35,6 +35,7 @@ import {
   updateAdminConfigProductCategoriesAction,
   updateAdminConfigPaymentMethodsAction,
   updateAdminConfigPaymentProviderAction,
+  updateAdminConfigReferralProgramAction,
   updateAdminConfigSubscriptionsAction,
   deleteAdminConfigMessagingTemplateAction,
   resetAdminConfigPredefinedMessagingTemplateAction,
@@ -61,6 +62,7 @@ import type {
   AdminPaymentProviderOut,
   AdminPaymentMethodsOut,
   AdminProductCategoriesOut,
+  AdminReferralProgramSettingsOut,
   AdminSubscriptionSettingsOut,
   UserOut,
   QuoteTemplateVariableOut,
@@ -87,6 +89,7 @@ type ConfigSection =
   | "params-account"
   | "params-subscriptions"
   | "params-payments"
+  | "params-referrals"
   | "params-messaging"
   | "formulas"
   | "quotes"
@@ -112,6 +115,7 @@ type SubNavItem = {
     | "params-account"
     | "params-subscriptions"
     | "params-payments"
+    | "params-referrals"
     | "params-messaging";
   label: string;
   labelKey?: string;
@@ -149,6 +153,7 @@ const PARAMS_SUBNAV_ITEMS: SubNavItem[] = [
   { key: "params-account", label: "", labelKey: "admin.breadcrumb.account_info" },
   { key: "params-subscriptions", label: "", labelKey: "admin.breadcrumb.subscription_settings" },
   { key: "params-payments", label: "", labelKey: "admin.breadcrumb.payment_methods" },
+  { key: "params-referrals", label: "Parrainage" },
   { key: "params-messaging", label: "", labelKey: "admin.config.messaging" },
 ];
 
@@ -345,6 +350,7 @@ function parseSection(raw: string): ConfigSection {
     value === "params-account" ||
     value === "params-subscriptions" ||
     value === "params-payments" ||
+    value === "params-referrals" ||
     value === "params-messaging" ||
     value === "formulas" ||
     value === "quotes" ||
@@ -368,6 +374,7 @@ function toMainSection(section: ConfigSection): ConfigMainSection {
     case "params-account":
     case "params-subscriptions":
     case "params-payments":
+    case "params-referrals":
     case "params-messaging":
       return "params";
     case "formulas":
@@ -570,6 +577,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     subscriptionsResult,
     paymentMethodsResult,
     productCategoriesResult,
+    referralProgramResult,
     paymentProviderResult,
     messagingSettingsResult,
     invoiceTemplateResult,
@@ -593,6 +601,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     backendRequest<AdminSubscriptionSettingsOut>("/api/v1/admin/config/subscriptions", {}, token),
     backendRequest<AdminPaymentMethodsOut>("/api/v1/admin/config/payment-methods", {}, token),
     backendRequest<AdminProductCategoriesOut>("/api/v1/admin/config/product-categories", {}, token),
+    backendRequest<AdminReferralProgramSettingsOut>("/api/v1/admin/config/referral-program", {}, token),
     backendRequest<AdminPaymentProviderOut>("/api/v1/admin/config/payment-provider", {}, token),
     backendRequest<AdminMessagingSettingsOut>("/api/v1/admin/config/messaging-settings", {}, token),
     backendRequest<AdminInvoiceTemplateOut>("/api/v1/admin/config/invoice-template", {}, token),
@@ -679,6 +688,12 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
     ? paymentProviderResult.data
     : (() => {
         loadErrors.push(t("admin.config.load_payment_provider", { message: paymentProviderResult.message }));
+        return null;
+      })();
+  const referralProgram = referralProgramResult.ok
+    ? referralProgramResult.data
+    : (() => {
+        loadErrors.push(`Parametres de parrainage indisponibles : ${referralProgramResult.message}`);
         return null;
       })();
   const productCategories = productCategoriesResult.ok
@@ -895,6 +910,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
       | "params-account"
       | "params-subscriptions"
       | "params-payments"
+      | "params-referrals"
       | "params-messaging"
       | "formulas"
       | "quotes"
@@ -1528,6 +1544,108 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                 )}
               </section>
             </>
+          ) : null}
+
+          {section === "params-referrals" ? (
+            <section className="card">
+              <h3>Parrainage</h3>
+              {!referralProgram ? (
+                <p className="muted">Impossible de charger les parametres de parrainage.</p>
+              ) : (
+                <form action={updateAdminConfigReferralProgramAction} className="grid cols-2 config-form-grid">
+                  <label className="checkline span-2">
+                    <input type="checkbox" name="enabled" defaultChecked={referralProgram.enabled} />
+                    <span>Activer le programme de parrainage</span>
+                  </label>
+                  <label>
+                    Devise
+                    <input type="text" name="currency" defaultValue={referralProgram.currency || "EUR"} maxLength={3} required />
+                  </label>
+                  <label>
+                    Seuil d'encaissement
+                    <input
+                      type="number"
+                      name="trigger_ratio"
+                      defaultValue={referralProgram.trigger_ratio || "0.50"}
+                      min="0.01"
+                      max="1"
+                      step="0.01"
+                      required
+                    />
+                    <small className="muted">0.50 = avoir genere lorsque 50% de la facture annuelle est encaisse.</small>
+                  </label>
+                  <label className="checkline">
+                    <input
+                      type="checkbox"
+                      name="announcement_email_enabled"
+                      defaultChecked={referralProgram.announcement_email_enabled}
+                    />
+                    <span>Email d'information au parrain</span>
+                  </label>
+                  <label className="checkline">
+                    <input type="checkbox" name="credit_email_enabled" defaultChecked={referralProgram.credit_email_enabled} />
+                    <span>Email lors de la generation de l'avoir</span>
+                  </label>
+
+                  <div className="table-wrap span-2">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Categorie</th>
+                          <th>Libelle</th>
+                          <th>Montant</th>
+                          <th>Actif</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[
+                          ["PARIS", "Paris"],
+                          ["BAR_LE_DUC", "Bar-le-Duc"],
+                          ["ONLINE", "En ligne"],
+                          ["DOMICILE", "Domicile"],
+                        ].map(([code, fallbackLabel]) => {
+                          const category = referralProgram.categories[code];
+                          return (
+                            <tr key={`referral-program-${code}`}>
+                              <td>{fallbackLabel}</td>
+                              <td>
+                                <input
+                                  type="text"
+                                  name={`category_label_${code}`}
+                                  defaultValue={category?.label || fallbackLabel}
+                                  maxLength={80}
+                                />
+                              </td>
+                              <td>
+                                <input
+                                  type="number"
+                                  name={`category_amount_${code}`}
+                                  defaultValue={category?.amount || "50.00"}
+                                  min="0"
+                                  step="0.01"
+                                  required
+                                />
+                              </td>
+                              <td>
+                                <input type="checkbox" name={`category_active_${code}`} defaultChecked={category?.active ?? true} />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <p className="muted span-2">
+                    Paris regroupe Richelieu, Assas, Pompe et Scheffer. Les inscriptions a domicile, en ligne et Bar-le-Duc
+                    peuvent avoir un montant distinct.
+                  </p>
+                  <div className="row span-2">
+                    <button type="submit">{t("common.save")}</button>
+                  </div>
+                </form>
+              )}
+            </section>
           ) : null}
 
           {requestedSection === "products" ? (
@@ -4575,6 +4693,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
           {section !== "params-account" &&
           section !== "params-subscriptions" &&
           section !== "params-payments" &&
+          section !== "params-referrals" &&
           section !== "params-messaging" &&
           section !== "activities" &&
           section !== "legal-entities" &&

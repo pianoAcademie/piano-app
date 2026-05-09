@@ -25,7 +25,9 @@ class _FakeFamilyDeleteSession:
         self._link = link
         self._siblings = siblings
         self.deleted: list[object] = []
+        self.added: list[object] = []
         self.commit_calls = 0
+        self.flush_calls = 0
 
     def scalar(self, _query: object) -> object | None:
         return self._link
@@ -35,6 +37,12 @@ class _FakeFamilyDeleteSession:
 
     def delete(self, obj: object) -> None:
         self.deleted.append(obj)
+
+    def add(self, obj: object) -> None:
+        self.added.append(obj)
+
+    def flush(self) -> None:
+        self.flush_calls += 1
 
     def commit(self) -> None:
         self.commit_calls += 1
@@ -59,7 +67,12 @@ class AdminClientFamilyLinkDeleteTests(unittest.TestCase):
         )
         db = _FakeFamilyDeleteSession(link=link, siblings=[replacement])
 
-        with patch("app.api.routes.admin_clients._set_billing_recipient") as set_billing_recipient:
+        adult = SimpleNamespace(id=current_adult_id)
+        with (
+            patch("app.api.routes.admin_clients._set_billing_recipient") as set_billing_recipient,
+            patch("app.api.routes.admin_clients._require_client", return_value=adult),
+            patch("app.api.routes.admin_clients.refresh_responsable_status") as refresh_status,
+        ):
             response = delete_admin_client_family_link(link.id, db=db, _=SimpleNamespace())
 
         set_billing_recipient.assert_called_once_with(
@@ -67,7 +80,10 @@ class AdminClientFamilyLinkDeleteTests(unittest.TestCase):
             child_user_id=child_id,
             chosen_adult_user_id=replacement_adult_id,
         )
+        refresh_status.assert_called_once_with(db, adult)
         self.assertEqual(db.deleted, [link])
+        self.assertEqual(db.added, [adult])
+        self.assertEqual(db.flush_calls, 1)
         self.assertEqual(db.commit_calls, 1)
         self.assertEqual(response.status_code, 204)
 

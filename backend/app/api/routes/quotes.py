@@ -163,6 +163,7 @@ from app.services.quotes.template_registry import (
 from app.services.reminders import ensure_booking_reminder
 from app.services.providers.sms import sms_delivery_disabled_reason
 from app.services.family_billing import resolve_billing_profile
+from app.services.referrals import bind_referral_after_quote_transformation
 from app.services.security import hash_password
 from app.services.subscriptions import add_months_utc, default_next_payment_at
 
@@ -6425,6 +6426,12 @@ def _execute_quote_followup_transformation(
         current_user=current_user,
         created_transaction_ids=created_transaction_ids,
         created_invoice_note_ids=created_invoice_note_ids,
+    )
+    bind_referral_after_quote_transformation(
+        db,
+        quote_id=quote.id,
+        referred_client_id=billing.id,
+        referred_student_id=student.id,
     )
 
     followup.status = "completed"

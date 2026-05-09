@@ -16,9 +16,50 @@ from app.api.routes.typeform_intakes import (
     _should_try_future_school_year_config,
     _typeform_session_option_from_row,
 )
+from app.services.referrals import referral_category_for_location
 
 
 class TypeformIntakeMatchingTests(unittest.TestCase):
+    def test_normalize_payload_extracts_free_text_referral_and_category(self) -> None:
+        config = SimpleNamespace(
+            configuration_json={
+                "field_mapping": {
+                    "requested_location": ["location"],
+                },
+                "field_labels": {},
+            },
+            audience_segment="enfants",
+            location_code="paris",
+        )
+        payload = {
+            "form_response": {
+                "answers": [
+                    {
+                        "field": {"ref": "location", "title": "Lieu du cours souhaité"},
+                        "choice": {"label": "Paris 06 - Rue d'Assas"},
+                    },
+                    {
+                        "field": {"id": "referral-free-text", "title": "Famille qui vous a recommandé"},
+                        "text": "Famille Martin",
+                    },
+                ]
+            }
+        }
+
+        normalized, _ = _normalize_payload(payload=payload, config=config)
+
+        self.assertEqual(normalized["referral_referrer_name"], "Famille Martin")
+        self.assertEqual(normalized["referral_category"], "PARIS")
+
+    def test_referral_category_distinguishes_home_online_bar_le_duc_and_paris_sites(self) -> None:
+        self.assertEqual(referral_category_for_location("Paris 16 - Rue Scheffer"), "PARIS")
+        self.assertEqual(referral_category_for_location("Paris 16 - Rue de la Pompe"), "PARIS")
+        self.assertEqual(referral_category_for_location("Paris 01 - Rue Richelieu"), "PARIS")
+        self.assertEqual(referral_category_for_location("Paris 06 - Rue d'Assas"), "PARIS")
+        self.assertEqual(referral_category_for_location("Vidéo Call"), "ONLINE")
+        self.assertEqual(referral_category_for_location("Domicile"), "DOMICILE")
+        self.assertEqual(referral_category_for_location("Bar-le-Duc"), "BAR_LE_DUC")
+
     def test_normalize_payload_falls_back_to_creneau_label_for_slot_preferences(self) -> None:
         config = SimpleNamespace(
             configuration_json={

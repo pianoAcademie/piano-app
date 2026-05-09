@@ -118,6 +118,9 @@ Workflow: `.github/workflows/deploy-vps.yml`
 
 Le workflow deploie automatiquement sur VPS lors d un `push` sur `main/master` ou manuellement via `workflow_dispatch`.
 
+Avant de deployer les changements parrainage + depot de cheques, suivre la note de release:
+`docs/referral-and-check-deposits-release.md`.
+
 Secrets GitHub requis:
 - `VPS_HOST`: IP ou domaine du serveur (ex: `83.228.220.74`)
 - `VPS_USER`: utilisateur SSH (ex: `ubuntu`)
