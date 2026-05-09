@@ -528,6 +528,17 @@ function formatDate(value: string | null | undefined): string {
   return parsed.toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
 }
 
+function invoicePeriodSubline(label: string | null | undefined, language: UiLanguage = "fr"): string {
+  const value = String(label ?? "").trim();
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})(?:\s+-\s+(\d{4}-\d{2}-\d{2}))?$/);
+  if (!match) {
+    return value;
+  }
+  const [, startDate, endDate] = match;
+  const periodLabel = endDate ? `${formatDate(startDate)} - ${formatDate(endDate)}` : formatDate(startDate);
+  return `${uiText(language, "client.billed_period")}: ${periodLabel}`;
+}
+
 function formatDateTime(value: string | null | undefined): string {
   const parsed = safeDate(value);
   if (!parsed) {
@@ -2678,7 +2689,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               title={compactId(invoice.invoice_number)}
                               statusBadge={<span className={`status-pill ${statusClass(invoice.status)}`}>{financeStatusLabel(invoice.status, language)}</span>}
                               meta={`${toMoney(invoice.total_incl_vat, invoice.currency)} · ${formatDate(invoice.issued_at)}`}
-                              subline={invoice.label}
+                              subline={invoicePeriodSubline(invoice.label, language)}
                               actions={
                                 <div className="row client-home-due-actions">
                                   {canPayInvoice ? (
@@ -2807,7 +2818,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             title={compactId(invoice.invoice_number)}
                             statusBadge={<span className={`status-pill ${statusClass(invoice.status)}`}>{financeStatusLabel(invoice.status, language)}</span>}
                             meta={`${toMoney(invoice.total_incl_vat, invoice.currency)} · ${formatDate(invoice.issued_at)} · ${invoice.owner_display_name}`}
-                            subline={invoice.label}
+                            subline={invoicePeriodSubline(invoice.label, language)}
                             actions={
                               <div className="row client-home-due-actions">
                                 <a
@@ -4679,7 +4690,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             title={compactId(row.invoice_number)}
                             statusBadge={<span className={`status-pill ${statusClass(row.status)}`}>{financeStatusLabel(row.status, language)}</span>}
                             meta={`${toMoney(row.total_incl_vat, row.currency)} · ${formatDate(row.issued_at)} · ${row.owner_display_name}`}
-                            subline={row.label}
+                            subline={invoicePeriodSubline(row.label, language)}
                             actions={
                               <div className="row client-finance-card-actions">
                                 {canPayInvoice ? (
@@ -4718,7 +4729,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         <h4>{selectedInvoice.invoice_number}</h4>
                         <span className={`status-pill ${statusClass(selectedInvoice.status)}`}>{financeStatusLabel(selectedInvoice.status, language)}</span>
                       </div>
-                      <p className="muted">{selectedInvoice.label}</p>
+                      <p className="muted">{invoicePeriodSubline(selectedInvoice.label, language)}</p>
                       <p className="muted">
                         {t("common.date")}: {formatDateTime(selectedInvoice.issued_at)} · {t("common.member")}: {selectedInvoice.owner_display_name}
                       </p>
