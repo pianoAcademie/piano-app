@@ -4526,6 +4526,18 @@ def _run_my_music_staff_import(db: Session, rows: list[dict[str, str]], *, dry_r
                     .limit(1)
                     .with_for_update()
                 )
+                if parent is None:
+                    conflicting_user = db.scalar(
+                        select(User)
+                        .where(User.email == parent_email)
+                        .limit(1)
+                        .with_for_update()
+                    )
+                    if conflicting_user is not None:
+                        out.warnings.append(
+                            f"Ligne {row_number}: email parent deja utilise par un compte non-client ({parent_email}), contact ignore."
+                        )
+                        continue
             if parent is None:
                 parent = _mms_find_by_note_key(db, "MMS_PARENT_KEY", parent_key)
 

@@ -6271,6 +6271,7 @@ export async function importMyMusicStaffFamiliesAction(formData: FormData): Prom
       body: uploadPayload,
     },
     token,
+    180000,
   );
 
   if (!result.ok) {

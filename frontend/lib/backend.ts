@@ -44,6 +44,7 @@ export async function backendRequest<T>(
   path: string,
   init: RequestInit = {},
   token?: string,
+  timeoutMs?: number,
 ): Promise<BackendResult<T>> {
   const headers = new Headers(init.headers ?? {});
 
@@ -62,7 +63,7 @@ export async function backendRequest<T>(
   }
 
   const timeoutController = new AbortController();
-  const timeout = setTimeout(() => timeoutController.abort(), backendTimeoutMs());
+  const timeout = setTimeout(() => timeoutController.abort(), timeoutMs ?? backendTimeoutMs());
   const signal = init.signal ? AbortSignal.any([init.signal, timeoutController.signal]) : timeoutController.signal;
 
   let response: Response;
