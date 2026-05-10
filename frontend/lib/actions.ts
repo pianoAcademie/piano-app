@@ -12908,6 +12908,59 @@ export async function updateAdminPricingCatalogConfigAction(formData: FormData):
   redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.catalog_updated")));
 }
 
+export async function archiveAdminPricingCatalogConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=catalogs"));
+  const catalogId = parseUuid(String(formData.get("catalog_id") ?? ""));
+  const name = String(formData.get("name") ?? "").trim();
+  const schoolYearLabel = optionalField(formData, "school_year_label");
+  const effectiveFromRaw = parseDateOnly(String(formData.get("effective_from") ?? ""));
+  const effectiveToRaw = parseDateOnly(String(formData.get("effective_to") ?? ""));
+  const shouldArchive = parseCheckboxFlag(formData, "archive", true);
+  const wasDefault = parseCheckboxFlag(formData, "is_default", false);
+
+  if (!catalogId || !name || !effectiveFromRaw) {
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_catalog")));
+  }
+  const effectiveFrom = parseUtcStartOfDate(effectiveFromRaw);
+  const effectiveTo = effectiveToRaw ? parseUtcEndOfDate(effectiveToRaw) : null;
+  if (!effectiveFrom || (effectiveToRaw && !effectiveTo)) {
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_catalog_dates")));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/pricing-catalogs/${encodeURIComponent(catalogId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        name,
+        school_year_label: schoolYearLabel,
+        effective_from: effectiveFrom,
+        effective_to: effectiveTo,
+        is_default: shouldArchive ? false : wasDefault,
+        is_active: !shouldArchive,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes/new");
+  redirect(appendQueryMessage(
+    returnTo,
+    "ok",
+    uiText(language, shouldArchive ? "admin.quote_config_action.catalog_archived" : "admin.quote_config_action.catalog_unarchived"),
+  ));
+}
+
 export async function deleteAdminPricingCatalogConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

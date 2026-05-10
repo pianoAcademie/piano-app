@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import {
+  archiveAdminPricingCatalogConfigAction,
   createAdminQuoteTemplateV2ConfigAction,
   createAdminTermsTemplateConfigAction,
   createAdminQuoteDocumentBindingConfigAction,
@@ -311,6 +312,10 @@ function pricingUnitLabel(value: string | null, language: UiLanguage): string {
     return uiText(language, "admin.quote_config.pricing_unit_fixed");
   }
   return value || "-";
+}
+
+function catalogStatusLabel(isActive: boolean, language: UiLanguage): string {
+  return isActive ? uiText(language, "common.active") : uiText(language, "common.archived");
 }
 
 function computedActivityFallbackPrice(
@@ -1140,7 +1145,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                         <span>{dateInputValue(row.effective_from)} → {dateInputValue(row.effective_to) || "-"}</span>
                       </span>
                       <span className="row wrap gap-sm">
-                        <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? t("common.active") : t("common.inactive")}</span>
+                        <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{catalogStatusLabel(row.is_active, language)}</span>
                         {row.is_default ? <span className="badge">{t("admin.quote_config.default_badge")}</span> : null}
                       </span>
                     </Link>
@@ -1158,7 +1163,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                     </p>
                   </div>
                   <div className="row wrap gap-sm">
-                    <span className={`status-pill ${selectedCatalog.is_active ? "status-ok" : "status-off"}`}>{selectedCatalog.is_active ? t("common.active") : t("common.inactive")}</span>
+                    <span className={`status-pill ${selectedCatalog.is_active ? "status-ok" : "status-off"}`}>{catalogStatusLabel(selectedCatalog.is_active, language)}</span>
                     {selectedCatalog.is_default ? <span className="badge">{t("admin.quote_config.default_badge")}</span> : null}
                     <span className="muted">{t("admin.quote_config.updated_short")}: {dateTimeLabel(selectedCatalog.updated_at, language)}</span>
                   </div>
@@ -1479,11 +1484,32 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                   </details>
                 </section>
 
-                <form action={deleteAdminPricingCatalogConfigAction} className="row quote-config-danger-row">
-                  <input type="hidden" name="catalog_id" value={selectedCatalog.id} />
-                  <input type="hidden" name="return_to" value={buildQuotesConfigHref("catalogs")} />
-                  <button type="submit" className="danger">{t("common.delete")}</button>
-                </form>
+                <section className="quote-config-panel quote-config-catalog-lifecycle">
+                  <div>
+                    <h4>{t("admin.quote_config.catalog_lifecycle_title")}</h4>
+                    <p className="muted">{t("admin.quote_config.catalog_archive_help")}</p>
+                  </div>
+                  <div className="row wrap gap-sm">
+                    <form action={archiveAdminPricingCatalogConfigAction} className="row">
+                      <input type="hidden" name="catalog_id" value={selectedCatalog.id} />
+                      <input type="hidden" name="name" value={selectedCatalog.name} />
+                      <input type="hidden" name="school_year_label" value={selectedCatalog.school_year_label || ""} />
+                      <input type="hidden" name="effective_from" value={dateInputValue(selectedCatalog.effective_from)} />
+                      <input type="hidden" name="effective_to" value={dateInputValue(selectedCatalog.effective_to)} />
+                      <input type="hidden" name="is_default" value={selectedCatalog.is_default ? "true" : "false"} />
+                      <input type="hidden" name="archive" value={selectedCatalog.is_active ? "true" : "false"} />
+                      <input type="hidden" name="return_to" value={selectedCatalog.is_active ? buildQuotesConfigHref("catalogs") : catalogReturnPath} />
+                      <button type="submit" className="ghost">
+                        {selectedCatalog.is_active ? t("common.archive") : t("common.unarchive")}
+                      </button>
+                    </form>
+                    <form action={deleteAdminPricingCatalogConfigAction} className="row">
+                      <input type="hidden" name="catalog_id" value={selectedCatalog.id} />
+                      <input type="hidden" name="return_to" value={buildQuotesConfigHref("catalogs")} />
+                      <button type="submit" className="danger">{t("common.delete")}</button>
+                    </form>
+                  </div>
+                </section>
               </div>
             </div>
           ) : (
