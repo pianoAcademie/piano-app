@@ -5955,6 +5955,42 @@ button.danger:focus-visible {
   margin-bottom: 0;
 }
 
+.quote-config-quick-fixes {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  background: #fffaf2;
+  border-color: #ead8ba;
+}
+
+.quote-config-quick-fixes > .quote-config-section-head {
+  margin-bottom: 0;
+}
+
+.quote-config-quick-fix-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.quote-config-quick-fix-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #ead8ba;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.quote-config-quick-fix-card strong,
+.quote-config-quick-fix-card small {
+  display: block;
+}
+
+.quote-config-quick-fix-card .row {
+  align-items: center;
+}
+
 .quote-config-diagnostic-group > summary {
   display: flex;
   align-items: center;
@@ -7237,6 +7273,10 @@ button.danger:focus-visible {
 
   .quote-config-metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .quote-config-quick-fix-grid {
+    grid-template-columns: 1fr;
   }
 }
 

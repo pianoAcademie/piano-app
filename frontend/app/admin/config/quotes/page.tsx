@@ -1183,6 +1183,56 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                   </article>
                 </section>
 
+                {selectedCatalogSummary.fallbackActivities.length > 0 ? (
+                  <section className="quote-config-panel quote-config-quick-fixes">
+                    <div className="quote-config-section-head">
+                      <div>
+                        <h4>{localText(language, "Corrections rapides", "Quick fixes")}</h4>
+                        <p className="muted">
+                          {localText(
+                            language,
+                            "Ces activites n'ont pas encore de tarif catalogue. Vous pouvez creer un tarif general a partir du montant de secours.",
+                            "These activities do not yet have a catalog price. You can create a general price from the fallback amount.",
+                          )}
+                        </p>
+                      </div>
+                      <span className="badge">{selectedCatalogSummary.fallbackActivities.length}</span>
+                    </div>
+                    <div className="quote-config-quick-fix-grid">
+                      {selectedCatalogSummary.fallbackActivities.slice(0, 8).map(({ activity, fallback }) => (
+                        <article key={`quick-${selectedCatalog.id}-${activity.id}`} className="quote-config-quick-fix-card">
+                          <div>
+                            <strong>{activity.name}</strong>
+                            <small className="muted">{activity.code} · {modalityLabel(activity.mode, language)}</small>
+                          </div>
+                          <span className={`status-pill ${fallback.tone === "off" ? "status-off" : "status-warn"}`}>
+                            {fallback.label}
+                          </span>
+                          <div className="row spread gap-sm">
+                            <strong>{fallback.amountTtc === null ? "-" : moneyLabel(fallback.amountTtc, "EUR", language)}</strong>
+                            {fallback.amountTtc === null ? (
+                              <span className="muted">{t("admin.quote_config.activity_price_unavailable")}</span>
+                            ) : (
+                              <form action={upsertAdminPricingActivityPriceConfigAction}>
+                                <input type="hidden" name="catalog_id" value={selectedCatalog.id} />
+                                <input type="hidden" name="activity_id" value={activity.id} />
+                                <input type="hidden" name="location_id" value="" />
+                                <input type="hidden" name="pricing_unit" value="per_session" />
+                                <input type="hidden" name="unit_price_ttc" value={fallback.amountTtc.toFixed(2)} />
+                                <input type="hidden" name="return_to" value={catalogReturnPath} />
+                                <button type="submit" className="ghost">{t("admin.quote_config.activity_price_quick_save")}</button>
+                              </form>
+                            )}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                    {selectedCatalogSummary.fallbackActivities.length > 8 ? (
+                      <p className="muted">{localText(language, "Les autres activites sont disponibles dans le diagnostic detaille plus bas.", "The remaining activities are available in the detailed diagnostics below.")}</p>
+                    ) : null}
+                  </section>
+                ) : null}
+
                 <details className="quote-config-panel">
                   <summary>{localText(language, "Parametres du catalogue", "Catalog settings")}</summary>
                   <form action={updateAdminPricingCatalogConfigAction} className="grid cols-4 config-form-grid top-gap-sm">
@@ -1319,7 +1369,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                     </div>
                   </details>
 
-                  <details className="quote-config-diagnostic-group">
+                  <details className="quote-config-diagnostic-group" open={selectedCatalogSummary.fallbackActivities.length > 0}>
                     <summary>
                       <span>{t("admin.quote_config.activity_without_explicit_price")}</span>
                       <span className="badge">{selectedCatalogSummary.fallbackActivities.length}</span>
