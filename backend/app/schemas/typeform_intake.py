@@ -82,6 +82,7 @@ class TypeformSessionRecommendationOut(BaseModel):
     selected_session_id: UUID | None = None
     options: list[TypeformSessionMatchOptionOut] = Field(default_factory=list)
     manual_options: list[TypeformSessionMatchOptionOut] = Field(default_factory=list)
+    slot_proposals: list[dict[str, object]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     blockages: list[str] = Field(default_factory=list)
 

@@ -73,6 +73,7 @@ type TypeformSessionRecommendationOut = {
   selected_session_id: string | null;
   options: TypeformSessionMatchOptionOut[];
   manual_options: TypeformSessionMatchOptionOut[];
+  slot_proposals: Record<string, unknown>[];
   warnings: string[];
   blockages: string[];
 };
@@ -967,7 +968,9 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                     <label className="top-gap-sm">
                       {t("admin.intakes.selected_slot")}
                       <select name={`selected_session_for_${recommendation.activity_id}`} defaultValue={recommendation.selected_session_id || ""}>
-                        <option value="">{t("admin.intakes.no_selection")}</option>
+                        <option value="">
+                          {recommendation.slot_proposals.length > 0 ? t("admin.intakes.typeform_proposal_retained") : t("admin.intakes.no_selection")}
+                        </option>
                         {recommendation.options.length > 0 ? (
                           <optgroup label={t("admin.intakes.auto_proposals")}>
                             {recommendation.options.map((option, index) => (
@@ -988,7 +991,53 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                         ) : null}
                       </select>
                     </label>
-                    <p className="muted">{t("admin.intakes.proposals_available", { autoCount: recommendation.options.length, manualCount: recommendation.manual_options.length })}</p>
+                    <p className="muted">
+                      {recommendation.slot_proposals.length > 0
+                        ? t("admin.intakes.typeform_proposals_available", {
+                            typeformCount: recommendation.slot_proposals.length,
+                            autoCount: recommendation.options.length,
+                            manualCount: recommendation.manual_options.length,
+                          })
+                        : t("admin.intakes.proposals_available", { autoCount: recommendation.options.length, manualCount: recommendation.manual_options.length })}
+                    </p>
+                    {recommendation.slot_proposals.length > 0 ? (
+                      <div className="table-wrap top-gap-sm">
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              <th>{t("admin.intakes.proposal_header")}</th>
+                              <th>{t("admin.intakes.occurrence")}</th>
+                              <th>{uiText(language, "common.location")}</th>
+                              <th>{t("admin.quote_config.solfege_mode")}</th>
+                              <th>{t("admin.quote_config.solfege_duration")}</th>
+                              <th>{t("admin.intakes.reasons")}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {recommendation.slot_proposals.map((proposal, index) => (
+                              <tr className={styles.selectedOptionRow} key={`${recommendation.activity_id}-slot-proposal-${index}`}>
+                                <td>
+                                  <div className={styles.optionCellStack}>
+                                    <strong>{proposalLabel(index, language)}</strong>
+                                    <span className="badge">{t("admin.intakes.retained")}</span>
+                                  </div>
+                                </td>
+                                <td>
+                                  <div className={styles.optionCellStack}>
+                                    <strong>{solfegeProposalLabel(proposal)}</strong>
+                                    <span className="muted">{t("admin.intakes.solfege_typeform_source")}</span>
+                                  </div>
+                                </td>
+                                <td>{typeof proposal.location_label === "string" ? proposal.location_label : ""}</td>
+                                <td>{typeof proposal.modality === "string" ? proposal.modality : ""}</td>
+                                <td>{typeof proposal.duration_minutes === "number" ? t("admin.quote_config.solfege_duration_short", { minutes: proposal.duration_minutes }) : ""}</td>
+                                <td>{t("admin.intakes.solfege_typeform_reason")}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : null}
                     {recommendation.options.length > 0 ? (
                       <div className="table-wrap top-gap-sm">
                         <table className="data-table">

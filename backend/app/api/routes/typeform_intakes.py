@@ -2466,8 +2466,12 @@ def _session_is_typeform_candidate(session_obj: CourseSession) -> bool:
 
 
 def _requested_summary(normalized: dict[str, object]) -> str | None:
-    slot_labels = []
-    for item in _json_list(normalized.get("requested_slot_preferences")):
+    return _requested_slot_summary(_json_list(normalized.get("requested_slot_preferences"))) or _requested_day_time_summary(normalized)
+
+
+def _requested_slot_summary(preferences: list[object]) -> str | None:
+    slot_labels: list[str] = []
+    for item in preferences:
         if not isinstance(item, dict):
             continue
         day = _text(item.get("day"))
@@ -2480,6 +2484,10 @@ def _requested_summary(normalized: dict[str, object]) -> str | None:
             slot_labels.append(time)
     if slot_labels:
         return ", ".join(slot_labels)
+    return None
+
+
+def _requested_day_time_summary(normalized: dict[str, object]) -> str | None:
     days = [DAY_LABELS[_weekday_from_label(day)] for day in _json_list(normalized.get("requested_days")) if _weekday_from_label(day) is not None]
     times = [_text(item) for item in _json_list(normalized.get("requested_times")) if _text(item)]
     parts: list[str] = []
@@ -3227,6 +3235,16 @@ def _build_session_recommendations(
         available_options = [item for item in options if not item.is_full]
         option_session_ids = {item.session_id for item in options}
         manual_options: list[TypeformSessionMatchOptionOut] = []
+        slot_proposals: list[dict[str, object]] = []
+        if line_uses_solfege_slot_request:
+            solfege_slot_proposal = _solfege_slot_proposal_from_normalized(
+                db,
+                normalized=normalized,
+                runtime_context=runtime_context,
+                session_recommendations=[],
+            )
+            if solfege_slot_proposal:
+                slot_proposals.append(solfege_slot_proposal)
         has_explicit_slot_request = bool(
             effective_requested_slot_preferences
             or effective_requested_days
@@ -3301,7 +3319,10 @@ def _build_session_recommendations(
             summary_status = "manual_selected"
             summary_label = "Creneau manuel retenu"
         elif not options:
-            if manual_options:
+            if slot_proposals:
+                summary_status = "proposed_match"
+                summary_label = "Creneau Typeform propose"
+            elif manual_options:
                 summary_status = "manual_selection_required"
                 summary_label = "Choix manuel de creneau requis"
                 local_blockages.append(
@@ -3364,12 +3385,17 @@ def _build_session_recommendations(
                 activity_id=line.activity_id,
                 activity_name=display_activity_name,
                 requested_location=_text(normalized.get("requested_location")) or None,
-                requested_summary=_requested_summary(normalized),
+                requested_summary=(
+                    _requested_slot_summary(_json_list(normalized.get("requested_solfege_slot_preferences")))
+                    if line_uses_solfege_slot_request
+                    else _requested_summary(normalized)
+                ),
                 summary_status=summary_status,
                 summary_label=summary_label,
                 selected_session_id=selected_session_id,
                 options=options[:6],
                 manual_options=manual_options,
+                slot_proposals=slot_proposals,
                 warnings=local_warnings,
                 blockages=local_blockages,
             )
