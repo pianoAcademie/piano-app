@@ -85,6 +85,7 @@ from app.schemas.quote import (
     QuoteCancelRequest,
     QuoteCreateRequest,
     QuoteDetailOut,
+    QuoteDuplicateForChildRequest,
     QuoteEmailPreviewOut,
     QuoteEventOut,
     QuoteFollowupOut,
@@ -4320,6 +4321,181 @@ def duplicate_quote(
             actor_type="admin",
             actor_id=current_user.id,
             payload={"source_quote_id": str(source.id)},
+        )
+    )
+    db.commit()
+    db.refresh(clone)
+    return _quote_detail_out(db, clone)
+
+
+def _quote_source_parent_for_sibling(db: Session, source: Quote) -> tuple[Prospect, Prospect | None]:
+    if source.prospect_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Sibling quote can only be created from an acquisition prospect quote",
+        )
+    source_prospect = db.scalar(select(Prospect).where(Prospect.id == source.prospect_id))
+    if source_prospect is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source prospect not found")
+    source_type = _normalized_prospect_type(source_prospect.meta or {})
+    if source_type == "child":
+        if source_prospect.parent_prospect_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Source child prospect has no parent prospect",
+            )
+        return _ensure_parent_prospect(db, source_prospect.parent_prospect_id), source_prospect
+    return source_prospect, None
+
+
+def _parent_referent_meta_from_prospect(parent: Prospect) -> dict[str, object | None]:
+    parent_meta = _json_object(parent.meta)
+    existing_referent = _json_object(parent_meta.get("parent_referent"))
+    return {
+        "title": existing_referent.get("title"),
+        "first_name": parent.first_name or existing_referent.get("first_name"),
+        "last_name": parent.last_name or existing_referent.get("last_name"),
+        "email": parent.email or existing_referent.get("email"),
+        "phone": parent.phone or existing_referent.get("phone"),
+        "address": parent_meta.get("adult_address") or existing_referent.get("address"),
+    }
+
+
+@router.post("/quotes/{quote_id}/duplicate-for-child", response_model=QuoteDetailOut, status_code=status.HTTP_201_CREATED)
+def duplicate_quote_for_child(
+    quote_id: UUID,
+    payload: QuoteDuplicateForChildRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteDetailOut:
+    source = _load_quote(db, quote_id)
+    lines = _load_quote_lines(db, quote_id)
+    parent, source_child = _quote_source_parent_for_sibling(db, source)
+    now = _utcnow()
+    child_first_name = payload.first_name.strip()
+    child_last_name = payload.last_name.strip()
+    child_birth_date = payload.birth_date.isoformat() if payload.birth_date is not None else None
+
+    child_meta: dict[str, object] = {
+        "prospect_type": "child",
+        "parent_referent_mode": "existing_parent",
+        "parent_existing_prospect_id": str(parent.id),
+        "child": {
+            "first_name": child_first_name,
+            "last_name": child_last_name,
+            "birth_date": child_birth_date,
+        },
+        "parent_referent": _parent_referent_meta_from_prospect(parent),
+        "sibling_quote_source_id": str(source.id),
+    }
+    if source_child is not None:
+        child_meta["sibling_source_child_prospect_id"] = str(source_child.id)
+
+    child = Prospect(
+        linked_client_id=None,
+        parent_prospect_id=parent.id,
+        status="active",
+        first_name=child_first_name,
+        last_name=child_last_name,
+        email=(parent.email or "").strip().lower(),
+        phone=parent.phone,
+        source="quote_sibling",
+        notes=payload.notes,
+        meta=child_meta,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(child)
+    db.flush()
+
+    clone = Quote(
+        quote_number=_new_quote_number(),
+        context_type=source.context_type,
+        quote_type=source.quote_type,
+        quote_type_id=source.quote_type_id,
+        pricing_catalog_id=source.pricing_catalog_id,
+        prospect_id=child.id,
+        client_id=None,
+        location_id=source.location_id,
+        legal_entity_id=source.legal_entity_id,
+        payment_plan_id=source.payment_plan_id,
+        quote_template_id=source.quote_template_id,
+        quote_template_version_id=source.quote_template_version_id,
+        terms_template_id=source.terms_template_id,
+        terms_template_version_id=source.terms_template_version_id,
+        status="created",
+        version_number=1,
+        parent_quote_id=source.id,
+        currency=source.currency,
+        total_ttc=source.total_ttc,
+        expiry_days=source.expiry_days,
+        expires_at=now + timedelta(days=int(source.expiry_days or 10)),
+        school_year_label=source.school_year_label,
+        language=source.language,
+        vat_rate=source.vat_rate,
+        estimated_solfege_level=source.estimated_solfege_level,
+        solfege_duration_minutes=source.solfege_duration_minutes,
+        selected_solfege_slot=deepcopy(source.selected_solfege_slot or {}),
+        calendar_snapshot=deepcopy(source.calendar_snapshot or {}),
+        payment_terms_snapshot=deepcopy(source.payment_terms_snapshot or {}),
+        cgv_snapshot=deepcopy(source.cgv_snapshot or {}),
+        price_snapshot=deepcopy(source.price_snapshot or {}),
+        meta={
+            **_json_object(source.meta),
+            "duplicated_from": str(source.id),
+            "duplicated_for_child_prospect_id": str(child.id),
+            "duplicated_for_child_name": f"{child_first_name} {child_last_name}".strip(),
+        },
+        created_by_user_id=current_user.id,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(clone)
+    db.flush()
+
+    for line in lines:
+        db.add(
+            QuoteLine(
+                quote_id=clone.id,
+                line_category=line.line_category,
+                line_type=line.line_type,
+                master_item_type=line.master_item_type,
+                master_item_id=line.master_item_id,
+                activity_id=line.activity_id,
+                product_id=line.product_id,
+                kit_id=line.kit_id,
+                code=line.code,
+                title=line.title,
+                description=line.description,
+                duration_minutes=line.duration_minutes,
+                pricing_unit=line.pricing_unit,
+                quantity=line.quantity,
+                vat_rate=line.vat_rate,
+                unit_price_ht=line.unit_price_ht,
+                unit_vat_amount=line.unit_vat_amount,
+                unit_price_ttc=line.unit_price_ttc,
+                amount_ht=line.amount_ht,
+                amount_vat=line.amount_vat,
+                amount_ttc=line.amount_ttc,
+                sort_order=line.sort_order,
+                meta=deepcopy(line.meta or {}),
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    db.add(
+        QuoteEvent(
+            quote_id=clone.id,
+            event_type="quote_duplicated_for_child",
+            actor_type="admin",
+            actor_id=current_user.id,
+            payload={
+                "source_quote_id": str(source.id),
+                "source_child_prospect_id": str(source_child.id) if source_child is not None else None,
+                "parent_prospect_id": str(parent.id),
+                "child_prospect_id": str(child.id),
+            },
         )
     )
     db.commit()

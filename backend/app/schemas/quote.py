@@ -197,6 +197,13 @@ class QuoteCreateRequest(BaseModel):
     lines: list[QuoteLineIn] = Field(default_factory=list)
 
 
+class QuoteDuplicateForChildRequest(BaseModel):
+    first_name: str = Field(min_length=1, max_length=120)
+    last_name: str = Field(min_length=1, max_length=120)
+    birth_date: date | None = None
+    notes: str | None = None
+
+
 class QuoteUpdateRequest(BaseModel):
     quote_type: str | None = Field(default=None, max_length=30)
     quote_type_id: UUID | None = None

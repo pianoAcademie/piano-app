@@ -24,6 +24,7 @@ import {
   cancelQuoteAction,
   changeQuoteFollowupPaymentMethodAction,
   duplicateQuoteAction,
+  duplicateQuoteForChildAction,
   finalizeQuoteFollowupAction,
   quickTransformQuoteAction,
   regenerateQuoteDocumentAction,
@@ -2383,6 +2384,39 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                   ) : null}
                 </article>
               </div>
+              {selectedProspect && isChildSource ? (
+                <article className="item top-gap-sm">
+                  <div className="row spread wrap gap-sm">
+                    <div>
+                      <h4>{t("admin.quote_detail.sibling_quote_title")}</h4>
+                      <p className="muted">{t("admin.quote_detail.sibling_quote_help")}</p>
+                    </div>
+                  </div>
+                  <form action={duplicateQuoteForChildAction} className="grid cols-4 top-gap-sm">
+                    <input type="hidden" name="quote_id" value={detail.quote.id} />
+                    <input type="hidden" name="return_to" value={selfPath} />
+                    <label>
+                      {t("admin.quote_detail.sibling_first_name")}
+                      <input type="text" name="child_first_name" placeholder="Archibald" required />
+                    </label>
+                    <label>
+                      {t("admin.quote_detail.sibling_last_name")}
+                      <input type="text" name="child_last_name" defaultValue={selectedProspect.last_name || ""} required />
+                    </label>
+                    <label>
+                      {t("admin.quote_detail.sibling_birth_date")}
+                      <input type="date" name="child_birth_date" />
+                    </label>
+                    <label>
+                      {t("admin.quote_detail.sibling_notes")}
+                      <input type="text" name="notes" defaultValue={t("admin.quote_detail.sibling_default_note", { quote: detail.quote.quote_number })} />
+                    </label>
+                    <div className="row wrap gap-sm">
+                      <button type="submit">{t("admin.quote_detail.sibling_create_quote")}</button>
+                    </div>
+                  </form>
+                </article>
+              ) : null}
             </section>
           </>
         ) : null}
