@@ -981,6 +981,25 @@ class AdminClientBulkOut(BaseModel):
     message: str
 
 
+class AdminMyMusicStaffImportOut(BaseModel):
+    dry_run: bool
+    rows_seen: int = 0
+    rows_imported: int = 0
+    families_seen: int = 0
+    parent_contacts_seen: int = 0
+    parents_created: int = 0
+    parents_updated: int = 0
+    parents_reused: int = 0
+    children_created: int = 0
+    children_updated: int = 0
+    children_reused: int = 0
+    family_links_created: int = 0
+    family_links_existing: int = 0
+    group_id: UUID | None = None
+    group_name: str = "Base 2025-2026 - My Music Staff"
+    warnings: list[str] = Field(default_factory=list)
+
+
 class AdminFamilyMemberOut(BaseModel):
     id: UUID
     email: str

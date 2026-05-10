@@ -13,7 +13,7 @@ from urllib.parse import urlencode
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 import jwt
 from jwt import PyJWTError
@@ -106,6 +106,7 @@ from app.schemas.admin import (
     AdminClientForfaitActivityPricingOut,
     AdminClientManualCreditOut,
     AdminClientManualCreditUpdateRequest,
+    AdminMyMusicStaffImportOut,
     AdminClientNoteOut,
     AdminClientNoteCreateRequest,
     AdminClientAutoInvoiceRuleOut,
@@ -4114,6 +4115,522 @@ def _normalize_group_code(name: str) -> str:
     return base[:80] or "GROUP"
 
 
+MY_MUSIC_STAFF_IMPORT_GROUP_CODE = "MMS_2025_2026_BASE"
+MY_MUSIC_STAFF_IMPORT_GROUP_NAME = "Base 2025-2026 - My Music Staff"
+MY_MUSIC_STAFF_NOTE_BEGIN = "IMPORT_SOURCE:my_music_staff_2025_2026"
+MY_MUSIC_STAFF_NOTE_END = "END_IMPORT_SOURCE:my_music_staff_2025_2026"
+
+
+def _mms_clean(value: str | None) -> str:
+    return (value or "").replace("\ufeff", "").strip()
+
+
+def _mms_normalize_email(value: str | None) -> str | None:
+    email = _mms_clean(value).lower()
+    if not email or "@" not in email:
+        return None
+    return email
+
+
+def _mms_slug(value: str | None, fallback: str) -> str:
+    raw = unicodedata.normalize("NFKD", _mms_clean(value)).encode("ascii", "ignore").decode("ascii")
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", raw).strip("-").lower()
+    return slug or fallback
+
+
+def _mms_synthetic_email(prefix: str, raw_id: str | None, fallback: str) -> str:
+    slug = _mms_slug(raw_id, fallback)
+    return f"mms-{prefix}-{slug}@no-email.local"
+
+
+def _mms_parse_date(value: str | None) -> date | None:
+    raw = _mms_clean(value)
+    if not raw:
+        return None
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _mms_decode_csv_bytes(content: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            return content.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return content.decode("utf-8-sig", errors="replace")
+
+
+def _mms_parse_csv_rows(text: str) -> list[dict[str, str]]:
+    sample = text[:4096]
+    delimiter = ";"
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=";,")
+        delimiter = dialect.delimiter
+    except csv.Error:
+        delimiter = ";"
+    reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
+    rows: list[dict[str, str]] = []
+    for row in reader:
+        normalized: dict[str, str] = {}
+        for key, value in row.items():
+            if key is None:
+                continue
+            normalized[_mms_clean(key)] = _mms_clean(value)
+        if any(value for value in normalized.values()):
+            rows.append(normalized)
+    return rows
+
+
+def _mms_parent_contacts_from_row(row: dict[str, str]) -> list[dict[str, str]]:
+    contacts: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for index in range(1, 5):
+        first_name = _mms_clean(row.get(f"Prenom du parent contact {index}") or row.get(f"Prénom du parent contact {index}"))
+        last_name = _mms_clean(row.get(f"Nom de famille du parent contact {index}"))
+        email = _mms_normalize_email(row.get(f"Contact du parent {index} courriel"))
+        mobile = _mms_clean(
+            row.get(f"Contact parent {index} téléphone portable")
+            or row.get(f"Contact parent {index} telephone portable")
+            or row.get(f"Contact du parent {index} telephone mobile")
+            or row.get(f"Contact du parent {index} téléphone mobile")
+        )
+        home_phone = _mms_clean(
+            row.get(f"Contact parent {index} téléphone domicile")
+            or row.get(f"Contact parent {index} telephone domicile")
+            or row.get(f"Contact du parent {index} numero de telephone fixe")
+            or row.get(f"Contact du parent {index} numéro de téléphone fixe")
+        )
+        address = _mms_clean(row.get(f"Adresse de contact du parent {index}") or row.get(f"Adresse du parent contact {index}")) or _mms_clean(row.get("Adresse"))
+        city = _mms_clean(row.get(f"Ville du parent contact {index}")) or _mms_clean(row.get("Ville"))
+        postal_code = _mms_clean(row.get(f"Code postal du parent contact {index}")) or _mms_clean(row.get("Code postal"))
+        note = _mms_clean(row.get(f"Note de contact du parent {index}") or row.get(f"Contact du parent {index} note"))
+
+        if not first_name and not last_name and not email and not mobile and not home_phone:
+            continue
+        key = (first_name.casefold(), last_name.casefold(), email or "", mobile)
+        if key in seen:
+            continue
+        seen.add(key)
+        contacts.append(
+            {
+                "index": str(index),
+                "first_name": first_name,
+                "last_name": last_name,
+                "email": email or "",
+                "mobile_phone_1": mobile,
+                "home_phone": home_phone,
+                "address_line": address,
+                "city": city,
+                "postal_code": postal_code,
+                "note": note,
+            }
+        )
+
+    if contacts:
+        return contacts
+
+    parent_raw = _mms_clean(row.get("Parent"))
+    if parent_raw:
+        parent_parts = parent_raw.split()
+        contacts.append(
+            {
+                "index": "1",
+                "first_name": " ".join(parent_parts[1:]) if len(parent_parts) > 1 else parent_raw,
+                "last_name": parent_parts[0] if len(parent_parts) > 1 else _mms_clean(row.get("Nom de famille")),
+                "email": "",
+                "mobile_phone_1": "",
+                "home_phone": "",
+                "address_line": _mms_clean(row.get("Adresse")),
+                "city": _mms_clean(row.get("Ville")),
+                "postal_code": _mms_clean(row.get("Code postal")),
+                "note": "",
+            }
+        )
+    return contacts
+
+
+def _mms_note_block(*, entity: str, identifiers: dict[str, str], details: list[str]) -> str:
+    lines = [MY_MUSIC_STAFF_NOTE_BEGIN, f"MMS_ENTITY:{entity}"]
+    for key, value in identifiers.items():
+        cleaned = _mms_clean(value)
+        if cleaned:
+            lines.append(f"{key}:{cleaned}")
+    lines.extend(detail for detail in details if _mms_clean(detail))
+    lines.append(MY_MUSIC_STAFF_NOTE_END)
+    return "\n".join(lines)
+
+
+def _mms_merge_private_note(existing: str | None, block: str) -> str:
+    existing_clean = _mms_clean(existing)
+    if not existing_clean:
+        return block
+    pattern = re.compile(
+        rf"\n?{re.escape(MY_MUSIC_STAFF_NOTE_BEGIN)}.*?{re.escape(MY_MUSIC_STAFF_NOTE_END)}",
+        re.DOTALL,
+    )
+    without_previous = pattern.sub("", existing_clean).strip()
+    if without_previous:
+        return f"{without_previous}\n\n{block}"
+    return block
+
+
+def _mms_apply_missing_contact_fields(user: User, values: dict[str, str], *, now: datetime) -> bool:
+    changed = False
+    for attr in ("first_name", "last_name", "address_line", "postal_code", "city", "mobile_phone_1", "home_phone"):
+        value = _mms_clean(values.get(attr))
+        if value and not _mms_clean(getattr(user, attr, None)):
+            setattr(user, attr, value)
+            changed = True
+    primary_phone = _mms_clean(values.get("mobile_phone_1")) or _mms_clean(values.get("home_phone"))
+    if primary_phone and not _mms_clean(user.phone):
+        user.phone = primary_phone
+        changed = True
+    if changed:
+        user.updated_at = now
+    return changed
+
+
+def _mms_ensure_group(db: Session) -> ClientGroup:
+    group = db.scalar(
+        select(ClientGroup)
+        .where(
+            or_(
+                ClientGroup.code == MY_MUSIC_STAFF_IMPORT_GROUP_CODE,
+                func.lower(ClientGroup.name) == MY_MUSIC_STAFF_IMPORT_GROUP_NAME.lower(),
+            )
+        )
+        .order_by(ClientGroup.created_at.asc())
+        .limit(1)
+        .with_for_update()
+    )
+    if group is not None:
+        if not group.active or group.name != MY_MUSIC_STAFF_IMPORT_GROUP_NAME or group.code != MY_MUSIC_STAFF_IMPORT_GROUP_CODE:
+            group.name = MY_MUSIC_STAFF_IMPORT_GROUP_NAME
+            group.code = MY_MUSIC_STAFF_IMPORT_GROUP_CODE
+            group.active = True
+            group.updated_at = _utcnow()
+            db.add(group)
+        return group
+
+    group = ClientGroup(
+        code=MY_MUSIC_STAFF_IMPORT_GROUP_CODE,
+        name=MY_MUSIC_STAFF_IMPORT_GROUP_NAME,
+        active=True,
+        updated_at=_utcnow(),
+    )
+    db.add(group)
+    db.flush()
+    return group
+
+
+def _mms_ensure_group_membership(db: Session, *, user_id: UUID, group_id: UUID) -> bool:
+    existing = db.scalar(
+        select(ClientGroupMembership.id).where(
+            ClientGroupMembership.user_id == user_id,
+            ClientGroupMembership.group_id == group_id,
+        )
+    )
+    if existing is not None:
+        return False
+    db.add(ClientGroupMembership(user_id=user_id, group_id=group_id))
+    return True
+
+
+def _mms_find_by_note_key(db: Session, key: str, value: str) -> User | None:
+    cleaned = _mms_clean(value)
+    if not cleaned:
+        return None
+    return db.scalar(
+        select(User)
+        .where(
+            User.role == UserRole.CLIENT,
+            User.private_note.ilike(f"%{key}:{cleaned}%"),
+        )
+        .order_by(User.created_at.asc())
+        .limit(1)
+        .with_for_update()
+    )
+
+
+def _mms_create_client(
+    *,
+    email: str,
+    kind: ClientKind,
+    status_value: ClientStatus,
+    first_name: str,
+    last_name: str,
+    now: datetime,
+    **values: object,
+) -> User:
+    return User(
+        email=email,
+        hashed_password=hash_password(generate_temporary_password()),
+        role=UserRole.CLIENT,
+        client_kind=kind,
+        client_status=status_value,
+        is_active=_status_implies_active(status_value),
+        first_name=first_name,
+        last_name=last_name,
+        address_country="FR",
+        residence_country="FR",
+        preferred_language="fr",
+        preferred_currency="EUR",
+        timezone="Europe/Paris",
+        portal_contact_visible=kind == ClientKind.ADULT,
+        email_opt_in=kind == ClientKind.ADULT,
+        sms_opt_in=kind == ClientKind.ADULT,
+        lesson_reminder_email_opt_in=kind == ClientKind.ADULT,
+        lesson_reminder_sms_opt_in=False,
+        updated_at=now,
+        **values,
+    )
+
+
+def _run_my_music_staff_import(db: Session, rows: list[dict[str, str]], *, dry_run: bool) -> AdminMyMusicStaffImportOut:
+    out = AdminMyMusicStaffImportOut(
+        dry_run=dry_run,
+        rows_seen=len(rows),
+        group_name=MY_MUSIC_STAFF_IMPORT_GROUP_NAME,
+    )
+    family_ids = {_mms_clean(row.get("ID de la famille My Music Staff")) for row in rows}
+    out.families_seen = len({family_id for family_id in family_ids if family_id})
+    out.parent_contacts_seen = sum(len(_mms_parent_contacts_from_row(row)) for row in rows)
+
+    if dry_run:
+        importable_rows = [row for row in rows if _mms_clean(row.get("ID étudiant My Music Staff"))]
+        parent_keys: set[str] = set()
+        estimated_links = 0
+        for row in importable_rows:
+            student_id = _mms_clean(row.get("ID étudiant My Music Staff"))
+            family_id = _mms_clean(row.get("ID de la famille My Music Staff"))
+            contacts = _mms_parent_contacts_from_row(row)
+            estimated_links += len(contacts)
+            for contact in contacts:
+                contact_index = _mms_clean(contact.get("index")) or "1"
+                email = _mms_normalize_email(contact.get("email"))
+                parent_keys.add(email or f"{family_id or student_id}:{contact_index}")
+        out.rows_imported = len(importable_rows)
+        out.children_created = len(importable_rows)
+        out.parents_created = len(parent_keys)
+        out.family_links_created = estimated_links
+        return out
+
+    now = _utcnow()
+    group = _mms_ensure_group(db)
+    out.group_id = group.id
+    out.group_name = group.name
+
+    for row_number, row in enumerate(rows, start=2):
+        student_id = _mms_clean(row.get("ID étudiant My Music Staff"))
+        family_id = _mms_clean(row.get("ID de la famille My Music Staff"))
+        child_first_name = _mms_clean(row.get("Prénom")) or _mms_clean(row.get("Prenom"))
+        child_last_name = _mms_clean(row.get("Nom de famille"))
+        if not student_id or not child_first_name or not child_last_name:
+            out.warnings.append(f"Ligne {row_number}: enfant ignore, identifiant/prenom/nom manquant.")
+            continue
+
+        child_email = _mms_synthetic_email("child", student_id, f"row-{row_number}")
+        child = db.scalar(
+            select(User)
+            .where(User.role == UserRole.CLIENT, User.email == child_email)
+            .limit(1)
+            .with_for_update()
+        )
+        if child is None:
+            child = _mms_find_by_note_key(db, "MMS_STUDENT_ID", student_id)
+
+        child_values = {
+            "first_name": child_first_name,
+            "last_name": child_last_name,
+            "address_line": _mms_clean(row.get("Adresse")),
+            "postal_code": _mms_clean(row.get("Code postal")),
+            "city": _mms_clean(row.get("Ville")),
+            "mobile_phone_1": _mms_clean(row.get("Téléphone portable") or row.get("Telephone portable")),
+            "home_phone": _mms_clean(row.get("Téléphone fixe") or row.get("Telephone fixe")),
+        }
+        child_note = _mms_note_block(
+            entity="child",
+            identifiers={
+                "MMS_STUDENT_ID": student_id,
+                "MMS_FAMILY_ID": family_id,
+            },
+            details=[
+                f"MMS_STATUS:{_mms_clean(row.get('Statut'))}",
+                f"MMS_GROUPS:{_mms_clean(row.get('Groupes'))}",
+                f"MMS_INSTRUMENT:{_mms_clean(row.get('Instrument'))}",
+                f"MMS_LEVEL:{_mms_clean(row.get('Niveau'))}",
+            ],
+        )
+
+        if child is None:
+            child = _mms_create_client(
+                email=child_email,
+                kind=ClientKind.CHILD,
+                status_value=ClientStatus.INACTIVE,
+                first_name=child_first_name,
+                last_name=child_last_name,
+                now=now,
+                address_line=child_values["address_line"] or None,
+                postal_code=child_values["postal_code"] or None,
+                city=child_values["city"] or None,
+                phone=child_values["mobile_phone_1"] or child_values["home_phone"] or None,
+                mobile_phone_1=child_values["mobile_phone_1"] or None,
+                home_phone=child_values["home_phone"] or None,
+                birth_date=_mms_parse_date(row.get("Anniversaire")),
+                private_note=child_note,
+            )
+            db.add(child)
+            db.flush()
+            out.children_created += 1
+        else:
+            out.children_reused += 1
+            changed = False
+            if child.client_kind != ClientKind.CHILD:
+                out.warnings.append(f"Ligne {row_number}: {child.email} existe mais n'est pas un enfant.")
+            if _mms_apply_missing_contact_fields(child, child_values, now=now):
+                changed = True
+            parsed_birth_date = _mms_parse_date(row.get("Anniversaire"))
+            if parsed_birth_date is not None and child.birth_date is None:
+                child.birth_date = parsed_birth_date
+                changed = True
+            merged_note = _mms_merge_private_note(child.private_note, child_note)
+            if merged_note != (child.private_note or ""):
+                child.private_note = merged_note
+                changed = True
+            if child.client_status == ClientStatus.ACTIVE:
+                out.warnings.append(f"Ligne {row_number}: enfant deja actif conserve actif ({child.email}).")
+            elif child.client_status != ClientStatus.INACTIVE:
+                child.client_status = ClientStatus.INACTIVE
+                child.is_active = False
+                changed = True
+            if changed:
+                child.updated_at = now
+                db.add(child)
+                out.children_updated += 1
+        _mms_ensure_group_membership(db, user_id=child.id, group_id=group.id)
+
+        contacts = _mms_parent_contacts_from_row(row)
+        for contact in contacts:
+            contact_index = _mms_clean(contact.get("index")) or "1"
+            parent_key = f"{family_id or student_id}:{contact_index}"
+            parent_email = _mms_normalize_email(contact.get("email"))
+            parent: User | None = None
+            if parent_email:
+                parent = db.scalar(
+                    select(User)
+                    .where(User.role == UserRole.CLIENT, User.email == parent_email)
+                    .limit(1)
+                    .with_for_update()
+                )
+            if parent is None:
+                parent = _mms_find_by_note_key(db, "MMS_PARENT_KEY", parent_key)
+
+            if parent is not None and parent.client_kind != ClientKind.ADULT:
+                out.warnings.append(
+                    f"Ligne {row_number}: email parent deja utilise par un non-adulte ({parent.email}), contact ignore."
+                )
+                continue
+
+            if parent_email is None:
+                parent_email = _mms_synthetic_email("parent", parent_key, f"row-{row_number}-{contact_index}")
+            first_name = _mms_clean(contact.get("first_name")) or "Responsable"
+            last_name = _mms_clean(contact.get("last_name")) or child_last_name
+            parent_note = _mms_note_block(
+                entity="parent",
+                identifiers={
+                    "MMS_PARENT_KEY": parent_key,
+                    "MMS_FAMILY_ID": family_id,
+                },
+                details=[
+                    f"MMS_PARENT_CONTACT_INDEX:{contact_index}",
+                    f"MMS_PARENT_NOTE:{_mms_clean(contact.get('note'))}",
+                ],
+            )
+
+            if parent is None:
+                parent = _mms_create_client(
+                    email=parent_email,
+                    kind=ClientKind.ADULT,
+                    status_value=ClientStatus.RESPONSABLE,
+                    first_name=first_name,
+                    last_name=last_name,
+                    now=now,
+                    address_line=_mms_clean(contact.get("address_line")) or None,
+                    postal_code=_mms_clean(contact.get("postal_code")) or None,
+                    city=_mms_clean(contact.get("city")) or None,
+                    phone=_mms_clean(contact.get("mobile_phone_1")) or _mms_clean(contact.get("home_phone")) or None,
+                    mobile_phone_1=_mms_clean(contact.get("mobile_phone_1")) or None,
+                    home_phone=_mms_clean(contact.get("home_phone")) or None,
+                    private_note=parent_note,
+                )
+                db.add(parent)
+                db.flush()
+                out.parents_created += 1
+            else:
+                out.parents_reused += 1
+                changed = False
+                if _mms_apply_missing_contact_fields(parent, contact, now=now):
+                    changed = True
+                if parent.client_status in {ClientStatus.INACTIVE, ClientStatus.PENDING}:
+                    parent.client_status = ClientStatus.RESPONSABLE
+                    parent.is_active = _status_implies_active(ClientStatus.RESPONSABLE)
+                    changed = True
+                merged_note = _mms_merge_private_note(parent.private_note, parent_note)
+                if merged_note != (parent.private_note or ""):
+                    parent.private_note = merged_note
+                    changed = True
+                if changed:
+                    parent.updated_at = now
+                    db.add(parent)
+                    out.parents_updated += 1
+            _mms_ensure_group_membership(db, user_id=parent.id, group_id=group.id)
+
+            existing_link = db.scalar(
+                select(ClientFamilyLink)
+                .where(
+                    ClientFamilyLink.adult_user_id == parent.id,
+                    ClientFamilyLink.child_user_id == child.id,
+                )
+                .with_for_update()
+            )
+            should_be_billing = contact_index == "1"
+            if existing_link is None:
+                link = ClientFamilyLink(
+                    adult_user_id=parent.id,
+                    child_user_id=child.id,
+                    relationship_label="Parent",
+                    is_billing_recipient=False,
+                    updated_at=now,
+                )
+                db.add(link)
+                db.flush()
+                out.family_links_created += 1
+            else:
+                out.family_links_existing += 1
+            has_billing = db.scalar(
+                select(ClientFamilyLink.id)
+                .where(
+                    ClientFamilyLink.child_user_id == child.id,
+                    ClientFamilyLink.is_billing_recipient.is_(True),
+                )
+                .limit(1)
+                .with_for_update()
+            )
+            if should_be_billing and has_billing is None:
+                _set_billing_recipient(db, child_user_id=child.id, chosen_adult_user_id=parent.id)
+            refresh_responsable_status(db, parent)
+            db.add(parent)
+
+        out.rows_imported += 1
+
+    db.commit()
+    return out
+
+
 def _groups_for_client_ids(db: Session, client_ids: list[UUID]) -> dict[UUID, list[tuple[UUID, str]]]:
     if not client_ids:
         return {}
@@ -4429,6 +4946,35 @@ def patch_admin_client_group(
 
     members_count = db.scalar(select(func.count(ClientGroupMembership.id)).where(ClientGroupMembership.group_id == group.id))
     return _group_out(group, members_count=int(members_count or 0))
+
+
+@router.post("/imports/my-music-staff-2025-2026", response_model=AdminMyMusicStaffImportOut)
+async def import_my_music_staff_2025_2026(
+    file: UploadFile = File(...),
+    dry_run: bool = True,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminMyMusicStaffImportOut:
+    filename = (file.filename or "").lower()
+    if filename and not filename.endswith(".csv"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="CSV file required")
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty CSV file")
+
+    rows = _mms_parse_csv_rows(_mms_decode_csv_bytes(content))
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="No rows found in CSV")
+
+    required_columns = {"Nom de famille", "ID étudiant My Music Staff", "ID de la famille My Music Staff"}
+    missing = sorted(column for column in required_columns if column not in rows[0])
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Missing My Music Staff column(s): {', '.join(missing)}",
+        )
+
+    return _run_my_music_staff_import(db, rows, dry_run=dry_run)
 
 
 @router.post("/bulk", response_model=AdminClientBulkOut)

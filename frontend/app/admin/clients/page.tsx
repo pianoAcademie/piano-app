@@ -9,6 +9,7 @@ import {
   bulkAdminClientsAction,
   createAdminClientAction,
   createAdminClientGroupAction,
+  importMyMusicStaffFamiliesAction,
 } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
 import {
@@ -686,6 +687,26 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
         </>
       ) : (
         <>
+          <section className="card">
+            <h2>{t("admin.clients.mms_import_title")}</h2>
+            <p className="muted">{t("admin.clients.mms_import_subtitle")}</p>
+            <form action={importMyMusicStaffFamiliesAction} className="grid cols-4">
+              <input type="hidden" name="return_to" value="/admin/clients?view=groups" />
+              <label className="span-2">
+                {t("admin.clients.mms_import_file")}
+                <input name="mms_file" type="file" accept=".csv,text/csv" required />
+              </label>
+              <label className="checkline">
+                <input type="checkbox" name="dry_run" defaultChecked />
+                {t("admin.clients.mms_import_dry_run")}
+              </label>
+              <div className="row">
+                <button type="submit">{t("admin.clients.mms_import_submit")}</button>
+              </div>
+            </form>
+            <small className="muted">{t("admin.clients.mms_import_note")}</small>
+          </section>
+
           <section className="card">
             <h2>{t("admin.clients.new_group_title")}</h2>
             <form action={createAdminClientGroupAction} className="grid cols-4">

@@ -6225,6 +6225,75 @@ export async function bulkAdminClientsAction(formData: FormData): Promise<void> 
   redirect(appendQueryMessage(returnTo, "ok", result.data.message));
 }
 
+
+export async function importMyMusicStaffFamiliesAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+
+  const returnTo = safeAdminReturnPath(formData, "/admin/clients?view=groups");
+  const rawFile = formData.get("mms_file");
+  if (!(rawFile instanceof File) || rawFile.size <= 0) {
+    redirect(appendQueryMessage(returnTo, "error", t("admin.clients.mms_import_select_file")));
+  }
+  if (!rawFile.name.toLowerCase().endsWith(".csv")) {
+    redirect(appendQueryMessage(returnTo, "error", t("admin.clients.mms_import_csv_required")));
+  }
+
+  const dryRun = checkboxField(formData, "dry_run");
+  const uploadPayload = new FormData();
+  uploadPayload.set("file", rawFile, rawFile.name);
+  const query = new URLSearchParams({ dry_run: dryRun ? "true" : "false" });
+
+  const result = await backendRequest<{
+    dry_run: boolean;
+    rows_seen: number;
+    rows_imported: number;
+    families_seen: number;
+    parent_contacts_seen: number;
+    parents_created: number;
+    parents_updated: number;
+    parents_reused: number;
+    children_created: number;
+    children_updated: number;
+    children_reused: number;
+    family_links_created: number;
+    family_links_existing: number;
+    group_name: string;
+    warnings: string[];
+  }>(
+    `/api/v1/admin/clients/imports/my-music-staff-2025-2026?${query.toString()}`,
+    {
+      method: "POST",
+      body: uploadPayload,
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/clients");
+  const summaryKey = dryRun ? "admin.clients.mms_import_preview_done" : "admin.clients.mms_import_done";
+  redirect(
+    appendQueryMessage(
+      returnTo,
+      "ok",
+      t(summaryKey, {
+        rows: result.data.rows_imported,
+        families: result.data.families_seen,
+        parents: result.data.parents_created + result.data.parents_reused,
+        children: result.data.children_created + result.data.children_reused,
+        links: result.data.family_links_created + result.data.family_links_existing,
+      }),
+    ),
+  );
+}
+
 export async function createAdminClientGroupAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
