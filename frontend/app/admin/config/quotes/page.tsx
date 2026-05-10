@@ -295,6 +295,10 @@ function moneyLabel(value: string | number | null | undefined, currency = "EUR",
   }
 }
 
+function localText(language: UiLanguage, fr: string, en: string): string {
+  return language === "en" ? en : fr;
+}
+
 function pricingUnitLabel(value: string | null, language: UiLanguage): string {
   const normalized = String(value || "").trim().toLowerCase();
   if (normalized === "per_session") {
@@ -853,6 +857,56 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     }),
   );
   const returnPath = buildQuotesConfigHref(tab);
+  const catalogSummaries = catalogs.map((row) => {
+    const explicitActivityPrices = pricingActivityPrices
+      .filter((price) => price.catalog_id === row.id && price.is_active)
+      .sort((left, right) => {
+        const leftActivity = activities.find((item) => item.id === left.activity_id)?.name ?? "";
+        const rightActivity = activities.find((item) => item.id === right.activity_id)?.name ?? "";
+        const byActivity = leftActivity.localeCompare(rightActivity, sortLocale);
+        if (byActivity !== 0) {
+          return byActivity;
+        }
+        const leftLocation = left.location_id ? (locationById.get(left.location_id) ?? "") : "";
+        const rightLocation = right.location_id ? (locationById.get(right.location_id) ?? "") : "";
+        return leftLocation.localeCompare(rightLocation, sortLocale);
+      });
+    const explicitActivityIds = new Set(explicitActivityPrices.map((price) => price.activity_id));
+    const fallbackActivities = activeActivities
+      .filter((activity) => !explicitActivityIds.has(activity.id))
+      .map((activity) => ({
+        activity,
+        fallback: computedActivityFallbackPrice(activity, language),
+      }));
+    const typeformTemplatePricingRows = collectTypeformTemplatePricingRows(typeformFormConfigs, {
+      catalogId: row.id,
+      activityByCode,
+      language,
+    });
+    const fallbackAvailableCount = fallbackActivities.filter((item) => item.fallback.amountTtc !== null).length;
+    const fallbackMissingCount = fallbackActivities.length - fallbackAvailableCount;
+    const typeformOverrideCount = typeformTemplatePricingRows.filter((item) => item.mode === "override").length;
+    const typeformFallbackCount = typeformTemplatePricingRows.length - typeformOverrideCount;
+    return {
+      row,
+      explicitActivityPrices,
+      fallbackActivities,
+      typeformTemplatePricingRows,
+      fallbackAvailableCount,
+      fallbackMissingCount,
+      typeformOverrideCount,
+      typeformFallbackCount,
+    };
+  });
+  const requestedCatalogId = readParam(params, "catalog_id").trim();
+  const selectedCatalogSummary =
+    catalogSummaries.find((item) => item.row.id === requestedCatalogId) ??
+    catalogSummaries.find((item) => item.row.is_default && item.row.is_active) ??
+    catalogSummaries.find((item) => item.row.is_default) ??
+    catalogSummaries[0] ??
+    null;
+  const selectedCatalog = selectedCatalogSummary?.row ?? null;
+  const catalogReturnPath = selectedCatalog ? buildQuotesConfigHref("catalogs", { catalog_id: selectedCatalog.id }) : buildQuotesConfigHref("catalogs");
 
   return (
     <section className="admin-page-grid">
@@ -1022,344 +1076,369 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
       ) : null}
 
       {tab === "catalogs" ? (
-        <section className="card">
-          <h3>{t("admin.quote_config.catalogs_title")}</h3>
-          <form action={createAdminPricingCatalogConfigAction} className="grid cols-4 config-form-grid">
-            <input type="hidden" name="return_to" value={buildQuotesConfigHref("catalogs")} />
-            <label className="span-2">
-              {t("common.name")}
-              <input type="text" name="name" required maxLength={180} placeholder={t("admin.quote_config.catalog_name_placeholder")} />
-            </label>
-            <label>
-              {t("admin.quote_config.school_year")}
-              <input type="text" name="school_year_label" maxLength={40} placeholder={t("admin.quote_config.school_year_placeholder")} />
-            </label>
-            <label>
-              {t("admin.quote_config.start_date")}
-              <input type="date" name="effective_from" required />
-            </label>
-            <label>
-              {t("admin.quote_config.end_date")}
-              <input type="date" name="effective_to" />
-            </label>
-            <label className="checkline">
-              <input type="checkbox" name="is_default" />
-              {t("admin.quote_config.default_catalog")}
-            </label>
-            <label className="checkline">
-              <input type="checkbox" name="is_active" defaultChecked />
-              {t("common.active")}
-            </label>
-            <div className="row span-4">
-              <button type="submit">{t("admin.quote_config.add_catalog")}</button>
+        <section className="card quote-config-catalogs-card">
+          <div className="quote-config-section-head">
+            <div>
+              <h3>{t("admin.quote_config.catalogs_title")}</h3>
+              <p className="muted">{localText(language, "Selectionnez un catalogue pour modifier ses parametres et ses tarifs.", "Select one catalog to edit settings and prices.")}</p>
             </div>
-          </form>
-
-          <div className="table-wrap top-gap-sm">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>{t("common.name")}</th>
-                  <th>{t("admin.quote_config.year_short")}</th>
-                  <th>{t("common.period")}</th>
-                  <th>{t("admin.quote_config.pricing_sources")}</th>
-                  <th>{t("common.status")}</th>
-                  <th>{t("admin.quote_config.updated_short")}</th>
-                  <th>{t("common.actions")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {catalogs.length === 0 ? (
-                  <tr><td colSpan={7}><p className="muted">{t("admin.quote_config.no_catalogs")}</p></td></tr>
-                ) : (
-                  catalogs.map((row) => {
-                    const explicitActivityPrices = pricingActivityPrices
-                      .filter((price) => price.catalog_id === row.id && price.is_active)
-                      .sort((left, right) => {
-                        const leftActivity = activities.find((item) => item.id === left.activity_id)?.name ?? "";
-                        const rightActivity = activities.find((item) => item.id === right.activity_id)?.name ?? "";
-                        const byActivity = leftActivity.localeCompare(rightActivity, sortLocale);
-                        if (byActivity !== 0) {
-                          return byActivity;
-                        }
-                        const leftLocation = left.location_id ? (locationById.get(left.location_id) ?? "") : "";
-                        const rightLocation = right.location_id ? (locationById.get(right.location_id) ?? "") : "";
-                        return leftLocation.localeCompare(rightLocation, sortLocale);
-                      });
-                    const explicitActivityIds = new Set(explicitActivityPrices.map((price) => price.activity_id));
-                    const fallbackActivities = activeActivities
-                      .filter((activity) => !explicitActivityIds.has(activity.id))
-                      .map((activity) => ({
-                        activity,
-                        fallback: computedActivityFallbackPrice(activity, language),
-                      }));
-                    const typeformTemplatePricingRows = collectTypeformTemplatePricingRows(typeformFormConfigs, {
-                      catalogId: row.id,
-                      activityByCode,
-                      language,
-                    });
-                    const fallbackAvailableCount = fallbackActivities.filter((item) => item.fallback.amountTtc !== null).length;
-                    const fallbackMissingCount = fallbackActivities.length - fallbackAvailableCount;
-                    const typeformOverrideCount = typeformTemplatePricingRows.filter((item) => item.mode === "override").length;
-                    const typeformFallbackCount = typeformTemplatePricingRows.length - typeformOverrideCount;
-
-                    return (
-                      <tr key={row.id}>
-                        <td><strong>{row.name}</strong></td>
-                        <td>{row.school_year_label || "-"}</td>
-                        <td>{dateInputValue(row.effective_from)} → {dateInputValue(row.effective_to)}</td>
-                        <td>
-                          <div><strong>{explicitActivityPrices.length}</strong> {t("admin.quote_config.explicit_price_count", { count: explicitActivityPrices.length })}</div>
-                          <div className="muted">
-                            {t("admin.quote_config.catalog_source_summary", {
-                              fallback_available: fallbackAvailableCount,
-                              typeform_override: typeformOverrideCount,
-                              typeform_fallback: typeformFallbackCount,
-                              missing: fallbackMissingCount,
-                            })}
-                          </div>
-                        </td>
-                        <td>
-                          <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? t("common.active") : t("common.inactive")}</span>
-                          {row.is_default ? <span className="badge">{t("admin.quote_config.default_badge")}</span> : null}
-                        </td>
-                        <td>{dateTimeLabel(row.updated_at, language)}</td>
-                        <td>
-                          <details open={row.is_default}>
-                            <summary className="mode-link">{t("common.edit")}</summary>
-                            <form action={updateAdminPricingCatalogConfigAction} className="grid config-form-grid top-gap-sm">
-                              <input type="hidden" name="catalog_id" value={row.id} />
-                              <input type="hidden" name="return_to" value={buildQuotesConfigHref("catalogs")} />
-                              <label>
-                                {t("common.name")}
-                                <input type="text" name="name" defaultValue={row.name} required maxLength={180} />
-                              </label>
-                              <label>
-                                {t("admin.quote_config.school_year")}
-                                <input type="text" name="school_year_label" defaultValue={row.school_year_label || ""} maxLength={40} />
-                              </label>
-                              <label>
-                                {t("admin.quote_config.start_date")}
-                                <input type="date" name="effective_from" defaultValue={dateInputValue(row.effective_from)} required />
-                              </label>
-                              <label>
-                                {t("admin.quote_config.end_date")}
-                                <input type="date" name="effective_to" defaultValue={dateInputValue(row.effective_to)} />
-                              </label>
-                              <label className="checkline">
-                                <input type="checkbox" name="is_default" defaultChecked={row.is_default} />
-                                {t("admin.quote_config.default_badge")}
-                              </label>
-                              <label className="checkline">
-                                <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
-                                {t("common.active")}
-                              </label>
-                              <div className="row">
-                                <button type="submit">{t("common.save")}</button>
-                              </div>
-                            </form>
-
-                            <div className="top-gap-sm">
-                              <h4>{t("admin.quote_config.activity_price_title")}</h4>
-                              <form action={upsertAdminPricingActivityPriceConfigAction} className="grid cols-4 config-form-grid top-gap-sm">
-                                <input type="hidden" name="catalog_id" value={row.id} />
-                                <input type="hidden" name="return_to" value={buildQuotesConfigHref("catalogs")} />
-                                <label className="span-2">
-                                  {t("admin.quote_config.activity_price_activity")}
-                                  <select name="activity_id" required>
-                                    <option value="">{t("admin.quote_config.select_option")}</option>
-                                    {activeActivities.map((activity) => (
-                                      <option key={`${row.id}-activity-price-${activity.id}`} value={activity.id}>
-                                        {activity.name}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </label>
-                                <label>
-                                  {t("common.location")}
-                                  <select name="location_id" defaultValue="">
-                                    <option value="">{t("admin.quote_config.all_sites")}</option>
-                                    {locations.map((location) => (
-                                      <option key={`${row.id}-activity-location-${location.id}`} value={location.id}>
-                                        {location.name}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </label>
-                                <label>
-                                  {t("admin.quote_config.unit")}
-                                  <select name="pricing_unit" defaultValue="per_session" required>
-                                    <option value="per_session">{pricingUnitLabel("per_session", language)}</option>
-                                    <option value="hourly">{pricingUnitLabel("hourly", language)}</option>
-                                    <option value="fixed">{pricingUnitLabel("fixed", language)}</option>
-                                  </select>
-                                </label>
-                                <label>
-                                  {t("admin.quote_config.amount_ttc")}
-                                  <input type="number" name="unit_price_ttc" min="0" step="0.01" placeholder="38.00" required />
-                                </label>
-                                <div className="span-3 muted">{t("admin.quote_config.activity_price_form_help")}</div>
-                                <div className="row align-end">
-                                  <button type="submit">{t("admin.quote_config.activity_price_save")}</button>
-                                </div>
-                              </form>
-
-                              <h4 className="top-gap">{t("admin.quote_config.pricing_sources_diagnostics_title")}</h4>
-                              <p className="muted">{t("admin.quote_config.pricing_sources_diagnostics_help")}</p>
-
-                              <div className="table-wrap top-gap-sm">
-                                <table className="data-table">
-                                  <thead>
-                                    <tr>
-                                      <th>{t("admin.quote_config.typeform_price_title")}</th>
-                                      <th>{t("admin.quote_config.form_label")}</th>
-                                      <th>{t("admin.quote_config.mode")}</th>
-                                      <th>{t("admin.quote_config.amount_ttc")}</th>
-                                      <th>{t("admin.quote_config.condition")}</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {typeformTemplatePricingRows.length === 0 ? (
-                                      <tr>
-                                        <td colSpan={5}>
-                                          <p className="muted">{t("admin.quote_config.no_typeform_prices")}</p>
-                                        </td>
-                                      </tr>
-                                    ) : (
-                                      typeformTemplatePricingRows.map((item) => (
-                                        <tr key={item.key}>
-                                          <td>
-                                            <strong>{item.itemLabel}</strong>
-                                            <div className="muted"><code>{item.itemCode || "-"}</code></div>
-                                          </td>
-                                          <td>
-                                            <strong>{item.formLabel}</strong>
-                                            <div className="muted"><code>{item.formId}</code> · {item.locationCode}</div>
-                                          </td>
-                                          <td>
-                                            <span className={`status-pill ${item.mode === "override" ? "status-warn" : "status-off"}`}>
-                                              {item.mode === "override" ? t("admin.quote_config.typeform_mode_override") : t("admin.quote_config.typeform_mode_fallback")}
-                                            </span>
-                                          </td>
-                                          <td>{moneyLabel(item.amountTtc, "EUR", language)}</td>
-                                          <td>{item.conditionsLabel}</td>
-                                        </tr>
-                                      ))
-                                    )}
-                                  </tbody>
-                                </table>
-                              </div>
-
-                              <div className="table-wrap top-gap-sm">
-                                <table className="data-table">
-                                  <thead>
-                                    <tr>
-                                      <th>{t("admin.quote_config.activity")}</th>
-                                      <th>{t("common.location")}</th>
-                                      <th>{t("admin.quote_config.unit")}</th>
-                                      <th>{t("common.source")}</th>
-                                      <th>{t("admin.quote_config.amount_ttc")}</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {explicitActivityPrices.length === 0 ? (
-                                      <tr>
-                                        <td colSpan={5}>
-                                          <p className="muted">{t("admin.quote_config.no_explicit_prices")}</p>
-                                        </td>
-                                      </tr>
-                                    ) : (
-                                      explicitActivityPrices.map((price) => {
-                                        const activity = activities.find((item) => item.id === price.activity_id);
-                                        const locationName = price.location_id ? (locationById.get(price.location_id) ?? price.location_id) : t("admin.quote_config.all_sites");
-                                        const sourceLabel = price.location_id ? t("admin.quote_config.source_catalog_specific") : t("admin.quote_config.source_catalog_general");
-                                        return (
-                                          <tr key={price.id}>
-                                            <td>
-                                              <strong>{activity?.name || price.activity_id}</strong>
-                                              <div className="muted"><code>{activity?.code || price.activity_id}</code></div>
-                                            </td>
-                                            <td>{locationName}</td>
-                                            <td>{pricingUnitLabel(price.pricing_unit, language)}</td>
-                                            <td>{sourceLabel}</td>
-                                            <td>{moneyLabel(price.unit_price_ttc, price.currency, language)}</td>
-                                          </tr>
-                                        );
-                                      })
-                                    )}
-                                  </tbody>
-                                </table>
-                              </div>
-
-                              <div className="table-wrap top-gap-sm">
-                                <table className="data-table">
-                                  <thead>
-                                    <tr>
-                                      <th>{t("admin.quote_config.activity_without_explicit_price")}</th>
-                                      <th>{t("admin.quote_config.mode")}</th>
-                                      <th>{t("admin.quote_config.fallback")}</th>
-                                      <th>{t("admin.quote_config.fallback_amount")}</th>
-                                      <th>{t("common.actions")}</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {fallbackActivities.length === 0 ? (
-                                      <tr>
-                                        <td colSpan={5}>
-                                          <p className="muted">{t("admin.quote_config.all_activities_priced")}</p>
-                                        </td>
-                                      </tr>
-                                    ) : (
-                                      fallbackActivities.map(({ activity, fallback }) => (
-                                        <tr key={`${row.id}-${activity.id}`}>
-                                          <td>
-                                            <strong>{activity.name}</strong>
-                                            <div className="muted"><code>{activity.code}</code></div>
-                                          </td>
-                                          <td>{modalityLabel(activity.mode, language)}</td>
-                                          <td>
-                                            <span className={`status-pill ${fallback.tone === "off" ? "status-off" : fallback.tone === "warn" ? "status-warn" : "status-ok"}`}>
-                                              {fallback.label}
-                                            </span>
-                                          </td>
-                                          <td>{fallback.amountTtc === null ? "-" : moneyLabel(fallback.amountTtc, "EUR", language)}</td>
-                                          <td>
-                                            {fallback.amountTtc === null ? (
-                                              <span className="muted">{t("admin.quote_config.activity_price_unavailable")}</span>
-                                            ) : (
-                                              <form action={upsertAdminPricingActivityPriceConfigAction} className="row">
-                                                <input type="hidden" name="catalog_id" value={row.id} />
-                                                <input type="hidden" name="activity_id" value={activity.id} />
-                                                <input type="hidden" name="location_id" value="" />
-                                                <input type="hidden" name="pricing_unit" value="per_session" />
-                                                <input type="hidden" name="unit_price_ttc" value={fallback.amountTtc.toFixed(2)} />
-                                                <input type="hidden" name="return_to" value={buildQuotesConfigHref("catalogs")} />
-                                                <button type="submit" className="ghost">{t("admin.quote_config.activity_price_quick_save")}</button>
-                                              </form>
-                                            )}
-                                          </td>
-                                        </tr>
-                                      ))
-                                    )}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-
-                            <form action={deleteAdminPricingCatalogConfigAction} className="row top-gap-sm">
-                              <input type="hidden" name="catalog_id" value={row.id} />
-                              <input type="hidden" name="return_to" value={buildQuotesConfigHref("catalogs")} />
-                              <button type="submit" className="danger">{t("common.delete")}</button>
-                            </form>
-                          </details>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+            <span className="badge">{catalogs.length} {t("admin.quote_config.nav_catalogs")}</span>
           </div>
+
+          <details className="quote-config-create-panel">
+            <summary>{localText(language, "Nouveau catalogue", "New catalog")}</summary>
+            <form action={createAdminPricingCatalogConfigAction} className="grid cols-4 config-form-grid top-gap-sm">
+              <input type="hidden" name="return_to" value={catalogReturnPath} />
+              <label className="span-2">
+                {t("common.name")}
+                <input type="text" name="name" required maxLength={180} placeholder={t("admin.quote_config.catalog_name_placeholder")} />
+              </label>
+              <label>
+                {t("admin.quote_config.school_year")}
+                <input type="text" name="school_year_label" maxLength={40} placeholder={t("admin.quote_config.school_year_placeholder")} />
+              </label>
+              <label>
+                {t("admin.quote_config.start_date")}
+                <input type="date" name="effective_from" required />
+              </label>
+              <label>
+                {t("admin.quote_config.end_date")}
+                <input type="date" name="effective_to" />
+              </label>
+              <label className="checkline">
+                <input type="checkbox" name="is_default" />
+                {t("admin.quote_config.default_catalog")}
+              </label>
+              <label className="checkline">
+                <input type="checkbox" name="is_active" defaultChecked />
+                {t("common.active")}
+              </label>
+              <div className="row span-4">
+                <button type="submit">{t("admin.quote_config.add_catalog")}</button>
+              </div>
+            </form>
+          </details>
+
+          {selectedCatalogSummary && selectedCatalog ? (
+            <div className="quote-config-catalog-layout">
+              <aside className="quote-config-catalog-list" aria-label={t("admin.quote_config.catalogs_title")}>
+                {catalogSummaries.map((summary) => {
+                  const row = summary.row;
+                  const isSelected = row.id === selectedCatalog.id;
+                  return (
+                    <Link
+                      key={row.id}
+                      className={`quote-config-catalog-link ${isSelected ? "active" : ""}`}
+                      href={buildQuotesConfigHref("catalogs", { catalog_id: row.id })}
+                    >
+                      <span>
+                        <strong>{row.name}</strong>
+                        <small>{row.school_year_label || "-"}</small>
+                      </span>
+                      <span className="quote-config-catalog-meta">
+                        <span>{summary.explicitActivityPrices.length} {localText(language, "tarifs", "prices")}</span>
+                        <span>{dateInputValue(row.effective_from)} → {dateInputValue(row.effective_to) || "-"}</span>
+                      </span>
+                      <span className="row wrap gap-sm">
+                        <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? t("common.active") : t("common.inactive")}</span>
+                        {row.is_default ? <span className="badge">{t("admin.quote_config.default_badge")}</span> : null}
+                      </span>
+                    </Link>
+                  );
+                })}
+              </aside>
+
+              <div className="quote-config-catalog-detail">
+                <header className="quote-config-detail-header">
+                  <div>
+                    <p className="muted">{localText(language, "Catalogue selectionne", "Selected catalog")}</p>
+                    <h3>{selectedCatalog.name}</h3>
+                    <p className="muted">
+                      {selectedCatalog.school_year_label || "-"} · {dateInputValue(selectedCatalog.effective_from)} → {dateInputValue(selectedCatalog.effective_to) || "-"}
+                    </p>
+                  </div>
+                  <div className="row wrap gap-sm">
+                    <span className={`status-pill ${selectedCatalog.is_active ? "status-ok" : "status-off"}`}>{selectedCatalog.is_active ? t("common.active") : t("common.inactive")}</span>
+                    {selectedCatalog.is_default ? <span className="badge">{t("admin.quote_config.default_badge")}</span> : null}
+                    <span className="muted">{t("admin.quote_config.updated_short")}: {dateTimeLabel(selectedCatalog.updated_at, language)}</span>
+                  </div>
+                </header>
+
+                <section className="quote-config-metric-grid">
+                  <article>
+                    <strong>{selectedCatalogSummary.explicitActivityPrices.length}</strong>
+                    <span>{t("admin.quote_config.explicit_price_count", { count: selectedCatalogSummary.explicitActivityPrices.length })}</span>
+                  </article>
+                  <article>
+                    <strong>{selectedCatalogSummary.fallbackAvailableCount}</strong>
+                    <span>{localText(language, "tarifs de secours disponibles", "fallback prices available")}</span>
+                  </article>
+                  <article>
+                    <strong>{selectedCatalogSummary.fallbackMissingCount}</strong>
+                    <span>{localText(language, "activites sans montant", "activities without amount")}</span>
+                  </article>
+                  <article>
+                    <strong>{selectedCatalogSummary.typeformTemplatePricingRows.length}</strong>
+                    <span>{localText(language, "prix issus des Typeform", "Typeform prices")}</span>
+                  </article>
+                </section>
+
+                <details className="quote-config-panel">
+                  <summary>{localText(language, "Parametres du catalogue", "Catalog settings")}</summary>
+                  <form action={updateAdminPricingCatalogConfigAction} className="grid cols-4 config-form-grid top-gap-sm">
+                    <input type="hidden" name="catalog_id" value={selectedCatalog.id} />
+                    <input type="hidden" name="return_to" value={catalogReturnPath} />
+                    <label className="span-2">
+                      {t("common.name")}
+                      <input type="text" name="name" defaultValue={selectedCatalog.name} required maxLength={180} />
+                    </label>
+                    <label>
+                      {t("admin.quote_config.school_year")}
+                      <input type="text" name="school_year_label" defaultValue={selectedCatalog.school_year_label || ""} maxLength={40} />
+                    </label>
+                    <label>
+                      {t("admin.quote_config.start_date")}
+                      <input type="date" name="effective_from" defaultValue={dateInputValue(selectedCatalog.effective_from)} required />
+                    </label>
+                    <label>
+                      {t("admin.quote_config.end_date")}
+                      <input type="date" name="effective_to" defaultValue={dateInputValue(selectedCatalog.effective_to)} />
+                    </label>
+                    <label className="checkline">
+                      <input type="checkbox" name="is_default" defaultChecked={selectedCatalog.is_default} />
+                      {t("admin.quote_config.default_badge")}
+                    </label>
+                    <label className="checkline">
+                      <input type="checkbox" name="is_active" defaultChecked={selectedCatalog.is_active} />
+                      {t("common.active")}
+                    </label>
+                    <div className="row span-4">
+                      <button type="submit">{t("common.save")}</button>
+                    </div>
+                  </form>
+                </details>
+
+                <details className="quote-config-panel" open>
+                  <summary>{t("admin.quote_config.activity_price_title")}</summary>
+                  <form action={upsertAdminPricingActivityPriceConfigAction} className="grid cols-4 config-form-grid top-gap-sm">
+                    <input type="hidden" name="catalog_id" value={selectedCatalog.id} />
+                    <input type="hidden" name="return_to" value={catalogReturnPath} />
+                    <label className="span-2">
+                      {t("admin.quote_config.activity_price_activity")}
+                      <select name="activity_id" required>
+                        <option value="">{t("admin.quote_config.select_option")}</option>
+                        {activeActivities.map((activity) => (
+                          <option key={`${selectedCatalog.id}-activity-price-${activity.id}`} value={activity.id}>
+                            {activity.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      {t("common.location")}
+                      <select name="location_id" defaultValue="">
+                        <option value="">{t("admin.quote_config.all_sites")}</option>
+                        {locations.map((location) => (
+                          <option key={`${selectedCatalog.id}-activity-location-${location.id}`} value={location.id}>
+                            {location.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      {t("admin.quote_config.unit")}
+                      <select name="pricing_unit" defaultValue="per_session" required>
+                        <option value="per_session">{pricingUnitLabel("per_session", language)}</option>
+                        <option value="hourly">{pricingUnitLabel("hourly", language)}</option>
+                        <option value="fixed">{pricingUnitLabel("fixed", language)}</option>
+                      </select>
+                    </label>
+                    <label>
+                      {t("admin.quote_config.amount_ttc")}
+                      <input type="number" name="unit_price_ttc" min="0" step="0.01" placeholder="38.00" required />
+                    </label>
+                    <div className="span-3 muted">{t("admin.quote_config.activity_price_form_help")}</div>
+                    <div className="row align-end">
+                      <button type="submit">{t("admin.quote_config.activity_price_save")}</button>
+                    </div>
+                  </form>
+                </details>
+
+                <section className="quote-config-panel quote-config-diagnostics">
+                  <div className="quote-config-section-head">
+                    <div>
+                      <h4>{t("admin.quote_config.pricing_sources_diagnostics_title")}</h4>
+                      <p className="muted">{t("admin.quote_config.pricing_sources_diagnostics_help")}</p>
+                    </div>
+                  </div>
+
+                  <details className="quote-config-diagnostic-group" open>
+                    <summary>
+                      <span>{t("admin.quote_config.activity")}</span>
+                      <span className="badge">{selectedCatalogSummary.explicitActivityPrices.length}</span>
+                    </summary>
+                    <div className="table-wrap top-gap-sm">
+                      <table className="data-table quote-config-compact-table">
+                        <thead>
+                          <tr>
+                            <th>{t("admin.quote_config.activity")}</th>
+                            <th>{t("common.location")}</th>
+                            <th>{t("admin.quote_config.unit")}</th>
+                            <th>{t("common.source")}</th>
+                            <th>{t("admin.quote_config.amount_ttc")}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedCatalogSummary.explicitActivityPrices.length === 0 ? (
+                            <tr>
+                              <td colSpan={5}>
+                                <p className="muted">{t("admin.quote_config.no_explicit_prices")}</p>
+                              </td>
+                            </tr>
+                          ) : (
+                            selectedCatalogSummary.explicitActivityPrices.map((price) => {
+                              const activity = activities.find((item) => item.id === price.activity_id);
+                              const locationName = price.location_id ? (locationById.get(price.location_id) ?? price.location_id) : t("admin.quote_config.all_sites");
+                              const sourceLabel = price.location_id ? t("admin.quote_config.source_catalog_specific") : t("admin.quote_config.source_catalog_general");
+                              return (
+                                <tr key={price.id}>
+                                  <td>
+                                    <strong>{activity?.name || price.activity_id}</strong>
+                                    <div className="muted"><code>{activity?.code || price.activity_id}</code></div>
+                                  </td>
+                                  <td>{locationName}</td>
+                                  <td>{pricingUnitLabel(price.pricing_unit, language)}</td>
+                                  <td>{sourceLabel}</td>
+                                  <td>{moneyLabel(price.unit_price_ttc, price.currency, language)}</td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </details>
+
+                  <details className="quote-config-diagnostic-group">
+                    <summary>
+                      <span>{t("admin.quote_config.activity_without_explicit_price")}</span>
+                      <span className="badge">{selectedCatalogSummary.fallbackActivities.length}</span>
+                    </summary>
+                    <div className="table-wrap top-gap-sm">
+                      <table className="data-table quote-config-compact-table">
+                        <thead>
+                          <tr>
+                            <th>{t("admin.quote_config.activity_without_explicit_price")}</th>
+                            <th>{t("admin.quote_config.mode")}</th>
+                            <th>{t("admin.quote_config.fallback")}</th>
+                            <th>{t("admin.quote_config.fallback_amount")}</th>
+                            <th>{t("common.actions")}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedCatalogSummary.fallbackActivities.length === 0 ? (
+                            <tr>
+                              <td colSpan={5}>
+                                <p className="muted">{t("admin.quote_config.all_activities_priced")}</p>
+                              </td>
+                            </tr>
+                          ) : (
+                            selectedCatalogSummary.fallbackActivities.map(({ activity, fallback }) => (
+                              <tr key={`${selectedCatalog.id}-${activity.id}`}>
+                                <td>
+                                  <strong>{activity.name}</strong>
+                                  <div className="muted"><code>{activity.code}</code></div>
+                                </td>
+                                <td>{modalityLabel(activity.mode, language)}</td>
+                                <td>
+                                  <span className={`status-pill ${fallback.tone === "off" ? "status-off" : fallback.tone === "warn" ? "status-warn" : "status-ok"}`}>
+                                    {fallback.label}
+                                  </span>
+                                </td>
+                                <td>{fallback.amountTtc === null ? "-" : moneyLabel(fallback.amountTtc, "EUR", language)}</td>
+                                <td>
+                                  {fallback.amountTtc === null ? (
+                                    <span className="muted">{t("admin.quote_config.activity_price_unavailable")}</span>
+                                  ) : (
+                                    <form action={upsertAdminPricingActivityPriceConfigAction} className="row">
+                                      <input type="hidden" name="catalog_id" value={selectedCatalog.id} />
+                                      <input type="hidden" name="activity_id" value={activity.id} />
+                                      <input type="hidden" name="location_id" value="" />
+                                      <input type="hidden" name="pricing_unit" value="per_session" />
+                                      <input type="hidden" name="unit_price_ttc" value={fallback.amountTtc.toFixed(2)} />
+                                      <input type="hidden" name="return_to" value={catalogReturnPath} />
+                                      <button type="submit" className="ghost">{t("admin.quote_config.activity_price_quick_save")}</button>
+                                    </form>
+                                  )}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </details>
+
+                  <details className="quote-config-diagnostic-group">
+                    <summary>
+                      <span>{t("admin.quote_config.typeform_price_title")}</span>
+                      <span className="badge">{selectedCatalogSummary.typeformTemplatePricingRows.length}</span>
+                    </summary>
+                    <div className="table-wrap top-gap-sm">
+                      <table className="data-table quote-config-compact-table">
+                        <thead>
+                          <tr>
+                            <th>{t("admin.quote_config.typeform_price_title")}</th>
+                            <th>{t("admin.quote_config.form_label")}</th>
+                            <th>{t("admin.quote_config.mode")}</th>
+                            <th>{t("admin.quote_config.amount_ttc")}</th>
+                            <th>{t("admin.quote_config.condition")}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedCatalogSummary.typeformTemplatePricingRows.length === 0 ? (
+                            <tr>
+                              <td colSpan={5}>
+                                <p className="muted">{t("admin.quote_config.no_typeform_prices")}</p>
+                              </td>
+                            </tr>
+                          ) : (
+                            selectedCatalogSummary.typeformTemplatePricingRows.map((item) => (
+                              <tr key={item.key}>
+                                <td>
+                                  <strong>{item.itemLabel}</strong>
+                                  <div className="muted"><code>{item.itemCode || "-"}</code></div>
+                                </td>
+                                <td>
+                                  <strong>{item.formLabel}</strong>
+                                  <div className="muted"><code>{item.formId}</code> · {item.locationCode}</div>
+                                </td>
+                                <td>
+                                  <span className={`status-pill ${item.mode === "override" ? "status-warn" : "status-off"}`}>
+                                    {item.mode === "override" ? t("admin.quote_config.typeform_mode_override") : t("admin.quote_config.typeform_mode_fallback")}
+                                  </span>
+                                </td>
+                                <td>{moneyLabel(item.amountTtc, "EUR", language)}</td>
+                                <td>{item.conditionsLabel}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </details>
+                </section>
+
+                <form action={deleteAdminPricingCatalogConfigAction} className="row quote-config-danger-row">
+                  <input type="hidden" name="catalog_id" value={selectedCatalog.id} />
+                  <input type="hidden" name="return_to" value={buildQuotesConfigHref("catalogs")} />
+                  <button type="submit" className="danger">{t("common.delete")}</button>
+                </form>
+              </div>
+            </div>
+          ) : (
+            <p className="muted top-gap-sm">{t("admin.quote_config.no_catalogs")}</p>
+          )}
         </section>
       ) : null}
 

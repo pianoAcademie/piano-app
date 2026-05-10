@@ -5783,6 +5783,203 @@ button.danger:focus-visible {
   gap: 6px;
 }
 
+.quote-config-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.quote-config-section-head h3,
+.quote-config-section-head h4 {
+  margin: 0;
+}
+
+.quote-config-catalogs-card {
+  overflow: visible;
+}
+
+.quote-config-create-panel,
+.quote-config-panel,
+.quote-config-diagnostic-group {
+  border: 1px solid #dfe5ee;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.quote-config-create-panel {
+  margin-bottom: 14px;
+}
+
+.quote-config-create-panel > summary,
+.quote-config-panel > summary,
+.quote-config-diagnostic-group > summary {
+  cursor: pointer;
+  padding: 12px 14px;
+  font-weight: 700;
+  color: #243244;
+  list-style: none;
+}
+
+.quote-config-create-panel > summary::-webkit-details-marker,
+.quote-config-panel > summary::-webkit-details-marker,
+.quote-config-diagnostic-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.quote-config-create-panel > summary::after,
+.quote-config-panel > summary::after,
+.quote-config-diagnostic-group > summary::after {
+  content: "+";
+  float: right;
+  color: #7b8796;
+  font-weight: 800;
+}
+
+.quote-config-create-panel[open] > summary::after,
+.quote-config-panel[open] > summary::after,
+.quote-config-diagnostic-group[open] > summary::after {
+  content: "-";
+}
+
+.quote-config-create-panel > form,
+.quote-config-panel > form,
+.quote-config-diagnostics > .quote-config-section-head,
+.quote-config-diagnostic-group > .table-wrap {
+  padding: 0 14px 14px;
+}
+
+.quote-config-catalog-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.quote-config-catalog-list {
+  display: grid;
+  gap: 8px;
+  position: sticky;
+  top: 14px;
+  max-height: calc(100vh - 120px);
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.quote-config-catalog-link {
+  display: grid;
+  gap: 8px;
+  text-decoration: none;
+  color: #273243;
+  border: 1px solid #dfe5ee;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.quote-config-catalog-link:hover,
+.quote-config-catalog-link.active {
+  border-color: #c69a57;
+  background: #fff8ed;
+}
+
+.quote-config-catalog-link strong,
+.quote-config-catalog-link small,
+.quote-config-catalog-meta {
+  display: block;
+}
+
+.quote-config-catalog-link small,
+.quote-config-catalog-meta {
+  color: #637084;
+  font-size: 12px;
+}
+
+.quote-config-catalog-detail {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.quote-config-detail-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 16px;
+  border: 1px solid #dfe5ee;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #f8fafc 0%, #fff 100%);
+}
+
+.quote-config-detail-header h3 {
+  margin: 2px 0 4px;
+}
+
+.quote-config-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.quote-config-metric-grid article {
+  border: 1px solid #dfe5ee;
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.quote-config-metric-grid strong {
+  font-size: 24px;
+  line-height: 1;
+  color: #1f2c3d;
+}
+
+.quote-config-metric-grid span {
+  color: #647084;
+  font-size: 12px;
+}
+
+.quote-config-diagnostics {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.quote-config-diagnostics > .quote-config-section-head {
+  padding: 0;
+  margin-bottom: 0;
+}
+
+.quote-config-diagnostic-group > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.quote-config-diagnostic-group > summary::after {
+  display: none;
+}
+
+.quote-config-compact-table {
+  min-width: 760px;
+}
+
+.quote-config-compact-table th,
+.quote-config-compact-table td {
+  font-size: 13px;
+  vertical-align: top;
+}
+
+.quote-config-danger-row {
+  justify-content: flex-end;
+}
+
 .solfege-config-form {
   display: grid;
   gap: 12px;
@@ -7026,9 +7223,28 @@ button.danger:focus-visible {
   .config-nav-panel {
     position: static;
   }
+
+  .quote-config-catalog-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .quote-config-catalog-list {
+    position: static;
+    max-height: none;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    padding-right: 0;
+  }
+
+  .quote-config-metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 900px) {
+  .quote-config-metric-grid {
+    grid-template-columns: 1fr;
+  }
+
   .config-payment-grid {
     grid-template-columns: 1fr;
   }
