@@ -28,6 +28,17 @@ type SortColumn = "last_name" | "first_name" | "family_name" | "client_status" |
 type SortDirection = "asc" | "desc";
 type ClientsView = "students" | "groups";
 type PerPage = 5 | 50;
+type MyMusicStaffImportStatus = {
+  group_found: boolean;
+  group_name: string;
+  members_count: number;
+  parents_count: number;
+  children_count: number;
+  imported_note_count: number;
+  family_links_count: number;
+  inactive_children_count: number;
+  responsible_parents_count: number;
+};
 
 const CLIENT_STATUS_OPTIONS = ["ACTIVE", "RESPONSABLE", "TRIAL", "PENDING", "INACTIVE", "ARCHIVED"] as const;
 
@@ -272,16 +283,18 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
     clientsQuery.set("group_id", selectedGroupId);
   }
 
-  const [clientsResult, allClientsResult, groupsResult, adultCandidatesResult] = await Promise.all([
+  const [clientsResult, allClientsResult, groupsResult, adultCandidatesResult, mmsImportStatusResult] = await Promise.all([
     backendRequest<AdminClientOut[]>(`/api/v1/admin/clients?${clientsQuery.toString()}`, {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000&include_archived=true", {}, token),
     backendRequest<AdminClientGroupOut[]>("/api/v1/admin/clients/groups?include_inactive=true", {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000&include_archived=false&sort_by=last_name&sort_dir=asc", {}, token),
+    backendRequest<MyMusicStaffImportStatus>("/api/v1/admin/clients/imports/my-music-staff-2025-2026/status", {}, token),
   ]);
 
   const listedClientsRaw = clientsResult.ok ? clientsResult.data : [];
   const allClients = allClientsResult.ok ? allClientsResult.data : [];
   const groups = groupsResult.ok ? groupsResult.data : [];
+  const mmsImportStatus = mmsImportStatusResult.ok ? mmsImportStatusResult.data : null;
   const adultCandidates = adultCandidatesResult.ok
     ? adultCandidatesResult.data.filter((client) => client.client_kind === "ADULT")
     : [];
@@ -705,6 +718,37 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
               </div>
             </form>
             <small className="muted">{t("admin.clients.mms_import_note")}</small>
+            {mmsImportStatus ? (
+              <div className="quote-saved-card-metrics top-gap-sm">
+                <div>
+                  <span>{t("admin.clients.mms_status_members")}</span>
+                  <strong>{mmsImportStatus.members_count}</strong>
+                </div>
+                <div>
+                  <span>{t("admin.clients.mms_status_parents")}</span>
+                  <strong>{mmsImportStatus.parents_count}</strong>
+                </div>
+                <div>
+                  <span>{t("admin.clients.mms_status_children")}</span>
+                  <strong>{mmsImportStatus.children_count}</strong>
+                </div>
+                <div>
+                  <span>{t("admin.clients.mms_status_links")}</span>
+                  <strong>{mmsImportStatus.family_links_count}</strong>
+                </div>
+              </div>
+            ) : null}
+            {mmsImportStatus ? (
+              <small className="muted">
+                {mmsImportStatus.group_found
+                  ? t("admin.clients.mms_status_detail", {
+                      inactiveChildren: mmsImportStatus.inactive_children_count,
+                      responsibleParents: mmsImportStatus.responsible_parents_count,
+                      noted: mmsImportStatus.imported_note_count,
+                    })
+                  : t("admin.clients.mms_status_missing")}
+              </small>
+            ) : null}
           </section>
 
           <section className="card">

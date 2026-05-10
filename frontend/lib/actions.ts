@@ -18,6 +18,7 @@ import {
   setPortalToken,
 } from "./auth-cookies";
 import { backendRequest, backendUrl } from "./backend";
+import { loadLivePlanningMatchForBlock, type LivePlanningBlockInput } from "./quote-planning-live";
 import {
   analyzeQuoteQuickTransformStatus,
   type QuoteQuickTransformAnalysis,
@@ -12053,6 +12054,16 @@ async function buildCalendarSnapshotFromBlocks({
   }));
 
   for (const block of normalizedBlocks) {
+    const liveMatch = await loadLivePlanningMatchForBlock({
+      block: block as LivePlanningBlockInput,
+      token,
+    });
+    if (liveMatch) {
+      sessions.push(...liveMatch.sessions);
+      Object.assign(block, liveMatch.block);
+      continue;
+    }
+
     const inferredSchoolYearLabel = deriveSchoolYearLabelFromDate(block.start_date) || schoolYearLabel || null;
     const resolvedCalendar = await resolveLocationCalendar(block.location_id, inferredSchoolYearLabel);
     const holidayDates = block.exclude_holidays_in_recurrence === false ? [] : resolvedCalendar.holiday_dates;
@@ -14991,9 +15002,6 @@ async function loadQuoteQuickTransformAnalysis(
     activityIds.map(async (activityId) => {
       const query = new URLSearchParams();
       query.set("course_type_id", activityId);
-      if (detail.quote.location_id) {
-        query.set("location_id", detail.quote.location_id);
-      }
       const result = await backendRequest<AdminSessionOut[]>(`/api/v1/admin/sessions?${query.toString()}`, {}, token);
       return {
         activityId,

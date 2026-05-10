@@ -107,6 +107,7 @@ from app.schemas.admin import (
     AdminClientManualCreditOut,
     AdminClientManualCreditUpdateRequest,
     AdminMyMusicStaffImportOut,
+    AdminMyMusicStaffImportStatusOut,
     AdminClientNoteOut,
     AdminClientNoteCreateRequest,
     AdminClientAutoInvoiceRuleOut,
@@ -4643,6 +4644,90 @@ def _run_my_music_staff_import(db: Session, rows: list[dict[str, str]], *, dry_r
     return out
 
 
+def _my_music_staff_import_group(db: Session) -> ClientGroup | None:
+    return db.scalar(
+        select(ClientGroup)
+        .where(
+            or_(
+                ClientGroup.code == MY_MUSIC_STAFF_IMPORT_GROUP_CODE,
+                func.lower(ClientGroup.name) == MY_MUSIC_STAFF_IMPORT_GROUP_NAME.lower(),
+            )
+        )
+        .order_by(ClientGroup.created_at.asc())
+        .limit(1)
+    )
+
+
+def _count_group_members(
+    db: Session,
+    *,
+    group_id: UUID,
+    kind: ClientKind | None = None,
+    status_value: ClientStatus | None = None,
+    active: bool | None = None,
+) -> int:
+    stmt = (
+        select(func.count())
+        .select_from(ClientGroupMembership)
+        .join(User, User.id == ClientGroupMembership.user_id)
+        .where(ClientGroupMembership.group_id == group_id)
+    )
+    if kind is not None:
+        stmt = stmt.where(User.client_kind == kind)
+    if status_value is not None:
+        stmt = stmt.where(User.client_status == status_value)
+    if active is not None:
+        stmt = stmt.where(User.is_active.is_(active))
+    return int(db.scalar(stmt) or 0)
+
+
+def _count_import_note_users(db: Session, *, kind: ClientKind | None = None) -> int:
+    stmt = select(func.count()).select_from(User).where(
+        User.role == UserRole.CLIENT,
+        User.private_note.ilike(f"%{MY_MUSIC_STAFF_NOTE_BEGIN}%"),
+    )
+    if kind is not None:
+        stmt = stmt.where(User.client_kind == kind)
+    return int(db.scalar(stmt) or 0)
+
+
+def _my_music_staff_family_links_count(db: Session, *, group_id: UUID) -> int:
+    adult_membership = aliased(ClientGroupMembership)
+    child_membership = aliased(ClientGroupMembership)
+    stmt = (
+        select(func.count())
+        .select_from(ClientFamilyLink)
+        .join(adult_membership, adult_membership.user_id == ClientFamilyLink.adult_user_id)
+        .join(child_membership, child_membership.user_id == ClientFamilyLink.child_user_id)
+        .where(
+            adult_membership.group_id == group_id,
+            child_membership.group_id == group_id,
+        )
+    )
+    return int(db.scalar(stmt) or 0)
+
+
+def _my_music_staff_import_status(db: Session) -> AdminMyMusicStaffImportStatusOut:
+    group = _my_music_staff_import_group(db)
+    if group is None:
+        return AdminMyMusicStaffImportStatusOut(group_found=False)
+    return AdminMyMusicStaffImportStatusOut(
+        group_id=group.id,
+        group_name=group.name,
+        group_found=True,
+        members_count=_count_group_members(db, group_id=group.id),
+        parents_count=_count_group_members(db, group_id=group.id, kind=ClientKind.ADULT),
+        children_count=_count_group_members(db, group_id=group.id, kind=ClientKind.CHILD),
+        imported_note_count=_count_import_note_users(db),
+        imported_parents_note_count=_count_import_note_users(db, kind=ClientKind.ADULT),
+        imported_children_note_count=_count_import_note_users(db, kind=ClientKind.CHILD),
+        family_links_count=_my_music_staff_family_links_count(db, group_id=group.id),
+        active_children_count=_count_group_members(db, group_id=group.id, kind=ClientKind.CHILD, active=True),
+        inactive_children_count=_count_group_members(db, group_id=group.id, kind=ClientKind.CHILD, active=False),
+        responsible_parents_count=_count_group_members(db, group_id=group.id, kind=ClientKind.ADULT, status_value=ClientStatus.RESPONSABLE),
+    )
+
+
 def _groups_for_client_ids(db: Session, client_ids: list[UUID]) -> dict[UUID, list[tuple[UUID, str]]]:
     if not client_ids:
         return {}
@@ -4958,6 +5043,14 @@ def patch_admin_client_group(
 
     members_count = db.scalar(select(func.count(ClientGroupMembership.id)).where(ClientGroupMembership.group_id == group.id))
     return _group_out(group, members_count=int(members_count or 0))
+
+
+@router.get("/imports/my-music-staff-2025-2026/status", response_model=AdminMyMusicStaffImportStatusOut)
+def get_my_music_staff_2025_2026_import_status(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminMyMusicStaffImportStatusOut:
+    return _my_music_staff_import_status(db)
 
 
 @router.post("/imports/my-music-staff-2025-2026", response_model=AdminMyMusicStaffImportOut)

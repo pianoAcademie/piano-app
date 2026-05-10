@@ -39,6 +39,7 @@ import {
   updateQuoteSettingsAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
+import { loadLivePlanningMatchForBlock, type LivePlanningBlockInput } from "../../../../lib/quote-planning-live";
 import {
   analyzeQuoteQuickTransformStatus,
   type QuoteQuickTransformAnalysis,
@@ -900,12 +901,76 @@ async function hydratePlanningSnapshotForEditor({
   );
 
   if (!didMutate) {
-    return snapshot;
+    const liveHydrated = await hydratePlanningSnapshotWithLiveSessions({
+      snapshot,
+      blocks,
+      token,
+    });
+    return liveHydrated || snapshot;
   }
+
+  const calendarHydrated = {
+    ...snapshot,
+    blocks: nextBlocks,
+  };
+  const liveHydrated = await hydratePlanningSnapshotWithLiveSessions({
+    snapshot: calendarHydrated,
+    blocks: nextBlocks,
+    token,
+  });
+  return liveHydrated || calendarHydrated;
+}
+
+async function hydratePlanningSnapshotWithLiveSessions({
+  snapshot,
+  blocks,
+  token,
+}: {
+  snapshot: Record<string, unknown>;
+  blocks: Array<Record<string, unknown>>;
+  token: string;
+}): Promise<Record<string, unknown> | null> {
+  const nextBlocks: Array<Record<string, unknown>> = [];
+  const liveSessions: Array<Record<string, unknown>> = [];
+  let didUseLivePlanning = false;
+
+  for (const block of blocks) {
+    const liveMatch = await loadLivePlanningMatchForBlock({
+      block: block as LivePlanningBlockInput,
+      token,
+    });
+    if (!liveMatch) {
+      nextBlocks.push(block);
+      continue;
+    }
+    didUseLivePlanning = true;
+    nextBlocks.push(liveMatch.block);
+    liveSessions.push(...liveMatch.sessions);
+  }
+
+  if (!didUseLivePlanning) {
+    return null;
+  }
+
+  const liveActivityIds = new Set(liveSessions.map((session) => String(session.activity_id || "")).filter(Boolean));
+  const existingSessions = getCalendarSessions(snapshot).filter((session) => {
+    const activityId = String(session.activity_id || "");
+    return !liveActivityIds.has(activityId);
+  });
 
   return {
     ...snapshot,
     blocks: nextBlocks,
+    sessions: [...existingSessions, ...liveSessions].sort((left, right) => {
+      const leftDate = String(left.date || "");
+      const rightDate = String(right.date || "");
+      if (leftDate !== rightDate) {
+        return leftDate.localeCompare(rightDate);
+      }
+      return String(left.start_time || "").localeCompare(String(right.start_time || ""));
+    }),
+    sessions_count: existingSessions.length + liveSessions.length,
+    live_planning_hydrated_at: new Date().toISOString(),
   };
 }
 
@@ -1551,9 +1616,6 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     activityIds.map(async (activityId) => {
       const query = new URLSearchParams();
       query.set("course_type_id", activityId);
-      if (detail.quote.location_id) {
-        query.set("location_id", detail.quote.location_id);
-      }
       const result = await backendRequest<AdminSessionOut[]>(
         `/api/v1/admin/sessions?${query.toString()}`,
         {},

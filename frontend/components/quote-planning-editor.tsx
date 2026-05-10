@@ -412,7 +412,7 @@ function datesFromSnapshotSessions(block: PlanningBlock, sessions: SnapshotSessi
       if (row.activity_id !== block.activity_id) {
         return false;
       }
-      if ((row.location_id || "") !== (block.location_id || "")) {
+      if (block.location_id && (row.location_id || "") !== block.location_id) {
         return false;
       }
       if (row.date < startIso || row.date > endIso) {

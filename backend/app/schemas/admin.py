@@ -1000,6 +1000,22 @@ class AdminMyMusicStaffImportOut(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class AdminMyMusicStaffImportStatusOut(BaseModel):
+    group_id: UUID | None = None
+    group_name: str = "Base 2025-2026 - My Music Staff"
+    group_found: bool = False
+    members_count: int = 0
+    parents_count: int = 0
+    children_count: int = 0
+    imported_note_count: int = 0
+    imported_parents_note_count: int = 0
+    imported_children_note_count: int = 0
+    family_links_count: int = 0
+    active_children_count: int = 0
+    inactive_children_count: int = 0
+    responsible_parents_count: int = 0
+
+
 class AdminFamilyMemberOut(BaseModel):
     id: UUID
     email: str
