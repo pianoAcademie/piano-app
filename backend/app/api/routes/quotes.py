@@ -1540,7 +1540,7 @@ def _line_out(row: QuoteLine) -> QuoteLineOut:
     )
 
 
-def _quote_out(row: Quote) -> QuoteOut:
+def _quote_out(row: Quote, *, calendar_snapshot: dict[str, object] | None = None) -> QuoteOut:
     meta = row.meta or {}
     fallback_language = str(meta.get("language") or "").strip().lower() or None
     fallback_vat = _extract_vat_rate(meta)
@@ -1585,7 +1585,7 @@ def _quote_out(row: Quote) -> QuoteOut:
         estimated_solfege_level=row.estimated_solfege_level,
         solfege_duration_minutes=row.solfege_duration_minutes,
         selected_solfege_slot=row.selected_solfege_slot or {},
-        calendar_snapshot=row.calendar_snapshot or {},
+        calendar_snapshot=calendar_snapshot if calendar_snapshot is not None else (row.calendar_snapshot or {}),
         payment_terms_snapshot=row.payment_terms_snapshot or {},
         cgv_snapshot=row.cgv_snapshot or {},
         price_snapshot=row.price_snapshot or {},
@@ -1599,6 +1599,85 @@ def _quote_out(row: Quote) -> QuoteOut:
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
+
+
+def _quote_line_is_solfege(row: QuoteLine) -> bool:
+    meta = _json_object(row.meta)
+    haystack = " ".join(
+        str(part or "")
+        for part in (
+            row.title,
+            row.description,
+            row.code,
+            meta.get("activity_name"),
+            meta.get("typeform_automatic_line"),
+            meta.get("source"),
+        )
+    )
+    normalized = unicodedata.normalize("NFKD", haystack).encode("ascii", "ignore").decode("ascii").lower()
+    return "solfege" in normalized and row.activity_id is not None
+
+
+def _calendar_snapshot_with_selected_solfege_block(
+    quote: Quote,
+    *,
+    lines: list[QuoteLine],
+) -> dict[str, object]:
+    snapshot = deepcopy(_json_object(quote.calendar_snapshot))
+    selected_slot = _json_object(quote.selected_solfege_slot)
+    if not selected_slot:
+        selected_slot = _json_object(_json_object(snapshot.get("solfege")).get("selected_slot"))
+    if not selected_slot:
+        return snapshot
+
+    blocks = [dict(item) if isinstance(item, dict) else item for item in _json_list(snapshot.get("blocks"))]
+    for raw_block in blocks:
+        if not isinstance(raw_block, dict):
+            continue
+        haystack = unicodedata.normalize(
+            "NFKD",
+            " ".join(str(raw_block.get(key) or "") for key in ("activity_label", "activity_name", "activity_code", "activity_service_code")),
+        ).encode("ascii", "ignore").decode("ascii").lower()
+        if "solfege" in haystack or str(raw_block.get("pending_solfege_level") or "").strip():
+            return snapshot
+
+    solfege_line = next((line for line in lines if _quote_line_is_solfege(line)), None)
+    if solfege_line is None or solfege_line.activity_id is None:
+        return snapshot
+
+    weekday = selected_slot.get("weekday")
+    weekday_label = str(selected_slot.get("weekday_label") or "").strip() or _public_solfege_weekday_label(
+        weekday,
+        language=_public_solfege_language(quote.language),
+    )
+    bounds = _school_year_bounds_from_label(quote.school_year_label or "")
+    start_date = bounds[0].isoformat() if bounds is not None else ""
+    end_date = bounds[1].isoformat() if bounds is not None else ""
+    block = {
+        "activity_id": str(solfege_line.activity_id),
+        "activity_label": solfege_line.title,
+        "location_id": selected_slot.get("location_id") or None,
+        "location_label": str(selected_slot.get("location_label") or "").strip() or None,
+        "weekday": weekday,
+        "weekday_label": weekday_label or None,
+        "recurrence_frequency": "weekly",
+        "start_date": start_date,
+        "end_date": end_date,
+        "start_time": str(selected_slot.get("start_time") or selected_slot.get("start") or "").strip(),
+        "end_time": str(selected_slot.get("end_time") or selected_slot.get("end") or "").strip(),
+        "duration_minutes": selected_slot.get("duration_minutes") or solfege_line.duration_minutes,
+        "modality": selected_slot.get("modality") or None,
+        "selection_pending": False,
+        "pending_solfege_level": quote.estimated_solfege_level or selected_slot.get("level_code") or None,
+        "pending_slot_options": [],
+        "source": "selected_solfege_slot",
+    }
+    blocks.append({key: value for key, value in block.items() if value not in ("", None)})
+    snapshot["blocks"] = blocks
+    snapshot_solfege = _json_object(snapshot.get("solfege"))
+    snapshot_solfege["selected_slot"] = selected_slot
+    snapshot["solfege"] = snapshot_solfege
+    return snapshot
 
 
 def _payment_plan_out(row: PaymentPlan) -> PaymentPlanOut:
@@ -2214,8 +2293,9 @@ def _load_quote_events(db: Session, quote_id: UUID) -> list[QuoteEventOut]:
 def _quote_detail_out(db: Session, quote: Quote) -> QuoteDetailOut:
     lines = _load_quote_lines(db, quote.id)
     events = _load_quote_events(db, quote.id)
+    calendar_snapshot = _calendar_snapshot_with_selected_solfege_block(quote, lines=lines)
     return QuoteDetailOut(
-        quote=_quote_out(quote),
+        quote=_quote_out(quote, calendar_snapshot=calendar_snapshot),
         lines=[_line_out(row) for row in lines],
         events=events,
     )
@@ -2525,7 +2605,7 @@ def _apply_selected_solfege_slot_to_calendar_snapshot(
     snapshot = deepcopy(_json_object(calendar_snapshot))
     next_blocks: list[object] = []
     selected_weekday = normalized_slot.get("weekday")
-    selected_weekday_label = str(normalized_slot.get("weekday_label") or "").strip() or _weekday_label(selected_weekday, language=language)
+    selected_weekday_label = str(normalized_slot.get("weekday_label") or "").strip() or _public_solfege_weekday_label(selected_weekday, language=_public_solfege_language(language))
     selected_start = str(normalized_slot.get("start_time") or normalized_slot.get("start") or "").strip()
     selected_end = str(normalized_slot.get("end_time") or normalized_slot.get("end") or "").strip()
     selected_location_id = normalized_slot.get("location_id")

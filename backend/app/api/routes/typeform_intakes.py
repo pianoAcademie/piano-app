@@ -2891,9 +2891,7 @@ def _is_solfege_recommendation(
     runtime_context: dict[str, object],
 ) -> bool:
     haystack = _normalize_token(recommendation.activity_name)
-    if "solfege" not in haystack:
-        return False
-    return _is_online_runtime_context(runtime_context) or "en ligne" in haystack or "online" in haystack
+    return "solfege" in haystack
 
 
 def _extract_estimated_solfege_level(
@@ -4572,6 +4570,14 @@ def _calendar_snapshot_from_analysis(
                     "label": f"{DAY_LABELS[first_local_start.weekday()]} {first_local_start.strftime('%H:%M')}-{first_local_end.strftime('%H:%M')} · {location.name}",
                 }
 
+    if not solfege_selected_slot:
+        solfege_selected_slot = _solfege_slot_proposal_from_normalized(
+            db,
+            normalized=normalized,
+            runtime_context=runtime_context,
+            session_recommendations=session_recommendations,
+        )
+
     if estimated_solfege_level:
         pending_recommendation = next(
             (
@@ -4606,33 +4612,38 @@ def _calendar_snapshot_from_analysis(
                 }
                 for option in pending_recommendation.options
             ]
+            selected_slot = _json_object(solfege_selected_slot)
+            selected_weekday = selected_slot.get("weekday")
+            selected_weekday_label = _text(selected_slot.get("weekday_label")) or (
+                DAY_LABELS[int(selected_weekday)]
+                if isinstance(selected_weekday, int) and 0 <= selected_weekday <= 6
+                else "Selection a faire"
+            )
+            selected_start = _text(selected_slot.get("start_time"))
+            selected_end = _text(selected_slot.get("end_time"))
+            school_year_bounds = _school_year_bounds_from_label(_text(runtime_context.get("school_year_label")))
+            start_date = school_year_bounds[0].isoformat() if school_year_bounds is not None else ""
+            end_date = school_year_bounds[1].isoformat() if school_year_bounds is not None else ""
             blocks.append(
                 {
                     "activity_id": str(pending_recommendation.activity_id),
                     "activity_label": pending_recommendation.activity_name,
-                    "location_id": str(resolved_location_id) if resolved_location_id is not None else None,
-                    "location_label": resolved_location_name,
-                    "weekday": -1,
-                    "weekday_label": "Selection a faire",
+                    "location_id": selected_slot.get("location_id") if selected_slot else (str(resolved_location_id) if resolved_location_id is not None else None),
+                    "location_label": _text(selected_slot.get("location_label")) if selected_slot else resolved_location_name,
+                    "weekday": selected_weekday if selected_slot else -1,
+                    "weekday_label": selected_weekday_label,
                     "recurrence_frequency": "weekly",
-                    "start_date": "",
-                    "end_date": "",
-                    "start_time": "",
-                    "end_time": "",
-                    "modality": "online" if _is_online_runtime_context(runtime_context) else None,
-                    "selection_pending": True,
+                    "start_date": start_date if selected_slot else "",
+                    "end_date": end_date if selected_slot else "",
+                    "start_time": selected_start if selected_slot else "",
+                    "end_time": selected_end if selected_slot else "",
+                    "duration_minutes": selected_slot.get("duration_minutes") if selected_slot else None,
+                    "modality": selected_slot.get("modality") if selected_slot else ("online" if _is_online_runtime_context(runtime_context) else None),
+                    "selection_pending": False if selected_slot else True,
                     "pending_solfege_level": estimated_solfege_level,
-                    "pending_slot_options": pending_slot_options,
+                    "pending_slot_options": [] if selected_slot else pending_slot_options,
                 }
             )
-
-    if not solfege_selected_slot:
-        solfege_selected_slot = _solfege_slot_proposal_from_normalized(
-            db,
-            normalized=normalized,
-            runtime_context=runtime_context,
-            session_recommendations=session_recommendations,
-        )
 
     sessions.sort(
         key=lambda item: (

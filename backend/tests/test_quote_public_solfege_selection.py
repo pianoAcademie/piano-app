@@ -10,9 +10,47 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.quotes import _public_quote_solfege_selection
 from app.api.routes.quotes import _apply_selected_solfege_slot_to_calendar_snapshot
+from app.api.routes.quotes import _calendar_snapshot_with_selected_solfege_block
 
 
 class QuotePublicSolfegeSelectionTests(unittest.TestCase):
+    def test_selected_solfege_slot_adds_missing_planning_block(self) -> None:
+        quote = SimpleNamespace(
+            language="fr",
+            school_year_label="2026-2027",
+            estimated_solfege_level="1",
+            selected_solfege_slot={
+                "weekday": 1,
+                "weekday_label": "Mardi",
+                "start_time": "17:05",
+                "end_time": "17:50",
+                "duration_minutes": 45,
+                "location_label": "En ligne",
+                "modality": "online",
+                "label": "Mardi 17:05-17:50 · En ligne",
+            },
+            calendar_snapshot={"blocks": []},
+        )
+        line = SimpleNamespace(
+            activity_id="activity-solfege-id",
+            title="Cours de solfège - Niveau 1",
+            description=None,
+            code=None,
+            duration_minutes=45,
+            meta={"typeform_automatic_line": "online_solfege"},
+        )
+
+        snapshot = _calendar_snapshot_with_selected_solfege_block(quote, lines=[line])
+
+        self.assertEqual(len(snapshot["blocks"]), 1)
+        block = snapshot["blocks"][0]
+        assert isinstance(block, dict)
+        self.assertEqual(block["activity_id"], "activity-solfege-id")
+        self.assertEqual(block["activity_label"], "Cours de solfège - Niveau 1")
+        self.assertEqual(block["location_label"], "En ligne")
+        self.assertEqual(block["start_time"], "17:05")
+        self.assertFalse(block["selection_pending"])
+
     def test_apply_selected_solfege_slot_updates_pending_block_in_snapshot(self) -> None:
         snapshot = {
             "blocks": [

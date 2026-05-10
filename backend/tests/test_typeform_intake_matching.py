@@ -250,7 +250,7 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
                 {
                     "day": "mercredi",
                     "time": "18:05",
-                    "location": "Paris 01 - Rue Richelieu",
+                    "location": "En ligne",
                     "segment": "enfants",
                 }
             ],
