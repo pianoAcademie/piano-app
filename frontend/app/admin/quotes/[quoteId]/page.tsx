@@ -535,6 +535,17 @@ function displayName(firstName: string | null, lastName: string | null, fallback
   return value || fallback || uiText(language, "admin.quote_detail.default_client");
 }
 
+function visibleEmail(value: string | null | undefined): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.endsWith("@piano-academie.invalid") || normalized.endsWith("@no-email.local")) {
+    return "";
+  }
+  return normalized;
+}
+
 function locationNameById(locations: LocationOut[], locationId: string | null, language: UiLanguage = "fr"): string {
   if (!locationId) {
     return uiText(language, "admin.quote_detail.location_not_defined");
@@ -1772,12 +1783,14 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const primaryRecipientLabel = detail.quote.context_type === "acquisition"
     ? t("admin.quote_detail.primary_recipient_prospect")
     : t("admin.quote_detail.primary_recipient_client");
-  const ownerEmail = String(owner?.email || "").trim().toLowerCase();
+  const ownerEmail = visibleEmail(owner?.email);
   const lastRecipientEmail = readStringMeta(detail.quote.meta || {}, "recipient_email", "").trim().toLowerCase();
   const lastRecipientPhone = readStringMeta(detail.quote.meta || {}, "recipient_phone", "").trim();
   const defaultThirdPartyEmail = lastRecipientEmail && lastRecipientEmail !== ownerEmail ? lastRecipientEmail : "";
+  const parentRecipientEmail = visibleEmail(resolvedParentReferentEmail);
+  const primaryRecipientEmail = isChildSource ? (parentRecipientEmail || ownerEmail) : ownerEmail;
   const defaultPublicConfirmationRecipient = [
-    isChildSource ? resolvedParentReferentEmail : "",
+    isChildSource ? parentRecipientEmail : "",
     ownerEmail,
     lastRecipientEmail,
   ]
@@ -2530,8 +2543,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                           : t("admin.quote_detail.resend_to_recipient", { recipient: primaryRecipientLabel })}
 	                      </h4>
 	                      <p className="muted top-gap-sm">
-	                        {ownerEmail
-	                          ? t("admin.quote_detail.primary_email_hint", { recipient: primaryRecipientLabel, email: ownerEmail })
+	                        {primaryRecipientEmail
+	                          ? t("admin.quote_detail.primary_email_hint", { recipient: primaryRecipientLabel, email: primaryRecipientEmail })
 	                          : t("admin.quote_detail.primary_email_missing", { recipient: primaryRecipientLabel })}
 	                      </p>
                       <form
@@ -2541,10 +2554,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                       >
                         <input type="hidden" name="quote_id" value={detail.quote.id} />
                         <input type="hidden" name="return_to" value={selfPath} />
-	                        <input type="hidden" name="recipient_email" value={ownerEmail} />
+	                        <input type="hidden" name="recipient_email" value={primaryRecipientEmail} />
 	                        <label>
 	                          {t("admin.quote_detail.email_template")}
-	                          <select name="template_ref" defaultValue={defaultSendTemplateRefForQuote} disabled={!ownerEmail || quoteSendTemplates.length === 0}>
+	                          <select name="template_ref" defaultValue={defaultSendTemplateRefForQuote} disabled={!primaryRecipientEmail || quoteSendTemplates.length === 0}>
                             {quoteSendTemplates.map((template) => (
                               <option key={`primary-send-${template.id}`} value={messagingTemplateRef(template)}>
                                 {messagingTemplateOptionLabel(template, language)}
@@ -2593,7 +2606,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                             description={primarySendDescription}
                             confirmLabel={canSendQuote ? t("admin.quote_detail.send_quote") : t("admin.quote_detail.resend_quote")}
                             language={language}
-                            disabled={!ownerEmail}
+                            disabled={!primaryRecipientEmail}
                           />
                         </div>
                       </form>
@@ -2684,7 +2697,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                       <input type="hidden" name="quote_id" value={detail.quote.id} />
                       <input type="hidden" name="return_to" value={selfPath} />
 	                      <label className="checkline">
-	                        <input type="checkbox" name="notify_recipient" defaultChecked={Boolean(ownerEmail)} />
+	                        <input type="checkbox" name="notify_recipient" defaultChecked={Boolean(primaryRecipientEmail)} />
 	                        {t("admin.quote_detail.notify_recipient_email")}
 	                      </label>
 	                      <label>
@@ -2692,7 +2705,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	                        <input
                           type="email"
                           name="recipient_email"
-                          defaultValue={ownerEmail || defaultThirdPartyEmail}
+                          defaultValue={primaryRecipientEmail || defaultThirdPartyEmail}
 	                          placeholder={t("admin.quote_detail.notify_email_placeholder")}
 	                        />
 	                      </label>

@@ -10,6 +10,9 @@ from uuid import uuid4
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.typeform_intakes import (
+    CLIENT_MODE_EXISTING,
+    CLIENT_MODE_NEW_PARENT_CHILD,
+    _default_resolution,
     _extract_estimated_solfege_level,
     _future_school_year_candidate_configs,
     _intake_list_out_fast,
@@ -24,6 +27,58 @@ from app.services.referrals import referral_category_for_location
 
 
 class TypeformIntakeMatchingTests(unittest.TestCase):
+    def test_child_intake_does_not_select_parent_client_as_quote_target(self) -> None:
+        adult_client_id = uuid4()
+
+        resolution = _default_resolution(
+            normalized={
+                "customer_type": "child",
+                "parent_first_name": "Karen",
+                "parent_last_name": "Lafon",
+                "child_first_name": "Natalie",
+                "child_last_name": "Lafon",
+            },
+            stored_resolution={},
+            client_candidates=[
+                {
+                    "client_id": adult_client_id,
+                    "client_kind": "ADULT",
+                    "display_name": "Karen Lafon",
+                    "confidence": 107,
+                }
+            ],
+            family_candidates=[],
+        )
+
+        self.assertEqual(resolution["client_resolution"]["mode"], CLIENT_MODE_NEW_PARENT_CHILD)
+        self.assertIsNone(resolution["client_resolution"]["selected_client_id"])
+
+    def test_child_intake_can_select_existing_child_client_as_quote_target(self) -> None:
+        child_client_id = uuid4()
+
+        resolution = _default_resolution(
+            normalized={
+                "customer_type": "child",
+                "parent_first_name": "Karen",
+                "parent_last_name": "Lafon",
+                "child_first_name": "Natalie",
+                "child_last_name": "Lafon",
+            },
+            stored_resolution={},
+            client_candidates=[
+                {
+                    "client_id": child_client_id,
+                    "client_kind": "CHILD",
+                    "display_name": "Natalie Lafon",
+                    "confidence": 107,
+                }
+            ],
+            family_candidates=[],
+        )
+
+        self.assertEqual(resolution["client_resolution"]["mode"], CLIENT_MODE_EXISTING)
+        self.assertEqual(resolution["client_resolution"]["selected_client_id"], str(child_client_id))
+
     def test_intake_list_fast_uses_stored_fields_without_reanalysis(self) -> None:
         config_id = uuid4()
         intake = SimpleNamespace(

@@ -89,6 +89,17 @@ function displayName(firstName: string | null, lastName: string | null, fallback
   return value || fallback;
 }
 
+function visibleEmail(value: string | null | undefined): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.endsWith("@piano-academie.invalid") || normalized.endsWith("@no-email.local")) {
+    return "";
+  }
+  return normalized;
+}
+
 function getCalendarSessionsCount(snapshot: Record<string, unknown>): number {
   const raw = snapshot.sessions;
   if (!Array.isArray(raw)) {
@@ -739,7 +750,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                   const ownerName = owner
                     ? displayName(owner.first_name, owner.last_name, owner.email)
                     : "-";
-                  const ownerEmail = owner?.email ?? "";
+                  const ownerEmail = visibleEmail(owner?.email);
 
                   const rowProspectType = row.context_type === "acquisition"
                     ? prospectTypeLabelFromMeta((owner as ProspectOut | undefined)?.meta || {})

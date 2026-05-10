@@ -20,6 +20,13 @@ def _normalize_phone(value: str | None) -> str | None:
     return candidate or None
 
 
+def _is_synthetic_email(value: str | None) -> bool:
+    normalized = _normalize_email(value)
+    if normalized is None:
+        return False
+    return normalized.endswith("@piano-academie.invalid") or normalized.endswith("@no-email.local")
+
+
 def _preferred_user_phone(user: User | None) -> str | None:
     if user is None:
         return None
@@ -99,14 +106,14 @@ def resolve_quote_recipient_email(db: Session, quote: Quote, explicit_email: str
 
     client = _load_quote_client(db, quote)
     if client is not None:
-        from_client = _normalize_email(client.email)
-        if from_client:
-            return from_client
         guardian = _load_primary_guardian(db, child_user_id=client.id) if client.client_kind == ClientKind.CHILD else None
         if guardian is not None:
             from_guardian = _normalize_email(guardian.email)
             if from_guardian:
                 return from_guardian
+        from_client = _normalize_email(client.email)
+        if from_client and not _is_synthetic_email(from_client):
+            return from_client
 
     return None
 
@@ -140,14 +147,14 @@ def resolve_quote_recipient_phone(db: Session, quote: Quote, explicit_phone: str
 
     client = _load_quote_client(db, quote)
     if client is not None:
-        from_client = _preferred_user_phone(client)
-        if from_client:
-            return from_client
         guardian = _load_primary_guardian(db, child_user_id=client.id) if client.client_kind == ClientKind.CHILD else None
         if guardian is not None:
             from_guardian = _preferred_user_phone(guardian)
             if from_guardian:
                 return from_guardian
+        from_client = _preferred_user_phone(client)
+        if from_client:
+            return from_client
 
     return None
 

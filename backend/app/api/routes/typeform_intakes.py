@@ -1411,6 +1411,7 @@ def _collect_client_candidates(db: Session, normalized: dict[str, object]) -> li
             {
                 "kind": "client",
                 "client_id": client.id,
+                "client_kind": client.client_kind.value if isinstance(client.client_kind, ClientKind) else client.client_kind,
                 "display_name": display,
                 "subtitle": subtitle,
                 "confidence": score,
@@ -1421,6 +1422,10 @@ def _collect_client_candidates(db: Session, normalized: dict[str, object]) -> li
 
     out.sort(key=lambda item: (int(item["confidence"]), _text(item["display_name"])), reverse=True)
     return out[:12]
+
+
+def _is_child_client_candidate(candidate: dict[str, object] | None) -> bool:
+    return _lower(_json_object(candidate).get("client_kind")) == "child"
 
 
 def _collect_family_candidates(db: Session, normalized: dict[str, object]) -> list[dict[str, object]]:
@@ -1518,7 +1523,9 @@ def _default_resolution(
         best_client = client_candidates[0] if client_candidates else None
         if customer_type == "child" and best_family and int(best_family.get("confidence") or 0) >= 95:
             mode = CLIENT_MODE_EXISTING_FAMILY
-        elif best_client and int(best_client.get("confidence") or 0) >= 95:
+        elif best_client and int(best_client.get("confidence") or 0) >= 95 and (
+            customer_type != "child" or _is_child_client_candidate(best_client)
+        ):
             mode = CLIENT_MODE_EXISTING
         elif customer_type == "child":
             mode = CLIENT_MODE_NEW_PARENT_CHILD
@@ -5014,13 +5021,9 @@ def create_draft_quote_from_typeform_intake(
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Client selectionne manquant")
         context_type = "active_client"
     elif mode == CLIENT_MODE_EXISTING_FAMILY:
-        client_id = (
-            _parse_uuid(client_resolution.get("selected_family_billing_client_id"))
-            or _parse_uuid(client_resolution.get("selected_family_adult_client_id"))
-            or _parse_uuid(client_resolution.get("selected_family_child_client_id"))
-        )
+        client_id = _parse_uuid(client_resolution.get("selected_family_child_client_id"))
         if client_id is None:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Famille selectionnee manquante")
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Eleve selectionne manquant")
         context_type = "active_client"
     elif mode == CLIENT_MODE_NEW_PARENT_CHILD:
         parent_prospect_id = _parse_uuid(created_entities.get("parent_prospect_id"))
@@ -5075,6 +5078,10 @@ def create_draft_quote_from_typeform_intake(
     if mode == CLIENT_MODE_EXISTING_FAMILY:
         quote_meta["typeform_selected_family_adult_client_id"] = client_resolution.get("selected_family_adult_client_id")
         quote_meta["typeform_selected_family_child_client_id"] = client_resolution.get("selected_family_child_client_id")
+        quote_meta["typeform_selected_family_billing_client_id"] = (
+            client_resolution.get("selected_family_billing_client_id")
+            or client_resolution.get("selected_family_adult_client_id")
+        )
     if allow_empty_quote and not preview_lines_in:
         quote_meta["typeform_empty_quote_created"] = True
         quote_meta["typeform_empty_quote_reason"] = [
