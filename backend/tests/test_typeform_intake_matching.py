@@ -15,6 +15,7 @@ from app.api.routes.typeform_intakes import (
     _normalize_payload,
     _session_recommendations_have_options,
     _should_try_future_school_year_config,
+    _solfege_slot_proposal_from_normalized,
     _typeform_session_option_from_row,
 )
 from app.services.referrals import referral_category_for_location
@@ -342,7 +343,7 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
                 {
                     "day": "mardi",
                     "time": "17:05",
-                    "location": "paris_assas",
+                    "location": "En ligne",
                     "segment": "enfants",
                 }
             ],
@@ -385,7 +386,7 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
                 {
                     "day": "mardi",
                     "time": "17:05",
-                    "location": "paris_assas",
+                    "location": "En ligne",
                     "segment": "enfants",
                 }
             ],
@@ -402,6 +403,44 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
         )
 
         self.assertEqual(level, "4")
+
+    def test_online_solfege_slot_proposal_does_not_use_main_course_location(self) -> None:
+        class FakeScalars:
+            def all(self) -> list[object]:
+                return [
+                    SimpleNamespace(
+                        level_code="1",
+                        modality="ONLINE",
+                        location_id=None,
+                        duration_minutes=45,
+                        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                    )
+                ]
+
+        class FakeDb:
+            def scalars(self, _stmt: object) -> FakeScalars:
+                return FakeScalars()
+
+        proposal = _solfege_slot_proposal_from_normalized(
+            FakeDb(),  # type: ignore[arg-type]
+            normalized={
+                "estimated_solfege_level": "1",
+                "requested_solfege_modality": "online",
+                "requested_solfege_slot_preferences": [
+                    {"day": "mardi", "time": "17:05", "location": "Paris 06 - Rue d'Assas"}
+                ],
+                "requested_products": ["Cours de solfege en ligne"],
+            },
+            runtime_context={
+                "location_id": str(uuid4()),
+                "location_name": "Rue d'Assas",
+            },
+            session_recommendations=[],
+        )
+
+        self.assertEqual(proposal["location_label"], "En ligne")
+        self.assertIsNone(proposal["location_id"])
+        self.assertNotIn("Assas", str(proposal["label"]))
 
     def test_option_does_not_mark_other_site_as_preferred_when_location_is_resolved(self) -> None:
         preferred_location_id = uuid4()

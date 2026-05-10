@@ -717,6 +717,22 @@ def _fallback_solfege_level_from_simplified_answers(
     return None
 
 
+def _with_solfege_modality_location(
+    preferences: list[dict[str, object]],
+    *,
+    modality: str | None,
+) -> list[dict[str, object]]:
+    if modality != "online":
+        return preferences
+    return [
+        {
+            **preference,
+            "location": "En ligne",
+        }
+        for preference in preferences
+    ]
+
+
 def _answer_is_negative(value: object | None) -> bool:
     raw = _normalize_token(value)
     return raw in {"0", "false", "no", "non", "off", "faux", "ne sais pas"}
@@ -1243,6 +1259,10 @@ def _normalize_payload(
     requested_solfege_modality = _fallback_requested_solfege_modality_from_simplified_answers(simplified_answers)
     if requested_solfege_modality is None and requested_solfege_slot_preferences:
         requested_solfege_modality = "online"
+    requested_solfege_slot_preferences = _with_solfege_modality_location(
+        requested_solfege_slot_preferences,
+        modality=requested_solfege_modality,
+    )
     requested_onsite_solfege = requested_solfege_modality == "onsite"
     requested_online_solfege = requested_solfege_modality == "online"
     referral_referrer_name = _mapped_scalar_with_fallbacks(
@@ -2204,13 +2224,14 @@ def _append_automatic_typeform_lines(
     default_vat_rate: Decimal,
 ) -> None:
     pricing_catalog_id = _parse_uuid(runtime_context.get("pricing_catalog_id"))
-    resolved_location_id = _parse_uuid(runtime_context.get("location_id"))
+    runtime_location_id = _parse_uuid(runtime_context.get("location_id"))
 
     requested_solfege_modality = _text(normalized.get("requested_solfege_modality"))
     if not requested_solfege_modality:
         requested_solfege_modality = "online" if _bool_or_default(normalized.get("requested_online_solfege"), False) else ""
         requested_solfege_modality = requested_solfege_modality or ("onsite" if _bool_or_default(normalized.get("requested_onsite_solfege"), False) else "")
     if requested_solfege_modality in {"online", "onsite"}:
+        resolved_location_id = runtime_location_id if requested_solfege_modality == "onsite" else None
         activity = _find_solfege_activity(
             db,
             modality=requested_solfege_modality,
@@ -2233,6 +2254,7 @@ def _append_automatic_typeform_lines(
             )
 
     if _bool_or_default(normalized.get("requested_pass_recup"), False):
+        resolved_location_id = runtime_location_id
         product = _find_pass_recup_product(db)
         if product is None:
             warnings.append("Produit automatique introuvable pour Pass Recup.")
@@ -2250,6 +2272,7 @@ def _append_automatic_typeform_lines(
 
     level_code = _text(normalized.get("estimated_solfege_level"))
     if level_code in {"1", "2", "3", "4", "5"}:
+        resolved_location_id = runtime_location_id
         product = _find_solfege_book_product(db, level_code)
         if product is None:
             warnings.append(f"Produit automatique introuvable pour Cahier de solfege niveau {level_code}.")
@@ -3036,7 +3059,7 @@ def _solfege_slot_proposal_from_normalized(
         session_recommendations=session_recommendations,
     )
     modality = _text(normalized.get("requested_solfege_modality")) or "online"
-    location_id = _parse_uuid(runtime_context.get("location_id"))
+    location_id = None if modality == "online" else _parse_uuid(runtime_context.get("location_id"))
     rule = _matching_solfege_rule_for_intake(
         db,
         level_code=level_code,
@@ -3044,7 +3067,9 @@ def _solfege_slot_proposal_from_normalized(
         modality=modality,
     )
     duration_minutes = int(rule.duration_minutes) if rule is not None else 45
-    location_label = _text(runtime_context.get("location_name")) or _text(preferences[0].get("location"))
+    location_label = "En ligne" if modality == "online" else (
+        _text(runtime_context.get("location_name")) or _text(preferences[0].get("location"))
+    )
     for preference in preferences:
         weekday = _weekday_from_label(preference.get("day"))
         start_time = _text(preference.get("time"))
@@ -3057,7 +3082,7 @@ def _solfege_slot_proposal_from_normalized(
         label_parts = [
             f"{weekday_label} {start_time}-{end_time}",
             location_label,
-            "En ligne" if modality == "online" else "Présentiel",
+            "Présentiel" if modality == "onsite" else "",
         ]
         return {
             "level_code": level_code,
