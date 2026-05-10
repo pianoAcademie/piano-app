@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models.client_record import ClientManualTransaction, ClientNoteEntry
 from app.models.ops import AppSetting
+from app.models.quote import Quote
 from app.models.referral import ReferralReward
 from app.models.typeform_intake import TypeformIntake
 from app.models.user import ClientKind, ClientStatus, User, UserRole
@@ -438,6 +439,25 @@ def quote_ids_from_invoice_metadata(db: Session, metadata: dict[str, object]) ->
     return quote_ids
 
 
+def quote_ids_with_referral_ancestors(db: Session, quote_ids: set[UUID]) -> set[UUID]:
+    out = set(quote_ids)
+    pending = set(quote_ids)
+    seen: set[UUID] = set()
+    while pending:
+        batch = pending - seen
+        if not batch:
+            break
+        seen.update(batch)
+        rows = db.scalars(select(Quote).where(Quote.id.in_(batch))).all()
+        pending = set()
+        for row in rows:
+            parent_id = row.parent_quote_id
+            if parent_id is not None and parent_id not in out:
+                out.add(parent_id)
+                pending.add(parent_id)
+    return out
+
+
 def _paid_total_for_invoice(db: Session, metadata: dict[str, object], *, currency: str) -> Decimal:
     payment_ids = _manual_ids_from_metadata(metadata, "reconciled_manual_payment_ids")
     if not payment_ids:
@@ -468,6 +488,7 @@ def evaluate_referrals_for_invoice(
     quote_ids = quote_ids_from_invoice_metadata(db, metadata)
     if not quote_ids:
         return []
+    quote_ids = quote_ids_with_referral_ancestors(db, quote_ids)
     config = referral_program_config(db)
     if not config.enabled:
         return []
