@@ -716,22 +716,34 @@ def _fallback_solfege_level_from_simplified_answers(
     return None
 
 
-def _fallback_requested_onsite_solfege_from_simplified_answers(
+def _answer_is_negative(value: object | None) -> bool:
+    raw = _normalize_token(value)
+    return raw in {"0", "false", "no", "non", "off", "faux", "ne sais pas"}
+
+
+def _fallback_requested_solfege_modality_from_simplified_answers(
     simplified_answers: list[dict[str, object]],
-) -> bool:
+) -> str | None:
+    fallback_requested = False
     for item in simplified_answers:
         if not isinstance(item, dict):
             continue
         label = _normalize_token(item.get("label"))
+        value = _normalize_token(item.get("value"))
         if "solfege" not in label:
             continue
-        if not any(token in label for token in ("presentiel", "cours")):
+        if _answer_is_negative(item.get("value")):
             continue
-        if any(token in label for token in ("niveau", "estimation", "creneau", "horaire")):
-            continue
-        if _truthy_answer_value(item.get("value")):
-            return True
-    return False
+        haystack = " ".join(part for part in (label, value) if part)
+        if "en ligne" in haystack or "online" in haystack or "video" in haystack:
+            return "online"
+        if "presentiel" in haystack and _truthy_answer_value(item.get("value")):
+            return "onsite"
+        if "presentiel" in haystack and any(token in value for token in DAY_ALIASES):
+            return "onsite"
+        if any(token in value for token in DAY_ALIASES) and _extract_time_tokens(_text(item.get("value"))):
+            fallback_requested = True
+    return "online" if fallback_requested else None
 
 
 def _answer_value(answer: dict[str, object]) -> object:
@@ -1227,7 +1239,9 @@ def _normalize_payload(
         requested_products=requested_products,
     )
     estimated_solfege_level = _fallback_solfege_level_from_simplified_answers(simplified_answers)
-    requested_onsite_solfege = _fallback_requested_onsite_solfege_from_simplified_answers(simplified_answers)
+    requested_solfege_modality = _fallback_requested_solfege_modality_from_simplified_answers(simplified_answers)
+    requested_onsite_solfege = requested_solfege_modality == "onsite"
+    requested_online_solfege = requested_solfege_modality == "online"
     referral_referrer_name = _mapped_scalar_with_fallbacks(
         answer_map,
         field_mapping,
@@ -1245,8 +1259,8 @@ def _normalize_payload(
     referral_category = referral_category_for_location(requested_location)
     requested_pass_recup = _simplified_bool_answer(simplified_answers, label_tokens=("pass", "recup"))
     is_reenrollment = _simplified_bool_answer(simplified_answers, label_tokens=("reinscription",))
-    if requested_onsite_solfege and not any("solfege" in _normalize_token(item) for item in requested_products):
-        requested_products.append("Cours de solfege en presentiel")
+    if (requested_onsite_solfege or requested_online_solfege) and not any("solfege" in _normalize_token(item) for item in requested_products):
+        requested_products.append("Cours de solfege en ligne" if requested_online_solfege else "Cours de solfege en presentiel")
     if requested_pass_recup and not any("pass" in _normalize_token(item) and "recup" in _normalize_token(item) for item in requested_products):
         requested_products.append("Pass Recup")
     address_parts = [
@@ -1291,7 +1305,9 @@ def _normalize_payload(
         "requested_payment_method": requested_payment_method,
         "requested_products": requested_products,
         "estimated_solfege_level": estimated_solfege_level,
+        "requested_solfege_modality": requested_solfege_modality,
         "requested_onsite_solfege": requested_onsite_solfege,
+        "requested_online_solfege": requested_online_solfege,
         "requested_pass_recup": requested_pass_recup,
         "is_reenrollment": is_reenrollment,
         "referral_referrer_name": referral_referrer_name,
@@ -1895,7 +1911,9 @@ def _course_type_haystack(activity: CourseType) -> str:
     )
 
 
-def _find_solfege_activity(db: Session, *, onsite: bool = True) -> CourseType | None:
+def _find_solfege_activity(db: Session, *, modality: str = "onsite", level_code: str | None = None) -> CourseType | None:
+    onsite = modality != "online"
+    level = _text(level_code)
     rows = db.scalars(
         select(CourseType)
         .where(CourseType.active.is_(True))
@@ -1917,6 +1935,12 @@ def _find_solfege_activity(db: Session, *, onsite: bool = True) -> CourseType | 
             score += 10
         if "collectif" in haystack:
             score += 2
+        if level in {"1", "2", "3", "4", "5"} and (
+            re.search(rf"\bniveau\s*{re.escape(level)}\b", haystack)
+            or re.search(rf"\bn\s*{re.escape(level)}\b", haystack)
+            or re.search(rf"\bn{re.escape(level)}\b", haystack)
+        ):
+            score += 15
         candidates.append((score, row))
     candidates.sort(key=lambda item: (-item[0], item[1].name))
     return candidates[0][1] if candidates else None
@@ -2179,10 +2203,19 @@ def _append_automatic_typeform_lines(
     pricing_catalog_id = _parse_uuid(runtime_context.get("pricing_catalog_id"))
     resolved_location_id = _parse_uuid(runtime_context.get("location_id"))
 
-    if _bool_or_default(normalized.get("requested_onsite_solfege"), False):
-        activity = _find_solfege_activity(db, onsite=True)
+    requested_solfege_modality = _text(normalized.get("requested_solfege_modality"))
+    if not requested_solfege_modality:
+        requested_solfege_modality = "online" if _bool_or_default(normalized.get("requested_online_solfege"), False) else ""
+        requested_solfege_modality = requested_solfege_modality or ("onsite" if _bool_or_default(normalized.get("requested_onsite_solfege"), False) else "")
+    if requested_solfege_modality in {"online", "onsite"}:
+        activity = _find_solfege_activity(
+            db,
+            modality=requested_solfege_modality,
+            level_code=_text(normalized.get("estimated_solfege_level")),
+        )
         if activity is None:
-            warnings.append("Activite automatique introuvable pour Cours de solfege en presentiel.")
+            modality_label = "en ligne" if requested_solfege_modality == "online" else "en presentiel"
+            warnings.append(f"Activite automatique introuvable pour Cours de solfege {modality_label}.")
         elif not _quote_lines_contain_solfege_activity(quote_lines, preview_lines):
             _append_activity_quote_line(
                 db,
@@ -2193,7 +2226,7 @@ def _append_automatic_typeform_lines(
                 resolved_location_id=resolved_location_id,
                 default_vat_rate=default_vat_rate,
                 warnings=warnings,
-                source="onsite_solfege",
+                source=f"{requested_solfege_modality}_solfege",
             )
 
     if _bool_or_default(normalized.get("requested_pass_recup"), False):

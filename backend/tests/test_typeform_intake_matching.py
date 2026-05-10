@@ -307,6 +307,46 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
             ],
         )
 
+    def test_normalize_payload_detects_online_solfege_slot_as_requested_product(self) -> None:
+        config = SimpleNamespace(
+            configuration_json={"field_mapping": {}, "field_labels": {}},
+            audience_segment="enfants",
+            location_code="paris_assas",
+        )
+        payload = {
+            "form_response": {
+                "answers": [
+                    {
+                        "field": {"id": "solfege-online-slot", "title": "Solfège en ligne"},
+                        "choice": {"label": "mardi - 17h05"},
+                    },
+                    {
+                        "field": {"id": "solfege-level-estimate", "title": "Estimation du niveau de votre enfant en solfège"},
+                        "choice": {"label": "Débutant ou une année de solfège et âge > 7 ans (Niveau 2)"},
+                    },
+                ]
+            }
+        }
+
+        normalized, _ = _normalize_payload(payload=payload, config=config)
+
+        self.assertFalse(normalized["requested_onsite_solfege"])
+        self.assertTrue(normalized["requested_online_solfege"])
+        self.assertEqual(normalized["requested_solfege_modality"], "online")
+        self.assertIn("Cours de solfege en ligne", normalized["requested_products"])
+        self.assertEqual(normalized["estimated_solfege_level"], "2")
+        self.assertEqual(
+            normalized["requested_solfege_slot_preferences"],
+            [
+                {
+                    "day": "mardi",
+                    "time": "17:05",
+                    "location": "paris_assas",
+                    "segment": "enfants",
+                }
+            ],
+        )
+
     def test_option_does_not_mark_other_site_as_preferred_when_location_is_resolved(self) -> None:
         preferred_location_id = uuid4()
         option = _typeform_session_option_from_row(
