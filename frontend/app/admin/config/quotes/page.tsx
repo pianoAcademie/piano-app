@@ -25,6 +25,7 @@ import {
   updateAdminPaymentPlanConfigAction,
   updateAdminPricingCatalogConfigAction,
   updateAdminQuoteTypeConfigAction,
+  updateAdminTypeformQuoteDefaultsConfigAction,
   upsertAdminPricingActivityPriceConfigAction,
   upsertAdminSolfegeLevelRuleConfigAction,
 } from "../../../../lib/actions";
@@ -361,6 +362,22 @@ function moneyNumber(value: unknown): number | null {
   }
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function typeformDepositEnabled(config: TypeformFormConfigOut): boolean {
+  const configJson = config.configuration_json ?? {};
+  if (!Object.prototype.hasOwnProperty.call(configJson, "default_pre_registration_deposit_enabled")) {
+    return true;
+  }
+  return boolish(configJson.default_pre_registration_deposit_enabled);
+}
+
+function typeformDepositAmount(config: TypeformFormConfigOut): string {
+  const amount = moneyNumber(config.configuration_json?.default_pre_registration_deposit_amount_ttc);
+  if (amount === null || amount <= 0) {
+    return "200.00";
+  }
+  return amount.toFixed(2);
 }
 
 function typeformTemplatePriceMode(template: Record<string, unknown>): "override" | "fallback" | null {
@@ -912,6 +929,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     null;
   const selectedCatalog = selectedCatalogSummary?.row ?? null;
   const catalogReturnPath = selectedCatalog ? buildQuotesConfigHref("catalogs", { catalog_id: selectedCatalog.id }) : buildQuotesConfigHref("catalogs");
+  const selectedTypeformConfigs = selectedCatalog
+    ? typeformFormConfigs.filter((config) => config.default_pricing_catalog_id === selectedCatalog.id)
+    : [];
 
   return (
     <section className="admin-page-grid">
@@ -1482,6 +1502,73 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                       </table>
                     </div>
                   </details>
+                </section>
+
+                <section className="quote-config-panel">
+                  <div>
+                    <h4>{t("admin.quote_config.typeform_defaults_title")}</h4>
+                    <p className="muted">{t("admin.quote_config.typeform_defaults_help")}</p>
+                  </div>
+                  <div className="table-wrap top-gap-sm">
+                    <table className="data-table quote-config-compact-table">
+                      <thead>
+                        <tr>
+                          <th>{t("admin.quote_config.form_label")}</th>
+                          <th>{t("admin.quote_config.pre_registration_deposit")}</th>
+                          <th>{t("admin.quote_config.amount_ttc")}</th>
+                          <th>{t("common.actions")}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedTypeformConfigs.length === 0 ? (
+                          <tr>
+                            <td colSpan={4}>
+                              <p className="muted">{t("admin.quote_config.no_typeform_configs_for_catalog")}</p>
+                            </td>
+                          </tr>
+                        ) : (
+                          selectedTypeformConfigs.map((config) => {
+                            const configJson = config.configuration_json ?? {};
+                            const label = String(configJson.label ?? config.source_code).trim() || config.source_code;
+                            const depositEnabled = typeformDepositEnabled(config);
+                            return (
+                              <tr key={config.id}>
+                                <td>
+                                  <strong>{label}</strong>
+                                  <div className="muted"><code>{config.typeform_form_id}</code> · {config.location_code}</div>
+                                </td>
+                                <td>
+                                  <form id={`typeform-defaults-${config.id}`} action={updateAdminTypeformQuoteDefaultsConfigAction} className="row gap-sm">
+                                    <input type="hidden" name="config_id" value={config.id} />
+                                    <input type="hidden" name="return_to" value={catalogReturnPath} />
+                                    <select name="default_pre_registration_deposit_enabled" defaultValue={depositEnabled ? "true" : "false"}>
+                                      <option value="true">{t("common.yes")}</option>
+                                      <option value="false">{t("common.no")}</option>
+                                    </select>
+                                  </form>
+                                </td>
+                                <td>
+                                  <input
+                                    form={`typeform-defaults-${config.id}`}
+                                    type="number"
+                                    name="default_pre_registration_deposit_amount_ttc"
+                                    min="0"
+                                    step="0.01"
+                                    defaultValue={typeformDepositAmount(config)}
+                                  />
+                                </td>
+                                <td>
+                                  <button form={`typeform-defaults-${config.id}`} type="submit" className="ghost">
+                                    {t("common.save")}
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </section>
 
                 <section className="quote-config-panel quote-config-catalog-lifecycle">

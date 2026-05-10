@@ -27,6 +27,11 @@ class TypeformFormConfigOut(BaseModel):
     updated_at: datetime
 
 
+class TypeformFormConfigQuoteDefaultsRequest(BaseModel):
+    default_pre_registration_deposit_enabled: bool = True
+    default_pre_registration_deposit_amount_ttc: Decimal = Field(default=Decimal("200.00"), ge=Decimal("0"))
+
+
 class TypeformAnswerOut(BaseModel):
     key: str
     label: str

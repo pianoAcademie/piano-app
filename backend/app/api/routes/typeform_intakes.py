@@ -43,6 +43,7 @@ from app.schemas.typeform_intake import (
     TypeformAnswerOut,
     TypeformDemoSeedOut,
     TypeformDraftQuoteResultOut,
+    TypeformFormConfigQuoteDefaultsRequest,
     TypeformFormConfigOut,
     TypeformIntakeDetailOut,
     TypeformIntakeListPageOut,
@@ -4282,6 +4283,28 @@ def list_typeform_form_configs(
         stmt = stmt.where(TypeformFormConfig.is_active.is_(True))
     rows = db.scalars(stmt).all()
     return [_form_config_out(row) for row in rows]
+
+
+@router.patch("/form-configs/{config_id}/quote-defaults", response_model=TypeformFormConfigOut)
+def update_typeform_form_config_quote_defaults(
+    config_id: UUID,
+    payload: TypeformFormConfigQuoteDefaultsRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> TypeformFormConfigOut:
+    row = db.scalar(select(TypeformFormConfig).where(TypeformFormConfig.id == config_id).with_for_update())
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Configuration Typeform introuvable")
+    config_json = _json_object(row.configuration_json)
+    amount = _q2(payload.default_pre_registration_deposit_amount_ttc)
+    config_json["default_pre_registration_deposit_enabled"] = bool(payload.default_pre_registration_deposit_enabled)
+    config_json["default_pre_registration_deposit_amount_ttc"] = str(amount)
+    row.configuration_json = config_json
+    row.updated_at = _utcnow()
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _form_config_out(row)
 
 
 @router.get("/intakes", response_model=TypeformIntakeListPageOut)

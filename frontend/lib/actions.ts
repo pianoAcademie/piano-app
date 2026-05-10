@@ -12987,6 +12987,42 @@ export async function deleteAdminPricingCatalogConfigAction(formData: FormData):
   redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.catalog_deleted")));
 }
 
+export async function updateAdminTypeformQuoteDefaultsConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=catalogs"));
+  const configId = parseUuid(String(formData.get("config_id") ?? ""));
+  const enabled = parseCheckboxFlag(formData, "default_pre_registration_deposit_enabled", true);
+  const amountRaw = String(formData.get("default_pre_registration_deposit_amount_ttc") ?? "").trim().replace(",", ".");
+  const amount = Number(amountRaw || "0");
+  if (!configId || !Number.isFinite(amount) || amount < 0) {
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_typeform_defaults")));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/typeform/form-configs/${encodeURIComponent(configId)}/quote-defaults`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        default_pre_registration_deposit_enabled: enabled,
+        default_pre_registration_deposit_amount_ttc: amount.toFixed(2),
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/intakes");
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.typeform_defaults_updated")));
+}
+
 export async function upsertAdminPricingActivityPriceConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
