@@ -107,6 +107,15 @@ type TypeformQuotePreviewOut = {
   total_ttc: string;
 };
 
+function solfegeProposalLabel(value: Record<string, unknown>): string {
+  const label = typeof value.label === "string" ? value.label.trim() : "";
+  if (label) return label;
+  const weekday = typeof value.weekday_label === "string" ? value.weekday_label.trim() : "";
+  const start = typeof value.start_time === "string" ? value.start_time.trim() : "";
+  const end = typeof value.end_time === "string" ? value.end_time.trim() : "";
+  return [weekday, [start, end].filter(Boolean).join("-")].filter(Boolean).join(" ");
+}
+
 type TypeformFormConfigOut = {
   id: string;
   source_code: string;
@@ -133,6 +142,7 @@ type TypeformIntakeDetailOut = {
   resolution: Record<string, unknown>;
   client_candidates: TypeformMatchCandidateOut[];
   session_recommendations: TypeformSessionRecommendationOut[];
+  solfege_slot_proposal: Record<string, unknown>;
   preview_quote: TypeformQuotePreviewOut | null;
   related_quote_id: string | null;
   form_config: TypeformFormConfigOut | null;
@@ -928,7 +938,18 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
             <div className="span-2">
               <h4>{t("admin.intakes.slots")}</h4>
               <div className={`${styles.candidateStack} top-gap-sm`}>
-                {detail.session_recommendations.length === 0 ? <p className="muted">{t("admin.intakes.no_slot_recommendation")}</p> : null}
+                {solfegeProposalLabel(detail.solfege_slot_proposal || {}) ? (
+                  <article className={styles.candidateItem}>
+                    <div className="row spread wrap gap-sm">
+                      <div>
+                        <strong>{t("admin.intakes.solfege_online")}</strong>
+                        <p className="muted">{t("admin.intakes.solfege_typeform_proposal", { slot: solfegeProposalLabel(detail.solfege_slot_proposal) })}</p>
+                      </div>
+                      <span className="status-pill status-ok">{t("admin.intakes.proposed_match")}</span>
+                    </div>
+                  </article>
+                ) : null}
+                {detail.session_recommendations.length === 0 && !solfegeProposalLabel(detail.solfege_slot_proposal || {}) ? <p className="muted">{t("admin.intakes.no_slot_recommendation")}</p> : null}
                 {detail.session_recommendations.map((recommendation) => (
                   <article className={styles.candidateItem} key={recommendation.activity_id}>
                     <div className="row spread wrap gap-sm">

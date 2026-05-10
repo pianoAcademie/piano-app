@@ -177,6 +177,7 @@ class TypeformIntakeDetailOut(BaseModel):
     resolution: dict[str, object] = Field(default_factory=dict)
     client_candidates: list[TypeformMatchCandidateOut] = Field(default_factory=list)
     session_recommendations: list[TypeformSessionRecommendationOut] = Field(default_factory=list)
+    solfege_slot_proposal: dict[str, object] = Field(default_factory=dict)
     preview_quote: TypeformQuotePreviewOut | None = None
     related_quote_id: UUID | None = None
     form_config: TypeformFormConfigOut | None = None

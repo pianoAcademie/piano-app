@@ -10,6 +10,7 @@ from uuid import uuid4
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.typeform_intakes import (
+    _extract_estimated_solfege_level,
     _future_school_year_candidate_configs,
     _normalize_payload,
     _session_recommendations_have_options,
@@ -389,6 +390,18 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
                 }
             ],
         )
+
+    def test_extract_solfege_level_works_with_typeform_slot_without_session_recommendation(self) -> None:
+        level = _extract_estimated_solfege_level(
+            normalized={
+                "estimated_solfege_level": "4",
+                "requested_solfege_slot_preferences": [{"day": "mardi", "time": "17:05"}],
+                "requested_products": ["Cours de solfege en ligne"],
+            },
+            session_recommendations=[],
+        )
+
+        self.assertEqual(level, "4")
 
     def test_option_does_not_mark_other_site_as_preferred_when_location_is_resolved(self) -> None:
         preferred_location_id = uuid4()

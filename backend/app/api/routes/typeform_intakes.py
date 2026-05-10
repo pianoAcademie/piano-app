@@ -33,6 +33,7 @@ from app.models.quote import (
     PricingProductPrice,
     Prospect,
     QuoteType,
+    SolfegeLevelRule,
 )
 from app.models.referral import ReferralReward
 from app.models.typeform_intake import TypeformFormConfig, TypeformIntake
@@ -2869,7 +2870,15 @@ def _extract_estimated_solfege_level(
     normalized: dict[str, object],
     session_recommendations: list[TypeformSessionRecommendationOut],
 ) -> str | None:
-    if not any("solfege" in _normalize_token(item.activity_name) for item in session_recommendations):
+    has_solfege_context = any("solfege" in _normalize_token(item.activity_name) for item in session_recommendations)
+    has_solfege_context = has_solfege_context or bool(_json_list(normalized.get("requested_solfege_slot_preferences")))
+    has_solfege_context = has_solfege_context or _bool_or_default(normalized.get("requested_online_solfege"), False)
+    has_solfege_context = has_solfege_context or _bool_or_default(normalized.get("requested_onsite_solfege"), False)
+    has_solfege_context = has_solfege_context or any(
+        "solfege" in _normalize_token(item)
+        for item in _json_list(normalized.get("requested_products"))
+    )
+    if not has_solfege_context:
         return None
 
     normalized_level = _text(normalized.get("estimated_solfege_level"))
@@ -2965,6 +2974,97 @@ def _modality_from_delivery_mode(value: DeliveryMode | str | None) -> str | None
     if value == DeliveryMode.ONSITE or _text(value).strip().upper() == DeliveryMode.ONSITE.value:
         return "onsite"
     return None
+
+
+def _matching_solfege_rule_for_intake(
+    db: Session,
+    *,
+    level_code: str | None,
+    location_id: object | None,
+    modality: str | None,
+) -> SolfegeLevelRule | None:
+    level = _text(level_code)
+    if not level:
+        return None
+    rows = db.scalars(
+        select(SolfegeLevelRule)
+        .where(
+            SolfegeLevelRule.level_code == level,
+            SolfegeLevelRule.is_active.is_(True),
+        )
+    ).all()
+    if not rows:
+        return None
+    expected_location_id = _text(location_id) or None
+    expected_modality = _text(modality).upper() or None
+
+    def _score(rule: SolfegeLevelRule) -> tuple[int, int, float]:
+        rule_location_id = _text(rule.location_id) if rule.location_id is not None else None
+        rule_modality = _text(rule.modality).upper() or None
+        location_score = 0 if expected_location_id and rule_location_id == expected_location_id else (1 if rule_location_id is None else 3)
+        modality_score = 0 if expected_modality and rule_modality == expected_modality else (1 if rule_modality is None else 3)
+        created_rank = -(rule.created_at.timestamp() if getattr(rule, "created_at", None) else 0.0)
+        return location_score, modality_score, created_rank
+
+    return min(rows, key=_score)
+
+
+def _solfege_slot_proposal_from_normalized(
+    db: Session,
+    *,
+    normalized: dict[str, object],
+    runtime_context: dict[str, object],
+    session_recommendations: list[TypeformSessionRecommendationOut],
+) -> dict[str, object]:
+    preferences = [
+        _json_object(item)
+        for item in _json_list(normalized.get("requested_solfege_slot_preferences"))
+        if isinstance(item, dict)
+    ]
+    if not preferences:
+        return {}
+    level_code = _extract_estimated_solfege_level(
+        normalized=normalized,
+        session_recommendations=session_recommendations,
+    )
+    modality = _text(normalized.get("requested_solfege_modality")) or "online"
+    location_id = _parse_uuid(runtime_context.get("location_id"))
+    rule = _matching_solfege_rule_for_intake(
+        db,
+        level_code=level_code,
+        location_id=location_id,
+        modality=modality,
+    )
+    duration_minutes = int(rule.duration_minutes) if rule is not None else 45
+    location_label = _text(runtime_context.get("location_name")) or _text(preferences[0].get("location"))
+    for preference in preferences:
+        weekday = _weekday_from_label(preference.get("day"))
+        start_time = _text(preference.get("time"))
+        start_minutes = _minutes_from_hhmm(start_time)
+        if weekday is None or start_minutes is None:
+            continue
+        end_minutes = start_minutes + duration_minutes
+        end_time = f"{(end_minutes // 60) % 24:02d}:{end_minutes % 60:02d}"
+        weekday_label = DAY_LABELS[weekday]
+        label_parts = [
+            f"{weekday_label} {start_time}-{end_time}",
+            location_label,
+            "En ligne" if modality == "online" else "Présentiel",
+        ]
+        return {
+            "level_code": level_code,
+            "weekday": weekday,
+            "weekday_label": weekday_label,
+            "start_time": start_time,
+            "end_time": end_time,
+            "duration_minutes": duration_minutes,
+            "location_id": str(location_id) if location_id is not None else None,
+            "location_label": location_label or None,
+            "modality": modality,
+            "label": " · ".join(part for part in label_parts if part),
+            "source": "typeform_solfege_slot_preference",
+        }
+    return {}
 
 
 def _build_session_recommendations(
@@ -3459,6 +3559,12 @@ def _analysis_for_intake(
             warnings.append("Plusieurs correspondances client ou famille doivent etre arbitrees.")
         if _needs_session_arbitrage(session_recommendations):
             warnings.append("Plusieurs creneaux compatibles demandent un arbitrage.")
+        solfege_slot_proposal = _solfege_slot_proposal_from_normalized(
+            db,
+            normalized=active_normalized,
+            runtime_context=runtime_context,
+            session_recommendations=session_recommendations,
+        )
 
         admin_state = _lower(effective_resolution.get("admin_state"))
         if intake.related_quote_id is not None:
@@ -3487,6 +3593,7 @@ def _analysis_for_intake(
             "runtime_context": runtime_context,
             "warnings": list(dict.fromkeys(warnings)),
             "blockages": list(dict.fromkeys(blockages)),
+            "solfege_slot_proposal": solfege_slot_proposal,
             "referral": referral_summary(
                 db.scalar(select(ReferralReward).where(ReferralReward.typeform_intake_id == intake.id))
             ),
@@ -3720,6 +3827,7 @@ def _intake_detail_out(intake: TypeformIntake, analysis: dict[str, object]) -> T
         resolution=analysis["effective_resolution"],
         client_candidates=candidates,
         session_recommendations=analysis["session_recommendations"],
+        solfege_slot_proposal=_json_object(analysis.get("solfege_slot_proposal")),
         preview_quote=analysis["preview_quote"],
         related_quote_id=intake.related_quote_id,
         form_config=config_out,
@@ -4466,6 +4574,14 @@ def _calendar_snapshot_from_analysis(
                     "pending_slot_options": pending_slot_options,
                 }
             )
+
+    if not solfege_selected_slot:
+        solfege_selected_slot = _solfege_slot_proposal_from_normalized(
+            db,
+            normalized=normalized,
+            runtime_context=runtime_context,
+            session_recommendations=session_recommendations,
+        )
 
     sessions.sort(
         key=lambda item: (
