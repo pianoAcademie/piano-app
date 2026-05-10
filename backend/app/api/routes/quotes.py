@@ -164,7 +164,7 @@ from app.services.quotes.template_registry import (
 from app.services.reminders import ensure_booking_reminder
 from app.services.providers.sms import sms_delivery_disabled_reason
 from app.services.family_billing import resolve_billing_profile
-from app.services.referrals import bind_referral_after_quote_transformation
+from app.services.referrals import bind_referral_after_quote_transformation, ensure_referral_for_sibling_quote
 from app.services.security import hash_password
 from app.services.subscriptions import add_months_utc, default_next_payment_at
 
@@ -4282,6 +4282,13 @@ def duplicate_quote(
     )
     db.add(clone)
     db.flush()
+
+    ensure_referral_for_sibling_quote(
+        db,
+        source_quote_id=source.id,
+        sibling_quote_id=clone.id,
+        sibling_prospect_id=child.id,
+    )
 
     for line in lines:
         db.add(

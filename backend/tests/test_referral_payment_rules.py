@@ -33,6 +33,18 @@ class _FakeDb:
         self.added.append(row)
 
 
+class _ScalarFakeDb(_FakeDb):
+    def __init__(self, scalar_rows: list[object | None]) -> None:
+        super().__init__([])
+        self.scalar_rows = scalar_rows
+        self.scalar_calls = 0
+
+    def scalar(self, _stmt: object) -> object | None:
+        value = self.scalar_rows[self.scalar_calls] if self.scalar_calls < len(self.scalar_rows) else None
+        self.scalar_calls += 1
+        return value
+
+
 class _SequencedFakeDb(_FakeDb):
     def __init__(self, rows_by_call: list[list[object]]) -> None:
         super().__init__([])
@@ -69,7 +81,9 @@ class ReferralPaymentRuleTests(unittest.TestCase):
         sibling_quote_id = uuid4()
         db = _SequencedFakeDb(
             [
+                [],
                 [SimpleNamespace(id=sibling_quote_id, parent_quote_id=source_quote_id)],
+                [],
                 [SimpleNamespace(id=source_quote_id, parent_quote_id=None)],
             ]
         )
@@ -77,6 +91,50 @@ class ReferralPaymentRuleTests(unittest.TestCase):
         quote_ids = referrals.quote_ids_with_referral_ancestors(db, {sibling_quote_id})
 
         self.assertEqual(quote_ids, {sibling_quote_id, source_quote_id})
+
+    def test_quote_ids_with_referral_ancestors_stops_when_sibling_has_own_reward(self) -> None:
+        source_quote_id = uuid4()
+        sibling_quote_id = uuid4()
+        db = _SequencedFakeDb([[sibling_quote_id], [SimpleNamespace(id=sibling_quote_id, parent_quote_id=source_quote_id)]])
+
+        quote_ids = referrals.quote_ids_with_referral_ancestors(db, {sibling_quote_id})
+
+        self.assertEqual(quote_ids, {sibling_quote_id})
+
+    def test_ensure_referral_for_sibling_quote_creates_second_reward_line(self) -> None:
+        source_quote_id = uuid4()
+        sibling_quote_id = uuid4()
+        sibling_prospect_id = uuid4()
+        referrer_id = uuid4()
+        source_reward = SimpleNamespace(
+            id=uuid4(),
+            declared_referrer_text="De laroche",
+            category="PARIS",
+            match_status=referrals.REFERRAL_MATCH_MANUAL,
+            referrer_user_id=referrer_id,
+            match_confidence=100,
+            match_candidates_json=[],
+            reward_amount=Decimal("50.00"),
+            currency="EUR",
+            trigger_ratio=Decimal("0.5000"),
+        )
+        db = _ScalarFakeDb([None, source_reward])
+
+        reward = referrals.ensure_referral_for_sibling_quote(
+            db,
+            source_quote_id=source_quote_id,
+            sibling_quote_id=sibling_quote_id,
+            sibling_prospect_id=sibling_prospect_id,
+        )
+
+        self.assertIsNotNone(reward)
+        self.assertEqual(reward.quote_id, sibling_quote_id)
+        self.assertIsNone(reward.typeform_intake_id)
+        self.assertEqual(reward.referrer_user_id, referrer_id)
+        self.assertEqual(reward.status, referrals.REFERRAL_STATUS_AWAITING_PAYMENT)
+        self.assertEqual(reward.metadata_json["source_quote_id"], str(source_quote_id))
+        self.assertEqual(reward.metadata_json["sibling_prospect_id"], str(sibling_prospect_id))
+        self.assertEqual(db.added, [reward])
 
     def test_invoice_below_threshold_updates_progress_without_granting_credit(self) -> None:
         reward = SimpleNamespace(

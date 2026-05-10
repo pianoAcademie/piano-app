@@ -1597,6 +1597,7 @@ class AdminReferralRewardOut(BaseModel):
     referred_client_name: str | None = None
     referred_student_id: UUID | None = None
     referred_student_name: str | None = None
+    referred_prospect_name: str | None = None
     reward_amount: Decimal
     currency: str
     trigger_ratio: Decimal

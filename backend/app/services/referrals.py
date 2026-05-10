@@ -332,6 +332,75 @@ def link_referral_to_quote(db: Session, *, intake_id: UUID, quote_id: UUID) -> R
     return reward
 
 
+def ensure_referral_for_sibling_quote(
+    db: Session,
+    *,
+    source_quote_id: UUID,
+    sibling_quote_id: UUID,
+    sibling_prospect_id: UUID | None = None,
+) -> ReferralReward | None:
+    existing = db.scalar(select(ReferralReward).where(ReferralReward.quote_id == sibling_quote_id).with_for_update())
+    if existing is not None:
+        return existing
+    source = db.scalar(select(ReferralReward).where(ReferralReward.quote_id == source_quote_id))
+    if source is None:
+        return None
+    now = utcnow()
+    reward = ReferralReward(
+        typeform_intake_id=None,
+        quote_id=sibling_quote_id,
+        declared_referrer_text=source.declared_referrer_text,
+        category=source.category,
+        status=REFERRAL_STATUS_AWAITING_PAYMENT if source.referrer_user_id is not None else REFERRAL_STATUS_NEEDS_REVIEW,
+        match_status=source.match_status,
+        referrer_user_id=source.referrer_user_id,
+        match_confidence=source.match_confidence,
+        match_candidates_json=source.match_candidates_json or [],
+        reward_amount=source.reward_amount,
+        currency=source.currency,
+        trigger_ratio=source.trigger_ratio,
+        validated_at=now if source.referrer_user_id is not None else None,
+        metadata_json={
+            "source": "quote_sibling",
+            "source_reward_id": str(source.id),
+            "source_quote_id": str(source_quote_id),
+            "sibling_prospect_id": str(sibling_prospect_id) if sibling_prospect_id else None,
+        },
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(reward)
+    return reward
+
+
+def ensure_referrals_for_sibling_quotes(db: Session) -> int:
+    sibling_quotes = db.scalars(select(Quote).where(Quote.parent_quote_id.is_not(None))).all()
+    created = 0
+    for quote in sibling_quotes:
+        quote_meta = quote.meta or {}
+        if not quote_meta.get("duplicated_for_child_prospect_id"):
+            continue
+        before = db.scalar(select(ReferralReward.id).where(ReferralReward.quote_id == quote.id).limit(1))
+        if before is not None or quote.parent_quote_id is None:
+            continue
+        sibling_prospect_id = quote.prospect_id
+        raw_sibling_prospect_id = quote_meta.get("duplicated_for_child_prospect_id")
+        if raw_sibling_prospect_id:
+            try:
+                sibling_prospect_id = UUID(str(raw_sibling_prospect_id))
+            except (TypeError, ValueError):
+                pass
+        reward = ensure_referral_for_sibling_quote(
+            db,
+            source_quote_id=quote.parent_quote_id,
+            sibling_quote_id=quote.id,
+            sibling_prospect_id=sibling_prospect_id,
+        )
+        if reward is not None:
+            created += 1
+    return created
+
+
 def bind_referral_after_quote_transformation(
     db: Session,
     *,
@@ -448,9 +517,14 @@ def quote_ids_with_referral_ancestors(db: Session, quote_ids: set[UUID]) -> set[
         if not batch:
             break
         seen.update(batch)
+        rewards_on_batch = set(
+            db.scalars(select(ReferralReward.quote_id).where(ReferralReward.quote_id.in_(batch))).all()
+        )
         rows = db.scalars(select(Quote).where(Quote.id.in_(batch))).all()
         pending = set()
         for row in rows:
+            if row.id in rewards_on_batch:
+                continue
             parent_id = row.parent_quote_id
             if parent_id is not None and parent_id not in out:
                 out.add(parent_id)

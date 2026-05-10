@@ -230,7 +230,7 @@ class QuoteDuplicationTests(unittest.TestCase):
         ), patch(
             "app.api.routes.quotes._new_quote_number",
             return_value="DV-TEST-SIBLING",
-        ):
+        ), patch("app.api.routes.quotes.ensure_referral_for_sibling_quote") as ensure_referral:
             result = duplicate_quote_for_child(
                 source_id,
                 QuoteDuplicateForChildRequest(
@@ -260,6 +260,12 @@ class QuoteDuplicationTests(unittest.TestCase):
         self.assertIsNone(clone.client_id)
         self.assertEqual(clone.parent_quote_id, source_id)
         self.assertEqual(clone.meta.get("duplicated_for_child_name"), "Archibald De Vilmarest")
+        ensure_referral.assert_called_once_with(
+            db,
+            source_quote_id=source_id,
+            sibling_quote_id=clone.id,
+            sibling_prospect_id=child.id,
+        )
         self.assertEqual(duplicate_event.event_type, "quote_duplicated_for_child")
 
 

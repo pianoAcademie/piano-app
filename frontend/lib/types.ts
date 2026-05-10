@@ -455,6 +455,7 @@ export type AdminReferralRewardOut = {
   referred_client_name: string | null;
   referred_student_id: string | null;
   referred_student_name: string | null;
+  referred_prospect_name: string | null;
   reward_amount: string;
   currency: string;
   trigger_ratio: string;

@@ -382,6 +382,8 @@ export default async function AdminReferralsPage({ searchParams }: { searchParam
                       <Link className="mode-link" href={`/admin/clients/${row.referred_client_id}`}>
                         {row.referred_client_name || rt(language, "referred_family")}
                       </Link>
+                    ) : row.referred_prospect_name ? (
+                      <span>{row.referred_prospect_name}</span>
                     ) : (
                       <span className="muted">{rt(language, "not_linked")}</span>
                     )}

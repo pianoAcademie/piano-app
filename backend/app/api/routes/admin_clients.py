@@ -56,7 +56,7 @@ from app.models.plan import (
     SubscriptionStatus,
 )
 from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct, ProductCategory
-from app.models.quote import QuoteLine
+from app.models.quote import Prospect, Quote, QuoteLine
 from app.models.referral import ReferralReward
 from app.models.notification_engine import ContactDeliveryStatus
 from app.models.user import ClientKind, ClientStatus, User, UserRole
@@ -199,7 +199,7 @@ from app.services.session_teachers import effective_teacher_id_for_session, prof
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
 from app.services.payment_provider import detect_provider_from_reference, parse_provider, resolve_provider, resolve_webhook_secret
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
-from app.services.referrals import evaluate_referrals_for_invoice, manually_validate_referral
+from app.services.referrals import evaluate_referrals_for_invoice, ensure_referrals_for_sibling_quotes, manually_validate_referral
 from app.services.reminders import skip_pending_reminders_for_booking
 from app.services.security import create_access_token, hash_password
 from app.services.session_audience import resolve_session_booking_scopes, scopes_allow_planless_booking
@@ -7961,6 +7961,26 @@ def _user_display_for_referral(user: User | None) -> str | None:
     return _display_name(user.first_name, user.last_name, user.email)
 
 
+def _prospect_display_for_referral(db: Session, row: ReferralReward) -> str | None:
+    prospect_id = None
+    metadata = row.metadata_json or {}
+    raw_prospect_id = metadata.get("sibling_prospect_id") or metadata.get("referred_prospect_id")
+    if raw_prospect_id:
+        try:
+            prospect_id = UUID(str(raw_prospect_id))
+        except (TypeError, ValueError):
+            prospect_id = None
+    if prospect_id is None and row.quote_id is not None:
+        quote = db.scalar(select(Quote).where(Quote.id == row.quote_id))
+        prospect_id = quote.prospect_id if quote is not None else None
+    if prospect_id is None:
+        return None
+    prospect = db.scalar(select(Prospect).where(Prospect.id == prospect_id))
+    if prospect is None:
+        return None
+    return _display_name(prospect.first_name, prospect.last_name, prospect.email)
+
+
 def _decimal_from_referral_metadata(metadata: dict[str, object], *keys: str) -> Decimal | None:
     for key in keys:
         value = metadata.get(key)
@@ -7974,7 +7994,7 @@ def _decimal_from_referral_metadata(metadata: dict[str, object], *keys: str) -> 
     return None
 
 
-def _referral_reward_out(row: ReferralReward, users_by_id: dict[UUID, User]) -> AdminReferralRewardOut:
+def _referral_reward_out(db: Session, row: ReferralReward, users_by_id: dict[UUID, User]) -> AdminReferralRewardOut:
     referrer = users_by_id.get(row.referrer_user_id) if row.referrer_user_id else None
     referred = users_by_id.get(row.referred_client_id) if row.referred_client_id else None
     student = users_by_id.get(row.referred_student_id) if row.referred_student_id else None
@@ -8004,6 +8024,7 @@ def _referral_reward_out(row: ReferralReward, users_by_id: dict[UUID, User]) -> 
         referred_client_name=_user_display_for_referral(referred),
         referred_student_id=row.referred_student_id,
         referred_student_name=_user_display_for_referral(student),
+        referred_prospect_name=_prospect_display_for_referral(db, row),
         reward_amount=Decimal(row.reward_amount or 0).quantize(Decimal("0.01")),
         currency=_normalize_currency(row.currency, fallback="EUR"),
         trigger_ratio=trigger_ratio,
@@ -8068,6 +8089,8 @@ def list_admin_referral_rewards(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> list[AdminReferralRewardOut]:
+    if ensure_referrals_for_sibling_quotes(db):
+        db.commit()
     stmt = select(ReferralReward)
     filtered_statuses = _referral_reward_statuses(statuses)
     if filtered_statuses is not None:
@@ -8083,7 +8106,7 @@ def list_admin_referral_rewards(
         user.id: user
         for user in db.scalars(select(User).where(User.id.in_(list(user_ids)))).all()
     } if user_ids else {}
-    return [_referral_reward_out(row, users_by_id) for row in rewards]
+    return [_referral_reward_out(db, row, users_by_id) for row in rewards]
 
 
 @router.post("/referrals/rewards/recompute", response_model=AdminReferralBulkRecomputeOut)
@@ -8091,6 +8114,9 @@ def recompute_admin_referral_rewards(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminReferralBulkRecomputeOut:
+    sibling_created_count = ensure_referrals_for_sibling_quotes(db)
+    if sibling_created_count:
+        db.flush()
     rewards = db.scalars(
         select(ReferralReward)
         .where(
@@ -8124,8 +8150,8 @@ def recompute_admin_referral_rewards(
             credit_granted_count += 1
     db.commit()
     return AdminReferralBulkRecomputeOut(
-        scanned_count=len(rewards),
-        updated_count=updated_count,
+        scanned_count=len(rewards) + sibling_created_count,
+        updated_count=updated_count + sibling_created_count,
         credit_granted_count=credit_granted_count,
     )
 
@@ -8160,7 +8186,7 @@ def update_admin_referral_reward_referrer(
         user.id: user
         for user in db.scalars(select(User).where(User.id.in_(list(user_ids)))).all()
     } if user_ids else {}
-    return _referral_reward_out(reward, users_by_id)
+    return _referral_reward_out(db, reward, users_by_id)
 
 
 @router.post("/referrals/rewards/{reward_id}/recompute", response_model=AdminReferralRewardOut)
@@ -8184,7 +8210,7 @@ def recompute_admin_referral_reward(
         user.id: user
         for user in db.scalars(select(User).where(User.id.in_(list(user_ids)))).all()
     } if user_ids else {}
-    return _referral_reward_out(reward, users_by_id)
+    return _referral_reward_out(db, reward, users_by_id)
 
 
 def _check_payment_base_stmt(*, statuses: set[str]):
