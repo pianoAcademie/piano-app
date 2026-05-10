@@ -1240,6 +1240,8 @@ def _normalize_payload(
     )
     estimated_solfege_level = _fallback_solfege_level_from_simplified_answers(simplified_answers)
     requested_solfege_modality = _fallback_requested_solfege_modality_from_simplified_answers(simplified_answers)
+    if requested_solfege_modality is None and requested_solfege_slot_preferences:
+        requested_solfege_modality = "online"
     requested_onsite_solfege = requested_solfege_modality == "onsite"
     requested_online_solfege = requested_solfege_modality == "online"
     referral_referrer_name = _mapped_scalar_with_fallbacks(
