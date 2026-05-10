@@ -4283,13 +4283,6 @@ def duplicate_quote(
     db.add(clone)
     db.flush()
 
-    ensure_referral_for_sibling_quote(
-        db,
-        source_quote_id=source.id,
-        sibling_quote_id=clone.id,
-        sibling_prospect_id=child.id,
-    )
-
     for line in lines:
         db.add(
             QuoteLine(
@@ -4459,6 +4452,13 @@ def duplicate_quote_for_child(
     )
     db.add(clone)
     db.flush()
+
+    ensure_referral_for_sibling_quote(
+        db,
+        source_quote_id=source.id,
+        sibling_quote_id=clone.id,
+        sibling_prospect_id=child.id,
+    )
 
     for line in lines:
         db.add(

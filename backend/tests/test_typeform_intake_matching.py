@@ -12,16 +12,63 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.api.routes.typeform_intakes import (
     _extract_estimated_solfege_level,
     _future_school_year_candidate_configs,
+    _intake_list_out_fast,
     _normalize_payload,
     _session_recommendations_have_options,
     _should_try_future_school_year_config,
     _solfege_slot_proposal_from_normalized,
+    _stored_messages,
     _typeform_session_option_from_row,
 )
 from app.services.referrals import referral_category_for_location
 
 
 class TypeformIntakeMatchingTests(unittest.TestCase):
+    def test_intake_list_fast_uses_stored_fields_without_reanalysis(self) -> None:
+        config_id = uuid4()
+        intake = SimpleNamespace(
+            id=uuid4(),
+            source_form_id="G8eqpU6H",
+            source_response_id="response-1",
+            received_at=datetime(2026, 5, 10, tzinfo=timezone.utc),
+            intake_status="READY_FOR_DRAFT_QUOTE",
+            detected_location="Rue d'Assas",
+            detected_segment="child",
+            detected_school_year="2026-2027",
+            related_quote_id=None,
+            form_config_id=config_id,
+            normalized_payload_json={
+                "customer_type": "child",
+                "parent_first_name": "Pauline",
+                "parent_last_name": "Castelnau-Marchand",
+                "parent_email": "pauline@example.test",
+                "child_first_name": "Victoria",
+                "child_last_name": "De Vilmarest",
+            },
+            warnings_json=[{"message": "A verifier"}],
+            blocking_reasons_json=[],
+        )
+        config = SimpleNamespace(
+            configuration_json={"label": "Paris Enfants 2026-2027"},
+            source_code="typeform_paris_child_2026_2027_multisite",
+            audience_segment="enfants",
+            school_year_label="2026-2027",
+        )
+
+        row = _intake_list_out_fast(intake, config=config)
+
+        self.assertEqual(row.source_form_label, "Paris Enfants 2026-2027")
+        self.assertEqual(row.prospect_label, "Pauline Castelnau-Marchand")
+        self.assertEqual(row.child_label, "Victoria De Vilmarest")
+        self.assertEqual(row.warnings, ["A verifier"])
+        self.assertEqual(row.blockages, [])
+
+    def test_stored_messages_accepts_legacy_string_entries(self) -> None:
+        self.assertEqual(
+            _stored_messages(["A verifier", {"message": "A verifier"}, {"message": "Autre"}]),
+            ["A verifier", "Autre"],
+        )
+
     def test_normalize_payload_extracts_free_text_referral_and_category(self) -> None:
         config = SimpleNamespace(
             configuration_json={

@@ -9,7 +9,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import Text, and_, cast, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import get_db, require_roles
@@ -3821,6 +3821,60 @@ def _intake_list_out(intake: TypeformIntake, analysis: dict[str, object]) -> Typ
     )
 
 
+def _stored_messages(value: object | None) -> list[str]:
+    messages: list[str] = []
+    for item in _json_list(value):
+        row = _json_object(item)
+        message = _text(row.get("message")) if row else _text(item)
+        if message:
+            messages.append(message)
+    return list(dict.fromkeys(messages))
+
+
+def _intake_list_out_fast(
+    intake: TypeformIntake,
+    *,
+    config: TypeformFormConfig | None,
+) -> TypeformIntakeListOut:
+    normalized = _json_object(intake.normalized_payload_json)
+    customer_type = _lower(normalized.get("customer_type"))
+    has_child = customer_type == "child" or bool(
+        _text(normalized.get("child_first_name")) or _text(normalized.get("child_last_name"))
+    )
+    prospect_label = _display_name(
+        normalized.get("parent_first_name"),
+        normalized.get("parent_last_name"),
+        _text(normalized.get("parent_email")) or "-",
+    )
+    child_label = (
+        _display_name(normalized.get("child_first_name"), normalized.get("child_last_name"), "-")
+        if has_child
+        else None
+    )
+    return TypeformIntakeListOut(
+        id=intake.id,
+        source_form_id=intake.source_form_id,
+        source_form_label=_form_label(config) if config is not None else intake.source_form_id,
+        source_response_id=intake.source_response_id,
+        received_at=intake.received_at,
+        intake_status=intake.intake_status,
+        detected_location=intake.detected_location or _text(normalized.get("requested_location")) or None,
+        detected_segment=(
+            config.audience_segment
+            if config is not None
+            else intake.detected_segment
+        ),
+        detected_school_year=intake.detected_school_year
+        or (config.school_year_label if config is not None else None),
+        prospect_label=prospect_label,
+        child_label=child_label,
+        warnings=_stored_messages(intake.warnings_json),
+        blockages=_stored_messages(intake.blocking_reasons_json),
+        related_quote_id=intake.related_quote_id,
+        referral=None,
+    )
+
+
 def _intake_detail_out(intake: TypeformIntake, analysis: dict[str, object]) -> TypeformIntakeDetailOut:
     runtime_context = _json_object(analysis.get("runtime_context"))
     resolved_school_year = (
@@ -4708,40 +4762,44 @@ def list_typeform_intakes(
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> TypeformIntakeListPageOut:
-    stmt = select(TypeformIntake).order_by(TypeformIntake.received_at.desc())
+    stmt = select(TypeformIntake)
     if status_filter:
         stmt = stmt.where(TypeformIntake.intake_status == _text(status_filter).upper())
-    rows = db.scalars(stmt).all()
-    items: list[TypeformIntakeListOut] = []
-    changed = False
-    needle = _normalize_token(q) if q else ""
-    for row in rows:
-        previous_status = row.intake_status
-        analysis = _refresh_intake_analysis(db, row)
-        if row.intake_status != previous_status:
-            changed = True
-        item = _intake_list_out(row, analysis)
-        haystack = " ".join(
-            [
-                _text(item.source_form_label),
-                _text(item.prospect_label),
-                _text(item.child_label),
-                _text(item.detected_location),
-                _text(item.detected_segment),
-            ]
+    needle = _text(q)
+    if needle:
+        like = f"%{needle}%"
+        stmt = stmt.where(
+            or_(
+                TypeformIntake.source_form_id.ilike(like),
+                TypeformIntake.source_response_id.ilike(like),
+                TypeformIntake.detected_location.ilike(like),
+                TypeformIntake.detected_segment.ilike(like),
+                TypeformIntake.detected_school_year.ilike(like),
+                cast(TypeformIntake.normalized_payload_json, Text).ilike(like),
+                cast(TypeformIntake.simplified_response_json, Text).ilike(like),
+            )
         )
-        if needle and needle not in _normalize_token(haystack):
-            continue
-        items.append(item)
-    if changed:
-        db.commit()
-    total = len(items)
+    total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
     total_pages = max((total + page_size - 1) // page_size, 1)
     current_page = min(page, total_pages)
-    start = (current_page - 1) * page_size
-    end = start + page_size
+    rows = db.scalars(
+        stmt.order_by(TypeformIntake.received_at.desc(), TypeformIntake.id.desc())
+        .offset((current_page - 1) * page_size)
+        .limit(page_size)
+    ).all()
+    config_ids = {row.form_config_id for row in rows if row.form_config_id is not None}
+    configs_by_id = (
+        {
+            config.id: config
+            for config in db.scalars(
+                select(TypeformFormConfig).where(TypeformFormConfig.id.in_(list(config_ids)))
+            ).all()
+        }
+        if config_ids
+        else {}
+    )
     return TypeformIntakeListPageOut(
-        items=items[start:end],
+        items=[_intake_list_out_fast(row, config=configs_by_id.get(row.form_config_id)) for row in rows],
         total=total,
         page=current_page,
         page_size=page_size,
