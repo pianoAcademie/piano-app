@@ -272,6 +272,10 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
                         "boolean": True,
                     },
                     {
+                        "field": {"id": "onsite-solfege", "title": "Cours de solfège en présentiel"},
+                        "boolean": True,
+                    },
+                    {
                         "field": {"id": "solfege-level-estimate", "title": "Estimation du niveau de votre enfant en solfège"},
                         "choice": {"label": "Très bonnes notions de solfège - Niveau 4"},
                     },
@@ -287,7 +291,9 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
 
         self.assertTrue(normalized["requested_pass_recup"])
         self.assertTrue(normalized["is_reenrollment"])
+        self.assertTrue(normalized["requested_onsite_solfege"])
         self.assertIn("Pass Recup", normalized["requested_products"])
+        self.assertIn("Cours de solfege en presentiel", normalized["requested_products"])
         self.assertEqual(normalized["estimated_solfege_level"], "4")
         self.assertEqual(
             normalized["requested_solfege_slot_preferences"],

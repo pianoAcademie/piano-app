@@ -716,6 +716,24 @@ def _fallback_solfege_level_from_simplified_answers(
     return None
 
 
+def _fallback_requested_onsite_solfege_from_simplified_answers(
+    simplified_answers: list[dict[str, object]],
+) -> bool:
+    for item in simplified_answers:
+        if not isinstance(item, dict):
+            continue
+        label = _normalize_token(item.get("label"))
+        if "solfege" not in label:
+            continue
+        if not any(token in label for token in ("presentiel", "cours")):
+            continue
+        if any(token in label for token in ("niveau", "estimation", "creneau", "horaire")):
+            continue
+        if _truthy_answer_value(item.get("value")):
+            return True
+    return False
+
+
 def _answer_value(answer: dict[str, object]) -> object:
     if "text" in answer:
         return answer.get("text")
@@ -1209,6 +1227,7 @@ def _normalize_payload(
         requested_products=requested_products,
     )
     estimated_solfege_level = _fallback_solfege_level_from_simplified_answers(simplified_answers)
+    requested_onsite_solfege = _fallback_requested_onsite_solfege_from_simplified_answers(simplified_answers)
     referral_referrer_name = _mapped_scalar_with_fallbacks(
         answer_map,
         field_mapping,
@@ -1226,6 +1245,8 @@ def _normalize_payload(
     referral_category = referral_category_for_location(requested_location)
     requested_pass_recup = _simplified_bool_answer(simplified_answers, label_tokens=("pass", "recup"))
     is_reenrollment = _simplified_bool_answer(simplified_answers, label_tokens=("reinscription",))
+    if requested_onsite_solfege and not any("solfege" in _normalize_token(item) for item in requested_products):
+        requested_products.append("Cours de solfege en presentiel")
     if requested_pass_recup and not any("pass" in _normalize_token(item) and "recup" in _normalize_token(item) for item in requested_products):
         requested_products.append("Pass Recup")
     address_parts = [
@@ -1270,6 +1291,7 @@ def _normalize_payload(
         "requested_payment_method": requested_payment_method,
         "requested_products": requested_products,
         "estimated_solfege_level": estimated_solfege_level,
+        "requested_onsite_solfege": requested_onsite_solfege,
         "requested_pass_recup": requested_pass_recup,
         "is_reenrollment": is_reenrollment,
         "referral_referrer_name": referral_referrer_name,
@@ -1858,6 +1880,61 @@ def _quote_lines_contain_product(
     return False
 
 
+def _course_type_haystack(activity: CourseType) -> str:
+    return _normalize_token(
+        " ".join(
+            part
+            for part in (
+                activity.code,
+                activity.name,
+                activity.description,
+                activity.service_code,
+            )
+            if _text(part)
+        )
+    )
+
+
+def _find_solfege_activity(db: Session, *, onsite: bool = True) -> CourseType | None:
+    rows = db.scalars(
+        select(CourseType)
+        .where(CourseType.active.is_(True))
+        .order_by(CourseType.name.asc())
+    ).all()
+    candidates: list[tuple[int, CourseType]] = []
+    for row in rows:
+        haystack = _course_type_haystack(row)
+        if "solfege" not in haystack:
+            continue
+        score = 0
+        if row.mode == DeliveryMode.ONSITE:
+            score += 20 if onsite else -5
+        elif row.mode == DeliveryMode.ONLINE:
+            score += -8 if onsite else 20
+        if onsite and "presentiel" in haystack:
+            score += 10
+        if not onsite and ("online" in haystack or "ligne" in haystack):
+            score += 10
+        if "collectif" in haystack:
+            score += 2
+        candidates.append((score, row))
+    candidates.sort(key=lambda item: (-item[0], item[1].name))
+    return candidates[0][1] if candidates else None
+
+
+def _quote_lines_contain_solfege_activity(
+    quote_lines: list[QuoteLineIn],
+    preview_lines: list[TypeformQuotePreviewLineOut],
+) -> bool:
+    for line in quote_lines:
+        if line.activity_id is not None and "solfege" in _normalize_token(" ".join(part for part in (line.code, line.title, line.description) if _text(part))):
+            return True
+    for line in preview_lines:
+        if line.activity_id is not None and "solfege" in _normalize_token(_preview_line_haystack(line)):
+            return True
+    return False
+
+
 def _preview_line_from_quote_line(
     line_in: QuoteLineIn,
     *,
@@ -1967,6 +2044,91 @@ def _append_catalog_product_quote_line(
     )
 
 
+def _append_activity_quote_line(
+    db: Session,
+    *,
+    activity: CourseType,
+    quote_lines: list[QuoteLineIn],
+    preview_lines: list[TypeformQuotePreviewLineOut],
+    pricing_catalog_id: UUID | None,
+    resolved_location_id: UUID | None,
+    default_vat_rate: Decimal,
+    warnings: list[str],
+    source: str,
+) -> None:
+    line_in = QuoteLineIn(
+        line_category="service",
+        line_type="item",
+        master_item_type="activity",
+        master_item_id=activity.id,
+        activity_id=activity.id,
+        title=activity.name,
+        quantity=Decimal("1.00"),
+        vat_rate=default_vat_rate,
+        unit_price_ttc=Decimal("0.00"),
+        pricing_unit="session",
+        sort_order=len(quote_lines),
+        meta={"typeform_automatic_line": source},
+    )
+    code, title, description, duration, unit_price, meta = _effective_item_price(
+        db,
+        line=line_in,
+        pricing_catalog_id=pricing_catalog_id,
+        location_id=resolved_location_id,
+    )
+    meta = {**dict(meta), "typeform_automatic_line": source}
+    pricing_source = _text(meta.get("pricing_source"))
+    if pricing_source == "activity_default_course_rate":
+        warnings.append(f"Tarif catalogue absent pour {title}, tarif par defaut activite utilise.")
+    if pricing_source == "activity_default_hourly_rate":
+        warnings.append(f"Tarif catalogue absent pour {title}, tarif horaire par defaut activite utilise.")
+    if pricing_source == "catalog_activity" and pricing_catalog_id is not None and resolved_location_id is not None:
+        location_specific_price = db.scalar(
+            select(PricingActivityPrice.id)
+            .where(
+                PricingActivityPrice.catalog_id == pricing_catalog_id,
+                PricingActivityPrice.activity_id == activity.id,
+                PricingActivityPrice.location_id == resolved_location_id,
+                PricingActivityPrice.is_active.is_(True),
+            )
+            .limit(1)
+        )
+        if location_specific_price is None:
+            warnings.append(f"Tarif specifique au site absent pour {title}, tarif catalogue general utilise.")
+    vat_rate = _q3(line_in.vat_rate if line_in.vat_rate is not None else default_vat_rate)
+    preview_lines.append(
+        _preview_line_from_quote_line(
+            line_in,
+            code=code,
+            title=title,
+            description=description,
+            quantity=Decimal("1.00"),
+            unit_price=_q2(unit_price),
+            vat_rate=vat_rate,
+            meta=meta,
+        )
+    )
+    quote_lines.append(
+        QuoteLineIn(
+            line_category="service",
+            line_type="item",
+            master_item_type="activity",
+            master_item_id=activity.id,
+            activity_id=activity.id,
+            code=code,
+            title=title,
+            description=description,
+            duration_minutes=duration,
+            pricing_unit="session",
+            quantity=Decimal("1.00"),
+            vat_rate=vat_rate,
+            unit_price_ttc=_q2(unit_price),
+            sort_order=len(quote_lines),
+            meta=meta,
+        )
+    )
+
+
 def _append_loyalty_discount_line(
     *,
     quote_lines: list[QuoteLineIn],
@@ -2016,6 +2178,23 @@ def _append_automatic_typeform_lines(
 ) -> None:
     pricing_catalog_id = _parse_uuid(runtime_context.get("pricing_catalog_id"))
     resolved_location_id = _parse_uuid(runtime_context.get("location_id"))
+
+    if _bool_or_default(normalized.get("requested_onsite_solfege"), False):
+        activity = _find_solfege_activity(db, onsite=True)
+        if activity is None:
+            warnings.append("Activite automatique introuvable pour Cours de solfege en presentiel.")
+        elif not _quote_lines_contain_solfege_activity(quote_lines, preview_lines):
+            _append_activity_quote_line(
+                db,
+                activity=activity,
+                quote_lines=quote_lines,
+                preview_lines=preview_lines,
+                pricing_catalog_id=pricing_catalog_id,
+                resolved_location_id=resolved_location_id,
+                default_vat_rate=default_vat_rate,
+                warnings=warnings,
+                source="onsite_solfege",
+            )
 
     if _bool_or_default(normalized.get("requested_pass_recup"), False):
         product = _find_pass_recup_product(db)
