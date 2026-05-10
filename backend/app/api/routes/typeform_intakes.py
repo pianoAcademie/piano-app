@@ -24,6 +24,7 @@ from app.api.routes.quotes import (
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, SessionAudienceScope, SessionStatus
 from app.models.family import ClientFamilyLink
 from app.models.ops import LegalEntity
+from app.models.product_catalog import CatalogProduct
 from app.models.quote import (
     PaymentPlan,
     PricingActivityPrice,
@@ -634,6 +635,86 @@ def _fallback_requested_slot_preferences_from_simplified_answers(
     return out
 
 
+def _fallback_solfege_slot_preferences_from_simplified_answers(
+    simplified_answers: list[dict[str, object]],
+    *,
+    requested_location: str | None,
+    segment: str | None,
+) -> list[dict[str, object]]:
+    out: list[dict[str, object]] = []
+    seen: set[tuple[str | None, str | None]] = set()
+    for item in simplified_answers:
+        if not isinstance(item, dict):
+            continue
+        label = _text(item.get("label"))
+        value = _text(item.get("value"))
+        label_token = _normalize_token(label)
+        value_times = _extract_time_tokens(value)
+        value_day = _extract_weekday_label(value)
+        if not value_times or not value_day:
+            continue
+        is_solfege_slot_label = (
+            "solfege" in label_token
+            or re.search(r"\bniveau\s*[1-5]\b", label_token) is not None
+            or "debutant" in label_token
+            or "notion" in label_token
+            or "dechiffrage" in label_token
+        )
+        if not is_solfege_slot_label:
+            continue
+        for child in _normalize_slot_preferences(
+            [value],
+            requested_location=requested_location,
+            segment=segment,
+        ):
+            key = (_text(child.get("day")) or None, _text(child.get("time")) or None)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(child)
+    return out
+
+
+def _truthy_answer_value(value: object | None) -> bool:
+    raw = _normalize_token(value)
+    return raw in {"1", "true", "yes", "oui", "on", "vrai"}
+
+
+def _simplified_bool_answer(
+    simplified_answers: list[dict[str, object]],
+    *,
+    label_tokens: tuple[str, ...],
+) -> bool:
+    for item in simplified_answers:
+        if not isinstance(item, dict):
+            continue
+        label = _normalize_token(item.get("label"))
+        if not label or not all(token in label for token in label_tokens):
+            continue
+        if _truthy_answer_value(item.get("value")):
+            return True
+    return False
+
+
+def _fallback_solfege_level_from_simplified_answers(
+    simplified_answers: list[dict[str, object]],
+) -> str | None:
+    for item in simplified_answers:
+        if not isinstance(item, dict):
+            continue
+        label_token = _normalize_token(item.get("label"))
+        value_token = _normalize_token(item.get("value"))
+        haystack = " ".join(part for part in (label_token, value_token) if part)
+        if not haystack or "ne sais pas" in haystack:
+            continue
+        if not any(token in haystack for token in ("solfege", "niveau", "debutant", "notion", "dechiffrage")):
+            continue
+        match = re.search(r"niveau\s*([1-5])", haystack)
+        if match:
+            return match.group(1)
+    return None
+
+
 def _answer_value(answer: dict[str, object]) -> object:
     if "text" in answer:
         return answer.get("text")
@@ -1017,6 +1098,17 @@ def _normalize_payload(
             requested_location=requested_location,
             segment=config_segment or None,
         )
+    requested_solfege_slot_preferences = _normalize_slot_preferences(
+        _mapped_token_list(answer_map, field_mapping, "requested_solfege_slot_preferences"),
+        requested_location=requested_location,
+        segment=config_segment or None,
+    )
+    if not requested_solfege_slot_preferences:
+        requested_solfege_slot_preferences = _fallback_solfege_slot_preferences_from_simplified_answers(
+            simplified_answers,
+            requested_location=requested_location,
+            segment=config_segment or None,
+        )
     if requested_slot_preferences:
         requested_days = list(
             dict.fromkeys(
@@ -1115,6 +1207,7 @@ def _normalize_payload(
     requested_payment_method = requested_payment_method or _fallback_requested_payment_method(
         requested_products=requested_products,
     )
+    estimated_solfege_level = _fallback_solfege_level_from_simplified_answers(simplified_answers)
     referral_referrer_name = _mapped_scalar_with_fallbacks(
         answer_map,
         field_mapping,
@@ -1130,6 +1223,10 @@ def _normalize_payload(
         ],
     ) or _fallback_referral_referrer_name(simplified_answers)
     referral_category = referral_category_for_location(requested_location)
+    requested_pass_recup = _simplified_bool_answer(simplified_answers, label_tokens=("pass", "recup"))
+    is_reenrollment = _simplified_bool_answer(simplified_answers, label_tokens=("reinscription",))
+    if requested_pass_recup and not any("pass" in _normalize_token(item) and "recup" in _normalize_token(item) for item in requested_products):
+        requested_products.append("Pass Recup")
     address_parts = [
         part
         for part in [
@@ -1167,9 +1264,13 @@ def _normalize_payload(
         "requested_days": requested_days,
         "requested_times": requested_times,
         "requested_slot_preferences": requested_slot_preferences,
+        "requested_solfege_slot_preferences": requested_solfege_slot_preferences,
         "requested_formula_type": requested_formula_type,
         "requested_payment_method": requested_payment_method,
         "requested_products": requested_products,
+        "estimated_solfege_level": estimated_solfege_level,
+        "requested_pass_recup": requested_pass_recup,
+        "is_reenrollment": is_reenrollment,
         "referral_referrer_name": referral_referrer_name,
         "referral_category": referral_category,
         "notes": notes,
@@ -1693,6 +1794,269 @@ def _resolve_form_runtime_context(
     return runtime_context
 
 
+def _catalog_product_haystack(product: CatalogProduct) -> str:
+    return _normalize_token(
+        " ".join(
+            part
+            for part in (
+                product.title,
+                product.barcode,
+                product.short_description,
+                product.long_description,
+            )
+            if _text(part)
+        )
+    )
+
+
+def _find_pass_recup_product(db: Session) -> CatalogProduct | None:
+    rows = db.scalars(
+        select(CatalogProduct)
+        .where(CatalogProduct.active.is_(True))
+        .order_by(CatalogProduct.title.asc())
+    ).all()
+    for row in rows:
+        haystack = _catalog_product_haystack(row)
+        if "passrecup" in haystack.replace(" ", "") or ("pass" in haystack and "recup" in haystack):
+            return row
+    return None
+
+
+def _find_solfege_book_product(db: Session, level_code: str | None) -> CatalogProduct | None:
+    level = _text(level_code)
+    if level not in {"1", "2", "3", "4", "5"}:
+        return None
+    rows = db.scalars(
+        select(CatalogProduct)
+        .where(CatalogProduct.active.is_(True))
+        .order_by(CatalogProduct.title.asc())
+    ).all()
+    candidates: list[CatalogProduct] = []
+    for row in rows:
+        haystack = _catalog_product_haystack(row)
+        if "cahier" not in haystack or "solfege" not in haystack:
+            continue
+        if re.search(rf"\b{re.escape(level)}\b", haystack) or f"niveau {level}" in haystack:
+            candidates.append(row)
+    return candidates[0] if candidates else None
+
+
+def _quote_lines_contain_product(
+    quote_lines: list[QuoteLineIn],
+    *,
+    product: CatalogProduct | None = None,
+    tokens: tuple[str, ...] = (),
+) -> bool:
+    product_id = product.id if product is not None else None
+    for line in quote_lines:
+        if product_id is not None and line.product_id == product_id:
+            return True
+        haystack = _normalize_token(" ".join(part for part in (line.code, line.title, line.description) if _text(part)))
+        if tokens and all(token in haystack for token in tokens):
+            return True
+    return False
+
+
+def _preview_line_from_quote_line(
+    line_in: QuoteLineIn,
+    *,
+    code: str | None,
+    title: str,
+    description: str | None,
+    quantity: Decimal,
+    unit_price: Decimal,
+    vat_rate: Decimal,
+    meta: dict[str, object],
+) -> TypeformQuotePreviewLineOut:
+    signed_unit_price = _q2(unit_price)
+    if line_in.line_type == "discount":
+        signed_unit_price = _q2(-abs(signed_unit_price))
+    elif line_in.line_type == "surcharge":
+        signed_unit_price = _q2(abs(signed_unit_price))
+    unit_price_ht, unit_vat_amount = _split_ttc(signed_unit_price, vat_rate)
+    amount_ht = _q2(unit_price_ht * quantity)
+    amount_vat = _q2(unit_vat_amount * quantity)
+    amount_ttc = _q2(amount_ht + amount_vat)
+    return TypeformQuotePreviewLineOut(
+        line_category=line_in.line_category,
+        line_type=line_in.line_type,
+        master_item_type=line_in.master_item_type,
+        master_item_id=line_in.master_item_id,
+        activity_id=line_in.activity_id,
+        product_id=line_in.product_id,
+        kit_id=line_in.kit_id,
+        code=code,
+        title=title,
+        description=description,
+        pricing_unit=line_in.pricing_unit,
+        quantity=_q2(quantity),
+        vat_rate=vat_rate,
+        unit_price_ht=unit_price_ht,
+        unit_vat_amount=unit_vat_amount,
+        unit_price_ttc=signed_unit_price,
+        amount_ht=amount_ht,
+        amount_vat=amount_vat,
+        amount_ttc=amount_ttc,
+        meta=meta,
+    )
+
+
+def _append_catalog_product_quote_line(
+    db: Session,
+    *,
+    product: CatalogProduct,
+    quote_lines: list[QuoteLineIn],
+    preview_lines: list[TypeformQuotePreviewLineOut],
+    pricing_catalog_id: UUID | None,
+    resolved_location_id: UUID | None,
+    default_vat_rate: Decimal,
+    source: str,
+) -> None:
+    line_in = QuoteLineIn(
+        line_category="product",
+        line_type="item",
+        master_item_type="product",
+        master_item_id=product.id,
+        product_id=product.id,
+        title=product.title,
+        quantity=Decimal("1.00"),
+        vat_rate=default_vat_rate,
+        unit_price_ttc=Decimal("0.00"),
+        pricing_unit="item",
+        sort_order=len(quote_lines),
+        meta={"typeform_automatic_line": source},
+    )
+    code, title, description, _duration, unit_price, meta = _effective_item_price(
+        db,
+        line=line_in,
+        pricing_catalog_id=pricing_catalog_id,
+        location_id=resolved_location_id,
+    )
+    meta = {**dict(meta), "typeform_automatic_line": source}
+    vat_rate = _q3(line_in.vat_rate if line_in.vat_rate is not None else product.vat_rate or default_vat_rate)
+    preview_lines.append(
+        _preview_line_from_quote_line(
+            line_in,
+            code=code,
+            title=title,
+            description=description,
+            quantity=Decimal("1.00"),
+            unit_price=_q2(unit_price),
+            vat_rate=vat_rate,
+            meta=meta,
+        )
+    )
+    quote_lines.append(
+        QuoteLineIn(
+            line_category="product",
+            line_type="item",
+            master_item_type="product",
+            master_item_id=product.id,
+            product_id=product.id,
+            code=code,
+            title=title,
+            description=description,
+            pricing_unit="item",
+            quantity=Decimal("1.00"),
+            vat_rate=vat_rate,
+            unit_price_ttc=_q2(unit_price),
+            sort_order=len(quote_lines),
+            meta=meta,
+        )
+    )
+
+
+def _append_loyalty_discount_line(
+    *,
+    quote_lines: list[QuoteLineIn],
+    preview_lines: list[TypeformQuotePreviewLineOut],
+    default_vat_rate: Decimal,
+) -> None:
+    if _quote_lines_contain_product(quote_lines, tokens=("remise", "fidelite")):
+        return
+    amount = Decimal("2.00")
+    line_in = QuoteLineIn(
+        line_category="service",
+        line_type="discount",
+        master_item_type="discount_rule",
+        title="Remise fidélité",
+        quantity=Decimal("1.00"),
+        vat_rate=default_vat_rate,
+        unit_price_ttc=amount,
+        pricing_unit="fixed",
+        sort_order=len(quote_lines),
+        meta={"typeform_automatic_line": "loyalty_discount", "discount_kind": "loyalty"},
+    )
+    meta = dict(line_in.meta)
+    preview_lines.append(
+        _preview_line_from_quote_line(
+            line_in,
+            code=None,
+            title=line_in.title,
+            description=None,
+            quantity=Decimal("1.00"),
+            unit_price=amount,
+            vat_rate=_q3(default_vat_rate),
+            meta=meta,
+        )
+    )
+    quote_lines.append(line_in)
+
+
+def _append_automatic_typeform_lines(
+    db: Session,
+    *,
+    normalized: dict[str, object],
+    runtime_context: dict[str, object],
+    preview_lines: list[TypeformQuotePreviewLineOut],
+    quote_lines: list[QuoteLineIn],
+    warnings: list[str],
+    default_vat_rate: Decimal,
+) -> None:
+    pricing_catalog_id = _parse_uuid(runtime_context.get("pricing_catalog_id"))
+    resolved_location_id = _parse_uuid(runtime_context.get("location_id"))
+
+    if _bool_or_default(normalized.get("requested_pass_recup"), False):
+        product = _find_pass_recup_product(db)
+        if product is None:
+            warnings.append("Produit automatique introuvable pour Pass Recup.")
+        elif not _quote_lines_contain_product(quote_lines, product=product, tokens=("pass", "recup")):
+            _append_catalog_product_quote_line(
+                db,
+                product=product,
+                quote_lines=quote_lines,
+                preview_lines=preview_lines,
+                pricing_catalog_id=pricing_catalog_id,
+                resolved_location_id=resolved_location_id,
+                default_vat_rate=default_vat_rate,
+                source="pass_recup",
+            )
+
+    level_code = _text(normalized.get("estimated_solfege_level"))
+    if level_code in {"1", "2", "3", "4", "5"}:
+        product = _find_solfege_book_product(db, level_code)
+        if product is None:
+            warnings.append(f"Produit automatique introuvable pour Cahier de solfege niveau {level_code}.")
+        elif not _quote_lines_contain_product(quote_lines, product=product, tokens=("cahier", "solfege")):
+            _append_catalog_product_quote_line(
+                db,
+                product=product,
+                quote_lines=quote_lines,
+                preview_lines=preview_lines,
+                pricing_catalog_id=pricing_catalog_id,
+                resolved_location_id=resolved_location_id,
+                default_vat_rate=default_vat_rate,
+                source=f"solfege_book_level_{level_code}",
+            )
+
+    if _bool_or_default(normalized.get("is_reenrollment"), False):
+        _append_loyalty_discount_line(
+            quote_lines=quote_lines,
+            preview_lines=preview_lines,
+            default_vat_rate=default_vat_rate,
+        )
+
+
 def _build_preview_lines(
     db: Session,
     *,
@@ -1842,6 +2206,16 @@ def _build_preview_lines(
                 meta=meta,
             )
         )
+
+    _append_automatic_typeform_lines(
+        db,
+        normalized=normalized,
+        runtime_context=runtime_context,
+        preview_lines=preview_lines,
+        quote_lines=quote_lines,
+        warnings=warnings,
+        default_vat_rate=default_vat_rate,
+    )
 
     if not preview_lines:
         blockages.append("Le pre-devis est vide car aucune ligne exploitable n a ete resolue.")
@@ -2283,6 +2657,10 @@ def _extract_estimated_solfege_level(
     if not any("solfege" in _normalize_token(item.activity_name) for item in session_recommendations):
         return None
 
+    normalized_level = _text(normalized.get("estimated_solfege_level"))
+    if normalized_level in {"1", "2", "3", "4", "5"}:
+        return normalized_level
+
     candidates = [
         _text(item)
         for item in _json_list(normalized.get("requested_products"))
@@ -2337,6 +2715,33 @@ def _recurrence_frequency_from_rule(value: object | None) -> str:
     if frequency_raw == "WEEKLY" and interval == 2:
         return "biweekly"
     return "weekly"
+
+
+def _slot_filters_from_preferences(
+    preferences: list[object],
+) -> tuple[set[int], list[int], list[dict[str, int | None]]]:
+    requested_days = {_weekday_from_label(_json_object(item).get("day")) for item in preferences if isinstance(item, dict)}
+    requested_days.discard(None)
+    requested_times = [
+        _minutes_from_hhmm(_text(_json_object(item).get("time")))
+        for item in preferences
+        if isinstance(item, dict)
+    ]
+    requested_times = [value for value in requested_times if value is not None]
+    requested_slot_preferences = [
+        {
+            "day": _weekday_from_label(_json_object(item).get("day")),
+            "time": _minutes_from_hhmm(_text(_json_object(item).get("time"))),
+        }
+        for item in preferences
+        if isinstance(item, dict)
+    ]
+    requested_slot_preferences = [
+        item
+        for item in requested_slot_preferences
+        if item["day"] is not None or item["time"] is not None
+    ]
+    return requested_days, requested_times, requested_slot_preferences
 
 
 def _modality_from_delivery_mode(value: DeliveryMode | str | None) -> str | None:
@@ -2443,19 +2848,14 @@ def _build_session_recommendations(
     requested_days.discard(None)
     requested_times = [_minutes_from_hhmm(_text(value)) for value in _json_list(normalized.get("requested_times"))]
     requested_times = [value for value in requested_times if value is not None]
-    requested_slot_preferences = [
-        {
-            "day": _weekday_from_label(_json_object(item).get("day")),
-            "time": _minutes_from_hhmm(_text(_json_object(item).get("time"))),
-        }
-        for item in _json_list(normalized.get("requested_slot_preferences"))
-        if isinstance(item, dict)
-    ]
-    requested_slot_preferences = [
-        item
-        for item in requested_slot_preferences
-        if item["day"] is not None or item["time"] is not None
-    ]
+    _, _, requested_slot_preferences = _slot_filters_from_preferences(
+        _json_list(normalized.get("requested_slot_preferences"))
+    )
+    (
+        solfege_requested_days,
+        solfege_requested_times,
+        solfege_requested_slot_preferences,
+    ) = _slot_filters_from_preferences(_json_list(normalized.get("requested_solfege_slot_preferences")))
     manual_rows = db.execute(
         manual_rows_stmt.order_by(CourseSession.start_at_utc.asc()).limit(250)
     ).all()
@@ -2477,6 +2877,13 @@ def _build_session_recommendations(
             line,
             runtime_context=runtime_context,
         )
+        line_is_solfege = "solfege" in _normalize_token(_preview_line_haystack(line))
+        line_uses_solfege_slot_request = bool(line_is_solfege and solfege_requested_slot_preferences)
+        effective_requested_days = solfege_requested_days if line_uses_solfege_slot_request else requested_days
+        effective_requested_times = solfege_requested_times if line_uses_solfege_slot_request else requested_times
+        effective_requested_slot_preferences = (
+            solfege_requested_slot_preferences if line_uses_solfege_slot_request else requested_slot_preferences
+        )
         activity_rows = by_activity.get(line.activity_id, [])
         option_rows: list[tuple[CourseSession, TypeformSessionMatchOptionOut]] = []
         for session_obj, activity, location, booked_count in activity_rows:
@@ -2490,9 +2897,9 @@ def _build_session_recommendations(
                 config=config,
                 requested_location=requested_location,
                 resolved_location_id=resolved_location_id,
-                requested_slot_preferences=requested_slot_preferences,
-                requested_days=requested_days,
-                requested_times=requested_times,
+                requested_slot_preferences=effective_requested_slot_preferences,
+                requested_days=effective_requested_days,
+                requested_times=effective_requested_times,
             )
             if option is not None:
                 option_rows.append((session_obj, option))
@@ -2505,7 +2912,11 @@ def _build_session_recommendations(
         available_options = [item for item in options if not item.is_full]
         option_session_ids = {item.session_id for item in options}
         manual_options: list[TypeformSessionMatchOptionOut] = []
-        has_explicit_slot_request = bool(requested_slot_preferences or requested_days or requested_times)
+        has_explicit_slot_request = bool(
+            effective_requested_slot_preferences
+            or effective_requested_days
+            or effective_requested_times
+        )
         if (
             not has_explicit_slot_request
             and (not options or (selected_session_id is not None and selected_session_id not in option_session_ids))
@@ -2528,9 +2939,9 @@ def _build_session_recommendations(
                     config=config,
                     requested_location=requested_location,
                     resolved_location_id=resolved_location_id,
-                    requested_slot_preferences=requested_slot_preferences,
-                    requested_days=requested_days,
-                    requested_times=requested_times,
+                    requested_slot_preferences=effective_requested_slot_preferences,
+                    requested_days=effective_requested_days,
+                    requested_times=effective_requested_times,
                     include_activity_in_label=True,
                     extra_reasons=[f"activite differente: {activity.name}"],
                     allow_low_score=True,
@@ -2620,6 +3031,16 @@ def _build_session_recommendations(
 
         if selected_session_id is None and available_options and summary_status in {"ideal_available", "full_with_alternative"}:
             selected_session_id = available_options[0].session_id
+        if (
+            selected_session_id is None
+            and available_options
+            and line_is_solfege
+            and line_uses_solfege_slot_request
+            and summary_status == "selection_deferred"
+        ):
+            selected_session_id = available_options[0].session_id
+            summary_status = "proposed_match"
+            summary_label = "Creneau solfege propose"
 
         line_meta = _json_object(line.meta)
         display_activity_name = _text(line_meta.get("activity_name")) or line.title
@@ -3419,6 +3840,8 @@ def _ensure_form_config(
                 "line_templates": line_templates,
                 "default_vat_rate": "20.00",
                 "default_course_mode": "onsite",
+                "default_pre_registration_deposit_enabled": True,
+                "default_pre_registration_deposit_amount_ttc": "200.00",
             },
             is_active=True,
             created_at=_utcnow(),
@@ -3608,6 +4031,20 @@ def _quote_meta_from_analysis(
                 for item in session_recommendations
             ],
         },
+    }
+
+
+def _default_pre_registration_deposit_from_config(config: TypeformFormConfig) -> dict[str, object] | None:
+    config_json = _json_object(config.configuration_json)
+    enabled = _bool_or_default(config_json.get("default_pre_registration_deposit_enabled"), True)
+    if not enabled:
+        return None
+    amount = _q2(_parse_decimal(config_json.get("default_pre_registration_deposit_amount_ttc"), Decimal("200.00")))
+    if amount <= Decimal("0.00"):
+        amount = Decimal("200.00")
+    return {
+        "enabled": True,
+        "amount_ttc": str(amount),
     }
 
 
@@ -4140,6 +4577,12 @@ def create_draft_quote_from_typeform_intake(
         session_recommendations=analysis["session_recommendations"],
         runtime_context=_json_object(analysis.get("runtime_context")),
     )
+    default_deposit = _default_pre_registration_deposit_from_config(config)
+    if default_deposit is not None:
+        quote_meta["pre_registration_deposit"] = default_deposit
+    if _bool_or_default(normalized.get("requested_pass_recup"), False):
+        quote_meta["pass_recup_mode"] = "enabled"
+        quote_meta["pass_recup_enabled"] = True
     if pending_arbitrage_warning:
         quote_meta["typeform_pending_arbitrage_at_creation"] = True
         quote_meta["typeform_creation_warning"] = pending_arbitrage_warning

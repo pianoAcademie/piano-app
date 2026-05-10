@@ -242,6 +242,64 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
                 },
             ],
         )
+        self.assertEqual(
+            normalized["requested_solfege_slot_preferences"],
+            [
+                {
+                    "day": "mercredi",
+                    "time": "18:05",
+                    "location": "Paris 01 - Rue Richelieu",
+                    "segment": "enfants",
+                }
+            ],
+        )
+
+    def test_normalize_payload_detects_pass_recup_reenrollment_and_solfege_level(self) -> None:
+        config = SimpleNamespace(
+            configuration_json={"field_mapping": {}, "field_labels": {}},
+            audience_segment="enfants",
+            location_code="paris_richelieu",
+        )
+        payload = {
+            "form_response": {
+                "answers": [
+                    {
+                        "field": {"id": "reenrollment", "title": "S'agit-il d'une réinscription ?"},
+                        "boolean": True,
+                    },
+                    {
+                        "field": {"id": "pass-rec", "title": "Pass Récup'"},
+                        "boolean": True,
+                    },
+                    {
+                        "field": {"id": "solfege-level-estimate", "title": "Estimation du niveau de votre enfant en solfège"},
+                        "choice": {"label": "Très bonnes notions de solfège - Niveau 4"},
+                    },
+                    {
+                        "field": {"id": "solfege-slot", "title": "Niveau 4"},
+                        "choice": {"label": "jeudi - 18h50"},
+                    },
+                ]
+            }
+        }
+
+        normalized, _ = _normalize_payload(payload=payload, config=config)
+
+        self.assertTrue(normalized["requested_pass_recup"])
+        self.assertTrue(normalized["is_reenrollment"])
+        self.assertIn("Pass Recup", normalized["requested_products"])
+        self.assertEqual(normalized["estimated_solfege_level"], "4")
+        self.assertEqual(
+            normalized["requested_solfege_slot_preferences"],
+            [
+                {
+                    "day": "jeudi",
+                    "time": "18:50",
+                    "location": "paris_richelieu",
+                    "segment": "enfants",
+                }
+            ],
+        )
 
     def test_option_does_not_mark_other_site_as_preferred_when_location_is_resolved(self) -> None:
         preferred_location_id = uuid4()

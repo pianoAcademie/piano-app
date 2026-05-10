@@ -248,7 +248,7 @@ QUOTE_TEMPLATE_VARIABLES: tuple[QuoteTemplateVariableDef, ...] = (
         "key": "financial_adjustment_label",
         "label": "Libelle ajustement",
         "description": "Libelle libre associe a l ajustement.",
-        "example": "Avoir fidelite",
+        "example": "Avoir fidélité",
     },
     {
         "key": "financial_adjustment_block_html",

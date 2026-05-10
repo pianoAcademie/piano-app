@@ -3599,7 +3599,7 @@ def _forfait_adjustments_grouped_by_type(
         if second_course_weekly_applies and second_course_weekly_discount > effective_loyalty_discount:
             effective_loyalty_discount = second_course_weekly_discount
         if include_discounts and effective_loyalty_discount > Decimal("0.00"):
-            key = ("Remise 2e cours semaine", currency) if second_course_weekly_applies else ("Remise fidelite", currency)
+            key = ("Remise 2e cours semaine", currency) if second_course_weekly_applies else ("Remise fidélité", currency)
             totals[key] = _quantize_money(
                 totals.get(key, Decimal("0.00")) - _quantize_money(effective_loyalty_discount * duration_hours)
             )
@@ -5983,7 +5983,7 @@ def update_admin_client_forfait_pricing(
             continue
         details.append(
             f"{activity_name_by_id.get(course_type_id, str(course_type_id))}: "
-            f"fidelite -{loyalty_discount:.2f}, famille -{family_discount:.2f}, "
+            f"fidélité -{loyalty_discount:.2f}, famille -{family_discount:.2f}, "
             f"2e cours semaine -{second_course_weekly_discount:.2f}, engagement court +{short_commitment_supplement:.2f}"
         )
     detail_suffix = " | ".join(details) if details else "aucune surcouche (valeurs a 0)."
