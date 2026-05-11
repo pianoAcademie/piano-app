@@ -801,7 +801,9 @@ def _select_eligible_subscription(
     now: datetime,
     requested_subscription_id: UUID | None,
     allowed_plan_kinds: set[PlanKind] | None = None,
+    coverage_at: datetime | None = None,
 ) -> tuple[ClientPlanSubscription, Plan] | None:
+    eligibility_at = coverage_at or now
     course_type = db.scalar(select(CourseType).where(CourseType.id == course_type_id))
     credit_type_id = course_type.credit_type_id if course_type is not None else None
     course_type_name = course_type.name if course_type is not None else None
@@ -817,8 +819,8 @@ def _select_eligible_subscription(
                 SubscriptionStatus.PAYMENT_ALERT,
                 SubscriptionStatus.PAUSED,
             ]),
-            ClientPlanSubscription.started_at <= now,
-            or_(ClientPlanSubscription.ends_at.is_(None), ClientPlanSubscription.ends_at > now),
+            ClientPlanSubscription.started_at <= eligibility_at,
+            or_(ClientPlanSubscription.ends_at.is_(None), ClientPlanSubscription.ends_at > eligibility_at),
             Plan.active.is_(True),
         )
         .order_by(
@@ -853,7 +855,7 @@ def _select_eligible_subscription(
             db.add(subscription)
         if plan.kind == PlanKind.PACK and (subscription.credits_remaining is None or subscription.credits_remaining <= 0):
             continue
-        if not _is_subscription_active(subscription, plan, now):
+        if not _is_subscription_active(subscription, plan, eligibility_at):
             continue
         return subscription, plan
 
@@ -1213,6 +1215,7 @@ def _book_session_internal(
         now=now,
         requested_subscription_id=payload.client_plan_subscription_id,
         allowed_plan_kinds=allowed_plan_kinds,
+        coverage_at=session_obj.start_at_utc,
     )
     subscription: ClientPlanSubscription | None = None
     plan: Plan | None = None

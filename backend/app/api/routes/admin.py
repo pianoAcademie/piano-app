@@ -3226,6 +3226,7 @@ def add_admin_session_booking(
                 course_type_id=target.course_type_id,
                 now=now,
                 requested_subscription_id=payload.client_plan_subscription_id,
+                coverage_at=target.start_at_utc,
             )
             force_allowed = planning_force_cache.get(target.location_id)
             if force_allowed is None:
