@@ -3444,6 +3444,20 @@ def _ensure_quote_editable(quote: Quote) -> None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote is immutable once sent")
 
 
+def _apply_quote_expiry_days_update(
+    quote: Quote,
+    expiry_days: int,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    next_expiry_days = int(expiry_days)
+    if int(quote.expiry_days or 0) == next_expiry_days:
+        return False
+    quote.expiry_days = next_expiry_days
+    quote.expires_at = (now or _utcnow()) + timedelta(days=next_expiry_days)
+    return True
+
+
 def _ensure_public_token(quote: Quote) -> None:
     if not quote.public_token:
         quote.public_token = _new_token()
@@ -4066,9 +4080,7 @@ def update_quote(
         row.meta = {**(row.meta or {}), "tva_rate": str(payload.vat_rate)}
         document_dirty = True
     if payload.expiry_days is not None:
-        row.expiry_days = int(payload.expiry_days)
-        row.expires_at = _utcnow() + timedelta(days=int(payload.expiry_days))
-        document_dirty = True
+        document_dirty = _apply_quote_expiry_days_update(row, int(payload.expiry_days)) or document_dirty
     if "estimated_solfege_level" in payload.model_fields_set:
         next_solfege_level = str(payload.estimated_solfege_level or "").strip() or None
         row.estimated_solfege_level = next_solfege_level
