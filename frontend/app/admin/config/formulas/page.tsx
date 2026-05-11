@@ -208,6 +208,12 @@ export default async function AdminFormulasPage({ searchParams }: { searchParams
     .sort((left, right) => left.name.localeCompare(right.name, localeForUiLanguage(language)));
 
   const currentHref = buildFormulasHref(params, {});
+  const formulaStats = {
+    total: formulas.length,
+    active: formulas.filter((formula) => formula.active).length,
+    public: formulas.filter((formula) => !formula.is_private).length,
+    diffusionEnabled: formulas.filter((formula) => formulaDiffusionStatus(formula, language).enabled).length,
+  };
 
   return (
     <main className="stack admin-formulas-page">
@@ -231,6 +237,27 @@ export default async function AdminFormulasPage({ searchParams }: { searchParams
       {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
       {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
       {loadError ? <section className="flash-err">{t("admin.formulas.load_error", { message: loadError })}</section> : null}
+
+      <section className="card">
+        <div className="config-metric-grid">
+          <article>
+            <span>{t("admin.config.metrics.total")}</span>
+            <strong>{formulaStats.total}</strong>
+          </article>
+          <article>
+            <span>{t("common.active")}</span>
+            <strong>{formulaStats.active}</strong>
+          </article>
+          <article>
+            <span>{t("admin.formulas.visibility_public")}</span>
+            <strong>{formulaStats.public}</strong>
+          </article>
+          <article>
+            <span>{t("admin.formulas.diffusion")}</span>
+            <strong>{formulaStats.diffusionEnabled}</strong>
+          </article>
+        </div>
+      </section>
 
       <section className="card">
         <form method="get" className="row formulas-admin-filters">

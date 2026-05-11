@@ -877,6 +877,12 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
       })();
   const activeCatalogCategories = catalogCategories.filter((row) => row.active);
   const activeCatalogProducts = catalogProducts.filter((row) => row.active);
+  const activityStats = {
+    total: activities.length,
+    active: activities.filter((activity) => activity.active).length,
+    online: activities.filter((activity) => activity.mode === "ONLINE").length,
+    unpriced: activities.filter((activity) => !activity.default_course_rate_ttc && !activity.default_hourly_rate).length,
+  };
 
   const accountAllowedCurrencies = account?.allowed_currencies?.length ? account.allowed_currencies : ["EUR", "USD"];
   const accountDefaultCurrency =
@@ -914,10 +920,19 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const selectedLegalEntityId = readParam(params, "legal_entity_id");
   const selectedLegalEntity = legalEntities.find((entity) => entity.id === selectedLegalEntityId) ?? null;
   const activeLegalEntities = legalEntities.filter((entity) => entity.is_active);
+  const legalEntityStats = {
+    total: legalEntities.length,
+    active: activeLegalEntities.length,
+  };
   const createCreditTypeModalOpen = readParam(params, "new_credit_type") === "1";
   const selectedCreditTypeId = readParam(params, "credit_type_id");
   const selectedCreditType = creditTypes.find((creditType) => creditType.id === selectedCreditTypeId) ?? null;
   const activeCreditTypes = creditTypes.filter((creditType) => creditType.active);
+  const creditTypeStats = {
+    total: creditTypes.length,
+    active: activeCreditTypes.length,
+    unlinked: creditTypes.filter((creditType) => creditType.activity_count === 0).length,
+  };
   const messagingTab = parseMessagingTab(readParam(params, "messaging_tab"));
   const messagingModalMode = readParam(params, "messaging_modal");
   const newCustomTemplateChannelRaw = readParam(params, "new_template_channel").toUpperCase();
@@ -3385,73 +3400,6 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
             <>
               <section className="card">
                 <div className="row between">
-                  <h3>{t("admin.activities.wordpress_title")}</h3>
-                  <small className="muted">
-                    {externalContentSettings.bearer_token_configured
-                      ? t("admin.activities.token_configured")
-                      : t("admin.activities.token_not_configured")}
-                  </small>
-                </div>
-                <p className="muted">{t("admin.activities.wordpress_help")}</p>
-                <form action={updateAdminConfigExternalContentSettingsAction} className="grid cols-2 config-form-grid">
-                  <label>
-                    {t("admin.activities.wordpress_site_url")}
-                    <input
-                      type="url"
-                      name="base_url"
-                      defaultValue={externalContentSettings.base_url}
-                      placeholder={t("admin.activities.wordpress_site_placeholder")}
-                    />
-                  </label>
-                  <label>
-                    {t("admin.activities.courses_endpoint")}
-                    <input
-                      type="url"
-                      name="courses_endpoint"
-                      defaultValue={externalContentSettings.courses_endpoint}
-                      placeholder={t("admin.activities.courses_endpoint_placeholder")}
-                    />
-                    <small className="muted">{t("admin.activities.endpoint_fallback_help")}</small>
-                  </label>
-                  <label>
-                    {t("admin.activities.bearer_token")}
-                    <input type="password" name="bearer_token" placeholder={t("admin.activities.bearer_token_placeholder")} />
-                    <small className="muted">
-                      {externalContentSettings.bearer_token_configured
-                        ? t("admin.activities.current_token", { token: externalContentSettings.bearer_token_masked })
-                        : t("admin.activities.no_token")}
-                    </small>
-                  </label>
-                  <label>
-                    {t("admin.activities.timeout_seconds")}
-                    <input
-                      type="number"
-                      name="timeout_seconds"
-                      min={5}
-                      max={120}
-                      defaultValue={externalContentSettings.timeout_seconds}
-                      required
-                    />
-                  </label>
-                  <label className="row center gap-sm">
-                    <input type="checkbox" name="clear_bearer_token" />
-                    <span>{t("admin.activities.clear_token")}</span>
-                  </label>
-                  <div className="item">
-                    <strong>{t("admin.activities.endpoint_used")}</strong>
-                    <p className="muted top-gap-sm">{externalContentSettings.resolved_endpoint_url ?? t("admin.activities.endpoint_missing")}</p>
-                    <p className="muted">
-                      {t("admin.activities.wordpress_plugin")} <code>wordpress/plugins/piano-academie-learndash-bridge</code>
-                    </p>
-                  </div>
-                  <div className="span-2 row end">
-                    <button type="submit">{t("admin.activities.save_connection")}</button>
-                  </div>
-                </form>
-              </section>
-
-              <section className="card">
-                <div className="row between">
                   <h3>{t("admin.activities.catalog_title")}</h3>
                   <div className="row wrap gap-sm">
                     <form action={syncAdminExternalContentCatalogAction}>
@@ -3468,6 +3416,24 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                 <p className="muted">
                   <strong>{externalContentCourses.length}</strong> {t("admin.activities.synced_catalog_suffix")}
                 </p>
+                <div className="config-metric-grid">
+                  <article>
+                    <span>{t("admin.config.metrics.total")}</span>
+                    <strong>{activityStats.total}</strong>
+                  </article>
+                  <article>
+                    <span>{t("common.active")}</span>
+                    <strong>{activityStats.active}</strong>
+                  </article>
+                  <article>
+                    <span>{t("admin.professor_detail.mode_online")}</span>
+                    <strong>{activityStats.online}</strong>
+                  </article>
+                  <article className={activityStats.unpriced > 0 ? "is-warning" : ""}>
+                    <span>{t("admin.config.metrics.unpriced")}</span>
+                    <strong>{activityStats.unpriced}</strong>
+                  </article>
+                </div>
                 {activeCreditTypes.length === 0 ? <p className="flash-err">{t("admin.credit_types.no_active_for_activities")}</p> : null}
                 {activeLegalEntities.length === 0 ? (
                   <p className="flash-err">{t("admin.legal_entities.no_active_for_activities")}</p>
@@ -3562,6 +3528,75 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   </div>
                 )}
               </section>
+
+              <details className="card config-technical-details">
+                <summary>
+                  <span>
+                    <strong>{t("admin.activities.wordpress_title")}</strong>
+                    <small className="muted">{t("admin.activities.wordpress_help")}</small>
+                  </span>
+                  <span className="status-pill status-info">
+                    {externalContentSettings.bearer_token_configured
+                      ? t("admin.activities.token_configured")
+                      : t("admin.activities.token_not_configured")}
+                  </span>
+                </summary>
+                <form action={updateAdminConfigExternalContentSettingsAction} className="grid cols-2 config-form-grid top-gap-sm">
+                  <label>
+                    {t("admin.activities.wordpress_site_url")}
+                    <input
+                      type="url"
+                      name="base_url"
+                      defaultValue={externalContentSettings.base_url}
+                      placeholder={t("admin.activities.wordpress_site_placeholder")}
+                    />
+                  </label>
+                  <label>
+                    {t("admin.activities.courses_endpoint")}
+                    <input
+                      type="url"
+                      name="courses_endpoint"
+                      defaultValue={externalContentSettings.courses_endpoint}
+                      placeholder={t("admin.activities.courses_endpoint_placeholder")}
+                    />
+                    <small className="muted">{t("admin.activities.endpoint_fallback_help")}</small>
+                  </label>
+                  <label>
+                    {t("admin.activities.bearer_token")}
+                    <input type="password" name="bearer_token" placeholder={t("admin.activities.bearer_token_placeholder")} />
+                    <small className="muted">
+                      {externalContentSettings.bearer_token_configured
+                        ? t("admin.activities.current_token", { token: externalContentSettings.bearer_token_masked })
+                        : t("admin.activities.no_token")}
+                    </small>
+                  </label>
+                  <label>
+                    {t("admin.activities.timeout_seconds")}
+                    <input
+                      type="number"
+                      name="timeout_seconds"
+                      min={5}
+                      max={120}
+                      defaultValue={externalContentSettings.timeout_seconds}
+                      required
+                    />
+                  </label>
+                  <label className="row center gap-sm">
+                    <input type="checkbox" name="clear_bearer_token" />
+                    <span>{t("admin.activities.clear_token")}</span>
+                  </label>
+                  <div className="item">
+                    <strong>{t("admin.activities.endpoint_used")}</strong>
+                    <p className="muted top-gap-sm">{externalContentSettings.resolved_endpoint_url ?? t("admin.activities.endpoint_missing")}</p>
+                    <p className="muted">
+                      {t("admin.activities.wordpress_plugin")} <code>wordpress/plugins/piano-academie-learndash-bridge</code>
+                    </p>
+                  </div>
+                  <div className="span-2 row end">
+                    <button type="submit">{t("admin.activities.save_connection")}</button>
+                  </div>
+                </form>
+              </details>
 
               {createActivityModalOpen ? (
                 <section className="modal-overlay">
@@ -4249,6 +4284,20 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     {t("admin.legal_entities.add")}
                   </Link>
                 </div>
+                <div className="config-metric-grid">
+                  <article>
+                    <span>{t("admin.config.metrics.total")}</span>
+                    <strong>{legalEntityStats.total}</strong>
+                  </article>
+                  <article>
+                    <span>{t("common.active")}</span>
+                    <strong>{legalEntityStats.active}</strong>
+                  </article>
+                  <article className={legalEntityStats.active === 0 ? "is-warning" : ""}>
+                    <span>{t("admin.config.metrics.ready_for_billing")}</span>
+                    <strong>{legalEntityStats.active > 0 ? t("common.yes") : t("common.no")}</strong>
+                  </article>
+                </div>
               </section>
 
               <section className="card">
@@ -4570,6 +4619,20 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                   <Link className="mode-link" href={buildConfigHref("credit-types", { new_credit_type: "1" })}>
                     {t("admin.credit_types.add")}
                   </Link>
+                </div>
+                <div className="config-metric-grid">
+                  <article>
+                    <span>{t("admin.config.metrics.total")}</span>
+                    <strong>{creditTypeStats.total}</strong>
+                  </article>
+                  <article>
+                    <span>{t("common.active")}</span>
+                    <strong>{creditTypeStats.active}</strong>
+                  </article>
+                  <article className={creditTypeStats.unlinked > 0 ? "is-warning" : ""}>
+                    <span>{t("admin.config.metrics.unlinked")}</span>
+                    <strong>{creditTypeStats.unlinked}</strong>
+                  </article>
                 </div>
               </section>
 

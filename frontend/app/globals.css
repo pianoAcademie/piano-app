@@ -5816,6 +5816,74 @@ button.danger:focus-visible {
   gap: 14px;
 }
 
+.config-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.config-metric-grid article {
+  display: grid;
+  gap: 3px;
+  border: 1px solid #ead8bd;
+  border-radius: 10px;
+  background: #fffaf2;
+  padding: 10px 12px;
+}
+
+.config-metric-grid article.is-warning {
+  background: #fff5df;
+  border-color: #e9c98e;
+}
+
+.config-metric-grid span {
+  color: #7a6b5b;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.config-metric-grid strong {
+  color: #2f261d;
+  font-size: 1.22rem;
+  line-height: 1.1;
+}
+
+.config-technical-details > summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  list-style: none;
+}
+
+.config-technical-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.config-technical-details > summary::after {
+  content: "+";
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  color: #4a3922;
+  font-weight: 800;
+}
+
+.config-technical-details[open] > summary::after {
+  content: "-";
+}
+
+.config-technical-details > summary > span:first-child {
+  display: grid;
+  gap: 3px;
+}
+
 .config-error-list {
   margin: 10px 0 0;
   padding: 0;

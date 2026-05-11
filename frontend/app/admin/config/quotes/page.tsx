@@ -975,6 +975,15 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
   const selectedTypeformConfigs = selectedCatalog
     ? typeformFormConfigs.filter((config) => config.default_pricing_catalog_id === selectedCatalog.id)
     : [];
+  const quoteConfigMetrics = [
+    { label: t("admin.quote_config.nav_types"), value: quoteTypes.length },
+    { label: t("admin.quote_config.nav_catalogs"), value: catalogs.filter((row) => row.is_active).length },
+    { label: t("admin.quote_config.nav_payment_plans"), value: paymentPlans.filter((row) => row.is_active).length },
+    { label: t("admin.quote_config.nav_doc_templates"), value: quoteTemplatesV2.filter((row) => row.is_active).length },
+    { label: t("admin.quote_config.nav_doc_terms"), value: termsTemplates.filter((row) => row.is_active).length },
+    { label: t("admin.quote_config.nav_doc_bindings"), value: quoteDocumentBindings.length },
+    { label: t("admin.quote_config.nav_solfege"), value: solfegeRules.length },
+  ];
 
   return (
     <section className="admin-page-grid">
@@ -1040,6 +1049,14 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
             </section>
           ))}
         </nav>
+        <div className="config-metric-grid">
+          {quoteConfigMetrics.map((metric) => (
+            <article key={metric.label}>
+              <span>{metric.label}</span>
+              <strong>{metric.value}</strong>
+            </article>
+          ))}
+        </div>
       </section>
 
       {tab === "types" ? (
