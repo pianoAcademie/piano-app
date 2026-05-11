@@ -87,11 +87,18 @@ function withUiLanguage(href: string, language: UiLanguage): string {
   return `${href}${href.includes("?") ? "&" : "?"}lang=en`;
 }
 
+function hasVisiblePermission(permission: string, permissions: Partial<Record<string, boolean>>): boolean {
+  if (permission === "can_view_planning" && permissions.can_edit_planning) {
+    return true;
+  }
+  return Boolean(permissions[permission]);
+}
+
 export default function AdminNav({ collapsed, language = "fr", isFullAdmin = true, permissions = {} }: AdminNavProps): JSX.Element {
   const pathname = usePathname() || "";
   const visibleSections = NAV_SECTIONS.map((section) => ({
     ...section,
-    items: section.items.filter((item) => isFullAdmin || (item.permission ? Boolean(permissions[item.permission]) : false)),
+    items: section.items.filter((item) => isFullAdmin || (item.permission ? hasVisiblePermission(item.permission, permissions) : false)),
   })).filter((section) => section.items.length > 0);
 
   return (

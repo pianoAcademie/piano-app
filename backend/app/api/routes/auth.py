@@ -676,6 +676,7 @@ def me(
         permissions = get_admin_permission_map(db, current_user)
         payload.admin_permissions = permissions
         manager_keys = {
+            "can_view_planning",
             "can_edit_planning",
             "can_view_planning_simulation",
             "can_view_clients",

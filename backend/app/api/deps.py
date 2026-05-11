@@ -19,6 +19,7 @@ from app.services.professor_permissions import permissions_dict
 bearer_scheme = HTTPBearer(auto_error=False)
 
 BACKOFFICE_PERMISSION_KEYS = {
+    "can_view_planning",
     "can_edit_planning",
     "can_view_planning_simulation",
     "can_view_clients",
@@ -26,6 +27,14 @@ BACKOFFICE_PERMISSION_KEYS = {
     "can_view_intakes",
     "can_view_quotes",
 }
+
+
+def normalize_admin_permission_map(permission_map: dict[str, bool]) -> dict[str, bool]:
+    normalized = dict(permission_map)
+    if normalized.get("can_edit_planning"):
+        normalized["can_view_planning"] = True
+        normalized["can_view_all_school_sessions"] = True
+    return normalized
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -117,7 +126,7 @@ def get_admin_permission_map(db: Session, user: User) -> dict[str, bool]:
     if professor is None:
         return {}
     row = db.scalar(select(ProfessorPermission).where(ProfessorPermission.professor_id == professor.id).limit(1))
-    return permissions_dict(row, legacy_if_missing=False)
+    return normalize_admin_permission_map(permissions_dict(row, legacy_if_missing=False))
 
 
 def require_admin_or_permissions(*permission_fields: str) -> Callable[..., User]:

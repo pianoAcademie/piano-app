@@ -4,6 +4,7 @@ import type { UiLanguage } from "./ui-i18n";
 export type AdminPermissionKey = keyof ProfessorPermissionOut;
 
 export const MANAGER_ADMIN_PERMISSION_KEYS: AdminPermissionKey[] = [
+  "can_view_planning",
   "can_edit_planning",
   "can_view_planning_simulation",
   "can_view_clients",
@@ -13,6 +14,9 @@ export const MANAGER_ADMIN_PERMISSION_KEYS: AdminPermissionKey[] = [
 ];
 
 export function hasAdminPermission(user: UserOut, key: AdminPermissionKey): boolean {
+  if (key === "can_view_planning" && Boolean(user.admin_permissions?.can_edit_planning)) {
+    return true;
+  }
   return user.role === "admin" || Boolean(user.admin_permissions?.[key]);
 }
 
