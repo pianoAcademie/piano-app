@@ -1768,6 +1768,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     ? formatDate(publicResponseLastAt, language)
     : t("admin.quote_detail.date_not_available");
   const publicChangeRequestMessage = publicResponseLastMessage || t("admin.quote_detail.public_change_request_fallback");
+  const canEditQuote = ["created", "change_requested"].includes(quoteStatus);
   const canSendQuote = quoteStatus === "created";
   const canResendQuote = ["sent", "approved", "rejected", "expired", "change_requested"].includes(quoteStatus);
   const canCancelQuote = !["cancelled", "approved"].includes(quoteStatus);
@@ -2877,10 +2878,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	                    confirmLabel={t("admin.quote_detail.regenerate")}
 	                    language={language}
 	                    className="ghost"
-	                    disabled={detail.quote.status !== "created"}
+	                    disabled={!canEditQuote}
 	                  />
 	                </form>
-	                {detail.quote.status !== "created" ? (
+	                {!canEditQuote ? (
 	                  <small className="muted">{t("admin.quote_detail.regeneration_draft_only")}</small>
 	                ) : null}
               </div>
@@ -2959,7 +2960,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	          <input type="hidden" name="current_meta_json" value={JSON.stringify(detail.quote.meta || {})} />
 	          <label>
 	            {t("admin.quote_detail.quote_type")}
-	            <select name="quote_type_id" defaultValue={detail.quote.quote_type_id || ""} disabled={detail.quote.status !== "created"}>
+	            <select name="quote_type_id" defaultValue={detail.quote.quote_type_id || ""} disabled={!canEditQuote}>
 	              <option value="">{t("admin.quote_detail.none")}</option>
 	              {quoteTypes.map((row) => (
                 <option key={row.id} value={row.id}>{row.name}</option>
@@ -2975,7 +2976,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	          </label>
 	          <label>
 	            {t("admin.quote_detail.pricing_catalog")}
-	            <select name="pricing_catalog_id" defaultValue={detail.quote.pricing_catalog_id || ""} disabled={detail.quote.status !== "created"}>
+	            <select name="pricing_catalog_id" defaultValue={detail.quote.pricing_catalog_id || ""} disabled={!canEditQuote}>
 	              <option value="">{t("admin.quote_detail.none")}</option>
               {catalogs.map((row) => (
                 <option key={row.id} value={row.id}>{row.name}</option>
@@ -2984,7 +2985,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	          </label>
 	          <label>
 	            {t("admin.quote_detail.payment_plan")}
-	            <select name="payment_plan_id" defaultValue={detail.quote.payment_plan_id || ""} disabled={detail.quote.status !== "created"}>
+	            <select name="payment_plan_id" defaultValue={detail.quote.payment_plan_id || ""} disabled={!canEditQuote}>
 	              <option value="">{t("admin.quote_detail.none")}</option>
               {paymentPlans.map((row) => (
                 <option key={row.id} value={row.id}>{row.name}</option>
@@ -3003,7 +3004,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             <select
               name="legal_entity_id"
               defaultValue={detail.quote.legal_entity_id || ""}
-              disabled={detail.quote.status !== "created"}
+              disabled={!canEditQuote}
 	            >
 	              <option value="">{t("admin.quote_detail.none_feminine")}</option>
               {legalEntities.map((row) => (
@@ -3016,7 +3017,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	          </label>
 	          <label>
 	            {t("admin.quote_detail.quote_template")}
-	            <select name="quote_template_uuid" defaultValue={quoteTemplateId} disabled={detail.quote.status !== "created"}>
+	            <select name="quote_template_uuid" defaultValue={quoteTemplateId} disabled={!canEditQuote}>
 	              <option value="">{t("admin.quote_detail.none")}</option>
               {templateOptions.map((row) => (
                 <option key={row.id} value={row.id}>{row.name}</option>
@@ -3025,7 +3026,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	          </label>
 	          <label>
 	            {t("admin.quote_detail.terms_template")}
-	            <select name="terms_template_id" defaultValue={quoteTermsTemplateId} disabled={detail.quote.status !== "created"}>
+	            <select name="terms_template_id" defaultValue={quoteTermsTemplateId} disabled={!canEditQuote}>
 	              <option value="">{t("admin.quote_detail.keep_current_snapshot")}</option>
               {termsOptions.map((row) => (
                 <option key={row.id} value={row.id}>{row.name}</option>
@@ -3034,14 +3035,14 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	          </label>
 	          <label>
 	            {t("common.language")}
-	            <select name="language" defaultValue={quoteLanguage} disabled={detail.quote.status !== "created"}>
+	            <select name="language" defaultValue={quoteLanguage} disabled={!canEditQuote}>
 	              <option value="fr">{t("common.french")}</option>
 	              <option value="en">{t("common.english")}</option>
 	            </select>
 	          </label>
 	          <label>
 	            {t("admin.quote_detail.currency")}
-            <select name="currency" defaultValue={detail.quote.currency || "EUR"} disabled={detail.quote.status !== "created"}>
+            <select name="currency" defaultValue={detail.quote.currency || "EUR"} disabled={!canEditQuote}>
               <option value="EUR">EUR</option>
               <option value="USD">USD</option>
               <option value="GBP">GBP</option>
@@ -3049,15 +3050,15 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	          </label>
 	          <label>
 	            {t("admin.quote_detail.expiry_delay_days")}
-	            <input type="number" name="expiry_days" min={1} max={120} defaultValue={detail.quote.expiry_days} disabled={detail.quote.status !== "created"} />
+	            <input type="number" name="expiry_days" min={1} max={120} defaultValue={detail.quote.expiry_days} disabled={!canEditQuote} />
 	          </label>
 	          <label>
 	            {t("admin.quote_detail.school_year")}
-	            <input type="text" name="school_year_label" defaultValue={detail.quote.school_year_label ?? ""} disabled={detail.quote.status !== "created"} />
+	            <input type="text" name="school_year_label" defaultValue={detail.quote.school_year_label ?? ""} disabled={!canEditQuote} />
 	          </label>
 	          <label>
 	            {t("admin.quote_detail.financial_adjustment")}
-	            <select name="financial_adjustment_type" defaultValue={quoteAdjustment.type} disabled={detail.quote.status !== "created"}>
+	            <select name="financial_adjustment_type" defaultValue={quoteAdjustment.type} disabled={!canEditQuote}>
 	              <option value="none">{t("admin.quote_detail.none")}</option>
 	              <option value="credit">{t("admin.quote_detail.adjustment_credit")}</option>
 	              <option value="debt">{t("admin.quote_detail.adjustment_debt")}</option>
@@ -3066,7 +3067,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	          {!hidePassRecupForTemplate ? (
 	            <label>
 	              {t("admin.quote_detail.pass_recup_option")}
-	              <select name="pass_recup_mode" defaultValue={passRecupMode} disabled={detail.quote.status !== "created"}>
+	              <select name="pass_recup_mode" defaultValue={passRecupMode} disabled={!canEditQuote}>
 	                <option value="auto">{t("admin.quote_detail.pass_recup_auto")}</option>
 	                <option value="enabled">{t("admin.quote_detail.pass_recup_enabled")}</option>
 	                <option value="disabled">{t("admin.quote_detail.pass_recup_disabled")}</option>
@@ -3078,7 +3079,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             <select
               name="pre_registration_deposit_enabled"
               defaultValue={quoteDeposit.enabled ? "yes" : "no"}
-              disabled={detail.quote.status !== "created"}
+              disabled={!canEditQuote}
 	            >
 	              <option value="no">{t("common.no")}</option>
 	              <option value="yes">{t("common.yes")}</option>
@@ -3093,7 +3094,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               step="0.01"
               defaultValue={quoteAdjustment.type === "none" ? "" : quoteAdjustment.amountTtc.toFixed(2)}
               placeholder="100.00"
-              disabled={detail.quote.status !== "created"}
+              disabled={!canEditQuote}
             />
 	          </label>
 	          <label>
@@ -3105,7 +3106,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               step="0.01"
               defaultValue={quoteDeposit.amountTtc.toFixed(2)}
               placeholder="200.00"
-              disabled={detail.quote.status !== "created"}
+              disabled={!canEditQuote}
             />
 	            <small className="muted">{t("admin.quote_detail.deposit_default")}</small>
 	          </label>
@@ -3115,7 +3116,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               type="date"
               name="financial_adjustment_effective_date"
               defaultValue={quoteAdjustment.effectiveDate}
-              disabled={detail.quote.status !== "created"}
+              disabled={!canEditQuote}
             />
 	          </label>
 	          <label className="span-3">
@@ -3125,12 +3126,12 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               name="financial_adjustment_label"
               defaultValue={quoteAdjustment.label}
 	              placeholder={t("admin.quote_detail.adjustment_label_placeholder")}
-	              disabled={detail.quote.status !== "created"}
+	              disabled={!canEditQuote}
 	            />
 	          </label>
 	                <div className="row span-3 top-gap-sm">
-	                  <button type="submit" disabled={detail.quote.status !== "created"}>{t("admin.quote_detail.save_settings")}</button>
-	                  {detail.quote.status !== "created" ? <small className="muted">{t("admin.quote_lines.immutable_after_send")}</small> : null}
+	                  <button type="submit" disabled={!canEditQuote}>{t("admin.quote_detail.save_settings")}</button>
+	                  {!canEditQuote ? <small className="muted">{t("admin.quote_lines.immutable_after_send")}</small> : null}
 	                </div>
 	              </form>
 	              <p className="muted top-gap-sm">
@@ -3202,7 +3203,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           <QuotePlanningEditor
             quoteId={detail.quote.id}
             returnTo={selfPath}
-            editable={detail.quote.status === "created"}
+            editable={canEditQuote}
             schoolYearLabel={planningEditorSchoolYearLabel}
             activities={activities.map((row) => ({
               id: row.id,
@@ -3247,7 +3248,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
         <QuoteLinesEditor
           quoteId={detail.quote.id}
           returnTo={selfPath}
-          editable={detail.quote.status === "created"}
+          editable={canEditQuote}
           currency={detail.quote.currency}
           initialLines={detail.lines}
           activities={activities.map((row) => ({

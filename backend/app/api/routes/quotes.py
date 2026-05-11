@@ -3440,7 +3440,7 @@ def _quote_lines_total_ttc(db: Session, *, quote_id: UUID) -> Decimal:
 
 
 def _ensure_quote_editable(quote: Quote) -> None:
-    if quote.status != "created":
+    if quote.status not in {"created", "change_requested"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote is immutable once sent")
 
 
@@ -4888,6 +4888,9 @@ def resend_quote(
     if quote.status not in {"sent", "approved", "rejected", "expired", "change_requested"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote cannot be resent in current status")
     _ensure_public_token(quote)
+    if quote.status == "change_requested":
+        quote.status = "sent"
+        quote.sent_at = _utcnow()
 
     recipient = _resolve_recipient_email(db, quote, explicit_email=payload.recipient_email)
     if recipient is None:
