@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import Text, and_, cast, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
-from app.api.deps import get_db, require_roles
+from app.api.deps import get_db, require_admin_or_permissions, require_roles
 from app.api.routes.quotes import (
     _effective_item_price,
     _extract_vat_rate,
@@ -4831,7 +4831,7 @@ def list_typeform_intakes(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=10, ge=1, le=100),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_intakes")),
 ) -> TypeformIntakeListPageOut:
     stmt = select(TypeformIntake)
     if status_filter:
@@ -4881,7 +4881,7 @@ def list_typeform_intakes(
 def get_typeform_intake(
     intake_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_intakes")),
 ) -> TypeformIntakeDetailOut:
     intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == intake_id).with_for_update())
     if intake is None:

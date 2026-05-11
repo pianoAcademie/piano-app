@@ -17,6 +17,7 @@ import {
 } from "../../lib/actions";
 import { getAdminToken } from "../../lib/auth-cookies";
 import { backendRequest } from "../../lib/backend";
+import { hasAdminPermission } from "../../lib/admin-access";
 import AutoSubmitSelect from "../../components/auto-submit-select";
 import RichMessageEditor from "../../components/rich-message-editor";
 import SearchMultiSelect from "../../components/search-multi-select";
@@ -896,7 +897,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     redirect("/login?error_code=session_expired");
   }
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
-  if (!meResult.ok || meResult.data.role !== "admin") {
+  if (!meResult.ok || !hasAdminPermission(meResult.data, "can_view_planning")) {
     redirect("/login?error_code=admin_access_required");
   }
   const language = normalizeUiLanguage(meResult.data.preferred_language);

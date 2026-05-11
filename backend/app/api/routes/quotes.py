@@ -18,7 +18,7 @@ from sqlalchemy import case, exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, require_roles
+from app.api.deps import get_db, require_admin_or_permissions, require_roles
 from app.core.config import settings
 from app.api.routes.admin_clients import (
     _allocate_invoice_number_for_seller_entity,
@@ -3472,7 +3472,7 @@ def list_prospects(
     prospect_type_filter: str | None = Query(default=None, alias="prospect_type"),
     limit: int = Query(default=200, ge=1, le=1000),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> list[ProspectOut]:
     stmt = select(Prospect)
     if status_filter:
@@ -3543,7 +3543,7 @@ def create_prospect(
 def get_prospect(
     prospect_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> ProspectOut:
     row = db.scalar(select(Prospect).where(Prospect.id == prospect_id))
     if row is None:
@@ -3663,7 +3663,7 @@ def list_quotes(
     q: str | None = None,
     limit: int = Query(default=200, ge=1, le=1000),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> list[QuoteOut]:
     stmt = select(Quote)
     if status_filter:
@@ -3693,7 +3693,7 @@ def list_quotes(
 @router.post("/quotes/calendar/preview")
 def preview_quote_calendar(
     payload: QuoteCalendarPreviewRequest,
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> dict[str, object]:
     snapshot = generate_calendar_snapshot(
         CalendarGenerationInput(
@@ -3716,7 +3716,7 @@ def preview_quote_calendar(
 @router.post("/quotes/payment-schedule/preview")
 def preview_quote_payment_schedule(
     payload: QuotePaymentSchedulePreviewRequest,
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> dict[str, object]:
     schedule = build_payment_schedule(
         PaymentPlanScheduleInput(
@@ -3954,7 +3954,7 @@ def create_quote(
 def get_quote(
     quote_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> QuoteDetailOut:
     row = _load_quote(db, quote_id)
     return _quote_detail_out(db, row)
@@ -4526,7 +4526,7 @@ def duplicate_quote_for_child(
 def generate_quote_pdf(
     quote_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> StreamingResponse:
     quote = _load_quote(db, quote_id)
     lines = _load_quote_lines(db, quote_id)
@@ -4550,7 +4550,7 @@ def preview_quote_document(
     quote_id: UUID,
     audience: str = Query(default=AUDIENCE_ADMIN_PREVIEW),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> dict[str, object]:
     quote = _load_quote(db, quote_id)
     lines = _load_quote_lines(db, quote_id)
@@ -4628,7 +4628,7 @@ def regenerate_quote_document(
 def download_quote_pdf(
     quote_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> StreamingResponse:
     quote = _load_quote(db, quote_id)
     lines = _load_quote_lines(db, quote_id)
@@ -4857,7 +4857,7 @@ def preview_quote_email(
     quote_id: UUID,
     payload: QuoteSendRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> QuoteEmailPreviewOut:
     quote = _load_quote(db, quote_id)
     token_updated = not quote.public_token or not quote.pdf_token
@@ -7173,7 +7173,7 @@ def public_quote_pdf(
 def get_quote_followup(
     followup_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> QuoteFollowupOut:
     row = db.scalar(select(QuoteAcceptanceFollowup).where(QuoteAcceptanceFollowup.id == followup_id))
     if row is None:
@@ -7186,7 +7186,7 @@ def list_quote_followups(
     quote_id: UUID | None = None,
     status_filter: str | None = Query(default=None, alias="status"),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> list[QuoteFollowupOut]:
     stmt = select(QuoteAcceptanceFollowup)
     if quote_id is not None:
@@ -7447,7 +7447,7 @@ def list_quote_templates_v2(
     target: str | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias="status"),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> list[QuoteTemplateV2Out]:
     stmt = select(QuoteTemplate)
     if active_only:
@@ -7593,7 +7593,7 @@ def update_quote_template_v2(
 def list_quote_template_v2_versions(
     template_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> list[QuoteTemplateVersionOut]:
     exists_row = db.scalar(select(QuoteTemplate.id).where(QuoteTemplate.id == template_id))
     if exists_row is None:
@@ -7757,7 +7757,7 @@ def list_terms_templates(
     target: str | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias="status"),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> list[TermsTemplateOut]:
     stmt = select(TermsTemplate)
     if active_only:
@@ -7892,7 +7892,7 @@ def update_terms_template(
 def list_terms_template_versions(
     template_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> list[TermsTemplateVersionOut]:
     exists_row = db.scalar(select(TermsTemplate.id).where(TermsTemplate.id == template_id))
     if exists_row is None:
@@ -8209,7 +8209,7 @@ def delete_quote_document_binding(
 def list_quote_types(
     active_only: bool = Query(default=False),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> list[QuoteTypeOut]:
     stmt = select(QuoteType)
     if active_only:
@@ -8327,7 +8327,7 @@ def delete_quote_type(
 def list_pricing_catalogs(
     active_only: bool = Query(default=False),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> list[PricingCatalogOut]:
     stmt = select(PricingCatalog)
     if active_only:
@@ -8598,7 +8598,7 @@ def delete_pricing_kit_price(
 def list_solfege_level_rules(
     active_only: bool = Query(default=False),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> list[SolfegeLevelRuleOut]:
     stmt = select(SolfegeLevelRule)
     if active_only:
@@ -9038,7 +9038,7 @@ def resolve_quote_school_calendar_for_location(
 def list_payment_plans(
     active_only: bool = Query(default=False),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> list[PaymentPlanOut]:
     stmt = select(PaymentPlan)
     if active_only:

@@ -10,6 +10,7 @@ import {
   saveTypeformIntakeResolutionAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
+import { hasAdminPermission } from "../../../../lib/admin-access";
 import type { UserOut } from "../../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 import styles from "../typeform-intakes.module.css";
@@ -431,7 +432,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
   }
 
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
-  if (!meResult.ok || meResult.data.role !== "admin") {
+  if (!meResult.ok || !hasAdminPermission(meResult.data, "can_view_intakes")) {
     redirect("/login?error_code=admin_access_required");
   }
   const language = normalizeUiLanguage(meResult.data.preferred_language);

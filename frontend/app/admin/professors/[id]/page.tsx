@@ -14,6 +14,7 @@ import {
 } from "../../../../lib/actions";
 import { getAdminToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
+import { hasAdminPermission } from "../../../../lib/admin-access";
 import CollaboratorClientChunkAnchor from "./_client-chunk-anchor";
 import type {
   AdminConfigAccountOut,
@@ -330,6 +331,18 @@ function spokenLanguagesLabel(values: string[], language: UiLanguage): string {
 
 const PERMISSION_SECTIONS: Array<{ titleKey: string; keys: Array<{ key: string; labelKey: string }> }> = [
   {
+    titleKey: "admin.professor_detail.permissions.manager_title",
+    keys: [
+      { key: "can_view_planning", labelKey: "admin.professor_detail.permissions.view_planning" },
+      { key: "can_edit_planning", labelKey: "admin.professor_detail.permissions.edit_planning" },
+      { key: "can_view_planning_simulation", labelKey: "admin.professor_detail.permissions.view_planning_simulation" },
+      { key: "can_view_clients", labelKey: "admin.professor_detail.permissions.view_clients_readonly" },
+      { key: "can_access_collaborators", labelKey: "admin.professor_detail.permissions.access_collaborators" },
+      { key: "can_view_intakes", labelKey: "admin.professor_detail.permissions.view_intakes_readonly" },
+      { key: "can_view_quotes", labelKey: "admin.professor_detail.permissions.view_quotes_readonly" },
+    ],
+  },
+  {
     titleKey: "admin.professor_detail.permissions.self_title",
     keys: [
       { key: "can_take_attendance", labelKey: "admin.professor_detail.permissions.take_attendance" },
@@ -374,14 +387,16 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
     redirect("/login?error_code=session_expired");
   }
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
-  if (!meResult.ok || meResult.data.role !== "admin") {
+  if (!meResult.ok || !hasAdminPermission(meResult.data, "can_access_collaborators")) {
     redirect("/login?error_code=admin_access_required");
   }
+  const canManageCollaborators = meResult.data.role === "admin";
   const language = normalizeUiLanguage(meResult.data.preferred_language);
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const sortLocale = localeForUiLanguage(language);
 
-  const currentTab = parseTab(readParam(searchParams, "tab"));
+  const requestedTab = parseTab(readParam(searchParams, "tab"));
+  const currentTab = canManageCollaborators || requestedTab === "planning" ? requestedTab : "profil";
   const isEditProfileOpen = readParam(searchParams, "edit_profile") === "1";
   const editGridId = readParam(searchParams, "edit_grid_id");
   const showLegacyContractGrid = readParam(searchParams, "legacy_contract") === "1";
@@ -399,14 +414,14 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
   const payoutLedgerQuery = new URLSearchParams();
   payoutLedgerQuery.set("as_of", payoutAsOf);
 
-  const contractGridsRequest = showLegacyContractGrid
+  const contractGridsRequest = canManageCollaborators && showLegacyContractGrid
     ? backendRequest<AdminProfessorContractGridOut[]>(`/api/v1/admin/collaborators/${params.id}/contract-grids`, {}, token)
     : Promise.resolve({ ok: true as const, status: 200, data: [] as AdminProfessorContractGridOut[] });
-  const contractLocationsRequest = showLegacyContractGrid
+  const contractLocationsRequest = canManageCollaborators && showLegacyContractGrid
     ? backendRequest<AdminProfessorContractLocationOptionOut[]>("/api/v1/admin/collaborators/contract-grid/locations", {}, token)
     : Promise.resolve({ ok: true as const, status: 200, data: [] as AdminProfessorContractLocationOptionOut[] });
   const payoutLedgerRequest =
-    currentTab === "solde"
+    canManageCollaborators && currentTab === "solde"
       ? backendRequest<AdminProfessorPayoutLedgerOut>(`/api/v1/admin/collaborators/${params.id}/payout-ledger?${payoutLedgerQuery.toString()}`, {}, token)
       : Promise.resolve({ ok: true as const, status: 200, data: null as AdminProfessorPayoutLedgerOut | null });
 
@@ -424,12 +439,18 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
   ] =
     await Promise.all([
     backendRequest<AdminProfessorDetailOut>(`/api/v1/admin/collaborators/${params.id}`, {}, token),
-    backendRequest<AdminProfessorRateOut[]>(`/api/v1/admin/collaborators/${params.id}/rates`, {}, token),
+    canManageCollaborators
+      ? backendRequest<AdminProfessorRateOut[]>(`/api/v1/admin/collaborators/${params.id}/rates`, {}, token)
+      : Promise.resolve({ ok: true as const, status: 200, data: [] as AdminProfessorRateOut[] }),
     backendRequest<CourseTypeOut[]>("/api/v1/course-types", {}, token),
     backendRequest<AdminSessionOut[]>(`/api/v1/admin/sessions?${sessionsQuery.toString()}`, {}, token),
     backendRequest<LocationOut[]>("/api/v1/locations", {}, token),
-    backendRequest<AdminConfigAccountOut>("/api/v1/admin/config/account", {}, token),
-    backendRequest<AdminProfessorDefaultGridOut>("/api/v1/admin/config/professor-default-grid", {}, token),
+    canManageCollaborators
+      ? backendRequest<AdminConfigAccountOut>("/api/v1/admin/config/account", {}, token)
+      : Promise.resolve({ ok: true as const, status: 200, data: null as AdminConfigAccountOut | null }),
+    canManageCollaborators
+      ? backendRequest<AdminProfessorDefaultGridOut>("/api/v1/admin/config/professor-default-grid", {}, token)
+      : Promise.resolve({ ok: true as const, status: 200, data: { lines: [], updated_at: null } as AdminProfessorDefaultGridOut }),
     contractGridsRequest,
     contractLocationsRequest,
     payoutLedgerRequest,
@@ -559,9 +580,13 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
 
   const tabs: Array<{ id: Tab; label: string }> = [
     { id: "profil", label: t("admin.professor_detail.tab_profile") },
-    { id: "droits", label: t("admin.professor_detail.tab_permissions") },
-    { id: "tarifs", label: t("admin.professor_detail.tab_payroll") },
-    { id: "solde", label: t("admin.professor_detail.tab_balance") },
+    ...(canManageCollaborators
+      ? [
+          { id: "droits" as const, label: t("admin.professor_detail.tab_permissions") },
+          { id: "tarifs" as const, label: t("admin.professor_detail.tab_payroll") },
+          { id: "solde" as const, label: t("admin.professor_detail.tab_balance") },
+        ]
+      : []),
     { id: "planning", label: t("admin.professor_detail.tab_schedule") },
   ];
 
@@ -573,13 +598,15 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
           <Link className="reset-link" href="/admin/professors">
             {t("admin.professor_detail.back_list")}
           </Link>
-          <form action={adminViewTeacherPortalAction} target="_blank" rel="noopener noreferrer">
-            <input type="hidden" name="teacher_id" value={professor.id} />
-            <input type="hidden" name="return_to" value={`/admin/professors/${professor.id}?tab=${currentTab}`} />
-            <button type="submit" className="mode-link">
-              {t("admin.professor_detail.view_teacher_portal")}
-            </button>
-          </form>
+          {canManageCollaborators ? (
+            <form action={adminViewTeacherPortalAction} target="_blank" rel="noopener noreferrer">
+              <input type="hidden" name="teacher_id" value={professor.id} />
+              <input type="hidden" name="return_to" value={`/admin/professors/${professor.id}?tab=${currentTab}`} />
+              <button type="submit" className="mode-link">
+                {t("admin.professor_detail.view_teacher_portal")}
+              </button>
+            </form>
+          ) : null}
           <span className={`status-pill ${professor.active ? "status-ok" : "status-off"}`}>
             {professor.active ? t("common.active") : t("common.inactive")}
           </span>
@@ -611,8 +638,8 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
       {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
       {!ratesResult.ok ? <section className="flash-err">{t("admin.professor_detail.error_rates")}: {ratesResult.message}</section> : null}
       {!sessionsResult.ok ? <section className="flash-err">{t("admin.professor_detail.error_schedule")}: {sessionsResult.message}</section> : null}
-      {!accountResult.ok ? <section className="flash-err">{t("admin.professor_detail.error_currencies")}: {accountResult.message}</section> : null}
-      {!defaultProfessorGridResult.ok ? (
+      {canManageCollaborators && !accountResult.ok ? <section className="flash-err">{t("admin.professor_detail.error_currencies")}: {accountResult.message}</section> : null}
+      {canManageCollaborators && !defaultProfessorGridResult.ok ? (
         <section className="flash-err">{t("admin.professor_detail.error_general_grid")}: {defaultProfessorGridResult.message}</section>
       ) : null}
       {showLegacyContractGrid && !contractGridsResult.ok ? (
@@ -703,19 +730,21 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                 <strong>{professor.last_activation_email_sent_at ? formatDate(professor.last_activation_email_sent_at, language) : t("admin.professor_detail.never")}</strong>
               </article>
             </div>
-            <div className="row top-gap-sm">
-              <Link className="mode-link" href={`/admin/professors/${professor.id}?tab=profil&edit_profile=1`}>
-                {t("common.edit")}
-              </Link>
-              <form action={sendAdminCollaboratorPasswordLinkAction}>
-                <input type="hidden" name="professor_id" value={professor.id} />
-                <input type="hidden" name="return_tab" value="profil" />
-                <button type="submit">{t("admin.professor_detail.send_access_link")}</button>
-              </form>
-            </div>
+            {canManageCollaborators ? (
+              <div className="row top-gap-sm">
+                <Link className="mode-link" href={`/admin/professors/${professor.id}?tab=profil&edit_profile=1`}>
+                  {t("common.edit")}
+                </Link>
+                <form action={sendAdminCollaboratorPasswordLinkAction}>
+                  <input type="hidden" name="professor_id" value={professor.id} />
+                  <input type="hidden" name="return_tab" value="profil" />
+                  <button type="submit">{t("admin.professor_detail.send_access_link")}</button>
+                </form>
+              </div>
+            ) : null}
           </article>
 
-          {isEditProfileOpen ? (
+          {isEditProfileOpen && canManageCollaborators ? (
             <section className="modal-overlay" role="dialog" aria-modal="true" aria-label={t("admin.professor_detail.edit_dialog_aria")}>
               <section className="modal-panel professor-profile-modal">
                 <Link className="modal-close-x" href={`/admin/professors/${professor.id}?tab=profil`} aria-label={t("common.close")}>
@@ -893,26 +922,28 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
             )}
 
             <div className="row">
-              {professor.contract ? (
+              {professor.contract && canManageCollaborators ? (
                 <a className="reset-link" href={`/admin/professors/${professor.id}/contract`}>
                   {t("admin.professor_detail.contract_download")}
                 </a>
               ) : null}
             </div>
 
-            <form action={uploadAdminCollaboratorContractAction} className="grid cols-3" encType="multipart/form-data">
-              <input type="hidden" name="professor_id" value={professor.id} />
-              <input type="hidden" name="return_tab" value="profil" />
-              <label className="span-2">
-                {t("admin.professor_detail.contract_pdf_file")}
-                <input type="file" name="contract_file" accept="application/pdf" required />
-              </label>
-              <div className="row">
-                <button type="submit">{t("admin.professor_detail.contract_upload_replace")}</button>
-              </div>
-            </form>
+            {canManageCollaborators ? (
+              <form action={uploadAdminCollaboratorContractAction} className="grid cols-3" encType="multipart/form-data">
+                <input type="hidden" name="professor_id" value={professor.id} />
+                <input type="hidden" name="return_tab" value="profil" />
+                <label className="span-2">
+                  {t("admin.professor_detail.contract_pdf_file")}
+                  <input type="file" name="contract_file" accept="application/pdf" required />
+                </label>
+                <div className="row">
+                  <button type="submit">{t("admin.professor_detail.contract_upload_replace")}</button>
+                </div>
+              </form>
+            ) : null}
 
-            {professor.contract ? (
+            {professor.contract && canManageCollaborators ? (
               <form action={deleteAdminCollaboratorContractAction} className="row">
                 <input type="hidden" name="professor_id" value={professor.id} />
                 <input type="hidden" name="return_tab" value="profil" />
@@ -931,6 +962,25 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
           <p className="muted">{t("admin.professor_detail.permissions_subtitle")}</p>
           <form action={updateAdminCollaboratorPermissionsAction} className="grid cols-2">
             <input type="hidden" name="professor_id" value={professor.id} />
+            <article className="item span-2">
+              <label className="checkline">
+                <input
+                  type="checkbox"
+                  name="manager_profile"
+                  defaultChecked={
+                    professor.role !== "admin" &&
+                    Boolean((professor.permissions as Record<string, boolean>).can_edit_planning) &&
+                    Boolean((professor.permissions as Record<string, boolean>).can_view_planning_simulation) &&
+                    Boolean((professor.permissions as Record<string, boolean>).can_view_clients) &&
+                    Boolean((professor.permissions as Record<string, boolean>).can_access_collaborators) &&
+                    Boolean((professor.permissions as Record<string, boolean>).can_view_intakes) &&
+                    Boolean((professor.permissions as Record<string, boolean>).can_view_quotes)
+                  }
+                />
+                {t("admin.professor_detail.permissions_manager_profile")}
+              </label>
+              <p className="muted">{t("admin.professor_detail.permissions_manager_profile_help")}</p>
+            </article>
             <article className="item span-2">
               <label className="checkline">
                 <input type="checkbox" name="is_admin" defaultChecked={professor.role === "admin"} />

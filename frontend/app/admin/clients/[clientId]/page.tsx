@@ -39,6 +39,7 @@ import {
   updateAdminClientGroupsAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
+import { hasAdminPermission } from "../../../../lib/admin-access";
 import {
   COUNTRY_OPTIONS,
   CURRENCY_OPTIONS,
@@ -1584,7 +1585,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     manualCreditsResult,
     notesResult,
   ] = await Promise.all([
-    backendRequest<UserOut>("/api/v1/me", {}, token),
+    backendRequest<UserOut>("/api/v1/auth/me", {}, token),
     backendRequest<AdminConfigAccountOut>("/api/v1/admin/config/account", {}, token),
     backendRequest<AdminClientOut>(`/api/v1/admin/clients/${params.clientId}`, {}, token),
     backendRequest<PlanOut[]>("/api/v1/plans", {}, token),
@@ -1608,6 +1609,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const language = meResult.ok ? normalizeUiLanguage(meResult.data.preferred_language) : "fr";
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const sortLocale = localeForUiLanguage(language);
+
+  if (!meResult.ok || !hasAdminPermission(meResult.data, "can_view_clients")) {
+    redirect("/login?error_code=admin_access_required");
+  }
 
   if (!clientResult.ok) {
     if (clientResult.status === 404) {

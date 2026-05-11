@@ -14,7 +14,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_admin_permission_map, get_current_user, get_db
 from app.core.config import settings
 from app.models.catalog import CourseSession, CourseType
 from app.models.client_group import ClientGroup, ClientGroupMembership
@@ -664,5 +664,24 @@ def reset_password(payload: ResetPasswordRequest, request: Request, db: Session 
 
 
 @router.get("/me", response_model=UserOut)
-def me(current_user: User = Depends(get_current_user)) -> UserOut:
-    return current_user
+def me(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> UserOut:
+    payload = UserOut.model_validate(current_user)
+    if current_user.role == UserRole.ADMIN:
+        payload.admin_permissions = {}
+        payload.admin_access_profile = "admin"
+    elif current_user.role == UserRole.PROF:
+        permissions = get_admin_permission_map(db, current_user)
+        payload.admin_permissions = permissions
+        manager_keys = {
+            "can_edit_planning",
+            "can_view_planning_simulation",
+            "can_view_clients",
+            "can_access_collaborators",
+            "can_view_intakes",
+            "can_view_quotes",
+        }
+        payload.admin_access_profile = "manager" if any(permissions.get(key) for key in manager_keys) else "professor"
+    return payload

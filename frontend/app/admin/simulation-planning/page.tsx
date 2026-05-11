@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { backendRequest } from "../../../lib/backend";
+import { hasAdminPermission } from "../../../lib/admin-access";
 import type {
   AdminPlanningSimulationOut,
   AdminPlanningSimulationSlotOut,
@@ -308,7 +309,7 @@ export default async function AdminSimulationPlanningPage({
   }
 
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
-  if (!meResult.ok || meResult.data.role !== "admin") {
+  if (!meResult.ok || !hasAdminPermission(meResult.data, "can_view_planning_simulation")) {
     redirect("/login?error_code=admin_access_required");
   }
 

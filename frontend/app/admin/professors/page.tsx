@@ -2,7 +2,8 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { createAdminCollaboratorAction, sendAdminCollaboratorsMessageAction } from "../../../lib/actions";
+import { adminViewTeacherPortalAction, createAdminCollaboratorAction, sendAdminCollaboratorsMessageAction } from "../../../lib/actions";
+import { hasAdminPermission } from "../../../lib/admin-access";
 import { backendRequest } from "../../../lib/backend";
 import CollaboratorSelectionControls from "../../../components/collaborator-selection-controls";
 import RichMessageEditor from "../../../components/rich-message-editor";
@@ -56,9 +57,10 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
     redirect("/login?error_code=session_expired");
   }
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
-  if (!meResult.ok || meResult.data.role !== "admin") {
+  if (!meResult.ok || !hasAdminPermission(meResult.data, "can_access_collaborators")) {
     redirect("/login?error_code=admin_access_required");
   }
+  const canManageCollaborators = meResult.data.role === "admin";
   const language = normalizeUiLanguage(meResult.data.preferred_language);
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const sortLocale = localeForUiLanguage(language);
@@ -166,18 +168,20 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
         </form>
       </section>
 
-      <section className="card">
-        <div className="row spread">
-          <h2>{t("admin.professors.add_title")}</h2>
-          <a className="icon-add-button" href={openCreateHref} aria-label={t("admin.professors.add_button_aria")}>
-            <span className="icon-add-button-plus" aria-hidden="true">
-              +
-            </span>
-            {t("admin.professors.add_button")}
-          </a>
-        </div>
-        <p className="muted">{t("admin.professors.add_subtitle")}</p>
-      </section>
+      {canManageCollaborators ? (
+        <section className="card">
+          <div className="row spread">
+            <h2>{t("admin.professors.add_title")}</h2>
+            <a className="icon-add-button" href={openCreateHref} aria-label={t("admin.professors.add_button_aria")}>
+              <span className="icon-add-button-plus" aria-hidden="true">
+                +
+              </span>
+              {t("admin.professors.add_button")}
+            </a>
+          </div>
+          <p className="muted">{t("admin.professors.add_subtitle")}</p>
+        </section>
+      ) : null}
 
       <section className="card">
         <h2>{t("admin.professors.list_title")}</h2>
@@ -200,6 +204,7 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
                     <th>{t("admin.professors.phone_short")}</th>
                     <th>{t("common.status")}</th>
                     <th>{t("admin.professors.payout_balance")}</th>
+                    {canManageCollaborators ? <th>{t("admin.professors.portal_view")}</th> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -225,6 +230,19 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
                         <td>
                           {formatAmount(payoutAmount, payoutCurrency, language)}
                         </td>
+                        {canManageCollaborators ? (
+                          <td>
+                            <button
+                              type="submit"
+                              name="teacher_id"
+                              value={professor.id}
+                              formAction={adminViewTeacherPortalAction}
+                              className="ghost"
+                            >
+                              {t("admin.professors.view_collaborator")}
+                            </button>
+                          </td>
+                        ) : null}
                       </tr>
                     );
                   })}
@@ -233,7 +251,7 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
               {sortedCollaborators.length === 0 ? <p className="muted">{t("admin.professors.no_results")}</p> : null}
             </div>
 
-            <details>
+            {canManageCollaborators ? <details>
               <summary>{t("admin.professors.messaging_summary")}</summary>
               <div className="grid cols-2" style={{ marginTop: "0.75rem" }}>
                 <label className="span-2">
@@ -281,12 +299,12 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
                   </button>
                 </div>
               </div>
-            </details>
+            </details> : null}
           </form>
         ) : null}
       </section>
 
-      {createOpen ? (
+      {createOpen && canManageCollaborators ? (
         <section className="modal-overlay">
           <article className="modal-panel">
             <a className="modal-close-x" href={closeCreateHref} aria-label={t("common.close")}>

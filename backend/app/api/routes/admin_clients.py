@@ -20,7 +20,7 @@ from jwt import PyJWTError
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.orm import Session, aliased
 
-from app.api.deps import get_db, require_roles
+from app.api.deps import get_db, require_admin_or_permissions, require_roles
 from app.core.config import settings
 from app.models.client_group import ClientGroup, ClientGroupMembership
 from app.models.client_record import (
@@ -4955,7 +4955,7 @@ def update_admin_client_password_email_template(
 def list_admin_client_groups(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_clients")),
 ) -> list[AdminClientGroupOut]:
     stmt = (
         select(ClientGroup, func.count(ClientGroupMembership.id))
@@ -5048,7 +5048,7 @@ def patch_admin_client_group(
 @router.get("/imports/my-music-staff-2025-2026/status", response_model=AdminMyMusicStaffImportStatusOut)
 def get_my_music_staff_2025_2026_import_status(
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_clients")),
 ) -> AdminMyMusicStaffImportStatusOut:
     return _my_music_staff_import_status(db)
 
@@ -5401,7 +5401,7 @@ def bulk_admin_clients(
 def export_admin_clients_csv(
     client_ids: list[UUID] = Query(default=[]),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_export_clients")),
 ) -> StreamingResponse:
     unique_ids: list[UUID] = []
     seen: set[UUID] = set()
@@ -5517,7 +5517,7 @@ def export_admin_clients_csv(
 def get_admin_client(
     client_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_clients")),
 ) -> AdminClientOut:
     client = _require_client(db, client_id)
     delivery_status = db.scalar(
@@ -5952,7 +5952,7 @@ def create_admin_client_portal_access(
 def get_admin_client_family(
     client_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_clients")),
 ) -> AdminClientFamilyOut:
     client = _require_client(db, client_id)
     return _family_payload(db, client)
@@ -6210,7 +6210,7 @@ def _admin_subscription_out(
 def list_admin_client_subscriptions(
     client_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_clients")),
 ) -> list[AdminClientSubscriptionOut]:
     client = _require_client(db, client_id)
     billing_profile = resolve_billing_profile(db, client)
@@ -6787,7 +6787,7 @@ def send_admin_client_subscription_payment_email(
 def list_admin_client_manual_credits(
     client_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_clients")),
 ) -> list[AdminClientManualCreditOut]:
     _require_client(db, client_id)
 
@@ -6885,7 +6885,7 @@ def list_admin_client_notes(
     client_id: UUID,
     limit: int = Query(default=200, ge=1, le=1000),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_clients")),
 ) -> list[AdminClientNoteOut]:
     _require_client(db, client_id)
     author_alias = aliased(User)
@@ -6923,7 +6923,7 @@ def create_admin_client_note(
 def list_admin_client_bookings(
     client_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_clients")),
 ) -> list[AdminClientBookingOut]:
     _require_client(db, client_id)
 
@@ -7139,7 +7139,7 @@ def list_admin_client_messages(
     q: str | None = Query(default=None, max_length=200),
     include_future: bool = Query(default=False),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_clients")),
 ) -> list[AdminClientMessageOut]:
     normalized_months = months if months in {3, 6, 12} else 3
     now = _utcnow()
@@ -7596,7 +7596,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
 def list_admin_client_payments(
     client_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_clients")),
 ) -> list[AdminClientPaymentOut]:
     return _build_admin_client_payments(db, client_id=client_id)
 

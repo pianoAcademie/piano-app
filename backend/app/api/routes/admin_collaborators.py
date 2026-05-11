@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, Up
 from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, require_roles
+from app.api.deps import get_db, require_admin_or_permissions, require_roles
 from app.models.catalog import CourseSession, CourseType, Location, Professor, SessionStatus
 from app.models.ops import (
     AppSetting,
@@ -919,7 +919,7 @@ def list_collaborators(
     payout_as_of: date | None = None,
     limit: int = Query(default=200, ge=1, le=1000),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_access_collaborators")),
 ) -> list[AdminProfessorDetailOut]:
     stmt = select(Professor)
 
@@ -1173,7 +1173,7 @@ def create_collaborator(
 def get_collaborator(
     professor_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_access_collaborators")),
 ) -> AdminProfessorDetailOut:
     professor = _load_professor_or_404(db, professor_id)
     linked_user = _find_user_by_email(db, professor.email)
@@ -1487,6 +1487,7 @@ def update_collaborator_permissions(
 
     values = payload.model_dump()
     is_admin = values.pop("is_admin", None)
+    manager_profile = bool(values.pop("manager_profile", False))
 
     can_take_attendance = bool(values.get("can_take_attendance"))
     can_edit_own_sessions = bool(values.get("can_edit_own_sessions"))
@@ -1522,6 +1523,18 @@ def update_collaborator_permissions(
     values["can_manage_events"] = can_edit_own_sessions or can_manage_other_teachers
     values["can_view_dashboard"] = bool(values.get("can_view_pay_details")) or can_view_reports
     values["can_view_admin_reservations"] = can_view_other_sessions
+
+    if manager_profile:
+        values["can_view_planning"] = True
+        values["can_edit_planning"] = True
+        values["can_view_all_school_sessions"] = True
+        values["can_view_planning_simulation"] = True
+        values["can_view_clients"] = True
+        values["can_access_collaborators"] = True
+        values["can_view_intakes"] = True
+        values["can_view_quotes"] = True
+        if is_admin is None:
+            is_admin = False
 
     for field in PERMISSION_FIELDS:
         setattr(row, field, bool(values[field]))

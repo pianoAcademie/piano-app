@@ -35,6 +35,8 @@ export type UserOut = {
   phone_delivery_status: string;
   phone_suspended_at: string | null;
   phone_suspension_reason: string | null;
+  admin_permissions: Partial<ProfessorPermissionOut> | null;
+  admin_access_profile: "admin" | "manager" | "professor" | string | null;
   residence_country: string;
   preferred_language: string;
   preferred_currency: string;
@@ -828,6 +830,9 @@ export type ProfessorPermissionOut = {
   can_view_admin_dashboard: boolean;
   can_view_admin_reservations: boolean;
   can_access_collaborators: boolean;
+  can_view_planning_simulation: boolean;
+  can_view_intakes: boolean;
+  can_view_quotes: boolean;
   can_configure_app: boolean;
   can_list_payments: boolean;
   can_manage_events: boolean;

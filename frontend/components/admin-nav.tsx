@@ -11,6 +11,7 @@ type NavItem = {
   href: string;
   label: LocalizedLabel;
   icon: string;
+  permission?: string;
 };
 
 type NavSection = {
@@ -24,10 +25,10 @@ const NAV_SECTIONS: NavSection[] = [
     key: "operations",
     title: { fr: "Operations", en: "Operations" },
     items: [
-      { href: "/admin", label: { fr: "Planning", en: "Schedule" }, icon: "📅" },
-      { href: "/admin/simulation-planning", label: { fr: "Simulation planning", en: "Planning simulation" }, icon: "🧮" },
-      { href: "/admin/clients", label: { fr: "Clients", en: "Clients" }, icon: "👥" },
-      { href: "/admin/professors", label: { fr: "Collaborateurs", en: "Collaborators" }, icon: "🧑‍🏫" },
+      { href: "/admin", label: { fr: "Planning", en: "Schedule" }, icon: "📅", permission: "can_view_planning" },
+      { href: "/admin/simulation-planning", label: { fr: "Simulation planning", en: "Planning simulation" }, icon: "🧮", permission: "can_view_planning_simulation" },
+      { href: "/admin/clients", label: { fr: "Clients", en: "Clients" }, icon: "👥", permission: "can_view_clients" },
+      { href: "/admin/professors", label: { fr: "Collaborateurs", en: "Collaborators" }, icon: "🧑‍🏫", permission: "can_access_collaborators" },
     ],
   },
   {
@@ -39,8 +40,8 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/admin/check-deposits", label: { fr: "Depots de cheques", en: "Check deposits" }, icon: "🏦" },
       { href: "/admin/referrals", label: { fr: "Parrainages", en: "Referrals" }, icon: "🤝" },
       { href: "/admin/subscriptions", label: { fr: "Abonnements", en: "Subscriptions" }, icon: "🔁" },
-      { href: "/admin/intakes", label: { fr: "Intakes", en: "Intakes" }, icon: "🧠" },
-      { href: "/admin/quotes", label: { fr: "Devis", en: "Quotes" }, icon: "📑" },
+      { href: "/admin/intakes", label: { fr: "Intakes", en: "Intakes" }, icon: "🧠", permission: "can_view_intakes" },
+      { href: "/admin/quotes", label: { fr: "Devis", en: "Quotes" }, icon: "📑", permission: "can_view_quotes" },
       { href: "/admin/prospects", label: { fr: "Prospects", en: "Prospects" }, icon: "🧲" },
       { href: "/admin/products", label: { fr: "Produits", en: "Products" }, icon: "📦" },
     ],
@@ -68,6 +69,8 @@ const NAV_SECTIONS: NavSection[] = [
 type AdminNavProps = {
   collapsed: boolean;
   language?: UiLanguage;
+  isFullAdmin?: boolean;
+  permissions?: Partial<Record<string, boolean>>;
 };
 
 function isLinkActive(pathname: string, href: string): boolean {
@@ -84,12 +87,16 @@ function withUiLanguage(href: string, language: UiLanguage): string {
   return `${href}${href.includes("?") ? "&" : "?"}lang=en`;
 }
 
-export default function AdminNav({ collapsed, language = "fr" }: AdminNavProps): JSX.Element {
+export default function AdminNav({ collapsed, language = "fr", isFullAdmin = true, permissions = {} }: AdminNavProps): JSX.Element {
   const pathname = usePathname() || "";
+  const visibleSections = NAV_SECTIONS.map((section) => ({
+    ...section,
+    items: section.items.filter((item) => isFullAdmin || (item.permission ? Boolean(permissions[item.permission]) : false)),
+  })).filter((section) => section.items.length > 0);
 
   return (
     <nav className={`admin-nav ${collapsed ? "collapsed" : ""}`}>
-      {NAV_SECTIONS.map((section) => (
+      {visibleSections.map((section) => (
         <section className="admin-nav-section" key={section.key}>
           <h3 className="admin-nav-section-title">{section.title[language]}</h3>
           <div className="admin-nav-section-items">

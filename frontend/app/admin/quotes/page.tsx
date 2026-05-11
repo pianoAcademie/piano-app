@@ -9,6 +9,7 @@ import QuoteRowNextAction, { type QuoteNextAction } from "../../../components/qu
 import QuoteRowValidationState, { type QuoteValidationUiState } from "../../../components/quotes/quote-row-validation-state";
 import { duplicateQuoteAction, sendQuoteAction } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
+import { hasAdminPermission } from "../../../lib/admin-access";
 import type { AdminActivityOut, AdminClientOut, UserOut } from "../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 import { resolveUiFlashMessage, withUiLanguage } from "../../../lib/ui-messages";
@@ -345,7 +346,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
     redirect("/login?error_code=session_expired");
   }
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
-  if (!meResult.ok || meResult.data.role !== "admin") {
+  if (!meResult.ok || !hasAdminPermission(meResult.data, "can_view_quotes")) {
     redirect("/login?error_code=admin_access_required");
   }
   const language = normalizeUiLanguage(meResult.data.preferred_language);

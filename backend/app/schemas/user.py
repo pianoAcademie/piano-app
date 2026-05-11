@@ -46,6 +46,8 @@ class UserOut(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    admin_permissions: dict[str, bool] | None = None
+    admin_access_profile: str | None = None
 
 
 class ClientMeUpdateRequest(BaseModel):

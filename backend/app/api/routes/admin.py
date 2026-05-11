@@ -25,7 +25,7 @@ from app.api.routes.bookings import (
     _select_eligible_subscription,
     _waitlist_position,
 )
-from app.api.deps import get_db, require_roles
+from app.api.deps import get_db, require_admin_or_permissions, require_roles
 from app.models.catalog import (
     Booking,
     BookingStatus,
@@ -1833,7 +1833,7 @@ def admin_ping(current_user: User = Depends(require_roles(UserRole.ADMIN))) -> d
 def list_admin_professors(
     active: bool = True,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_planning", "can_access_collaborators")),
 ) -> list[AdminProfessorOut]:
     stmt = select(Professor).order_by(Professor.last_name.asc(), Professor.first_name.asc())
     if active:
@@ -1895,7 +1895,7 @@ def update_setting(
 def get_planning_activities(
     location_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_planning")),
 ) -> AdminPlanningActivitiesOut:
     location = _get_location_or_404(db, location_id)
     selected_rows = _ensure_planning_course_type_defaults(db, location_id=location.id)
@@ -1996,7 +1996,7 @@ def update_planning_activities(
 def get_planning_settings(
     location_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_planning")),
 ) -> AdminPlanningSettingsOut:
     location = _get_location_or_404(db, location_id)
     config = _get_or_create_planning_config(db, location)
@@ -2031,7 +2031,7 @@ def get_planning_simulation(
     location_id: UUID | None = Query(default=None),
     activity_id: UUID | None = Query(default=None),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_planning_simulation")),
 ) -> AdminPlanningSimulationOut:
     available_school_years = _available_school_year_labels(db)
     requested_school_year = (school_year_label or "").strip() or _default_school_year_label()
@@ -2456,7 +2456,7 @@ def get_planning_simulation(
 def create_session(
     payload: AdminSessionCreateRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> AdminSessionOut:
     course_type, location, professor = _validate_and_load_refs(
         db,
@@ -2686,7 +2686,7 @@ def list_admin_sessions(
     status: SessionStatus | None = None,
     client_status: ClientStatus | None = None,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_planning")),
 ) -> list[AdminSessionOut]:
     substitute_professor = aliased(Professor, name="substitute_professor")
     stmt = (
@@ -2762,7 +2762,7 @@ def list_admin_sessions(
 def get_admin_session(
     session_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_planning")),
 ) -> AdminSessionOut:
     session_with_refs = _load_admin_session_with_refs(db, session_id=session_id)
     if session_with_refs is None:
@@ -2789,7 +2789,7 @@ def get_admin_session(
 def list_admin_session_bookings(
     session_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_planning")),
 ) -> list[AdminSessionBookingOut]:
     session_exists = db.scalar(select(CourseSession.id).where(CourseSession.id == session_id))
     if session_exists is None:
@@ -2830,7 +2830,7 @@ def update_admin_session_booking_attendance(
     booking_id: UUID,
     payload: AdminSessionBookingAttendanceUpdateRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> AdminSessionBookingOut:
     session_obj = db.scalar(select(CourseSession).where(CourseSession.id == session_id).with_for_update())
     if session_obj is None:
@@ -2900,7 +2900,7 @@ def update_admin_session_group_note(
     session_id: UUID,
     payload: AdminSessionGroupNoteUpdateRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> AdminSessionOut:
     session_obj = db.scalar(select(CourseSession).where(CourseSession.id == session_id).with_for_update())
     if session_obj is None:
@@ -3118,7 +3118,7 @@ def update_admin_session_booking_note(
     booking_id: UUID,
     payload: AdminSessionBookingNoteUpdateRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> AdminSessionBookingOut:
     booking = db.scalar(
         select(Booking)
@@ -3151,7 +3151,7 @@ def add_admin_session_booking(
     scope: BookingScope | None = Query(default=None),
     apply_scope: ApplyScope | None = Query(default=None),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> AdminSessionBookingOperationOut:
     try:
         resolved_scope = _resolve_booking_scope(scope=scope, apply_scope=apply_scope)
@@ -3352,7 +3352,7 @@ def cancel_admin_session_booking(
     scope: BookingScope | None = Query(default=None),
     apply_scope: ApplyScope | None = Query(default=None),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> Response:
     session_obj = db.scalar(
         select(CourseSession)
@@ -3442,7 +3442,7 @@ def update_session(
     payload: AdminSessionUpdateRequest,
     apply_scope: ApplyScope = Query(default="ONE"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> AdminSessionOut:
     session_obj = db.scalar(select(CourseSession).where(CourseSession.id == session_id).with_for_update())
     if session_obj is None:
@@ -4132,7 +4132,7 @@ def duplicate_session_operation(
     payload: AdminSessionDuplicateRequest,
     apply_scope: ApplyScope = Query(default="ONE"),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> AdminSessionDuplicateOperationOut:
     if apply_scope == "SERIES_ALL":
         raise HTTPException(
@@ -4304,7 +4304,7 @@ def cancel_session_operation(
     payload: AdminSessionCancelOperationRequest,
     apply_scope: ApplyScope = Query(default="ONE"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> AdminSessionOperationOut:
     session_obj = db.scalar(select(CourseSession).where(CourseSession.id == session_id).with_for_update())
     if session_obj is None:
@@ -4357,7 +4357,7 @@ def delete_session_operation(
     payload: AdminSessionDeleteOperationRequest,
     apply_scope: ApplyScope = Query(default="ONE"),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> AdminSessionOperationOut:
     session_obj = db.scalar(select(CourseSession).where(CourseSession.id == session_id).with_for_update())
     if session_obj is None:
@@ -4426,7 +4426,7 @@ def delete_session(
     session_id: UUID,
     apply_scope: ApplyScope = Query(default="ONE"),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> Response:
     session_obj = db.scalar(select(CourseSession).where(CourseSession.id == session_id).with_for_update())
     if session_obj is None:

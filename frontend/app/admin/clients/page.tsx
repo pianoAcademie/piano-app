@@ -12,6 +12,7 @@ import {
   importMyMusicStaffFamiliesAction,
 } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
+import { hasAdminPermission } from "../../../lib/admin-access";
 import {
   COUNTRY_OPTIONS,
   CURRENCY_OPTIONS,
@@ -251,7 +252,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
   }
 
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
-  if (!meResult.ok || meResult.data.role !== "admin") {
+  if (!meResult.ok || !hasAdminPermission(meResult.data, "can_view_clients")) {
     redirect("/login?error_code=admin_access_required");
   }
   const language = normalizeUiLanguage(meResult.data.preferred_language);

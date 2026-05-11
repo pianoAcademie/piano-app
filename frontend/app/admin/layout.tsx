@@ -7,6 +7,7 @@ import AdminBreadcrumb from "../../components/admin-breadcrumb";
 import AdminSidebar from "../../components/admin-sidebar";
 import { getAdminToken } from "../../lib/auth-cookies";
 import { logoutAction } from "../../lib/actions";
+import { adminRoleLabel, hasAnyAdminAccess } from "../../lib/admin-access";
 import { backendRequest } from "../../lib/backend";
 import { uiLanguageFromAcceptLanguage, withUiLanguage, withUiMessageCode } from "../../lib/ui-messages";
 import type { UserOut } from "../../lib/types";
@@ -19,7 +20,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   }
 
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
-  if (!meResult.ok || meResult.data.role !== "admin") {
+  if (!meResult.ok || !hasAnyAdminAccess(meResult.data)) {
     redirect(withUiMessageCode("/login", "error", "admin_access_required", { lang: language }));
   }
 
@@ -30,7 +31,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       <AdminSidebar
         displayName={displayName}
         email={meResult.data.email}
-        roleLabel={language === "en" ? "Administrator" : "Administrateur"}
+        roleLabel={adminRoleLabel(meResult.data, language)}
+        isFullAdmin={meResult.data.role === "admin"}
+        permissions={meResult.data.admin_permissions ?? {}}
       />
 
       <div className="admin-main">

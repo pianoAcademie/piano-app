@@ -39,6 +39,7 @@ import {
   updateQuoteSettingsAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
+import { hasAdminPermission } from "../../../../lib/admin-access";
 import { loadLivePlanningMatchForBlock, type LivePlanningBlockInput } from "../../../../lib/quote-planning-live";
 import {
   analyzeQuoteQuickTransformStatus,
@@ -1494,7 +1495,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     redirect("/login?error_code=session_expired");
   }
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
-  if (!meResult.ok || meResult.data.role !== "admin") {
+  if (!meResult.ok || !hasAdminPermission(meResult.data, "can_view_quotes")) {
     redirect("/login?error_code=admin_access_required");
   }
   const language = normalizeUiLanguage(meResult.data.preferred_language);

@@ -18,6 +18,7 @@ import {
   setPortalToken,
 } from "./auth-cookies";
 import { backendRequest, backendUrl } from "./backend";
+import { hasAnyAdminAccess } from "./admin-access";
 import { loadLivePlanningMatchForBlock, type LivePlanningBlockInput } from "./quote-planning-live";
 import {
   analyzeQuoteQuickTransformStatus,
@@ -1144,6 +1145,9 @@ const PROFESSOR_PERMISSION_KEYS: Array<keyof ProfessorPermissionOut> = [
   "can_view_admin_dashboard",
   "can_view_admin_reservations",
   "can_access_collaborators",
+  "can_view_planning_simulation",
+  "can_view_intakes",
+  "can_view_quotes",
   "can_configure_app",
   "can_list_payments",
   "can_manage_events",
@@ -1186,14 +1190,14 @@ async function fetchCurrentUser(token: string): Promise<UserOut | null> {
 
 async function ensureAdmin(token: string): Promise<void> {
   const me = await fetchCurrentUser(token);
-  if (!me || me.role !== "admin") {
+  if (!me || !hasAnyAdminAccess(me)) {
     redirect("/login?error_code=admin_access_required");
   }
 }
 
 async function ensureAdminAndGetLanguage(token: string): Promise<UiLanguage> {
   const me = await fetchCurrentUser(token);
-  if (!me || me.role !== "admin") {
+  if (!me || !hasAnyAdminAccess(me)) {
     redirect("/login?error_code=admin_access_required");
   }
   return normalizeUiLanguage(me.preferred_language);
@@ -1299,7 +1303,7 @@ export async function loginAction(formData: FormData): Promise<void> {
     redirect("/login?error_code=invalid_session");
   }
 
-  if (me.role === "admin") {
+  if (hasAnyAdminAccess(me)) {
     clearAllAuthTokens();
     setAdminSessionToken(result.data.access_token);
   } else {
@@ -1307,7 +1311,7 @@ export async function loginAction(formData: FormData): Promise<void> {
     setPortalSessionToken(result.data.access_token);
   }
 
-  if (me.role === "admin") {
+  if (hasAnyAdminAccess(me)) {
     redirect("/admin?ok_code=login_admin_success");
   }
 
@@ -6729,12 +6733,13 @@ export async function updateAdminCollaboratorPermissionsAction(formData: FormDat
 
   const payload = parseProfessorPermissions(formData);
   const isAdmin = checkboxField(formData, "is_admin");
+  const managerProfile = checkboxField(formData, "manager_profile");
 
   const result = await backendRequest<ProfessorPermissionOut>(
     `/api/v1/admin/collaborators/${professorId}/permissions`,
     {
       method: "PUT",
-      body: JSON.stringify({ ...payload, is_admin: isAdmin }),
+      body: JSON.stringify({ ...payload, is_admin: isAdmin, manager_profile: managerProfile }),
     },
     token,
   );

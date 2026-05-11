@@ -13,6 +13,8 @@ type AdminSidebarProps = {
   displayName: string;
   email: string;
   roleLabel: string;
+  isFullAdmin?: boolean;
+  permissions?: Partial<Record<string, boolean>>;
 };
 
 function initialsFromDisplayName(value: string): string {
@@ -26,7 +28,7 @@ function initialsFromDisplayName(value: string): string {
   return `${tokens[0].slice(0, 1)}${tokens[1].slice(0, 1)}`.toUpperCase();
 }
 
-export default function AdminSidebar({ displayName, email, roleLabel }: AdminSidebarProps): JSX.Element {
+export default function AdminSidebar({ displayName, email, roleLabel, isFullAdmin = true, permissions = {} }: AdminSidebarProps): JSX.Element {
   const searchParams = useSearchParams();
   const language: UiLanguage = searchParams.get("lang") === "en" ? "en" : "fr";
   const [collapsed, setCollapsed] = useState(false);
@@ -74,7 +76,7 @@ export default function AdminSidebar({ displayName, email, roleLabel }: AdminSid
         </div>
       </div>
 
-      <AdminNav collapsed={collapsed} language={language} />
+      <AdminNav collapsed={collapsed} language={language} isFullAdmin={isFullAdmin} permissions={permissions} />
 
       <button
         type="button"

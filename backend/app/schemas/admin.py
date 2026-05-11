@@ -1670,6 +1670,9 @@ class ProfessorPermissionOut(BaseModel):
     can_view_admin_dashboard: bool
     can_view_admin_reservations: bool
     can_access_collaborators: bool
+    can_view_planning_simulation: bool
+    can_view_intakes: bool
+    can_view_quotes: bool
     can_configure_app: bool
     can_list_payments: bool
     can_manage_events: bool
@@ -1716,6 +1719,9 @@ class ProfessorPermissionUpdateRequest(BaseModel):
     can_view_admin_dashboard: bool = False
     can_view_admin_reservations: bool = False
     can_access_collaborators: bool = False
+    can_view_planning_simulation: bool = False
+    can_view_intakes: bool = False
+    can_view_quotes: bool = False
     can_configure_app: bool = False
     can_list_payments: bool = False
     can_manage_events: bool = False
@@ -1737,6 +1743,7 @@ class ProfessorPermissionUpdateRequest(BaseModel):
     can_manage_website_and_news: bool = False
     can_create_and_view_reports: bool = False
     is_admin: bool | None = None
+    manager_profile: bool = False
 
 
 class AdminProfessorContractOut(BaseModel):

@@ -6,14 +6,26 @@ from uuid import UUID
 import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.session import SessionLocal
+from app.models.catalog import Professor
+from app.models.professor_access import ProfessorPermission
 from app.models.user import User, UserRole
+from app.services.professor_permissions import permissions_dict
 
 bearer_scheme = HTTPBearer(auto_error=False)
+
+BACKOFFICE_PERMISSION_KEYS = {
+    "can_edit_planning",
+    "can_view_planning_simulation",
+    "can_view_clients",
+    "can_access_collaborators",
+    "can_view_intakes",
+    "can_view_quotes",
+}
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -91,3 +103,37 @@ def require_roles(*allowed_roles: UserRole) -> Callable[..., User]:
         return current_user
 
     return _require_role
+
+
+def get_admin_permission_map(db: Session, user: User) -> dict[str, bool]:
+    if user.role == UserRole.ADMIN:
+        return {}
+    if user.role != UserRole.PROF:
+        return {}
+    email = (user.email or "").strip().lower()
+    if not email:
+        return {}
+    professor = db.scalar(select(Professor).where(func.lower(Professor.email) == email).limit(1))
+    if professor is None:
+        return {}
+    row = db.scalar(select(ProfessorPermission).where(ProfessorPermission.professor_id == professor.id).limit(1))
+    return permissions_dict(row, legacy_if_missing=False)
+
+
+def require_admin_or_permissions(*permission_fields: str) -> Callable[..., User]:
+    def _require_permission(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> User:
+        if current_user.role == UserRole.ADMIN:
+            return current_user
+        permission_map = get_admin_permission_map(db, current_user)
+        has_backoffice_profile = any(bool(permission_map.get(field)) for field in BACKOFFICE_PERMISSION_KEYS)
+        if has_backoffice_profile and any(bool(permission_map.get(field)) for field in permission_fields):
+            return current_user
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions",
+        )
+
+    return _require_permission
