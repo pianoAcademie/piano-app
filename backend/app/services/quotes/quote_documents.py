@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from html import escape, unescape as html_unescape
 from html.parser import HTMLParser
@@ -26,9 +26,11 @@ from xhtml2pdf import pisa
 
 from app.models.ops import AppSetting, LegalEntity
 from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct
+from app.models.catalog import CourseSession, CourseType, Location, SessionStatus
+from app.models.family import ClientFamilyLink
 from app.models.quote import Prospect, Quote, QuoteLine, QuoteTemplate, QuoteTemplateVersion, SolfegeLevelRule, TermsTemplateVersion
 from app.models.typeform_intake import TypeformIntake
-from app.models.user import User
+from app.models.user import ClientKind, User
 from app.services.i18n import normalize_language
 
 
@@ -38,6 +40,15 @@ AUDIENCE_CLIENT_PDF = "client_pdf"
 DEFAULT_AUDIENCE = AUDIENCE_CLIENT_PDF
 ACCOUNT_LOGO_SETTING_KEY = "config_account_logo_data_url"
 logger = logging.getLogger(__name__)
+DAY_LABELS_FR = {
+    0: "Lundi",
+    1: "Mardi",
+    2: "Mercredi",
+    3: "Jeudi",
+    4: "Vendredi",
+    5: "Samedi",
+    6: "Dimanche",
+}
 CSS_VAR_RE = re.compile(r"var\(\s*(--[a-zA-Z0-9_-]+)\s*(?:,\s*([^)]+?)\s*)?\)")
 CSS_VAR_DEFAULTS: dict[str, str] = {
     "--line-soft": "#d6d9de",
@@ -1361,6 +1372,188 @@ def _modality_label(value: Any, *, language: str | None = None) -> str:
     return mapping.get(raw.upper(), raw)
 
 
+def _parse_uuid(value: Any) -> UUID | None:
+    if isinstance(value, UUID):
+        return value
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return UUID(raw)
+    except ValueError:
+        return None
+
+
+def _parse_iso_date(value: Any) -> date | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw[:10])
+    except ValueError:
+        return None
+
+
+def _safe_zoneinfo(value: str | None) -> ZoneInfo:
+    try:
+        return ZoneInfo(value or "Europe/Paris")
+    except Exception:
+        return ZoneInfo("Europe/Paris")
+
+
+def _course_type_modality(activity: CourseType, location: Location) -> str:
+    mode = getattr(activity.mode, "value", activity.mode)
+    normalized = str(mode or "").strip().upper()
+    if normalized in {"ONLINE", "ONSITE"}:
+        return normalized
+    return "ONLINE" if bool(location.is_online) else "ONSITE"
+
+
+def _block_is_online(block: dict[str, Any]) -> bool:
+    haystack = unicodedata.normalize(
+        "NFKD",
+        " ".join(str(block.get(key) or "") for key in ("modality", "location_label", "activity_label")),
+    ).encode("ascii", "ignore").decode("ascii").lower()
+    return "online" in haystack or "ligne" in haystack
+
+
+def _session_snapshot_matches_block(session: dict[str, Any], block: dict[str, Any]) -> bool:
+    activity_id = str(block.get("activity_id") or "").strip()
+    start_time = str(block.get("start_time") or "").strip()
+    if activity_id and str(session.get("activity_id") or "").strip() != activity_id:
+        return False
+    if start_time and str(session.get("start_time") or "").strip() != start_time:
+        return False
+    try:
+        block_weekday = int(block.get("weekday"))
+    except (TypeError, ValueError):
+        block_weekday = -1
+    if block_weekday >= 0:
+        try:
+            session_weekday = int(session.get("weekday"))
+        except (TypeError, ValueError):
+            session_weekday = -1
+        if session_weekday >= 0 and session_weekday != block_weekday:
+            return False
+    block_location_id = str(block.get("location_id") or "").strip()
+    if block_location_id and not _block_is_online(block):
+        session_location_id = str(session.get("location_id") or "").strip()
+        if session_location_id and session_location_id != block_location_id:
+            return False
+    return True
+
+
+def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[dict[str, Any]]:
+    activity_id = _parse_uuid(block.get("activity_id"))
+    if activity_id is None:
+        return []
+    start_date = _parse_iso_date(block.get("start_date"))
+    end_date = _parse_iso_date(block.get("end_date"))
+    if start_date is None or end_date is None:
+        return []
+    start_time = str(block.get("start_time") or "").strip()
+    if not start_time:
+        return []
+    try:
+        weekday = int(block.get("weekday"))
+    except (TypeError, ValueError):
+        weekday = -1
+    location_id = _parse_uuid(block.get("location_id"))
+    enforce_location = location_id is not None and not _block_is_online(block)
+
+    lower_bound = datetime.combine(start_date - timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+    upper_bound = datetime.combine(end_date + timedelta(days=2), datetime.min.time(), tzinfo=timezone.utc)
+    conditions = [
+        CourseSession.course_type_id == activity_id,
+        CourseSession.status == SessionStatus.SCHEDULED,
+        CourseSession.start_at_utc >= lower_bound,
+        CourseSession.start_at_utc < upper_bound,
+    ]
+    if enforce_location:
+        conditions.append(CourseSession.location_id == location_id)
+
+    rows = db.execute(
+        select(CourseSession, CourseType, Location)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .where(*conditions)
+        .order_by(CourseSession.start_at_utc.asc())
+    ).all()
+    sessions: list[dict[str, Any]] = []
+    for session_obj, activity, location in rows:
+        zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
+        local_start = session_obj.start_at_utc.astimezone(zone)
+        local_end = session_obj.end_at_utc.astimezone(zone)
+        if local_start.date() < start_date or local_start.date() > end_date:
+            continue
+        if weekday >= 0 and local_start.weekday() != weekday:
+            continue
+        if local_start.strftime("%H:%M") != start_time:
+            continue
+        modality = _course_type_modality(activity, location)
+        sessions.append(
+            {
+                "date": local_start.date().isoformat(),
+                "start_time": local_start.strftime("%H:%M"),
+                "end_time": local_end.strftime("%H:%M"),
+                "duration_minutes": int((local_end - local_start).total_seconds() // 60),
+                "activity_id": str(activity.id),
+                "activity_label": activity.name,
+                "location_id": str(location.id),
+                "location_label": location.name,
+                "series_key": str(session_obj.recurrence_group_id or session_obj.id),
+                "weekday": local_start.weekday(),
+                "weekday_label": DAY_LABELS_FR.get(local_start.weekday(), local_start.strftime("%A")),
+                "modality": modality,
+            }
+        )
+    return sessions
+
+
+def _calendar_snapshot_with_planning_sessions(db: Session | None, calendar_snapshot: dict[str, Any]) -> dict[str, Any]:
+    snapshot = dict(_json_object(calendar_snapshot))
+    if db is None:
+        return snapshot
+    sessions = [dict(item) for item in _json_list(snapshot.get("sessions")) if isinstance(item, dict)]
+    blocks = [dict(item) for item in _json_list(snapshot.get("blocks")) if isinstance(item, dict)]
+    changed = False
+    seen: set[tuple[str, str, str, str]] = {
+        (
+            str(item.get("date") or ""),
+            str(item.get("start_time") or ""),
+            str(item.get("activity_id") or ""),
+            str(item.get("location_id") or ""),
+        )
+        for item in sessions
+    }
+    for block in blocks:
+        if any(_session_snapshot_matches_block(item, block) for item in sessions):
+            continue
+        for item in _sessions_from_planning_block(db, block):
+            key = (
+                str(item.get("date") or ""),
+                str(item.get("start_time") or ""),
+                str(item.get("activity_id") or ""),
+                str(item.get("location_id") or ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            sessions.append(item)
+            changed = True
+    if changed:
+        sessions.sort(
+            key=lambda item: (
+                str(item.get("date") or ""),
+                str(item.get("start_time") or ""),
+                str(item.get("activity_label") or ""),
+            )
+        )
+        snapshot["sessions"] = sessions
+        snapshot["sessions_count"] = len(sessions)
+    return snapshot
+
+
 def _slot_mode_label(value: Any, *, language: str | None = None) -> str:
     raw = str(value or "").strip()
     if not raw:
@@ -1963,6 +2156,62 @@ def _load_terms_template_content(*, db: Session | None, quote: Quote) -> tuple[s
     return str(cgv_snapshot.get("version_label") or "").strip(), str(cgv_snapshot.get("content") or "").strip()
 
 
+def _user_address(user: User | None) -> str:
+    if user is None:
+        return ""
+    return " ".join(
+        part
+        for part in [user.address_line or "", user.postal_code or "", user.city or ""]
+        if str(part or "").strip()
+    ).strip()
+
+
+def _is_child_user(user: User | None) -> bool:
+    if user is None:
+        return False
+    kind = getattr(user.client_kind, "value", user.client_kind)
+    return str(kind or "").strip().upper() == ClientKind.CHILD.value
+
+
+def _family_adult_for_child(db: Session, child_id: UUID) -> User | None:
+    rows = db.execute(
+        select(ClientFamilyLink, User)
+        .join(User, User.id == ClientFamilyLink.adult_user_id)
+        .where(ClientFamilyLink.child_user_id == child_id)
+        .order_by(ClientFamilyLink.is_billing_recipient.desc(), ClientFamilyLink.created_at.asc())
+    ).all()
+    if not rows:
+        return None
+    _, adult = rows[0]
+    return adult
+
+
+def _apply_child_client_family_data(*, db: Session | None, quote: Quote, values: dict[str, str]) -> dict[str, str]:
+    if db is None or quote.client_id is None:
+        return values
+    child = db.scalar(select(User).where(User.id == quote.client_id))
+    if child is None or not _is_child_user(child):
+        return values
+
+    values["prospect_type"] = "child"
+    values["prospect_type_label"] = "Enfant"
+    values["child_first_name"] = values.get("child_first_name") or (child.first_name or "").strip()
+    values["child_last_name"] = values.get("child_last_name") or (child.last_name or "").strip()
+    values["child_full_name"] = values.get("child_full_name") or _name(child.first_name, child.last_name, fallback="")
+    if not values.get("child_birth_date") and child.birth_date is not None:
+        values["child_birth_date"] = child.birth_date.isoformat()
+
+    adult = _family_adult_for_child(db, child.id)
+    if adult is not None:
+        values["parent_first_name"] = values.get("parent_first_name") or (adult.first_name or "").strip()
+        values["parent_last_name"] = values.get("parent_last_name") or (adult.last_name or "").strip()
+        values["parent_full_name"] = values.get("parent_full_name") or _name(adult.first_name, adult.last_name, fallback="")
+        values["parent_email"] = values.get("parent_email") or (adult.email or "").strip().lower()
+        values["parent_phone"] = values.get("parent_phone") or (adult.mobile_phone_1 or adult.phone or "").strip()
+        values["parent_address"] = values.get("parent_address") or _user_address(adult)
+    return values
+
+
 def _resolve_prospect_data(*, db: Session | None, quote: Quote) -> dict[str, str]:
     values: dict[str, str] = {
         "prospect_type": "adult",
@@ -1985,11 +2234,11 @@ def _resolve_prospect_data(*, db: Session | None, quote: Quote) -> dict[str, str
         "child_birth_date": "",
     }
     if db is None or quote.prospect_id is None:
-        return values
+        return _apply_child_client_family_data(db=db, quote=quote, values=values)
 
     prospect = db.scalar(select(Prospect).where(Prospect.id == quote.prospect_id))
     if prospect is None:
-        return values
+        return _apply_child_client_family_data(db=db, quote=quote, values=values)
 
     meta = prospect.meta or {}
     typeform_parent_address = _typeform_parent_address_from_quote(db=db, quote=quote).strip()
@@ -2039,7 +2288,7 @@ def _resolve_prospect_data(*, db: Session | None, quote: Quote) -> dict[str, str
         values["adult_phone"] = (prospect.phone or "").strip()
         values["adult_address"] = str(meta.get("adult_address") or typeform_parent_address or "").strip()
 
-    return values
+    return _apply_child_client_family_data(db=db, quote=quote, values=values)
 
 
 def _resolve_client_data(*, db: Session | None, quote: Quote) -> dict[str, str]:
@@ -2061,9 +2310,7 @@ def _resolve_client_data(*, db: Session | None, quote: Quote) -> dict[str, str]:
     values["client_full_name"] = _name(user.first_name, user.last_name, fallback="")
     values["client_email"] = (user.email or "").strip().lower()
     values["client_phone"] = (user.mobile_phone_1 or user.phone or "").strip()
-    values["client_address"] = " ".join(
-        part for part in [user.address_line or "", user.postal_code or "", user.city or ""] if part
-    ).strip()
+    values["client_address"] = _user_address(user)
     return values
 
 
@@ -2325,7 +2572,7 @@ def _extract_document_context(
     if remaining_ttc_after_deposit < Decimal("0.00"):
         remaining_ttc_after_deposit = Decimal("0.00")
 
-    calendar_snapshot = _json_object(quote.calendar_snapshot)
+    calendar_snapshot = _calendar_snapshot_with_planning_sessions(db, _json_object(quote.calendar_snapshot))
     calendar_solfege = _json_object(calendar_snapshot.get("solfege"))
     solfege_selected_slot = _json_object(calendar_solfege.get("selected_slot"))
     selected_solfege_slot = _json_object(quote.selected_solfege_slot)
@@ -2969,7 +3216,7 @@ def _build_template_values(
 ) -> tuple[dict[str, str], set[str], dict[str, Any]]:
     language = _quote_doc_language(quote=quote)
     currency = (quote.currency or "EUR").upper()
-    calendar_snapshot = _json_object(quote.calendar_snapshot)
+    calendar_snapshot = _calendar_snapshot_with_planning_sessions(db, _json_object(quote.calendar_snapshot))
     service_product_ids = _service_product_ids_for_lines(db=db, lines=lines)
     services, products, kits, adjustments, other_fees = _line_groups(lines, service_product_ids=service_product_ids)
     document_context = build_quote_document_context(db=db, quote=quote, lines=lines, audience=audience)
@@ -4717,7 +4964,7 @@ def _render_quote_pdf_blocks(
     language = _quote_doc_language(quote=quote)
     values, html_keys, context = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     prospect_data = context.get("prospect_data", {})
-    calendar_snapshot = _json_object(quote.calendar_snapshot)
+    calendar_snapshot = _calendar_snapshot_with_planning_sessions(db, _json_object(quote.calendar_snapshot))
     sessions = [item for item in _json_list(calendar_snapshot.get("sessions")) if isinstance(item, dict)]
     planning_blocks = [item for item in _json_list(calendar_snapshot.get("blocks")) if isinstance(item, dict)]
     service_product_ids = _service_product_ids_for_lines(db=db, lines=lines)

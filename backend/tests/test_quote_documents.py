@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 import unittest
@@ -14,6 +15,7 @@ from reportlab.platypus import Paragraph
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.services.quotes.quote_documents import (
+    _calendar_snapshot_with_planning_sessions,
     _check_payment_instruction_lines,
     _line_groups,
     _pass_recup_compact_notice_markup,
@@ -23,6 +25,57 @@ from app.services.quotes.quote_documents import (
 
 
 class QuoteDocumentMarkupTests(unittest.TestCase):
+    def test_calendar_snapshot_hydrates_missing_block_sessions_from_planning(self) -> None:
+        activity_id = uuid4()
+        location_id = uuid4()
+        session_id = uuid4()
+        recurrence_id = uuid4()
+        fake_db = SimpleNamespace(
+            execute=lambda _query: SimpleNamespace(
+                all=lambda: [
+                    (
+                        SimpleNamespace(
+                            id=session_id,
+                            course_type_id=activity_id,
+                            location_id=location_id,
+                            status="SCHEDULED",
+                            start_at_utc=datetime(2026, 10, 7, 16, 5, tzinfo=timezone.utc),
+                            end_at_utc=datetime(2026, 10, 7, 16, 35, tzinfo=timezone.utc),
+                            timezone="Europe/Paris",
+                            recurrence_group_id=recurrence_id,
+                        ),
+                        SimpleNamespace(id=activity_id, name="Cours de solfège - Niveau 1", mode="ONLINE"),
+                        SimpleNamespace(id=location_id, name="Online", timezone="Europe/Paris", is_online=True),
+                    )
+                ]
+            )
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(activity_id),
+                    "activity_label": "Cours de solfège - Niveau 1",
+                    "location_label": "En ligne",
+                    "weekday": 2,
+                    "weekday_label": "Mercredi",
+                    "start_date": "2026-09-01",
+                    "end_date": "2027-08-31",
+                    "start_time": "18:05",
+                    "end_time": "18:35",
+                    "modality": "ONLINE",
+                    "selection_pending": False,
+                }
+            ],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_planning_sessions(fake_db, snapshot)
+
+        self.assertEqual(hydrated["sessions_count"], 1)
+        self.assertEqual(hydrated["sessions"][0]["date"], "2026-10-07")
+        self.assertEqual(hydrated["sessions"][0]["activity_label"], "Cours de solfège - Niveau 1")
+        self.assertEqual(hydrated["sessions"][0]["modality"], "ONLINE")
+
     def test_pass_recup_compact_pdf_markup_is_reportlab_compatible(self) -> None:
         markup = _pass_recup_compact_notice_markup(language="fr", pdf_compatible=True)
         markup = markup.replace("<p>", "").replace("</p>", "")

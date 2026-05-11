@@ -61,6 +61,7 @@ from app.schemas.typeform_intake import (
 )
 from app.services.invoice_documents import normalize_billing_entity
 from app.services.professor_activation import generate_temporary_password
+from app.services.quotes.quote_documents import _calendar_snapshot_with_planning_sessions
 from app.services.referrals import (
     ensure_referral_for_intake,
     link_referral_to_quote,
@@ -4722,7 +4723,7 @@ def _calendar_snapshot_from_analysis(
             "level_code": estimated_solfege_level,
             "selected_slot": solfege_selected_slot,
         }
-    return snapshot
+    return _calendar_snapshot_with_planning_sessions(db, snapshot)
 
 
 @router.get("/form-configs", response_model=list[TypeformFormConfigOut])
