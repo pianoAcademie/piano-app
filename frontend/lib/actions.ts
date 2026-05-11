@@ -10963,13 +10963,22 @@ export async function generateTypeformDraftQuoteAction(formData: FormData): Prom
 
   const intakeId = String(formData.get("intake_id") ?? "").trim();
   const allowEmptyQuote = String(formData.get("allow_empty_quote") ?? "").trim() === "1";
+  const familyOnlyQuote = String(formData.get("family_only_quote") ?? "").trim() === "1";
   const returnTo = safeAdminIntakesPath(String(formData.get("return_to") ?? "/admin/intakes"));
   if (!intakeId) {
     redirect(setQueryParam(returnTo, "error", "Intake introuvable"));
   }
 
+  const query = new URLSearchParams();
+  if (allowEmptyQuote) {
+    query.set("allow_empty_quote", "true");
+  }
+  if (familyOnlyQuote) {
+    query.set("family_only_quote", "true");
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : "";
   const result = await backendRequest<{ quote_id: string }>(
-    `/api/v1/typeform/intakes/${encodeURIComponent(intakeId)}/draft-quote${allowEmptyQuote ? "?allow_empty_quote=true" : ""}`,
+    `/api/v1/typeform/intakes/${encodeURIComponent(intakeId)}/draft-quote${suffix}`,
     {
       method: "POST",
     },

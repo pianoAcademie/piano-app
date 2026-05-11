@@ -5021,6 +5021,7 @@ def update_typeform_intake_referral(
 def create_draft_quote_from_typeform_intake(
     intake_id: UUID,
     allow_empty_quote: bool = Query(default=False),
+    family_only_quote: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> TypeformDraftQuoteResultOut:
@@ -5050,7 +5051,7 @@ def create_draft_quote_from_typeform_intake(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Cette intake est ignoree. Reactivez-la avant de generer un devis.",
         )
-    if intake.intake_status == INTAKE_STATUS_BLOCKED:
+    if intake.intake_status == INTAKE_STATUS_BLOCKED and not family_only_quote:
         blocking_messages = [message for message in analysis["blockages"] if _text(message)]
         preview_lines_in = analysis["preview_quote_lines_in"]
         if not (
@@ -5070,9 +5071,10 @@ def create_draft_quote_from_typeform_intake(
     normalized = _json_object(analysis["normalized"])
     resolution = _json_object(analysis["effective_resolution"])
     client_resolution = _json_object(resolution.get("client_resolution"))
-    preview_lines_in = analysis["preview_quote_lines_in"]
+    preview_lines_in = [] if family_only_quote else analysis["preview_quote_lines_in"]
     if not preview_lines_in and not allow_empty_quote:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Pre-devis vide")
+        if not family_only_quote:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Pre-devis vide")
 
     created_entities = _json_object(resolution.get("created_entities"))
     context_type = "acquisition"
@@ -5114,7 +5116,7 @@ def create_draft_quote_from_typeform_intake(
         config=config,
         normalized=normalized,
         resolution={**resolution, "created_entities": created_entities},
-        session_recommendations=analysis["session_recommendations"],
+        session_recommendations=[] if family_only_quote else analysis["session_recommendations"],
         runtime_context=_json_object(analysis.get("runtime_context")),
     )
     default_deposit = _default_pre_registration_deposit_from_config(config)
@@ -5153,19 +5155,42 @@ def create_draft_quote_from_typeform_intake(
             for message in _json_list(analysis.get("blockages"))
             if _text(message)
         ]
+    if family_only_quote:
+        quote_meta["typeform_family_only_quote_created"] = True
+        quote_meta["typeform_family_only_quote_reason"] = [
+            _text(message)
+            for message in _json_list(analysis.get("blockages"))
+            if _text(message)
+        ]
 
-    calendar_snapshot = _calendar_snapshot_from_analysis(
-        db,
-        normalized=normalized,
-        resolution=resolution,
-        session_recommendations=analysis["session_recommendations"],
-        runtime_context=_json_object(analysis.get("runtime_context")),
-    )
+    if family_only_quote:
+        calendar_snapshot = {
+            "typeform_preferences": {
+                "requested_days": _json_list(normalized.get("requested_days")),
+                "requested_times": _json_list(normalized.get("requested_times")),
+                "requested_location": normalized.get("requested_location"),
+                "requested_slot_preferences": _json_list(normalized.get("requested_slot_preferences")),
+            },
+            "typeform_recommendations": [],
+            "blocks": [],
+            "sessions": [],
+            "sessions_count": 0,
+            "generated_at": _utcnow().isoformat(),
+            "family_only_quote": True,
+        }
+    else:
+        calendar_snapshot = _calendar_snapshot_from_analysis(
+            db,
+            normalized=normalized,
+            resolution=resolution,
+            session_recommendations=analysis["session_recommendations"],
+            runtime_context=_json_object(analysis.get("runtime_context")),
+        )
     estimated_solfege_level = _extract_estimated_solfege_level(
         normalized=normalized,
-        session_recommendations=analysis["session_recommendations"],
+        session_recommendations=[] if family_only_quote else analysis["session_recommendations"],
     )
-    selected_solfege_slot = _json_object(_json_object(calendar_snapshot.get("solfege")).get("selected_slot"))
+    selected_solfege_slot = {} if family_only_quote else _json_object(_json_object(calendar_snapshot.get("solfege")).get("selected_slot"))
     default_quote_template = _typeform_default_quote_template(db, config=config)
     default_terms_template = _typeform_default_terms_template(db, config=config)
 

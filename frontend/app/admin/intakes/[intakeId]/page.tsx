@@ -484,6 +484,11 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
     Boolean(detail.related_quote_id)
     || (detail.blockages.length > 0 && !emptyPreviewOnlyBlockage)
     || detail.intake_status === "IGNORED";
+  const familyOnlyQuoteAvailable =
+    !detail.related_quote_id
+    && detail.intake_status !== "IGNORED"
+    && detail.blockages.length > 0
+    && !emptyPreviewOnlyBlockage;
 
   return (
     <section className="admin-page-grid">
@@ -1178,6 +1183,17 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                 <input type="hidden" name="return_to" value={`/admin/intakes/${encodeURIComponent(detail.id)}`} />
                 <input type="hidden" name="allow_empty_quote" value="1" />
                 <button type="submit">{t("admin.intakes.generate_empty_quote")}</button>
+              </form>
+            </section>
+          ) : null}
+          {familyOnlyQuoteAvailable ? (
+            <section className="flash-warn top-gap-sm">
+              <div>{t("admin.intakes.family_only_quote_warning")}</div>
+              <form action={generateTypeformDraftQuoteAction} className="top-gap-sm">
+                <input type="hidden" name="intake_id" value={detail.id} />
+                <input type="hidden" name="return_to" value={`/admin/intakes/${encodeURIComponent(detail.id)}`} />
+                <input type="hidden" name="family_only_quote" value="1" />
+                <button type="submit">{t("admin.intakes.generate_family_only_quote")}</button>
               </form>
             </section>
           ) : null}
