@@ -11,6 +11,7 @@ import type {
   UserOut,
 } from "../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage } from "../../../lib/ui-i18n";
+import { SimulationPlanningFilterForm } from "./filter-form";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -35,6 +36,7 @@ type CalendarDayGroup = {
 };
 
 const VACATION_COURSE_TYPE_CODE = "VACATION_DAY";
+const DEFAULT_SIMULATION_SCHOOL_YEAR = "2026-2027";
 
 type SlotPeopleSection = {
   label: string;
@@ -311,7 +313,7 @@ export default async function AdminSimulationPlanningPage({
   }
 
   const language = normalizeUiLanguage(meResult.data.preferred_language);
-  const requestedSchoolYear = readParam(searchParams ?? {}, "school_year").trim();
+  const requestedSchoolYear = readParam(searchParams ?? {}, "school_year").trim() || DEFAULT_SIMULATION_SCHOOL_YEAR;
   const requestedLocationId = readParam(searchParams ?? {}, "location_id").trim();
   const requestedActivityId = readParam(searchParams ?? {}, "activity_id").trim();
 
@@ -339,7 +341,9 @@ export default async function AdminSimulationPlanningPage({
   const simulationError = simulationResult.ok ? null : simulationResult.message;
 
   const effectiveSchoolYear = simulation?.school_year_label || requestedSchoolYear || "";
-  const availableSchoolYears = simulation?.available_school_years ?? [effectiveSchoolYear].filter(Boolean);
+  const availableSchoolYears = Array.from(
+    new Set([effectiveSchoolYear, ...(simulation?.available_school_years ?? [])].filter(Boolean)),
+  );
   const groupedLocations = simulation ? groupByLocation(simulation.slots) : [];
 
   return (
@@ -368,7 +372,7 @@ export default async function AdminSimulationPlanningPage({
       </section>
 
       <section className="card">
-        <form className="simulation-planning-toolbar" method="get">
+        <SimulationPlanningFilterForm className="simulation-planning-toolbar">
           <label>
             <span>{text(language, "Saison", "Season")}</span>
             <select name="school_year" defaultValue={effectiveSchoolYear}>
@@ -418,7 +422,7 @@ export default async function AdminSimulationPlanningPage({
               {text(language, "Reinitialiser", "Reset")}
             </Link>
           </div>
-        </form>
+        </SimulationPlanningFilterForm>
       </section>
 
       {locationsError ? (
