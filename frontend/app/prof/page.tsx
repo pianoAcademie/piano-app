@@ -654,6 +654,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
   const todaySessions = sessionsByDay.get(todayKeyUtc()) ?? [];
   const canEditPlanning = profile.permissions.can_edit_planning;
+  const canTakeAttendance = profile.permissions.can_take_attendance || profile.permissions.can_edit_planning;
   const canMessageStudents = profile.permissions.can_message_clients;
   const maxVisibleSessionsByDay = agendaView === "day" ? 24 : agendaView === "week" ? 8 : 5;
   const previousAgendaDate = shiftAgendaDate(agendaView, agendaDate, -1);
@@ -1327,7 +1328,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                       {t("teacher.missing_filter")}
                     </Link>
                   </div>
-                  {canEditPlanning && editableAttendanceStudents.length > 0 ? (
+                  {canTakeAttendance && editableAttendanceStudents.length > 0 ? (
                     <span className="status-badge status-scheduled">{t("teacher.one_tap_per_student")}</span>
                   ) : null}
                 </div>
@@ -1358,7 +1359,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
                         {student.attendance_status === "WAITLISTED" ? (
                           <p className="muted">{t("teacher.waitlist_student_readonly")}</p>
-                        ) : canEditPlanning ? (
+                        ) : canTakeAttendance ? (
                           <div className="teacher-attendance-segment-grid">
                             {[
                               { value: "ATTENDED", label: t("teacher.present"), tone: "ok" },
@@ -1402,7 +1403,44 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
               <aside className="teacher-attendance-secondary">
                 {canMessageStudents ? (
                   <details className="teacher-attendance-accordion">
-                    <summary>{t("teacher.notes_optional")}</summary>
+                    <summary>{t("teacher.notify_students_section")}</summary>
+                    <div className="teacher-attendance-accordion-body">
+                      <form action={professorSendSessionMessageAction} className="grid">
+                        <input type="hidden" name="session_id" value={selectedSession.id} />
+                        <input
+                          type="hidden"
+                          name="return_to"
+                          value={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id, attendanceFilter })}
+                        />
+                        <input type="hidden" name="recipient_target" value="GROUP" />
+                        <label>
+                          {t("teacher.subject")}
+                          <input
+                            type="text"
+                            name="subject"
+                            required
+                            maxLength={255}
+                            defaultValue={t("teacher.message_students_subject", { title: selectedSession.title })}
+                          />
+                        </label>
+                        <label>
+                          {t("teacher.message_students")}
+                          <input type="hidden" name="body_format" value="TEXT" />
+                          <textarea name="body" rows={4} maxLength={12000} placeholder={t("teacher.message_students_placeholder")} required />
+                        </label>
+                        <div className="row">
+                          <button type="submit" className="primary">
+                            {t("teacher.send_students_message")}
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  </details>
+                ) : null}
+
+                {canMessageStudents ? (
+                  <details className="teacher-attendance-accordion">
+                    <summary>{t("teacher.admin_note_section")}</summary>
                     <div className="teacher-attendance-accordion-body">
                       <form action={professorSendSessionMessageAction} className="grid">
                         <input type="hidden" name="session_id" value={selectedSession.id} />

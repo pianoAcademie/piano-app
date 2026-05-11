@@ -6360,7 +6360,7 @@ export async function createAdminCollaboratorAction(formData: FormData): Promise
 
   const permissions = parseProfessorPermissions(formData);
   permissions.can_view_planning = true;
-  permissions.can_edit_planning = true;
+  permissions.can_take_attendance = true;
 
   const payload = {
     email,
@@ -6733,13 +6733,14 @@ export async function updateAdminCollaboratorPermissionsAction(formData: FormDat
 
   const payload = parseProfessorPermissions(formData);
   const isAdmin = checkboxField(formData, "is_admin");
+  const teacherProfile = checkboxField(formData, "teacher_profile");
   const managerProfile = checkboxField(formData, "manager_profile");
 
   const result = await backendRequest<ProfessorPermissionOut>(
     `/api/v1/admin/collaborators/${professorId}/permissions`,
     {
       method: "PUT",
-      body: JSON.stringify({ ...payload, is_admin: isAdmin, manager_profile: managerProfile }),
+      body: JSON.stringify({ ...payload, is_admin: isAdmin, teacher_profile: teacherProfile, manager_profile: managerProfile }),
     },
     token,
   );

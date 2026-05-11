@@ -1743,6 +1743,7 @@ class ProfessorPermissionUpdateRequest(BaseModel):
     can_manage_website_and_news: bool = False
     can_create_and_view_reports: bool = False
     is_admin: bool | None = None
+    teacher_profile: bool = False
     manager_profile: bool = False
 
 

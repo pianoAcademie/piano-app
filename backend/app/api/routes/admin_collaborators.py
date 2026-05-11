@@ -1146,9 +1146,10 @@ def create_collaborator(
     db.flush()
 
     seed_permissions = payload.permissions.model_dump() if payload.permissions is not None else DEFAULT_PROFESSOR_PERMISSIONS
-    # Business rule: a collaborator must always be able to record student attendance.
+    # Business rule: a collaborator must always be able to see their own planning
+    # and record attendance without receiving full planning edit rights.
     seed_permissions["can_view_planning"] = True
-    seed_permissions["can_edit_planning"] = True
+    seed_permissions["can_take_attendance"] = True
     permission_row = ensure_permissions_row(db, professor_id=professor.id, defaults=seed_permissions)
 
     activation_email_message_id, _ = _send_professor_password_reset_link(
@@ -1487,6 +1488,7 @@ def update_collaborator_permissions(
 
     values = payload.model_dump()
     is_admin = values.pop("is_admin", None)
+    teacher_profile = bool(values.pop("teacher_profile", False))
     manager_profile = bool(values.pop("manager_profile", False))
 
     can_take_attendance = bool(values.get("can_take_attendance"))
@@ -1507,12 +1509,12 @@ def update_collaborator_permissions(
     # Compatibility bridge: keep legacy permission flags coherent with the
     # new privilege matrix used in the BackOffice.
     values["can_view_planning"] = can_take_attendance or can_edit_own_sessions or can_view_other_sessions
-    values["can_edit_planning"] = can_take_attendance or can_edit_own_sessions or can_manage_other_teachers
+    values["can_edit_planning"] = can_edit_own_sessions or can_manage_other_teachers
     values["can_view_all_school_sessions"] = can_view_other_sessions
     values["can_force_booking"] = can_manage_other_teachers
     values["can_view_clients"] = can_manage_students
     values["can_export_clients"] = bool(values.get("can_view_student_attachments"))
-    values["can_message_clients"] = bool(values.get("can_view_student_parent_emails"))
+    values["can_message_clients"] = bool(values.get("can_message_clients"))
     values["can_edit_payments"] = bool(values.get("can_record_payments_with_attendance")) or can_manage_invoices
     values["can_list_payments"] = can_manage_invoices
     values["can_access_cash_menu"] = bool(values.get("can_manage_expenses_and_other_income"))
@@ -1523,6 +1525,17 @@ def update_collaborator_permissions(
     values["can_manage_events"] = can_edit_own_sessions or can_manage_other_teachers
     values["can_view_dashboard"] = bool(values.get("can_view_pay_details")) or can_view_reports
     values["can_view_admin_reservations"] = can_view_other_sessions
+
+    if teacher_profile:
+        for field in PERMISSION_FIELDS:
+            values[field] = False
+        values["can_view_dashboard"] = True
+        values["can_view_planning"] = True
+        values["can_take_attendance"] = True
+        values["can_message_clients"] = True
+        values["can_view_pay_details"] = True
+        if is_admin is None:
+            is_admin = False
 
     if manager_profile:
         values["can_view_planning"] = True

@@ -464,6 +464,30 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
   }
 
   const professor = profResult.data;
+  const permissionState = professor.permissions as Record<string, boolean>;
+  const isTeacherProfile =
+    professor.role !== "admin" &&
+    Boolean(permissionState.can_view_planning) &&
+    Boolean(permissionState.can_take_attendance) &&
+    Boolean(permissionState.can_message_clients) &&
+    Boolean(permissionState.can_view_pay_details) &&
+    !Boolean(permissionState.can_edit_planning) &&
+    !Boolean(permissionState.can_view_all_school_sessions) &&
+    !Boolean(permissionState.can_access_collaborators) &&
+    !Boolean(permissionState.can_view_clients) &&
+    !Boolean(permissionState.can_view_student_parent_addresses_phones) &&
+    !Boolean(permissionState.can_view_student_parent_emails) &&
+    !Boolean(permissionState.can_view_other_teachers_contacts) &&
+    !Boolean(permissionState.can_view_other_teachers_sessions) &&
+    !Boolean(permissionState.can_manage_other_teachers_students_and_sessions);
+  const isManagerProfile =
+    professor.role !== "admin" &&
+    Boolean(permissionState.can_edit_planning) &&
+    Boolean(permissionState.can_view_planning_simulation) &&
+    Boolean(permissionState.can_view_clients) &&
+    Boolean(permissionState.can_access_collaborators) &&
+    Boolean(permissionState.can_view_intakes) &&
+    Boolean(permissionState.can_view_quotes);
   const rates = ratesResult.ok ? ratesResult.data : [];
   const courseTypes = courseTypesResult.ok ? courseTypesResult.data : [];
   const sessions = sessionsResult.ok ? sessionsResult.data : [];
@@ -964,18 +988,17 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
             <input type="hidden" name="professor_id" value={professor.id} />
             <article className="item span-2">
               <label className="checkline">
+                <input type="checkbox" name="teacher_profile" defaultChecked={isTeacherProfile} />
+                {t("admin.professor_detail.permissions_teacher_profile")}
+              </label>
+              <p className="muted">{t("admin.professor_detail.permissions_teacher_profile_help")}</p>
+            </article>
+            <article className="item span-2">
+              <label className="checkline">
                 <input
                   type="checkbox"
                   name="manager_profile"
-                  defaultChecked={
-                    professor.role !== "admin" &&
-                    Boolean((professor.permissions as Record<string, boolean>).can_edit_planning) &&
-                    Boolean((professor.permissions as Record<string, boolean>).can_view_planning_simulation) &&
-                    Boolean((professor.permissions as Record<string, boolean>).can_view_clients) &&
-                    Boolean((professor.permissions as Record<string, boolean>).can_access_collaborators) &&
-                    Boolean((professor.permissions as Record<string, boolean>).can_view_intakes) &&
-                    Boolean((professor.permissions as Record<string, boolean>).can_view_quotes)
-                  }
+                  defaultChecked={isManagerProfile}
                 />
                 {t("admin.professor_detail.permissions_manager_profile")}
               </label>

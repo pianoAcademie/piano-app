@@ -1050,7 +1050,7 @@ def update_booking_attendance(
     if current_user.role == UserRole.PROF:
         professor = _resolve_professor_profile(db, current_user=current_user)
         permissions = _resolve_professor_permissions(db, professor_id=professor.id)
-        if not permissions["can_edit_planning"]:
+        if not (permissions["can_take_attendance"] or permissions["can_edit_planning"]):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Attendance permission denied")
         if session_obj.professor_id != professor.id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Session does not belong to this professor")
