@@ -47,6 +47,49 @@ type QuotesConfigTab =
   | "doc_terms"
   | "doc_bindings";
 
+type QuotesConfigNavItem = {
+  tab?: QuotesConfigTab;
+  href?: string;
+  labelKey: string;
+  descriptionKey: string;
+};
+
+type QuotesConfigNavGroup = {
+  titleKey: string;
+  descriptionKey: string;
+  items: QuotesConfigNavItem[];
+};
+
+const QUOTES_CONFIG_NAV_GROUPS: QuotesConfigNavGroup[] = [
+  {
+    titleKey: "admin.quote_config.nav_group_business",
+    descriptionKey: "admin.quote_config.nav_group_business_desc",
+    items: [
+      { tab: "types", labelKey: "admin.quote_config.nav_types", descriptionKey: "admin.quote_config.nav_types_desc" },
+      { tab: "catalogs", labelKey: "admin.quote_config.nav_catalogs", descriptionKey: "admin.quote_config.nav_catalogs_desc" },
+      { tab: "payment_plans", labelKey: "admin.quote_config.nav_payment_plans", descriptionKey: "admin.quote_config.nav_payment_plans_desc" },
+    ],
+  },
+  {
+    titleKey: "admin.quote_config.nav_group_documents",
+    descriptionKey: "admin.quote_config.nav_group_documents_desc",
+    items: [
+      { tab: "doc_templates", labelKey: "admin.quote_config.nav_doc_templates", descriptionKey: "admin.quote_config.nav_doc_templates_desc" },
+      { tab: "doc_terms", labelKey: "admin.quote_config.nav_doc_terms", descriptionKey: "admin.quote_config.nav_doc_terms_desc" },
+      { tab: "doc_bindings", labelKey: "admin.quote_config.nav_doc_bindings", descriptionKey: "admin.quote_config.nav_doc_bindings_desc" },
+      { tab: "variables", labelKey: "admin.quote_config.nav_variables", descriptionKey: "admin.quote_config.nav_variables_desc" },
+    ],
+  },
+  {
+    titleKey: "admin.quote_config.nav_group_pedagogy",
+    descriptionKey: "admin.quote_config.nav_group_pedagogy_desc",
+    items: [
+      { tab: "solfege", labelKey: "admin.quote_config.nav_solfege", descriptionKey: "admin.quote_config.nav_solfege_desc" },
+      { href: "/admin/config/calendars", labelKey: "admin.quote_config.nav_calendars", descriptionKey: "admin.quote_config.nav_calendars_desc" },
+    ],
+  },
+];
+
 type QuoteTypeOut = {
   id: string;
   code: string;
@@ -975,16 +1018,27 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
       ) : null}
 
       <section className="card">
-        <nav className="config-sub-nav">
-          <Link className={`config-sub-link ${tab === "types" ? "active" : ""}`} href={buildQuotesConfigHref("types")}>{t("admin.quote_config.nav_types")}</Link>
-          <Link className={`config-sub-link ${tab === "catalogs" ? "active" : ""}`} href={buildQuotesConfigHref("catalogs")}>{t("admin.quote_config.nav_catalogs")}</Link>
-          <Link className={`config-sub-link ${tab === "payment_plans" ? "active" : ""}`} href={buildQuotesConfigHref("payment_plans")}>{t("admin.quote_config.nav_payment_plans")}</Link>
-          <Link className={`config-sub-link ${tab === "doc_templates" ? "active" : ""}`} href={buildQuotesConfigHref("doc_templates")}>{t("admin.quote_config.nav_doc_templates")}</Link>
-          <Link className={`config-sub-link ${tab === "doc_terms" ? "active" : ""}`} href={buildQuotesConfigHref("doc_terms")}>{t("admin.quote_config.nav_doc_terms")}</Link>
-          <Link className={`config-sub-link ${tab === "doc_bindings" ? "active" : ""}`} href={buildQuotesConfigHref("doc_bindings")}>{t("admin.quote_config.nav_doc_bindings")}</Link>
-          <Link className={`config-sub-link ${tab === "variables" ? "active" : ""}`} href={buildQuotesConfigHref("variables")}>{t("admin.quote_config.nav_variables")}</Link>
-          <Link className={`config-sub-link ${tab === "solfege" ? "active" : ""}`} href={buildQuotesConfigHref("solfege")}>{t("admin.quote_config.nav_solfege")}</Link>
-          <Link className="config-sub-link" href="/admin/config/calendars">{t("admin.quote_config.nav_calendars")}</Link>
+        <nav className="config-sub-nav config-grouped-sub-nav" aria-label={t("admin.quote_config.page_title")}>
+          {QUOTES_CONFIG_NAV_GROUPS.map((group) => (
+            <section key={group.titleKey} className="config-nav-group config-nav-group-compact">
+              <div className="config-nav-group-head">
+                <strong>{t(group.titleKey)}</strong>
+                <small>{t(group.descriptionKey)}</small>
+              </div>
+              <div className="config-nav-group-links">
+                {group.items.map((item) => {
+                  const href = item.href ?? (item.tab ? buildQuotesConfigHref(item.tab) : "/admin/config/quotes");
+                  const isActive = item.tab ? tab === item.tab : false;
+                  return (
+                    <Link key={item.labelKey} className={`config-sub-link ${isActive ? "active" : ""}`} href={href}>
+                      <span>{t(item.labelKey)}</span>
+                      <small>{t(item.descriptionKey)}</small>
+                    </Link>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
         </nav>
       </section>
 

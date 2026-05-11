@@ -5743,9 +5743,49 @@ button.danger:focus-visible {
   gap: 8px;
 }
 
+.config-nav-group {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #ead8bd;
+  border-radius: 12px;
+  background: #fffaf2;
+}
+
+.config-nav-group-compact {
+  padding: 8px;
+}
+
+.config-nav-group-head {
+  display: grid;
+  gap: 2px;
+}
+
+.config-nav-group-head strong,
+.config-sub-nav-title {
+  color: #2f261d;
+  font-size: 0.88rem;
+  line-height: 1.2;
+}
+
+.config-nav-group-head small,
+.config-main-link small,
+.config-sub-link small {
+  color: #7a6b5b;
+  font-size: 0.76rem;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.config-nav-group-links {
+  display: grid;
+  gap: 6px;
+}
+
 .config-main-link,
 .config-sub-link {
-  display: block;
+  display: grid;
+  gap: 3px;
   text-decoration: none;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -5759,6 +5799,16 @@ button.danger:focus-visible {
 .config-sub-link.active {
   background: #f0d7b2;
   border-color: #d7ba8f;
+}
+
+.config-main-link.active small,
+.config-sub-link.active small {
+  color: #5b4526;
+}
+
+.config-grouped-sub-nav {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
 }
 
 .config-main-content {
@@ -7258,6 +7308,10 @@ button.danger:focus-visible {
 
   .config-nav-panel {
     position: static;
+  }
+
+  .config-grouped-sub-nav {
+    grid-template-columns: 1fr;
   }
 
   .quote-config-catalog-layout {

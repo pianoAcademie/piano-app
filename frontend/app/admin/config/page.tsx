@@ -107,7 +107,14 @@ type MainNavItem = {
   key: ConfigMainSection;
   label: string;
   labelKey?: string;
+  descriptionKey?: string;
   section: ConfigSection;
+};
+
+type MainNavGroup = {
+  titleKey: string;
+  descriptionKey: string;
+  items: MainNavItem[];
 };
 
 type SubNavItem = {
@@ -136,17 +143,35 @@ type MessagingTabItem = {
 };
 
 const MAIN_NAV_ITEMS: MainNavItem[] = [
-  { key: "params", label: "", labelKey: "admin.config.main.params", section: "params-account" },
-  { key: "formulas", label: "", labelKey: "admin.breadcrumb.formulas", section: "formulas" },
-  { key: "quotes", label: "", labelKey: "admin.breadcrumb.quotes", section: "quotes" },
-  { key: "calendars", label: "", labelKey: "admin.breadcrumb.school_calendars", section: "calendars" },
-  { key: "activities", label: "", labelKey: "admin.breadcrumb.activities", section: "activities" },
-  { key: "legal-entities", label: "", labelKey: "admin.breadcrumb.legal_entities", section: "legal-entities" },
-  { key: "promo", label: "", labelKey: "admin.breadcrumb.promo", section: "promo" },
-  { key: "payment-rules", label: "", labelKey: "admin.breadcrumb.payment_rules", section: "payment-rules" },
-  { key: "integrations", label: "", labelKey: "admin.breadcrumb.integrations", section: "integrations" },
-  { key: "purchase-link", label: "", labelKey: "admin.breadcrumb.purchase_link", section: "purchase-link" },
-  { key: "credit-types", label: "", labelKey: "admin.breadcrumb.credit_types", section: "credit-types" },
+  { key: "params", label: "", labelKey: "admin.config.main.params", descriptionKey: "admin.config.nav.params_desc", section: "params-account" },
+  { key: "legal-entities", label: "", labelKey: "admin.breadcrumb.legal_entities", descriptionKey: "admin.config.nav.legal_entities_desc", section: "legal-entities" },
+  { key: "integrations", label: "", labelKey: "admin.breadcrumb.integrations", descriptionKey: "admin.config.nav.integrations_desc", section: "integrations" },
+  { key: "activities", label: "", labelKey: "admin.breadcrumb.activities", descriptionKey: "admin.config.nav.activities_desc", section: "activities" },
+  { key: "formulas", label: "", labelKey: "admin.breadcrumb.formulas", descriptionKey: "admin.config.nav.formulas_desc", section: "formulas" },
+  { key: "credit-types", label: "", labelKey: "admin.breadcrumb.credit_types", descriptionKey: "admin.config.nav.credit_types_desc", section: "credit-types" },
+  { key: "calendars", label: "", labelKey: "admin.breadcrumb.school_calendars", descriptionKey: "admin.config.nav.calendars_desc", section: "calendars" },
+  { key: "quotes", label: "", labelKey: "admin.breadcrumb.quotes", descriptionKey: "admin.config.nav.quotes_desc", section: "quotes" },
+  { key: "payment-rules", label: "", labelKey: "admin.breadcrumb.payment_rules", descriptionKey: "admin.config.nav.payment_rules_desc", section: "payment-rules" },
+  { key: "promo", label: "", labelKey: "admin.breadcrumb.promo", descriptionKey: "admin.config.nav.promo_desc", section: "promo" },
+  { key: "purchase-link", label: "", labelKey: "admin.breadcrumb.purchase_link", descriptionKey: "admin.config.nav.purchase_link_desc", section: "purchase-link" },
+];
+
+const MAIN_NAV_GROUPS: MainNavGroup[] = [
+  {
+    titleKey: "admin.config.nav.group_admin",
+    descriptionKey: "admin.config.nav.group_admin_desc",
+    items: MAIN_NAV_ITEMS.filter((item) => item.key === "params" || item.key === "legal-entities" || item.key === "integrations"),
+  },
+  {
+    titleKey: "admin.config.nav.group_offer",
+    descriptionKey: "admin.config.nav.group_offer_desc",
+    items: MAIN_NAV_ITEMS.filter((item) => item.key === "activities" || item.key === "formulas" || item.key === "credit-types" || item.key === "calendars"),
+  },
+  {
+    titleKey: "admin.config.nav.group_sales",
+    descriptionKey: "admin.config.nav.group_sales_desc",
+    items: MAIN_NAV_ITEMS.filter((item) => item.key === "quotes" || item.key === "payment-rules" || item.key === "promo" || item.key === "purchase-link"),
+  },
 ];
 
 const PARAMS_SUBNAV_ITEMS: SubNavItem[] = [
@@ -1000,27 +1025,39 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
       <section className="config-layout">
         <aside className="card config-nav-panel">
           <nav className="config-main-nav">
-            {MAIN_NAV_ITEMS.map((item) => {
-              const isActive = mainSection === item.key;
-              const href =
-                item.key === "formulas"
-                  ? "/admin/config/formulas"
-                  : item.key === "quotes"
-                  ? "/admin/config/quotes"
-                  : item.key === "calendars"
-                  ? "/admin/config/calendars"
-                  : buildConfigHref(item.section);
+            {MAIN_NAV_GROUPS.map((group) => (
+              <section key={group.titleKey} className="config-nav-group">
+                <div className="config-nav-group-head">
+                  <strong>{t(group.titleKey)}</strong>
+                  <small>{t(group.descriptionKey)}</small>
+                </div>
+                <div className="config-nav-group-links">
+                  {group.items.map((item) => {
+                    const isActive = mainSection === item.key;
+                    const href =
+                      item.key === "formulas"
+                        ? "/admin/config/formulas"
+                        : item.key === "quotes"
+                        ? "/admin/config/quotes"
+                        : item.key === "calendars"
+                        ? "/admin/config/calendars"
+                        : buildConfigHref(item.section);
 
-              return (
-                <Link key={item.key} className={`config-main-link ${isActive ? "active" : ""}`} href={href}>
-                  {configNavLabel(item.label, item.labelKey)}
-                </Link>
-              );
-            })}
+                    return (
+                      <Link key={item.key} className={`config-main-link ${isActive ? "active" : ""}`} href={href}>
+                        <span>{configNavLabel(item.label, item.labelKey)}</span>
+                        {item.descriptionKey ? <small>{t(item.descriptionKey)}</small> : null}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
           </nav>
 
           {mainSection === "params" ? (
-            <nav className="config-sub-nav">
+            <nav className="config-sub-nav" aria-label={t("admin.config.nav.params_submenu")}>
+              <strong className="config-sub-nav-title">{t("admin.config.nav.params_submenu")}</strong>
               {PARAMS_SUBNAV_ITEMS.map((item) => (
                 <Link
                   key={item.key}
