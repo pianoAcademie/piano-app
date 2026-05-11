@@ -407,12 +407,13 @@ function datesFromSnapshotSessions(block: PlanningBlock, sessions: SnapshotSessi
   }
   const startIso = start.toISOString().slice(0, 10);
   const endIso = end.toISOString().slice(0, 10);
+  const isOnlineBlock = normalizePlanningModality(block.modality) === "ONLINE";
   const relaxedMatches = sessions
     .filter((row) => {
       if (row.activity_id !== block.activity_id) {
         return false;
       }
-      if (block.location_id && (row.location_id || "") !== block.location_id) {
+      if (block.location_id && !isOnlineBlock && (row.location_id || "") !== block.location_id) {
         return false;
       }
       if (row.date < startIso || row.date > endIso) {

@@ -739,6 +739,40 @@ function getPlanningBlocks(snapshot: Record<string, unknown>): Array<Record<stri
   return raw.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
 }
 
+function snapshotSessionMatchesPlanningBlock(
+  session: Record<string, unknown>,
+  block: Record<string, unknown>,
+): boolean {
+  const activityId = String(block.activity_id ?? "").trim();
+  if (activityId && String(session.activity_id ?? "").trim() !== activityId) {
+    return false;
+  }
+  const startTime = String(block.start_time ?? "").trim();
+  if (startTime && String(session.start_time ?? "").trim() !== startTime) {
+    return false;
+  }
+  const blockWeekday = Number.parseInt(String(block.weekday ?? ""), 10);
+  if (Number.isFinite(blockWeekday) && blockWeekday >= 0 && blockWeekday <= 6) {
+    const sessionWeekday = Number.parseInt(String(session.weekday ?? ""), 10);
+    if (Number.isFinite(sessionWeekday) && sessionWeekday >= 0 && sessionWeekday <= 6 && sessionWeekday !== blockWeekday) {
+      return false;
+    }
+  }
+  const blockLocationId = String(block.location_id ?? "").trim();
+  const blockModality = normalizePlanningBlockModality(block.modality);
+  if (blockLocationId && blockModality !== "ONLINE" && String(session.location_id ?? "").trim() !== blockLocationId) {
+    return false;
+  }
+  return true;
+}
+
+function countSnapshotSessionsForPlanningBlock(
+  snapshot: Record<string, unknown>,
+  block: Record<string, unknown>,
+): number {
+  return getCalendarSessions(snapshot).filter((session) => snapshotSessionMatchesPlanningBlock(session, block)).length;
+}
+
 function normalizeCalendarDateList(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
@@ -951,6 +985,11 @@ async function hydratePlanningSnapshotWithLiveSessions({
       token,
     });
     if (!liveMatch) {
+      nextBlocks.push(block);
+      continue;
+    }
+    const existingCount = countSnapshotSessionsForPlanningBlock(snapshot, block);
+    if (existingCount > liveMatch.sessions.length) {
       nextBlocks.push(block);
       continue;
     }

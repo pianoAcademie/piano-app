@@ -97,6 +97,21 @@ function validBlock(block: LivePlanningBlockInput): boolean {
     && block.weekday <= 6;
 }
 
+function blockIsOnline(block: LivePlanningBlockInput): boolean {
+  const haystack = [
+    block.modality,
+    block.location_label,
+    block.activity_label,
+  ]
+    .filter((item) => item !== null && item !== undefined)
+    .map((item) => String(item))
+    .join(" ")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  return haystack.includes("online") || haystack.includes("ligne");
+}
+
 export async function loadLivePlanningMatchForBlock({
   block,
   token,
@@ -110,7 +125,8 @@ export async function loadLivePlanningMatchForBlock({
 
   const query = new URLSearchParams();
   query.set("course_type_id", block.activity_id);
-  if (block.location_id) {
+  const isOnlineBlock = blockIsOnline(block);
+  if (block.location_id && !isOnlineBlock) {
     query.set("location_id", block.location_id);
   }
   query.set("status", "SCHEDULED");
@@ -126,7 +142,7 @@ export async function loadLivePlanningMatchForBlock({
       if (session.course_type_id !== block.activity_id) {
         return false;
       }
-      if (block.location_id && session.location_id !== block.location_id) {
+      if (block.location_id && !isOnlineBlock && session.location_id !== block.location_id) {
         return false;
       }
       if (local.date < block.start_date || local.date > block.end_date) {

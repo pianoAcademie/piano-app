@@ -12054,16 +12054,6 @@ async function buildCalendarSnapshotFromBlocks({
   }));
 
   for (const block of normalizedBlocks) {
-    const liveMatch = await loadLivePlanningMatchForBlock({
-      block: block as LivePlanningBlockInput,
-      token,
-    });
-    if (liveMatch) {
-      sessions.push(...liveMatch.sessions);
-      Object.assign(block, liveMatch.block);
-      continue;
-    }
-
     const inferredSchoolYearLabel = deriveSchoolYearLabelFromDate(block.start_date) || schoolYearLabel || null;
     const resolvedCalendar = await resolveLocationCalendar(block.location_id, inferredSchoolYearLabel);
     const holidayDates = block.exclude_holidays_in_recurrence === false ? [] : resolvedCalendar.holiday_dates;
@@ -12082,6 +12072,7 @@ async function buildCalendarSnapshotFromBlocks({
       });
       continue;
     }
+
     const preview = await backendRequest<Record<string, unknown>>(
       "/api/v1/quotes/calendar/preview",
       {
@@ -12106,6 +12097,23 @@ async function buildCalendarSnapshotFromBlocks({
       redirect(appendQueryMessage(returnTo, "error", preview.message));
     }
     const rows = Array.isArray(preview.data.sessions) ? (preview.data.sessions as Array<Record<string, unknown>>) : [];
+
+    const liveMatch = await loadLivePlanningMatchForBlock({
+      block: block as LivePlanningBlockInput,
+      token,
+    });
+    if (liveMatch && (rows.length === 0 || liveMatch.sessions.length >= rows.length)) {
+      sessions.push(...liveMatch.sessions);
+      Object.assign(block, liveMatch.block, {
+        calendar_id: String(resolvedCalendar.calendar?.id ?? ""),
+        calendar_name: String(resolvedCalendar.calendar?.name ?? ""),
+        calendar_school_year: String(resolvedCalendar.calendar?.school_year_label ?? ""),
+        holiday_dates: holidayDates,
+        closure_dates: closureDates,
+      });
+      continue;
+    }
+
     for (const row of rows) {
       sessions.push({
         ...row,
