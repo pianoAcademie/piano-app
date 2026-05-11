@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, require_roles
+from app.api.deps import get_db, require_admin_or_permissions, require_roles
 from app.models.catalog import CourseType, CreditType, DeliveryMode
 from app.models.external_content import (
     CourseTypeContentMapping,
@@ -2612,7 +2612,7 @@ def get_admin_messaging_templates(
     usage_context: str | None = Query(default=None),
     active_only: bool = Query(default=False),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> list[AdminMessagingTemplateOut]:
     items = list_messaging_templates(
         db,

@@ -4811,7 +4811,7 @@ def list_admin_clients(
     active_only: bool = False,
     limit: int = Query(default=200, ge=1, le=1000),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_clients")),
 ) -> list[AdminClientOut]:
     stmt = _filtered_clients_stmt(
         search=search,
