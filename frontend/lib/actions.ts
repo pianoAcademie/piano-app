@@ -344,6 +344,18 @@ function normalizeTimezone(raw: string, fallback = "UTC"): string {
   }
 }
 
+function formatAdminDateTime(value: string, language: UiLanguage, timezone = "Europe/Paris"): string {
+  return new Intl.DateTimeFormat(localeForUiLanguage(language), {
+    timeZone: normalizeTimezone(timezone, "Europe/Paris"),
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(value));
+}
+
 type DateParts = {
   year: number;
   month: number;
@@ -6754,7 +6766,7 @@ export async function sendAdminCollaboratorPasswordLinkAction(formData: FormData
 
   revalidatePath("/admin/professors");
   revalidatePath(`/admin/professors/${professorId}`);
-  const expiresAtLabel = new Date(result.data.expires_at).toLocaleString(localeForUiLanguage(language));
+  const expiresAtLabel = formatAdminDateTime(result.data.expires_at, language);
   redirect(appendQueryMessage(`/admin/professors/${professorId}?tab=${returnTab}`, "ok", t("admin.professor_action.password_link_sent", { expires_at: expiresAtLabel })));
 }
 
