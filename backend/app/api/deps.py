@@ -70,7 +70,7 @@ def get_current_user(
             detail="Invalid or expired token",
         ) from exc
 
-    if payload.get("imp") and request.url.path.startswith("/api/v1/admin"):
+    if payload.get("imp") and request.url.path.startswith("/api/v1/admin") and payload.get("target_role") != "manager":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Impersonation token cannot access admin endpoints",

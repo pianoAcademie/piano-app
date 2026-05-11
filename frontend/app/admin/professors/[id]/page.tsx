@@ -627,7 +627,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
               <input type="hidden" name="teacher_id" value={professor.id} />
               <input type="hidden" name="return_to" value={`/admin/professors/${professor.id}?tab=${currentTab}`} />
               <button type="submit" className="mode-link">
-                {t("admin.professor_detail.view_teacher_portal")}
+                {isManagerProfile ? (language === "en" ? "Manager view" : "Vue gestionnaire") : t("admin.professor_detail.view_teacher_portal")}
               </button>
             </form>
           ) : null}

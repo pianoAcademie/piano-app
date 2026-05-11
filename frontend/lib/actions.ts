@@ -6,13 +6,17 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import {
+  clearAdminImpersonationReturnToken,
+  clearAdminToken,
   clearAllAuthTokens,
   clearPortalReturnTo,
   clearPortalToken,
+  getAdminImpersonationReturnToken,
   getAnyToken,
   getPortalToken,
   getTokenForPathname,
   getPortalReturnTo,
+  setAdminImpersonationReturnToken,
   setAdminToken,
   setPortalReturnTo,
   setPortalToken,
@@ -121,8 +125,8 @@ function currentPortalToken(): string | null {
   return getPortalToken() ?? currentToken();
 }
 
-function setAdminSessionToken(token: string): void {
-  setAdminToken(token);
+function setAdminSessionToken(token: string, maxAgeSeconds?: number): void {
+  setAdminToken(token, { maxAge: maxAgeSeconds });
 }
 
 function setPortalSessionToken(token: string, maxAgeSeconds?: number): void {
@@ -4001,6 +4005,18 @@ export async function adminViewTeacherPortalAction(formData: FormData): Promise<
     redirect(`/admin/professors/${teacherId}?tab=profil&error=${encodeURIComponent(result.message)}`);
   }
 
+  if (result.data.target_role === "manager") {
+    setAdminImpersonationReturnToken(token, result.data.expires_in_seconds);
+    setPortalReturnTo(returnTo);
+    setAdminSessionToken(result.data.access_token, result.data.expires_in_seconds);
+    const redirectPath = appendQueryParam(
+      appendQueryParam(result.data.redirect_path, "imp", "1"),
+      "imp_name",
+      result.data.target_display_name,
+    );
+    redirect(redirectPath);
+  }
+
   setPortalSessionToken(result.data.access_token, result.data.expires_in_seconds);
   setPortalReturnTo(returnTo);
   const redirectPath = appendQueryParam(
@@ -4009,6 +4025,31 @@ export async function adminViewTeacherPortalAction(formData: FormData): Promise<
     result.data.target_display_name,
   );
   redirect(redirectPath);
+}
+
+export async function endAdminImpersonationAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (token) {
+    await backendRequest<{ message: string }>(
+      "/api/v1/impersonation/end",
+      {
+        method: "POST",
+      },
+      token,
+    );
+  }
+
+  const returnToRaw = String(formData.get("return_to") ?? "").trim() || getPortalReturnTo() || "/admin";
+  const returnTo = returnToRaw.startsWith("/admin") ? returnToRaw : "/admin";
+  const adminReturnToken = getAdminImpersonationReturnToken();
+  if (adminReturnToken) {
+    setAdminSessionToken(adminReturnToken);
+  } else {
+    clearAdminToken();
+  }
+  clearAdminImpersonationReturnToken();
+  clearPortalReturnTo();
+  redirect(returnTo);
 }
 
 export async function endPortalImpersonationAction(formData: FormData): Promise<void> {

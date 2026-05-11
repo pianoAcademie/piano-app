@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 
 export const LEGACY_ACCESS_TOKEN_COOKIE = "access_token";
 export const ADMIN_ACCESS_TOKEN_COOKIE = "admin_access_token";
+export const ADMIN_IMPERSONATION_RETURN_TOKEN_COOKIE = "admin_impersonation_return_token";
 export const PORTAL_ACCESS_TOKEN_COOKIE = "portal_access_token";
 export const PORTAL_RETURN_TO_COOKIE = "portal_return_to";
 
@@ -45,7 +46,12 @@ function cookieSameSite(name: string): "lax" | "none" {
   if (!isSecureCookie()) {
     return "lax";
   }
-  if (name === PORTAL_ACCESS_TOKEN_COOKIE || name === LEGACY_ACCESS_TOKEN_COOKIE || name === PORTAL_RETURN_TO_COOKIE) {
+  if (
+    name === PORTAL_ACCESS_TOKEN_COOKIE
+    || name === LEGACY_ACCESS_TOKEN_COOKIE
+    || name === PORTAL_RETURN_TO_COOKIE
+    || name === ADMIN_IMPERSONATION_RETURN_TOKEN_COOKIE
+  ) {
     return "none";
   }
   return "lax";
@@ -181,6 +187,19 @@ export function clearAdminToken(): void {
   clearCookieValue(ADMIN_ACCESS_TOKEN_COOKIE, { path: "/" });
 }
 
+export function setAdminImpersonationReturnToken(token: string, maxAgeSeconds: number): void {
+  setCookieValue(ADMIN_IMPERSONATION_RETURN_TOKEN_COOKIE, token, { path: "/", maxAge: maxAgeSeconds });
+}
+
+export function getAdminImpersonationReturnToken(): string | null {
+  const token = cookies().get(ADMIN_IMPERSONATION_RETURN_TOKEN_COOKIE)?.value ?? null;
+  return token && !isExpiredJwt(token) ? token : null;
+}
+
+export function clearAdminImpersonationReturnToken(): void {
+  clearCookieValue(ADMIN_IMPERSONATION_RETURN_TOKEN_COOKIE, { path: "/" });
+}
+
 export function clearPortalToken(): void {
   clearCookieValue(PORTAL_ACCESS_TOKEN_COOKIE, { path: "/" });
 }
@@ -191,6 +210,7 @@ export function clearLegacyToken(): void {
 
 export function clearAllAuthTokens(): void {
   clearAdminToken();
+  clearAdminImpersonationReturnToken();
   clearPortalToken();
   clearLegacyToken();
 }
@@ -209,5 +229,10 @@ export function clearPortalReturnTo(): void {
 
 export function readPortalImpersonationClaims(): JwtPayloadLike | null {
   const token = cookies().get(PORTAL_ACCESS_TOKEN_COOKIE)?.value ?? null;
+  return decodeJwtPayloadUnsafe(token);
+}
+
+export function readAdminImpersonationClaims(): JwtPayloadLike | null {
+  const token = cookies().get(ADMIN_ACCESS_TOKEN_COOKIE)?.value ?? null;
   return decodeJwtPayloadUnsafe(token);
 }

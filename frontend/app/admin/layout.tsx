@@ -5,8 +5,8 @@ import { Suspense } from "react";
 
 import AdminBreadcrumb from "../../components/admin-breadcrumb";
 import AdminSidebar from "../../components/admin-sidebar";
-import { getAdminToken } from "../../lib/auth-cookies";
-import { logoutAction } from "../../lib/actions";
+import { getAdminToken, getPortalReturnTo, readAdminImpersonationClaims } from "../../lib/auth-cookies";
+import { endAdminImpersonationAction, logoutAction } from "../../lib/actions";
 import { adminRoleLabel, hasAnyAdminAccess } from "../../lib/admin-access";
 import { backendRequest } from "../../lib/backend";
 import { uiLanguageFromAcceptLanguage, withUiLanguage, withUiMessageCode } from "../../lib/ui-messages";
@@ -25,6 +25,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   }
 
   const displayName = [meResult.data.first_name, meResult.data.last_name].filter(Boolean).join(" ") || meResult.data.email;
+  const impersonationClaims = readAdminImpersonationClaims();
+  const isImpersonatingManager = Boolean(impersonationClaims?.imp && impersonationClaims.target_role === "manager");
+  const impersonationReturnTo = getPortalReturnTo() ?? "/admin";
 
   return (
     <div className="admin-shell" data-ui-language={language}>
@@ -57,6 +60,19 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         </header>
 
         <section className="admin-content">
+          {isImpersonatingManager ? (
+            <section className="portal-impersonation-banner" role="status" aria-live="polite">
+              <span>
+                {language === "en" ? "Admin mode: signed in as" : "Mode admin: connecte en tant que"} <strong>{displayName}</strong>
+              </span>
+              <form action={endAdminImpersonationAction}>
+                <input type="hidden" name="return_to" value={impersonationReturnTo} />
+                <button type="submit" className="mode-link">
+                  {language === "en" ? "Leave" : "Quitter"}
+                </button>
+              </form>
+            </section>
+          ) : null}
           {children}
         </section>
       </div>

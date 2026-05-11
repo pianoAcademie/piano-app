@@ -301,7 +301,7 @@ export type AdminClientSubscriptionOut = {
 
 export type AdminImpersonationStartOut = {
   target_user_id: string;
-  target_role: "client" | "teacher";
+  target_role: "client" | "teacher" | "manager";
   target_display_name: string;
   access_token: string;
   expires_in_seconds: number;

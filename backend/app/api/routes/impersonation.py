@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_db, require_roles
+from app.api.deps import BACKOFFICE_PERMISSION_KEYS, get_admin_permission_map, get_current_user, get_db, require_roles
 from app.models.catalog import Professor
 from app.models.user import User, UserRole
 from app.schemas.admin import AdminImpersonationEndOut, AdminImpersonationStartOut
@@ -73,6 +73,11 @@ def start_admin_teacher_impersonation(
             detail="Teacher user account not found or inactive",
         )
 
+    permission_map = get_admin_permission_map(db, target)
+    has_manager_access = any(bool(permission_map.get(field)) for field in BACKOFFICE_PERMISSION_KEYS)
+    target_role = "manager" if has_manager_access else "teacher"
+    redirect_path = "/admin" if has_manager_access else "/prof"
+
     access_token = create_access_token(
         subject=str(target.id),
         role=target.role.value,
@@ -80,17 +85,17 @@ def start_admin_teacher_impersonation(
         extra_claims={
             "imp": True,
             "act": str(actor.id),
-            "target_role": "teacher",
+            "target_role": target_role,
         },
     )
-    logger.info("impersonation_started actor=%s target=%s role=teacher", actor.id, target.id)
+    logger.info("impersonation_started actor=%s target=%s role=%s", actor.id, target.id, target_role)
     return AdminImpersonationStartOut(
         target_user_id=target.id,
-        target_role="teacher",
+        target_role=target_role,
         target_display_name=_display_name(target.first_name, target.last_name, target.email),
         access_token=access_token,
         expires_in_seconds=IMPERSONATION_TOKEN_TTL_MINUTES * 60,
-        redirect_path="/prof",
+        redirect_path=redirect_path,
     )
 
 

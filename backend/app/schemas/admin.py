@@ -1059,7 +1059,7 @@ class AdminClientPortalAccessOut(BaseModel):
 
 class AdminImpersonationStartOut(BaseModel):
     target_user_id: UUID
-    target_role: Literal["client", "teacher"]
+    target_role: Literal["client", "teacher", "manager"]
     target_display_name: str
     access_token: str
     expires_in_seconds: int
