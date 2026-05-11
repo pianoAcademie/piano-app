@@ -18,8 +18,10 @@ from app.services.quotes.quote_documents import (
     _calendar_snapshot_with_planning_sessions,
     _check_payment_instruction_lines,
     _line_groups,
+    _line_matches_end_year_concert,
     _pass_recup_compact_notice_markup,
     _planning_blocks_table_html,
+    _quote_template_allows_end_year_concert,
     _solfege_pending_block_info,
 )
 
@@ -85,6 +87,28 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertIsNotNone(paragraph)
         self.assertIn("<font", markup)
         self.assertNotIn("<span", markup)
+
+    def test_end_year_concert_line_match_detects_billed_option(self) -> None:
+        line = SimpleNamespace(
+            title="Concert de fin d’année",
+            code="CONCERT_FIN_ANNEE",
+            line_type="item",
+            line_category="product",
+            master_item_type="product",
+        )
+
+        self.assertTrue(_line_matches_end_year_concert(line))
+
+    def test_end_year_concert_template_gate_uses_meta(self) -> None:
+        enabled_quote = SimpleNamespace(
+            meta={"end_year_concert_option_mode": "enabled"},
+            quote_template_id=None,
+            quote_template_version_id=None,
+        )
+        regular_quote = SimpleNamespace(meta={}, quote_template_id=None, quote_template_version_id=None)
+
+        self.assertTrue(_quote_template_allows_end_year_concert(db=None, quote=enabled_quote))
+        self.assertFalse(_quote_template_allows_end_year_concert(db=None, quote=regular_quote))
 
     def test_solfege_pending_info_detects_accented_labels_and_keeps_slot_proposals(self) -> None:
         snapshot = {

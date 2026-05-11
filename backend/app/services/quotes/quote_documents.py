@@ -260,6 +260,9 @@ QUOTE_DOC_TEXT = {
         "masterclass_subscribed_with_slots": "Masterclass du samedi souscrite - {slots}",
         "masterclass_option_subscribed": "Option Masterclass du samedi : souscrite.",
         "masterclass_common_text": "Masterclass du samedi (complément aux 2 cours collectifs hebdomadaires) : une session de 3h dédiée à la pratique au piano, avec un focus approfondi sur la musicalité et l’interprétation.",
+        "end_year_concert_option_subscribed": "Option Concert de fin d’année : souscrite.",
+        "end_year_concert_option_not_subscribed": "Option Concert de fin d’année : non souscrite.",
+        "end_year_concert_common_text": "Participation au concert de fin d’année de Piano Académie.",
         "pass_recup_option_subscribed": "Option Pass Récup : souscrite.",
         "pass_recup_option_not_subscribed": "Option Pass Récup : non souscrite.",
         "pass_recup_common_text": "Le Pass Récup’ permet de rattraper un cours collectif manqué, dans la limite de 4 rattrapages par année scolaire. Le rattrapage peut s’effectuer soit sur un cours collectif en présentiel, sous réserve de disponibilité d’un créneau, soit sur un cours collectif en ligne, sur des créneaux dédiés. Le pass est utilisable uniquement en cas d’absence signalée. Il est valable pour l’année scolaire en cours et n’est pas remboursable. Sans souscription à ce pass, aucun rattrapage ne pourra être proposé, quelle que soit la raison de l’absence.",
@@ -461,6 +464,9 @@ QUOTE_DOC_TEXT = {
         "masterclass_subscribed_with_slots": "Saturday masterclass selected - {slots}",
         "masterclass_option_subscribed": "Saturday Masterclass option: selected.",
         "masterclass_common_text": "Saturday masterclass (in addition to the two weekly group lessons): a 3-hour session dedicated to piano practice, with a deeper focus on musicality and interpretation.",
+        "end_year_concert_option_subscribed": "End-of-year concert option: selected.",
+        "end_year_concert_option_not_subscribed": "End-of-year concert option: not selected.",
+        "end_year_concert_common_text": "Participation in Piano Academie's end-of-year concert.",
         "pass_recup_option_subscribed": "Catch-up Pass option: selected.",
         "pass_recup_option_not_subscribed": "Catch-up Pass option: not selected.",
         "pass_recup_common_text": "The Catch-up Pass lets you make up for a missed group lesson, up to 4 catch-ups per school year. Catch-up may take place either in an on-site group lesson, subject to slot availability, or in a dedicated online group lesson. The pass can only be used when an absence has been reported. It is valid for the current school year and is non-refundable. Without this pass, no catch-up can be offered, whatever the reason for the absence.",
@@ -2155,6 +2161,40 @@ def _quote_template_disables_pass_recup(*, db: Session | None, quote: Quote) -> 
     return any(("eveil" in item) or ("initiation" in item) for item in candidates if item)
 
 
+def _quote_template_allows_end_year_concert(*, db: Session | None, quote: Quote) -> bool:
+    meta = _json_object(quote.meta)
+    mode = str(meta.get("end_year_concert_option_mode") or meta.get("concert_option_mode") or "").strip().lower()
+    if mode in {"enabled", "required", "optional"}:
+        return True
+    if mode in {"disabled", "off", "none"}:
+        return False
+
+    candidates: list[str] = [
+        str(meta.get("quote_template_name") or "").strip().lower(),
+        str(meta.get("quote_template_code") or "").strip().lower(),
+        str(meta.get("template_name") or "").strip().lower(),
+    ]
+    if db is not None:
+        template: QuoteTemplate | None = None
+        if quote.quote_template_id is not None:
+            template = db.scalar(select(QuoteTemplate).where(QuoteTemplate.id == quote.quote_template_id))
+        elif quote.quote_template_version_id is not None:
+            version = db.scalar(select(QuoteTemplateVersion).where(QuoteTemplateVersion.id == quote.quote_template_version_id))
+            if version is not None:
+                template = db.scalar(select(QuoteTemplate).where(QuoteTemplate.id == version.quote_template_id))
+        if template is not None:
+            candidates.extend(
+                [
+                    str(template.name or "").strip().lower(),
+                    str(template.code or "").strip().lower(),
+                    str(template.description or "").strip().lower(),
+                ]
+            )
+
+    searchable = " ".join(_searchable_text(item) for item in candidates if item)
+    return "concert" in searchable and "option" in searchable
+
+
 def _load_terms_template_content(*, db: Session | None, quote: Quote) -> tuple[str, str]:
     if db is not None and quote.terms_template_version_id is not None:
         version = db.scalar(select(TermsTemplateVersion).where(TermsTemplateVersion.id == quote.terms_template_version_id))
@@ -2399,6 +2439,18 @@ def _line_matches_masterclass(line: QuoteLine) -> bool:
     return "masterclass" in haystack or "master class" in haystack
 
 
+def _line_matches_end_year_concert(line: QuoteLine) -> bool:
+    tokens = [
+        str(line.title or ""),
+        str(line.code or ""),
+        str(line.line_type or ""),
+        str(line.line_category or ""),
+        str(line.master_item_type or ""),
+    ]
+    haystack = _searchable_text(" ".join(tokens))
+    return "concert" in haystack
+
+
 def _masterclass_blocks_from_calendar_snapshot(snapshot: dict[str, Any], *, language: str | None = None) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for raw in _json_list(snapshot.get("blocks")):
@@ -2625,6 +2677,12 @@ def _extract_document_context(
         or _is_true(meta.get("masterclass_enabled"))
         or any(_line_matches_masterclass(line) for line in lines)
     )
+    end_year_concert_allowed = _quote_template_allows_end_year_concert(db=db, quote=quote)
+    end_year_concert_enabled = end_year_concert_allowed and (
+        _is_true(meta.get("end_year_concert_enabled"))
+        or _is_true(meta.get("concert_enabled"))
+        or any(_line_matches_end_year_concert(line) for line in lines)
+    )
 
     schedule_allowed_for_audience = bool(schedule_visibility.get(audience, False))
     show_schedule_detailed = has_installment_schedule and schedule_allowed_for_audience
@@ -2659,6 +2717,8 @@ def _extract_document_context(
         "showSolfegeCompactNotice": not solfege_enabled,
         "showMasterclassSection": masterclass_enabled,
         "showMasterclassCompactNotice": not masterclass_enabled,
+        "showEndYearConcertSection": end_year_concert_enabled,
+        "showEndYearConcertCompactNotice": end_year_concert_allowed and not end_year_concert_enabled,
         "showPassRecupSection": pass_recup_enabled,
         "showPassRecupCompactNotice": pass_recup_allowed and not pass_recup_enabled,
     }
@@ -2681,6 +2741,8 @@ def _extract_document_context(
         "solfege_available_slots": [item for item in pending_solfege_info.get("slot_labels", []) if isinstance(item, str)],
         "masterclass_enabled": masterclass_enabled,
         "masterclass_blocks": masterclass_blocks,
+        "end_year_concert_allowed": end_year_concert_allowed,
+        "end_year_concert_enabled": end_year_concert_enabled,
         "pass_recup_mode": pass_recup_mode,
         "pass_recup_allowed": pass_recup_allowed,
         "pass_recup_enabled": pass_recup_enabled,
@@ -2710,6 +2772,8 @@ def build_quote_document_context(
         ("solfege_compact_notice", "showSolfegeCompactNotice"),
         ("masterclass", "showMasterclassSection"),
         ("masterclass_compact_notice", "showMasterclassCompactNotice"),
+        ("end_year_concert", "showEndYearConcertSection"),
+        ("end_year_concert_compact_notice", "showEndYearConcertCompactNotice"),
         ("pass_recup", "showPassRecupSection"),
         ("pass_recup_compact_notice", "showPassRecupCompactNotice"),
     ):
@@ -3869,6 +3933,25 @@ def _build_template_values(
         if display_flags["showMasterclassSection"]
         else ""
     )
+    end_year_concert_common_text = _quote_doc_text("end_year_concert_common_text", language=language)
+    end_year_concert_block_html = (
+        f"<p><strong>{escape(_quote_doc_text('end_year_concert_option_subscribed', language=language))}</strong><br/>"
+        f"<i>{escape(end_year_concert_common_text)}</i></p>"
+        if display_flags["showEndYearConcertSection"]
+        else ""
+    )
+    end_year_concert_compact_notice_html = (
+        f"<p><strong>{escape(_quote_doc_text('end_year_concert_option_not_subscribed', language=language))}</strong><br/>"
+        f"<span class='quote-small-muted'><i>{escape(end_year_concert_common_text)}</i></span></p>"
+        if display_flags["showEndYearConcertCompactNotice"]
+        else ""
+    )
+    end_year_concert_compact_notice_pdf_html = (
+        f"<p><b>{escape(_quote_doc_text('end_year_concert_option_not_subscribed', language=language))}</b><br/>"
+        f"<font size='9' color='#667085'><i>{escape(end_year_concert_common_text)}</i></font></p>"
+        if display_flags["showEndYearConcertCompactNotice"]
+        else ""
+    )
     pass_recup_common_text = _quote_doc_text("pass_recup_common_text", language=language)
     pass_recup_block_html = (
         f"<p><strong>{escape(_quote_doc_text('pass_recup_option_subscribed', language=language))}</strong><br/>"
@@ -3890,7 +3973,14 @@ def _build_template_values(
         _quote_doc_text("options_title", language=language),
         "".join(
             fragment
-            for fragment in (solfege_block_html, masterclass_block_html, pass_recup_block_html, pass_recup_compact_notice_html)
+            for fragment in (
+                solfege_block_html,
+                masterclass_block_html,
+                end_year_concert_block_html,
+                end_year_concert_compact_notice_html,
+                pass_recup_block_html,
+                pass_recup_compact_notice_html,
+            )
             if str(fragment or "").strip()
         ),
     )
@@ -4034,6 +4124,9 @@ def _build_template_values(
         "prospect_identity_block_html": prospect_identity_block_html,
         "solfege_block_html": solfege_block_html,
         "masterclass_block_html": masterclass_block_html,
+        "end_year_concert_block_html": end_year_concert_block_html,
+        "end_year_concert_compact_notice_html": end_year_concert_compact_notice_html,
+        "end_year_concert_compact_notice_pdf_html": end_year_concert_compact_notice_pdf_html,
         "pass_recup_block_html": pass_recup_block_html,
         "pass_recup_compact_notice_html": pass_recup_compact_notice_html,
         "pass_recup_compact_notice_pdf_html": pass_recup_compact_notice_pdf_html,
@@ -4062,6 +4155,7 @@ def _build_template_values(
         "show_child_block": "true" if display_flags["showChildBlock"] else "false",
         "show_solfege_section": "true" if display_flags["showSolfegeSection"] else "false",
         "show_masterclass_section": "true" if display_flags["showMasterclassSection"] else "false",
+        "show_end_year_concert_section": "true" if display_flags["showEndYearConcertSection"] else "false",
         "show_pass_recup_section": "true" if display_flags["showPassRecupSection"] else "false",
         "show_payment_schedule_detailed": "true" if display_flags["showPaymentScheduleDetailed"] else "false",
     }
@@ -4076,6 +4170,8 @@ def _build_template_values(
         "prospect_identity_block_html",
         "solfege_block_html",
         "masterclass_block_html",
+        "end_year_concert_block_html",
+        "end_year_concert_compact_notice_html",
         "pass_recup_block_html",
         "pass_recup_compact_notice_html",
         "options_section_html",
@@ -4222,6 +4318,8 @@ def _render_quote_body_html(
             "prospect_identity_block_html",
             "solfege_block_html",
             "masterclass_block_html",
+            "end_year_concert_block_html",
+            "end_year_concert_compact_notice_html",
             "pass_recup_block_html",
             "options_section_html",
             "payment_method_block_html",
@@ -4617,6 +4715,8 @@ _TERMS_RENDER_BLOCK_KEYS = {
     "prospect_identity_block_html",
     "solfege_block_html",
     "masterclass_block_html",
+    "end_year_concert_block_html",
+    "end_year_concert_compact_notice_html",
     "pass_recup_block_html",
     "pass_recup_compact_notice_html",
     "options_section_html",
@@ -5376,6 +5476,18 @@ def _render_quote_pdf_blocks(
     option_blocks = [
         _apply_template("{solfege_block_html}", values=values, html_keys={"solfege_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""),
         _apply_template("{masterclass_block_html}", values=values, html_keys={"masterclass_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""),
+        _apply_template(
+            "{end_year_concert_block_html}",
+            values=values,
+            html_keys={"end_year_concert_block_html"},
+            html_output=True,
+        ).replace("<p>", "").replace("</p>", ""),
+        _apply_template(
+            "{end_year_concert_compact_notice_pdf_html}",
+            values=values,
+            html_keys={"end_year_concert_compact_notice_pdf_html"},
+            html_output=True,
+        ).replace("<p>", "").replace("</p>", ""),
         _apply_template("{pass_recup_block_html}", values=values, html_keys={"pass_recup_block_html"}, html_output=True).replace("<p>", "").replace("</p>", ""),
         _apply_template(
             "{pass_recup_compact_notice_pdf_html}",
