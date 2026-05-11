@@ -21,6 +21,7 @@ from app.api.routes.typeform_intakes import (
     _should_try_future_school_year_config,
     _solfege_slot_proposal_from_normalized,
     _stored_messages,
+    _template_matches_segment_target,
     _typeform_session_option_from_row,
 )
 from app.services.referrals import referral_category_for_location
@@ -163,6 +164,13 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
         self.assertEqual(referral_category_for_location("Vidéo Call"), "ONLINE")
         self.assertEqual(referral_category_for_location("Domicile"), "DOMICILE")
         self.assertEqual(referral_category_for_location("Bar-le-Duc"), "BAR_LE_DUC")
+
+    def test_document_template_target_matches_child_segment_aliases(self) -> None:
+        child_template = SimpleNamespace(target="enfants", code="quote_child", name="Modele enfants", description="")
+        teen_template = SimpleNamespace(target="ados", code="quote_teen", name="Modele ados", description="")
+
+        self.assertTrue(_template_matches_segment_target(child_template, segment="child"))
+        self.assertFalse(_template_matches_segment_target(teen_template, segment="child"))
 
     def test_normalize_payload_falls_back_to_creneau_label_for_slot_preferences(self) -> None:
         config = SimpleNamespace(

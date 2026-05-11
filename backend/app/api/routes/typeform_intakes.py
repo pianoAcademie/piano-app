@@ -32,8 +32,10 @@ from app.models.quote import (
     PricingKitPrice,
     PricingProductPrice,
     Prospect,
+    QuoteTemplate,
     QuoteType,
     SolfegeLevelRule,
+    TermsTemplate,
 )
 from app.models.referral import ReferralReward
 from app.models.typeform_intake import TypeformFormConfig, TypeformIntake
@@ -123,6 +125,13 @@ DAY_LABELS = {
     6: "Dimanche",
 }
 
+DOCUMENT_TARGET_ALIASES = {
+    "adult": {"adult", "adulte", "adultes"},
+    "child": {"child", "children", "enfant", "enfants"},
+    "teen": {"teen", "teens", "ado", "ados", "adolescent", "adolescents"},
+    "eveil": {"eveil", "initiation", "early_childhood"},
+}
+
 
 def _recurrence_label(value: object | None) -> str | None:
     raw = _text(value).strip().upper()
@@ -175,6 +184,60 @@ def _normalize_token(value: object | None) -> str:
         .replace("ê", "e")
         .replace("à", "a")
         .replace("ç", "c")
+    )
+
+
+def _document_target_tokens(segment: object | None) -> set[str]:
+    normalized = _normalize_token(segment)
+    if not normalized:
+        return set()
+    return DOCUMENT_TARGET_ALIASES.get(normalized, {normalized})
+
+
+def _template_matches_segment_target(template: QuoteTemplate | TermsTemplate, *, segment: object | None) -> bool:
+    target_tokens = _document_target_tokens(segment)
+    if not target_tokens:
+        return False
+    template_target = _normalize_token(getattr(template, "target", None))
+    if template_target and template_target in target_tokens:
+        return True
+    haystack = _normalize_token(" ".join(str(getattr(template, field, "") or "") for field in ("code", "name", "description")))
+    return any(token and token in haystack for token in target_tokens)
+
+
+def _typeform_default_quote_template(db: Session, *, config: TypeformFormConfig) -> QuoteTemplate | None:
+    language = _normalize_token(config.default_language) or "fr"
+    candidates = db.scalars(
+        select(QuoteTemplate)
+        .where(QuoteTemplate.is_active.is_(True), QuoteTemplate.current_version_id.isnot(None))
+        .order_by(QuoteTemplate.is_default.desc(), QuoteTemplate.updated_at.desc())
+    ).all()
+    language_candidates = [
+        item
+        for item in candidates
+        if not getattr(item, "language", None) or _normalize_token(item.language) == language
+    ]
+    return next(
+        (item for item in language_candidates if _template_matches_segment_target(item, segment=config.audience_segment)),
+        None,
+    )
+
+
+def _typeform_default_terms_template(db: Session, *, config: TypeformFormConfig) -> TermsTemplate | None:
+    language = _normalize_token(config.default_language) or "fr"
+    candidates = db.scalars(
+        select(TermsTemplate)
+        .where(TermsTemplate.is_active.is_(True), TermsTemplate.current_version_id.isnot(None))
+        .order_by(TermsTemplate.updated_at.desc())
+    ).all()
+    language_candidates = [
+        item
+        for item in candidates
+        if not getattr(item, "language", None) or _normalize_token(item.language) == language
+    ]
+    return next(
+        (item for item in language_candidates if _template_matches_segment_target(item, segment=config.audience_segment)),
+        None,
     )
 
 
@@ -5103,6 +5166,8 @@ def create_draft_quote_from_typeform_intake(
         session_recommendations=analysis["session_recommendations"],
     )
     selected_solfege_slot = _json_object(_json_object(calendar_snapshot.get("solfege")).get("selected_slot"))
+    default_quote_template = _typeform_default_quote_template(db, config=config)
+    default_terms_template = _typeform_default_terms_template(db, config=config)
 
     quote_payload = QuoteCreateRequest(
         context_type=context_type,
@@ -5121,6 +5186,8 @@ def create_draft_quote_from_typeform_intake(
         estimated_solfege_level=estimated_solfege_level,
         selected_solfege_slot=selected_solfege_slot,
         calendar_snapshot=calendar_snapshot,
+        quote_template_uuid=default_quote_template.id if default_quote_template is not None else None,
+        terms_template_id=default_terms_template.id if default_terms_template is not None else None,
         meta=quote_meta,
         lines=preview_lines_in,
     )

@@ -1723,14 +1723,14 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
         key: `adult-${link.id}`,
         role: t("admin.quote_detail.linked_child"),
         personName: displayName(link.child.first_name, link.child.last_name, link.child.email, language),
-        personEmail: link.child.email,
+        personEmail: visibleEmail(link.child.email) || "-",
         billing: link.is_billing_recipient,
       })),
       ...clientFamily.links_as_child.map((link) => ({
         key: `child-${link.id}`,
         role: t("admin.quote_detail.linked_adult"),
         personName: displayName(link.adult.first_name, link.adult.last_name, link.adult.email, language),
-        personEmail: link.adult.email,
+        personEmail: visibleEmail(link.adult.email) || "-",
         billing: link.is_billing_recipient,
       })),
     ]
@@ -2420,7 +2420,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	                  <h4>{t("admin.quote_detail.source_contact_title")}</h4>
 	                  <p><strong>{t("admin.quote_detail.context_label")}:</strong> {labelForContext(detail.quote.context_type, language)}</p>
 	                  <p><strong>{t("admin.quote_detail.name_label")}:</strong> {ownerName}</p>
-	                  <p><strong>{t("common.email")}:</strong> {owner?.email || "-"}</p>
+	                  <p><strong>{t("common.email")}:</strong> {ownerEmail || "-"}</p>
 	                  <p><strong>{t("admin.quote_detail.phone_label")}:</strong> {ownerPhone}</p>
 	                  <div className="row wrap gap-sm top-gap-sm">
 	                    {selectedProspect ? (

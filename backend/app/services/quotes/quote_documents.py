@@ -1409,6 +1409,18 @@ def _course_type_modality(activity: CourseType, location: Location) -> str:
     return "ONLINE" if bool(location.is_online) else "ONSITE"
 
 
+def _is_synthetic_email(value: str | None) -> bool:
+    normalized = (value or "").strip().lower()
+    return normalized.endswith("@piano-academie.invalid") or normalized.endswith("@no-email.local")
+
+
+def _public_email(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    if not normalized or _is_synthetic_email(normalized):
+        return ""
+    return normalized
+
+
 def _block_is_online(block: dict[str, Any]) -> bool:
     haystack = unicodedata.normalize(
         "NFKD",
@@ -2206,7 +2218,7 @@ def _apply_child_client_family_data(*, db: Session | None, quote: Quote, values:
         values["parent_first_name"] = values.get("parent_first_name") or (adult.first_name or "").strip()
         values["parent_last_name"] = values.get("parent_last_name") or (adult.last_name or "").strip()
         values["parent_full_name"] = values.get("parent_full_name") or _name(adult.first_name, adult.last_name, fallback="")
-        values["parent_email"] = values.get("parent_email") or (adult.email or "").strip().lower()
+        values["parent_email"] = values.get("parent_email") or _public_email(adult.email)
         values["parent_phone"] = values.get("parent_phone") or (adult.mobile_phone_1 or adult.phone or "").strip()
         values["parent_address"] = values.get("parent_address") or _user_address(adult)
     return values
@@ -2258,7 +2270,7 @@ def _resolve_prospect_data(*, db: Session | None, quote: Quote) -> dict[str, str
 
         parent_first_name = str((parent_meta or {}).get("first_name") or "").strip()
         parent_last_name = str((parent_meta or {}).get("last_name") or "").strip()
-        parent_email = str((parent_meta or {}).get("email") or prospect.email or "").strip().lower()
+        parent_email = _public_email(str((parent_meta or {}).get("email") or prospect.email or ""))
         parent_phone = str((parent_meta or {}).get("phone") or prospect.phone or "").strip()
         parent_address = str((parent_meta or {}).get("address") or "").strip()
         if prospect.parent_prospect_id is not None:
@@ -2266,7 +2278,7 @@ def _resolve_prospect_data(*, db: Session | None, quote: Quote) -> dict[str, str
             if parent is not None:
                 parent_first_name = parent.first_name or parent_first_name
                 parent_last_name = parent.last_name or parent_last_name
-                parent_email = (parent.email or parent_email).strip().lower()
+                parent_email = _public_email(parent.email) or parent_email
                 parent_phone = (parent.phone or parent_phone).strip()
                 if not parent_address:
                     parent_meta_data = parent.meta or {}
@@ -2284,7 +2296,7 @@ def _resolve_prospect_data(*, db: Session | None, quote: Quote) -> dict[str, str
         values["adult_first_name"] = (prospect.first_name or "").strip()
         values["adult_last_name"] = (prospect.last_name or "").strip()
         values["adult_full_name"] = _name(prospect.first_name, prospect.last_name, fallback="")
-        values["adult_email"] = (prospect.email or "").strip().lower()
+        values["adult_email"] = _public_email(prospect.email)
         values["adult_phone"] = (prospect.phone or "").strip()
         values["adult_address"] = str(meta.get("adult_address") or typeform_parent_address or "").strip()
 
@@ -2308,7 +2320,7 @@ def _resolve_client_data(*, db: Session | None, quote: Quote) -> dict[str, str]:
     values["client_first_name"] = (user.first_name or "").strip()
     values["client_last_name"] = (user.last_name or "").strip()
     values["client_full_name"] = _name(user.first_name, user.last_name, fallback="")
-    values["client_email"] = (user.email or "").strip().lower()
+    values["client_email"] = _public_email(user.email)
     values["client_phone"] = (user.mobile_phone_1 or user.phone or "").strip()
     values["client_address"] = _user_address(user)
     return values
