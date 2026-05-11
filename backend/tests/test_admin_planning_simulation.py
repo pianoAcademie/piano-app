@@ -4,10 +4,17 @@ from datetime import date
 from pathlib import Path
 import sys
 import unittest
+from types import SimpleNamespace
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.api.routes.admin import _parse_school_year_bounds, _safe_zoneinfo
+from app.api.routes.admin import (
+    _parse_school_year_bounds,
+    _planning_simulation_clean_location_label,
+    _planning_simulation_quote_location_name,
+    _safe_zoneinfo,
+)
+from app.models.catalog import DeliveryMode
 
 
 class AdminPlanningSimulationTests(unittest.TestCase):
@@ -26,6 +33,23 @@ class AdminPlanningSimulationTests(unittest.TestCase):
         self.assertEqual(_safe_zoneinfo(None).key, "Europe/Paris")
         self.assertEqual(_safe_zoneinfo("not-a-timezone").key, "Europe/Paris")
         self.assertEqual(_safe_zoneinfo("UTC").key, "UTC")
+
+    def test_planning_simulation_hides_uuid_location_labels(self) -> None:
+        self.assertEqual(
+            _planning_simulation_clean_location_label("1be3c4dc-2f55-4712-bcf9-32a4624ff1ad"),
+            "",
+        )
+
+    def test_planning_simulation_labels_online_quote_slots(self) -> None:
+        label = _planning_simulation_quote_location_name(
+            {"activity_label": "Cours de solfege - Niveau 1"},
+            course_type=SimpleNamespace(mode=DeliveryMode.ONLINE),
+        )
+
+        self.assertEqual(label, "En ligne")
+
+    def test_planning_simulation_falls_back_to_unknown_location_label(self) -> None:
+        self.assertEqual(_planning_simulation_quote_location_name({}), "Lieu non defini")
 
 
 if __name__ == "__main__":

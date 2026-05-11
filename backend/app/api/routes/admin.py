@@ -1100,6 +1100,42 @@ def _planning_simulation_quote_student_name(
     return f"Devis {quote.quote_number}"
 
 
+def _planning_simulation_clean_location_label(value: object | None) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if _parse_uuid_local(raw) is not None:
+        return ""
+    return raw
+
+
+def _planning_simulation_quote_location_name(
+    block: dict[str, object],
+    *,
+    resolved_location_name: str = "",
+    course_type: CourseType | None = None,
+) -> str:
+    explicit_label = _planning_simulation_clean_location_label(
+        block.get("location_label") or block.get("location_name")
+    )
+    if explicit_label:
+        return explicit_label
+
+    resolved_label = _planning_simulation_clean_location_label(resolved_location_name)
+    if resolved_label:
+        return resolved_label
+
+    modality = str(block.get("modality") or "").strip().upper()
+    activity_label = str(block.get("activity_label") or block.get("activity_name") or "").strip().casefold()
+    if modality == "ONLINE" or (course_type is not None and course_type.mode == DeliveryMode.ONLINE):
+        return "En ligne"
+    if "en ligne" in activity_label or "online" in activity_label:
+        return "En ligne"
+    if modality == "ONSITE":
+        return "Sur site"
+    return "Lieu non defini"
+
+
 def _school_calendar_updated_at(raw: dict[str, object]) -> datetime:
     value = str(raw.get("updated_at") or "").strip()
     if not value:
@@ -2026,6 +2062,8 @@ def get_planning_simulation(
     slot_entries: dict[str, dict[str, object]] = {}
     session_slot_by_id: dict[UUID, str] = {}
     live_slot_keys_by_signature: dict[str, set[str]] = {}
+    quote_location_name_by_id: dict[UUID, str] = {}
+    quote_course_type_by_id: dict[UUID, CourseType | None] = {}
 
     def ensure_slot(
         *,
@@ -2229,6 +2267,25 @@ def get_planning_simulation(
                 continue
             if block_activity_id in vacation_course_type_ids:
                 continue
+            block_course_type: CourseType | None = None
+            if block_activity_id is not None:
+                if block_activity_id not in quote_course_type_by_id:
+                    quote_course_type_by_id[block_activity_id] = db.scalar(
+                        select(CourseType).where(CourseType.id == block_activity_id).limit(1)
+                    )
+                block_course_type = quote_course_type_by_id.get(block_activity_id)
+            resolved_location_name = ""
+            if block_location_id is not None:
+                if block_location_id not in quote_location_name_by_id:
+                    quote_location_name_by_id[block_location_id] = str(
+                        db.scalar(select(Location.name).where(Location.id == block_location_id).limit(1)) or ""
+                    ).strip()
+                resolved_location_name = quote_location_name_by_id.get(block_location_id, "")
+            block_location_name = _planning_simulation_quote_location_name(
+                block,
+                resolved_location_name=resolved_location_name,
+                course_type=block_course_type,
+            )
 
             block_start_date = _safe_parse_iso_date(block.get("start_date"))
             block_end_date = _safe_parse_iso_date(block.get("end_date"))
@@ -2266,12 +2323,14 @@ def get_planning_simulation(
             entry = ensure_slot(
                 slot_key=resolved_slot_key,
                 slot_label_location_id=block_location_id,
-                slot_label_location_name=str(block.get("location_label") or quote.location_id or "Lieu inconnu"),
+                slot_label_location_name=block_location_name,
                 slot_label_timezone=None,
                 slot_label_activity_id=block_activity_id,
-                slot_label_activity_name=str(block.get("activity_label") or "Activite"),
-                slot_label_activity_color=None,
-                slot_label_activity_mode=None,
+                slot_label_activity_name=str(
+                    block.get("activity_label") or (block_course_type.name if block_course_type is not None else "") or "Activite"
+                ),
+                slot_label_activity_color=block_course_type.color_hex if block_course_type is not None else None,
+                slot_label_activity_mode=block_course_type.mode if block_course_type is not None else None,
                 weekday=block_weekday,
                 start_time=block_start_time,
                 end_time=block_end_time,
