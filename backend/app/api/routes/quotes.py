@@ -5881,6 +5881,8 @@ def _resolve_followup_clients(
 
     if mode == "existing":
         student = ensure_existing_client(selected_client_id or followup.target_client_id or quote.client_id)
+        if student.client_kind == ClientKind.CHILD:
+            _apply_quote_client_contact_defaults(student, birth_date=_quote_child_birth_date(quote))
         quote_prospect_type = str(_json_object(quote_prospect.meta).get("prospect_type") or "").strip().lower() if quote_prospect is not None else ""
         if quote_prospect_type == "child" and student.client_kind != ClientKind.CHILD:
             raise HTTPException(

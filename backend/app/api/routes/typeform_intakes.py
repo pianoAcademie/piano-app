@@ -495,6 +495,34 @@ def _parse_uuid(value: object | None) -> UUID | None:
         return None
 
 
+def _birth_date_from_normalized_payload(normalized: dict[str, object]) -> date | None:
+    raw = _text(normalized.get("child_birth_date"))
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _apply_intake_child_birth_date_to_existing_client(
+    db: Session,
+    *,
+    client_id: UUID | None,
+    normalized: dict[str, object],
+) -> bool:
+    birth_date = _birth_date_from_normalized_payload(normalized)
+    if client_id is None or birth_date is None:
+        return False
+    client = db.scalar(select(User).where(User.id == client_id).with_for_update())
+    if client is None or client.role != UserRole.CLIENT or client.client_kind != ClientKind.CHILD or client.birth_date is not None:
+        return False
+    client.birth_date = birth_date
+    client.updated_at = _utcnow()
+    db.add(client)
+    return True
+
+
 def _parse_decimal(value: object | None, default: Decimal = Decimal("0.00")) -> Decimal:
     raw = _text(value).replace(",", ".")
     if not raw:
@@ -5350,11 +5378,13 @@ def create_draft_quote_from_typeform_intake(
         if client_id is None:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Client selectionne manquant")
         context_type = "active_client"
+        _apply_intake_child_birth_date_to_existing_client(db, client_id=client_id, normalized=normalized)
     elif mode == CLIENT_MODE_EXISTING_FAMILY:
         client_id = _parse_uuid(client_resolution.get("selected_family_child_client_id"))
         if client_id is None:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Eleve selectionne manquant")
         context_type = "active_client"
+        _apply_intake_child_birth_date_to_existing_client(db, client_id=client_id, normalized=normalized)
     elif mode == CLIENT_MODE_NEW_PARENT_CHILD:
         parent_prospect_id = _parse_uuid(created_entities.get("parent_prospect_id"))
         child_prospect_id = _parse_uuid(created_entities.get("child_prospect_id"))
