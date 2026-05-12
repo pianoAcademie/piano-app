@@ -1178,6 +1178,24 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       return startMs >= fromMs && startMs <= toMs;
     })
     .sort((a, b) => a.start_at_utc.localeCompare(b.start_at_utc));
+  const planningStats = filteredSessions.reduce(
+    (acc, session) => {
+      acc.sessions += 1;
+      acc.booked += Number(session.booked_count || 0);
+      if (session.allows_student_bookings !== false && Number(session.capacity_max || 0) > 0) {
+        const remaining = Math.max(0, Number(session.capacity_max || 0) - Number(session.booked_count || 0));
+        acc.openSeats += remaining;
+        if (remaining === 0) {
+          acc.full += 1;
+        }
+      }
+      if (session.requires_professor !== false && !session.effective_teacher_id) {
+        acc.missingTeacher += 1;
+      }
+      return acc;
+    },
+    { sessions: 0, booked: 0, openSeats: 0, full: 0, missingTeacher: 0 },
+  );
 
   const sessionsByDay = new Map<string, AdminSessionOut[]>();
   for (const session of filteredSessions) {
@@ -1513,6 +1531,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         fixForm: "Fix the form",
         mainInformation: "Main information",
         required: "Required",
+        metricsSlots: "Visible slots",
+        metricsStudents: "Students",
+        metricsSeats: "Open seats",
+        metricsFull: "Full",
+        metricsMissingTeacher: "Missing teacher",
       }
     : {
         backendError: "Erreur backend :",
@@ -1557,6 +1580,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         fixForm: "Corriger la saisie",
         mainInformation: "Informations principales",
         required: "Obligatoire",
+        metricsSlots: "Creneaux visibles",
+        metricsStudents: "Eleves",
+        metricsSeats: "Places restantes",
+        metricsFull: "Complets",
+        metricsMissingTeacher: "Professeur manquant",
       };
 
   return (
@@ -1777,6 +1805,31 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
           </article>
         </section>
       ) : null}
+
+      <section className="card">
+        <div className="config-metric-grid">
+          <article>
+            <span>{planningText.metricsSlots}</span>
+            <strong>{planningStats.sessions}</strong>
+          </article>
+          <article>
+            <span>{planningText.metricsStudents}</span>
+            <strong>{planningStats.booked}</strong>
+          </article>
+          <article>
+            <span>{planningText.metricsSeats}</span>
+            <strong>{planningStats.openSeats}</strong>
+          </article>
+          <article className={planningStats.full > 0 ? "is-warning" : ""}>
+            <span>{planningText.metricsFull}</span>
+            <strong>{planningStats.full}</strong>
+          </article>
+          <article className={planningStats.missingTeacher > 0 ? "is-warning" : ""}>
+            <span>{planningText.metricsMissingTeacher}</span>
+            <strong>{planningStats.missingTeacher}</strong>
+          </article>
+        </div>
+      </section>
 
       {createOpen && !filtersOpen && !selectedDayDetails && !selectedSession ? (
         <section className="modal-overlay">

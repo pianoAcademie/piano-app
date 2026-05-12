@@ -555,6 +555,29 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
     { value: "expired", label: t("admin.quotes.status_expired") },
     { value: "cancelled", label: t("admin.quotes.status_cancelled") },
   ];
+  const quoteStats = filteredQuotes.reduce(
+    (acc, row) => {
+      const commercialState = quoteValidationState(row);
+      const integrationState = quoteIntegrationState(row, commercialState);
+      if (commercialState === "pret_a_envoyer") {
+        acc.readyToSend += 1;
+      }
+      if (commercialState === "modification_demandee") {
+        acc.changeRequests += 1;
+      }
+      if (commercialState === "valide") {
+        acc.approved += 1;
+        if (integrationState !== "integre") {
+          acc.integrationTodo += 1;
+        }
+      }
+      if (integrationState === "erreur_integration") {
+        acc.integrationErrors += 1;
+      }
+      return acc;
+    },
+    { total: filteredQuotes.length, readyToSend: 0, changeRequests: 0, approved: 0, integrationTodo: 0, integrationErrors: 0 },
+  );
   return (
     <section className="admin-page-grid">
       <section className="card">
@@ -581,6 +604,35 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
       {!activitiesResult.ok ? <section className="flash-err">{t("admin.quotes.error_activities")}: {activitiesResult.message}</section> : null}
       {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
       {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
+
+      <section className="card">
+        <div className="config-metric-grid">
+          <article>
+            <span>{t("admin.quotes.metrics_filtered")}</span>
+            <strong>{quoteStats.total}</strong>
+          </article>
+          <article>
+            <span>{t("admin.quotes.metrics_ready_to_send")}</span>
+            <strong>{quoteStats.readyToSend}</strong>
+          </article>
+          <article className={quoteStats.changeRequests > 0 ? "is-warning" : ""}>
+            <span>{t("admin.quotes.metrics_change_requests")}</span>
+            <strong>{quoteStats.changeRequests}</strong>
+          </article>
+          <article>
+            <span>{t("admin.quotes.metrics_approved")}</span>
+            <strong>{quoteStats.approved}</strong>
+          </article>
+          <article className={quoteStats.integrationTodo > 0 ? "is-warning" : ""}>
+            <span>{t("admin.quotes.metrics_integration_todo")}</span>
+            <strong>{quoteStats.integrationTodo}</strong>
+          </article>
+          <article className={quoteStats.integrationErrors > 0 ? "is-warning" : ""}>
+            <span>{t("admin.quotes.metrics_integration_errors")}</span>
+            <strong>{quoteStats.integrationErrors}</strong>
+          </article>
+        </div>
+      </section>
 
       <QuoteListPageRefine
         language={language}

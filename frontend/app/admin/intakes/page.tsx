@@ -275,6 +275,13 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
   const totalPages = Math.max(1, Math.ceil(total / Math.max(pageSize, 1)));
   const pageStart = total === 0 ? 0 : (currentPage - 1) * pageSize;
   const returnTo = buildIntakesHref({ q, status, page: currentPage, pageSize });
+  const intakeStats = {
+    visible: rows.length,
+    toReview: rows.filter((row) => ["NEW", "NORMALIZED", "MATCHING_REQUIRED"].includes(row.intake_status)).length,
+    readyForQuote: rows.filter((row) => row.intake_status === "READY_FOR_DRAFT_QUOTE").length,
+    blocked: rows.filter((row) => row.intake_status === "BLOCKED" || row.blockages.length > 0).length,
+    withQuote: rows.filter((row) => Boolean(row.related_quote_id)).length,
+  };
 
   return (
     <section className="admin-page-grid">
@@ -298,6 +305,31 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
       {!result.ok ? <section className="flash-err">{t("admin.intakes.backend_error")}: {result.message}</section> : null}
       {ok ? <section className="flash-ok">{ok}</section> : null}
       {error ? <section className="flash-err">{error}</section> : null}
+
+      <section className="card">
+        <div className="config-metric-grid">
+          <article>
+            <span>{t("admin.intakes.metrics_visible")}</span>
+            <strong>{intakeStats.visible}</strong>
+          </article>
+          <article className={intakeStats.toReview > 0 ? "is-warning" : ""}>
+            <span>{t("admin.intakes.metrics_to_review")}</span>
+            <strong>{intakeStats.toReview}</strong>
+          </article>
+          <article>
+            <span>{t("admin.intakes.metrics_ready_quote")}</span>
+            <strong>{intakeStats.readyForQuote}</strong>
+          </article>
+          <article className={intakeStats.blocked > 0 ? "is-warning" : ""}>
+            <span>{t("admin.intakes.metrics_blocked")}</span>
+            <strong>{intakeStats.blocked}</strong>
+          </article>
+          <article>
+            <span>{t("admin.intakes.metrics_with_quote")}</span>
+            <strong>{intakeStats.withQuote}</strong>
+          </article>
+        </div>
+      </section>
 
       <section className="card">
         <form method="get" className="grid cols-5 sticky-filters">
