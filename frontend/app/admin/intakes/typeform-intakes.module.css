@@ -42,6 +42,64 @@
   gap: 10px;
 }
 
+.resolutionForm {
+  display: grid;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.resolutionSection {
+  border: 1px solid #dbe3ed;
+  border-radius: 14px;
+  padding: 14px;
+  background: #fbfdff;
+  display: grid;
+  gap: 12px;
+}
+
+.resolutionSectionHeader {
+  display: grid;
+  gap: 4px;
+}
+
+.resolutionSectionHeader h4 {
+  margin: 0;
+}
+
+.resolutionGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.resolutionField {
+  border: 1px solid #e8d6b9;
+  border-radius: 12px;
+  padding: 12px;
+  background: #fffefa;
+  display: grid;
+  gap: 7px;
+}
+
+.resolutionField span {
+  font-weight: 700;
+  color: #2e3747;
+}
+
+.resolutionField small {
+  color: #6f6a63;
+  line-height: 1.35;
+}
+
+.resolutionField select,
+.resolutionField textarea {
+  width: 100%;
+}
+
+.resolutionFieldWide {
+  grid-column: 1 / -1;
+}
+
 .editorIntro {
   margin: 0;
   color: #5f6f82;
@@ -128,11 +186,13 @@
 @media (max-width: 1080px) {
   .kvGrid,
   .totalRow,
-  .editorGrid {
+  .editorGrid,
+  .resolutionGrid {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .editorSectionWide {
+  .editorSectionWide,
+  .resolutionFieldWide {
     grid-column: auto;
   }
 }

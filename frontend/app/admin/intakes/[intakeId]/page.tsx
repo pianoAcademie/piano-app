@@ -425,6 +425,57 @@ function clientModeLabel(mode: string, language: UiLanguage): string {
   return uiText(language, "admin.intakes.mode_new_adult");
 }
 
+function familyDisplayParts(displayName: string): { adult: string; child: string } {
+  const parts = displayName
+    .split(/→|->/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return {
+    adult: parts[0] || displayName,
+    child: parts[1] || displayName,
+  };
+}
+
+function familyOptionLabel(candidate: TypeformMatchCandidateOut, role: "adult" | "child" | "billing", language: UiLanguage): string {
+  const parts = familyDisplayParts(candidate.display_name);
+  const confidence = `${confidenceLabel(candidate.confidence_label, language)} ${candidate.confidence}%`;
+  if (role === "child") {
+    return uiText(language, "admin.intakes.family_child_option", {
+      child: parts.child,
+      adult: parts.adult,
+      confidence,
+    });
+  }
+  if (role === "billing") {
+    return uiText(language, "admin.intakes.family_billing_option", {
+      adult: parts.adult,
+      child: parts.child,
+      confidence,
+    });
+  }
+  return uiText(language, "admin.intakes.family_adult_option", {
+    adult: parts.adult,
+    child: parts.child,
+    confidence,
+  });
+}
+
+function clientCandidateOptionLabel(candidate: TypeformMatchCandidateOut, language: UiLanguage): string {
+  return uiText(language, "admin.intakes.client_candidate_option", {
+    client: candidate.display_name,
+    confidence: `${confidenceLabel(candidate.confidence_label, language)} ${candidate.confidence}%`,
+  });
+}
+
+function recommendationStatusLabel(status: string, language: UiLanguage): string {
+  const normalized = status.trim().toLowerCase();
+  if (normalized === "manual_selection_required") return uiText(language, "admin.intakes.slot_status_manual_selection_required");
+  if (normalized === "selection_deferred") return uiText(language, "admin.intakes.slot_status_selection_deferred");
+  if (normalized === "blocked") return uiText(language, "admin.intakes.slot_status_blocked");
+  if (normalized === "matched" || normalized === "auto_selected" || normalized === "exact_match") return uiText(language, "admin.intakes.slot_status_matched");
+  return status.replaceAll("_", " ");
+}
+
 export default async function AdminTypeformIntakeDetailPage({ params, searchParams }: RouteParams): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
@@ -874,76 +925,99 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
         </article>
 
         <article className="card span-2">
-          <h3>{t("admin.intakes.resolution_panel")}</h3>
-          <form action={saveTypeformIntakeResolutionAction} className="grid cols-2 config-form-grid top-gap-sm" id="resolution-form">
+          <div className="row spread wrap gap-sm">
+            <div>
+              <h3>{t("admin.intakes.resolution_panel")}</h3>
+              <p className="muted">{t("admin.intakes.resolution_panel_subtitle")}</p>
+            </div>
+          </div>
+          <form action={saveTypeformIntakeResolutionAction} className={styles.resolutionForm} id="resolution-form">
             <input type="hidden" name="intake_id" value={detail.id} />
             <input type="hidden" name="return_to" value={intakeHref} />
 
-            <label>
-              {t("admin.intakes.client_mode")}
-              <select name="client_mode" defaultValue={resolution.clientMode}>
-                <option value="new_adult_prospect">{t("admin.intakes.mode_new_adult")}</option>
-                <option value="new_parent_child_prospect">{t("admin.intakes.mode_new_parent_child")}</option>
-                <option value="existing_client">{t("admin.intakes.mode_existing_client")}</option>
-                <option value="existing_family">{t("admin.intakes.mode_existing_family")}</option>
-              </select>
-            </label>
+            <section className={styles.resolutionSection}>
+              <div className={styles.resolutionSectionHeader}>
+                <h4>{t("admin.intakes.client_decision_title")}</h4>
+                <p className="muted">{t("admin.intakes.client_decision_help")}</p>
+              </div>
 
-            <label>
-              {t("admin.intakes.existing_client")}
-              <select name="selected_client_id" defaultValue={resolution.selectedClientId}>
-                <option value="">{uiText(language, "common.no")}</option>
-                {clientCandidates.map((candidate) => (
-                  <option key={candidate.client_id || candidate.display_name} value={candidate.client_id || ""}>
-                    {candidate.display_name} · {confidenceLabel(candidate.confidence_label, language)} · {candidate.confidence}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <div className={styles.resolutionGrid}>
+                <label className={styles.resolutionField}>
+                  <span>{t("admin.intakes.client_mode")}</span>
+                  <small>{t("admin.intakes.client_mode_help")}</small>
+                  <select name="client_mode" defaultValue={resolution.clientMode}>
+                    <option value="new_adult_prospect">{t("admin.intakes.mode_new_adult")}</option>
+                    <option value="new_parent_child_prospect">{t("admin.intakes.mode_new_parent_child")}</option>
+                    <option value="existing_client">{t("admin.intakes.mode_existing_client")}</option>
+                    <option value="existing_family">{t("admin.intakes.mode_existing_family")}</option>
+                  </select>
+                </label>
 
-            <label>
-              {t("admin.intakes.family_adult")}
-              <select name="selected_family_adult_client_id" defaultValue={resolution.selectedFamilyAdultClientId}>
-                <option value="">{uiText(language, "common.no")}</option>
-                {familyCandidates.map((candidate) => (
-                  <option key={`adult-${candidate.adult_client_id || candidate.display_name}`} value={candidate.adult_client_id || ""}>
-                    {candidate.display_name}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <label className={styles.resolutionField}>
+                  <span>{t("admin.intakes.existing_client")}</span>
+                  <small>{t("admin.intakes.existing_client_help")}</small>
+                  <select name="selected_client_id" defaultValue={resolution.selectedClientId}>
+                    <option value="">{t("admin.intakes.no_standalone_client")}</option>
+                    {clientCandidates.map((candidate) => (
+                      <option key={candidate.client_id || candidate.display_name} value={candidate.client_id || ""}>
+                        {clientCandidateOptionLabel(candidate, language)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-            <label>
-              {t("admin.intakes.family_child")}
-              <select name="selected_family_child_client_id" defaultValue={resolution.selectedFamilyChildClientId}>
-                <option value="">{uiText(language, "common.no")}</option>
-                {familyCandidates.map((candidate) => (
-                  <option key={`child-${candidate.child_client_id || candidate.display_name}`} value={candidate.child_client_id || ""}>
-                    {candidate.display_name}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <label className={styles.resolutionField}>
+                  <span>{t("admin.intakes.family_child")}</span>
+                  <small>{t("admin.intakes.family_child_help")}</small>
+                  <select name="selected_family_child_client_id" defaultValue={resolution.selectedFamilyChildClientId}>
+                    <option value="">{t("admin.intakes.no_child_selected")}</option>
+                    {familyCandidates.map((candidate) => (
+                      <option key={`child-${candidate.child_client_id || candidate.display_name}`} value={candidate.child_client_id || ""}>
+                        {familyOptionLabel(candidate, "child", language)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-            <label>
-              {t("admin.intakes.family_payer")}
-              <select name="selected_family_billing_client_id" defaultValue={resolution.selectedFamilyBillingClientId}>
-                <option value="">{t("admin.intakes.automatic")}</option>
-                {familyCandidates.map((candidate) => (
-                  <option key={`billing-${candidate.billing_client_id || candidate.display_name}`} value={candidate.billing_client_id || ""}>
-                    {candidate.display_name}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <label className={styles.resolutionField}>
+                  <span>{t("admin.intakes.family_adult")}</span>
+                  <small>{t("admin.intakes.family_adult_help")}</small>
+                  <select name="selected_family_adult_client_id" defaultValue={resolution.selectedFamilyAdultClientId}>
+                    <option value="">{t("admin.intakes.no_parent_selected")}</option>
+                    {familyCandidates.map((candidate) => (
+                      <option key={`adult-${candidate.adult_client_id || candidate.display_name}`} value={candidate.adult_client_id || ""}>
+                        {familyOptionLabel(candidate, "adult", language)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-            <label className="span-2">
-              {t("admin.intakes.arbitration_notes")}
-              <textarea name="resolution_notes" defaultValue={resolution.notes} rows={3} />
-            </label>
+                <label className={styles.resolutionField}>
+                  <span>{t("admin.intakes.family_payer")}</span>
+                  <small>{t("admin.intakes.family_payer_help")}</small>
+                  <select name="selected_family_billing_client_id" defaultValue={resolution.selectedFamilyBillingClientId}>
+                    <option value="">{t("admin.intakes.automatic")}</option>
+                    {familyCandidates.map((candidate) => (
+                      <option key={`billing-${candidate.billing_client_id || candidate.display_name}`} value={candidate.billing_client_id || ""}>
+                        {familyOptionLabel(candidate, "billing", language)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-            <div className="span-2">
-              <h4>{t("admin.intakes.slots")}</h4>
+                <label className={`${styles.resolutionField} ${styles.resolutionFieldWide}`}>
+                  <span>{t("admin.intakes.arbitration_notes")}</span>
+                  <small>{t("admin.intakes.arbitration_notes_help")}</small>
+                  <textarea name="resolution_notes" defaultValue={resolution.notes} rows={3} />
+                </label>
+              </div>
+            </section>
+
+            <section className={styles.resolutionSection}>
+              <div className={styles.resolutionSectionHeader}>
+                <h4>{t("admin.intakes.slots_decision_title")}</h4>
+                <p className="muted">{t("admin.intakes.slots_decision_help")}</p>
+              </div>
               <div className={`${styles.candidateStack} top-gap-sm`}>
                 {solfegeProposalLabel(detail.solfege_slot_proposal || {}) ? (
                   <article className={styles.candidateItem}>
@@ -968,7 +1042,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                         </p>
                       </div>
                       <span className={`status-pill ${recommendation.blockages.length > 0 ? "status-off" : recommendation.warnings.length > 0 ? "status-warn" : "status-ok"}`}>
-                        {recommendation.summary_status}
+                        {recommendationStatusLabel(recommendation.summary_status, language)}
                       </span>
                     </div>
                     <label className="top-gap-sm">
@@ -1139,7 +1213,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                   </article>
                 ))}
               </div>
-            </div>
+            </section>
 
           </form>
           <div className="row wrap gap-sm top-gap-sm">
