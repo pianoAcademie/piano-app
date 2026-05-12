@@ -1640,7 +1640,17 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     locations,
   });
   const prospects = prospectsResult.ok ? prospectsResult.data : [];
-  const clients = clientsResult.ok ? clientsResult.data : [];
+  let clients = clientsResult.ok ? clientsResult.data : [];
+  if (detail.quote.client_id && !clients.some((client) => client.id === detail.quote.client_id)) {
+    const selectedClientResult = await backendRequest<AdminClientOut>(
+      `/api/v1/admin/clients/${encodeURIComponent(detail.quote.client_id)}`,
+      {},
+      token,
+    );
+    if (selectedClientResult.ok) {
+      clients = [...clients, selectedClientResult.data];
+    }
+  }
   const documentPreview = documentPreviewResult.ok ? documentPreviewResult.data : null;
   const messagingSettings = messagingSettingsResult.ok ? messagingSettingsResult.data : null;
   const quoteSendTemplates = quoteSendTemplatesResult.ok ? quoteSendTemplatesResult.data : [];
