@@ -1062,13 +1062,44 @@ def _requested_payment_method_code(value: object | None) -> str | None:
         return None
     if "virement" in token or "bank transfer" in token:
         return "BANK_TRANSFER"
-    if "carte" in token or token in {"cb", "visa", "mastercard"}:
+    if ("mensuel" in token or "monthly" in token) and ("carte" in token or "cb" in token):
+        return "CARD_MONTHLY"
+    if "carte" in token or "cb" in token or token in {"visa", "mastercard"}:
         return "CARD"
     if "cheque" in token:
         return "CHECK"
     if "espece" in token:
         return "CASH"
     return None
+
+
+def _requested_payment_installment_count(value: object | None) -> int | None:
+    token = _normalize_token(value)
+    if not token:
+        return None
+    match = re.search(r"\b(\d{1,2})\s*(?:x|fois)\b", token)
+    if match:
+        count = int(match.group(1))
+        if 1 <= count <= 24:
+            return count
+    return None
+
+
+def _payment_plan_installment_count(plan: PaymentPlan) -> int | None:
+    rules = plan.schedule_rules if isinstance(plan.schedule_rules, dict) else {}
+    raw_count = rules.get("installment_count")
+    try:
+        count = int(raw_count) if raw_count is not None else 0
+    except (TypeError, ValueError):
+        count = 0
+    if count > 0:
+        return count
+    return _requested_payment_installment_count(f"{plan.name} {plan.code} {plan.schedule_type}")
+
+
+def _payment_plan_is_monthly(plan: PaymentPlan) -> bool:
+    token = _normalize_token(f"{plan.name} {plan.code} {plan.schedule_type}")
+    return "monthly" in token or "mensuel" in token
 
 
 def _payment_method_label_from_code(method_code: str | None) -> str | None:
@@ -1079,6 +1110,8 @@ def _payment_method_label_from_code(method_code: str | None) -> str | None:
         return "Virement bancaire"
     if normalized == "CARD":
         return "Carte bancaire"
+    if normalized == "CARD_MONTHLY":
+        return "Carte bancaire mensuelle"
     if normalized == "CHECK":
         return "Chèque"
     if normalized == "CASH":
@@ -1090,8 +1123,38 @@ def _fallback_requested_payment_method(*, requested_products: list[str]) -> str 
     for item in requested_products:
         method_code = _requested_payment_method_code(item)
         if method_code is not None:
-            return _payment_method_label_from_code(method_code)
+            return _text(item) or _payment_method_label_from_code(method_code)
     return None
+
+
+def _specific_requested_payment_method_from_products(
+    requested_payment_method: str | None,
+    requested_products: list[object],
+) -> str | None:
+    current_code = _requested_payment_method_code(requested_payment_method)
+    current_token = _normalize_token(requested_payment_method)
+    current_has_schedule = (
+        _requested_payment_installment_count(requested_payment_method) is not None
+        or "mensuel" in current_token
+        or "monthly" in current_token
+    )
+    if current_code is not None and current_has_schedule:
+        return requested_payment_method
+
+    for item in requested_products:
+        text = _text(item)
+        item_code = _requested_payment_method_code(text)
+        item_token = _normalize_token(text)
+        item_has_schedule = (
+            _requested_payment_installment_count(text) is not None
+            or "mensuel" in item_token
+            or "monthly" in item_token
+        )
+        if item_code is None or not item_has_schedule:
+            continue
+        if current_code is None or item_code == current_code:
+            return text
+    return requested_payment_method
 
 
 def _fallback_referral_referrer_name(simplified_answers: list[dict[str, object]]) -> str | None:
@@ -1378,6 +1441,12 @@ def _normalize_payload(
         "parent_last_name": parent_last_name,
         "parent_email": parent_email.lower() if parent_email else None,
         "parent_phone": parent_phone,
+        "parent_address_line_1": address_line_1,
+        "parent_address_line_2": address_line_2,
+        "parent_city": city,
+        "parent_postal_code": postal_code,
+        "parent_country": country,
+        "parent_address": address,
         "child_first_name": child_first_name,
         "child_last_name": child_last_name,
         "child_birth_date": child_birth_date,
@@ -1919,8 +1988,17 @@ def _resolve_form_runtime_context(
     )
 
     requested_payment_method = _text(normalized.get("requested_payment_method")) or None
+    requested_payment_method = _specific_requested_payment_method_from_products(
+        requested_payment_method,
+        _json_list(normalized.get("requested_products")),
+    )
     requested_payment_method_code = _requested_payment_method_code(requested_payment_method)
     if requested_payment_method_code:
+        requested_installments = _requested_payment_installment_count(requested_payment_method)
+        requested_monthly = requested_payment_method_code == "CARD_MONTHLY" or (
+            "mensuel" in _normalize_token(requested_payment_method)
+            or "monthly" in _normalize_token(requested_payment_method)
+        )
         candidate_plans = db.scalars(
             select(PaymentPlan)
             .where(
@@ -1930,12 +2008,26 @@ def _resolve_form_runtime_context(
             .order_by(PaymentPlan.created_at.asc())
         ).all()
         if candidate_plans:
-            if payment_plan is not None and _text(payment_plan.payment_method).strip().upper() == requested_payment_method_code:
+            matching_plans = candidate_plans
+            if requested_installments is not None:
+                matching_plans = [
+                    item for item in candidate_plans if _payment_plan_installment_count(item) == requested_installments
+                ]
+            elif requested_monthly:
+                matching_plans = [item for item in candidate_plans if _payment_plan_is_monthly(item)]
+            if not matching_plans:
+                matching_plans = candidate_plans
+
+            if (
+                payment_plan is not None
+                and _text(payment_plan.payment_method).strip().upper() == requested_payment_method_code
+                and payment_plan in matching_plans
+            ):
                 chosen_payment_plan = payment_plan
             else:
                 chosen_payment_plan = next(
-                    (item for item in candidate_plans if payment_plan is not None and item.schedule_type == payment_plan.schedule_type),
-                    candidate_plans[0],
+                    (item for item in matching_plans if payment_plan is not None and item.schedule_type == payment_plan.schedule_type),
+                    matching_plans[0],
                 )
             runtime_context["payment_plan_id"] = chosen_payment_plan.id
             payment_plan = chosen_payment_plan
