@@ -205,8 +205,102 @@ def _template_matches_segment_target(template: QuoteTemplate | TermsTemplate, *,
     return any(token and token in haystack for token in target_tokens)
 
 
-def _typeform_default_quote_template(db: Session, *, config: TypeformFormConfig) -> QuoteTemplate | None:
+def _quote_template_by_code(db: Session, *, codes: list[str], language: str) -> QuoteTemplate | None:
+    normalized_codes = {code.strip().upper() for code in codes if code.strip()}
+    if not normalized_codes:
+        return None
+    candidates = db.scalars(
+        select(QuoteTemplate)
+        .where(
+            QuoteTemplate.is_active.is_(True),
+            QuoteTemplate.current_version_id.isnot(None),
+            func.upper(QuoteTemplate.code).in_(normalized_codes),
+        )
+    ).all()
+    by_code = {candidate.code.upper(): candidate for candidate in candidates}
+    for code in codes:
+        candidate = by_code.get(code.strip().upper())
+        if candidate is None:
+            continue
+        if getattr(candidate, "language", None) and _normalize_token(candidate.language) != language:
+            continue
+        return candidate
+    return None
+
+
+def _terms_template_by_code(db: Session, *, codes: list[str], language: str) -> TermsTemplate | None:
+    normalized_codes = {code.strip().upper() for code in codes if code.strip()}
+    if not normalized_codes:
+        return None
+    candidates = db.scalars(
+        select(TermsTemplate)
+        .where(
+            TermsTemplate.is_active.is_(True),
+            TermsTemplate.current_version_id.isnot(None),
+            func.upper(TermsTemplate.code).in_(normalized_codes),
+        )
+    ).all()
+    by_code = {candidate.code.upper(): candidate for candidate in candidates}
+    for code in codes:
+        candidate = by_code.get(code.strip().upper())
+        if candidate is None:
+            continue
+        if getattr(candidate, "language", None) and _normalize_token(candidate.language) != language:
+            continue
+        return candidate
+    return None
+
+
+def _primary_course_modality_for_documents(
+    db: Session,
+    *,
+    preview_lines: list[TypeformQuotePreviewLineOut] | None,
+) -> str | None:
+    if not preview_lines:
+        return None
+    activity_ids = [line.activity_id for line in preview_lines if line.activity_id is not None]
+    activities = {}
+    if activity_ids:
+        rows = db.scalars(select(CourseType).where(CourseType.id.in_(activity_ids))).all()
+        activities = {row.id: row for row in rows}
+    for line in preview_lines:
+        if line.activity_id is None:
+            continue
+        haystack = _normalize_token(_preview_line_haystack(line))
+        if "solfege" in haystack:
+            continue
+        activity = activities.get(line.activity_id)
+        modality = _modality_from_delivery_mode(activity.mode if activity is not None else None)
+        if modality in {"onsite", "online"}:
+            return modality
+        if "presentiel" in haystack or "sur place" in haystack:
+            return "onsite"
+        if "en ligne" in haystack or "online" in haystack or "video" in haystack:
+            return "online"
+    return None
+
+
+def _typeform_default_quote_template(
+    db: Session,
+    *,
+    config: TypeformFormConfig,
+    preview_lines: list[TypeformQuotePreviewLineOut] | None = None,
+) -> QuoteTemplate | None:
     language = _normalize_token(config.default_language) or "fr"
+    segment = _normalize_token(config.audience_segment)
+    primary_modality = _primary_course_modality_for_documents(db, preview_lines=preview_lines)
+    if segment == "child" and primary_modality == "onsite":
+        template = _quote_template_by_code(db, codes=["TEMPLATE_COURS_COLLECTIF_ENFANT"], language=language)
+        if template is not None:
+            return template
+    if segment == "child" and primary_modality == "online":
+        template = _quote_template_by_code(
+            db,
+            codes=["TEMPLATE_COURS_COLLECTIF_ENFANT_EN_LIGNE_CONCERT_OPTION"],
+            language=language,
+        )
+        if template is not None:
+            return template
     candidates = db.scalars(
         select(QuoteTemplate)
         .where(QuoteTemplate.is_active.is_(True), QuoteTemplate.current_version_id.isnot(None))
@@ -223,8 +317,27 @@ def _typeform_default_quote_template(db: Session, *, config: TypeformFormConfig)
     )
 
 
-def _typeform_default_terms_template(db: Session, *, config: TypeformFormConfig) -> TermsTemplate | None:
+def _typeform_default_terms_template(
+    db: Session,
+    *,
+    config: TypeformFormConfig,
+    preview_lines: list[TypeformQuotePreviewLineOut] | None = None,
+) -> TermsTemplate | None:
     language = _normalize_token(config.default_language) or "fr"
+    segment = _normalize_token(config.audience_segment)
+    primary_modality = _primary_course_modality_for_documents(db, preview_lines=preview_lines)
+    if segment == "child" and primary_modality == "onsite":
+        template = _terms_template_by_code(
+            db,
+            codes=["CGV_ENFANTS_GROUPE_2026_2027", "CGV_ENFANTS_COLLECTIFS_2025"],
+            language=language,
+        )
+        if template is not None:
+            return template
+    if segment == "child" and primary_modality == "online":
+        template = _terms_template_by_code(db, codes=["CGV_COURS_EN_LIGNE_ENFANTS_2026_2027"], language=language)
+        if template is not None:
+            return template
     candidates = db.scalars(
         select(TermsTemplate)
         .where(TermsTemplate.is_active.is_(True), TermsTemplate.current_version_id.isnot(None))
@@ -2131,22 +2244,35 @@ def _find_solfege_activity(db: Session, *, modality: str = "onsite", level_code:
         if "solfege" not in haystack:
             continue
         score = 0
+        row_level_match = False
+        row_has_other_level = False
+        if level in {"1", "2", "3", "4", "5"}:
+            row_level_match = bool(
+                re.search(rf"\bniveau\s*{re.escape(level)}\b", haystack)
+                or re.search(rf"\bn\s*{re.escape(level)}\b", haystack)
+                or re.search(rf"\bn{re.escape(level)}\b", haystack)
+            )
+            row_has_other_level = bool(
+                re.search(r"\bniveau\s*[1-5]\b", haystack)
+                or re.search(r"\bn\s*[1-5]\b", haystack)
+                or re.search(r"\bn[1-5]\b", haystack)
+            ) and not row_level_match
+            if row_level_match:
+                score += 100
+            elif row_has_other_level:
+                score -= 80
         if row.mode == DeliveryMode.ONSITE:
             score += 20 if onsite else -5
         elif row.mode == DeliveryMode.ONLINE:
             score += -8 if onsite else 20
+        elif row.mode == DeliveryMode.ANY:
+            score += 8
         if onsite and "presentiel" in haystack:
             score += 10
         if not onsite and ("online" in haystack or "ligne" in haystack):
             score += 10
         if "collectif" in haystack:
             score += 2
-        if level in {"1", "2", "3", "4", "5"} and (
-            re.search(rf"\bniveau\s*{re.escape(level)}\b", haystack)
-            or re.search(rf"\bn\s*{re.escape(level)}\b", haystack)
-            or re.search(rf"\bn{re.escape(level)}\b", haystack)
-        ):
-            score += 15
         candidates.append((score, row))
     candidates.sort(key=lambda item: (-item[0], item[1].name))
     return candidates[0][1] if candidates else None
@@ -3188,6 +3314,22 @@ def _modality_from_delivery_mode(value: DeliveryMode | str | None) -> str | None
     return None
 
 
+def _modality_from_activity_location(activity: CourseType, location: Location | None) -> str | None:
+    modality = _modality_from_delivery_mode(activity.mode)
+    if modality:
+        return modality
+    if location is None:
+        return None
+    tokens = {
+        _normalize_token(location.code),
+        _normalize_token(location.name),
+    }
+    tokens.discard("")
+    if "online" in tokens or any(token in {"videocall", "video call", "visioconference", "video"} for token in tokens):
+        return "online"
+    return None
+
+
 def _matching_solfege_rule_for_intake(
     db: Session,
     *,
@@ -3336,11 +3478,6 @@ def _build_session_recommendations(
     rows = db.execute(
         rows_stmt.order_by(CourseSession.start_at_utc.asc())
     ).all()
-    rows = [
-        (session_obj, activity, location, booked_count)
-        for session_obj, activity, location, booked_count in rows
-        if _session_is_typeform_candidate(session_obj)
-    ]
 
     manual_rows_stmt = (
         select(CourseSession, CourseType, Location, func.coalesce(booked_counts.c.booked_count, 0))
@@ -3408,6 +3545,17 @@ def _build_session_recommendations(
         )
         line_is_solfege = "solfege" in _normalize_token(_preview_line_haystack(line))
         line_uses_solfege_slot_request = bool(line_is_solfege and solfege_requested_slot_preferences)
+        line_solfege_modality = _text(normalized.get("requested_solfege_modality")) if line_is_solfege else ""
+        line_resolved_location_id = (
+            None
+            if line_uses_solfege_slot_request and line_solfege_modality == "online"
+            else resolved_location_id
+        )
+        line_requested_location = (
+            "online"
+            if line_uses_solfege_slot_request and line_solfege_modality == "online"
+            else requested_location
+        )
         effective_requested_days = solfege_requested_days if line_uses_solfege_slot_request else requested_days
         effective_requested_times = solfege_requested_times if line_uses_solfege_slot_request else requested_times
         effective_requested_slot_preferences = (
@@ -3416,7 +3564,9 @@ def _build_session_recommendations(
         activity_rows = by_activity.get(line.activity_id, [])
         option_rows: list[tuple[CourseSession, TypeformSessionMatchOptionOut]] = []
         for session_obj, activity, location, booked_count in activity_rows:
-            if resolved_location_id is not None and location.id != resolved_location_id:
+            if not _session_is_typeform_candidate(session_obj) and not line_uses_solfege_slot_request:
+                continue
+            if line_resolved_location_id is not None and location.id != line_resolved_location_id:
                 continue
             option = _typeform_session_option_from_row(
                 session_obj=session_obj,
@@ -3424,8 +3574,8 @@ def _build_session_recommendations(
                 location=location,
                 booked_count=int(booked_count or 0),
                 config=config,
-                requested_location=requested_location,
-                resolved_location_id=resolved_location_id,
+                requested_location=line_requested_location,
+                resolved_location_id=line_resolved_location_id,
                 requested_slot_preferences=effective_requested_slot_preferences,
                 requested_days=effective_requested_days,
                 requested_times=effective_requested_times,
@@ -4753,7 +4903,7 @@ def _calendar_snapshot_from_analysis(
             first_local_start = series_sessions[0].start_at_utc.astimezone(zone)
             first_local_end = series_sessions[0].end_at_utc.astimezone(zone)
             last_local_start = series_sessions[-1].start_at_utc.astimezone(zone)
-            modality = _modality_from_delivery_mode(activity.mode)
+            modality = _modality_from_activity_location(activity, location)
             series_key = str(session_obj.recurrence_group_id or session_obj.id)
             blocks.append(
                 {
@@ -5305,8 +5455,10 @@ def create_draft_quote_from_typeform_intake(
         session_recommendations=[] if family_only_quote else analysis["session_recommendations"],
     )
     selected_solfege_slot = {} if family_only_quote else _json_object(_json_object(calendar_snapshot.get("solfege")).get("selected_slot"))
-    default_quote_template = _typeform_default_quote_template(db, config=config)
-    default_terms_template = _typeform_default_terms_template(db, config=config)
+    preview_quote = analysis["preview_quote"]
+    preview_template_lines = list(preview_quote.lines) if preview_quote is not None else []
+    default_quote_template = _typeform_default_quote_template(db, config=config, preview_lines=preview_template_lines)
+    default_terms_template = _typeform_default_terms_template(db, config=config, preview_lines=preview_template_lines)
 
     quote_payload = QuoteCreateRequest(
         context_type=context_type,
@@ -5326,7 +5478,9 @@ def create_draft_quote_from_typeform_intake(
         selected_solfege_slot=selected_solfege_slot,
         calendar_snapshot=calendar_snapshot,
         quote_template_uuid=default_quote_template.id if default_quote_template is not None else None,
+        quote_template_version_id=default_quote_template.current_version_id if default_quote_template is not None else None,
         terms_template_id=default_terms_template.id if default_terms_template is not None else None,
+        terms_template_version_id=default_terms_template.current_version_id if default_terms_template is not None else None,
         meta=quote_meta,
         lines=preview_lines_in,
     )
