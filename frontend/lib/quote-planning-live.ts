@@ -139,6 +139,10 @@ export async function loadLivePlanningMatchForBlock({
     .map((session) => ({ session, local: sessionLocalParts(session) }))
     .filter((item): item is { session: AdminSessionOut; local: LocalSessionParts } => item.local !== null)
     .filter(({ session, local }) => {
+      const blockSeriesKey = String(block.series_key || "").trim();
+      if (blockSeriesKey && String(session.recurrence_group_id || session.id || "").trim() !== blockSeriesKey) {
+        return false;
+      }
       if (session.course_type_id !== block.activity_id) {
         return false;
       }
