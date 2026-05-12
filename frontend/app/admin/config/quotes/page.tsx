@@ -6,6 +6,7 @@ import {
   archiveAdminPricingCatalogConfigAction,
   createAdminQuoteTemplateV2ConfigAction,
   createAdminTermsTemplateConfigAction,
+  createAdminQuoteDiscountRuleConfigAction,
   createAdminQuoteDocumentBindingConfigAction,
   createAdminPaymentPlanConfigAction,
   createAdminPricingCatalogConfigAction,
@@ -21,6 +22,7 @@ import {
   deleteAdminSolfegeLevelRuleConfigAction,
   updateAdminQuoteTemplateV2ConfigAction,
   updateAdminTermsTemplateConfigAction,
+  updateAdminQuoteDiscountRuleConfigAction,
   updateAdminQuoteDocumentBindingConfigAction,
   updateAdminPaymentPlanConfigAction,
   updateAdminPricingCatalogConfigAction,
@@ -40,6 +42,7 @@ type SearchParams = Record<string, string | string[] | undefined>;
 type QuotesConfigTab =
   | "types"
   | "catalogs"
+  | "discounts"
   | "payment_plans"
   | "variables"
   | "solfege"
@@ -67,6 +70,7 @@ const QUOTES_CONFIG_NAV_GROUPS: QuotesConfigNavGroup[] = [
     items: [
       { tab: "types", labelKey: "admin.quote_config.nav_types", descriptionKey: "admin.quote_config.nav_types_desc" },
       { tab: "catalogs", labelKey: "admin.quote_config.nav_catalogs", descriptionKey: "admin.quote_config.nav_catalogs_desc" },
+      { tab: "discounts", labelKey: "admin.quote_config.nav_discounts", descriptionKey: "admin.quote_config.nav_discounts_desc" },
       { tab: "payment_plans", labelKey: "admin.quote_config.nav_payment_plans", descriptionKey: "admin.quote_config.nav_payment_plans_desc" },
     ],
   },
@@ -137,6 +141,18 @@ type PricingActivityPriceOut = {
   unit_price_ttc: string;
   currency: string;
   is_active: boolean;
+  updated_at: string;
+};
+
+type QuoteDiscountRuleOut = {
+  id: string;
+  code: string;
+  label: string;
+  unit_price_ttc: string;
+  vat_rate: string;
+  currency: string;
+  is_active: boolean;
+  sort_order: number;
   updated_at: string;
 };
 
@@ -259,6 +275,7 @@ function parseTab(raw: string): QuotesConfigTab {
   const value = raw.trim().toLowerCase();
   if (
     value === "catalogs" ||
+    value === "discounts" ||
     value === "payment_plans" ||
     value === "variables" ||
     value === "solfege" ||
@@ -743,6 +760,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     quoteTypesResult,
     formulasResult,
     catalogsResult,
+    discountRulesResult,
     typeformFormConfigsResult,
     pricingActivityPricesResult,
     paymentPlansResult,
@@ -757,6 +775,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     backendRequest<QuoteTypeOut[]>("/api/v1/quote-types", {}, token),
     backendRequest<AdminFormulaOut[]>("/api/v1/admin/formulas?include_inactive=true", {}, token),
     backendRequest<PricingCatalogOut[]>("/api/v1/pricing-catalogs", {}, token),
+    backendRequest<QuoteDiscountRuleOut[]>("/api/v1/quote-discount-rules", {}, token),
     backendRequest<TypeformFormConfigOut[]>("/api/v1/typeform/form-configs", {}, token),
     backendRequest<PricingActivityPriceOut[]>("/api/v1/pricing-activity-prices", {}, token),
     backendRequest<PaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
@@ -793,6 +812,12 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
     : (() => {
         loadErrors.push(`${t("admin.quote_config.load_typeform_configs")}: ${typeformFormConfigsResult.message}`);
         return [] as TypeformFormConfigOut[];
+      })();
+  const discountRules = discountRulesResult.ok
+    ? discountRulesResult.data
+    : (() => {
+        loadErrors.push(`${t("admin.quote_config.nav_discounts")}: ${discountRulesResult.message}`);
+        return [] as QuoteDiscountRuleOut[];
       })();
   const paymentPlans = paymentPlansResult.ok
     ? paymentPlansResult.data
@@ -978,6 +1003,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
   const quoteConfigMetrics = [
     { label: t("admin.quote_config.nav_types"), value: quoteTypes.length },
     { label: t("admin.quote_config.nav_catalogs"), value: catalogs.filter((row) => row.is_active).length },
+    { label: t("admin.quote_config.nav_discounts"), value: discountRules.filter((row) => row.is_active).length },
     { label: t("admin.quote_config.nav_payment_plans"), value: paymentPlans.filter((row) => row.is_active).length },
     { label: t("admin.quote_config.nav_doc_templates"), value: quoteTemplatesV2.filter((row) => row.is_active).length },
     { label: t("admin.quote_config.nav_doc_terms"), value: termsTemplates.filter((row) => row.is_active).length },
@@ -1673,6 +1699,130 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
           ) : (
             <p className="muted top-gap-sm">{t("admin.quote_config.no_catalogs")}</p>
           )}
+        </section>
+      ) : null}
+
+      {tab === "discounts" ? (
+        <section className="card">
+          <div className="quote-config-section-head">
+            <div>
+              <h3>{localText(language, "Remises disponibles", "Available discounts")}</h3>
+              <p className="muted">
+                {localText(
+                  language,
+                  "Ces remises alimentent la modale des lignes de devis et conservent une TVA et un prix TTC coherents pour la transformation.",
+                  "These discounts feed the quote-line modal and keep VAT and tax-included prices consistent for conversion.",
+                )}
+              </p>
+            </div>
+            <span className="badge">{discountRules.filter((row) => row.is_active).length} {t("common.active")}</span>
+          </div>
+
+          <form action={createAdminQuoteDiscountRuleConfigAction} className="grid cols-5 config-form-grid top-gap-sm">
+            <input type="hidden" name="return_to" value={buildQuotesConfigHref("discounts")} />
+            <label className="span-2">
+              {localText(language, "Libelle", "Label")}
+              <input type="text" name="label" required maxLength={255} placeholder={localText(language, "Remise fidelite", "Loyalty discount")} />
+            </label>
+            <label>
+              {localText(language, "Code", "Code")}
+              <input type="text" name="code" maxLength={80} placeholder="REMISE_FIDELITE" />
+            </label>
+            <label>
+              {localText(language, "Prix TTC", "Price incl. VAT")}
+              <input type="number" name="unit_price_ttc" min="0" step="0.01" required defaultValue="2.00" />
+            </label>
+            <label>
+              {localText(language, "TVA (%)", "VAT (%)")}
+              <input type="number" name="vat_rate" min="0" max="100" step="0.01" required defaultValue="20.00" />
+            </label>
+            <label>
+              {localText(language, "Ordre", "Order")}
+              <input type="number" name="sort_order" min="0" step="1" defaultValue={discountRules.length ? Math.max(...discountRules.map((row) => row.sort_order || 0)) + 10 : 10} />
+            </label>
+            <label className="checkline">
+              <input type="checkbox" name="is_active" defaultChecked />
+              {t("common.active")}
+            </label>
+            <div className="row span-5">
+              <button type="submit">{localText(language, "Ajouter la remise", "Add discount")}</button>
+            </div>
+          </form>
+
+          <div className="table-scroll top-gap-sm">
+            <table className="admin-table compact-table">
+              <thead>
+                <tr>
+                  <th>{localText(language, "Remise", "Discount")}</th>
+                  <th>{localText(language, "Code", "Code")}</th>
+                  <th>{localText(language, "Prix TTC", "Price incl. VAT")}</th>
+                  <th>{localText(language, "TVA", "VAT")}</th>
+                  <th>{localText(language, "Statut", "Status")}</th>
+                  <th>{t("common.actions")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {discountRules.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="muted">{localText(language, "Aucune remise configuree.", "No discount configured.")}</td>
+                  </tr>
+                ) : (
+                  discountRules.map((row) => (
+                    <tr key={row.id}>
+                      <td>
+                        <strong>{row.label}</strong>
+                        <div className="muted">{localText(language, "Ordre", "Order")} {row.sort_order}</div>
+                      </td>
+                      <td><code>{row.code}</code></td>
+                      <td>{moneyLabel(row.unit_price_ttc, row.currency, language)}</td>
+                      <td>{Number(row.vat_rate).toLocaleString(localeForUiLanguage(language), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%</td>
+                      <td>
+                        <span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>
+                          {row.is_active ? t("common.active") : t("common.inactive")}
+                        </span>
+                      </td>
+                      <td>
+                        <details>
+                          <summary className="mode-link">{t("common.edit")}</summary>
+                          <form action={updateAdminQuoteDiscountRuleConfigAction} className="grid cols-5 config-form-grid top-gap-sm">
+                            <input type="hidden" name="discount_rule_id" value={row.id} />
+                            <input type="hidden" name="return_to" value={buildQuotesConfigHref("discounts")} />
+                            <label className="span-2">
+                              {localText(language, "Libelle", "Label")}
+                              <input type="text" name="label" defaultValue={row.label} required maxLength={255} />
+                            </label>
+                            <label>
+                              {localText(language, "Code", "Code")}
+                              <input type="text" name="code" defaultValue={row.code} maxLength={80} />
+                            </label>
+                            <label>
+                              {localText(language, "Prix TTC", "Price incl. VAT")}
+                              <input type="number" name="unit_price_ttc" min="0" step="0.01" defaultValue={row.unit_price_ttc} required />
+                            </label>
+                            <label>
+                              {localText(language, "TVA (%)", "VAT (%)")}
+                              <input type="number" name="vat_rate" min="0" max="100" step="0.01" defaultValue={row.vat_rate} required />
+                            </label>
+                            <label>
+                              {localText(language, "Ordre", "Order")}
+                              <input type="number" name="sort_order" min="0" step="1" defaultValue={row.sort_order} />
+                            </label>
+                            <label className="checkline">
+                              <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
+                              {t("common.active")}
+                            </label>
+                            <div className="row span-5">
+                              <button type="submit">{t("common.save")}</button>
+                            </div>
+                          </form>
+                        </details>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </section>
       ) : null}
 

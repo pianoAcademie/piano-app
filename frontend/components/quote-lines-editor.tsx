@@ -27,6 +27,15 @@ type KitOption = {
   vat_rate: string;
 };
 
+type DiscountRuleOption = {
+  id: string;
+  code: string;
+  label: string;
+  unit_price_ttc: string;
+  vat_rate: string;
+  currency: string;
+};
+
 type InitialQuoteLine = {
   id: string;
   line_type: string;
@@ -72,6 +81,7 @@ type QuoteLinesEditorProps = {
   activities: ActivityOption[];
   products: ProductOption[];
   kits: KitOption[];
+  discountRules?: DiscountRuleOption[];
   activityCatalogPriceByActivityId?: Record<string, string>;
   productCatalogPriceByProductId?: Record<string, string>;
   kitCatalogPriceByKitId?: Record<string, string>;
@@ -292,6 +302,10 @@ function inferKind(row: InitialQuoteLine): LineKind {
 }
 
 function inferRefId(row: InitialQuoteLine): string {
+  if (inferKind(row) === "discount") {
+    const ruleId = row.meta?.discount_rule_id;
+    return typeof ruleId === "string" ? ruleId : "";
+  }
   if (row.activity_id) {
     return row.activity_id;
   }
@@ -341,6 +355,18 @@ function selectedOptionLabel(
     return kits.find((item) => item.id === refId)?.title ?? null;
   }
   return null;
+}
+
+function normalizeDiscountRuleMeta(rule: DiscountRuleOption | undefined, current: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...(current || {}) };
+  if (!rule) {
+    delete next.discount_rule_id;
+    delete next.discount_rule_code;
+    return next;
+  }
+  next.discount_rule_id = rule.id;
+  next.discount_rule_code = rule.code;
+  return next;
 }
 
 function parsePositive(value: string | null | undefined): number | null {
@@ -528,6 +554,7 @@ export default function QuoteLinesEditor({
   activities,
   products,
   kits,
+  discountRules = [],
   activityCatalogPriceByActivityId = {},
   productCatalogPriceByProductId = {},
   kitCatalogPriceByKitId = {},
@@ -705,6 +732,41 @@ export default function QuoteLinesEditor({
           title: kit?.title ?? "Kit",
           vatRate: resolvedVatRate && resolvedVatRate !== "" ? resolvedVatRate : "0",
           unitPrice: resolvedUnitPrice && resolvedUnitPrice !== "" ? resolvedUnitPrice : "0",
+          manualUnitPriceOverride: false,
+        },
+      };
+    });
+  }
+
+  function applyDiscountRuleToEditor(ruleId: string): void {
+    if (!editorState) {
+      return;
+    }
+    setEditorState((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      const line = prev.line;
+      const rule = discountRules.find((item) => item.id === ruleId);
+      if (!rule) {
+        return {
+          ...prev,
+          line: {
+            ...line,
+            refId: "",
+            meta: normalizeDiscountRuleMeta(undefined, line.meta),
+          },
+        };
+      }
+      return {
+        ...prev,
+        line: {
+          ...line,
+          refId: rule.id,
+          title: rule.label,
+          vatRate: rule.vat_rate || "0",
+          unitPrice: rule.unit_price_ttc || "0",
+          meta: normalizeDiscountRuleMeta(rule, line.meta),
           manualUnitPriceOverride: false,
         },
       };
@@ -974,6 +1036,23 @@ export default function QuoteLinesEditor({
                     </small>
                   ) : null}
                 </>
+              ) : null}
+              {editorLine.kind === "discount" && discountRules.length > 0 ? (
+                <label className="top-gap-sm">
+                  {t("admin.quote_lines.discount_rule")}
+                  <select
+                    value={editorLine.refId}
+                    onChange={(event) => applyDiscountRuleToEditor(event.target.value)}
+                    disabled={!editable}
+                  >
+                    <option value="">{t("admin.quote_lines.discount_rule_custom")}</option>
+                    {discountRules.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.label} · {toMoney(Number(item.unit_price_ttc || "0"), item.currency || currency, language)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               ) : null}
               <div className="grid cols-4 top-gap-sm">
                 <label className="cols-span-4">

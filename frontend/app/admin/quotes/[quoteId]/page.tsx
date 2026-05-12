@@ -232,6 +232,17 @@ type PricingKitPriceOut = {
   is_active: boolean;
 };
 
+type QuoteDiscountRuleOut = {
+  id: string;
+  code: string;
+  label: string;
+  unit_price_ttc: string;
+  vat_rate: string;
+  currency: string;
+  is_active: boolean;
+  sort_order: number;
+};
+
 type TermsTemplateOut = {
   id: string;
   name: string;
@@ -1520,6 +1531,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     plansResult,
     legalEntitiesResult,
     catalogsResult,
+    discountRulesResult,
     termsTemplatesResult,
     quoteTemplatesResult,
     activitiesResult,
@@ -1543,6 +1555,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     backendRequest<PlanOut[]>("/api/v1/plans?active=true", {}, token),
     backendRequest<AdminLegalEntityOut[]>("/api/v1/admin/legal-entities?include_inactive=false", {}, token),
     backendRequest<PricingCatalogOut[]>("/api/v1/pricing-catalogs", {}, token),
+    backendRequest<QuoteDiscountRuleOut[]>("/api/v1/quote-discount-rules?active_only=true", {}, token),
     backendRequest<TermsTemplateOut[]>("/api/v1/terms-templates?active_only=true", {}, token),
     backendRequest<QuoteTemplateV2Out[]>("/api/v1/quote-templates-v2?active_only=true", {}, token),
     backendRequest<AdminActivityOut[]>("/api/v1/admin/activities?include_inactive=true", {}, token),
@@ -1623,6 +1636,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const legalEntities = legalEntitiesResult.ok ? legalEntitiesResult.data : [];
   const selectedQuoteType = quoteTypes.find((row) => row.id === detail.quote.quote_type_id) ?? null;
   const catalogs = catalogsResult.ok ? catalogsResult.data : [];
+  const discountRules = discountRulesResult.ok ? discountRulesResult.data : [];
   const termsTemplates = termsTemplatesResult.ok ? termsTemplatesResult.data : [];
   const quoteTemplates = quoteTemplatesResult.ok ? quoteTemplatesResult.data : [];
   const activities = activitiesResult.ok ? activitiesResult.data : [];
@@ -3319,6 +3333,14 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             title: row.title,
             effective_price_ttc: row.price_effective_incl_vat,
             vat_rate: row.vat_rate,
+          }))}
+          discountRules={discountRules.map((row) => ({
+            id: row.id,
+            code: row.code,
+            label: row.label,
+            unit_price_ttc: row.unit_price_ttc,
+            vat_rate: row.vat_rate,
+            currency: row.currency,
           }))}
           activityCatalogPriceByActivityId={activityCatalogPriceByActivityId}
           productCatalogPriceByProductId={productCatalogPriceByProductId}

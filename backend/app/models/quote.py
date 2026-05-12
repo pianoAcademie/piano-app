@@ -191,6 +191,27 @@ class PricingKitPrice(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
 
 
+class QuoteDiscountRule(Base):
+    __tablename__ = "quote_discount_rules"
+    __table_args__ = (UniqueConstraint("code", name="uq_quote_discount_rules_code"),)
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("gen_random_uuid()"),
+    )
+    code: Mapped[str] = mapped_column(String(80), nullable=False)
+    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    unit_price_ttc: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    vat_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, server_default=text("0"))
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'EUR'"))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
+
 class SolfegeLevelRule(Base):
     __tablename__ = "solfege_level_rules"
     __table_args__ = (UniqueConstraint("level_code", "location_id", "modality", name="uq_solfege_level_rules_scope"),)

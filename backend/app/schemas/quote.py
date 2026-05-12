@@ -445,6 +445,29 @@ class PricingKitPriceUpsertRequest(BaseModel):
     is_active: bool = True
 
 
+class QuoteDiscountRuleOut(BaseModel):
+    id: UUID
+    code: str
+    label: str
+    unit_price_ttc: Decimal
+    vat_rate: Decimal
+    currency: str
+    is_active: bool
+    sort_order: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class QuoteDiscountRuleUpsertRequest(BaseModel):
+    code: str | None = Field(default=None, max_length=80)
+    label: str = Field(min_length=1, max_length=255)
+    unit_price_ttc: Decimal = Field(ge=Decimal("0"))
+    vat_rate: Decimal = Field(default=Decimal("0"), ge=Decimal("0"), le=Decimal("100"))
+    currency: str = Field(default="EUR", min_length=3, max_length=3)
+    is_active: bool = True
+    sort_order: int = 0
+
+
 class SolfegeLevelRuleOut(BaseModel):
     id: UUID
     level_code: str

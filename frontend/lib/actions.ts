@@ -13269,6 +13269,95 @@ export async function upsertAdminPricingActivityPriceConfigAction(formData: Form
   redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.activity_price_saved")));
 }
 
+export async function createAdminQuoteDiscountRuleConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=discounts"));
+  const code = optionalField(formData, "code");
+  const label = String(formData.get("label") ?? "").trim();
+  const unitPriceTtc = String(formData.get("unit_price_ttc") ?? "").trim().replace(",", ".");
+  const vatRate = String(formData.get("vat_rate") ?? "0").trim().replace(",", ".");
+  const sortOrder = parsePositiveInt(String(formData.get("sort_order") ?? "")) ?? 0;
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+
+  if (!label || !unitPriceTtc || !Number.isFinite(Number(unitPriceTtc)) || Number(unitPriceTtc) < 0 || !Number.isFinite(Number(vatRate)) || Number(vatRate) < 0 || Number(vatRate) > 100) {
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_discount_rule")));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    "/api/v1/quote-discount-rules",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        code,
+        label,
+        unit_price_ttc: Number(unitPriceTtc).toFixed(2),
+        vat_rate: Number(vatRate).toFixed(2),
+        currency: "EUR",
+        is_active: isActive,
+        sort_order: sortOrder,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes");
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.discount_rule_created")));
+}
+
+export async function updateAdminQuoteDiscountRuleConfigAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+
+  const returnTo = safeAdminConfigQuotesPath(String(formData.get("return_to") ?? "/admin/config/quotes?tab=discounts"));
+  const ruleId = parseUuid(String(formData.get("discount_rule_id") ?? ""));
+  const code = optionalField(formData, "code");
+  const label = String(formData.get("label") ?? "").trim();
+  const unitPriceTtc = String(formData.get("unit_price_ttc") ?? "").trim().replace(",", ".");
+  const vatRate = String(formData.get("vat_rate") ?? "0").trim().replace(",", ".");
+  const sortOrder = parsePositiveInt(String(formData.get("sort_order") ?? "")) ?? 0;
+  const isActive = parseCheckboxFlag(formData, "is_active", true);
+
+  if (!ruleId || !label || !unitPriceTtc || !Number.isFinite(Number(unitPriceTtc)) || Number(unitPriceTtc) < 0 || !Number.isFinite(Number(vatRate)) || Number(vatRate) < 0 || Number(vatRate) > 100) {
+    redirect(appendQueryMessage(returnTo, "error", uiText(language, "admin.quote_config_action.invalid_discount_rule")));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/quote-discount-rules/${encodeURIComponent(ruleId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        code,
+        label,
+        unit_price_ttc: Number(unitPriceTtc).toFixed(2),
+        vat_rate: Number(vatRate).toFixed(2),
+        currency: "EUR",
+        is_active: isActive,
+        sort_order: sortOrder,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/config/quotes");
+  revalidatePath("/admin/quotes");
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.quote_config_action.discount_rule_updated")));
+}
+
 export async function createAdminPaymentPlanConfigAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

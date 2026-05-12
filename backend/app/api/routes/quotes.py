@@ -52,6 +52,7 @@ from app.models.quote import (
     Prospect,
     Quote,
     QuoteAcceptanceFollowup,
+    QuoteDiscountRule,
     QuoteDocumentBinding,
     QuoteDocumentSnapshot,
     QuoteEmailOutbox,
@@ -85,6 +86,8 @@ from app.schemas.quote import (
     QuoteCancelRequest,
     QuoteCreateRequest,
     QuoteDetailOut,
+    QuoteDiscountRuleOut,
+    QuoteDiscountRuleUpsertRequest,
     QuoteDuplicateForChildRequest,
     QuoteEmailPreviewOut,
     QuoteEventOut,
@@ -363,6 +366,31 @@ def _next_available_payment_plan_code(db: Session, *, base_code: str, exclude_id
             return candidate
         suffix = f"_{index}"
         candidate = f"{root[: max(1, 60 - len(suffix))]}{suffix}"
+        index += 1
+
+
+def _discount_rule_code_from_label(label: str) -> str:
+    normalized = unicodedata.normalize("NFKD", (label or "").strip())
+    ascii_label = normalized.encode("ascii", "ignore").decode("ascii")
+    code = re.sub(r"[^A-Z0-9]+", "_", ascii_label.upper()).strip("_")
+    return (code or "DISCOUNT_RULE")[:80]
+
+
+def _next_available_discount_rule_code(db: Session, *, base_code: str, exclude_id: UUID | None = None) -> str:
+    root = (base_code or "DISCOUNT_RULE").strip().upper() or "DISCOUNT_RULE"
+    root = re.sub(r"[^A-Z0-9_]+", "_", root).strip("_") or "DISCOUNT_RULE"
+    root = root[:80]
+    candidate = root
+    index = 2
+    while True:
+        stmt = select(QuoteDiscountRule.id).where(func.upper(QuoteDiscountRule.code) == candidate.upper())
+        if exclude_id is not None:
+            stmt = stmt.where(QuoteDiscountRule.id != exclude_id)
+        existing = db.scalar(stmt.limit(1))
+        if existing is None:
+            return candidate
+        suffix = f"_{index}"
+        candidate = f"{root[: max(1, 80 - len(suffix))]}{suffix}"
         index += 1
 
 
@@ -1762,6 +1790,21 @@ def _pricing_kit_price_out(row: PricingKitPrice) -> PricingKitPriceOut:
         unit_price_ttc=_q2(Decimal(row.unit_price_ttc or 0)),
         currency=row.currency,
         is_active=bool(row.is_active),
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _quote_discount_rule_out(row: QuoteDiscountRule) -> QuoteDiscountRuleOut:
+    return QuoteDiscountRuleOut(
+        id=row.id,
+        code=row.code,
+        label=row.label,
+        unit_price_ttc=_q2(Decimal(row.unit_price_ttc or 0)),
+        vat_rate=_q2(Decimal(row.vat_rate or 0)),
+        currency=row.currency,
+        is_active=bool(row.is_active),
+        sort_order=int(row.sort_order or 0),
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -6292,10 +6335,12 @@ def _apply_followup_forfait_discount_rows(
             continue
 
         source_line = line_by_id.get(_source_line_id_from_billing_row(row))
+        source_meta = _json_object(source_line.meta if source_line is not None else None)
+        discount_code = _normalize_discount_label(source_meta.get("discount_rule_code"))
         normalized_label = _normalize_discount_label(source_line.title if source_line is not None else row.get("label"))
-        if "famille" in normalized_label:
+        if "famille" in normalized_label or "family" in discount_code or "famille" in discount_code:
             target_bucket = "family"
-        elif "fidel" in normalized_label:
+        elif "fidel" in normalized_label or "loyal" in discount_code or "fidel" in discount_code:
             target_bucket = "loyalty"
         else:
             continue
@@ -8592,6 +8637,69 @@ def delete_pricing_kit_price(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pricing kit price not found")
     db.delete(row)
     db.commit()
+
+
+@router.get("/quote-discount-rules", response_model=list[QuoteDiscountRuleOut])
+def list_quote_discount_rules(
+    active_only: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
+) -> list[QuoteDiscountRuleOut]:
+    stmt = select(QuoteDiscountRule)
+    if active_only:
+        stmt = stmt.where(QuoteDiscountRule.is_active.is_(True))
+    rows = db.scalars(stmt.order_by(QuoteDiscountRule.sort_order.asc(), QuoteDiscountRule.label.asc())).all()
+    return [_quote_discount_rule_out(row) for row in rows]
+
+
+@router.post("/quote-discount-rules", response_model=QuoteDiscountRuleOut, status_code=status.HTTP_201_CREATED)
+def create_quote_discount_rule(
+    payload: QuoteDiscountRuleUpsertRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteDiscountRuleOut:
+    now = _utcnow()
+    base_code = payload.code or _discount_rule_code_from_label(payload.label)
+    row = QuoteDiscountRule(
+        code=_next_available_discount_rule_code(db, base_code=base_code),
+        label=payload.label.strip(),
+        unit_price_ttc=_q2(payload.unit_price_ttc),
+        vat_rate=_q2(payload.vat_rate),
+        currency=payload.currency.upper(),
+        is_active=payload.is_active,
+        sort_order=payload.sort_order,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _quote_discount_rule_out(row)
+
+
+@router.patch("/quote-discount-rules/{rule_id}", response_model=QuoteDiscountRuleOut)
+def update_quote_discount_rule(
+    rule_id: UUID,
+    payload: QuoteDiscountRuleUpsertRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteDiscountRuleOut:
+    row = db.scalar(select(QuoteDiscountRule).where(QuoteDiscountRule.id == rule_id).with_for_update())
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote discount rule not found")
+    base_code = payload.code or row.code or _discount_rule_code_from_label(payload.label)
+    row.code = _next_available_discount_rule_code(db, base_code=base_code, exclude_id=row.id)
+    row.label = payload.label.strip()
+    row.unit_price_ttc = _q2(payload.unit_price_ttc)
+    row.vat_rate = _q2(payload.vat_rate)
+    row.currency = payload.currency.upper()
+    row.is_active = payload.is_active
+    row.sort_order = payload.sort_order
+    row.updated_at = _utcnow()
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _quote_discount_rule_out(row)
 
 
 @router.get("/solfege-level-rules", response_model=list[SolfegeLevelRuleOut])
