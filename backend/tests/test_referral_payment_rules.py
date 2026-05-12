@@ -190,7 +190,7 @@ class ReferralPaymentRuleTests(unittest.TestCase):
         self.assertIs(updated, reward)
         self.assertEqual(reward.referred_client_id, referred_client_id)
         self.assertEqual(reward.referred_student_id, referred_student_id)
-        self.assertEqual(reward.status, referrals.REFERRAL_STATUS_NEEDS_REVIEW)
+        self.assertEqual(reward.status, referrals.REFERRAL_STATUS_CANCELLED)
         self.assertEqual(reward.match_status, referrals.REFERRAL_MATCH_UNMATCHED)
         self.assertIsNone(reward.referrer_user_id)
         self.assertEqual(reward.match_confidence, 0)

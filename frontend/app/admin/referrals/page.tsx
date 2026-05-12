@@ -253,9 +253,10 @@ export default async function AdminReferralsPage({ searchParams }: { searchParam
     token,
   );
   const allReferrals = referralsResult.ok ? referralsResult.data : [];
-  const referrals = allReferrals.filter((row) => (!status || row.status === status) && rowMatchesQuery(row, searchQuery));
-  const counters = referralCounters(allReferrals);
-  const totalAmount = allReferrals
+  const operationalReferrals = status === "CANCELLED" ? allReferrals : allReferrals.filter((row) => row.status !== "CANCELLED");
+  const referrals = operationalReferrals.filter((row) => (!status || row.status === status) && rowMatchesQuery(row, searchQuery));
+  const counters = referralCounters(operationalReferrals);
+  const totalAmount = operationalReferrals
     .filter((row) => row.status === "CREDIT_GRANTED")
     .reduce((sum, row) => sum + (Number(row.reward_amount) || 0), 0);
   const errorMessage = referralsResult.ok ? "" : referralsResult.message;
@@ -311,7 +312,7 @@ export default async function AdminReferralsPage({ searchParams }: { searchParam
 
       <section className="grid cols-4 span-2">
         <article className="card">
-          <strong>{allReferrals.length}</strong>
+          <strong>{operationalReferrals.length}</strong>
           <span className="muted">{rt(language, "referrals")}</span>
         </article>
         <article className="card">

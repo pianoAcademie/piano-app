@@ -298,7 +298,7 @@ def is_same_referral_family(
 
 
 def _block_self_referral(reward: ReferralReward) -> None:
-    reward.status = REFERRAL_STATUS_NEEDS_REVIEW
+    reward.status = REFERRAL_STATUS_CANCELLED
     reward.match_status = REFERRAL_MATCH_UNMATCHED
     reward.referrer_user_id = None
     reward.match_confidence = 0
