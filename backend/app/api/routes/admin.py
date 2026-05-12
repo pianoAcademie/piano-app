@@ -3591,7 +3591,7 @@ def update_session(
     recurrence_occurrences = 1
     recurrence_frequency = "WEEKLY"
     recurrence_interval = 1
-    recurrence_time_basis = "UTC"
+    recurrence_time_basis = "LOCAL"
     recurrence_until_date: date | None = None
     create_future_recurrences = False
     realign_existing_recurrence = False
