@@ -1549,6 +1549,14 @@ def _collect_family_candidates(db: Session, normalized: dict[str, object]) -> li
         if score <= 0:
             continue
 
+        child_identity_score = 0
+        if child_first_name and _lower(child.first_name) == child_first_name:
+            child_identity_score += 28
+        if child_last_name and _lower(child.last_name) == child_last_name:
+            child_identity_score += 24
+        if child_birth_date and child.birth_date and child.birth_date.isoformat() == child_birth_date:
+            child_identity_score += 28
+
         adult_label = _display_name(adult.first_name, adult.last_name, adult.email)
         child_label = _display_name(child.first_name, child.last_name, child.email)
         out.append(
@@ -1561,12 +1569,19 @@ def _collect_family_candidates(db: Session, normalized: dict[str, object]) -> li
                 "subtitle": adult.email,
                 "confidence": score,
                 "confidence_label": _confidence_label(score),
+                "child_identity_score": child_identity_score,
                 "reasons": reasons,
             }
         )
 
     out.sort(key=lambda item: (int(item["confidence"]), _text(item["display_name"])), reverse=True)
     return out[:8]
+
+
+def _family_candidate_matches_requested_child(candidate: dict[str, object] | None) -> bool:
+    if not candidate:
+        return False
+    return int(candidate.get("child_identity_score") or 0) >= 28
 
 
 def _default_resolution(
@@ -1585,7 +1600,12 @@ def _default_resolution(
     if not mode:
         best_family = family_candidates[0] if family_candidates else None
         best_client = client_candidates[0] if client_candidates else None
-        if customer_type == "child" and best_family and int(best_family.get("confidence") or 0) >= 95:
+        if (
+            customer_type == "child"
+            and best_family
+            and int(best_family.get("confidence") or 0) >= 95
+            and _family_candidate_matches_requested_child(best_family)
+        ):
             mode = CLIENT_MODE_EXISTING_FAMILY
         elif best_client and int(best_client.get("confidence") or 0) >= 95 and (
             customer_type != "child" or _is_child_client_candidate(best_client)
