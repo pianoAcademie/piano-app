@@ -3735,7 +3735,8 @@ def _analysis_for_intake(
             "blockages": list(dict.fromkeys(blockages)),
             "solfege_slot_proposal": solfege_slot_proposal,
             "referral": referral_summary(
-                db.scalar(select(ReferralReward).where(ReferralReward.typeform_intake_id == intake.id))
+                db.scalar(select(ReferralReward).where(ReferralReward.typeform_intake_id == intake.id)),
+                db,
             ),
             "intake_status": intake_status,
         }
@@ -3835,7 +3836,8 @@ def _safe_analysis_for_intake(
             "warnings": list(dict.fromkeys(warnings)),
             "blockages": list(dict.fromkeys(blockages)),
             "referral": referral_summary(
-                db.scalar(select(ReferralReward).where(ReferralReward.typeform_intake_id == intake.id))
+                db.scalar(select(ReferralReward).where(ReferralReward.typeform_intake_id == intake.id)),
+                db,
             ),
             "intake_status": INTAKE_STATUS_BLOCKED,
         }

@@ -196,6 +196,27 @@ class ReferralPaymentRuleTests(unittest.TestCase):
         self.assertEqual(reward.match_confidence, 0)
         self.assertTrue(reward.metadata_json["self_referral_blocked"])
 
+    def test_reward_candidates_hide_same_family_options(self) -> None:
+        blocked_id = uuid4()
+        valid_id = uuid4()
+        reward = SimpleNamespace(
+            referred_client_id=uuid4(),
+            referred_student_id=uuid4(),
+            match_candidates_json=[
+                {"user_id": str(blocked_id), "display_name": "Alice Avenel"},
+                {"user_id": str(valid_id), "display_name": "Famille Martin"},
+            ],
+        )
+        db = _FakeDb([])
+
+        def same_family(_db: object, *, referrer_user_id: object, referred_client_id: object, referred_student_id: object) -> bool:
+            return referrer_user_id == blocked_id
+
+        with patch.object(referrals, "is_same_referral_family", side_effect=same_family):
+            candidates = referrals.referral_match_candidates_for_reward(db, reward)
+
+        self.assertEqual(candidates, [{"user_id": str(valid_id), "display_name": "Famille Martin"}])
+
     def test_manual_validation_rejects_same_family_referral(self) -> None:
         reward = SimpleNamespace(id=uuid4(), referred_client_id=uuid4(), referred_student_id=uuid4())
         db = _ScalarFakeDb([reward])

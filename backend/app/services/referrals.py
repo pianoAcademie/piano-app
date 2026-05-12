@@ -305,6 +305,26 @@ def _block_self_referral(reward: ReferralReward) -> None:
     reward.metadata_json = {**(reward.metadata_json or {}), "self_referral_blocked": True}
 
 
+def referral_match_candidates_for_reward(db: Session, reward: ReferralReward) -> list[dict[str, object]]:
+    candidates = reward.match_candidates_json or []
+    filtered: list[dict[str, object]] = []
+    for candidate in candidates:
+        raw_user_id = candidate.get("user_id") if isinstance(candidate, dict) else None
+        try:
+            candidate_user_id = UUID(str(raw_user_id))
+        except (TypeError, ValueError):
+            continue
+        if is_same_referral_family(
+            db,
+            referrer_user_id=candidate_user_id,
+            referred_client_id=reward.referred_client_id,
+            referred_student_id=reward.referred_student_id,
+        ):
+            continue
+        filtered.append(candidate)
+    return filtered
+
+
 def ensure_referral_for_intake(
     db: Session,
     *,
@@ -852,9 +872,10 @@ def send_referral_credit_email(db: Session, *, reward: ReferralReward) -> str | 
     return message_id
 
 
-def referral_summary(reward: ReferralReward | None) -> dict[str, object] | None:
+def referral_summary(reward: ReferralReward | None, db: Session | None = None) -> dict[str, object] | None:
     if reward is None:
         return None
+    candidates = referral_match_candidates_for_reward(db, reward) if db is not None else reward.match_candidates_json or []
     return {
         "id": str(reward.id),
         "typeform_intake_id": str(reward.typeform_intake_id) if reward.typeform_intake_id else None,
@@ -869,5 +890,5 @@ def referral_summary(reward: ReferralReward | None) -> dict[str, object] | None:
         "currency": reward.currency,
         "trigger_ratio": f"{Decimal(reward.trigger_ratio or 0):.4f}",
         "credit_transaction_id": str(reward.credit_transaction_id) if reward.credit_transaction_id else None,
-        "match_candidates": reward.match_candidates_json or [],
+        "match_candidates": candidates,
     }

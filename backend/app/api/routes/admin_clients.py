@@ -199,7 +199,12 @@ from app.services.session_teachers import effective_teacher_id_for_session, prof
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
 from app.services.payment_provider import detect_provider_from_reference, parse_provider, resolve_provider, resolve_webhook_secret
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
-from app.services.referrals import evaluate_referrals_for_invoice, ensure_referrals_for_sibling_quotes, manually_validate_referral
+from app.services.referrals import (
+    evaluate_referrals_for_invoice,
+    ensure_referrals_for_sibling_quotes,
+    manually_validate_referral,
+    referral_match_candidates_for_reward,
+)
 from app.services.reminders import skip_pending_reminders_for_booking
 from app.services.security import create_access_token, hash_password
 from app.services.session_audience import resolve_session_booking_scopes, scopes_allow_planless_booking
@@ -8039,7 +8044,7 @@ def _referral_reward_out(db: Session, row: ReferralReward, users_by_id: dict[UUI
         validated_at=row.validated_at,
         credit_granted_at=row.credit_granted_at,
         updated_at=row.updated_at,
-        match_candidates=row.match_candidates_json or [],
+        match_candidates=referral_match_candidates_for_reward(db, row),
     )
 
 
