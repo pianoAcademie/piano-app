@@ -74,6 +74,7 @@ class TypeformSessionMatchOptionOut(BaseModel):
 
 class TypeformSessionRecommendationOut(BaseModel):
     activity_id: UUID
+    recommendation_key: str | None = None
     activity_name: str
     requested_location: str | None = None
     requested_summary: str | None = None

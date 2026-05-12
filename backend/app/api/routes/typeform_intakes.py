@@ -842,6 +842,148 @@ def _fallback_requested_slot_preferences_from_simplified_answers(
     return out
 
 
+def _is_second_course_label(value: object | None) -> bool:
+    token = _normalize_token(value)
+    if not token:
+        return False
+    return (
+        "2e cours" in token
+        or "2eme cours" in token
+        or "deuxieme cours" in token
+        or "second cours" in token
+    )
+
+
+def _is_solfege_label(value: object | None) -> bool:
+    token = _normalize_token(value)
+    return "solfege" in token or re.search(r"\bniveau\s*[1-5]\b", token) is not None
+
+
+def _main_course_slot_preferences_from_simplified_answers(
+    simplified_answers: list[dict[str, object]],
+    *,
+    requested_location: str | None,
+    segment: str | None,
+) -> list[dict[str, object]]:
+    requested_days: list[str] = []
+    requested_times: list[str] = []
+    for item in simplified_answers:
+        if not isinstance(item, dict):
+            continue
+        label = _text(item.get("label"))
+        value = _text(item.get("value"))
+        label_token = _normalize_token(label)
+        if not label_token or _is_second_course_label(label) or _is_solfege_label(label):
+            continue
+        if "jour" in label_token and "cours" in label_token:
+            day = _extract_weekday_label(value)
+            if day and day not in requested_days:
+                requested_days.append(day)
+        if "horaire" in label_token and "cours" in label_token:
+            for time_value in _extract_time_tokens(value):
+                if time_value not in requested_times:
+                    requested_times.append(time_value)
+
+    if not requested_days and not requested_times:
+        return []
+    out: list[dict[str, object]] = []
+    seen: set[tuple[str | None, str | None]] = set()
+    days = requested_days or [None]
+    times = requested_times or [None]
+    for day in days:
+        for time_value in times:
+            key = (day, time_value)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(
+                {
+                    "day": day,
+                    "time": time_value,
+                    "location": requested_location,
+                    "segment": segment,
+                }
+            )
+    return out
+
+
+def _first_start_time_from_choice(value: object | None) -> str | None:
+    for chunk in _text(value).replace("/", ",").replace(";", ",").split(","):
+        tokens = _extract_time_tokens(chunk)
+        if tokens:
+            return tokens[0]
+    return None
+
+
+def _second_course_request_from_simplified_answers(
+    simplified_answers: list[dict[str, object]],
+    *,
+    requested_location: str | None,
+    segment: str | None,
+) -> dict[str, object]:
+    request_label: str | None = None
+    request_value: str | None = None
+    requested_days: list[str] = []
+    requested_times: list[str] = []
+    for item in simplified_answers:
+        if not isinstance(item, dict):
+            continue
+        label = _text(item.get("label"))
+        value = _text(item.get("value"))
+        label_token = _normalize_token(label)
+        if not _is_second_course_label(label):
+            continue
+        if "selection" not in label_token and "jour" not in label_token and "creneau" not in label_token:
+            request_label = label
+            request_value = value
+            continue
+        if "jour" in label_token:
+            day = _extract_weekday_label(value)
+            if day and day not in requested_days:
+                requested_days.append(day)
+            continue
+        if "creneau" in label_token or "horaire" in label_token:
+            time_value = _first_start_time_from_choice(value)
+            if time_value and time_value not in requested_times:
+                requested_times.append(time_value)
+
+    request_token = _normalize_token(request_value)
+    requested = bool(request_token and "oui" in request_token and "non" not in request_token)
+    if not requested:
+        return {"requested": False}
+
+    modality = "online" if "ligne" in request_token or "online" in request_token else "onsite"
+    unit_price_match = re.search(r"(\d+(?:[,.]\d+)?)\s*(?:eur|€)", request_value or "", flags=re.IGNORECASE)
+    unit_price_ttc = unit_price_match.group(1).replace(",", ".") if unit_price_match else None
+    location = "En ligne" if modality == "online" else requested_location
+    days = requested_days or [None]
+    times = requested_times or [None]
+    slot_preferences: list[dict[str, object]] = []
+    seen: set[tuple[str | None, str | None]] = set()
+    for day in days:
+        for time_value in times:
+            key = (day, time_value)
+            if key in seen:
+                continue
+            seen.add(key)
+            slot_preferences.append(
+                {
+                    "day": day,
+                    "time": time_value,
+                    "location": location,
+                    "segment": segment,
+                }
+            )
+    return {
+        "requested": True,
+        "label": request_label,
+        "value": request_value,
+        "modality": modality,
+        "unit_price_ttc": unit_price_ttc,
+        "slot_preferences": slot_preferences,
+    }
+
+
 def _fallback_solfege_slot_preferences_from_simplified_answers(
     simplified_answers: list[dict[str, object]],
     *,
@@ -1408,12 +1550,24 @@ def _normalize_payload(
         requested_location=requested_location,
         segment=config_segment or None,
     )
-    if not requested_slot_preferences:
+    explicit_main_slot_preferences = _main_course_slot_preferences_from_simplified_answers(
+        simplified_answers,
+        requested_location=requested_location,
+        segment=config_segment or None,
+    )
+    if explicit_main_slot_preferences:
+        requested_slot_preferences = explicit_main_slot_preferences
+    elif not requested_slot_preferences:
         requested_slot_preferences = _fallback_requested_slot_preferences_from_simplified_answers(
             simplified_answers,
             requested_location=requested_location,
             segment=config_segment or None,
         )
+    requested_second_course = _second_course_request_from_simplified_answers(
+        simplified_answers,
+        requested_location=requested_location,
+        segment=config_segment or None,
+    )
     requested_solfege_slot_preferences = _normalize_slot_preferences(
         _mapped_token_list(answer_map, field_mapping, "requested_solfege_slot_preferences"),
         requested_location=requested_location,
@@ -1554,6 +1708,10 @@ def _normalize_payload(
         requested_products.append("Cours de solfege en ligne" if requested_online_solfege else "Cours de solfege en presentiel")
     if requested_pass_recup and not any("pass" in _normalize_token(item) and "recup" in _normalize_token(item) for item in requested_products):
         requested_products.append("Pass Recup")
+    if _bool_or_default(requested_second_course.get("requested"), False):
+        second_course_label = _text(requested_second_course.get("value")) or "2e cours de piano"
+        if not any(_is_second_course_label(item) for item in requested_products):
+            requested_products.append(second_course_label)
     address_parts = [
         part
         for part in [
@@ -1597,6 +1755,7 @@ def _normalize_payload(
         "requested_days": requested_days,
         "requested_times": requested_times,
         "requested_slot_preferences": requested_slot_preferences,
+        "requested_second_course": requested_second_course,
         "requested_solfege_slot_preferences": requested_solfege_slot_preferences,
         "requested_formula_type": requested_formula_type,
         "requested_payment_method": requested_payment_method,
@@ -2306,6 +2465,45 @@ def _find_solfege_activity(db: Session, *, modality: str = "onsite", level_code:
     return candidates[0][1] if candidates else None
 
 
+def _find_second_piano_activity(
+    db: Session,
+    *,
+    modality: str,
+    preview_lines: list[TypeformQuotePreviewLineOut],
+) -> CourseType | None:
+    if modality != "online":
+        for line in preview_lines:
+            if line.activity_id is None:
+                continue
+            haystack = _normalize_token(_preview_line_haystack(line))
+            if "piano" in haystack and "solfege" not in haystack:
+                return db.scalar(select(CourseType).where(CourseType.id == line.activity_id, CourseType.active.is_(True)))
+
+    rows = db.scalars(
+        select(CourseType)
+        .where(CourseType.active.is_(True))
+        .order_by(CourseType.name.asc())
+    ).all()
+    candidates: list[tuple[int, CourseType]] = []
+    for row in rows:
+        haystack = _course_type_haystack(row)
+        if "piano" not in haystack or "solfege" in haystack:
+            continue
+        score = 0
+        if "collectif" in haystack or "group" in haystack:
+            score += 20
+        if modality == "online":
+            if row.mode == DeliveryMode.ONLINE:
+                score += 40
+            if "ligne" in haystack or "online" in haystack:
+                score += 20
+        elif row.mode == DeliveryMode.ONSITE:
+            score += 30
+        candidates.append((score, row))
+    candidates.sort(key=lambda item: (-item[0], item[1].name))
+    return candidates[0][1] if candidates else None
+
+
 def _quote_lines_contain_solfege_activity(
     quote_lines: list[QuoteLineIn],
     preview_lines: list[TypeformQuotePreviewLineOut],
@@ -2439,7 +2637,13 @@ def _append_activity_quote_line(
     default_vat_rate: Decimal,
     warnings: list[str],
     source: str,
+    unit_price_override_ttc: Decimal | None = None,
+    extra_meta: dict[str, object] | None = None,
 ) -> None:
+    meta: dict[str, object] = {"typeform_automatic_line": source, **(extra_meta or {})}
+    if unit_price_override_ttc is not None and unit_price_override_ttc > Decimal("0.00"):
+        meta["manual_unit_price_override"] = True
+        meta["typeform_unit_price_ttc"] = str(_q2(unit_price_override_ttc))
     line_in = QuoteLineIn(
         line_category="service",
         line_type="item",
@@ -2449,10 +2653,10 @@ def _append_activity_quote_line(
         title=activity.name,
         quantity=Decimal("1.00"),
         vat_rate=default_vat_rate,
-        unit_price_ttc=Decimal("0.00"),
+        unit_price_ttc=_q2(unit_price_override_ttc) if unit_price_override_ttc is not None else Decimal("0.00"),
         pricing_unit="session",
         sort_order=len(quote_lines),
-        meta={"typeform_automatic_line": source},
+        meta=meta,
     )
     code, title, description, duration, unit_price, meta = _effective_item_price(
         db,
@@ -2460,7 +2664,7 @@ def _append_activity_quote_line(
         pricing_catalog_id=pricing_catalog_id,
         location_id=resolved_location_id,
     )
-    meta = {**dict(meta), "typeform_automatic_line": source}
+    meta = {**dict(meta), "typeform_automatic_line": source, **(extra_meta or {})}
     pricing_source = _text(meta.get("pricing_source"))
     if pricing_source == "activity_default_course_rate":
         warnings.append(f"Tarif catalogue absent pour {title}, tarif par defaut activite utilise.")
@@ -2567,6 +2771,39 @@ def _append_automatic_typeform_lines(
     if not requested_solfege_modality:
         requested_solfege_modality = "online" if _bool_or_default(normalized.get("requested_online_solfege"), False) else ""
         requested_solfege_modality = requested_solfege_modality or ("onsite" if _bool_or_default(normalized.get("requested_onsite_solfege"), False) else "")
+
+    second_course = _json_object(normalized.get("requested_second_course"))
+    if _bool_or_default(second_course.get("requested"), False):
+        second_course_modality = _text(second_course.get("modality")) or "onsite"
+        activity = _find_second_piano_activity(
+            db,
+            modality=second_course_modality,
+            preview_lines=preview_lines,
+        )
+        if activity is None:
+            warnings.append("Activite automatique introuvable pour le 2e cours de piano.")
+        elif not any(_text(_json_object(line.meta).get("typeform_automatic_line")) == "second_piano_course" for line in quote_lines):
+            unit_price_override = _parse_decimal(second_course.get("unit_price_ttc"))
+            resolved_location_id = runtime_location_id if second_course_modality != "online" else None
+            display_name = "2e cours de piano en ligne" if second_course_modality == "online" else "2e cours de piano en presentiel"
+            _append_activity_quote_line(
+                db,
+                activity=activity,
+                quote_lines=quote_lines,
+                preview_lines=preview_lines,
+                pricing_catalog_id=pricing_catalog_id,
+                resolved_location_id=resolved_location_id,
+                default_vat_rate=default_vat_rate,
+                warnings=warnings,
+                source="second_piano_course",
+                unit_price_override_ttc=unit_price_override if unit_price_override > Decimal("0.00") else None,
+                extra_meta={
+                    "typeform_display_name": display_name,
+                    "typeform_second_course": True,
+                    "typeform_second_course_modality": second_course_modality,
+                },
+            )
+
     if requested_solfege_modality in {"online", "onsite"}:
         resolved_location_id = runtime_location_id if requested_solfege_modality == "onsite" else None
         activity = _find_solfege_activity(
@@ -3282,11 +3519,23 @@ def _effective_selected_session_ids(
         if _text(key) and _text(value)
     }
     for recommendation in session_recommendations:
-        activity_key = str(recommendation.activity_id)
+        activity_key = _session_recommendation_key(recommendation)
         if activity_key in effective or recommendation.selected_session_id is None:
             continue
         effective[activity_key] = str(recommendation.selected_session_id)
     return effective
+
+
+def _line_recommendation_key(line: TypeformQuotePreviewLineOut) -> str:
+    meta = _json_object(line.meta)
+    source = _text(meta.get("typeform_automatic_line"))
+    if source:
+        return f"{line.activity_id}:{source}"
+    return str(line.activity_id)
+
+
+def _session_recommendation_key(recommendation: TypeformSessionRecommendationOut) -> str:
+    return _text(getattr(recommendation, "recommendation_key", None)) or str(recommendation.activity_id)
 
 
 def _recurrence_frequency_from_rule(value: object | None) -> str:
@@ -3567,27 +3816,58 @@ def _build_session_recommendations(
     for line in preview_lines:
         if line.activity_id is None:
             continue
+        recommendation_key = _line_recommendation_key(line)
         allow_deferred_selection = _is_non_blocking_solfege_line(
             line,
             runtime_context=runtime_context,
         )
         line_is_solfege = "solfege" in _normalize_token(_preview_line_haystack(line))
+        line_is_second_course = _bool_or_default(_json_object(line.meta).get("typeform_second_course"), False)
         line_uses_solfege_slot_request = bool(line_is_solfege and solfege_requested_slot_preferences)
+        second_course_preferences = []
+        if line_is_second_course:
+            second_course_preferences = _json_list(_json_object(normalized.get("requested_second_course")).get("slot_preferences"))
+        (
+            second_course_requested_days,
+            second_course_requested_times,
+            second_course_requested_slot_preferences,
+        ) = _slot_filters_from_preferences(second_course_preferences)
         line_solfege_modality = _text(normalized.get("requested_solfege_modality")) if line_is_solfege else ""
+        line_second_course_modality = _text(_json_object(normalized.get("requested_second_course")).get("modality")) if line_is_second_course else ""
         line_resolved_location_id = (
             None
             if line_uses_solfege_slot_request and line_solfege_modality == "online"
+            else None
+            if line_is_second_course and line_second_course_modality == "online"
             else resolved_location_id
         )
         line_requested_location = (
             "online"
             if line_uses_solfege_slot_request and line_solfege_modality == "online"
+            else "online"
+            if line_is_second_course and line_second_course_modality == "online"
             else requested_location
         )
-        effective_requested_days = solfege_requested_days if line_uses_solfege_slot_request else requested_days
-        effective_requested_times = solfege_requested_times if line_uses_solfege_slot_request else requested_times
+        effective_requested_days = (
+            solfege_requested_days
+            if line_uses_solfege_slot_request
+            else second_course_requested_days
+            if line_is_second_course and second_course_preferences
+            else requested_days
+        )
+        effective_requested_times = (
+            solfege_requested_times
+            if line_uses_solfege_slot_request
+            else second_course_requested_times
+            if line_is_second_course and second_course_preferences
+            else requested_times
+        )
         effective_requested_slot_preferences = (
-            solfege_requested_slot_preferences if line_uses_solfege_slot_request else requested_slot_preferences
+            solfege_requested_slot_preferences
+            if line_uses_solfege_slot_request
+            else second_course_requested_slot_preferences
+            if line_is_second_course and second_course_preferences
+            else requested_slot_preferences
         )
         activity_rows = by_activity.get(line.activity_id, [])
         option_rows: list[tuple[CourseSession, TypeformSessionMatchOptionOut]] = []
@@ -3611,7 +3891,7 @@ def _build_session_recommendations(
             if option is not None:
                 option_rows.append((session_obj, option))
 
-        selected_session_id = _parse_uuid(selected_session_ids.get(str(line.activity_id)))
+        selected_session_id = _parse_uuid(selected_session_ids.get(recommendation_key) or selected_session_ids.get(str(line.activity_id)))
         options = _collapse_session_option_groups(
             option_rows,
             selected_session_id=selected_session_id,
@@ -3763,15 +4043,18 @@ def _build_session_recommendations(
             summary_label = "Creneau solfege propose"
 
         line_meta = _json_object(line.meta)
-        display_activity_name = _text(line_meta.get("activity_name")) or line.title
+        display_activity_name = _text(line_meta.get("typeform_display_name")) or _text(line_meta.get("activity_name")) or line.title
         recommendations.append(
             TypeformSessionRecommendationOut(
                 activity_id=line.activity_id,
+                recommendation_key=recommendation_key,
                 activity_name=display_activity_name,
-                requested_location=_text(normalized.get("requested_location")) or None,
+                requested_location=_text(line_requested_location) or None,
                 requested_summary=(
                     _requested_slot_summary(_json_list(normalized.get("requested_solfege_slot_preferences")))
                     if line_uses_solfege_slot_request
+                    else _requested_slot_summary(second_course_preferences)
+                    if line_is_second_course and second_course_preferences
                     else _requested_summary(normalized)
                 ),
                 summary_status=summary_status,
@@ -3859,6 +4142,7 @@ def _build_preview(
             "session_recommendations": [
                 {
                     "activity_id": str(item.activity_id),
+                    "recommendation_key": _session_recommendation_key(item),
                     "summary_status": item.summary_status,
                     "selected_session_id": str(item.selected_session_id) if item.selected_session_id else None,
                 }
@@ -4859,10 +5143,11 @@ def _calendar_snapshot_from_analysis(
         "typeform_recommendations": [
             {
                 "activity_id": str(item.activity_id),
+                "recommendation_key": _session_recommendation_key(item),
                 "activity_name": item.activity_name,
                 "summary_status": item.summary_status,
                 "summary_label": item.summary_label,
-                "selected_session_id": selected_session_ids.get(str(item.activity_id)),
+                "selected_session_id": selected_session_ids.get(_session_recommendation_key(item)) or selected_session_ids.get(str(item.activity_id)),
                 "options": [
                     {
                         "session_id": str(option.session_id),
@@ -4904,7 +5189,7 @@ def _calendar_snapshot_from_analysis(
         }
 
         for recommendation in session_recommendations:
-            selected_session_id = selected_uuid_map.get(str(recommendation.activity_id))
+            selected_session_id = selected_uuid_map.get(_session_recommendation_key(recommendation)) or selected_uuid_map.get(str(recommendation.activity_id))
             if selected_session_id is None:
                 continue
             selected_row = selected_rows_by_id.get(selected_session_id)
@@ -4936,6 +5221,7 @@ def _calendar_snapshot_from_analysis(
             blocks.append(
                 {
                     "activity_id": str(activity.id),
+                    "recommendation_key": _session_recommendation_key(recommendation),
                     "activity_label": activity.name,
                     "location_id": str(location.id),
                     "location_label": location.name,
@@ -4963,6 +5249,7 @@ def _calendar_snapshot_from_analysis(
                         "end_time": local_end.strftime("%H:%M"),
                         "duration_minutes": int((local_end - local_start).total_seconds() // 60),
                         "activity_id": str(activity.id),
+                        "recommendation_key": _session_recommendation_key(recommendation),
                         "activity_label": activity.name,
                         "location_id": str(location.id),
                         "location_label": location.name,
@@ -5001,6 +5288,7 @@ def _calendar_snapshot_from_analysis(
                 item
                 for item in session_recommendations
                 if _is_solfege_recommendation(item, runtime_context=runtime_context)
+                and _session_recommendation_key(item) not in selected_session_ids
                 and str(item.activity_id) not in selected_session_ids
             ),
             None,

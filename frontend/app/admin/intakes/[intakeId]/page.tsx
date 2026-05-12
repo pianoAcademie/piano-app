@@ -66,6 +66,7 @@ type TypeformSessionMatchOptionOut = {
 
 type TypeformSessionRecommendationOut = {
   activity_id: string;
+  recommendation_key: string | null;
   activity_name: string;
   requested_location: string | null;
   requested_summary: string | null;
@@ -1031,8 +1032,10 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                   </article>
                 ) : null}
                 {detail.session_recommendations.length === 0 && !solfegeProposalLabel(detail.solfege_slot_proposal || {}) ? <p className="muted">{t("admin.intakes.no_slot_recommendation")}</p> : null}
-                {detail.session_recommendations.map((recommendation) => (
-                  <article className={styles.candidateItem} key={recommendation.activity_id}>
+                {detail.session_recommendations.map((recommendation) => {
+                  const recommendationKey = recommendation.recommendation_key || recommendation.activity_id;
+                  return (
+                    <article className={styles.candidateItem} key={recommendationKey}>
                     <div className="row spread wrap gap-sm">
                       <div>
                         <strong>{recommendation.activity_name}</strong>
@@ -1047,7 +1050,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                     </div>
                     <label className="top-gap-sm">
                       {t("admin.intakes.selected_slot")}
-                      <select name={`selected_session_for_${recommendation.activity_id}`} defaultValue={recommendation.selected_session_id || ""}>
+                      <select name={`selected_session_for_${recommendationKey}`} defaultValue={recommendation.selected_session_id || ""}>
                         <option value="">
                           {recommendation.slot_proposals.length > 0 ? t("admin.intakes.typeform_proposal_retained") : t("admin.intakes.no_selection")}
                         </option>
@@ -1095,7 +1098,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                           </thead>
                           <tbody>
                             {recommendation.slot_proposals.map((proposal, index) => (
-                              <tr className={styles.selectedOptionRow} key={`${recommendation.activity_id}-slot-proposal-${index}`}>
+                              <tr className={styles.selectedOptionRow} key={`${recommendationKey}-slot-proposal-${index}`}>
                                 <td>
                                   <div className={styles.optionCellStack}>
                                     <strong>{proposalLabel(index, language)}</strong>
@@ -1210,8 +1213,9 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                         </table>
                       </div>
                     ) : null}
-                  </article>
-                ))}
+                    </article>
+                  );
+                })}
               </div>
             </section>
 

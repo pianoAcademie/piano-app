@@ -607,6 +607,27 @@ function getCalendarSessions(snapshot: Record<string, unknown>): Array<Record<st
   return raw.filter((item): item is Record<string, unknown> => !!item && typeof item === "object");
 }
 
+function planningKeyFromActivityAndSource(activityId: string, source: string): string {
+  return source ? `${activityId}:${source}` : activityId;
+}
+
+function planningKeyFromSnapshotItem(item: Record<string, unknown>): string {
+  const recommendationKey = String(item.recommendation_key ?? "").trim();
+  if (recommendationKey) {
+    return recommendationKey;
+  }
+  return String(item.activity_id ?? "").trim();
+}
+
+function planningKeyFromQuoteLine(line: QuoteLineOut): string {
+  const activityId = String(line.activity_id ?? "").trim();
+  if (!activityId) {
+    return "";
+  }
+  const source = readStringMeta(line.meta || {}, "typeform_automatic_line");
+  return planningKeyFromActivityAndSource(activityId, source);
+}
+
 function monthLabel(month: number, language: UiLanguage): string {
   try {
     const label = new Intl.DateTimeFormat(localeForUiLanguage(language), { month: "long" }).format(new Date(2026, month - 1, 1));
@@ -1927,27 +1948,27 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const planningBlocks = getPlanningBlocks(planningSnapshotForEditor);
   const planningByActivityId: Record<string, { plannedQuantity: number; pendingSelection: boolean }> = {};
   for (const session of calendarSessions) {
-    const activityId = String(session.activity_id ?? "").trim();
-    if (!activityId) {
+    const planningKey = planningKeyFromSnapshotItem(session);
+    if (!planningKey) {
       continue;
     }
-    if (!(activityId in planningByActivityId)) {
-      planningByActivityId[activityId] = { plannedQuantity: 0, pendingSelection: false };
+    if (!(planningKey in planningByActivityId)) {
+      planningByActivityId[planningKey] = { plannedQuantity: 0, pendingSelection: false };
     }
-    planningByActivityId[activityId].plannedQuantity += 1;
+    planningByActivityId[planningKey].plannedQuantity += 1;
   }
   for (const block of planningBlocks) {
-    const activityId = String(block.activity_id ?? "").trim();
-    if (!activityId) {
+    const planningKey = planningKeyFromSnapshotItem(block);
+    if (!planningKey) {
       continue;
     }
-    if (!(activityId in planningByActivityId)) {
-      planningByActivityId[activityId] = { plannedQuantity: 0, pendingSelection: false };
+    if (!(planningKey in planningByActivityId)) {
+      planningByActivityId[planningKey] = { plannedQuantity: 0, pendingSelection: false };
     }
     const rawPending = block.selection_pending;
     const isPending = rawPending === true || String(rawPending ?? "").trim().toLowerCase() === "true";
     if (isPending) {
-      planningByActivityId[activityId].pendingSelection = true;
+      planningByActivityId[planningKey].pendingSelection = true;
     }
   }
   const activityById = new Map(activities.map((activity) => [activity.id, activity]));
@@ -1961,8 +1982,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       return !isSolfegeActivityName(haystack);
     })
     .map((line) => {
-      const activityId = String(line.activity_id || "").trim();
-      const planningSummaryForActivity = activityId ? planningByActivityId[activityId] : undefined;
+      const planningKey = planningKeyFromQuoteLine(line);
+      const planningSummaryForActivity = planningKey ? planningByActivityId[planningKey] : undefined;
       const plannedQuantity = planningSummaryForActivity?.plannedQuantity ?? 0;
       const billedQuantity = toNumber(line.quantity, 0);
       return {
