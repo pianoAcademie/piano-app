@@ -2579,7 +2579,7 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   const recurrence_interval_raw = String(formData.get("recurrence_interval") ?? "1").trim();
   const recurrence_interval = parsePositiveInt(recurrence_interval_raw);
   const recurrence_until_date = String(formData.get("recurrence_until_date") ?? "").trim();
-  const recurrence_time_basis = checkboxField(formData, "recurrence_keep_local_time") ? "LOCAL" : "UTC";
+  const recurrence_time_basis = "LOCAL";
 
   const start_date = String(formData.get("start_date") ?? "");
   const start_time = String(formData.get("start_time") ?? (is_all_day ? "00:00" : ""));
@@ -2780,7 +2780,7 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   const recurrence_interval_raw = String(formData.get("recurrence_interval") ?? "1").trim();
   const recurrence_interval = parsePositiveInt(recurrence_interval_raw);
   const recurrence_until_date = String(formData.get("recurrence_until_date") ?? "").trim();
-  const recurrence_time_basis = checkboxField(formData, "recurrence_keep_local_time") ? "LOCAL" : "UTC";
+  const recurrence_time_basis = "LOCAL";
 
   const start_date = String(formData.get("start_date") ?? "");
   const start_time = String(formData.get("start_time") ?? (is_all_day ? "00:00" : ""));
