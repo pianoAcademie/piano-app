@@ -529,6 +529,17 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
   const activeProducts = products.filter((row) => row.active);
   const stockableProducts = activeProducts.filter((row) => !row.is_virtual);
   const activeLocations = locations.filter((row) => row.active);
+  const activeCatalogRequests = requests.filter(
+    (row) => row.status === "PROCESSING" || row.status === "INVOICE_TO_SEND" || row.status === "TO_DELIVER",
+  );
+  const activeCatalogRequestIds = new Set(activeCatalogRequests.map((row) => row.id));
+  const productStats = {
+    total: products.length,
+    active: activeProducts.length,
+    virtual: activeProducts.filter((row) => row.is_virtual).length,
+    lowStock: activeProducts.filter((row) => !row.is_virtual && row.stock_global_quantity < row.reserve_stock).length,
+    activeRequests: activeCatalogRequests.length,
+  };
 
   const qLower = query.toLocaleLowerCase("fr-FR");
   const filteredProducts = products
@@ -644,7 +655,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
     .sort((a, b) => a.label.localeCompare(b.label, "fr"));
 
   const requestsByLocation = requests
-    .filter((row) => row.status === "PROCESSING" || row.status === "INVOICE_TO_SEND" || row.status === "TO_DELIVER")
+    .filter((row) => activeCatalogRequestIds.has(row.id))
     .filter((row) => !selectedProduct || row.product_id === selectedProduct.id)
     .reduce<
       Array<{ key: string; locationName: string; productTitle: string; quantity: number; estimatedStock: number | null; status: string }>
@@ -725,6 +736,31 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
           </ul>
         </section>
       ) : null}
+
+      <section className="card">
+        <div className="config-metric-grid">
+          <article>
+            <span>{t("admin.config.metrics.total")}</span>
+            <strong>{productStats.total}</strong>
+          </article>
+          <article>
+            <span>{t("common.active")}</span>
+            <strong>{productStats.active}</strong>
+          </article>
+          <article>
+            <span>{t("admin.products.metrics_virtual")}</span>
+            <strong>{productStats.virtual}</strong>
+          </article>
+          <article className={productStats.lowStock > 0 ? "is-warning" : ""}>
+            <span>{t("admin.products.metrics_low_stock")}</span>
+            <strong>{productStats.lowStock}</strong>
+          </article>
+          <article className={productStats.activeRequests > 0 ? "is-warning" : ""}>
+            <span>{t("admin.products.metrics_active_requests")}</span>
+            <strong>{productStats.activeRequests}</strong>
+          </article>
+        </div>
+      </section>
 
       {currentView === "products" ? (
         <>

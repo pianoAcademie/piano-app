@@ -324,6 +324,12 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
       is_fully_removed: allRemoved,
     };
   });
+  const calendarStats = {
+    groups: groupSummaries.length,
+    locations: new Set(quoteSchoolCalendars.map((row) => row.location_id)).size,
+    activeSlots: groupSummaries.reduce((sum, group) => sum + group.active_slots, 0),
+    staleGroups: groupSummaries.filter((group) => group.items.some((item) => item.deployment_status === "stale")).length,
+  };
   const returnPath = buildCalendarsPath({
     locationFilter,
     deploymentFilter,
@@ -641,6 +647,27 @@ export default async function AdminSchoolCalendarsPage({ searchParams }: { searc
           </ul>
         </section>
       ) : null}
+
+      <section className="card">
+        <div className="config-metric-grid">
+          <article>
+            <span>{t("admin.calendars.metrics_groups")}</span>
+            <strong>{calendarStats.groups}</strong>
+          </article>
+          <article>
+            <span>{t("admin.calendars.metrics_locations")}</span>
+            <strong>{calendarStats.locations}</strong>
+          </article>
+          <article>
+            <span>{t("admin.calendars.column_active_slots")}</span>
+            <strong>{calendarStats.activeSlots}</strong>
+          </article>
+          <article className={calendarStats.staleGroups > 0 ? "is-warning" : ""}>
+            <span>{t("admin.calendars.metrics_stale_groups")}</span>
+            <strong>{calendarStats.staleGroups}</strong>
+          </article>
+        </div>
+      </section>
 
       <section className="card">
         <div className="row spread wrap gap-sm">

@@ -225,6 +225,13 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
   const createKitHref = buildCatalogConfigHref(params, { tab: "kits", kit_drawer: "create", kit_id: undefined });
   const categoryCloseHref = buildCatalogConfigHref(params, { category_drawer: undefined, category_id: undefined });
   const kitCloseHref = buildCatalogConfigHref(params, { kit_drawer: undefined, kit_id: undefined });
+  const catalogStats = {
+    categories: categories.length,
+    activeCategories: categories.filter((row) => row.active).length,
+    kits: kits.length,
+    activeKits: kits.filter((row) => row.active).length,
+    uncategorizedProducts: products.filter((row) => !row.category_id).length,
+  };
 
   return (
     <main className="stack catalog-admin-page">
@@ -270,6 +277,31 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
             {t("admin.catalog.kits_title")}
           </Link>
         </nav>
+      </section>
+
+      <section className="card">
+        <div className="config-metric-grid">
+          <article>
+            <span>{t("admin.catalog.categories_title")}</span>
+            <strong>{catalogStats.categories}</strong>
+          </article>
+          <article>
+            <span>{t("admin.catalog.metrics_active_categories")}</span>
+            <strong>{catalogStats.activeCategories}</strong>
+          </article>
+          <article>
+            <span>{t("admin.catalog.kits_title")}</span>
+            <strong>{catalogStats.kits}</strong>
+          </article>
+          <article>
+            <span>{t("admin.catalog.metrics_active_kits")}</span>
+            <strong>{catalogStats.activeKits}</strong>
+          </article>
+          <article className={catalogStats.uncategorizedProducts > 0 ? "is-warning" : ""}>
+            <span>{t("admin.catalog.metrics_uncategorized_products")}</span>
+            <strong>{catalogStats.uncategorizedProducts}</strong>
+          </article>
+        </div>
       </section>
 
       {activeTab === "categories" ? (
