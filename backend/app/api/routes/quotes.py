@@ -5708,6 +5708,7 @@ def _apply_quote_client_contact_defaults(
     postal_code: str | None = None,
     city: str | None = None,
     address_country: str | None = None,
+    prefer_address: bool = False,
 ) -> None:
     if phone and not str(user.phone or "").strip():
         user.phone = phone
@@ -5715,13 +5716,13 @@ def _apply_quote_client_contact_defaults(
         user.mobile_phone_1 = phone
     if birth_date is not None and user.birth_date is None:
         user.birth_date = birth_date
-    if address_line and not str(user.address_line or "").strip():
+    if address_line and (prefer_address or not str(user.address_line or "").strip()):
         user.address_line = address_line
-    if postal_code and not str(user.postal_code or "").strip():
+    if postal_code and (prefer_address or not str(user.postal_code or "").strip()):
         user.postal_code = postal_code
-    if city and not str(user.city or "").strip():
+    if city and (prefer_address or not str(user.city or "").strip()):
         user.city = city
-    if address_country and not str(user.address_country or "").strip():
+    if address_country and (prefer_address or not str(user.address_country or "").strip()):
         user.address_country = address_country
     user.updated_at = _utcnow()
 def _expected_activity_dates_from_snapshot(
@@ -5953,6 +5954,7 @@ def _resolve_followup_clients(
                 postal_code=address_fields.get("postal_code"),
                 city=address_fields.get("city"),
                 address_country=address_fields.get("country_code"),
+                prefer_address=True,
             )
         quote_prospect.linked_client_id = student.id
         quote_prospect.status = "converted"
@@ -6006,6 +6008,7 @@ def _resolve_followup_clients(
             postal_code=parent_address_fields.get("postal_code"),
             city=parent_address_fields.get("city"),
             address_country=parent_address_fields.get("country_code"),
+            prefer_address=True,
         )
         refresh_responsable_status(db, billing)
 
@@ -6066,6 +6069,7 @@ def _resolve_followup_clients(
             postal_code=parent_address_fields.get("postal_code"),
             city=parent_address_fields.get("city"),
             address_country=parent_address_fields.get("country_code"),
+            prefer_address=True,
         )
 
     if parent_prospect is not None:

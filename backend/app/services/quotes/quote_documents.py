@@ -2291,9 +2291,9 @@ def _resolved_parent_address_for_quote_adult(*, db: Session, quote: Quote, adult
             city=typeform_parts["city"],
             country=typeform_parts["country"],
         )
-    address_line = str(adult.address_line or "").strip() or typeform_parts["address_line"]
-    postal_code = str(adult.postal_code or "").strip() or typeform_parts["postal_code"]
-    city = str(adult.city or "").strip() or typeform_parts["city"]
+    address_line = typeform_parts["address_line"] or str(adult.address_line or "").strip()
+    postal_code = typeform_parts["postal_code"] or str(adult.postal_code or "").strip()
+    city = typeform_parts["city"] or str(adult.city or "").strip()
     country = str(typeform_parts["country"] or "").strip()
     return _format_address_parts(address_line=address_line, postal_code=postal_code, city=city, country=country)
 
