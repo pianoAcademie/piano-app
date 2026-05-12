@@ -1395,10 +1395,7 @@ def _time_from_hhmm(value: str, *, field: str) -> time:
 
 
 def _typeform_parent_address_from_normalized_payload(normalized: dict[str, object]) -> str | None:
-    direct = str(normalized.get("parent_address") or "").strip()
-    if direct:
-        return direct
-    line_1 = str(normalized.get("parent_address_line_1") or "").strip()
+    line_1 = str(normalized.get("parent_address_line_1") or normalized.get("parent_address") or "").strip()
     line_2 = str(normalized.get("parent_address_line_2") or "").strip()
     city = str(normalized.get("parent_city") or "").strip()
     postal_code = str(normalized.get("parent_postal_code") or "").strip()
@@ -5661,6 +5658,14 @@ def _quote_parent_address_fields(
     fields = _typeform_parent_address_fields_from_normalized_payload(_typeform_quote_normalized_payload(quote))
     if _has_useful_address_fields(fields):
         return fields
+
+    typeform_meta = _json_object(_quote_meta_dict(quote).get("typeform_intake"))
+    quote_intake_id = _parse_uuid_value(typeform_meta.get("intake_id"))
+    if quote_intake_id is not None:
+        intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == quote_intake_id).limit(1))
+        intake_fields = _typeform_parent_address_fields_from_intake(intake)
+        if _has_useful_address_fields(intake_fields):
+            return intake_fields
 
     for prospect in (parent_prospect, quote_prospect):
         if prospect is None:

@@ -514,19 +514,39 @@ def _json_list(value: Any) -> list[Any]:
     return []
 
 
-def _typeform_parent_address_from_normalized_payload(normalized: dict[str, Any]) -> str:
-    normalized = _json_object(normalized)
-    direct = str(normalized.get("parent_address") or "").strip()
-    if direct:
-        return direct
-    line_1 = str(normalized.get("parent_address_line_1") or "").strip()
-    line_2 = str(normalized.get("parent_address_line_2") or "").strip()
-    city = str(normalized.get("parent_city") or "").strip()
-    postal_code = str(normalized.get("parent_postal_code") or "").strip()
-    country = str(normalized.get("parent_country") or "").strip()
-    locality = " ".join(part for part in [postal_code, city] if part).strip()
-    parts = [part for part in [line_1, line_2, locality or None, country] if part]
+def _format_address_parts(
+    *,
+    address_line: str = "",
+    address_line_2: str = "",
+    postal_code: str = "",
+    city: str = "",
+    country: str = "",
+) -> str:
+    locality = " ".join(part for part in [postal_code.strip(), city.strip()] if part).strip()
+    parts = [part.strip() for part in [address_line, address_line_2, locality, country] if part and part.strip()]
     return ", ".join(parts)
+
+
+def _typeform_parent_address_parts_from_normalized_payload(normalized: dict[str, Any]) -> dict[str, str]:
+    normalized = _json_object(normalized)
+    return {
+        "address_line": str(normalized.get("parent_address_line_1") or normalized.get("parent_address") or "").strip(),
+        "address_line_2": str(normalized.get("parent_address_line_2") or "").strip(),
+        "postal_code": str(normalized.get("parent_postal_code") or "").strip(),
+        "city": str(normalized.get("parent_city") or "").strip(),
+        "country": str(normalized.get("parent_country") or "").strip(),
+    }
+
+
+def _typeform_parent_address_from_normalized_payload(normalized: dict[str, Any]) -> str:
+    parts = _typeform_parent_address_parts_from_normalized_payload(normalized)
+    return _format_address_parts(
+        address_line=parts["address_line"],
+        address_line_2=parts["address_line_2"],
+        postal_code=parts["postal_code"],
+        city=parts["city"],
+        country=parts["country"],
+    )
 
 
 def _typeform_simplified_answer_value(simplified_answers: list[Any], *labels: str) -> str:
@@ -545,41 +565,64 @@ def _typeform_simplified_answer_value(simplified_answers: list[Any], *labels: st
 
 
 def _typeform_parent_address_from_intake(intake: TypeformIntake | None) -> str:
+    parts = _typeform_parent_address_parts_from_intake(intake)
+    return _format_address_parts(
+        address_line=parts["address_line"],
+        address_line_2=parts["address_line_2"],
+        postal_code=parts["postal_code"],
+        city=parts["city"],
+        country=parts["country"],
+    )
+
+
+def _typeform_parent_address_parts_from_intake(intake: TypeformIntake | None) -> dict[str, str]:
     if intake is None:
-        return ""
-    parent_address = _typeform_parent_address_from_normalized_payload(_json_object(intake.normalized_payload_json)).strip()
-    if parent_address:
-        return parent_address
+        return {"address_line": "", "address_line_2": "", "postal_code": "", "city": "", "country": ""}
+    parts = _typeform_parent_address_parts_from_normalized_payload(_json_object(intake.normalized_payload_json))
     simplified_answers = _json_list(intake.simplified_response_json)
-    line_1 = _typeform_simplified_answer_value(simplified_answers, "Address", "address", "Adresse", "adresse")
-    line_2 = _typeform_simplified_answer_value(
-        simplified_answers,
-        "Address line 2",
-        "address line 2",
-        "Adresse ligne 2",
-        "Complement d'adresse",
-        "Complément d'adresse",
-    )
-    city = _typeform_simplified_answer_value(simplified_answers, "City/Town", "city/town", "Ville", "ville")
-    postal_code = _typeform_simplified_answer_value(
-        simplified_answers,
-        "Zip/Post Code",
-        "zip/post code",
-        "Code postal",
-        "code postal",
-    )
-    country = _typeform_simplified_answer_value(simplified_answers, "Country", "country", "Pays", "pays")
-    locality = " ".join(part for part in [postal_code, city] if part).strip()
-    parts = [part for part in [line_1, line_2, locality or None, country] if part]
-    return ", ".join(parts)
+    if not parts["address_line"]:
+        parts["address_line"] = _typeform_simplified_answer_value(simplified_answers, "Address", "address", "Adresse", "adresse")
+    if not parts["address_line_2"]:
+        parts["address_line_2"] = _typeform_simplified_answer_value(
+            simplified_answers,
+            "Address line 2",
+            "address line 2",
+            "Adresse ligne 2",
+            "Complement d'adresse",
+            "Complément d'adresse",
+        )
+    if not parts["city"]:
+        parts["city"] = _typeform_simplified_answer_value(simplified_answers, "City/Town", "city/town", "Ville", "ville")
+    if not parts["postal_code"]:
+        parts["postal_code"] = _typeform_simplified_answer_value(
+            simplified_answers,
+            "Zip/Post Code",
+            "zip/post code",
+            "Code postal",
+            "code postal",
+        )
+    if not parts["country"]:
+        parts["country"] = _typeform_simplified_answer_value(simplified_answers, "Country", "country", "Pays", "pays")
+    return {key: str(value or "").strip() for key, value in parts.items()}
 
 
 def _typeform_parent_address_from_quote(*, db: Session | None, quote: Quote) -> str:
+    parts = _typeform_parent_address_parts_from_quote(db=db, quote=quote)
+    return _format_address_parts(
+        address_line=parts["address_line"],
+        address_line_2=parts["address_line_2"],
+        postal_code=parts["postal_code"],
+        city=parts["city"],
+        country=parts["country"],
+    )
+
+
+def _typeform_parent_address_parts_from_quote(*, db: Session | None, quote: Quote) -> dict[str, str]:
     quote_meta = _json_object(quote.meta)
     typeform_meta = _json_object(quote_meta.get("typeform_intake"))
-    parent_address = _typeform_parent_address_from_normalized_payload(_json_object(typeform_meta.get("normalized_payload"))).strip()
-    if parent_address:
-        return parent_address
+    parts = _typeform_parent_address_parts_from_normalized_payload(_json_object(typeform_meta.get("normalized_payload")))
+    if any(parts.values()):
+        return parts
     intake_id = str(typeform_meta.get("intake_id") or "").strip()
     if not intake_id and db is not None and quote.prospect_id is not None:
         prospect = db.scalar(select(Prospect).where(Prospect.id == quote.prospect_id))
@@ -587,13 +630,13 @@ def _typeform_parent_address_from_quote(*, db: Session | None, quote: Quote) -> 
             prospect_meta = _json_object(prospect.meta)
             intake_id = str(prospect_meta.get("typeform_intake_id") or "").strip()
     if db is None or not intake_id:
-        return ""
+        return {"address_line": "", "address_line_2": "", "postal_code": "", "city": "", "country": ""}
     try:
         intake_uuid = UUID(intake_id)
     except ValueError:
-        return ""
+        return {"address_line": "", "address_line_2": "", "postal_code": "", "city": "", "country": ""}
     intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == intake_uuid))
-    return _typeform_parent_address_from_intake(intake)
+    return _typeform_parent_address_parts_from_intake(intake)
 
 
 def _utcnow() -> datetime:
@@ -2238,6 +2281,23 @@ def _family_adult_for_child(db: Session, child_id: UUID) -> User | None:
     return adult
 
 
+def _resolved_parent_address_for_quote_adult(*, db: Session, quote: Quote, adult: User | None) -> str:
+    typeform_parts = _typeform_parent_address_parts_from_quote(db=db, quote=quote)
+    if adult is None:
+        return _format_address_parts(
+            address_line=typeform_parts["address_line"],
+            address_line_2=typeform_parts["address_line_2"],
+            postal_code=typeform_parts["postal_code"],
+            city=typeform_parts["city"],
+            country=typeform_parts["country"],
+        )
+    address_line = str(adult.address_line or "").strip() or typeform_parts["address_line"]
+    postal_code = str(adult.postal_code or "").strip() or typeform_parts["postal_code"]
+    city = str(adult.city or "").strip() or typeform_parts["city"]
+    country = str(typeform_parts["country"] or "").strip()
+    return _format_address_parts(address_line=address_line, postal_code=postal_code, city=city, country=country)
+
+
 def _apply_child_client_family_data(*, db: Session | None, quote: Quote, values: dict[str, str]) -> dict[str, str]:
     if db is None or quote.client_id is None:
         return values
@@ -2260,7 +2320,11 @@ def _apply_child_client_family_data(*, db: Session | None, quote: Quote, values:
         values["parent_full_name"] = values.get("parent_full_name") or _name(adult.first_name, adult.last_name, fallback="")
         values["parent_email"] = values.get("parent_email") or _public_email(adult.email)
         values["parent_phone"] = values.get("parent_phone") or (adult.mobile_phone_1 or adult.phone or "").strip()
-        values["parent_address"] = values.get("parent_address") or _user_address(adult)
+        values["parent_address"] = values.get("parent_address") or _resolved_parent_address_for_quote_adult(
+            db=db,
+            quote=quote,
+            adult=adult,
+        )
     return values
 
 

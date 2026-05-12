@@ -39,7 +39,7 @@ def upgrade() -> None:
         insert into quote_discount_rules (code, label, unit_price_ttc, vat_rate, currency, is_active, sort_order)
         values
           ('REMISE_FIDELITE', 'Remise fidélité', 2.00, 20.00, 'EUR', true, 10),
-          ('REMISE_FAMILLE', 'Remise famille', 2.00, 20.00, 'EUR', true, 20)
+          ('REMISE_FAMILLE', 'Remise famille', 4.00, 20.00, 'EUR', true, 20)
         on conflict (code) do nothing
         """
     )
