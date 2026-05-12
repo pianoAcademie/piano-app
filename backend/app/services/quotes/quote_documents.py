@@ -1571,32 +1571,44 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
     return sessions
 
 
+def _calendar_session_dedupe_key(item: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (
+        str(item.get("date") or ""),
+        str(item.get("start_time") or ""),
+        str(item.get("activity_id") or ""),
+        str(item.get("location_id") or ""),
+    )
+
+
+def _dedupe_calendar_sessions(items: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    changed = False
+    for item in items:
+        key = _calendar_session_dedupe_key(item)
+        if key in seen:
+            changed = True
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped, changed
+
+
 def _calendar_snapshot_with_planning_sessions(db: Session | None, calendar_snapshot: dict[str, Any]) -> dict[str, Any]:
     snapshot = dict(_json_object(calendar_snapshot))
     if db is None:
         return snapshot
-    sessions = [dict(item) for item in _json_list(snapshot.get("sessions")) if isinstance(item, dict)]
+    sessions, deduped_existing = _dedupe_calendar_sessions(
+        [dict(item) for item in _json_list(snapshot.get("sessions")) if isinstance(item, dict)]
+    )
     blocks = [dict(item) for item in _json_list(snapshot.get("blocks")) if isinstance(item, dict)]
-    changed = False
-    seen: set[tuple[str, str, str, str]] = {
-        (
-            str(item.get("date") or ""),
-            str(item.get("start_time") or ""),
-            str(item.get("activity_id") or ""),
-            str(item.get("location_id") or ""),
-        )
-        for item in sessions
-    }
+    changed = deduped_existing
+    seen: set[tuple[str, str, str, str]] = {_calendar_session_dedupe_key(item) for item in sessions}
     for block in blocks:
         if any(_session_snapshot_matches_block(item, block) for item in sessions):
             continue
         for item in _sessions_from_planning_block(db, block):
-            key = (
-                str(item.get("date") or ""),
-                str(item.get("start_time") or ""),
-                str(item.get("activity_id") or ""),
-                str(item.get("location_id") or ""),
-            )
+            key = _calendar_session_dedupe_key(item)
             if key in seen:
                 continue
             seen.add(key)
@@ -2301,6 +2313,9 @@ def _resolved_parent_address_for_quote_adult(*, db: Session, quote: Quote, adult
 def _apply_child_client_family_data(*, db: Session | None, quote: Quote, values: dict[str, str]) -> dict[str, str]:
     if db is None or quote.client_id is None:
         return values
+    normalized_payload = _json_object(_json_object(_json_object(quote.meta).get("typeform_intake")).get("normalized_payload"))
+    if not values.get("child_birth_date"):
+        values["child_birth_date"] = str(normalized_payload.get("child_birth_date") or "").strip()
     child = db.scalar(select(User).where(User.id == quote.client_id))
     if child is None or not _is_child_user(child):
         return values
