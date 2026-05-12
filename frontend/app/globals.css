@@ -8862,6 +8862,79 @@ button.danger:focus-visible {
   gap: 14px;
 }
 
+.catalog-admin-hero {
+  display: grid;
+  gap: 14px;
+}
+
+.catalog-admin-hero-main,
+.catalog-admin-section-head,
+.catalog-admin-workbench-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.catalog-admin-hero-main h1,
+.catalog-admin-hero-main h2,
+.catalog-admin-section-head h3 {
+  margin-bottom: 4px;
+}
+
+.catalog-admin-hub-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.catalog-admin-hub-card {
+  min-height: 82px;
+  border: 1px solid #e4d3b9;
+  border-radius: 12px;
+  background: #fffdf8;
+  color: #443421;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  padding: 12px;
+  text-decoration: none;
+}
+
+.catalog-admin-hub-card:hover {
+  border-color: #c8863a;
+  box-shadow: 0 8px 18px rgba(119, 84, 40, 0.12);
+}
+
+.catalog-admin-hub-card strong {
+  font-size: 15px;
+}
+
+.catalog-admin-hub-card span {
+  color: #796d60;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.catalog-admin-workbench {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.catalog-admin-workbench-head {
+  align-items: center;
+}
+
+.catalog-admin-workbench-head p {
+  margin: 0;
+  text-align: right;
+}
+
+.catalog-admin-management-card {
+  display: grid;
+  gap: 14px;
+}
+
 .teacher-invoicing-header-card {
   display: grid;
   gap: 14px;
@@ -8930,13 +9003,24 @@ button.danger:focus-visible {
 }
 
 .catalog-admin-filters {
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: end;
+  padding: 10px;
+  border: 1px solid #efe2cf;
+  border-radius: 12px;
+  background: #fffaf3;
 }
 
 .catalog-admin-filters label {
   display: grid;
   gap: 6px;
+  min-width: min(260px, 100%);
+}
+
+.catalog-admin-filters label:first-of-type {
+  flex: 1 1 360px;
 }
 
 .catalog-admin-drawer-overlay {
@@ -9020,6 +9104,20 @@ button.danger:focus-visible {
 }
 
 @media (max-width: 980px) {
+  .catalog-admin-hero-main,
+  .catalog-admin-section-head,
+  .catalog-admin-workbench-head {
+    display: grid;
+  }
+
+  .catalog-admin-workbench-head p {
+    text-align: left;
+  }
+
+  .catalog-admin-hub-grid {
+    grid-template-columns: 1fr;
+  }
+
   .catalog-admin-filters {
     display: grid;
     grid-template-columns: 1fr 1fr;

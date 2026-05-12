@@ -696,9 +696,35 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
 
   return (
     <section className="admin-page-grid">
-      <section className="card">
-        <h2>{t("admin.products.title")}</h2>
-        <p className="muted">{t("admin.products.subtitle")}</p>
+      <section className="card catalog-admin-hero">
+        <div className="catalog-admin-hero-main">
+          <div>
+            <h2>{t("admin.products.title")}</h2>
+            <p className="muted">{t("admin.products.subtitle")}</p>
+          </div>
+          <div className="row wrap gap-xs">
+            <Link className="ghost" href={addLink}>
+              {t("admin.products.add_product")}
+            </Link>
+            <Link className="mode-link" href="/admin/config/catalog">
+              {t("admin.products.configure_categories_kits")}
+            </Link>
+          </div>
+        </div>
+        <div className="catalog-admin-hub-grid">
+          <Link className="catalog-admin-hub-card" href={`/admin/products${buildProductsQuery({ ...baseQuery, add: "", editProduct: "", view: "products" })}`}>
+            <strong>{t("admin.products.tab_products")}</strong>
+            <span>{t("admin.products.hub_products_desc")}</span>
+          </Link>
+          <Link className="catalog-admin-hub-card" href="/admin/config/catalog?tab=categories">
+            <strong>{t("admin.catalog.categories_title")}</strong>
+            <span>{t("admin.products.hub_categories_desc")}</span>
+          </Link>
+          <Link className="catalog-admin-hub-card" href="/admin/config/catalog?tab=kits">
+            <strong>{t("admin.catalog.kits_title")}</strong>
+            <span>{t("admin.products.hub_kits_desc")}</span>
+          </Link>
+        </div>
       </section>
 
       <section className="card">

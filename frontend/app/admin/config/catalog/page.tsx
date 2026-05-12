@@ -228,20 +228,38 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
   const catalogStats = {
     categories: categories.length,
     activeCategories: categories.filter((row) => row.active).length,
+    archivedCategories: categories.filter((row) => !row.active).length,
     kits: kits.length,
     activeKits: kits.filter((row) => row.active).length,
+    archivedKits: kits.filter((row) => !row.active).length,
+    publicKits: kits.filter((row) => row.active && row.is_public).length,
+    onlineKits: kits.filter((row) => row.active && row.purchasable_online).length,
     uncategorizedProducts: products.filter((row) => !row.category_id).length,
+    products: products.length,
   };
+  const activeTabSummary = activeTab === "categories"
+    ? t("admin.catalog.categories_workbench_summary", {
+        filtered: filteredCategories.length,
+        total: categories.length,
+        active: catalogStats.activeCategories,
+        archived: catalogStats.archivedCategories,
+      })
+    : t("admin.catalog.kits_workbench_summary", {
+        filtered: filteredKits.length,
+        total: kits.length,
+        active: catalogStats.activeKits,
+        archived: catalogStats.archivedKits,
+      });
 
   return (
     <main className="stack catalog-admin-page">
-      <section className="card">
-        <div className="row spread">
+      <section className="card catalog-admin-hero">
+        <div className="catalog-admin-hero-main">
           <div>
             <h1>{t("admin.catalog.title")}</h1>
             <p className="muted">{t("admin.catalog.subtitle")}</p>
           </div>
-          <div className="row">
+          <div className="row wrap gap-xs">
             <Link className="ghost" href={createCategoryHref}>
               {t("admin.catalog.add_category")}
             </Link>
@@ -249,6 +267,20 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
               {t("admin.catalog.add_kit")}
             </Link>
           </div>
+        </div>
+        <div className="catalog-admin-hub-grid">
+          <Link className="catalog-admin-hub-card" href="/admin/products">
+            <strong>{t("admin.catalog.hub_products")}</strong>
+            <span>{t("admin.catalog.hub_products_desc")}</span>
+          </Link>
+          <Link className="catalog-admin-hub-card" href={categoriesTabHref}>
+            <strong>{t("admin.catalog.categories_title")}</strong>
+            <span>{t("admin.catalog.hub_categories_desc")}</span>
+          </Link>
+          <Link className="catalog-admin-hub-card" href={kitsTabHref}>
+            <strong>{t("admin.catalog.kits_title")}</strong>
+            <span>{t("admin.catalog.hub_kits_desc")}</span>
+          </Link>
         </div>
       </section>
 
@@ -268,19 +300,26 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
         </section>
       ) : null}
 
-      <section className="card">
-        <nav className="catalog-admin-tabs">
-          <Link className={`catalog-admin-tab ${activeTab === "categories" ? "active" : ""}`} href={categoriesTabHref}>
-            {t("admin.catalog.categories_title")}
-          </Link>
-          <Link className={`catalog-admin-tab ${activeTab === "kits" ? "active" : ""}`} href={kitsTabHref}>
-            {t("admin.catalog.kits_title")}
-          </Link>
-        </nav>
+      <section className="card catalog-admin-workbench">
+        <div className="catalog-admin-workbench-head">
+          <nav className="catalog-admin-tabs">
+            <Link className={`catalog-admin-tab ${activeTab === "categories" ? "active" : ""}`} href={categoriesTabHref}>
+              {t("admin.catalog.categories_title")}
+            </Link>
+            <Link className={`catalog-admin-tab ${activeTab === "kits" ? "active" : ""}`} href={kitsTabHref}>
+              {t("admin.catalog.kits_title")}
+            </Link>
+          </nav>
+          <p className="muted">{activeTabSummary}</p>
+        </div>
       </section>
 
       <section className="card">
         <div className="config-metric-grid">
+          <article>
+            <span>{t("admin.catalog.hub_products")}</span>
+            <strong>{catalogStats.products}</strong>
+          </article>
           <article>
             <span>{t("admin.catalog.categories_title")}</span>
             <strong>{catalogStats.categories}</strong>
@@ -297,6 +336,14 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
             <span>{t("admin.catalog.metrics_active_kits")}</span>
             <strong>{catalogStats.activeKits}</strong>
           </article>
+          <article>
+            <span>{t("admin.catalog.metrics_public_kits")}</span>
+            <strong>{catalogStats.publicKits}</strong>
+          </article>
+          <article>
+            <span>{t("admin.catalog.metrics_online_kits")}</span>
+            <strong>{catalogStats.onlineKits}</strong>
+          </article>
           <article className={catalogStats.uncategorizedProducts > 0 ? "is-warning" : ""}>
             <span>{t("admin.catalog.metrics_uncategorized_products")}</span>
             <strong>{catalogStats.uncategorizedProducts}</strong>
@@ -305,29 +352,35 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
       </section>
 
       {activeTab === "categories" ? (
-        <section className="card">
-          <div className="row spread">
-            <h3>{t("admin.catalog.categories_title")}</h3>
-            <form method="get" className="row catalog-admin-filters">
-              <input type="hidden" name="tab" value="categories" />
-              <label>
-                {uiText(language, "common.search")}
-                <input type="search" name="category_q" defaultValue={categoryQuery} placeholder={t("admin.catalog.search_placeholder")} />
-              </label>
-              <label>
-                {uiText(language, "common.status")}
-                <select name="category_status" defaultValue={categoryStatus}>
-                  <option value="all">{uiText(language, "common.all")}</option>
-                  <option value="active">{uiText(language, "common.active")}</option>
-                  <option value="archived">{uiText(language, "common.archived")}</option>
-                </select>
-              </label>
-              <button type="submit">{uiText(language, "common.apply")}</button>
-              <Link className="ghost" href={buildCatalogConfigHref(params, { category_q: undefined, category_status: undefined })}>
-                {uiText(language, "common.reset")}
-              </Link>
-            </form>
+        <section className="card catalog-admin-management-card">
+          <div className="catalog-admin-section-head">
+            <div>
+              <h3>{t("admin.catalog.categories_title")}</h3>
+              <p className="muted">{t("admin.catalog.categories_daily_help")}</p>
+            </div>
+            <Link className="mode-link" href={createCategoryHref}>
+              {t("admin.catalog.add_category")}
+            </Link>
           </div>
+          <form method="get" className="catalog-admin-filters">
+            <input type="hidden" name="tab" value="categories" />
+            <label>
+              {uiText(language, "common.search")}
+              <input type="search" name="category_q" defaultValue={categoryQuery} placeholder={t("admin.catalog.search_placeholder")} />
+            </label>
+            <label>
+              {uiText(language, "common.status")}
+              <select name="category_status" defaultValue={categoryStatus}>
+                <option value="all">{uiText(language, "common.all")}</option>
+                <option value="active">{uiText(language, "common.active")}</option>
+                <option value="archived">{uiText(language, "common.archived")}</option>
+              </select>
+            </label>
+            <button type="submit">{uiText(language, "common.apply")}</button>
+            <Link className="ghost" href={buildCatalogConfigHref(params, { category_q: undefined, category_status: undefined })}>
+              {uiText(language, "common.reset")}
+            </Link>
+          </form>
 
           {filteredCategories.length === 0 ? (
             <p className="muted">{t("admin.catalog.no_categories")}</p>
@@ -396,29 +449,35 @@ export default async function AdminCatalogConfigPage({ searchParams }: { searchP
       ) : null}
 
       {activeTab === "kits" ? (
-        <section className="card">
-          <div className="row spread">
-            <h3>{t("admin.catalog.kits_title")}</h3>
-            <form method="get" className="row catalog-admin-filters">
-              <input type="hidden" name="tab" value="kits" />
-              <label>
-                {uiText(language, "common.search")}
-                <input type="search" name="kit_q" defaultValue={kitQuery} placeholder={t("admin.catalog.search_placeholder")} />
-              </label>
-              <label>
-                {uiText(language, "common.status")}
-                <select name="kit_status" defaultValue={kitStatus}>
-                  <option value="all">{uiText(language, "common.all")}</option>
-                  <option value="active">{uiText(language, "common.active")}</option>
-                  <option value="archived">{uiText(language, "common.archived")}</option>
-                </select>
-              </label>
-              <button type="submit">{uiText(language, "common.apply")}</button>
-              <Link className="ghost" href={buildCatalogConfigHref(params, { kit_q: undefined, kit_status: undefined })}>
-                {uiText(language, "common.reset")}
-              </Link>
-            </form>
+        <section className="card catalog-admin-management-card">
+          <div className="catalog-admin-section-head">
+            <div>
+              <h3>{t("admin.catalog.kits_title")}</h3>
+              <p className="muted">{t("admin.catalog.kits_daily_help")}</p>
+            </div>
+            <Link className="mode-link" href={createKitHref}>
+              {t("admin.catalog.add_kit")}
+            </Link>
           </div>
+          <form method="get" className="catalog-admin-filters">
+            <input type="hidden" name="tab" value="kits" />
+            <label>
+              {uiText(language, "common.search")}
+              <input type="search" name="kit_q" defaultValue={kitQuery} placeholder={t("admin.catalog.search_placeholder")} />
+            </label>
+            <label>
+              {uiText(language, "common.status")}
+              <select name="kit_status" defaultValue={kitStatus}>
+                <option value="all">{uiText(language, "common.all")}</option>
+                <option value="active">{uiText(language, "common.active")}</option>
+                <option value="archived">{uiText(language, "common.archived")}</option>
+              </select>
+            </label>
+            <button type="submit">{uiText(language, "common.apply")}</button>
+            <Link className="ghost" href={buildCatalogConfigHref(params, { kit_q: undefined, kit_status: undefined })}>
+              {uiText(language, "common.reset")}
+            </Link>
+          </form>
 
           {filteredKits.length === 0 ? (
             <p className="muted">{t("admin.catalog.no_kits")}</p>
