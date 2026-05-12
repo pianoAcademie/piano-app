@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.client_record import ClientManualTransaction, ClientNoteEntry
+from app.models.family import ClientFamilyLink
 from app.models.ops import AppSetting
 from app.models.quote import Quote
 from app.models.referral import ReferralReward
@@ -260,6 +261,50 @@ def _match_status_for_candidates(candidates: list[dict[str, object]]) -> tuple[s
     return REFERRAL_MATCH_AMBIGUOUS, None, top_score
 
 
+def _linked_child_ids_for_adult(db: Session, user_id: UUID | None) -> set[UUID]:
+    if user_id is None:
+        return set()
+    rows = db.scalars(select(ClientFamilyLink.child_user_id).where(ClientFamilyLink.adult_user_id == user_id)).all()
+    out: set[UUID] = set()
+    for row in rows:
+        try:
+            out.add(row if isinstance(row, UUID) else UUID(str(row)))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def is_same_referral_family(
+    db: Session,
+    *,
+    referrer_user_id: UUID | None,
+    referred_client_id: UUID | None,
+    referred_student_id: UUID | None,
+) -> bool:
+    if referrer_user_id is None:
+        return False
+    referred_ids = {user_id for user_id in (referred_client_id, referred_student_id) if user_id is not None}
+    if referrer_user_id in referred_ids:
+        return True
+
+    referrer_child_ids = _linked_child_ids_for_adult(db, referrer_user_id)
+    if referrer_child_ids.intersection(referred_ids):
+        return True
+
+    referred_family_child_ids: set[UUID] = set()
+    for user_id in referred_ids:
+        referred_family_child_ids.update(_linked_child_ids_for_adult(db, user_id))
+    return bool(referrer_child_ids and referrer_child_ids.intersection(referred_family_child_ids))
+
+
+def _block_self_referral(reward: ReferralReward) -> None:
+    reward.status = REFERRAL_STATUS_NEEDS_REVIEW
+    reward.match_status = REFERRAL_MATCH_UNMATCHED
+    reward.referrer_user_id = None
+    reward.match_confidence = 0
+    reward.metadata_json = {**(reward.metadata_json or {}), "self_referral_blocked": True}
+
+
 def ensure_referral_for_intake(
     db: Session,
     *,
@@ -413,10 +458,13 @@ def bind_referral_after_quote_transformation(
         return None
     reward.referred_client_id = referred_client_id
     reward.referred_student_id = referred_student_id
-    if reward.referrer_user_id is not None and reward.referrer_user_id in {referred_client_id, referred_student_id}:
-        reward.status = REFERRAL_STATUS_NEEDS_REVIEW
-        reward.match_status = REFERRAL_MATCH_AMBIGUOUS
-        reward.metadata_json = {**(reward.metadata_json or {}), "self_referral_blocked": True}
+    if is_same_referral_family(
+        db,
+        referrer_user_id=reward.referrer_user_id,
+        referred_client_id=referred_client_id,
+        referred_student_id=referred_student_id,
+    ):
+        _block_self_referral(reward)
     elif reward.referrer_user_id is not None and reward.status in {REFERRAL_STATUS_DECLARED, REFERRAL_STATUS_NEEDS_REVIEW}:
         reward.status = REFERRAL_STATUS_AWAITING_PAYMENT
         if reward.validated_at is None:
@@ -441,7 +489,12 @@ def manually_validate_referral(
     reward = db.scalar(select(ReferralReward).where(ReferralReward.id == reward_id).with_for_update())
     if reward is None:
         raise ValueError("Referral reward not found")
-    if referrer_user_id in {reward.referred_client_id, reward.referred_student_id}:
+    if is_same_referral_family(
+        db,
+        referrer_user_id=referrer_user_id,
+        referred_client_id=reward.referred_client_id,
+        referred_student_id=reward.referred_student_id,
+    ):
         raise ValueError("A family cannot refer itself")
     referrer = db.scalar(select(User).where(User.id == referrer_user_id, User.role == UserRole.CLIENT))
     if referrer is None:
@@ -584,9 +637,13 @@ def evaluate_referrals_for_invoice(
             continue
         if reward.referred_client_id is None:
             reward.referred_client_id = client_id
-        if reward.referrer_user_id in {reward.referred_client_id, reward.referred_student_id}:
-            reward.status = REFERRAL_STATUS_NEEDS_REVIEW
-            reward.metadata_json = {**(reward.metadata_json or {}), "self_referral_blocked": True}
+        if is_same_referral_family(
+            db,
+            referrer_user_id=reward.referrer_user_id,
+            referred_client_id=reward.referred_client_id,
+            referred_student_id=reward.referred_student_id,
+        ):
+            _block_self_referral(reward)
             reward.updated_at = utcnow()
             db.add(reward)
             continue

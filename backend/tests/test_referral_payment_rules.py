@@ -136,6 +136,74 @@ class ReferralPaymentRuleTests(unittest.TestCase):
         self.assertEqual(reward.metadata_json["sibling_prospect_id"], str(sibling_prospect_id))
         self.assertEqual(db.added, [reward])
 
+    def test_same_referral_family_detects_parent_child_link(self) -> None:
+        parent_id = uuid4()
+        child_id = uuid4()
+        db = _SequencedFakeDb([[child_id]])
+
+        self.assertTrue(
+            referrals.is_same_referral_family(
+                db,
+                referrer_user_id=parent_id,
+                referred_client_id=child_id,
+                referred_student_id=None,
+            )
+        )
+
+    def test_same_referral_family_detects_shared_child_between_adults(self) -> None:
+        referrer_parent_id = uuid4()
+        billing_parent_id = uuid4()
+        child_id = uuid4()
+        db = _SequencedFakeDb([[child_id], [child_id]])
+
+        self.assertTrue(
+            referrals.is_same_referral_family(
+                db,
+                referrer_user_id=referrer_parent_id,
+                referred_client_id=billing_parent_id,
+                referred_student_id=None,
+            )
+        )
+
+    def test_binding_quote_blocks_same_family_referral(self) -> None:
+        reward = SimpleNamespace(
+            id=uuid4(),
+            quote_id=uuid4(),
+            referrer_user_id=uuid4(),
+            status=referrals.REFERRAL_STATUS_NEEDS_REVIEW,
+            match_status=referrals.REFERRAL_MATCH_AUTO,
+            match_confidence=95,
+            metadata_json={},
+        )
+        db = _ScalarFakeDb([reward])
+        referred_client_id = uuid4()
+        referred_student_id = uuid4()
+
+        with patch.object(referrals, "is_same_referral_family", return_value=True):
+            updated = referrals.bind_referral_after_quote_transformation(
+                db,
+                quote_id=reward.quote_id,
+                referred_client_id=referred_client_id,
+                referred_student_id=referred_student_id,
+            )
+
+        self.assertIs(updated, reward)
+        self.assertEqual(reward.referred_client_id, referred_client_id)
+        self.assertEqual(reward.referred_student_id, referred_student_id)
+        self.assertEqual(reward.status, referrals.REFERRAL_STATUS_NEEDS_REVIEW)
+        self.assertEqual(reward.match_status, referrals.REFERRAL_MATCH_UNMATCHED)
+        self.assertIsNone(reward.referrer_user_id)
+        self.assertEqual(reward.match_confidence, 0)
+        self.assertTrue(reward.metadata_json["self_referral_blocked"])
+
+    def test_manual_validation_rejects_same_family_referral(self) -> None:
+        reward = SimpleNamespace(id=uuid4(), referred_client_id=uuid4(), referred_student_id=uuid4())
+        db = _ScalarFakeDb([reward])
+
+        with patch.object(referrals, "is_same_referral_family", return_value=True):
+            with self.assertRaisesRegex(ValueError, "cannot refer itself"):
+                referrals.manually_validate_referral(db, reward_id=reward.id, referrer_user_id=uuid4())
+
     def test_invoice_below_threshold_updates_progress_without_granting_credit(self) -> None:
         reward = SimpleNamespace(
             quote_id=uuid4(),
