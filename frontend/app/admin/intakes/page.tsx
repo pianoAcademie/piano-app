@@ -70,6 +70,11 @@ function readPageSizeParam(params: SearchParams): number {
   return DEFAULT_PAGE_SIZE;
 }
 
+function readBooleanParam(params: SearchParams, key: string): boolean {
+  const value = readParam(params, key).trim().toLowerCase();
+  return value === "1" || value === "true" || value === "on" || value === "yes";
+}
+
 function safeStatus(raw: string): string {
   const value = raw.trim().toUpperCase();
   if (
@@ -137,11 +142,15 @@ function compactList(values: string[]): string {
 function buildIntakesHref({
   q,
   status,
+  includeIgnored,
+  excludeProcessed,
   page,
   pageSize,
 }: {
   q: string;
   status: string;
+  includeIgnored?: boolean;
+  excludeProcessed?: boolean;
   page?: number;
   pageSize?: number;
 }): string {
@@ -151,6 +160,12 @@ function buildIntakesHref({
   }
   if (status) {
     params.set("status", status);
+  }
+  if (includeIgnored) {
+    params.set("include_ignored", "1");
+  }
+  if (excludeProcessed) {
+    params.set("exclude_processed", "1");
   }
   if ((page ?? DEFAULT_PAGE) > DEFAULT_PAGE) {
     params.set("page", String(page));
@@ -165,6 +180,8 @@ function buildIntakesHref({
 function IntakePaginationControls({
   q,
   status,
+  includeIgnored,
+  excludeProcessed,
   total,
   currentPage,
   totalPages,
@@ -174,6 +191,8 @@ function IntakePaginationControls({
 }: {
   q: string;
   status: string;
+  includeIgnored: boolean;
+  excludeProcessed: boolean;
   total: number;
   currentPage: number;
   totalPages: number;
@@ -181,8 +200,8 @@ function IntakePaginationControls({
   pageStart: number;
   language: UiLanguage;
 }): JSX.Element {
-  const previousPageHref = buildIntakesHref({ q, status, page: currentPage - 1, pageSize });
-  const nextPageHref = buildIntakesHref({ q, status, page: currentPage + 1, pageSize });
+  const previousPageHref = buildIntakesHref({ q, status, includeIgnored, excludeProcessed, page: currentPage - 1, pageSize });
+  const nextPageHref = buildIntakesHref({ q, status, includeIgnored, excludeProcessed, page: currentPage + 1, pageSize });
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   return (
@@ -198,6 +217,8 @@ function IntakePaginationControls({
         <form method="get" className="row wrap gap-sm">
           {q ? <input type="hidden" name="q" value={q} /> : null}
           {status ? <input type="hidden" name="status" value={status} /> : null}
+          {includeIgnored ? <input type="hidden" name="include_ignored" value="1" /> : null}
+          {excludeProcessed ? <input type="hidden" name="exclude_processed" value="1" /> : null}
           <label className="row gap-sm">
             <span className="muted">{uiText(language, "common.per_page")}</span>
             <select name="page_size" defaultValue={String(pageSize)}>
@@ -249,6 +270,8 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
 
   const q = readParam(searchParams, "q").trim();
   const status = safeStatus(readParam(searchParams, "status"));
+  const includeIgnored = readBooleanParam(searchParams, "include_ignored");
+  const excludeProcessed = readBooleanParam(searchParams, "exclude_processed");
   const requestedPage = readPositiveIntParam(searchParams, "page", DEFAULT_PAGE);
   const requestedPageSize = readPageSizeParam(searchParams);
   const ok = readParam(searchParams, "ok").trim();
@@ -257,6 +280,8 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
   const query = new URLSearchParams();
   if (q) query.set("q", q);
   if (status) query.set("status", status);
+  if (includeIgnored) query.set("include_ignored", "1");
+  if (excludeProcessed) query.set("exclude_processed", "1");
   query.set("page", String(requestedPage));
   query.set("page_size", String(requestedPageSize));
 
@@ -274,7 +299,7 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
   const pageSize = pageData.page_size;
   const totalPages = Math.max(1, Math.ceil(total / Math.max(pageSize, 1)));
   const pageStart = total === 0 ? 0 : (currentPage - 1) * pageSize;
-  const returnTo = buildIntakesHref({ q, status, page: currentPage, pageSize });
+  const returnTo = buildIntakesHref({ q, status, includeIgnored, excludeProcessed, page: currentPage, pageSize });
   const intakeStats = {
     visible: rows.length,
     toReview: rows.filter((row) => ["NEW", "NORMALIZED", "MATCHING_REQUIRED"].includes(row.intake_status)).length,
@@ -361,6 +386,16 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
             </select>
           </label>
           <div className="row wrap gap-sm" style={{ alignItems: "end" }}>
+            <label className="row gap-sm">
+              <input type="checkbox" name="include_ignored" value="1" defaultChecked={includeIgnored} />
+              <span>{t("admin.intakes.include_ignored")}</span>
+            </label>
+            <label className="row gap-sm">
+              <input type="checkbox" name="exclude_processed" value="1" defaultChecked={excludeProcessed} />
+              <span>{t("admin.intakes.exclude_processed")}</span>
+            </label>
+          </div>
+          <div className="row wrap gap-sm" style={{ alignItems: "end" }}>
             <button type="submit">{uiText(language, "common.apply")}</button>
             <Link className="ghost" href="/admin/intakes">{uiText(language, "common.reset")}</Link>
           </div>
@@ -390,6 +425,8 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
               totalPages={totalPages}
               pageSize={pageSize}
               pageStart={pageStart}
+              includeIgnored={includeIgnored}
+              excludeProcessed={excludeProcessed}
               language={language}
             />
             <div className="table-wrap top-gap-sm">
@@ -480,6 +517,8 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
               totalPages={totalPages}
               pageSize={pageSize}
               pageStart={pageStart}
+              includeIgnored={includeIgnored}
+              excludeProcessed={excludeProcessed}
               language={language}
             />
           ) : null}

@@ -5407,6 +5407,8 @@ def update_typeform_form_config_quote_defaults(
 @router.get("/intakes", response_model=TypeformIntakeListPageOut)
 def list_typeform_intakes(
     status_filter: str | None = Query(default=None, alias="status"),
+    include_ignored: bool = Query(default=False),
+    exclude_processed: bool = Query(default=False),
     q: str | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=10, ge=1, le=100),
@@ -5416,6 +5418,11 @@ def list_typeform_intakes(
     stmt = select(TypeformIntake)
     if status_filter:
         stmt = stmt.where(TypeformIntake.intake_status == _text(status_filter).upper())
+    else:
+        if not include_ignored:
+            stmt = stmt.where(TypeformIntake.intake_status != INTAKE_STATUS_IGNORED)
+        if exclude_processed:
+            stmt = stmt.where(TypeformIntake.intake_status != INTAKE_STATUS_PROCESSED)
     needle = _text(q)
     if needle:
         like = f"%{needle}%"
