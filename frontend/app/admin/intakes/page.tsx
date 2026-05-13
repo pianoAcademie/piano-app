@@ -43,7 +43,8 @@ type TypeformIntakeListPageOut = {
 
 const DEFAULT_PAGE = 1;
 const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
-const DEFAULT_PAGE_SIZE = PAGE_SIZE_OPTIONS[0];
+const DEFAULT_PAGE_SIZE = 50;
+const DEFAULT_EXCLUDE_PROCESSED = true;
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -72,6 +73,18 @@ function readPageSizeParam(params: SearchParams): number {
 
 function readBooleanParam(params: SearchParams, key: string): boolean {
   const value = readParam(params, key).trim().toLowerCase();
+  return value === "1" || value === "true" || value === "on" || value === "yes";
+}
+
+function readBooleanParamWithDefault(params: SearchParams, key: string, fallback: boolean): boolean {
+  const raw = readParam(params, key).trim();
+  if (!raw) {
+    return fallback;
+  }
+  const value = raw.toLowerCase();
+  if (value === "0" || value === "false" || value === "off" || value === "no") {
+    return false;
+  }
   return value === "1" || value === "true" || value === "on" || value === "yes";
 }
 
@@ -164,7 +177,9 @@ function buildIntakesHref({
   if (includeIgnored) {
     params.set("include_ignored", "1");
   }
-  if (excludeProcessed) {
+  if ((excludeProcessed ?? DEFAULT_EXCLUDE_PROCESSED) !== DEFAULT_EXCLUDE_PROCESSED) {
+    params.set("exclude_processed", excludeProcessed ? "1" : "0");
+  } else if (excludeProcessed && !DEFAULT_EXCLUDE_PROCESSED) {
     params.set("exclude_processed", "1");
   }
   if ((page ?? DEFAULT_PAGE) > DEFAULT_PAGE) {
@@ -218,7 +233,7 @@ function IntakePaginationControls({
           {q ? <input type="hidden" name="q" value={q} /> : null}
           {status ? <input type="hidden" name="status" value={status} /> : null}
           {includeIgnored ? <input type="hidden" name="include_ignored" value="1" /> : null}
-          {excludeProcessed ? <input type="hidden" name="exclude_processed" value="1" /> : null}
+          <input type="hidden" name="exclude_processed" value={excludeProcessed ? "1" : "0"} />
           <label className="row gap-sm">
             <span className="muted">{uiText(language, "common.per_page")}</span>
             <select name="page_size" defaultValue={String(pageSize)}>
@@ -271,7 +286,7 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
   const q = readParam(searchParams, "q").trim();
   const status = safeStatus(readParam(searchParams, "status"));
   const includeIgnored = readBooleanParam(searchParams, "include_ignored");
-  const excludeProcessed = readBooleanParam(searchParams, "exclude_processed");
+  const excludeProcessed = readBooleanParamWithDefault(searchParams, "exclude_processed", DEFAULT_EXCLUDE_PROCESSED);
   const requestedPage = readPositiveIntParam(searchParams, "page", DEFAULT_PAGE);
   const requestedPageSize = readPageSizeParam(searchParams);
   const ok = readParam(searchParams, "ok").trim();
@@ -394,6 +409,7 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
               <input type="checkbox" name="exclude_processed" value="1" defaultChecked={excludeProcessed} />
               <span>{t("admin.intakes.exclude_processed")}</span>
             </label>
+            <input type="hidden" name="exclude_processed" value="0" />
           </div>
           <div className="row wrap gap-sm" style={{ alignItems: "end" }}>
             <button type="submit">{uiText(language, "common.apply")}</button>

@@ -5408,10 +5408,10 @@ def update_typeform_form_config_quote_defaults(
 def list_typeform_intakes(
     status_filter: str | None = Query(default=None, alias="status"),
     include_ignored: bool = Query(default=False),
-    exclude_processed: bool = Query(default=False),
+    exclude_processed: bool = Query(default=True),
     q: str | None = None,
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=10, ge=1, le=100),
+    page_size: int = Query(default=50, ge=1, le=100),
     db: Session = Depends(get_db),
     _: User = Depends(require_admin_or_permissions("can_view_intakes")),
 ) -> TypeformIntakeListPageOut:
