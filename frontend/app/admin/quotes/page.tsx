@@ -397,9 +397,25 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
   ]);
 
   const prospects = prospectsResult.ok ? prospectsResult.data : [];
-  const clients = clientsResult.ok ? clientsResult.data : [];
+  const baseClients = clientsResult.ok ? clientsResult.data : [];
   const activities = activitiesResult.ok ? activitiesResult.data : [];
   const quotes = quotesResult.ok ? quotesResult.data : [];
+
+  const baseClientById = new Map(baseClients.map((row) => [row.id, row]));
+  const missingQuoteClientIds = Array.from(new Set(
+    quotes
+      .map((row) => row.client_id || "")
+      .filter((clientId) => clientId && !baseClientById.has(clientId)),
+  ));
+  const missingClientResults = missingQuoteClientIds.length > 0
+    ? await Promise.all(missingQuoteClientIds.slice(0, 100).map((clientId) => (
+      backendRequest<AdminClientOut>(`/api/v1/admin/clients/${encodeURIComponent(clientId)}`, {}, token)
+    )))
+    : [];
+  const clients = [
+    ...baseClients,
+    ...missingClientResults.flatMap((result) => (result.ok ? [result.data] : [])),
+  ];
 
   const prospectById = new Map(prospects.map((row) => [row.id, row]));
   const clientById = new Map(clients.map((row) => [row.id, row]));

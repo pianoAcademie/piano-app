@@ -114,6 +114,58 @@ function billingStatus(row: BillingExtraRow): QuoteTransformStatus {
   return "ok";
 }
 
+function normalizeClientSearch(value: string | null | undefined): string {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function isPlaceholderClientEmail(email: string | null | undefined): boolean {
+  return String(email || "").toLowerCase().endsWith("@no-email.local");
+}
+
+function clientOptionLabel(client: QuoteTransformClient): string {
+  const name = displayName(client.firstName, client.lastName, client.email);
+  const contacts = [
+    isPlaceholderClientEmail(client.email) ? "" : client.email,
+    client.mobilePhone1 || client.phone || client.homePhone || "",
+    client.familyName || "",
+  ].filter(Boolean);
+  return contacts.length > 0 ? `${name} · ${contacts.join(" · ")}` : name;
+}
+
+function clientSearchHaystack(client: QuoteTransformClient): string {
+  return normalizeClientSearch([
+    client.firstName,
+    client.lastName,
+    client.email,
+    client.mobilePhone1,
+    client.mobilePhone2,
+    client.phone,
+    client.homePhone,
+    client.familyName,
+    client.clientKind,
+    client.clientStatus,
+  ].filter(Boolean).join(" "));
+}
+
+function sortClientsByName(clients: QuoteTransformClient[]): QuoteTransformClient[] {
+  return clients.slice().sort((left, right) => {
+    const leftKey = normalizeClientSearch(`${left.lastName || ""} ${left.firstName || ""} ${left.email || ""}`);
+    const rightKey = normalizeClientSearch(`${right.lastName || ""} ${right.firstName || ""} ${right.email || ""}`);
+    return leftKey.localeCompare(rightKey, "fr");
+  });
+}
+
+function primaryClientPhone(client: QuoteTransformClient | null): string {
+  if (!client) {
+    return "";
+  }
+  return client.mobilePhone1 || client.phone || client.homePhone || client.mobilePhone2 || "";
+}
+
 function canProceedFromStep(step: number, status: QuoteTransformStatus): boolean {
   if (step === 5) {
     return true;
@@ -164,34 +216,22 @@ export default function QuoteToEnrollmentWizard({
   );
   const bestClientCandidate = clientCandidates[0] || null;
   const bestCandidateClient = bestClientCandidate ? clientsById.get(bestClientCandidate.clientId) || null : null;
+  const linkedQuoteClient = quote.clientId ? clientsById.get(quote.clientId) || null : null;
+  const linkedQuoteClientKind = String(linkedQuoteClient?.clientKind || "").toUpperCase();
+  const quoteOwnerType = prospect?.prospectType
+    ?? (linkedQuoteClientKind === "CHILD" ? "child" : linkedQuoteClientKind === "ADULT" ? "adult" : null);
   const hasStrongClientCandidate = (bestClientCandidate?.confidence || 0) >= 80;
   const bestAdultCandidate = clientCandidates
     .map((candidate) => ({ candidate, client: clientsById.get(candidate.clientId) || null }))
     .find((entry) => entry.client && String(entry.client.clientKind || "").toUpperCase() === "ADULT" && entry.candidate.confidence >= 70) || null;
-  const existingClientOptions = useMemo(() => {
-    const output = new Map<string, { id: string; label: string }>();
-    for (const candidate of clientCandidates) {
-      output.set(candidate.clientId, {
-        id: candidate.clientId,
-        label: `${candidate.displayName} · ${candidate.email} · ${t("admin.quote_transform.match_short", { confidence: candidate.confidence })}`,
-      });
-    }
-    for (const client of clients.slice(0, 300)) {
-      if (output.has(client.id)) {
-        continue;
-      }
-      output.set(client.id, {
-        id: client.id,
-        label: `${displayName(client.firstName, client.lastName, client.email)} · ${client.email}`,
-      });
-    }
-    return Array.from(output.values());
-  }, [clientCandidates, clients, language]);
+  const sortedClients = useMemo(() => sortClientsByName(clients), [clients]);
 
   const initialClientMode: QuoteTransformClientResolutionMode =
     restoredDraft?.clientResolution.mode
     ?? (
-      prospect?.prospectType === "child"
+      linkedQuoteClient
+        ? "existing"
+        : quoteOwnerType === "child"
         ? bestAdultCandidate
           ? "new_child_existing_parent"
           : "new_parent_child"
@@ -211,7 +251,7 @@ export default function QuoteToEnrollmentWizard({
   const [clientMode, setClientMode] = useState<QuoteTransformClientResolutionMode>(initialClientMode);
   const [selectedClientId, setSelectedClientId] = useState<string>(
     restoredDraft?.clientResolution.selectedClientId
-    || (initialClientMode === "existing" ? bestClientCandidate?.clientId || "" : ""),
+    || (initialClientMode === "existing" ? quote.clientId || bestClientCandidate?.clientId || "" : ""),
   );
   const [selectedParentClientId, setSelectedParentClientId] = useState<string>(
     restoredDraft?.clientResolution.selectedParentClientId
@@ -223,6 +263,91 @@ export default function QuoteToEnrollmentWizard({
     ),
   );
   const [clientNotes, setClientNotes] = useState<string>(restoredDraft?.clientResolution.notes || "");
+  const [clientSearch, setClientSearch] = useState<string>("");
+  const [parentClientSearch, setParentClientSearch] = useState<string>("");
+
+  const existingClientOptions = useMemo(() => {
+    const output = new Map<string, { id: string; label: string }>();
+    const query = normalizeClientSearch(clientSearch);
+    const addClient = (client: QuoteTransformClient, label?: string): void => {
+      output.set(client.id, {
+        id: client.id,
+        label: label || clientOptionLabel(client),
+      });
+    };
+
+    for (const candidate of clientCandidates) {
+      const client = clientsById.get(candidate.clientId) || null;
+      const candidateLabel = `${candidate.displayName} · ${candidate.email} · ${t("admin.quote_transform.match_short", { confidence: candidate.confidence })}`;
+      if (!query || normalizeClientSearch(candidateLabel).includes(query) || (client && clientSearchHaystack(client).includes(query))) {
+        output.set(candidate.clientId, {
+          id: candidate.clientId,
+          label: candidateLabel,
+        });
+      }
+    }
+
+    for (const client of sortedClients) {
+      if (output.size >= 120) {
+        break;
+      }
+      if (output.has(client.id)) {
+        continue;
+      }
+      if (query && !clientSearchHaystack(client).includes(query)) {
+        continue;
+      }
+      addClient(client);
+    }
+
+    for (const id of [quote.clientId || "", selectedClientId]) {
+      const client = id ? clientsById.get(id) || null : null;
+      if (client && !output.has(client.id)) {
+        addClient(client);
+      }
+    }
+
+    return Array.from(output.values());
+  }, [clientCandidates, clientsById, sortedClients, clientSearch, selectedClientId, quote.clientId, language]);
+
+  const parentClientOptions = useMemo(() => {
+    const output = new Map<string, { id: string; label: string }>();
+    const query = normalizeClientSearch(parentClientSearch);
+    const adults = sortedClients.filter((client) => String(client.clientKind || "").toUpperCase() === "ADULT");
+
+    for (const client of adults) {
+      if (output.size >= 120) {
+        break;
+      }
+      if (query && !clientSearchHaystack(client).includes(query)) {
+        continue;
+      }
+      output.set(client.id, {
+        id: client.id,
+        label: clientOptionLabel(client),
+      });
+    }
+
+    const selectedParent = selectedParentClientId ? clientsById.get(selectedParentClientId) || null : null;
+    if (selectedParent && !output.has(selectedParent.id)) {
+      output.set(selectedParent.id, {
+        id: selectedParent.id,
+        label: clientOptionLabel(selectedParent),
+      });
+    }
+
+    return Array.from(output.values());
+  }, [clientsById, parentClientSearch, selectedParentClientId, sortedClients]);
+
+  const quoteOwnerName = prospect
+    ? displayName(prospect.firstName, prospect.lastName, prospect.email)
+    : linkedQuoteClient
+      ? displayName(linkedQuoteClient.firstName, linkedQuoteClient.lastName, linkedQuoteClient.email)
+      : "-";
+  const quoteOwnerEmail = prospect?.email
+    || (linkedQuoteClient && !isPlaceholderClientEmail(linkedQuoteClient.email) ? linkedQuoteClient.email : "")
+    || "-";
+  const quoteOwnerPhone = prospect?.phone || primaryClientPhone(linkedQuoteClient) || "-";
 
   const [selectedPlanId, setSelectedPlanId] = useState<string>(() => {
     if (restoredDraft?.activityResolution.planId) {
@@ -368,7 +493,7 @@ export default function QuoteToEnrollmentWizard({
 
   const step1Issues = useMemo(() => {
     const issues: StepIssue[] = [];
-    if (!prospect) {
+    if (!prospect && !linkedQuoteClient) {
       issues.push({
         issueId: "step1-prospect-missing",
         step: 1,
@@ -396,7 +521,7 @@ export default function QuoteToEnrollmentWizard({
           canOverride: false,
         });
       } else if (
-        prospect?.prospectType === "child"
+        quoteOwnerType === "child"
         && String(clientsById.get(selectedClientId)?.clientKind || "").toUpperCase() !== "CHILD"
       ) {
         issues.push({
@@ -440,7 +565,7 @@ export default function QuoteToEnrollmentWizard({
     }
 
     return issues;
-  }, [prospect, clientMode, selectedClientId, selectedParentClientId, scenario, clientCandidates.length, clientsById, language]);
+  }, [prospect, linkedQuoteClient, quoteOwnerType, clientMode, selectedClientId, selectedParentClientId, scenario, clientCandidates.length, clientsById, language]);
 
   const step1Status = useMemo(
     () => summarizeStatus(step1Issues.map((issue) => (issue.level === "blocked" ? "blocked" : "warning"))),
@@ -868,7 +993,7 @@ export default function QuoteToEnrollmentWizard({
           </div>
         </div>
         <div className="quote-transform-header-kpis top-gap-sm">
-          <span className="badge">{t("admin.quote_transform.badge_owner")}: {prospect ? displayName(prospect.firstName, prospect.lastName, prospect.email) : "-"}</span>
+          <span className="badge">{t("admin.quote_transform.badge_owner")}: {quoteOwnerName}</span>
           <span className="badge">{t("admin.quote_transform.badge_school_year")}: {quote.schoolYearLabel || "-"}</span>
           <span className="badge">{t("admin.quote_transform.badge_legal_entity")}: {selectedLegalEntity?.name || quote.legalEntityName}</span>
           <span className="badge">{t("admin.quote_transform.badge_followup_status")}: {followupStatus || t("admin.quote_transform.followup_absent")}</span>
@@ -949,10 +1074,10 @@ export default function QuoteToEnrollmentWizard({
               <div className="grid cols-2 top-gap-sm">
                 <article className="item">
                   <h4>{t("admin.quote_transform.quote_prospect")}</h4>
-                  <p><strong>{t("admin.quote_transform.name")}:</strong> {prospect ? displayName(prospect.firstName, prospect.lastName, prospect.email) : "-"}</p>
-                  <p><strong>{t("admin.quote_transform.email")}:</strong> {prospect?.email || "-"}</p>
-                  <p><strong>{t("admin.quote_transform.phone")}:</strong> {prospect?.phone || "-"}</p>
-                  <p><strong>{t("admin.quote_transform.type")}:</strong> {prospect?.prospectType === "child" ? t("admin.quote_transform.type_child") : t("admin.quote_transform.type_adult")}</p>
+                  <p><strong>{t("admin.quote_transform.name")}:</strong> {quoteOwnerName}</p>
+                  <p><strong>{t("admin.quote_transform.email")}:</strong> {quoteOwnerEmail}</p>
+                  <p><strong>{t("admin.quote_transform.phone")}:</strong> {quoteOwnerPhone}</p>
+                  <p><strong>{t("admin.quote_transform.type")}:</strong> {quoteOwnerType === "child" ? t("admin.quote_transform.type_child") : quoteOwnerType === "adult" ? t("admin.quote_transform.type_adult") : "-"}</p>
                 </article>
                 <article className="item">
                   <h4>{t("admin.quote_transform.resolution_mode_title")}</h4>
@@ -986,7 +1111,7 @@ export default function QuoteToEnrollmentWizard({
                     />
                     {t("admin.quote_transform.create_parent_child")}
                   </label>
-                  {prospect?.prospectType === "child" ? (
+                  {quoteOwnerType === "child" ? (
                     <label className="quote-transform-radio">
                       <input
                         type="radio"
@@ -1024,7 +1149,7 @@ export default function QuoteToEnrollmentWizard({
                       <tbody>
                         {clientCandidates.map((candidate) => {
                           const candidateClientKind = String(clientsById.get(candidate.clientId)?.clientKind || "").toUpperCase();
-                          const candidateIsAdultForChildProspect = prospect?.prospectType === "child" && candidateClientKind === "ADULT";
+                          const candidateIsAdultForChildProspect = quoteOwnerType === "child" && candidateClientKind === "ADULT";
                           return (
                           <tr key={candidate.clientId}>
                             <td>
@@ -1084,40 +1209,61 @@ export default function QuoteToEnrollmentWizard({
               </section>
 
               {clientMode === "existing" ? (
-                <label className="top-gap-sm">
-                  {t("admin.quote_transform.selected_client_record")}
-                  <select value={selectedClientId} onChange={(event) => setSelectedClientId(event.target.value)}>
-                    <option value="">{t("admin.quote_transform.select")}</option>
-                    {existingClientOptions.map((option) => (
-                      <option key={`client-option-${option.id}`} value={option.id}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <section className="top-gap-sm">
+                  <label>
+                    {t("admin.quote_transform.client_search")}
+                    <input
+                      type="search"
+                      value={clientSearch}
+                      onChange={(event) => setClientSearch(event.target.value)}
+                      placeholder={t("admin.quote_transform.client_search_placeholder")}
+                    />
+                  </label>
+                  <label className="top-gap-sm">
+                    {t("admin.quote_transform.selected_client_record")}
+                    <select value={selectedClientId} onChange={(event) => setSelectedClientId(event.target.value)}>
+                      <option value="">{t("admin.quote_transform.select")}</option>
+                      {existingClientOptions.map((option) => (
+                        <option key={`client-option-${option.id}`} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="muted">{t("admin.quote_transform.client_search_count", { count: existingClientOptions.length })}</p>
+                </section>
               ) : null}
 
               {clientMode === "new_parent_child" || clientMode === "new_child_existing_parent" ? (
-                <label className="top-gap-sm">
-                  {clientMode === "new_child_existing_parent"
-                    ? t("admin.quote_transform.existing_parent_required")
-                    : t("admin.quote_transform.existing_parent_optional")}
-                  <select value={selectedParentClientId} onChange={(event) => setSelectedParentClientId(event.target.value)}>
-                    <option value="">
-                      {clientMode === "new_child_existing_parent"
-                        ? t("admin.quote_transform.select_existing_parent")
-                        : t("admin.quote_transform.create_new_parent")}
-                    </option>
-                    {clients
-                      .filter((client) => String(client.clientKind || "").toUpperCase() === "ADULT")
-                      .slice(0, 60)
-                      .map((client) => (
-                        <option key={`parent-option-${client.id}`} value={client.id}>
-                          {displayName(client.firstName, client.lastName, client.email)}
+                <section className="top-gap-sm">
+                  <label>
+                    {t("admin.quote_transform.parent_search")}
+                    <input
+                      type="search"
+                      value={parentClientSearch}
+                      onChange={(event) => setParentClientSearch(event.target.value)}
+                      placeholder={t("admin.quote_transform.parent_search_placeholder")}
+                    />
+                  </label>
+                  <label className="top-gap-sm">
+                    {clientMode === "new_child_existing_parent"
+                      ? t("admin.quote_transform.existing_parent_required")
+                      : t("admin.quote_transform.existing_parent_optional")}
+                    <select value={selectedParentClientId} onChange={(event) => setSelectedParentClientId(event.target.value)}>
+                      <option value="">
+                        {clientMode === "new_child_existing_parent"
+                          ? t("admin.quote_transform.select_existing_parent")
+                          : t("admin.quote_transform.create_new_parent")}
+                      </option>
+                      {parentClientOptions.map((option) => (
+                        <option key={`parent-option-${option.id}`} value={option.id}>
+                          {option.label}
                         </option>
                       ))}
-                  </select>
-                </label>
+                    </select>
+                  </label>
+                  <p className="muted">{t("admin.quote_transform.client_search_count", { count: parentClientOptions.length })}</p>
+                </section>
               ) : null}
 
               <label className="top-gap-sm">

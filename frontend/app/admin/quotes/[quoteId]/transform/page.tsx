@@ -73,6 +73,10 @@ type QuoteOut = {
   context_type: string;
   prospect_id: string | null;
   client_id: string | null;
+  recipient_name: string | null;
+  recipient_email: string | null;
+  recipient_phone: string | null;
+  meta: Record<string, unknown>;
   calendar_snapshot: Record<string, unknown>;
   payment_terms_snapshot: Record<string, unknown>;
 };
@@ -157,6 +161,56 @@ function toNumber(raw: string, fallback = 0): number {
     return fallback;
   }
   return parsed;
+}
+
+function readString(source: Record<string, unknown>, key: string): string | null {
+  const raw = source[key];
+  if (typeof raw !== "string") {
+    return null;
+  }
+  const value = raw.trim();
+  return value || null;
+}
+
+function findNormalizedTypeformPayload(quoteMeta: Record<string, unknown>): Record<string, unknown> {
+  const direct = readObject(quoteMeta.normalized_payload);
+  if (direct) {
+    return direct;
+  }
+  const typeformIntake = readObject(quoteMeta.typeform_intake);
+  const nested = readObject(typeformIntake?.normalized_payload);
+  return nested || {};
+}
+
+function buildProspectFromQuoteMeta(quote: QuoteOut): QuoteTransformProspect | null {
+  const payload = findNormalizedTypeformPayload(quote.meta || {});
+  const customerType = String(readString(payload, "customer_type") || "").trim().toLowerCase();
+  const childFirstName = readString(payload, "child_first_name");
+  const childLastName = readString(payload, "child_last_name");
+  const isChild = customerType === "child" || Boolean(childFirstName || childLastName);
+  const firstName = isChild ? childFirstName : readString(payload, "parent_first_name");
+  const lastName = isChild ? childLastName : readString(payload, "parent_last_name");
+  const email = readString(payload, "parent_email") || quote.recipient_email || "";
+  const phone = readString(payload, "parent_phone") || quote.recipient_phone || null;
+
+  if (!firstName && !lastName && !email && !phone) {
+    return null;
+  }
+
+  return {
+    id: `quote-meta:${quote.id}`,
+    firstName,
+    lastName,
+    email,
+    phone,
+    parentProspectId: null,
+    prospectType: isChild ? "child" : "adult",
+    meta: {
+      source: "quote_typeform_metadata",
+      normalized_payload: payload,
+      linked_client_id: quote.client_id,
+    },
+  };
 }
 
 function locationNameById(locations: LocationOut[], locationId: string | null, language: "fr" | "en" = "fr"): string {
@@ -251,7 +305,7 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
   }
 
   const detail = detailResult.data;
-  const clientsRaw = clientsResult.ok ? clientsResult.data : [];
+  let clientsRaw = clientsResult.ok ? clientsResult.data.slice() : [];
   const activitiesRaw = activitiesResult.ok ? activitiesResult.data : [];
   const plansRaw = plansResult.ok ? plansResult.data : [];
   const legalEntitiesRaw = legalEntitiesResult.ok ? legalEntitiesResult.data : [];
@@ -282,6 +336,17 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
       };
     }),
   );
+
+  if (detail.quote.client_id && !clientsRaw.some((client) => client.id === detail.quote.client_id)) {
+    const linkedClientResult = await backendRequest<AdminClientOut>(
+      `/api/v1/admin/clients/${encodeURIComponent(detail.quote.client_id)}`,
+      {},
+      token,
+    );
+    if (linkedClientResult.ok) {
+      clientsRaw = [...clientsRaw, linkedClientResult.data];
+    }
+  }
 
   const prospectResult = detail.quote.prospect_id
     ? await backendRequest<ProspectOut>(`/api/v1/prospects/${encodeURIComponent(detail.quote.prospect_id)}`, {}, token)
@@ -331,7 +396,7 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
         linked_client_id: sourceClientRaw.id,
       },
     }
-    : null;
+    : buildProspectFromQuoteMeta(detail.quote);
 
   const clients: QuoteTransformClient[] = clientsRaw.map((client) => ({
     id: client.id,
@@ -415,6 +480,7 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
     id: detail.quote.id,
     quoteNumber: detail.quote.quote_number,
     status: detail.quote.status,
+    clientId: detail.quote.client_id,
     currency: detail.quote.currency || "EUR",
     totalTtc: toNumber(detail.quote.total_ttc),
     totalHt: Number(lines.reduce((sum, line) => sum + line.amountHt, 0).toFixed(2)),
