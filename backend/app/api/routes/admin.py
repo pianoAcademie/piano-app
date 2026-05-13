@@ -160,6 +160,7 @@ PLANNING_SIMULATION_QUOTE_RELEVANT_STATUSES = (
     | PLANNING_SIMULATION_QUOTE_PENDING_STATUSES
     | PLANNING_SIMULATION_QUOTE_DRAFT_STATUSES
 )
+PLANNING_SIMULATION_ACTIVITY_GROUP_COLLECTIVE_PIANO = "collective_piano"
 VACATION_COURSE_TYPE_CODE = "VACATION_DAY"
 QUOTE_SCHOOL_CALENDARS_SETTING_KEY = "quote_school_calendars_v1"
 
@@ -1253,6 +1254,26 @@ def _planning_simulation_signature(
     )
 
 
+def _planning_simulation_collective_piano_course_type_ids(db: Session) -> set[UUID]:
+    rows = db.scalars(
+        select(CourseType).where(
+            CourseType.active.is_(True),
+            func.upper(CourseType.code) != VACATION_COURSE_TYPE_CODE,
+        )
+    ).all()
+    out: set[UUID] = set()
+    excluded_terms = ("solfege", "eveil", "initiation", "studio", "repetition", "booster", "rattrap")
+    for course_type in rows:
+        searchable = f"{course_type.code or ''} {course_type.name or ''}".casefold()
+        if "collectif" not in searchable and "collective" not in searchable:
+            continue
+        if any(term in searchable for term in excluded_terms):
+            continue
+        if "piano" in searchable or "ado" in searchable or "adulte" in searchable:
+            out.add(course_type.id)
+    return out
+
+
 def _planning_simulation_person_name(
     *,
     first_name: str | None,
@@ -2221,6 +2242,7 @@ def get_planning_simulation(
     school_year_label: str | None = Query(default=None),
     location_id: UUID | None = Query(default=None),
     activity_id: UUID | None = Query(default=None),
+    activity_group: str | None = Query(default=None),
     db: Session = Depends(get_db),
     _: User = Depends(require_admin_or_permissions("can_view_planning_simulation")),
 ) -> AdminPlanningSimulationOut:
@@ -2245,6 +2267,19 @@ def get_planning_simulation(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course type not found")
         if requested_activity_code.upper() == VACATION_COURSE_TYPE_CODE:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Vacation course types are excluded")
+    normalized_activity_group = str(activity_group or "").strip().lower() or None
+    if activity_id is not None:
+        normalized_activity_group = None
+    elif normalized_activity_group in {None, "all"}:
+        normalized_activity_group = None
+    elif normalized_activity_group != PLANNING_SIMULATION_ACTIVITY_GROUP_COLLECTIVE_PIANO:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid activity group")
+
+    activity_filter_ids: set[UUID] = set()
+    if activity_id is not None:
+        activity_filter_ids.add(activity_id)
+    elif normalized_activity_group == PLANNING_SIMULATION_ACTIVITY_GROUP_COLLECTIVE_PIANO:
+        activity_filter_ids = _planning_simulation_collective_piano_course_type_ids(db)
 
     vacation_course_type_ids = set(
         db.scalars(select(CourseType.id).where(func.upper(CourseType.code) == VACATION_COURSE_TYPE_CODE)).all()
@@ -2328,8 +2363,8 @@ def get_planning_simulation(
     )
     if location_id is not None:
         session_stmt = session_stmt.where(CourseSession.location_id == location_id)
-    if activity_id is not None:
-        session_stmt = session_stmt.where(CourseSession.course_type_id == activity_id)
+    if activity_filter_ids:
+        session_stmt = session_stmt.where(CourseSession.course_type_id.in_(list(activity_filter_ids)))
 
     session_rows = db.execute(session_stmt).all()
     for session_obj, course_type, location in session_rows:
@@ -2454,7 +2489,7 @@ def get_planning_simulation(
             block_activity_id = _parse_uuid_local(block.get("activity_id"))
             if location_id is not None and block_location_id != location_id:
                 continue
-            if activity_id is not None and block_activity_id != activity_id:
+            if activity_filter_ids and block_activity_id not in activity_filter_ids:
                 continue
             if block_activity_id in vacation_course_type_ids:
                 continue
@@ -2628,6 +2663,7 @@ def get_planning_simulation(
         available_school_years=available_school_years,
         location_filter_id=location_id,
         activity_filter_id=activity_id,
+        activity_group_filter=normalized_activity_group,
         generated_at=_utcnow(),
         summary=AdminPlanningSimulationSummaryOut(
             location_count=len(location_ids_seen),

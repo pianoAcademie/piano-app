@@ -37,7 +37,7 @@ from app.api.routes.bookings import (
     _resolve_booking_snapshot,
     _restore_pack_credit,
 )
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, SessionStatus
+from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, SessionStatus
 from app.models.client_record import ClientInvoiceLine, ClientManualTransaction, ClientNoteEntry
 from app.models.family import ClientFamilyLink
 from app.models.ops import AppSetting, LegalEntity
@@ -5912,6 +5912,130 @@ def _expected_activity_dates_from_snapshot(
     return sorted(out)
 
 
+def _quote_snapshot_activity_is_solfege(quote: Quote, *, activity_id: UUID) -> bool:
+    snapshot = _json_object(quote.calendar_snapshot)
+    for collection_name in ("blocks", "sessions"):
+        for raw in _json_list(snapshot.get(collection_name)):
+            row = _json_object(raw)
+            if _parse_uuid_value(row.get("activity_id")) != activity_id:
+                continue
+            haystack = _public_searchable_text(
+                " ".join(
+                    str(item or "")
+                    for item in (
+                        row.get("activity_label"),
+                        row.get("activity_name"),
+                        row.get("title"),
+                        row.get("label"),
+                        row.get("pending_solfege_level"),
+                    )
+                )
+            )
+            if "solfege" in haystack or str(row.get("pending_solfege_level") or "").strip():
+                return True
+    return False
+
+
+def _quote_selected_solfege_slot(quote: Quote) -> dict[str, object]:
+    selected_slot = _json_object(quote.selected_solfege_slot)
+    if selected_slot:
+        return selected_slot
+    snapshot = _json_object(quote.calendar_snapshot)
+    return _json_object(_json_object(snapshot.get("solfege")).get("selected_slot"))
+
+
+def _session_matches_quote_selected_solfege_slot(
+    session_obj: CourseSession,
+    *,
+    course_type: CourseType,
+    location: Location,
+    selected_slot: dict[str, object],
+    expected_date_set: set[date],
+) -> bool:
+    try:
+        selected_weekday = int(selected_slot.get("weekday"))
+    except (TypeError, ValueError):
+        selected_weekday = None
+    selected_start_time = str(selected_slot.get("start_time") or selected_slot.get("start") or "").strip()
+    selected_end_time = str(selected_slot.get("end_time") or selected_slot.get("end") or "").strip()
+    if selected_weekday is None or not selected_start_time or not selected_end_time:
+        return False
+
+    zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
+    local_start = session_obj.start_at_utc.astimezone(zone)
+    local_end = session_obj.end_at_utc.astimezone(zone)
+    if local_start.weekday() != selected_weekday:
+        return False
+    if expected_date_set and local_start.date() not in expected_date_set:
+        return False
+    if local_start.strftime("%H:%M") != selected_start_time or local_end.strftime("%H:%M") != selected_end_time:
+        return False
+
+    selected_location_id = _parse_uuid_value(selected_slot.get("location_id"))
+    if selected_location_id is not None:
+        return session_obj.location_id == selected_location_id
+
+    selected_modality = _public_solfege_mode_semantic(
+        selected_slot.get("modality") or selected_slot.get("location_label") or selected_slot.get("mode")
+    )
+    session_location_semantic = _public_solfege_mode_semantic(location.name)
+    if selected_modality == "ONLINE":
+        return course_type.mode == DeliveryMode.ONLINE or session_location_semantic == "ONLINE"
+    if selected_modality == "ONSITE":
+        return course_type.mode != DeliveryMode.ONLINE and session_location_semantic != "ONLINE"
+    return True
+
+
+def _resolve_selected_solfege_live_session(
+    db: Session,
+    *,
+    quote: Quote,
+    activity_id: UUID,
+    expected_dates: list[date],
+) -> CourseSession | None:
+    if not _quote_snapshot_activity_is_solfege(quote, activity_id=activity_id):
+        return None
+    selected_slot = _quote_selected_solfege_slot(quote)
+    if not selected_slot:
+        return None
+
+    expected_date_set = set(expected_dates)
+    if expected_date_set:
+        start_floor = min(expected_date_set)
+        end_ceil = max(expected_date_set)
+    else:
+        bounds = _school_year_bounds_from_label(quote.school_year_label or "")
+        if bounds is None:
+            return None
+        start_floor, end_ceil = bounds
+
+    start_utc = datetime.combine(start_floor, time.min, tzinfo=timezone.utc)
+    end_utc = datetime.combine(end_ceil, time.max, tzinfo=timezone.utc)
+    rows = db.execute(
+        select(CourseSession, CourseType, Location)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .where(
+            CourseSession.course_type_id == activity_id,
+            CourseSession.status == SessionStatus.SCHEDULED,
+            CourseSession.start_at_utc >= start_utc,
+            CourseSession.start_at_utc <= end_utc,
+        )
+        .order_by(CourseSession.start_at_utc.asc())
+        .with_for_update()
+    ).all()
+    for session_obj, course_type, location in rows:
+        if _session_matches_quote_selected_solfege_slot(
+            session_obj,
+            course_type=course_type,
+            location=location,
+            selected_slot=selected_slot,
+            expected_date_set=expected_date_set,
+        ):
+            return session_obj
+    return None
+
+
 def _load_live_series_sessions(
     db: Session,
     *,
@@ -6887,10 +7011,24 @@ def _execute_quote_followup_transformation(
         )
         if selected_session is None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Creneau selectionne introuvable")
+
+        expected_dates = _expected_activity_dates_from_snapshot(quote, activity_id=activity_id)
+        selected_solfege_session = _resolve_selected_solfege_live_session(
+            db,
+            quote=quote,
+            activity_id=activity_id,
+            expected_dates=expected_dates,
+        )
+        if selected_solfege_session is not None:
+            selected_session = selected_solfege_session
+        elif _quote_snapshot_activity_is_solfege(quote, activity_id=activity_id) and _quote_selected_solfege_slot(quote):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Le creneau de solfege choisi sur le devis n'a plus de correspondance live",
+            )
         if selected_session.status != SessionStatus.SCHEDULED:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Le creneau selectionne n'est plus reservable")
 
-        expected_dates = _expected_activity_dates_from_snapshot(quote, activity_id=activity_id)
         live_sessions = _load_live_series_sessions(
             db,
             selected_session=selected_session,

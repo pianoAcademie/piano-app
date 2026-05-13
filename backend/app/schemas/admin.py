@@ -2431,6 +2431,7 @@ class AdminPlanningSimulationOut(BaseModel):
     available_school_years: list[str] = Field(default_factory=list)
     location_filter_id: UUID | None = None
     activity_filter_id: UUID | None = None
+    activity_group_filter: str | None = None
     generated_at: datetime
     summary: AdminPlanningSimulationSummaryOut
     slots: list[AdminPlanningSimulationSlotOut] = Field(default_factory=list)

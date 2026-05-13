@@ -38,6 +38,9 @@ type CalendarDayGroup = {
 
 const VACATION_COURSE_TYPE_CODE = "VACATION_DAY";
 const DEFAULT_SIMULATION_SCHOOL_YEAR = "2026-2027";
+const DEFAULT_SIMULATION_ACTIVITY_FILTER = "__collective_piano__";
+const ALL_SIMULATION_ACTIVITY_FILTER = "__all__";
+const ACTIVITY_FILTER_PREFIX = "activity:";
 
 type SlotPeopleSection = {
   label: string;
@@ -50,6 +53,18 @@ function readParam(params: SearchParams, key: string): string {
     return raw[0] ?? "";
   }
   return raw ?? "";
+}
+
+function activityFilterFromParams(params: SearchParams): string {
+  const requestedFilter = readParam(params, "activity_filter").trim();
+  if (requestedFilter) {
+    return requestedFilter;
+  }
+  const legacyActivityId = readParam(params, "activity_id").trim();
+  if (legacyActivityId) {
+    return `${ACTIVITY_FILTER_PREFIX}${legacyActivityId}`;
+  }
+  return DEFAULT_SIMULATION_ACTIVITY_FILTER;
 }
 
 async function loadPlanningSimulationLocations(
@@ -316,12 +331,18 @@ export default async function AdminSimulationPlanningPage({
   const language = normalizeUiLanguage(meResult.data.preferred_language);
   const requestedSchoolYear = readParam(searchParams ?? {}, "school_year").trim() || DEFAULT_SIMULATION_SCHOOL_YEAR;
   const requestedLocationId = readParam(searchParams ?? {}, "location_id").trim();
-  const requestedActivityId = readParam(searchParams ?? {}, "activity_id").trim();
+  const requestedActivityFilter = activityFilterFromParams(searchParams ?? {});
+  const requestedActivityId = requestedActivityFilter.startsWith(ACTIVITY_FILTER_PREFIX)
+    ? requestedActivityFilter.slice(ACTIVITY_FILTER_PREFIX.length)
+    : "";
+  const requestedActivityGroup =
+    requestedActivityFilter === DEFAULT_SIMULATION_ACTIVITY_FILTER ? "collective_piano" : "";
 
   const simulationQuery = new URLSearchParams();
   if (requestedSchoolYear) simulationQuery.set("school_year_label", requestedSchoolYear);
   if (requestedLocationId) simulationQuery.set("location_id", requestedLocationId);
   if (requestedActivityId) simulationQuery.set("activity_id", requestedActivityId);
+  if (requestedActivityGroup) simulationQuery.set("activity_group", requestedActivityGroup);
   const simulationPath = simulationQuery.size
     ? `/api/v1/admin/plannings/simulation?${simulationQuery.toString()}`
     : "/api/v1/admin/plannings/simulation";
@@ -402,13 +423,16 @@ export default async function AdminSimulationPlanningPage({
 
           <label>
             <span>{text(language, "Type de cours", "Course type")}</span>
-            <select name="activity_id" defaultValue={requestedActivityId}>
-              <option value="">{text(language, "Tous les types", "All course types")}</option>
+            <select name="activity_filter" defaultValue={requestedActivityFilter}>
+              <option value={DEFAULT_SIMULATION_ACTIVITY_FILTER}>
+                {text(language, "Collectifs piano (defaut)", "Piano groups (default)")}
+              </option>
+              <option value={ALL_SIMULATION_ACTIVITY_FILTER}>{text(language, "Tous les types", "All course types")}</option>
               {courseTypes
                 .slice()
                 .sort((a, b) => a.name.localeCompare(b.name, "fr"))
                 .map((courseType) => (
-                  <option key={courseType.id} value={courseType.id}>
+                  <option key={courseType.id} value={`${ACTIVITY_FILTER_PREFIX}${courseType.id}`}>
                     {courseType.name}
                   </option>
                 ))}

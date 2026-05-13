@@ -2140,6 +2140,7 @@ export type AdminPlanningSimulationOut = {
   available_school_years: string[];
   location_filter_id: string | null;
   activity_filter_id: string | null;
+  activity_group_filter: string | null;
   generated_at: string;
   summary: AdminPlanningSimulationSummaryOut;
   slots: AdminPlanningSimulationSlotOut[];

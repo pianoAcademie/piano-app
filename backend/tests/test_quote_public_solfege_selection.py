@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 import unittest
 from types import SimpleNamespace
+from uuid import uuid4
 from unittest.mock import patch
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -11,9 +13,53 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.api.routes.quotes import _public_quote_solfege_selection
 from app.api.routes.quotes import _apply_selected_solfege_slot_to_calendar_snapshot
 from app.api.routes.quotes import _calendar_snapshot_with_selected_solfege_block
+from app.api.routes.quotes import _session_matches_quote_selected_solfege_slot
+from app.models.catalog import DeliveryMode
 
 
 class QuotePublicSolfegeSelectionTests(unittest.TestCase):
+    def test_selected_solfege_slot_match_rejects_stale_manual_session(self) -> None:
+        selected_slot = {
+            "weekday": 4,
+            "start_time": "18:35",
+            "end_time": "19:20",
+            "location_label": "En ligne",
+            "modality": "online",
+        }
+        location = SimpleNamespace(name="Online", timezone="Europe/Paris")
+        course_type = SimpleNamespace(mode=DeliveryMode.ONLINE)
+        friday_session = SimpleNamespace(
+            timezone="Europe/Paris",
+            location_id=uuid4(),
+            start_at_utc=datetime(2026, 10, 2, 16, 35, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 10, 2, 17, 20, tzinfo=timezone.utc),
+        )
+        wednesday_session = SimpleNamespace(
+            timezone="Europe/Paris",
+            location_id=uuid4(),
+            start_at_utc=datetime(2026, 9, 30, 16, 35, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 30, 17, 20, tzinfo=timezone.utc),
+        )
+
+        self.assertTrue(
+            _session_matches_quote_selected_solfege_slot(
+                friday_session,
+                course_type=course_type,
+                location=location,
+                selected_slot=selected_slot,
+                expected_date_set=set(),
+            )
+        )
+        self.assertFalse(
+            _session_matches_quote_selected_solfege_slot(
+                wednesday_session,
+                course_type=course_type,
+                location=location,
+                selected_slot=selected_slot,
+                expected_date_set=set(),
+            )
+        )
+
     def test_selected_solfege_slot_adds_missing_planning_block(self) -> None:
         quote = SimpleNamespace(
             language="fr",
