@@ -2795,6 +2795,98 @@ def _current_solfege_document_info(
     }
 
 
+def _calendar_snapshot_with_current_solfege_block(
+    calendar_snapshot: dict[str, Any],
+    *,
+    lines: list[QuoteLine],
+    selected_solfege_slot: dict[str, Any] | None = None,
+    language: str | None = None,
+) -> dict[str, Any]:
+    snapshot = dict(_json_object(calendar_snapshot))
+    blocks = [dict(item) for item in _json_list(snapshot.get("blocks")) if isinstance(item, dict)]
+    solfege_lines = [line for line in lines if _line_matches_solfege_activity(line)]
+    if not solfege_lines:
+        snapshot["blocks"] = blocks
+        return snapshot
+
+    line = solfege_lines[0]
+    line_activity_id = str(getattr(line, "activity_id", "") or "").strip()
+    line_level = _solfege_level_from_line(line)
+    slot = _json_object(selected_solfege_slot)
+    slot_level = str(slot.get("level_code") or "").strip()
+    if line_level and slot_level and slot_level != line_level:
+        slot = {}
+
+    def _matches_current_solfege(block: dict[str, Any]) -> bool:
+        if not _is_solfege_planning_block(block):
+            return False
+        block_activity_id = str(block.get("activity_id") or "").strip()
+        if line_activity_id and block_activity_id and block_activity_id != line_activity_id:
+            return False
+        block_level = _solfege_level_from_block(block)
+        if line_level and block_level and block_level != line_level:
+            return False
+        return True
+
+    matching_indices = [index for index, block in enumerate(blocks) if _matches_current_solfege(block)]
+    if any(not _solfege_block_is_pending(blocks[index]) for index in matching_indices):
+        snapshot["blocks"] = blocks
+        return snapshot
+    if not slot:
+        snapshot["blocks"] = blocks
+        return snapshot
+
+    base_block = blocks[matching_indices[0]] if matching_indices else {}
+    start_time = str(slot.get("start_time") or base_block.get("start_time") or "").strip()
+    end_time = str(slot.get("end_time") or base_block.get("end_time") or "").strip()
+    weekday = slot.get("weekday", base_block.get("weekday"))
+    if not start_time or not end_time or weekday in ("", None):
+        snapshot["blocks"] = blocks
+        return snapshot
+
+    duration_minutes = (
+        slot.get("duration_minutes")
+        or getattr(line, "duration_minutes", None)
+        or base_block.get("duration_minutes")
+    )
+    location_label = str(slot.get("location_label") or base_block.get("location_label") or "").strip()
+    modality = slot.get("modality") or base_block.get("modality")
+    if not modality and location_label.lower() in {"online", "en ligne"}:
+        modality = "ONLINE"
+
+    activity_label = str(getattr(line, "title", "") or base_block.get("activity_label") or "").strip()
+    if not activity_label:
+        level_suffix = f" - Niveau {line_level}" if line_level else ""
+        activity_label = f"{_quote_doc_text('course_solfege', language=language)}{level_suffix}"
+
+    normalized_block = dict(base_block)
+    normalized_block.update(
+        {
+            "activity_id": line_activity_id or base_block.get("activity_id"),
+            "activity_label": activity_label,
+            "location_id": slot.get("location_id") or base_block.get("location_id"),
+            "location_label": location_label or "-",
+            "weekday": weekday,
+            "weekday_label": str(slot.get("weekday_label") or "").strip()
+            or _weekday_label(weekday, language=language),
+            "start_time": start_time,
+            "end_time": end_time,
+            "duration_minutes": duration_minutes,
+            "modality": modality,
+            "selection_pending": False,
+            "pending_solfege_level": line_level or base_block.get("pending_solfege_level") or slot.get("level_code"),
+        }
+    )
+    normalized_block = {key: value for key, value in normalized_block.items() if value not in ("", None)}
+
+    if matching_indices:
+        blocks[matching_indices[0]] = normalized_block
+    else:
+        blocks.append(normalized_block)
+    snapshot["blocks"] = blocks
+    return snapshot
+
+
 def _resolve_pass_recup_enabled(*, meta: dict[str, Any], lines: list[QuoteLine]) -> bool:
     mode = str(meta.get("pass_recup_mode") or "").strip().lower()
     if mode == "enabled":
@@ -2869,6 +2961,12 @@ def _extract_document_context(
         selected_solfege_slot = current_solfege_slot
     current_solfege_level = str(current_solfege_info.get("level_code") or "").strip()
     current_solfege_duration = current_solfege_info.get("duration_minutes") or quote.solfege_duration_minutes
+    calendar_snapshot = _calendar_snapshot_with_current_solfege_block(
+        calendar_snapshot,
+        lines=lines,
+        selected_solfege_slot=selected_solfege_slot,
+        language=language,
+    )
     activity_solfege = [item for item in _json_list(meta.get("activity_solfege")) if isinstance(item, dict)]
     masterclass_blocks_meta = [item for item in _json_list(meta.get("masterclass_blocks")) if isinstance(item, dict)]
     masterclass_blocks_calendar = _masterclass_blocks_from_calendar_snapshot(calendar_snapshot, language=language)
@@ -2954,6 +3052,7 @@ def _extract_document_context(
         "schedule": schedule,
         "schedule_visibility": schedule_visibility,
         "payment_method_label": _resolve_payment_method_label(quote=quote),
+        "calendar_snapshot": calendar_snapshot,
         "payment_schedule_compact_notice": payment_schedule_compact_notice,
         "payment_instruction": payment_instruction,
         "deposit_enabled": deposit_enabled and deposit_amount_ttc > Decimal("0.00"),
@@ -3522,6 +3621,7 @@ def _build_template_values(
     service_product_ids = _service_product_ids_for_lines(db=db, lines=lines)
     services, products, kits, adjustments, other_fees = _line_groups(lines, service_product_ids=service_product_ids)
     document_context = build_quote_document_context(db=db, quote=quote, lines=lines, audience=audience)
+    calendar_snapshot = _json_object(document_context.get("calendar_snapshot")) or calendar_snapshot
     display_flags = document_context["display_flags"]
     selected_solfege_slot = _json_object(document_context.get("solfege_selected_slot"))
     total_ttc = Decimal(quote.total_ttc or 0).quantize(Decimal("0.01"))
@@ -5302,7 +5402,7 @@ def _render_quote_pdf_blocks(
     language = _quote_doc_language(quote=quote)
     values, html_keys, context = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     prospect_data = context.get("prospect_data", {})
-    calendar_snapshot = _calendar_snapshot_with_planning_sessions(db, _json_object(quote.calendar_snapshot))
+    calendar_snapshot = _json_object(context.get("calendar_snapshot")) or _calendar_snapshot_with_planning_sessions(db, _json_object(quote.calendar_snapshot))
     sessions = [item for item in _json_list(calendar_snapshot.get("sessions")) if isinstance(item, dict)]
     planning_blocks = [item for item in _json_list(calendar_snapshot.get("blocks")) if isinstance(item, dict)]
     service_product_ids = _service_product_ids_for_lines(db=db, lines=lines)

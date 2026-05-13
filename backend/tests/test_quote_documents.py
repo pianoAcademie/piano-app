@@ -16,6 +16,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.services.quotes.quote_documents import (
     _calendar_snapshot_with_planning_sessions,
+    _calendar_snapshot_with_current_solfege_block,
     _check_payment_instruction_lines,
     _current_solfege_document_info,
     _line_groups,
@@ -279,6 +280,55 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertEqual(info["selected_slot"]["weekday_label"], "Jeudi")
         self.assertEqual(info["selected_slot"]["start_time"], "18:50")
         self.assertIn("cours en ligne", info["selected_slot"]["label"].lower())
+
+    def test_current_solfege_block_is_added_to_planning_table_when_snapshot_lacks_it(self) -> None:
+        activity_id = uuid4()
+        line = SimpleNamespace(
+            activity_id=activity_id,
+            title="Solfège - Niveau 1",
+            description="Cours de solfège en ligne",
+            code="SOLFEGE_NIVEAU_1",
+            duration_minutes=30,
+            meta={},
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(uuid4()),
+                    "activity_label": "Cours de piano collectif en présentiel (1h)",
+                    "location_label": "Rue d Assas",
+                    "weekday": 1,
+                    "weekday_label": "Mardi",
+                    "start_time": "17:00",
+                    "end_time": "18:00",
+                    "duration_minutes": 60,
+                    "selection_pending": False,
+                }
+            ]
+        }
+        selected_slot = {
+            "weekday": 1,
+            "weekday_label": "Mardi",
+            "start_time": "17:05",
+            "end_time": "17:35",
+            "duration_minutes": 30,
+            "location_label": "Online",
+            "level_code": "1",
+            "modality": "ONLINE",
+        }
+
+        snapshot = _calendar_snapshot_with_current_solfege_block(
+            snapshot,
+            lines=[line],
+            selected_solfege_slot=selected_slot,
+            language="fr",
+        )
+        html, count = _planning_blocks_table_html(snapshot, language="fr")
+
+        self.assertEqual(count, 2)
+        self.assertIn("Cours de piano collectif", html)
+        self.assertIn("Solfège - Niveau 1", html)
+        self.assertIn("17:05 - 17:35", html)
 
     def test_line_groups_route_service_products_to_other_fees(self) -> None:
         product_id = uuid4()
