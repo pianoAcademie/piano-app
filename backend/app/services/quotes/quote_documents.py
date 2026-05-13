@@ -1720,6 +1720,100 @@ def _dedupe_calendar_sessions(items: list[dict[str, Any]]) -> tuple[list[dict[st
     return deduped, changed
 
 
+def _quote_line_recommendation_key(line: QuoteLine) -> str:
+    activity_id = str(getattr(line, "activity_id", None) or "").strip()
+    if not activity_id:
+        return ""
+    line_meta = _json_object(getattr(line, "meta", None))
+    source = str(line_meta.get("typeform_automatic_line") or "").strip()
+    return f"{activity_id}:{source}" if source else activity_id
+
+
+def _calendar_snapshot_with_line_recommendation_keys(
+    db: Session | None,
+    calendar_snapshot: dict[str, Any],
+    *,
+    lines: list[QuoteLine],
+) -> dict[str, Any]:
+    snapshot = dict(_json_object(calendar_snapshot))
+    blocks = [dict(item) for item in _json_list(snapshot.get("blocks")) if isinstance(item, dict)]
+    if not blocks:
+        return snapshot
+
+    lines_by_activity_id: dict[str, list[QuoteLine]] = {}
+    for line in lines:
+        activity_id = str(getattr(line, "activity_id", None) or "").strip()
+        if not activity_id or _line_matches_solfege_activity(line):
+            continue
+        lines_by_activity_id.setdefault(activity_id, []).append(line)
+
+    target_activity_ids = {
+        activity_id
+        for activity_id, activity_lines in lines_by_activity_id.items()
+        if len(activity_lines) > 1
+        or any(str(_json_object(getattr(line, "meta", None)).get("typeform_automatic_line") or "").strip() for line in activity_lines)
+    }
+    if not target_activity_ids:
+        return snapshot
+
+    cursors: dict[str, int] = {}
+    changed_blocks = False
+    normalized_blocks: list[dict[str, Any]] = []
+    for block in blocks:
+        activity_id = str(block.get("activity_id") or "").strip()
+        if activity_id not in target_activity_ids:
+            normalized_blocks.append(block)
+            continue
+
+        existing_key = str(block.get("recommendation_key") or "").strip()
+        if existing_key and existing_key != activity_id:
+            normalized_blocks.append(block)
+            continue
+
+        activity_lines = lines_by_activity_id.get(activity_id) or []
+        cursor = cursors.get(activity_id, 0)
+        line = activity_lines[min(cursor, len(activity_lines) - 1)] if activity_lines else None
+        cursors[activity_id] = cursor + 1
+        recommendation_key = _quote_line_recommendation_key(line) if line is not None else activity_id
+        if recommendation_key and recommendation_key != existing_key:
+            block = {**block, "recommendation_key": recommendation_key}
+            changed_blocks = True
+        normalized_blocks.append(block)
+
+    if not changed_blocks:
+        snapshot["blocks"] = normalized_blocks
+        return snapshot
+
+    snapshot["blocks"] = normalized_blocks
+    if db is None:
+        return snapshot
+
+    refreshed_sessions: list[dict[str, Any]] = []
+    for raw_session in _json_list(snapshot.get("sessions")):
+        if not isinstance(raw_session, dict):
+            continue
+        if str(raw_session.get("activity_id") or "").strip() in target_activity_ids:
+            continue
+        refreshed_sessions.append(dict(raw_session))
+
+    for block in normalized_blocks:
+        if str(block.get("activity_id") or "").strip() not in target_activity_ids:
+            continue
+        refreshed_sessions.extend(_sessions_from_planning_block(db, block))
+
+    refreshed_sessions, _ = _dedupe_calendar_sessions(refreshed_sessions)
+    refreshed_sessions.sort(
+        key=lambda item: (
+            str(item.get("date") or ""),
+            str(item.get("start_time") or ""),
+            str(item.get("activity_label") or ""),
+        )
+    )
+    snapshot["sessions"] = refreshed_sessions
+    snapshot["sessions_count"] = len(refreshed_sessions)
+    return snapshot
+
+
 def _calendar_snapshot_with_planning_sessions(db: Session | None, calendar_snapshot: dict[str, Any]) -> dict[str, Any]:
     snapshot = dict(_json_object(calendar_snapshot))
     if db is None:
@@ -3125,7 +3219,12 @@ def _extract_document_context(
     if remaining_ttc_after_deposit < Decimal("0.00"):
         remaining_ttc_after_deposit = Decimal("0.00")
 
-    calendar_snapshot = _calendar_snapshot_with_planning_sessions(db, _json_object(quote.calendar_snapshot))
+    calendar_snapshot = _calendar_snapshot_with_line_recommendation_keys(
+        db,
+        _json_object(quote.calendar_snapshot),
+        lines=lines,
+    )
+    calendar_snapshot = _calendar_snapshot_with_planning_sessions(db, calendar_snapshot)
     calendar_solfege = _json_object(calendar_snapshot.get("solfege"))
     solfege_selected_slot = _json_object(calendar_solfege.get("selected_slot"))
     selected_solfege_slot = _json_object(quote.selected_solfege_slot)

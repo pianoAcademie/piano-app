@@ -159,6 +159,7 @@ from app.services.quotes.quote_documents import (
     AUDIENCE_ADMIN_PREVIEW,
     AUDIENCE_CLIENT_PDF,
     AUDIENCE_PUBLIC_PAGE,
+    _calendar_snapshot_with_line_recommendation_keys,
     _calendar_snapshot_with_planning_sessions,
     render_quote_document_bundle,
     render_quote_pdf_from_combined_html,
@@ -2483,6 +2484,7 @@ def _quote_detail_out(db: Session, quote: Quote) -> QuoteDetailOut:
     lines = _load_quote_lines(db, quote.id)
     events = _load_quote_events(db, quote.id)
     calendar_snapshot = _calendar_snapshot_with_selected_solfege_block(quote, lines=lines, db=db)
+    calendar_snapshot = _calendar_snapshot_with_line_recommendation_keys(db, calendar_snapshot, lines=lines)
     calendar_snapshot = _calendar_snapshot_with_planning_sessions(db, calendar_snapshot)
     return QuoteDetailOut(
         quote=_quote_out(quote, calendar_snapshot=calendar_snapshot),
