@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 import unittest
@@ -9,7 +11,10 @@ from uuid import uuid4
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.api.routes.quotes import _try_send_public_quote_confirmation_email
+from app.api.routes.quotes import (
+    _try_send_public_quote_admin_notification_email,
+    _try_send_public_quote_confirmation_email,
+)
 from app.models.quote import QuoteEmailOutbox, QuoteEvent
 
 
@@ -96,6 +101,80 @@ class QuotePublicConfirmationEmailTests(unittest.TestCase):
         self.assertEqual(result.get("status"), "skipped")
         self.assertEqual(len(skipped_events), 1)
         self.assertEqual(skipped_events[0].payload.get("reason"), "missing_recipient_email")
+
+    def test_sends_admin_notification_when_public_quote_is_approved(self) -> None:
+        db = _FakeSession()
+        quote = SimpleNamespace(
+            id=uuid4(),
+            quote_number="DV-TEST",
+            total_ttc=Decimal("1534.00"),
+            currency="EUR",
+            approved_at=datetime(2026, 5, 12, 12, 18, tzinfo=timezone.utc),
+            rejected_at=None,
+            meta={},
+        )
+
+        with patch(
+            "app.api.routes.quotes.email_delivery_disabled_reason",
+            return_value=None,
+        ), patch(
+            "app.api.routes.quotes.resolve_admin_booking_notification_recipients",
+            return_value=[SimpleNamespace(email="admin@piano-academie.com")],
+        ), patch(
+            "app.api.routes.quotes.build_quote_email_context",
+            return_value={"recipient_name": "Olivia Loubiere"},
+        ), patch(
+            "app.api.routes.quotes.resolve_frontend_base_url",
+            return_value="https://app.piano-academie.com",
+        ), patch(
+            "app.api.routes.quotes.send_email",
+            return_value="mail-admin",
+        ) as send_email_mock:
+            result = _try_send_public_quote_admin_notification_email(
+                db,
+                quote=quote,
+                lines=[],
+                action="approved",
+                client_recipient_email="olivia@example.com",
+                client_message_status="sent",
+            )
+
+        sent_events = [
+            row for row in db.added
+            if isinstance(row, QuoteEvent) and row.event_type == "quote_public_admin_notification_email_sent"
+        ]
+        self.assertEqual(result.get("status"), "sent")
+        self.assertEqual(len(sent_events), 1)
+        self.assertEqual(sent_events[0].payload.get("sent_recipients"), ["admin@piano-academie.com"])
+        send_email_mock.assert_called_once()
+
+    def test_records_skipped_admin_notification_when_admin_recipient_is_missing(self) -> None:
+        db = _FakeSession()
+        quote = SimpleNamespace(id=uuid4(), meta={})
+
+        with patch(
+            "app.api.routes.quotes.email_delivery_disabled_reason",
+            return_value=None,
+        ), patch(
+            "app.api.routes.quotes.resolve_admin_booking_notification_recipients",
+            return_value=[],
+        ):
+            result = _try_send_public_quote_admin_notification_email(
+                db,
+                quote=quote,
+                lines=[],
+                action="approved",
+                client_recipient_email="olivia@example.com",
+                client_message_status="sent",
+            )
+
+        skipped_events = [
+            row for row in db.added
+            if isinstance(row, QuoteEvent) and row.event_type == "quote_public_admin_notification_email_skipped"
+        ]
+        self.assertEqual(result.get("status"), "skipped")
+        self.assertEqual(len(skipped_events), 1)
+        self.assertEqual(skipped_events[0].payload.get("reason"), "missing_admin_recipient")
 
 
 if __name__ == "__main__":

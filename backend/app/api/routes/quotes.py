@@ -129,10 +129,11 @@ from app.schemas.quote import (
     TermsTemplateVersionOut,
     TermsTemplateVersionPublishRequest,
 )
-from app.services.email_delivery import email_delivery_disabled_reason
+from app.services.email_delivery import email_delivery_disabled_reason, send_email
 from app.services.invoice_documents import normalize_billing_entity
 from app.services.messaging_templates import resolve_frontend_base_url
 from app.services.notifications.application.orchestrator import enqueue_notifications, schedule_booking_created_notifications
+from app.services.notifications.application.recipients import resolve_admin_booking_notification_recipients
 from app.services.client_status import (
     client_status_keeps_portal_enabled,
     promote_client_to_active_student,
@@ -146,6 +147,7 @@ from app.services.quotes.email_templates import (
     USAGE_CONTEXT_QUOTE_REJECTED,
     USAGE_CONTEXT_QUOTE_REMINDER,
     USAGE_CONTEXT_QUOTE_SEND,
+    build_quote_email_context,
     render_quote_email_template,
     send_quote_templated_email,
     send_quote_templated_sms,
@@ -3103,6 +3105,153 @@ def _try_send_public_quote_confirmation_email(
             "recipient_email": recipient_email,
             "error": str(exc),
         }
+
+
+def _format_admin_quote_amount(value: Decimal | None, currency: str | None) -> str:
+    amount = f"{_q2(value or Decimal('0')):.2f}".replace(".", ",")
+    return f"{amount} {(currency or 'EUR').strip() or 'EUR'}"
+
+
+def _format_admin_quote_response_time(value: datetime | None) -> str:
+    if value is None:
+        return "-"
+    try:
+        local_value = value.astimezone(ZoneInfo("Europe/Paris"))
+    except Exception:
+        local_value = value
+    return local_value.strftime("%d/%m/%Y %H:%M")
+
+
+def _public_response_admin_label(action: str) -> str:
+    normalized = action.strip().lower()
+    if normalized == "approved":
+        return "valide"
+    if normalized == "rejected":
+        return "refuse"
+    if normalized == "change_requested":
+        return "demande une modification"
+    return normalized or "mis a jour"
+
+
+def _try_send_public_quote_admin_notification_email(
+    db: Session,
+    *,
+    quote: Quote,
+    lines: list[QuoteLine],
+    action: str,
+    client_recipient_email: str | None,
+    client_message_status: str | None,
+    client_message_error: str | None = None,
+) -> dict[str, object]:
+    delivery_error = email_delivery_disabled_reason()
+    now = _utcnow()
+    normalized_action = action.strip().lower()
+    if delivery_error:
+        db.add(
+            QuoteEvent(
+                quote_id=quote.id,
+                event_type="quote_public_admin_notification_email_skipped",
+                actor_type="system",
+                payload={
+                    "action": normalized_action,
+                    "reason": "delivery_disabled",
+                    "detail": delivery_error,
+                },
+                created_at=now,
+            )
+        )
+        db.commit()
+        return {"status": "skipped", "reason": "delivery_disabled", "detail": delivery_error}
+
+    recipients = [
+        str(recipient.email or "").strip().lower()
+        for recipient in resolve_admin_booking_notification_recipients(db, is_cancellation=False)
+        if str(recipient.email or "").strip()
+    ]
+    unique_recipients = list(dict.fromkeys(recipients))
+    if not unique_recipients:
+        db.add(
+            QuoteEvent(
+                quote_id=quote.id,
+                event_type="quote_public_admin_notification_email_skipped",
+                actor_type="system",
+                payload={"action": normalized_action, "reason": "missing_admin_recipient"},
+                created_at=now,
+            )
+        )
+        db.commit()
+        return {"status": "skipped", "reason": "missing_admin_recipient"}
+
+    context = build_quote_email_context(
+        db,
+        quote=quote,
+        lines=lines,
+        recipient_email=client_recipient_email,
+    )
+    recipient_name = str(context.get("recipient_name") or "").strip() or str(
+        context.get("quote_recipient") or ""
+    ).strip() or "Client"
+    admin_url = f"{resolve_frontend_base_url().rstrip('/')}/admin/quotes/{quote.id}"
+    response_label = _public_response_admin_label(normalized_action)
+    response_time = _format_admin_quote_response_time(quote.approved_at or quote.rejected_at or now)
+    message = str(_quote_meta_dict(quote).get(QUOTE_PUBLIC_RESPONSE_LAST_MESSAGE_META_KEY) or "").strip()
+    client_status_label = (client_message_status or "unknown").strip() or "unknown"
+    if client_message_error:
+        client_status_label = f"{client_status_label} ({client_message_error})"
+
+    subject = f"Devis {quote.quote_number} {response_label} par le client"
+    body_lines = [
+        "Bonjour,",
+        "",
+        f"Le devis {quote.quote_number} vient d'etre {response_label} depuis la page client.",
+        "",
+        f"Client: {recipient_name}",
+        f"Email destinataire: {client_recipient_email or '-'}",
+        f"Montant TTC: {_format_admin_quote_amount(quote.total_ttc, quote.currency)}",
+        f"Heure: {response_time} (Europe/Paris)",
+        f"Email de confirmation client: {client_status_label}",
+    ]
+    if message:
+        body_lines.extend(["", "Message client:", message])
+    body_lines.extend(["", f"Ouvrir le devis: {admin_url}"])
+    body = "\n".join(body_lines)
+
+    sent: list[str] = []
+    failed: list[dict[str, str]] = []
+    for admin_email in unique_recipients:
+        try:
+            message_id = send_email(
+                to_email=admin_email,
+                subject=subject,
+                body=body,
+                body_format="TEXT",
+                context=f"QUOTE_PUBLIC_{normalized_action.upper()}_ADMIN",
+                raise_on_failure=True,
+            )
+            if message_id:
+                sent.append(admin_email)
+            else:
+                failed.append({"recipient_email": admin_email, "error": "empty_provider_message_id"})
+        except Exception as exc:
+            failed.append({"recipient_email": admin_email, "error": str(exc)})
+
+    db.add(
+        QuoteEvent(
+            quote_id=quote.id,
+            event_type="quote_public_admin_notification_email_sent" if sent else "quote_public_admin_notification_email_failed",
+            actor_type="system",
+            payload={
+                "action": normalized_action,
+                "sent_recipients": sent,
+                "failed_recipients": failed,
+                "client_recipient_email": client_recipient_email,
+                "client_message_status": client_message_status,
+            },
+            created_at=now,
+        )
+    )
+    db.commit()
+    return {"status": "sent" if sent else "failed", "sent_recipients": sent, "failed_recipients": failed}
 
 
 def _build_payment_schedule_for_quote(db: Session, quote: Quote, *, total_ttc: Decimal) -> list[dict[str, object]]:
@@ -7043,12 +7192,24 @@ def public_approve_quote(
     db.add(quote)
     db.commit()
     db.refresh(quote)
-    _try_send_public_quote_confirmation_email(
+    client_email_result = _try_send_public_quote_confirmation_email(
         db,
         quote=quote,
         lines=lines,
         usage_context=USAGE_CONTEXT_QUOTE_APPROVED,
         kind="quote_public_approved_confirmation",
+    )
+    _try_send_public_quote_admin_notification_email(
+        db,
+        quote=quote,
+        lines=lines,
+        action="approved",
+        client_recipient_email=str(client_email_result.get("recipient_email") or "").strip() or None,
+        client_message_status=str(client_email_result.get("status") or "").strip() or None,
+        client_message_error=str(
+            client_email_result.get("error") or client_email_result.get("detail") or ""
+        ).strip()
+        or None,
     )
     public_bundle = render_quote_document_bundle(db=db, quote=quote, lines=lines, audience=AUDIENCE_PUBLIC_PAGE)
     public_schedule = (
@@ -7097,12 +7258,24 @@ def public_reject_quote(
     db.commit()
     db.refresh(quote)
     lines = _load_quote_lines(db, quote.id)
-    _try_send_public_quote_confirmation_email(
+    client_email_result = _try_send_public_quote_confirmation_email(
         db,
         quote=quote,
         lines=lines,
         usage_context=USAGE_CONTEXT_QUOTE_REJECTED,
         kind="quote_public_rejected_confirmation",
+    )
+    _try_send_public_quote_admin_notification_email(
+        db,
+        quote=quote,
+        lines=lines,
+        action="rejected",
+        client_recipient_email=str(client_email_result.get("recipient_email") or "").strip() or None,
+        client_message_status=str(client_email_result.get("status") or "").strip() or None,
+        client_message_error=str(
+            client_email_result.get("error") or client_email_result.get("detail") or ""
+        ).strip()
+        or None,
     )
     public_bundle = render_quote_document_bundle(db=db, quote=quote, lines=lines, audience=AUDIENCE_PUBLIC_PAGE)
     public_schedule = (
@@ -7153,12 +7326,24 @@ def public_change_request_quote(
     db.commit()
     db.refresh(quote)
     lines = _load_quote_lines(db, quote.id)
-    _try_send_public_quote_confirmation_email(
+    client_email_result = _try_send_public_quote_confirmation_email(
         db,
         quote=quote,
         lines=lines,
         usage_context=USAGE_CONTEXT_QUOTE_CHANGE_REQUESTED,
         kind="quote_public_change_requested_confirmation",
+    )
+    _try_send_public_quote_admin_notification_email(
+        db,
+        quote=quote,
+        lines=lines,
+        action="change_requested",
+        client_recipient_email=str(client_email_result.get("recipient_email") or "").strip() or None,
+        client_message_status=str(client_email_result.get("status") or "").strip() or None,
+        client_message_error=str(
+            client_email_result.get("error") or client_email_result.get("detail") or ""
+        ).strip()
+        or None,
     )
     public_bundle = render_quote_document_bundle(db=db, quote=quote, lines=lines, audience=AUDIENCE_PUBLIC_PAGE)
     public_schedule = (
