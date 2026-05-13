@@ -3249,7 +3249,7 @@ def _extract_document_context(
         language=language,
     )
     current_solfege_slot = _json_object(current_solfege_info.get("selected_slot"))
-    if current_solfege_slot:
+    if current_solfege_info.get("has_current_solfege"):
         selected_solfege_slot = current_solfege_slot
     current_solfege_level = str(current_solfege_info.get("level_code") or "").strip()
     current_solfege_duration = current_solfege_info.get("duration_minutes") or quote.solfege_duration_minutes
