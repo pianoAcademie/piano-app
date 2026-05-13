@@ -2957,9 +2957,6 @@ def _calendar_snapshot_with_current_solfege_block(
         return True
 
     matching_indices = [index for index, block in enumerate(blocks) if _matches_current_solfege(block)]
-    if any(not _solfege_block_is_pending(blocks[index]) for index in matching_indices):
-        snapshot["blocks"] = blocks
-        return snapshot
     if not slot:
         snapshot["blocks"] = blocks
         return snapshot
