@@ -1662,10 +1662,93 @@ def _quote_line_solfege_level(row: QuoteLine) -> str:
     return ""
 
 
+def _selected_solfege_live_series_for_slot(
+    db: Session | None,
+    *,
+    activity_id: UUID,
+    selected_slot: dict[str, object],
+    school_year_label: str | None,
+) -> tuple[list[CourseSession], Location | None]:
+    if db is None:
+        return [], None
+
+    bounds = _school_year_bounds_from_label(school_year_label or "")
+    if bounds is None:
+        return [], None
+
+    try:
+        selected_weekday = int(selected_slot.get("weekday"))
+    except (TypeError, ValueError):
+        return [], None
+    if selected_weekday < 0 or selected_weekday > 6:
+        return [], None
+
+    selected_start_time = str(selected_slot.get("start_time") or selected_slot.get("start") or "").strip()
+    selected_end_time = str(selected_slot.get("end_time") or selected_slot.get("end") or "").strip()
+    if not selected_start_time or not selected_end_time:
+        return [], None
+
+    selected_location_id = _parse_uuid_value(selected_slot.get("location_id"))
+    selected_modality = _public_solfege_mode_semantic(
+        selected_slot.get("modality") or selected_slot.get("location_label") or selected_slot.get("mode")
+    )
+    lower_bound = datetime.combine(bounds[0] - timedelta(days=1), time.min, tzinfo=timezone.utc)
+    upper_bound = datetime.combine(bounds[1] + timedelta(days=2), time.min, tzinfo=timezone.utc)
+    rows = db.execute(
+        select(CourseSession, CourseType, Location)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .where(
+            CourseSession.course_type_id == activity_id,
+            CourseSession.status == SessionStatus.SCHEDULED,
+            CourseSession.start_at_utc >= lower_bound,
+            CourseSession.start_at_utc < upper_bound,
+        )
+        .order_by(CourseSession.start_at_utc.asc())
+    ).all()
+
+    grouped: dict[str, list[CourseSession]] = {}
+    locations_by_group: dict[str, Location] = {}
+    for session_obj, course_type, location in rows:
+        zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
+        local_start = session_obj.start_at_utc.astimezone(zone)
+        local_end = session_obj.end_at_utc.astimezone(zone)
+        if local_start.date() < bounds[0] or local_start.date() > bounds[1]:
+            continue
+        if local_start.weekday() != selected_weekday:
+            continue
+        if local_start.strftime("%H:%M") != selected_start_time or local_end.strftime("%H:%M") != selected_end_time:
+            continue
+        if selected_location_id is not None:
+            if session_obj.location_id != selected_location_id:
+                continue
+        else:
+            session_location_semantic = _public_solfege_mode_semantic(location.name)
+            if selected_modality == "ONLINE" and not (
+                course_type.mode == DeliveryMode.ONLINE or session_location_semantic == "ONLINE"
+            ):
+                continue
+            if selected_modality == "ONSITE" and (
+                course_type.mode == DeliveryMode.ONLINE or session_location_semantic == "ONLINE"
+            ):
+                continue
+
+        group_key = str(session_obj.recurrence_group_id or session_obj.id)
+        grouped.setdefault(group_key, []).append(session_obj)
+        locations_by_group.setdefault(group_key, location)
+
+    if not grouped:
+        return [], None
+
+    best_key = max(grouped, key=lambda key: len(grouped[key]))
+    return sorted(grouped[best_key], key=lambda session_obj: session_obj.start_at_utc), locations_by_group.get(best_key)
+
+
 def _calendar_snapshot_with_selected_solfege_block(
     quote: Quote,
     *,
     lines: list[QuoteLine],
+    db: Session | None = None,
 ) -> dict[str, object]:
     snapshot = deepcopy(_json_object(quote.calendar_snapshot))
     selected_slot = _json_object(quote.selected_solfege_slot)
@@ -1698,14 +1781,31 @@ def _calendar_snapshot_with_selected_solfege_block(
         weekday,
         language=_public_solfege_language(quote.language),
     )
-    bounds = _school_year_bounds_from_label(quote.school_year_label or "")
-    start_date = bounds[0].isoformat() if bounds is not None else ""
-    end_date = bounds[1].isoformat() if bounds is not None else ""
+    live_sessions, live_location = _selected_solfege_live_series_for_slot(
+        db,
+        activity_id=solfege_line.activity_id,
+        selected_slot=selected_slot,
+        school_year_label=quote.school_year_label,
+    )
+    live_dates = []
+    for session_obj in live_sessions:
+        timezone_name = session_obj.timezone or (live_location.timezone if live_location is not None else None)
+        live_dates.append(session_obj.start_at_utc.astimezone(_safe_zoneinfo(timezone_name)).date())
+    start_date = min(live_dates).isoformat() if live_dates else ""
+    end_date = max(live_dates).isoformat() if live_dates else ""
+    line_meta = _json_object(solfege_line.meta)
+    source_key = str(line_meta.get("typeform_automatic_line") or "").strip()
+    recommendation_key = f"{solfege_line.activity_id}:{source_key}" if source_key else str(solfege_line.activity_id)
+    series_key = str(live_sessions[0].recurrence_group_id or live_sessions[0].id) if live_sessions else ""
+    location_id = str(live_location.id) if live_location is not None else str(selected_slot.get("location_id") or "").strip()
+    location_label = str(live_location.name) if live_location is not None else str(selected_slot.get("location_label") or "").strip()
     block = {
         "activity_id": str(solfege_line.activity_id),
         "activity_label": solfege_line.title,
-        "location_id": selected_slot.get("location_id") or None,
-        "location_label": str(selected_slot.get("location_label") or "").strip() or None,
+        "location_id": location_id or None,
+        "location_label": location_label or None,
+        "recommendation_key": recommendation_key,
+        "series_key": series_key or None,
         "weekday": weekday,
         "weekday_label": weekday_label or None,
         "recurrence_frequency": "weekly",
@@ -1715,7 +1815,8 @@ def _calendar_snapshot_with_selected_solfege_block(
         "end_time": str(selected_slot.get("end_time") or selected_slot.get("end") or "").strip(),
         "duration_minutes": selected_slot.get("duration_minutes") or solfege_line.duration_minutes,
         "modality": selected_slot.get("modality") or None,
-        "selection_pending": False,
+        "sessions_count": len(live_sessions) if live_sessions else None,
+        "selection_pending": not bool(live_sessions),
         "pending_solfege_level": line_solfege_level or selected_slot.get("level_code") or quote.estimated_solfege_level or None,
         "pending_slot_options": [],
         "source": "selected_solfege_slot",
@@ -2356,7 +2457,7 @@ def _load_quote_events(db: Session, quote_id: UUID) -> list[QuoteEventOut]:
 def _quote_detail_out(db: Session, quote: Quote) -> QuoteDetailOut:
     lines = _load_quote_lines(db, quote.id)
     events = _load_quote_events(db, quote.id)
-    calendar_snapshot = _calendar_snapshot_with_selected_solfege_block(quote, lines=lines)
+    calendar_snapshot = _calendar_snapshot_with_selected_solfege_block(quote, lines=lines, db=db)
     calendar_snapshot = _calendar_snapshot_with_planning_sessions(db, calendar_snapshot)
     return QuoteDetailOut(
         quote=_quote_out(quote, calendar_snapshot=calendar_snapshot),

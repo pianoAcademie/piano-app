@@ -453,6 +453,15 @@ function sameMoneyValue(left: string | null | undefined, right: string | null | 
   return Math.abs(leftNumber - rightNumber) < 0.005;
 }
 
+function readStringMeta(meta: Record<string, unknown> | null | undefined, key: string): string {
+  const value = meta?.[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function planningKeyFromActivityAndSource(activityId: string, source: string): string {
+  return source ? `${activityId}:${source}` : activityId;
+}
+
 function planningSummaryForLine(
   line: EditableLine,
   planningByActivityId: Record<string, { plannedQuantity: number; pendingSelection: boolean }>,
@@ -464,7 +473,9 @@ function planningSummaryForLine(
   if (!activityId) {
     return { plannedQuantity: 0, pendingSelection: false };
   }
-  const summary = planningByActivityId[activityId];
+  const source = readStringMeta(line.meta, "typeform_automatic_line");
+  const keyedSummary = source ? planningByActivityId[planningKeyFromActivityAndSource(activityId, source)] : undefined;
+  const summary = keyedSummary ?? planningByActivityId[activityId];
   if (!summary) {
     return { plannedQuantity: 0, pendingSelection: false };
   }

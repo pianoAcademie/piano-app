@@ -205,6 +205,7 @@ export async function loadLivePlanningMatchForBlock({
       location_id: session.location_id,
       location_label: session.location_label,
       modality: block.modality || null,
+      recommendation_key: block.recommendation_key || null,
       weekday: local.weekday,
       weekday_label: block.weekday_label || null,
       series_key: seriesKey || null,

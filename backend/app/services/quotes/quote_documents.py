@@ -1562,6 +1562,7 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
                 "activity_label": activity.name,
                 "location_id": str(location.id),
                 "location_label": location.name,
+                "recommendation_key": block.get("recommendation_key") or None,
                 "series_key": str(session_obj.recurrence_group_id or session_obj.id),
                 "weekday": local_start.weekday(),
                 "weekday_label": DAY_LABELS_FR.get(local_start.weekday(), local_start.strftime("%A")),

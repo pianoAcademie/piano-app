@@ -95,7 +95,10 @@ class QuotePublicSolfegeSelectionTests(unittest.TestCase):
         self.assertEqual(block["activity_label"], "Cours de solfège - Niveau 1")
         self.assertEqual(block["location_label"], "En ligne")
         self.assertEqual(block["start_time"], "17:05")
-        self.assertFalse(block["selection_pending"])
+        self.assertEqual(block["recommendation_key"], "activity-solfege-id:online_solfege")
+        self.assertTrue(block["selection_pending"])
+        self.assertNotIn("start_date", block)
+        self.assertNotIn("end_date", block)
 
     def test_apply_selected_solfege_slot_updates_pending_block_in_snapshot(self) -> None:
         snapshot = {
