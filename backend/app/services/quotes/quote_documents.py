@@ -1443,6 +1443,18 @@ def _parse_iso_date(value: Any) -> date | None:
         return None
 
 
+def _school_year_bounds_from_label(label: str | None) -> tuple[date, date] | None:
+    normalized = (label or "").strip()
+    match = re.fullmatch(r"(\d{4})\s*[-/]\s*(\d{4})", normalized)
+    if match is None:
+        return None
+    start_year = int(match.group(1))
+    end_year = int(match.group(2))
+    if end_year < start_year:
+        return None
+    return date(start_year, 9, 1), date(end_year, 8, 31)
+
+
 def _safe_zoneinfo(value: str | None) -> ZoneInfo:
     try:
         return ZoneInfo(value or "Europe/Paris")
@@ -1476,6 +1488,17 @@ def _block_is_online(block: dict[str, Any]) -> bool:
         " ".join(str(block.get(key) or "") for key in ("modality", "location_label", "activity_label")),
     ).encode("ascii", "ignore").decode("ascii").lower()
     return "online" in haystack or "ligne" in haystack
+
+
+def _solfege_mode_semantic(value: Any) -> str:
+    normalized = _searchable_text(value)
+    if normalized in {"online", "en ligne", "cours en ligne", "mode en ligne"}:
+        return "ONLINE"
+    if normalized in {"presentiel", "onsite", "cours en presentiel", "mode presentiel"}:
+        return "ONSITE"
+    if normalized in {"hybride", "hybrid"}:
+        return "HYBRID"
+    return normalized
 
 
 def _session_snapshot_matches_block(session: dict[str, Any], block: dict[str, Any]) -> bool:
@@ -1570,6 +1593,108 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
             }
         )
     return sessions
+
+
+def _selected_solfege_live_series_for_slot(
+    db: Session | None,
+    *,
+    activity_id: UUID,
+    selected_slot: dict[str, Any],
+    school_year_label: str | None,
+) -> tuple[list[tuple[CourseSession, CourseType, Location]], Location | None]:
+    if db is None:
+        return [], None
+    bounds = _school_year_bounds_from_label(school_year_label)
+    if bounds is None:
+        return [], None
+    try:
+        selected_weekday = int(selected_slot.get("weekday"))
+    except (TypeError, ValueError):
+        return [], None
+    if selected_weekday < 0 or selected_weekday > 6:
+        return [], None
+    selected_start_time = str(selected_slot.get("start_time") or selected_slot.get("start") or "").strip()
+    selected_end_time = str(selected_slot.get("end_time") or selected_slot.get("end") or "").strip()
+    if not selected_start_time or not selected_end_time:
+        return [], None
+
+    selected_location_id = _parse_uuid(selected_slot.get("location_id"))
+    selected_modality = _solfege_mode_semantic(
+        selected_slot.get("modality") or selected_slot.get("location_label") or selected_slot.get("mode")
+    )
+    lower_bound = datetime.combine(bounds[0] - timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+    upper_bound = datetime.combine(bounds[1] + timedelta(days=2), datetime.min.time(), tzinfo=timezone.utc)
+    rows = db.execute(
+        select(CourseSession, CourseType, Location)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .where(
+            CourseSession.course_type_id == activity_id,
+            CourseSession.status == SessionStatus.SCHEDULED,
+            CourseSession.start_at_utc >= lower_bound,
+            CourseSession.start_at_utc < upper_bound,
+        )
+        .order_by(CourseSession.start_at_utc.asc())
+    ).all()
+
+    grouped: dict[str, list[tuple[CourseSession, CourseType, Location]]] = {}
+    locations_by_group: dict[str, Location] = {}
+    for session_obj, activity, location in rows:
+        zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
+        local_start = session_obj.start_at_utc.astimezone(zone)
+        local_end = session_obj.end_at_utc.astimezone(zone)
+        if local_start.date() < bounds[0] or local_start.date() > bounds[1]:
+            continue
+        if local_start.weekday() != selected_weekday:
+            continue
+        if local_start.strftime("%H:%M") != selected_start_time or local_end.strftime("%H:%M") != selected_end_time:
+            continue
+        if selected_location_id is not None:
+            if session_obj.location_id != selected_location_id:
+                continue
+        else:
+            session_location_semantic = _solfege_mode_semantic(location.name)
+            course_modality = _course_type_modality(activity, location)
+            if selected_modality == "ONLINE" and course_modality != "ONLINE" and session_location_semantic != "ONLINE":
+                continue
+            if selected_modality == "ONSITE" and (course_modality == "ONLINE" or session_location_semantic == "ONLINE"):
+                continue
+
+        group_key = str(session_obj.recurrence_group_id or session_obj.id)
+        grouped.setdefault(group_key, []).append((session_obj, activity, location))
+        locations_by_group.setdefault(group_key, location)
+
+    if not grouped:
+        return [], None
+    best_key = max(grouped, key=lambda key: len(grouped[key]))
+    return sorted(grouped[best_key], key=lambda row: row[0].start_at_utc), locations_by_group.get(best_key)
+
+
+def _session_snapshot_from_live_row(
+    session_obj: CourseSession,
+    activity: CourseType,
+    location: Location,
+    *,
+    recommendation_key: str,
+) -> dict[str, Any]:
+    zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
+    local_start = session_obj.start_at_utc.astimezone(zone)
+    local_end = session_obj.end_at_utc.astimezone(zone)
+    return {
+        "date": local_start.date().isoformat(),
+        "start_time": local_start.strftime("%H:%M"),
+        "end_time": local_end.strftime("%H:%M"),
+        "duration_minutes": int((local_end - local_start).total_seconds() // 60),
+        "activity_id": str(activity.id),
+        "activity_label": activity.name,
+        "location_id": str(location.id),
+        "location_label": location.name,
+        "recommendation_key": recommendation_key,
+        "series_key": str(session_obj.recurrence_group_id or session_obj.id),
+        "weekday": local_start.weekday(),
+        "weekday_label": DAY_LABELS_FR.get(local_start.weekday(), local_start.strftime("%A")),
+        "modality": _course_type_modality(activity, location),
+    }
 
 
 def _calendar_session_dedupe_key(item: dict[str, Any]) -> tuple[str, str, str, str]:
@@ -2799,6 +2924,8 @@ def _current_solfege_document_info(
 def _calendar_snapshot_with_current_solfege_block(
     calendar_snapshot: dict[str, Any],
     *,
+    db: Session | None = None,
+    quote: Quote | None = None,
     lines: list[QuoteLine],
     selected_solfege_slot: dict[str, Any] | None = None,
     language: str | None = None,
@@ -2860,13 +2987,39 @@ def _calendar_snapshot_with_current_solfege_block(
         level_suffix = f" - Niveau {line_level}" if line_level else ""
         activity_label = f"{_quote_doc_text('course_solfege', language=language)}{level_suffix}"
 
+    recommendation_key = str(base_block.get("recommendation_key") or "").strip()
+    if not recommendation_key:
+        line_meta = _json_object(getattr(line, "meta", None))
+        source_key = str(line_meta.get("typeform_automatic_line") or "").strip()
+        recommendation_key = f"{line_activity_id}:{source_key}" if source_key else line_activity_id
+
+    live_rows: list[tuple[CourseSession, CourseType, Location]] = []
+    live_location: Location | None = None
+    parsed_activity_id = _parse_uuid(line_activity_id)
+    if parsed_activity_id is not None and quote is not None:
+        live_rows, live_location = _selected_solfege_live_series_for_slot(
+            db,
+            activity_id=parsed_activity_id,
+            selected_slot=slot,
+            school_year_label=getattr(quote, "school_year_label", None),
+        )
+    live_dates: list[date] = []
+    for session_obj, _activity, location in live_rows:
+        zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
+        live_dates.append(session_obj.start_at_utc.astimezone(zone).date())
+    if live_rows and live_location is not None:
+        location_label = live_location.name
+        modality = _course_type_modality(live_rows[0][1], live_location)
+
     normalized_block = dict(base_block)
     normalized_block.update(
         {
             "activity_id": line_activity_id or base_block.get("activity_id"),
             "activity_label": activity_label,
-            "location_id": slot.get("location_id") or base_block.get("location_id"),
+            "location_id": str(live_location.id) if live_location is not None else slot.get("location_id") or base_block.get("location_id"),
             "location_label": location_label or "-",
+            "recommendation_key": recommendation_key or None,
+            "series_key": str(live_rows[0][0].recurrence_group_id or live_rows[0][0].id) if live_rows else None,
             "weekday": weekday,
             "weekday_label": str(slot.get("weekday_label") or "").strip()
             or _weekday_label(weekday, language=language),
@@ -2874,8 +3027,13 @@ def _calendar_snapshot_with_current_solfege_block(
             "end_time": end_time,
             "duration_minutes": duration_minutes,
             "modality": modality,
-            "selection_pending": False,
+            "start_date": min(live_dates).isoformat() if live_dates else None,
+            "end_date": max(live_dates).isoformat() if live_dates else None,
+            "sessions_count": len(live_rows) if live_rows else None,
+            "selection_pending": not bool(live_rows),
             "pending_solfege_level": line_level or base_block.get("pending_solfege_level") or slot.get("level_code"),
+            "pending_slot_options": [] if live_rows else base_block.get("pending_slot_options") or [],
+            "source": "selected_solfege_slot",
         }
     )
     normalized_block = {key: value for key, value in normalized_block.items() if value not in ("", None)}
@@ -2885,6 +3043,35 @@ def _calendar_snapshot_with_current_solfege_block(
     else:
         blocks.append(normalized_block)
     snapshot["blocks"] = blocks
+    sessions: list[dict[str, Any]] = []
+    for raw_session in _json_list(snapshot.get("sessions")):
+        if not isinstance(raw_session, dict):
+            continue
+        if line_activity_id and str(raw_session.get("activity_id") or "").strip() == line_activity_id:
+            continue
+        sessions.append(dict(raw_session))
+    for session_obj, activity, location in live_rows:
+        sessions.append(
+            _session_snapshot_from_live_row(
+                session_obj,
+                activity,
+                location,
+                recommendation_key=recommendation_key,
+            )
+        )
+    sessions, _ = _dedupe_calendar_sessions(sessions)
+    sessions.sort(
+        key=lambda item: (
+            str(item.get("date") or ""),
+            str(item.get("start_time") or ""),
+            str(item.get("activity_label") or ""),
+        )
+    )
+    snapshot["sessions"] = sessions
+    snapshot["sessions_count"] = len(sessions)
+    snapshot_solfege = _json_object(snapshot.get("solfege"))
+    snapshot_solfege["selected_slot"] = slot
+    snapshot["solfege"] = snapshot_solfege
     return snapshot
 
 
@@ -2948,6 +3135,14 @@ def _extract_document_context(
     if not selected_solfege_slot:
         selected_solfege_slot = solfege_selected_slot
 
+    calendar_snapshot = _calendar_snapshot_with_current_solfege_block(
+        calendar_snapshot,
+        db=db,
+        quote=quote,
+        lines=lines,
+        selected_solfege_slot=selected_solfege_slot,
+        language=language,
+    )
     pending_solfege_info = _solfege_pending_block_info(calendar_snapshot, db=db, language=language)
     current_solfege_info = _current_solfege_document_info(
         lines=lines,
@@ -2962,12 +3157,6 @@ def _extract_document_context(
         selected_solfege_slot = current_solfege_slot
     current_solfege_level = str(current_solfege_info.get("level_code") or "").strip()
     current_solfege_duration = current_solfege_info.get("duration_minutes") or quote.solfege_duration_minutes
-    calendar_snapshot = _calendar_snapshot_with_current_solfege_block(
-        calendar_snapshot,
-        lines=lines,
-        selected_solfege_slot=selected_solfege_slot,
-        language=language,
-    )
     activity_solfege = [item for item in _json_list(meta.get("activity_solfege")) if isinstance(item, dict)]
     masterclass_blocks_meta = [item for item in _json_list(meta.get("masterclass_blocks")) if isinstance(item, dict)]
     masterclass_blocks_calendar = _masterclass_blocks_from_calendar_snapshot(calendar_snapshot, language=language)
