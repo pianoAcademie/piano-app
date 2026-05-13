@@ -1781,6 +1781,47 @@ def _client_out_label(client: User) -> tuple[str, str]:
     return display, subtitle or None
 
 
+def _find_existing_adult_parent_client(db: Session, normalized: dict[str, object]) -> User | None:
+    parent_email = _lower(normalized.get("parent_email"))
+    parent_phone = _digits(normalized.get("parent_phone"))
+
+    base_filters = [
+        User.role == UserRole.CLIENT,
+        User.client_kind == ClientKind.ADULT,
+        User.client_status != ClientStatus.ARCHIVED,
+    ]
+    if parent_email:
+        row = db.scalar(
+            select(User)
+            .where(
+                *base_filters,
+                or_(
+                    func.lower(User.email) == parent_email,
+                    func.lower(func.coalesce(User.contact_email, "")) == parent_email,
+                ),
+            )
+            .order_by(User.created_at.desc())
+            .limit(1)
+        )
+        if row is not None:
+            return row
+
+    if not parent_phone:
+        return None
+
+    adults = db.scalars(select(User).where(*base_filters).order_by(User.created_at.desc())).all()
+    for adult in adults:
+        phones = {
+            _digits(adult.phone),
+            _digits(adult.mobile_phone_1),
+            _digits(adult.mobile_phone_2),
+            _digits(adult.home_phone),
+        }
+        if parent_phone in {phone for phone in phones if phone}:
+            return adult
+    return None
+
+
 def _collect_client_candidates(db: Session, normalized: dict[str, object]) -> list[dict[str, object]]:
     parent_email = _lower(normalized.get("parent_email"))
     parent_phone = _digits(normalized.get("parent_phone"))
@@ -4966,6 +5007,7 @@ def _create_or_reuse_adult_prospect(
     email = _lower(normalized.get("parent_email"))
     if not email:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Email parent/adulte manquant pour creer le prospect")
+    existing_parent_client = _find_existing_adult_parent_client(db, normalized)
     existing = db.scalar(
         select(Prospect)
         .where(
@@ -4975,16 +5017,36 @@ def _create_or_reuse_adult_prospect(
         .limit(1)
     )
     if existing is not None:
+        if existing_parent_client is not None:
+            existing.linked_client_id = existing.linked_client_id or existing_parent_client.id
+            existing.first_name = existing_parent_client.first_name or existing.first_name
+            existing.last_name = existing_parent_client.last_name or existing.last_name
+            existing.phone = existing_parent_client.mobile_phone_1 or existing_parent_client.phone or existing.phone
+            meta = _json_object(existing.meta)
+            meta["linked_parent_client_id"] = str(existing_parent_client.id)
+            existing.meta = meta
+            existing.updated_at = _utcnow()
+            db.add(existing)
+            db.commit()
+            db.refresh(existing)
         return existing
 
+    parent_first_name = _text(normalized.get("parent_first_name")) or None
+    parent_last_name = _text(normalized.get("parent_last_name")) or None
+    parent_phone = _text(normalized.get("parent_phone")) or None
+    if existing_parent_client is not None:
+        parent_first_name = existing_parent_client.first_name or parent_first_name
+        parent_last_name = existing_parent_client.last_name or parent_last_name
+        parent_phone = existing_parent_client.mobile_phone_1 or existing_parent_client.phone or parent_phone
+
     row = Prospect(
-        linked_client_id=None,
+        linked_client_id=existing_parent_client.id if existing_parent_client is not None else None,
         parent_prospect_id=None,
         status="active",
-        first_name=_text(normalized.get("parent_first_name")) or None,
-        last_name=_text(normalized.get("parent_last_name")) or None,
+        first_name=parent_first_name,
+        last_name=parent_last_name,
         email=email,
-        phone=_text(normalized.get("parent_phone")) or None,
+        phone=parent_phone,
         source=f"typeform:{config.source_code}",
         notes=_text(normalized.get("notes")) or None,
         meta={
@@ -4992,6 +5054,7 @@ def _create_or_reuse_adult_prospect(
             "typeform_intake_id": str(intake.id),
             "requested_location": normalized.get("requested_location"),
             "requested_formula_type": normalized.get("requested_formula_type"),
+            "linked_parent_client_id": str(existing_parent_client.id) if existing_parent_client is not None else None,
         },
         created_at=_utcnow(),
         updated_at=_utcnow(),
@@ -5043,7 +5106,7 @@ def _create_or_reuse_child_prospect(
         notes=_text(normalized.get("notes")) or None,
         meta={
             "prospect_type": "child",
-            "parent_referent_mode": "new_parent",
+            "parent_referent_mode": "existing_parent" if parent.linked_client_id is not None else "new_parent",
             "child": {
                 "first_name": child_first_name,
                 "last_name": child_last_name,

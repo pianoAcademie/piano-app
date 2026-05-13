@@ -15,6 +15,7 @@ from app.api.routes.typeform_intakes import (
     CLIENT_MODE_NEW_PARENT_CHILD,
     _default_resolution,
     _extract_estimated_solfege_level,
+    _find_existing_adult_parent_client,
     _future_school_year_candidate_configs,
     _intake_list_out_fast,
     _normalize_payload,
@@ -140,6 +141,46 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
 
         self.assertEqual(resolution["client_resolution"]["mode"], CLIENT_MODE_EXISTING_FAMILY)
         self.assertEqual(resolution["client_resolution"]["selected_family_child_client_id"], str(child_client_id))
+
+    def test_existing_parent_client_can_be_found_by_email_or_phone(self) -> None:
+        email_parent = SimpleNamespace(id=uuid4(), first_name="Myriam", last_name="Demian")
+        phone_parent = SimpleNamespace(
+            id=uuid4(),
+            phone=None,
+            mobile_phone_1="+33 6 86 17 47 61",
+            mobile_phone_2=None,
+            home_phone=None,
+        )
+
+        class EmailDb:
+            def scalar(self, _stmt: object) -> object:
+                return email_parent
+
+        class PhoneScalars:
+            def all(self) -> list[object]:
+                return [phone_parent]
+
+        class PhoneDb:
+            def scalar(self, _stmt: object) -> None:
+                return None
+
+            def scalars(self, _stmt: object) -> PhoneScalars:
+                return PhoneScalars()
+
+        self.assertIs(
+            _find_existing_adult_parent_client(  # type: ignore[arg-type]
+                EmailDb(),
+                {"parent_email": "myriamthera@hotmail.com"},
+            ),
+            email_parent,
+        )
+        self.assertIs(
+            _find_existing_adult_parent_client(  # type: ignore[arg-type]
+                PhoneDb(),
+                {"parent_phone": "+33686174761"},
+            ),
+            phone_parent,
+        )
 
     def test_intake_list_fast_uses_stored_fields_without_reanalysis(self) -> None:
         config_id = uuid4()
