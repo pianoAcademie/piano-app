@@ -16658,3 +16658,234 @@ button.danger:focus-visible {
     min-width: 0;
   }
 }
+
+.reorg-hero,
+.reorg-toolbar,
+.reorg-slot-header,
+.reorg-filters {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.reorg-hero p,
+.reorg-toolbar p,
+.reorg-empty p {
+  max-width: 760px;
+  margin: 6px 0 0;
+  color: #6f6255;
+}
+
+.reorg-filters {
+  flex-wrap: wrap;
+  align-items: end;
+}
+
+.reorg-filters label,
+.reorg-scope {
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+  color: #4c3e31;
+  font-weight: 700;
+}
+
+.reorg-filters select,
+.reorg-scope select {
+  width: 100%;
+  min-height: 42px;
+}
+
+.reorg-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.reorg-summary-grid .card {
+  display: grid;
+  gap: 6px;
+}
+
+.reorg-summary-grid span {
+  color: #6f6255;
+  font-size: 0.9rem;
+}
+
+.reorg-summary-grid strong {
+  color: #1f2a3a;
+  font-size: 1.25rem;
+}
+
+.reorg-workspace {
+  display: grid;
+  gap: 18px;
+}
+
+.reorg-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.reorg-slot {
+  display: grid;
+  gap: 12px;
+  min-height: 260px;
+  padding: 14px;
+  border: 1px solid #dce5ef;
+  border-radius: 8px;
+  background: #fbfdff;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.reorg-slot.drop-enabled {
+  background: #fffdf8;
+}
+
+.reorg-slot.drag-over {
+  border-color: #c67b2b;
+  box-shadow: 0 12px 28px rgba(198, 123, 43, 0.18);
+  transform: translateY(-1px);
+}
+
+.reorg-slot-header strong,
+.reorg-slot-header span {
+  display: block;
+}
+
+.reorg-slot-header strong {
+  color: #142033;
+  font-size: 1rem;
+}
+
+.reorg-slot-header span {
+  margin-top: 3px;
+  color: #5c6b7f;
+  font-size: 0.9rem;
+}
+
+.reorg-capacity {
+  min-width: 58px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  text-align: center;
+  font-weight: 800;
+}
+
+.reorg-capacity.available {
+  background: #e1f3e7;
+  color: #28613d;
+}
+
+.reorg-capacity.busy {
+  background: #f8e6bd;
+  color: #7b4a00;
+}
+
+.reorg-capacity.full {
+  background: #f9dcdc;
+  color: #9a2424;
+}
+
+.reorg-slot-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.reorg-slot-meta div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.reorg-slot-meta dt {
+  color: #637083;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.reorg-slot-meta dd {
+  margin: 0;
+  color: #233044;
+  overflow-wrap: anywhere;
+}
+
+.reorg-student-list {
+  display: grid;
+  gap: 8px;
+}
+
+.reorg-student-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 12px;
+  border: 1px solid #d7e0ec;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #172338;
+  cursor: grab;
+  font: inherit;
+  font-weight: 800;
+  text-align: left;
+}
+
+.reorg-student-card:active {
+  cursor: grabbing;
+}
+
+.reorg-student-card small {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #edf3fb;
+  color: #52627a;
+  font-size: 0.72rem;
+}
+
+.reorg-slot-empty {
+  margin: 0;
+  padding: 14px;
+  border: 1px dashed #cfdae8;
+  border-radius: 8px;
+  color: #718096;
+}
+
+.reorg-empty {
+  display: grid;
+  gap: 6px;
+}
+
+@media (max-width: 980px) {
+  .reorg-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .reorg-hero,
+  .reorg-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 680px) {
+  .reorg-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .reorg-board {
+    grid-template-columns: 1fr;
+  }
+}

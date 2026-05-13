@@ -3279,6 +3279,50 @@ export async function adminRemoveClientFromSessionAction(formData: FormData): Pr
   redirect(appendQueryMessage(returnTo, "ok", t("admin.planning_action.student_removed_from_slot")));
 }
 
+export async function movePlanningReorganizationBookingAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+
+  const returnTo = safeAdminReturnPath(formData, "/admin/planning-reorganization");
+  const bookingId = String(formData.get("booking_id") ?? "").trim();
+  const targetSessionId = String(formData.get("target_session_id") ?? "").trim();
+  const scopeRaw = String(formData.get("scope") ?? "single").trim();
+  const scope = scopeRaw === "series_future" ? "series_future" : "single";
+
+  if (!bookingId || !targetSessionId) {
+    redirect(appendQueryMessage(returnTo, "error", "Deplacement impossible : eleve ou creneau manquant."));
+  }
+
+  const result = await backendRequest<{
+    moved_count: number;
+    skipped_count: number;
+    details: string[];
+  }>(
+    "/api/v1/admin/planning-reorganization/move-booking",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        booking_id: bookingId,
+        target_session_id: targetSessionId,
+        scope,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/planning-reorganization");
+  revalidatePath("/admin");
+  const details = result.data.details.length ? ` (${result.data.details.join(" ; ")})` : "";
+  const message = `${result.data.moved_count} deplacement(s), ${result.data.skipped_count} ignore(s)${details}`;
+  redirect(appendQueryMessage(returnTo, result.data.moved_count > 0 ? "ok" : "error", message));
+}
+
 export async function adminUpdateSessionAttendanceAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

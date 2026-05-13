@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from calendar import monthrange
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 import json
 import logging
 import re
@@ -90,6 +90,12 @@ from app.schemas.admin import (
     AdminPlanningSimulationOut,
     AdminPlanningSimulationSlotOut,
     AdminPlanningSimulationSummaryOut,
+    AdminPlanningReorganizationBookingOut,
+    AdminPlanningReorganizationLocationOut,
+    AdminPlanningReorganizationMoveOut,
+    AdminPlanningReorganizationMoveRequest,
+    AdminPlanningReorganizationOut,
+    AdminPlanningReorganizationSessionOut,
     AdminPlanningSettingsUpdateRequest,
     AdminProfessorOut,
     AdminSessionBookingCreateRequest,
@@ -428,6 +434,191 @@ def _to_admin_session_booking_out(db: Session, booking: Booking, client: User) -
         waitlist_position=_waitlist_position(db, booking),
         student_note=booking.student_note,
     )
+
+
+def _school_year_label_for_day(value: date) -> str:
+    if value.month >= 8:
+        return f"{value.year}-{value.year + 1}"
+    return f"{value.year - 1}-{value.year}"
+
+
+def _school_year_bounds_utc(label: str) -> tuple[datetime, datetime]:
+    match = re.match(r"^\s*(20\d{2})\s*[-/]\s*(20\d{2})\s*$", label or "")
+    if match is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid school year")
+    start_year = int(match.group(1))
+    end_year = int(match.group(2))
+    if end_year != start_year + 1:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid school year")
+    return (
+        datetime(start_year, 8, 1, tzinfo=timezone.utc),
+        datetime(end_year, 8, 1, tzinfo=timezone.utc),
+    )
+
+
+def _available_school_years(db: Session) -> list[str]:
+    starts = db.scalars(select(CourseSession.start_at_utc).order_by(CourseSession.start_at_utc.desc()).limit(3000)).all()
+    labels = sorted({_school_year_label_for_day(start.astimezone(timezone.utc).date()) for start in starts}, reverse=True)
+    if "2026-2027" not in labels:
+        labels.insert(0, "2026-2027")
+    return labels or ["2026-2027"]
+
+
+def _planning_reorganization_locations(
+    db: Session,
+    *,
+    season_start_utc: datetime,
+    season_end_utc: datetime,
+) -> list[Location]:
+    rows = db.scalars(
+        select(Location)
+        .join(CourseSession, CourseSession.location_id == Location.id)
+        .where(
+            CourseSession.start_at_utc >= season_start_utc,
+            CourseSession.start_at_utc < season_end_utc,
+        )
+        .distinct()
+        .order_by(Location.name.asc())
+    ).all()
+    if rows:
+        return rows
+    return db.scalars(select(Location).where(Location.active.is_(True)).order_by(Location.name.asc())).all()
+
+
+def _planning_reorganization_available_days(
+    db: Session,
+    *,
+    location_id: UUID,
+    season_start_utc: datetime,
+    season_end_utc: datetime,
+) -> list[date]:
+    rows = db.execute(
+        select(CourseSession.start_at_utc, CourseSession.timezone)
+        .where(
+            CourseSession.location_id == location_id,
+            CourseSession.start_at_utc >= season_start_utc,
+            CourseSession.start_at_utc < season_end_utc,
+        )
+        .order_by(CourseSession.start_at_utc.asc())
+    ).all()
+    return sorted(
+        {
+            _local_date_in_timezone(start_at, _normalize_session_timezone(timezone_name or "Europe/Paris"))
+            for start_at, timezone_name in rows
+        }
+    )
+
+
+def _planning_reorganization_session_out(
+    session_obj: CourseSession,
+    *,
+    course_type: CourseType,
+    location: Location,
+    professor: Professor | None,
+    substitute_professor: Professor | None,
+    booked_count: int,
+    bookings: list[AdminPlanningReorganizationBookingOut],
+) -> AdminPlanningReorganizationSessionOut:
+    return AdminPlanningReorganizationSessionOut(
+        id=session_obj.id,
+        title=session_obj.title,
+        type_label=_session_type_label(session_obj, course_type=course_type, location=location),
+        location_id=session_obj.location_id,
+        location_label=_session_location_label(location),
+        teacher_display_name=_session_teacher_display_name(substitute_professor or professor),
+        start_at_utc=session_obj.start_at_utc,
+        end_at_utc=session_obj.end_at_utc,
+        timezone=session_obj.timezone,
+        capacity_max=session_obj.capacity_max,
+        booked_count=booked_count,
+        recurrence_group_id=session_obj.recurrence_group_id,
+        recurrence_rule=session_obj.recurrence_rule,
+        status=session_obj.status,
+        bookings=bookings,
+    )
+
+
+def _copy_booking_payload(source: Booking, target: Booking) -> None:
+    target.client_plan_subscription_id = source.client_plan_subscription_id
+    target.status = source.status
+    target.booked_at = source.booked_at
+    target.cancelled_at = None
+    target.cancellation_reason = None
+    target.price_excl_vat_snapshot = source.price_excl_vat_snapshot
+    target.vat_rate_snapshot = source.vat_rate_snapshot
+    target.vat_amount_snapshot = source.vat_amount_snapshot
+    target.total_incl_vat_snapshot = source.total_incl_vat_snapshot
+    target.currency_snapshot = source.currency_snapshot
+    target.student_note = source.student_note
+
+
+def _move_planning_reorganization_booking_occurrence(
+    db: Session,
+    *,
+    booking: Booking,
+    source_session: CourseSession,
+    target_session: CourseSession,
+    now: datetime,
+) -> tuple[bool, str | None]:
+    if source_session.id == target_session.id:
+        return False, "Eleve deja sur ce creneau"
+    if booking.status not in BOOKING_STATUSES_ACTIVE:
+        return False, "Reservation inactive ignoree"
+    if target_session.status != SessionStatus.SCHEDULED:
+        return False, "Creneau cible non planifie"
+
+    target_course_type = db.scalar(select(CourseType).where(CourseType.id == target_session.course_type_id))
+    if target_course_type is None:
+        return False, "Activite du creneau cible introuvable"
+    if not bool(target_course_type.allows_student_bookings):
+        return False, "Creneau cible sans inscription eleve"
+
+    existing_target_booking = db.scalar(
+        select(Booking)
+        .where(
+            Booking.session_id == target_session.id,
+            Booking.user_id == booking.user_id,
+        )
+        .with_for_update()
+    )
+    if existing_target_booking is not None and existing_target_booking.id != booking.id:
+        if existing_target_booking.status != BookingStatus.CANCELLED:
+            return False, "Eleve deja inscrit sur le creneau cible"
+        target_booking = existing_target_booking
+    else:
+        target_booking = booking
+
+    if booking.status in BOOKING_STATUSES_COUNTED_AS_RESERVED:
+        reserved_count = _booked_count_by_session(db, target_session.id)
+        if reserved_count >= target_session.capacity_max and target_booking.id == booking.id:
+            return False, "Creneau cible complet"
+        if reserved_count >= target_session.capacity_max and target_booking.id != booking.id:
+            return False, "Creneau cible complet"
+
+    if target_booking.id == booking.id:
+        booking.session_id = target_session.id
+        moved_booking = booking
+    else:
+        _copy_booking_payload(booking, target_booking)
+        booking.status = BookingStatus.CANCELLED
+        booking.cancelled_at = now
+        booking.cancellation_reason = "ADMIN_MOVED_TO_ANOTHER_SLOT"
+        skip_pending_reminders_for_booking(
+            db,
+            booking_id=booking.id,
+            reason="Booking moved by admin",
+            now=now,
+        )
+        moved_booking = target_booking
+
+    if moved_booking.status == BookingStatus.BOOKED:
+        ensure_booking_reminder(
+            db,
+            booking=moved_booking,
+            session_obj=target_session,
+            now=now,
+        )
+    return True, None
 
 
 def _to_planning_settings_out(config: PlanningConfig, *, location_name: str) -> AdminPlanningSettingsOut:
@@ -2449,6 +2640,230 @@ def get_planning_simulation(
             quote_only_slot_count=quote_only_slot_count,
         ),
         slots=slot_payloads,
+    )
+
+
+@router.get("/planning-reorganization", response_model=AdminPlanningReorganizationOut)
+def get_planning_reorganization_day(
+    school_year: str | None = None,
+    location_id: UUID | None = None,
+    day: date | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
+) -> AdminPlanningReorganizationOut:
+    school_years = _available_school_years(db)
+    selected_school_year = (school_year or "").strip() or (
+        "2026-2027" if "2026-2027" in school_years else school_years[0]
+    )
+    season_start_utc, season_end_utc = _school_year_bounds_utc(selected_school_year)
+
+    location_rows = _planning_reorganization_locations(
+        db,
+        season_start_utc=season_start_utc,
+        season_end_utc=season_end_utc,
+    )
+    selected_location: Location | None = None
+    if location_id is not None:
+        selected_location = next((location for location in location_rows if location.id == location_id), None)
+        if selected_location is None:
+            selected_location = db.scalar(select(Location).where(Location.id == location_id).limit(1))
+    if selected_location is None and location_rows:
+        selected_location = location_rows[0]
+
+    available_days: list[date] = []
+    selected_day = day
+    sessions_out: list[AdminPlanningReorganizationSessionOut] = []
+    if selected_location is not None:
+        available_days = _planning_reorganization_available_days(
+            db,
+            location_id=selected_location.id,
+            season_start_utc=season_start_utc,
+            season_end_utc=season_end_utc,
+        )
+        if selected_day is None and available_days:
+            selected_day = available_days[0]
+
+    if selected_location is not None and selected_day is not None:
+        zone = _safe_zoneinfo(_normalize_session_timezone(selected_location.timezone))
+        local_start = datetime.combine(selected_day, time.min).replace(tzinfo=zone)
+        local_end = local_start + timedelta(days=1)
+        day_start_utc = local_start.astimezone(timezone.utc)
+        day_end_utc = local_end.astimezone(timezone.utc)
+
+        substitute_professor = aliased(Professor, name="planning_reorg_substitute_professor")
+        session_rows = db.execute(
+            select(CourseSession, CourseType, Location, Professor, substitute_professor)
+            .join(CourseType, CourseType.id == CourseSession.course_type_id)
+            .join(Location, Location.id == CourseSession.location_id)
+            .outerjoin(Professor, Professor.id == CourseSession.professor_id)
+            .outerjoin(substitute_professor, substitute_professor.id == CourseSession.substitute_teacher_id)
+            .where(
+                CourseSession.location_id == selected_location.id,
+                CourseSession.start_at_utc >= day_start_utc,
+                CourseSession.start_at_utc < day_end_utc,
+            )
+            .order_by(CourseSession.start_at_utc.asc(), CourseSession.title.asc())
+        ).all()
+        session_ids = [session_obj.id for session_obj, *_ in session_rows]
+        booked_counts = _booked_counts_map(db, session_ids)
+        bookings_by_session: dict[UUID, list[AdminPlanningReorganizationBookingOut]] = {
+            session_id: [] for session_id in session_ids
+        }
+        if session_ids:
+            booking_rows = db.execute(
+                select(Booking, User)
+                .join(User, User.id == Booking.user_id)
+                .where(
+                    Booking.session_id.in_(session_ids),
+                    Booking.status.in_(BOOKING_STATUSES_ACTIVE),
+                )
+                .order_by(
+                    func.lower(func.coalesce(User.last_name, "")),
+                    func.lower(func.coalesce(User.first_name, "")),
+                    User.email.asc(),
+                )
+            ).all()
+            for booking, client in booking_rows:
+                bookings_by_session.setdefault(booking.session_id, []).append(
+                    AdminPlanningReorganizationBookingOut(
+                        id=booking.id,
+                        client_id=client.id,
+                        client_display_name=_client_display_name(client),
+                        status=booking.status.value,
+                        student_note=booking.student_note,
+                    )
+                )
+
+        sessions_out = [
+            _planning_reorganization_session_out(
+                session_obj,
+                course_type=course_type,
+                location=location,
+                professor=professor,
+                substitute_professor=substitute,
+                booked_count=booked_counts.get(session_obj.id, 0),
+                bookings=bookings_by_session.get(session_obj.id, []),
+            )
+            for session_obj, course_type, location, professor, substitute in session_rows
+        ]
+
+    return AdminPlanningReorganizationOut(
+        school_years=school_years,
+        locations=[
+            AdminPlanningReorganizationLocationOut(
+                id=location.id,
+                name=_session_location_label(location),
+                timezone=_normalize_session_timezone(location.timezone),
+            )
+            for location in location_rows
+        ],
+        available_days=available_days,
+        selected_school_year=selected_school_year,
+        selected_location_id=selected_location.id if selected_location is not None else None,
+        selected_day=selected_day,
+        sessions=sessions_out,
+    )
+
+
+@router.post("/planning-reorganization/move-booking", response_model=AdminPlanningReorganizationMoveOut)
+def move_planning_reorganization_booking(
+    payload: AdminPlanningReorganizationMoveRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
+) -> AdminPlanningReorganizationMoveOut:
+    now = _utcnow()
+    source_booking = db.scalar(select(Booking).where(Booking.id == payload.booking_id).with_for_update())
+    if source_booking is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+    source_session = db.scalar(
+        select(CourseSession).where(CourseSession.id == source_booking.session_id).with_for_update()
+    )
+    target_session = db.scalar(
+        select(CourseSession).where(CourseSession.id == payload.target_session_id).with_for_update()
+    )
+    if source_session is None or target_session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    moved_count = 0
+    skipped_count = 0
+    details: list[str] = []
+
+    if (
+        payload.scope == "single"
+        or source_session.recurrence_group_id is None
+        or target_session.recurrence_group_id is None
+    ):
+        moved, detail = _move_planning_reorganization_booking_occurrence(
+            db,
+            booking=source_booking,
+            source_session=source_session,
+            target_session=target_session,
+            now=now,
+        )
+        moved_count += 1 if moved else 0
+        skipped_count += 0 if moved else 1
+        if detail:
+            details.append(detail)
+        db.commit()
+        return AdminPlanningReorganizationMoveOut(
+            moved_count=moved_count,
+            skipped_count=skipped_count,
+            details=details[:8],
+        )
+
+    source_sessions = _target_sessions_for_scope(db, source_session, ApplyScope.SERIES_FUTURE)
+    target_sessions = _target_sessions_for_scope(db, target_session, ApplyScope.SERIES_FUTURE)
+    source_session_by_id = {session_obj.id: session_obj for session_obj in source_sessions}
+    target_by_day = {
+        _local_date_in_timezone(
+            session_obj.start_at_utc,
+            _normalize_session_timezone(session_obj.timezone),
+        ): session_obj
+        for session_obj in target_sessions
+    }
+
+    recurring_bookings = db.scalars(
+        select(Booking)
+        .where(
+            Booking.session_id.in_(list(source_session_by_id.keys())),
+            Booking.user_id == source_booking.user_id,
+            Booking.status.in_(BOOKING_STATUSES_ACTIVE),
+        )
+        .order_by(Booking.booked_at.asc())
+        .with_for_update()
+    ).all()
+    for booking in recurring_bookings:
+        current_source_session = source_session_by_id.get(booking.session_id)
+        if current_source_session is None:
+            skipped_count += 1
+            continue
+        source_day = _local_date_in_timezone(
+            current_source_session.start_at_utc,
+            _normalize_session_timezone(current_source_session.timezone),
+        )
+        current_target_session = target_by_day.get(source_day)
+        if current_target_session is None:
+            skipped_count += 1
+            if len(details) < 8:
+                details.append(f"Aucun creneau cible le {source_day.isoformat()}")
+            continue
+        moved, detail = _move_planning_reorganization_booking_occurrence(
+            db,
+            booking=booking,
+            source_session=current_source_session,
+            target_session=current_target_session,
+            now=now,
+        )
+        moved_count += 1 if moved else 0
+        skipped_count += 0 if moved else 1
+        if detail and len(details) < 8:
+            details.append(detail)
+
+    db.commit()
+    return AdminPlanningReorganizationMoveOut(
+        moved_count=moved_count,
+        skipped_count=skipped_count,
+        details=details[:8],
     )
 
 

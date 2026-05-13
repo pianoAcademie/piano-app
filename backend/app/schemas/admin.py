@@ -2166,6 +2166,60 @@ class AdminSessionBookingOperationOut(BaseModel):
     details: list[str] = Field(default_factory=list)
 
 
+class AdminPlanningReorganizationLocationOut(BaseModel):
+    id: UUID
+    name: str
+    timezone: str
+
+
+class AdminPlanningReorganizationBookingOut(BaseModel):
+    id: UUID
+    client_id: UUID
+    client_display_name: str
+    status: str
+    student_note: str | None = None
+
+
+class AdminPlanningReorganizationSessionOut(BaseModel):
+    id: UUID
+    title: str
+    type_label: str
+    location_id: UUID
+    location_label: str
+    teacher_display_name: str
+    start_at_utc: datetime
+    end_at_utc: datetime
+    timezone: str
+    capacity_max: int
+    booked_count: int
+    recurrence_group_id: UUID | None
+    recurrence_rule: str | None
+    status: SessionStatus
+    bookings: list[AdminPlanningReorganizationBookingOut] = Field(default_factory=list)
+
+
+class AdminPlanningReorganizationOut(BaseModel):
+    school_years: list[str] = Field(default_factory=list)
+    locations: list[AdminPlanningReorganizationLocationOut] = Field(default_factory=list)
+    available_days: list[date] = Field(default_factory=list)
+    selected_school_year: str
+    selected_location_id: UUID | None
+    selected_day: date | None
+    sessions: list[AdminPlanningReorganizationSessionOut] = Field(default_factory=list)
+
+
+class AdminPlanningReorganizationMoveRequest(BaseModel):
+    booking_id: UUID
+    target_session_id: UUID
+    scope: Literal["single", "series_future"] = "single"
+
+
+class AdminPlanningReorganizationMoveOut(BaseModel):
+    moved_count: int
+    skipped_count: int
+    details: list[str] = Field(default_factory=list)
+
+
 class AdminSessionDuplicateRequest(BaseModel):
     target_start_at_utc: datetime
 
