@@ -1757,21 +1757,11 @@ def _calendar_snapshot_with_selected_solfege_block(
     if not selected_slot:
         return snapshot
 
-    blocks = [dict(item) if isinstance(item, dict) else item for item in _json_list(snapshot.get("blocks"))]
-    for raw_block in blocks:
-        if not isinstance(raw_block, dict):
-            continue
-        haystack = unicodedata.normalize(
-            "NFKD",
-            " ".join(str(raw_block.get(key) or "") for key in ("activity_label", "activity_name", "activity_code", "activity_service_code")),
-        ).encode("ascii", "ignore").decode("ascii").lower()
-        if "solfege" in haystack or str(raw_block.get("pending_solfege_level") or "").strip():
-            return snapshot
-
     solfege_line = next((line for line in lines if _quote_line_is_solfege(line)), None)
     if solfege_line is None or solfege_line.activity_id is None:
         return snapshot
 
+    blocks = [dict(item) if isinstance(item, dict) else item for item in _json_list(snapshot.get("blocks"))]
     line_solfege_level = _quote_line_solfege_level(solfege_line)
     selected_slot = dict(selected_slot)
     if line_solfege_level:
@@ -1821,8 +1811,43 @@ def _calendar_snapshot_with_selected_solfege_block(
         "pending_slot_options": [],
         "source": "selected_solfege_slot",
     }
-    blocks.append({key: value for key, value in block.items() if value not in ("", None)})
+    solfege_activity_id = str(solfege_line.activity_id)
+    refreshed_block = {key: value for key, value in block.items() if value not in ("", None)}
+    refreshed_blocks: list[object] = []
+    inserted_refreshed_block = False
+    for raw_block in blocks:
+        if not isinstance(raw_block, dict):
+            refreshed_blocks.append(raw_block)
+            continue
+        haystack = unicodedata.normalize(
+            "NFKD",
+            " ".join(str(raw_block.get(key) or "") for key in ("activity_label", "activity_name", "activity_code", "activity_service_code")),
+        ).encode("ascii", "ignore").decode("ascii").lower()
+        is_solfege_block = "solfege" in haystack or str(raw_block.get("pending_solfege_level") or "").strip()
+        is_target_solfege_block = is_solfege_block and str(raw_block.get("activity_id") or "").strip() == solfege_activity_id
+        if is_target_solfege_block:
+            if not inserted_refreshed_block:
+                refreshed_blocks.append(refreshed_block)
+                inserted_refreshed_block = True
+            continue
+        refreshed_blocks.append(raw_block)
+    if not inserted_refreshed_block:
+        refreshed_blocks.append(refreshed_block)
+    blocks = refreshed_blocks
     snapshot["blocks"] = blocks
+    sessions = []
+    sessions_changed = False
+    for raw_session in _json_list(snapshot.get("sessions")):
+        if not isinstance(raw_session, dict):
+            sessions.append(raw_session)
+            continue
+        if str(raw_session.get("activity_id") or "").strip() == solfege_activity_id:
+            sessions_changed = True
+            continue
+        sessions.append(raw_session)
+    if sessions_changed:
+        snapshot["sessions"] = sessions
+        snapshot["sessions_count"] = len([item for item in sessions if isinstance(item, dict)])
     snapshot_solfege = _json_object(snapshot.get("solfege"))
     snapshot_solfege["selected_slot"] = selected_slot
     snapshot["solfege"] = snapshot_solfege

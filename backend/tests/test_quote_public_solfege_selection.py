@@ -100,6 +100,61 @@ class QuotePublicSolfegeSelectionTests(unittest.TestCase):
         self.assertNotIn("start_date", block)
         self.assertNotIn("end_date", block)
 
+    def test_selected_solfege_slot_refreshes_stale_planning_block(self) -> None:
+        quote = SimpleNamespace(
+            language="fr",
+            school_year_label="2026-2027",
+            estimated_solfege_level="3",
+            selected_solfege_slot={
+                "weekday": 2,
+                "weekday_label": "Mercredi",
+                "start_time": "19:30",
+                "end_time": "20:15",
+                "duration_minutes": 45,
+                "location_label": "En ligne",
+                "modality": "online",
+            },
+            calendar_snapshot={
+                "blocks": [
+                    {
+                        "activity_id": "activity-solfege-id",
+                        "activity_label": "Solfège niveau 3",
+                        "weekday": 2,
+                        "start_time": "19:30",
+                        "end_time": "20:15",
+                        "start_date": "2026-09-01",
+                        "end_date": "2027-08-31",
+                        "selection_pending": False,
+                    }
+                ],
+                "sessions": [
+                    {"activity_id": "activity-piano-id", "date": "2026-09-07"},
+                    {"activity_id": "activity-solfege-id", "date": "2026-09-02"},
+                ],
+                "sessions_count": 2,
+            },
+        )
+        line = SimpleNamespace(
+            activity_id="activity-solfege-id",
+            title="Solfège niveau 3",
+            description=None,
+            code=None,
+            duration_minutes=45,
+            meta={"typeform_automatic_line": "online_solfege"},
+        )
+
+        snapshot = _calendar_snapshot_with_selected_solfege_block(quote, lines=[line])
+
+        self.assertEqual(len(snapshot["blocks"]), 1)
+        block = snapshot["blocks"][0]
+        assert isinstance(block, dict)
+        self.assertTrue(block["selection_pending"])
+        self.assertNotIn("start_date", block)
+        self.assertNotIn("end_date", block)
+        self.assertEqual(block["recommendation_key"], "activity-solfege-id:online_solfege")
+        self.assertEqual(snapshot["sessions"], [{"activity_id": "activity-piano-id", "date": "2026-09-07"}])
+        self.assertEqual(snapshot["sessions_count"], 1)
+
     def test_apply_selected_solfege_slot_updates_pending_block_in_snapshot(self) -> None:
         snapshot = {
             "blocks": [
