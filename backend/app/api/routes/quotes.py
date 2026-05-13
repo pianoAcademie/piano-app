@@ -1645,6 +1645,21 @@ def _quote_line_is_solfege(row: QuoteLine) -> bool:
     return "solfege" in normalized and row.activity_id is not None
 
 
+def _quote_line_solfege_level(row: QuoteLine) -> str:
+    meta = _json_object(row.meta)
+    for value in (
+        row.title,
+        row.description,
+        row.code,
+        meta.get("activity_name"),
+        meta.get("typeform_automatic_line"),
+    ):
+        level = _public_extract_solfege_level_from_text(value)
+        if level:
+            return level
+    return ""
+
+
 def _calendar_snapshot_with_selected_solfege_block(
     quote: Quote,
     *,
@@ -1672,6 +1687,10 @@ def _calendar_snapshot_with_selected_solfege_block(
     if solfege_line is None or solfege_line.activity_id is None:
         return snapshot
 
+    line_solfege_level = _quote_line_solfege_level(solfege_line)
+    selected_slot = dict(selected_slot)
+    if line_solfege_level:
+        selected_slot["level_code"] = line_solfege_level
     weekday = selected_slot.get("weekday")
     weekday_label = str(selected_slot.get("weekday_label") or "").strip() or _public_solfege_weekday_label(
         weekday,
@@ -1695,7 +1714,7 @@ def _calendar_snapshot_with_selected_solfege_block(
         "duration_minutes": selected_slot.get("duration_minutes") or solfege_line.duration_minutes,
         "modality": selected_slot.get("modality") or None,
         "selection_pending": False,
-        "pending_solfege_level": quote.estimated_solfege_level or selected_slot.get("level_code") or None,
+        "pending_solfege_level": line_solfege_level or selected_slot.get("level_code") or quote.estimated_solfege_level or None,
         "pending_slot_options": [],
         "source": "selected_solfege_slot",
     }

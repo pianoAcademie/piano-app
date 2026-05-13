@@ -17,6 +17,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.services.quotes.quote_documents import (
     _calendar_snapshot_with_planning_sessions,
     _check_payment_instruction_lines,
+    _current_solfege_document_info,
     _line_groups,
     _line_matches_end_year_concert,
     _pass_recup_compact_notice_markup,
@@ -226,6 +227,58 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertIn("Mardi", html)
         self.assertIn("17:05 - 17:35", html)
         self.assertNotIn("à choisir", html)
+
+    def test_current_solfege_document_info_prefers_saved_line_and_planning_over_stale_quote_fields(self) -> None:
+        activity_id = uuid4()
+        line = SimpleNamespace(
+            activity_id=activity_id,
+            title="Solfège - Niveau 2",
+            description="Cours de solfège en ligne",
+            code="SOLFEGE_NIVEAU_2",
+            duration_minutes=45,
+            meta={},
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(activity_id),
+                    "activity_label": "Cours de solfège - Niveau 2",
+                    "location_label": "Online",
+                    "weekday": 3,
+                    "weekday_label": "Jeudi",
+                    "start_time": "18:50",
+                    "end_time": "19:35",
+                    "duration_minutes": 45,
+                    "selection_pending": False,
+                    "pending_solfege_level": "2",
+                    "modality": "ONLINE",
+                }
+            ]
+        }
+        stale_selected_slot = {
+            "weekday": 2,
+            "weekday_label": "Mercredi",
+            "start_time": "18:05",
+            "end_time": "18:35",
+            "duration_minutes": 30,
+            "location_label": "Online",
+            "level_code": "1",
+        }
+
+        info = _current_solfege_document_info(
+            lines=[line],
+            calendar_snapshot=snapshot,
+            quote_selected_slot=stale_selected_slot,
+            quote_level="1",
+            quote_duration_minutes=30,
+            language="fr",
+        )
+
+        self.assertEqual(info["level_code"], "2")
+        self.assertEqual(info["duration_minutes"], 45)
+        self.assertEqual(info["selected_slot"]["weekday_label"], "Jeudi")
+        self.assertEqual(info["selected_slot"]["start_time"], "18:50")
+        self.assertIn("cours en ligne", info["selected_slot"]["label"].lower())
 
     def test_line_groups_route_service_products_to_other_fees(self) -> None:
         product_id = uuid4()
