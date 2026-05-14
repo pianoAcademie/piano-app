@@ -327,8 +327,8 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
 
         self.assertEqual(count, 2)
         self.assertIn("Cours de piano collectif", html)
-        self.assertIn("Solfège - Niveau 1", html)
-        self.assertIn("17:05 - 17:35", html)
+        self.assertIn("Cours de solfège en ligne - niveau 1", html)
+        self.assertIn("à choisir", html)
 
     def test_line_groups_route_service_products_to_other_fees(self) -> None:
         product_id = uuid4()

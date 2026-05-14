@@ -25,6 +25,10 @@ type PlanningBlock = {
   activity_id: string;
   location_id: string;
   series_key: string;
+  recommendation_key: string;
+  source: string;
+  duration_minutes: number | null;
+  sessions_count: number | null;
   weekday: number;
   recurrence_frequency: "weekly" | "biweekly" | "monthly";
   start_date: string;
@@ -601,6 +605,10 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
         const endTime = typeof row.end_time === "string" ? row.end_time : "";
         const locationId = typeof row.location_id === "string" ? row.location_id : "";
         const seriesKey = typeof row.series_key === "string" ? row.series_key : "";
+        const recommendationKey = typeof row.recommendation_key === "string" ? row.recommendation_key : "";
+        const source = typeof row.source === "string" ? row.source : "";
+        const durationMinutesRaw = Number.parseInt(String(row.duration_minutes ?? ""), 10);
+        const sessionsCountRaw = Number.parseInt(String(row.sessions_count ?? ""), 10);
         const modality = typeof row.modality === "string" ? row.modality : "";
         const holidayDates = Array.isArray(row.holiday_dates)
           ? row.holiday_dates.map((item) => String(item)).filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item))
@@ -615,6 +623,10 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
           activity_id: activityId,
           location_id: locationId,
           series_key: seriesKey,
+          recommendation_key: recommendationKey,
+          source,
+          duration_minutes: Number.isFinite(durationMinutesRaw) && durationMinutesRaw > 0 ? durationMinutesRaw : null,
+          sessions_count: Number.isFinite(sessionsCountRaw) && sessionsCountRaw >= 0 ? sessionsCountRaw : null,
           weekday: selectionPending
             ? WEEKDAY_UNSET
             : Number.isFinite(weekday) && weekday >= 0 && weekday <= 6
@@ -656,6 +668,10 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
         activity_id: activityId,
         location_id: locationId,
         series_key: "",
+        recommendation_key: "",
+        source: "",
+        duration_minutes: null,
+        sessions_count: null,
         weekday: weekday >= 0 && weekday <= 6 ? weekday : WEEKDAY_UNSET,
         recurrence_frequency: "weekly",
         start_date: startDate,
@@ -684,6 +700,10 @@ function newPlanningBlock(activities: ActivityOption[], locations: LocationOptio
     activity_id: defaultActivityId,
     location_id: locations[0]?.id ?? "",
     series_key: "",
+    recommendation_key: "",
+    source: "",
+    duration_minutes: null,
+    sessions_count: null,
     weekday: 0,
     recurrence_frequency: "weekly",
     start_date: "",
@@ -833,6 +853,12 @@ export default function QuotePlanningEditor({
             activity_label: activity?.name || null,
             location_id: row.location_id || null,
             location_label: locationLabel,
+            series_key: row.series_key || null,
+            recommendation_key: row.recommendation_key || null,
+            source: row.source || null,
+            duration_minutes: row.duration_minutes,
+            sessions_count: row.sessions_count,
+            calendar_name: row.calendar_name || null,
             weekday: row.weekday,
             weekday_label: row.weekday === WEEKDAY_UNSET ? null : weekdayLabel(row.weekday, language),
             recurrence_frequency: row.recurrence_frequency,
@@ -853,6 +879,22 @@ export default function QuotePlanningEditor({
       ),
     [blocks, activities, locations, solfegeRules, language],
   );
+  const removedActivityIdsJson = useMemo(() => {
+    const remainingActivityIds = new Set(
+      blocks
+        .map((row) => String(row.activity_id || "").trim())
+        .filter((value) => value.length > 0),
+    );
+    const removedActivityIds = Array.from(
+      new Set(
+        initialBlocks
+          .filter((row) => row.saved)
+          .map((row) => String(row.activity_id || "").trim())
+          .filter((activityId) => activityId.length > 0 && !remainingActivityIds.has(activityId)),
+      ),
+    );
+    return JSON.stringify(removedActivityIds);
+  }, [blocks, initialBlocks]);
 
   function openCreateModal(): void {
     setEditorState({
@@ -887,8 +929,34 @@ export default function QuotePlanningEditor({
       if (!prev) {
         return prev;
       }
+      const liveIdentityKeys: Array<keyof PlanningBlock> = [
+        "activity_id",
+        "location_id",
+        "weekday",
+        "recurrence_frequency",
+        "start_date",
+        "end_date",
+        "start_time",
+        "end_time",
+        "modality",
+      ];
+      const resetLiveIdentity = liveIdentityKeys.some((key) =>
+        Object.prototype.hasOwnProperty.call(patch, key) && patch[key] !== prev.block[key],
+      );
+      const nextInput = {
+        ...prev.block,
+        ...patch,
+        ...(resetLiveIdentity
+          ? {
+              series_key: "",
+              recommendation_key: "",
+              source: "",
+              sessions_count: null,
+            }
+          : {}),
+      };
       const nextBlock = normalizePlanningBlockWithActivity(
-        { ...prev.block, ...patch },
+        nextInput,
         activities,
         calendarPresetMap,
       );
@@ -940,7 +1008,10 @@ export default function QuotePlanningEditor({
   const savedCount = blocks.filter((row) => row.saved && !row.dirty).length;
   const modifiedCount = blocks.filter((row) => row.saved && row.dirty).length;
   const newCount = blocks.filter((row) => !row.saved).length;
-  const pendingSaveCount = blocks.filter((row) => !row.saved || row.dirty).length;
+  const currentSavedUids = new Set(blocks.filter((row) => row.saved).map((row) => row.uid));
+  const removedSavedCount = initialBlocks.filter((row) => row.saved && !currentSavedUids.has(row.uid)).length;
+  const draftCount = modifiedCount + newCount + removedSavedCount;
+  const pendingSaveCount = draftCount;
 
   function blockStatusLabel(block: PlanningBlock): string {
     if (!block.saved) {
@@ -964,13 +1035,14 @@ export default function QuotePlanningEditor({
       <input type="hidden" name="return_to" value={returnTo} />
       <input type="hidden" name="school_year_label" value={schoolYearLabel || ""} />
       <input type="hidden" name="planning_blocks_json" value={blocksJson} />
+      <input type="hidden" name="removed_activity_ids_json" value={removedActivityIdsJson} />
       <input type="hidden" name="current_meta_json" value={JSON.stringify(initialMeta || {})} />
 
       <div className="quote-editor-toolbar row spread wrap gap-sm">
         <div className="quote-editor-toolbar-main">
           <strong>{t("admin.quote_planning.title_main")}</strong>
           <span className="quote-editor-count">
-            {t("admin.quote_lines.counts", { saved: savedCount, draft: modifiedCount + newCount })}
+            {t("admin.quote_lines.counts", { saved: savedCount, draft: draftCount })}
           </span>
         </div>
         <div className="row wrap gap-sm">
@@ -983,6 +1055,11 @@ export default function QuotePlanningEditor({
           </span>
         </div>
       </div>
+      {removedSavedCount > 0 ? (
+        <p className="quote-editor-empty quote-editor-warning">
+          {t("admin.quote_planning.removed_notice", { count: removedSavedCount })}
+        </p>
+      ) : null}
 
       <section className="quote-editor-pane quote-editor-pane-saved top-gap-sm">
         {blocks.length === 0 ? (

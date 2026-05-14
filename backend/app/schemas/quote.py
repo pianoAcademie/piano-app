@@ -228,6 +228,7 @@ class QuoteUpdateRequest(BaseModel):
     price_snapshot: dict[str, object] | None = None
     meta: dict[str, object] | None = None
     lines: list[QuoteLineIn] | None = None
+    remove_orphan_activity_line_ids: list[UUID] | None = None
 
 
 class QuoteSendRequest(BaseModel):

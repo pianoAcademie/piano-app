@@ -348,6 +348,11 @@ export default function QuoteToEnrollmentWizard({
     || (linkedQuoteClient && !isPlaceholderClientEmail(linkedQuoteClient.email) ? linkedQuoteClient.email : "")
     || "-";
   const quoteOwnerPhone = prospect?.phone || primaryClientPhone(linkedQuoteClient) || "-";
+  const selectedExistingClient = selectedClientId ? clientsById.get(selectedClientId) || null : null;
+  const existingChildNeedsResponsibleSelection =
+    clientMode === "existing"
+    && quoteOwnerType === "child"
+    && String(selectedExistingClient?.clientKind || "").toUpperCase() === "CHILD";
 
   const [selectedPlanId, setSelectedPlanId] = useState<string>(() => {
     if (restoredDraft?.activityResolution.planId) {
@@ -1234,7 +1239,7 @@ export default function QuoteToEnrollmentWizard({
                 </section>
               ) : null}
 
-              {clientMode === "new_parent_child" || clientMode === "new_child_existing_parent" ? (
+              {clientMode === "new_parent_child" || clientMode === "new_child_existing_parent" || existingChildNeedsResponsibleSelection ? (
                 <section className="top-gap-sm">
                   <label>
                     {t("admin.quote_transform.parent_search")}
@@ -1248,11 +1253,15 @@ export default function QuoteToEnrollmentWizard({
                   <label className="top-gap-sm">
                     {clientMode === "new_child_existing_parent"
                       ? t("admin.quote_transform.existing_parent_required")
+                      : existingChildNeedsResponsibleSelection
+                        ? t("admin.quote_transform.existing_child_parent_optional")
                       : t("admin.quote_transform.existing_parent_optional")}
                     <select value={selectedParentClientId} onChange={(event) => setSelectedParentClientId(event.target.value)}>
                       <option value="">
                         {clientMode === "new_child_existing_parent"
                           ? t("admin.quote_transform.select_existing_parent")
+                          : existingChildNeedsResponsibleSelection
+                            ? t("admin.quote_transform.keep_existing_parent_link")
                           : t("admin.quote_transform.create_new_parent")}
                       </option>
                       {parentClientOptions.map((option) => (

@@ -11875,6 +11875,12 @@ type QuotePlanningBlockInput = {
   activity_label: string | null;
   location_id: string | null;
   location_label: string | null;
+  series_key?: string | null;
+  recommendation_key?: string | null;
+  source?: string | null;
+  duration_minutes?: number | null;
+  sessions_count?: number | null;
+  calendar_name?: string | null;
   weekday: number;
   weekday_label: string | null;
   recurrence_frequency: "weekly" | "biweekly" | "monthly";
@@ -11928,6 +11934,12 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
       const activityLabel = String(item.activity_label ?? "").trim();
       const locationIdRaw = String(item.location_id ?? "").trim();
       const locationLabel = String(item.location_label ?? "").trim();
+      const seriesKey = String(item.series_key ?? "").trim();
+      const recommendationKey = String(item.recommendation_key ?? "").trim();
+      const source = String(item.source ?? "").trim();
+      const durationMinutesRaw = Number.parseInt(String(item.duration_minutes ?? ""), 10);
+      const sessionsCountRaw = Number.parseInt(String(item.sessions_count ?? ""), 10);
+      const calendarName = String(item.calendar_name ?? "").trim();
       const modalityRaw = String(item.modality ?? "").trim().toUpperCase();
       const recurrenceRaw = String(item.recurrence_frequency ?? "").trim().toLowerCase();
       const recurrenceFrequency: QuotePlanningBlockInput["recurrence_frequency"] =
@@ -11987,6 +11999,12 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
         activity_label: activityLabel || null,
         location_id: parseUuid(locationIdRaw),
         location_label: locationLabel || null,
+        series_key: seriesKey || null,
+        recommendation_key: recommendationKey || null,
+        source: source || null,
+        duration_minutes: Number.isFinite(durationMinutesRaw) && durationMinutesRaw > 0 ? durationMinutesRaw : null,
+        sessions_count: Number.isFinite(sessionsCountRaw) && sessionsCountRaw >= 0 ? sessionsCountRaw : null,
+        calendar_name: calendarName || null,
         weekday: selectionPending ? -1 : weekday,
         weekday_label: selectionPending ? (weekdayLabel || "Selection a faire") : (weekdayLabel || null),
         recurrence_frequency: recurrenceFrequency,
@@ -12285,6 +12303,23 @@ export async function updateQuotePlanningAction(formData: FormData): Promise<voi
   if (blocks === null) {
     redirect(withUiMessageCode(successReturnTo, "error", "planning_invalid", { lang: language }));
   }
+  const removedActivityIds = (() => {
+    const raw = String(formData.get("removed_activity_ids_json") ?? "").trim();
+    if (!raw) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+      return parsed
+        .map((value) => parseUuid(String(value ?? "")))
+        .filter((value): value is string => Boolean(value));
+    } catch {
+      return [];
+    }
+  })();
 
   let currentMeta: Record<string, unknown> = {};
   const currentMetaRaw = String(formData.get("current_meta_json") ?? "").trim();
@@ -12327,6 +12362,7 @@ export async function updateQuotePlanningAction(formData: FormData): Promise<voi
         calendar_snapshot: snapshot,
         school_year_label: effectivePlanningSchoolYearLabel,
         meta: currentMeta,
+        remove_orphan_activity_line_ids: removedActivityIds,
       }),
     },
     token,

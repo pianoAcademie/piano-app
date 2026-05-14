@@ -344,6 +344,55 @@ class QuotePublicSolfegeSelectionTests(unittest.TestCase):
         self.assertEqual(selection.selected_label, "Mercredi 17:15-18:00 · Online")
         self.assertTrue(any(option.key == selection.selected_key for option in selection.available_slots))
 
+    def test_stale_selected_slot_does_not_satisfy_new_solfege_level(self) -> None:
+        quote = SimpleNamespace(
+            language="fr",
+            estimated_solfege_level="1",
+            solfege_duration_minutes=30,
+            selected_solfege_slot={
+                "weekday": 2,
+                "weekday_label": "Mercredi",
+                "start_time": "18:05",
+                "end_time": "18:35",
+                "duration_minutes": 30,
+                "location_label": "Online",
+                "modality": "ONLINE",
+                "level_code": "1",
+            },
+            calendar_snapshot={
+                "blocks": [
+                    {
+                        "activity_label": "Solfège - niveau 2",
+                        "selection_pending": True,
+                        "pending_solfege_level": "2",
+                        "duration_minutes": 45,
+                        "pending_slot_options": [
+                            {
+                                "weekday": 2,
+                                "weekday_label": "Mercredi",
+                                "start_time": "18:35",
+                                "end_time": "19:20",
+                                "location_label": "Online",
+                                "modality": "ONLINE",
+                                "level_code": "2",
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+
+        selection = _public_quote_solfege_selection(object(), quote)
+
+        self.assertIsNotNone(selection)
+        assert selection is not None
+        self.assertEqual(selection.level_code, "2")
+        self.assertEqual(selection.duration_minutes, 45)
+        self.assertIsNone(selection.selected_key)
+        self.assertTrue(selection.required)
+        self.assertEqual(len(selection.available_slots), 1)
+        self.assertIn("Mercredi 18:35-19:20", selection.available_slots[0].label)
+
     def test_infers_selected_slot_from_non_pending_calendar_block(self) -> None:
         quote = SimpleNamespace(
             language="fr",

@@ -13687,6 +13687,12 @@ button.danger:focus-visible {
   color: #5c6774;
 }
 
+.quote-editor-warning {
+  border-color: #e4bd73;
+  background: #fff7e8;
+  color: #7a4f12;
+}
+
 .quote-saved-list {
   display: grid;
   gap: 0.65rem;

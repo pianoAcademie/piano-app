@@ -406,6 +406,9 @@ class AdminClientPaymentDocumentTests(unittest.TestCase):
             "app.api.routes.admin_clients._invoice_range_download_url",
             return_value="https://app.piano-academie.com/invoice.pdf",
         ), patch(
+            "app.api.routes.admin_clients._frontend_base_url",
+            return_value="https://app.piano-academie.com",
+        ), patch(
             "app.api.routes.admin_clients.send_payment_success_notifications",
             return_value={"payment_confirmation_message_id": "client-msg", "invoice_message_id": "invoice-msg"},
         ) as send_success:
@@ -486,6 +489,9 @@ class AdminClientPaymentDocumentTests(unittest.TestCase):
         with patch("app.api.routes.admin_clients.resolve_billing_profile", return_value=billing_profile), patch(
             "app.api.routes.admin_clients._invoice_range_download_url",
             return_value="https://app.piano-academie.com/invoice.pdf",
+        ), patch(
+            "app.api.routes.admin_clients._frontend_base_url",
+            return_value="https://app.piano-academie.com",
         ), patch(
             "app.api.routes.admin_clients.resolve_admin_booking_notification_recipients",
             return_value=[SimpleNamespace(email="admin@example.com")],

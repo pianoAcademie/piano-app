@@ -1795,10 +1795,7 @@ def _find_existing_adult_parent_client(db: Session, normalized: dict[str, object
             select(User)
             .where(
                 *base_filters,
-                or_(
-                    func.lower(User.email) == parent_email,
-                    func.lower(func.coalesce(User.contact_email, "")) == parent_email,
-                ),
+                func.lower(User.email) == parent_email,
             )
             .order_by(User.created_at.desc())
             .limit(1)

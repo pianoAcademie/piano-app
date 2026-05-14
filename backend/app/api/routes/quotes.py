@@ -1813,6 +1813,45 @@ def _calendar_snapshot_with_selected_solfege_block(
         "source": "selected_solfege_slot",
     }
     solfege_activity_id = str(solfege_line.activity_id)
+
+    def _is_confirmed_target_solfege_block(raw_block: dict[str, object]) -> bool:
+        haystack = unicodedata.normalize(
+            "NFKD",
+            " ".join(
+                str(raw_block.get(key) or "")
+                for key in ("activity_label", "activity_name", "activity_code", "activity_service_code")
+            ),
+        ).encode("ascii", "ignore").decode("ascii").lower()
+        is_solfege_block = "solfege" in haystack or str(raw_block.get("pending_solfege_level") or "").strip()
+        if not is_solfege_block or str(raw_block.get("activity_id") or "").strip() != solfege_activity_id:
+            return False
+        if bool(raw_block.get("selection_pending")):
+            return False
+        weekday_raw = raw_block.get("weekday")
+        try:
+            weekday_int = int(weekday_raw)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return False
+        if weekday_int < 0 or weekday_int > 6:
+            return False
+        has_live_identity = (
+            str(raw_block.get("series_key") or "").strip()
+            or str(raw_block.get("recommendation_key") or "").strip()
+            or str(raw_block.get("source") or "").strip() == "live_planning"
+        )
+        if not has_live_identity:
+            return False
+        return all(
+            str(raw_block.get(key) or "").strip()
+            for key in ("start_date", "end_date", "start_time", "end_time")
+        )
+
+    if not live_sessions and any(
+        isinstance(raw_block, dict) and _is_confirmed_target_solfege_block(raw_block)
+        for raw_block in blocks
+    ):
+        return snapshot
+
     refreshed_block = {key: value for key, value in block.items() if value not in ("", None)}
     refreshed_blocks: list[object] = []
     inserted_refreshed_block = False
@@ -2660,6 +2699,31 @@ def _public_solfege_slot_payload(
     return {key: value for key, value in payload.items() if value not in (None, "")}
 
 
+def _public_solfege_slot_matches_context(
+    slot: dict[str, object],
+    *,
+    level_code: str | None,
+    duration_minutes: int | None,
+) -> bool:
+    if not slot:
+        return False
+
+    expected_level = str(level_code or "").strip()
+    slot_level = str(slot.get("level_code") or "").strip()
+    if expected_level and slot_level and slot_level != expected_level:
+        return False
+
+    if duration_minutes is not None:
+        try:
+            slot_duration = int(slot.get("duration_minutes")) if slot.get("duration_minutes") is not None else None
+        except (TypeError, ValueError):
+            slot_duration = None
+        if slot_duration is not None and slot_duration != int(duration_minutes):
+            return False
+
+    return True
+
+
 def _public_quote_solfege_options_from_snapshot(
     *,
     calendar_snapshot: dict[str, object],
@@ -2723,7 +2787,7 @@ def _public_pending_solfege_block_hints(
     calendar_snapshot: dict[str, object],
     *,
     level_code: str | None,
-) -> tuple[str | None, object | None, object | None, str]:
+) -> tuple[str | None, int | None, object | None, object | None, str]:
     resolved_level = str(level_code or "").strip() or None
     for raw_block in _json_list(calendar_snapshot.get("blocks")):
         if not isinstance(raw_block, dict):
@@ -2737,17 +2801,24 @@ def _public_pending_solfege_block_hints(
             or _public_extract_solfege_level_from_text(activity_label)
             or None
         )
-        if block_level and not resolved_level:
+        if block_level:
             resolved_level = block_level
         if not (block_level or "solfege" in haystack):
             continue
+        block_duration: int | None = None
+        try:
+            if block.get("duration_minutes") is not None:
+                block_duration = int(block.get("duration_minutes"))
+        except (TypeError, ValueError):
+            block_duration = None
         return (
             resolved_level or str(level_code or "").strip() or None,
+            block_duration,
             block.get("location_id"),
             block.get("modality"),
             str(block.get("location_label") or "").strip(),
         )
-    return resolved_level, None, None, ""
+    return resolved_level, None, None, None, ""
 
 
 def _public_selected_solfege_slot_from_snapshot(
@@ -2804,6 +2875,27 @@ def _apply_selected_solfege_slot_to_calendar_snapshot(
     selected_location_label = str(normalized_slot.get("location_label") or "").strip()
     selected_modality = normalized_slot.get("modality")
     selected_duration_minutes = normalized_slot.get("duration_minutes")
+    selected_level = str(normalized_slot.get("level_code") or "").strip()
+
+    has_pending_solfege_block = False
+    for raw_block in _json_list(snapshot.get("blocks")):
+        if not isinstance(raw_block, dict):
+            continue
+        block = dict(raw_block)
+        activity_label = str(block.get("activity_label") or "").strip()
+        activity_code = str(block.get("activity_code") or block.get("activity_service_code") or "").strip()
+        haystack = _public_searchable_text(f"{activity_label} {activity_code}")
+        block_level = (
+            str(block.get("pending_solfege_level") or "").strip()
+            or _public_extract_solfege_level_from_text(activity_label)
+            or None
+        )
+        weekday_value = int(block.get("weekday") or -99) if str(block.get("weekday") or "").strip() else -99
+        if (bool(block_level) or "solfege" in haystack) and (
+            bool(block.get("selection_pending")) or weekday_value == -1 or bool(_json_list(block.get("pending_slot_options")))
+        ):
+            has_pending_solfege_block = True
+            break
 
     for raw_block in _json_list(snapshot.get("blocks")):
         if not isinstance(raw_block, dict):
@@ -2821,7 +2913,8 @@ def _apply_selected_solfege_slot_to_calendar_snapshot(
         weekday_value = int(block.get("weekday") or -99) if str(block.get("weekday") or "").strip() else -99
         selection_pending = bool(block.get("selection_pending")) or weekday_value == -1 or bool(_json_list(block.get("pending_slot_options")))
         is_solfege_block = bool(block_level) or "solfege" in haystack
-        if is_solfege_block and selection_pending:
+        is_selected_level_block = not selected_level or not block_level or block_level == selected_level
+        if is_solfege_block and (selection_pending or (not has_pending_solfege_block and is_selected_level_block)):
             block["weekday"] = selected_weekday
             block["weekday_label"] = selected_weekday_label or block.get("weekday_label")
             block["start_time"] = selected_start
@@ -2974,10 +3067,18 @@ def _public_quote_solfege_selection(db: Session, quote: Quote) -> QuotePublicSol
     selected_slot = _json_object(quote.selected_solfege_slot) or _json_object(calendar_solfege.get("selected_slot"))
     level_code = str(quote.estimated_solfege_level or calendar_solfege.get("level_code") or "").strip() or None
     duration_minutes = int(quote.solfege_duration_minutes) if quote.solfege_duration_minutes else None
-    level_code, pending_location_id, pending_modality, pending_location_label = _public_pending_solfege_block_hints(
+    level_code, block_duration_minutes, pending_location_id, pending_modality, pending_location_label = _public_pending_solfege_block_hints(
         calendar_snapshot,
         level_code=level_code,
     )
+    if block_duration_minutes is not None:
+        duration_minutes = block_duration_minutes
+    if selected_slot and not _public_solfege_slot_matches_context(
+        selected_slot,
+        level_code=level_code,
+        duration_minutes=duration_minutes,
+    ):
+        selected_slot = {}
     if not selected_slot:
         selected_slot = _public_selected_solfege_slot_from_snapshot(
             calendar_snapshot,
@@ -3053,6 +3154,12 @@ def _resolve_public_selected_solfege_slot(
     current_slot = _json_object(quote.selected_solfege_slot) or _json_object(
         _json_object(_json_object(quote.calendar_snapshot).get("solfege")).get("selected_slot")
     )
+    if selection is not None and current_slot and not _public_solfege_slot_matches_context(
+        current_slot,
+        level_code=selection.level_code,
+        duration_minutes=selection.duration_minutes,
+    ):
+        current_slot = {}
     if not current_slot and selection is not None:
         current_slot = _public_selected_solfege_slot_from_snapshot(
             _json_object(quote.calendar_snapshot),
@@ -3082,7 +3189,7 @@ def _resolve_public_selected_solfege_slot(
         language=language,
     )
     if not options:
-        _, pending_location_id, pending_modality, pending_location_label = _public_pending_solfege_block_hints(
+        _, _, pending_location_id, pending_modality, pending_location_label = _public_pending_solfege_block_hints(
             _json_object(quote.calendar_snapshot),
             level_code=selection.level_code,
         )
@@ -3777,6 +3884,121 @@ def _quote_lines_total_ttc(db: Session, *, quote_id: UUID) -> Decimal:
     return _q2(Decimal(raw or 0))
 
 
+def _ascii_search_text(value: object | None) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or "").strip())
+    return normalized.encode("ascii", "ignore").decode("ascii").lower()
+
+
+def _quote_line_looks_like_solfege(line: QuoteLine) -> bool:
+    return "solfege" in _ascii_search_text(" ".join([line.title or "", line.description or "", line.code or ""]))
+
+
+def _calendar_snapshot_activity_ids(snapshot: object | None) -> set[UUID]:
+    if not isinstance(snapshot, dict):
+        return set()
+    blocks = snapshot.get("blocks")
+    if not isinstance(blocks, list):
+        return set()
+    activity_ids: set[UUID] = set()
+    for raw in blocks:
+        if not isinstance(raw, dict):
+            continue
+        activity_id_raw = raw.get("activity_id")
+        if not activity_id_raw:
+            continue
+        try:
+            activity_ids.add(UUID(str(activity_id_raw)))
+        except (TypeError, ValueError):
+            continue
+    return activity_ids
+
+
+def _calendar_snapshot_has_solfege_block(snapshot: object | None) -> bool:
+    if not isinstance(snapshot, dict):
+        return False
+    blocks = snapshot.get("blocks")
+    if not isinstance(blocks, list):
+        return False
+    for raw in blocks:
+        if not isinstance(raw, dict):
+            continue
+        haystack = _ascii_search_text(
+            " ".join(
+                [
+                    str(raw.get("activity_label") or ""),
+                    str(raw.get("activity_code") or ""),
+                    str(raw.get("activity_service_code") or ""),
+                ]
+            )
+        )
+        if "solfege" in haystack:
+            return True
+    return False
+
+
+def _remove_orphan_activity_quote_lines(
+    db: Session,
+    *,
+    quote: Quote,
+    requested_activity_ids: list[UUID],
+) -> bool:
+    remaining_activity_ids = _calendar_snapshot_activity_ids(quote.calendar_snapshot or {})
+    lines = _load_quote_lines(db, quote.id)
+    activity_ids_to_remove = set(requested_activity_ids) - remaining_activity_ids
+    for line in lines:
+        if (
+            line.activity_id is not None
+            and line.activity_id not in remaining_activity_ids
+            and line.line_category == "service"
+            and line.line_type == "item"
+            and _quote_line_looks_like_solfege(line)
+        ):
+            activity_ids_to_remove.add(line.activity_id)
+
+    if not activity_ids_to_remove:
+        return False
+
+    removed_line_ids: set[UUID] = set()
+    removed_any = False
+    for line in lines:
+        if line.activity_id in activity_ids_to_remove:
+            removed_line_ids.add(line.id)
+            db.delete(line)
+            removed_any = True
+
+    if removed_any:
+        remaining_lines = [line for line in lines if line.id not in removed_line_ids]
+        has_remaining_solfege_service = any(
+            line.line_category == "service"
+            and line.line_type == "item"
+            and _quote_line_looks_like_solfege(line)
+            for line in remaining_lines
+        ) or _calendar_snapshot_has_solfege_block(quote.calendar_snapshot or {})
+        if not has_remaining_solfege_service:
+            for line in remaining_lines:
+                if line.line_category == "product" and _quote_line_looks_like_solfege(line):
+                    db.delete(line)
+
+        db.flush()
+        lines_total = _quote_lines_total_ttc(db, quote_id=quote.id)
+        quote.total_ttc = _quote_total_with_adjustment(lines_total_ttc=lines_total, meta=quote.meta or {})
+        quote.price_snapshot = {
+            "catalog_id": str(quote.pricing_catalog_id) if quote.pricing_catalog_id else None,
+            "currency": quote.currency,
+            "lines_total_ttc": str(lines_total),
+            "total_ttc": str(_q2(Decimal(quote.total_ttc or 0))),
+        }
+        quote.payment_terms_snapshot = _build_payment_terms_snapshot_for_quote(
+            db,
+            quote,
+            total_ttc=_q2(Decimal(quote.total_ttc or 0)),
+        )
+        quote.updated_at = _utcnow()
+        db.add(quote)
+
+    return removed_any
+
+
 def _ensure_quote_editable(quote: Quote) -> None:
     if quote.status not in {"created", "change_requested"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote is immutable once sent")
@@ -4312,6 +4534,7 @@ def update_quote(
     adjustment_changed = False
     deposit_changed = False
     computed_total: Decimal | None = None
+    activity_lines_removed = False
     previous_adjustment_signature = _quote_adjustment_signature(row.meta or {})
     previous_deposit_signature = _quote_deposit_signature(row.meta or {})
 
@@ -4461,13 +4684,23 @@ def update_quote(
         row.total_ttc = computed_total
         document_dirty = True
 
+    if payload.remove_orphan_activity_line_ids is not None:
+        activity_lines_removed = _remove_orphan_activity_quote_lines(
+            db,
+            quote=row,
+            requested_activity_ids=payload.remove_orphan_activity_line_ids,
+        )
+        if activity_lines_removed:
+            computed_total = _q2(Decimal(row.total_ttc or 0))
+            document_dirty = True
+
     if payload.payment_terms_snapshot is None and (
-        payment_plan_changed or payload.lines is not None or adjustment_changed or deposit_changed
+        payment_plan_changed or payload.lines is not None or adjustment_changed or deposit_changed or activity_lines_removed
     ):
         total_for_schedule = computed_total if computed_total is not None else _q2(Decimal(row.total_ttc or 0))
         row.payment_terms_snapshot = _build_payment_terms_snapshot_for_quote(db, row, total_ttc=total_for_schedule)
 
-    if payload.price_snapshot is None and (payload.lines is not None or adjustment_changed):
+    if payload.price_snapshot is None and (payload.lines is not None or adjustment_changed or activity_lines_removed):
         lines_total_ttc = _quote_lines_total_ttc(db, quote_id=row.id)
         row.price_snapshot = {
             "catalog_id": str(row.pricing_catalog_id) if row.pricing_catalog_id else None,
@@ -5681,12 +5914,22 @@ def _restore_quote_state_from_snapshot(quote: Quote, snapshot: dict[str, object]
 
 def _snapshot_user_state(user: User) -> dict[str, object]:
     return {
+        "email": user.email,
+        "client_kind": user.client_kind.value if hasattr(user.client_kind, "value") else str(user.client_kind),
         "client_status": user.client_status.value if hasattr(user.client_status, "value") else str(user.client_status),
         "is_active": bool(user.is_active),
     }
 
 
 def _restore_user_state(user: User, snapshot: dict[str, object]) -> None:
+    email = _normalized_email(snapshot.get("email"))
+    if email:
+        user.email = email
+    raw_kind = str(snapshot.get("client_kind") or "").strip().upper()
+    try:
+        user.client_kind = ClientKind(raw_kind)
+    except ValueError:
+        pass
     raw_status = str(snapshot.get("client_status") or "").strip().upper()
     try:
         user.client_status = ClientStatus(raw_status)
@@ -5748,6 +5991,39 @@ def _find_user_by_email_for_update(db: Session, email: str | None) -> User | Non
     if normalized is None:
         return None
     return db.scalar(select(User).where(User.email == normalized).with_for_update().limit(1))
+
+
+def _find_adult_user_by_email_for_update(db: Session, email: str | None) -> User | None:
+    normalized = _normalized_email(email)
+    if normalized is None:
+        return None
+    return db.scalar(
+        select(User)
+        .where(User.email == normalized, User.client_kind == ClientKind.ADULT)
+        .with_for_update()
+        .limit(1)
+    )
+
+
+def _release_parent_email_from_child(
+    db: Session,
+    *,
+    child: User,
+    parent_email: str | None,
+    user_snapshots: dict[str, dict[str, object]],
+) -> None:
+    normalized_parent_email = _normalized_email(parent_email)
+    if normalized_parent_email is None:
+        return
+    if child.client_kind != ClientKind.CHILD:
+        return
+    if _normalized_email(child.email) != normalized_parent_email:
+        return
+    _remember_user_snapshot(user_snapshots, child)
+    child.email = _synthetic_quote_client_email(prefix="child")
+    child.updated_at = _utcnow()
+    db.add(child)
+    db.flush()
 
 
 def _find_family_link_for_update(
@@ -6304,12 +6580,91 @@ def _resolve_followup_clients(
         if student.client_kind == ClientKind.CHILD:
             _apply_quote_client_contact_defaults(student, birth_date=_quote_child_birth_date(quote))
         quote_prospect_type = str(_json_object(quote_prospect.meta).get("prospect_type") or "").strip().lower() if quote_prospect is not None else ""
+        parent_contact = _resolve_parent_contact_data(
+            quote=quote,
+            quote_prospect=quote_prospect,
+            parent_prospect=parent_prospect,
+        )
+        parent_email = _normalized_email(parent_contact.get("email"))
+
+        def resolve_existing_child_billing_from_quote_context() -> User | None:
+            if quote_prospect_type != "child":
+                return None
+
+            candidate_ids: list[UUID] = []
+            if parent_prospect is not None and parent_prospect.linked_client_id is not None:
+                candidate_ids.append(parent_prospect.linked_client_id)
+
+            user_by_email = _find_adult_user_by_email_for_update(db, parent_email)
+            if user_by_email is not None:
+                candidate_ids.append(user_by_email.id)
+
+            seen: set[UUID] = set()
+            for candidate_id in candidate_ids:
+                if candidate_id in seen or candidate_id == student.id:
+                    continue
+                seen.add(candidate_id)
+                candidate = ensure_existing_billing_client(candidate_id)
+                if candidate.client_kind == ClientKind.ADULT:
+                    return candidate
+            return None
+
+        def create_missing_existing_child_billing() -> User | None:
+            if quote_prospect_type != "child" or student.client_kind != ClientKind.CHILD:
+                return None
+            has_parent_contact = any(
+                str(parent_contact.get(key) or "").strip()
+                for key in ("email", "first_name", "last_name", "phone")
+            )
+            if not has_parent_contact:
+                return None
+            parent_address_fields = _quote_parent_address_fields(
+                db,
+                quote=quote,
+                quote_prospect=quote_prospect,
+                parent_prospect=parent_prospect,
+            )
+            _release_parent_email_from_child(
+                db,
+                child=student,
+                parent_email=parent_email,
+                user_snapshots=user_snapshots,
+            )
+            created_billing = _create_quote_client(
+                db,
+                email=parent_email or _synthetic_quote_client_email(prefix="parent"),
+                first_name=str(parent_contact.get("first_name") or "").strip() or None,
+                last_name=str(parent_contact.get("last_name") or "").strip() or None,
+                phone=_normalized_phone(parent_contact.get("phone")),
+                birth_date=None,
+                address_line=parent_address_fields.get("address_line"),
+                postal_code=parent_address_fields.get("postal_code"),
+                city=parent_address_fields.get("city"),
+                address_country=parent_address_fields.get("country_code"),
+                client_kind=ClientKind.ADULT,
+                status=ClientStatus.RESPONSABLE,
+            )
+            created_user_ids.append(created_billing.id)
+            if parent_prospect is not None:
+                parent_prospect.linked_client_id = created_billing.id
+                parent_prospect.status = "converted"
+                parent_prospect.updated_at = _utcnow()
+                db.add(parent_prospect)
+            return created_billing
+
         if quote_prospect_type == "child" and student.client_kind != ClientKind.CHILD:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Pour un prospect enfant, la fiche cible doit etre une fiche enfant. Utilisez creation parent + enfant ou selectionnez un enfant existant.",
             )
-        billing = ensure_existing_billing_client(selected_parent_client_id) if selected_parent_client_id else resolve_billing_profile(db, student)
+        if selected_parent_client_id:
+            billing = ensure_existing_billing_client(selected_parent_client_id)
+        else:
+            billing = resolve_billing_profile(db, student)
+            if billing is None:
+                billing = resolve_existing_child_billing_from_quote_context()
+            if billing is None:
+                billing = create_missing_existing_child_billing()
         if billing is None:
             billing = student
         elif billing.id != student.id:
@@ -6409,8 +6764,18 @@ def _resolve_followup_clients(
     if billing is None and parent_prospect is not None:
         billing = _load_user_for_update(db, parent_prospect.linked_client_id)
     if billing is None:
-        billing = _find_user_by_email_for_update(db, _normalized_email(parent_contact.get("email")))
+        billing = _find_adult_user_by_email_for_update(db, _normalized_email(parent_contact.get("email")))
     if billing is None:
+        for candidate_id in (selected_client_id, quote_prospect.linked_client_id, quote.client_id):
+            candidate_child = _load_user_for_update(db, candidate_id)
+            if candidate_child is None:
+                continue
+            _release_parent_email_from_child(
+                db,
+                child=candidate_child,
+                parent_email=_normalized_email(parent_contact.get("email")),
+                user_snapshots=user_snapshots,
+            )
         billing = _create_quote_client(
             db,
             email=_normalized_email(parent_contact.get("email")) or _synthetic_quote_client_email(prefix="parent"),
@@ -6418,6 +6783,10 @@ def _resolve_followup_clients(
             last_name=str(parent_contact.get("last_name") or "").strip() or None,
             phone=_normalized_phone(parent_contact.get("phone")),
             birth_date=None,
+            address_line=parent_address_fields.get("address_line"),
+            postal_code=parent_address_fields.get("postal_code"),
+            city=parent_address_fields.get("city"),
+            address_country=parent_address_fields.get("country_code"),
             client_kind=ClientKind.ADULT,
             status=ClientStatus.RESPONSABLE,
         )
@@ -7337,21 +7706,6 @@ def _rollback_quote_followup_transformation(
         if link is not None:
             db.delete(link)
 
-    for user_id_str, snapshot in _json_object(execution.get("user_snapshots")).items():
-        user = _load_user_for_update(db, _parse_uuid_value(user_id_str))
-        if user is not None:
-            _restore_user_state(user, _json_object(snapshot))
-            db.add(user)
-
-    for prospect_id_str, snapshot in _json_object(execution.get("prospect_snapshots")).items():
-        prospect = _load_prospect_for_update(db, _parse_uuid_value(prospect_id_str))
-        if prospect is not None:
-            _restore_prospect_state(prospect, _json_object(snapshot))
-            db.add(prospect)
-
-    _restore_quote_state_from_snapshot(quote, _json_object(execution.get("quote_snapshot")))
-    _restore_quote_followup_from_snapshot(followup, _json_object(execution.get("followup_snapshot")))
-
     for user_id in created_user_ids:
         if user_id is None:
             continue
@@ -7367,6 +7721,22 @@ def _rollback_quote_followup_transformation(
         ])
         if not has_remaining_dependency:
             db.delete(user)
+            db.flush()
+
+    for user_id_str, snapshot in _json_object(execution.get("user_snapshots")).items():
+        user = _load_user_for_update(db, _parse_uuid_value(user_id_str))
+        if user is not None:
+            _restore_user_state(user, _json_object(snapshot))
+            db.add(user)
+
+    for prospect_id_str, snapshot in _json_object(execution.get("prospect_snapshots")).items():
+        prospect = _load_prospect_for_update(db, _parse_uuid_value(prospect_id_str))
+        if prospect is not None:
+            _restore_prospect_state(prospect, _json_object(snapshot))
+            db.add(prospect)
+
+    _restore_quote_state_from_snapshot(quote, _json_object(execution.get("quote_snapshot")))
+    _restore_quote_followup_from_snapshot(followup, _json_object(execution.get("followup_snapshot")))
 
     rolled_back_at = _utcnow()
     execution["status"] = "rolled_back"
@@ -7762,18 +8132,32 @@ def select_quote_followup_solfege_slot(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote follow-up not found")
 
-    row.payload = {**(row.payload or {}), "selected_solfege_slot": payload.slot}
+    selected_slot = _json_object(payload.slot)
+    row.payload = {**(row.payload or {}), "selected_solfege_slot": selected_slot}
     row.solfege_slot_status = "chosen"
     row.status = "partially_configured"
     row.updated_at = _utcnow()
 
     quote = _load_quote(db, row.quote_id, lock=True)
-    quote.selected_solfege_slot = payload.slot
+    quote.selected_solfege_slot = selected_slot
+    slot_level = str(selected_slot.get("level_code") or "").strip()
+    if slot_level:
+        quote.estimated_solfege_level = slot_level
+    try:
+        slot_duration = int(selected_slot.get("duration_minutes")) if selected_slot.get("duration_minutes") is not None else None
+    except (TypeError, ValueError):
+        slot_duration = None
+    if slot_duration is not None:
+        quote.solfege_duration_minutes = slot_duration
     quote.calendar_snapshot = _apply_selected_solfege_slot_to_calendar_snapshot(
         _json_object(quote.calendar_snapshot),
-        selected_slot=payload.slot,
+        selected_slot=selected_slot,
         language=_public_solfege_language(quote.language),
     )
+    quote.document_status = "stale"
+    quote.document_hash = None
+    quote.document_generated_at = None
+    quote.document_snapshot_id = None
     quote.updated_at = _utcnow()
     db.add_all([row, quote])
     db.commit()

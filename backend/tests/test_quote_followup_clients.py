@@ -10,6 +10,7 @@ from uuid import uuid4
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.quotes import _create_quote_client, _resolve_followup_clients, _resolve_parent_contact_data
+from app.models.family import ClientFamilyLink
 from app.models.user import ClientKind, ClientStatus
 
 
@@ -104,6 +105,9 @@ class QuoteFollowupClientsTests(unittest.TestCase):
             return_value=None,
         ), patch(
             "app.api.routes.quotes._find_user_by_email_for_update",
+            return_value=None,
+        ), patch(
+            "app.api.routes.quotes._find_adult_user_by_email_for_update",
             return_value=None,
         ), patch(
             "app.api.routes.quotes._resolve_parent_contact_data",
@@ -245,6 +249,9 @@ class QuoteFollowupClientsTests(unittest.TestCase):
             "app.api.routes.quotes._find_user_by_email_for_update",
             side_effect=find_user_by_email_side_effect,
         ), patch(
+            "app.api.routes.quotes._find_adult_user_by_email_for_update",
+            side_effect=find_user_by_email_side_effect,
+        ), patch(
             "app.api.routes.quotes._resolve_parent_contact_data",
             return_value={
                 "email": "parent@example.com",
@@ -284,6 +291,133 @@ class QuoteFollowupClientsTests(unittest.TestCase):
         self.assertEqual(quote.client_id, student.id)
         self.assertEqual(len(create_calls), 1)
         self.assertEqual(create_calls[0]["phone"], "+33638151506")
+
+    def test_existing_child_creates_missing_parent_from_quote_context(self) -> None:
+        db = _FakeSession()
+        child_id = uuid4()
+        parent_id = uuid4()
+        quote = SimpleNamespace(prospect_id=uuid4(), client_id=child_id, meta={})
+        followup = SimpleNamespace(target_client_id=child_id)
+        quote_prospect = SimpleNamespace(
+            id=uuid4(),
+            email="jeanne.in.tokyo@gmail.com",
+            first_name="Elise",
+            last_name="Hu",
+            phone="+33763744649",
+            linked_client_id=child_id,
+            status="new",
+            updated_at=None,
+            meta={"prospect_type": "child"},
+        )
+        parent_prospect = SimpleNamespace(
+            id=uuid4(),
+            email="jeanne.in.tokyo@gmail.com",
+            first_name="Jeanne",
+            last_name="Hu",
+            phone="+33763744649",
+            linked_client_id=None,
+            status="new",
+            updated_at=None,
+            meta={},
+        )
+        child = SimpleNamespace(
+            id=child_id,
+            email="jeanne.in.tokyo@gmail.com",
+            client_kind=ClientKind.CHILD,
+            client_status=ClientStatus.PENDING,
+            is_active=True,
+            updated_at=None,
+            birth_date=None,
+        )
+        created_parent = SimpleNamespace(
+            id=parent_id,
+            email="jeanne.in.tokyo@gmail.com",
+            client_kind=ClientKind.ADULT,
+            client_status=ClientStatus.RESPONSABLE,
+            is_active=True,
+            updated_at=None,
+        )
+        created_user_ids: list[object] = []
+        created_family_link_ids: list[object] = []
+        user_snapshots: dict[str, dict[str, object]] = {}
+        create_calls: list[dict[str, object]] = []
+
+        def create_quote_client_side_effect(*args, **kwargs):
+            create_calls.append(kwargs)
+            return created_parent
+
+        def load_user_for_update_side_effect(_db, user_id):
+            if user_id == child_id:
+                return child
+            return None
+
+        with patch(
+            "app.api.routes.quotes._load_prospect_for_update",
+            return_value=quote_prospect,
+        ), patch(
+            "app.api.routes.quotes._resolve_quote_parent_prospect",
+            return_value=parent_prospect,
+        ), patch(
+            "app.api.routes.quotes._quote_child_birth_date",
+            return_value=None,
+        ), patch(
+            "app.api.routes.quotes._quote_parent_address_fields",
+            return_value={
+                "address_line": "9 place Falguiere",
+                "postal_code": "75015",
+                "city": "Paris",
+                "country_code": "FR",
+            },
+        ), patch(
+            "app.api.routes.quotes._load_user_for_update",
+            side_effect=load_user_for_update_side_effect,
+        ), patch(
+            "app.api.routes.quotes._find_adult_user_by_email_for_update",
+            return_value=None,
+        ), patch(
+            "app.api.routes.quotes.resolve_billing_profile",
+            return_value=None,
+        ), patch(
+            "app.api.routes.quotes._create_quote_client",
+            side_effect=create_quote_client_side_effect,
+        ), patch(
+            "app.api.routes.quotes._find_family_link_for_update",
+            return_value=None,
+        ), patch(
+            "app.api.routes.quotes.refresh_responsable_status",
+            return_value=None,
+        ):
+            student_result, billing_result = _resolve_followup_clients(
+                db,
+                quote=quote,
+                followup=followup,
+                transformation_payload={
+                    "clientResolution": {
+                        "mode": "existing",
+                        "selectedClientId": str(child_id),
+                    },
+                },
+                user_snapshots=user_snapshots,
+                prospect_snapshots={},
+                created_user_ids=created_user_ids,
+                created_family_link_ids=created_family_link_ids,
+            )
+
+        self.assertEqual(student_result.id, child_id)
+        self.assertEqual(billing_result.id, parent_id)
+        self.assertEqual(quote.client_id, child_id)
+        self.assertEqual(followup.target_client_id, child_id)
+        self.assertNotEqual(child.email, "jeanne.in.tokyo@gmail.com")
+        self.assertEqual(user_snapshots[str(child_id)]["email"], "jeanne.in.tokyo@gmail.com")
+        self.assertEqual(parent_prospect.linked_client_id, parent_id)
+        self.assertEqual(parent_prospect.status, "converted")
+        self.assertEqual(created_user_ids, [parent_id])
+        self.assertEqual(len(create_calls), 1)
+        self.assertEqual(create_calls[0]["email"], "jeanne.in.tokyo@gmail.com")
+        self.assertEqual(create_calls[0]["first_name"], "Jeanne")
+        self.assertEqual(create_calls[0]["last_name"], "Hu")
+        self.assertEqual(create_calls[0]["postal_code"], "75015")
+        self.assertTrue(any(isinstance(value, ClientFamilyLink) for value in db.added))
 
 
 if __name__ == "__main__":
