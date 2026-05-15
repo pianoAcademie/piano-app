@@ -4056,11 +4056,18 @@ def _build_session_recommendations(
                 summary_status = "proposed_match"
                 summary_label = "Creneau Typeform propose"
             elif manual_options:
-                summary_status = "manual_selection_required"
-                summary_label = "Choix manuel de creneau requis"
-                local_blockages.append(
-                    f"Aucun creneau exact trouve pour {line.title}. Selectionnez manuellement un creneau compatible."
-                )
+                if allow_deferred_selection:
+                    summary_status = "selection_deferred"
+                    summary_label = "Creneau a confirmer ulterieurement"
+                    local_warnings.append(
+                        f"Aucun creneau exact trouve pour {line.title}. Le choix pourra etre finalise plus tard."
+                    )
+                else:
+                    summary_status = "manual_selection_required"
+                    summary_label = "Choix manuel de creneau requis"
+                    local_blockages.append(
+                        f"Aucun creneau exact trouve pour {line.title}. Selectionnez manuellement un creneau compatible."
+                    )
             elif allow_deferred_selection:
                 summary_status = "selection_deferred"
                 summary_label = "Creneau a confirmer ulterieurement"
