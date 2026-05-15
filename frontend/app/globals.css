@@ -16552,11 +16552,10 @@ button.danger:focus-visible {
 .simulation-calendar-slot-detail {
   position: absolute;
   left: 0;
-  top: calc(100% + 8px);
   display: none;
   min-width: 230px;
   max-width: 310px;
-  max-height: 280px;
+  max-height: min(360px, calc(100vh - 180px));
   overflow: auto;
   padding: 10px 12px;
   border-radius: 12px;
@@ -16564,6 +16563,14 @@ button.danger:focus-visible {
   background: #fffdfa;
   color: #302112;
   box-shadow: 0 18px 36px rgba(44, 34, 22, 0.22);
+}
+
+.simulation-calendar-slot-detail-below {
+  top: calc(100% + 8px);
+}
+
+.simulation-calendar-slot-detail-above {
+  bottom: calc(100% + 8px);
 }
 
 .simulation-calendar-slot-detail-counts {

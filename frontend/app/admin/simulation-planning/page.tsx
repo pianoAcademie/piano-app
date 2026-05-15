@@ -228,6 +228,17 @@ function calendarSlotStyle(
   };
 }
 
+function calendarSlotDetailPlacement(
+  slot: AdminPlanningSimulationSlotOut,
+  bounds: { start: number; end: number; height: number },
+): "above" | "below" {
+  const start = parseTimeToMinutes(slot.start_time) ?? bounds.start;
+  const total = Math.max(60, bounds.end - bounds.start);
+  const topRatio = (Math.max(bounds.start, start) - bounds.start) / total;
+  const remainingMinutes = bounds.end - start;
+  return remainingMinutes <= 180 || topRatio >= 0.62 ? "above" : "below";
+}
+
 function projectedSlotLabel(slot: AdminPlanningSimulationSlotOut): string {
   return slot.capacity !== null ? `${slot.projected_count}/${slot.capacity}` : String(slot.projected_count);
 }
@@ -621,6 +632,7 @@ export default async function AdminSimulationPlanningPage({
                                 const tone = projectionTone(slot);
                                 const percent = fillPercent(slot.projected_fill_rate);
                                 const peopleSections = slotPeopleSections(slot, language);
+                                const detailPlacement = calendarSlotDetailPlacement(slot, bounds);
                                 return (
                                   <article
                                     className={`simulation-calendar-slot simulation-calendar-slot-${tone}`}
@@ -639,7 +651,10 @@ export default async function AdminSimulationPlanningPage({
                                     <div className="simulation-calendar-slot-fill" aria-hidden="true">
                                       <span style={{ width: `${percent}%` }} />
                                     </div>
-                                    <div className="simulation-calendar-slot-detail" role="tooltip">
+                                    <div
+                                      className={`simulation-calendar-slot-detail simulation-calendar-slot-detail-${detailPlacement}`}
+                                      role="tooltip"
+                                    >
                                       <div className="simulation-calendar-slot-meta simulation-calendar-slot-detail-counts">
                                         {slotStatusBreakdown(slot, language).map((item) => (
                                           <span className={item.className} key={`${slot.slot_key}-${item.className}`}>
@@ -660,10 +675,9 @@ export default async function AdminSimulationPlanningPage({
                                           <div className="simulation-calendar-people-section" key={section.label}>
                                             <strong>{section.label}</strong>
                                             <ul>
-                                              {section.people.slice(0, 8).map((person) => (
+                                              {section.people.map((person) => (
                                                 <li key={person}>{person}</li>
                                               ))}
-                                              {section.people.length > 8 ? <li>+{section.people.length - 8}</li> : null}
                                             </ul>
                                           </div>
                                         ))
