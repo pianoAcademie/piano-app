@@ -14635,6 +14635,20 @@ button.danger:focus-visible {
   line-height: 1.45;
 }
 
+.quote-interaction-message-html {
+  margin-top: 10px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.quote-interaction-message-html :first-child {
+  margin-top: 0;
+}
+
+.quote-interaction-message-html :last-child {
+  margin-bottom: 0;
+}
+
 @media (max-width: 900px) {
   .quote-mailbox-grid {
     grid-template-columns: 1fr;

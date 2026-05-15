@@ -5576,12 +5576,13 @@ def send_quote_manual_email(
     body = payload.body.strip()
     if not body:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Email body is required")
+    body_format = "HTML" if payload.body_format == "HTML" else "TEXT"
 
     provider_message_id = send_email(
         to_email=recipient,
         subject=subject,
         body=body,
-        body_format="TEXT",
+        body_format=body_format,
         context=f"QUOTE_MANUAL:{quote.id}",
         sender_user_id=current_user.id,
         sender_label=_user_display_label(current_user),
@@ -5602,6 +5603,7 @@ def send_quote_manual_email(
                 "recipient_email": recipient,
                 "subject": subject,
                 "body": body,
+                "body_format": body_format,
                 "provider_message_id": provider_message_id,
             },
             created_at=now,
@@ -5625,6 +5627,7 @@ def log_quote_manual_reply(
     if not body:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Reply body is required")
     subject = (payload.subject or "").strip() or f"Re: Devis {quote.quote_number}"
+    body_format = "HTML" if payload.body_format == "HTML" else "TEXT"
     now = _utcnow()
     db.add(
         QuoteEvent(
@@ -5636,6 +5639,7 @@ def log_quote_manual_reply(
                 "sender_email": sender_email,
                 "subject": subject,
                 "body": body,
+                "body_format": body_format,
                 "logged_by_admin_id": str(current_user.id),
                 "logged_by_admin_label": _user_display_label(current_user),
             },

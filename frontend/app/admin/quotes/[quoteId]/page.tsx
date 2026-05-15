@@ -20,6 +20,7 @@ import QuoteWorkspaceSidebar, { type SidebarItem } from "../../../../components/
 import QuoteFollowupSlotForm from "../../../../components/quote-followup-slot-form";
 import QuoteLinesEditor from "../../../../components/quote-lines-editor";
 import QuotePlanningEditor from "../../../../components/quote-planning-editor";
+import RichMessageEditor from "../../../../components/rich-message-editor";
 import {
   cancelQuoteAction,
   changeQuoteFollowupPaymentMethodAction,
@@ -1520,6 +1521,14 @@ function quoteEventDescription(event: QuoteEventOut, language: UiLanguage = "fr"
   return uiText(language, "admin.quote_events.description.action_by", { actor: actorLabel });
 }
 
+function quoteEventMessageBody(event: QuoteEventOut): string {
+  return typeof event.payload?.body === "string" ? event.payload.body.trim() : "";
+}
+
+function quoteEventMessageBodyFormat(event: QuoteEventOut): "TEXT" | "HTML" {
+  return String(event.payload?.body_format || "").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
+}
+
 function integrationStateFromQuote(
   quote: QuoteOut,
   commercialState: QuoteValidationUiState,
@@ -1982,29 +1991,40 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           </div>
         </div>
         <ol className="quote-interactions-timeline top-gap-sm">
-          {interactionEvents.map((event) => (
-            <li key={event.id} className={`quote-interaction-item is-${quoteEventTone(event)}`}>
-              <div className="quote-interaction-dot" aria-hidden="true" />
-              <div className="quote-interaction-body">
-                <div className="row spread wrap gap-sm">
-                  <div>
-                    <strong>{quoteEventTitle(event, language)}</strong>
-                    <div className="muted">
-                      {formatDate(event.created_at)}
-                      {event.actor_label ? ` · ${event.actor_label}` : ""}
+          {interactionEvents.map((event) => {
+            const messageBody = quoteEventMessageBody(event);
+            const messageBodyFormat = quoteEventMessageBodyFormat(event);
+            return (
+              <li key={event.id} className={`quote-interaction-item is-${quoteEventTone(event)}`}>
+                <div className="quote-interaction-dot" aria-hidden="true" />
+                <div className="quote-interaction-body">
+                  <div className="row spread wrap gap-sm">
+                    <div>
+                      <strong>{quoteEventTitle(event, language)}</strong>
+                      <div className="muted">
+                        {formatDate(event.created_at)}
+                        {event.actor_label ? ` · ${event.actor_label}` : ""}
+                      </div>
                     </div>
                   </div>
+                  <p className="top-gap-xs">{quoteEventDescription(event, language)}</p>
+                  {messageBody ? (
+                    <details className="quote-interaction-message top-gap-xs">
+                      <summary>{t("admin.quote_detail.interaction_message_toggle")}</summary>
+                      {messageBodyFormat === "HTML" ? (
+                        <div
+                          className="quote-interaction-message-html"
+                          dangerouslySetInnerHTML={{ __html: messageBody }}
+                        />
+                      ) : (
+                        <pre>{messageBody}</pre>
+                      )}
+                    </details>
+                  ) : null}
                 </div>
-                <p className="top-gap-xs">{quoteEventDescription(event, language)}</p>
-                {typeof event.payload?.body === "string" && event.payload.body.trim() ? (
-                  <details className="quote-interaction-message top-gap-xs">
-                    <summary>{t("admin.quote_detail.interaction_message_toggle")}</summary>
-                    <pre>{event.payload.body.trim()}</pre>
-                  </details>
-                ) : null}
-              </div>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ol>
       </section>
     ) : null;
@@ -2683,7 +2703,14 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                   </label>
                   <label>
                     {t("admin.quote_detail.manual_email_body")}
-                    <textarea name="body" rows={7} required placeholder={t("admin.quote_detail.manual_email_body_placeholder")} />
+                    <RichMessageEditor
+                      name="body"
+                      formatName="body_format"
+                      rows={8}
+                      maxLength={20000}
+                      placeholder={t("admin.quote_detail.manual_email_body_placeholder")}
+                      language={language}
+                    />
                   </label>
                   <button type="submit">{t("admin.quote_detail.manual_email_send_button")}</button>
                 </form>
@@ -2708,7 +2735,14 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                   </label>
                   <label>
                     {t("admin.quote_detail.manual_reply_body")}
-                    <textarea name="body" rows={7} required placeholder={t("admin.quote_detail.manual_reply_body_placeholder")} />
+                    <RichMessageEditor
+                      name="body"
+                      formatName="body_format"
+                      rows={8}
+                      maxLength={20000}
+                      placeholder={t("admin.quote_detail.manual_reply_body_placeholder")}
+                      language={language}
+                    />
                   </label>
                   <button type="submit" className="ghost">{t("admin.quote_detail.manual_reply_save_button")}</button>
                 </form>

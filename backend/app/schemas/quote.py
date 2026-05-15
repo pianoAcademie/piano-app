@@ -253,13 +253,15 @@ class QuoteSendRequest(BaseModel):
 class QuoteManualEmailRequest(BaseModel):
     recipient_email: str = Field(min_length=3, max_length=255)
     subject: str = Field(min_length=1, max_length=255)
-    body: str = Field(min_length=1, max_length=10000)
+    body: str = Field(min_length=1, max_length=20000)
+    body_format: Literal["TEXT", "HTML"] = "TEXT"
 
 
 class QuoteManualReplyRequest(BaseModel):
     sender_email: str = Field(min_length=3, max_length=255)
     subject: str | None = Field(default=None, max_length=255)
-    body: str = Field(min_length=1, max_length=10000)
+    body: str = Field(min_length=1, max_length=20000)
+    body_format: Literal["TEXT", "HTML"] = "TEXT"
 
 
 class QuoteEmailPreviewOut(BaseModel):

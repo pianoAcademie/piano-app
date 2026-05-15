@@ -11461,6 +11461,7 @@ export async function sendQuoteManualEmailAction(formData: FormData): Promise<vo
   const recipientEmail = String(formData.get("recipient_email") ?? "").trim();
   const subject = String(formData.get("subject") ?? "").trim();
   const body = String(formData.get("body") ?? "").trim();
+  const bodyFormat = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes/${encodeURIComponent(quoteId)}?section=interactions`));
   const successReturnTo = withUiLanguage(returnTo, language);
   if (!quoteId) {
@@ -11478,6 +11479,7 @@ export async function sendQuoteManualEmailAction(formData: FormData): Promise<vo
         recipient_email: recipientEmail,
         subject,
         body,
+        body_format: bodyFormat,
       }),
     },
     token,
@@ -11503,6 +11505,7 @@ export async function logQuoteManualReplyAction(formData: FormData): Promise<voi
   const senderEmail = String(formData.get("sender_email") ?? "").trim();
   const subject = String(formData.get("subject") ?? "").trim();
   const body = String(formData.get("body") ?? "").trim();
+  const bodyFormat = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes/${encodeURIComponent(quoteId)}?section=interactions`));
   const successReturnTo = withUiLanguage(returnTo, language);
   if (!quoteId) {
@@ -11520,6 +11523,7 @@ export async function logQuoteManualReplyAction(formData: FormData): Promise<voi
         sender_email: senderEmail,
         subject: subject || null,
         body,
+        body_format: bodyFormat,
       }),
     },
     token,
