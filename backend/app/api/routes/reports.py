@@ -7,6 +7,7 @@ import json
 import re
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from sqlalchemy import Numeric, case, cast, extract, func, or_, select, update
@@ -38,6 +39,7 @@ from app.services.messaging_templates import resolve_sender_profile
 router = APIRouter(prefix="/admin/reports")
 INVOICE_RANGE_NOTE_PREFIX = "INVOICE_RANGE::"
 COMMUNICATION_ARCHIVE_RETENTION_DAYS = 365
+ADMIN_COMMUNICATION_TIMEZONE = ZoneInfo("Europe/Paris")
 
 
 def _professor_name(prof: Professor) -> str:
@@ -89,20 +91,17 @@ def _ensure_date_range(from_: datetime | None, to: datetime | None) -> None:
         )
 
 
-def _utc_today() -> date:
-    return datetime.now(timezone.utc).date()
-
-
-def _day_bounds(day: date) -> tuple[datetime, datetime]:
-    start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
-    return start, start + timedelta(days=1)
+def _day_bounds(day: date, tz: ZoneInfo = ADMIN_COMMUNICATION_TIMEZONE) -> tuple[datetime, datetime]:
+    start_local = datetime(day.year, day.month, day.day, tzinfo=tz)
+    end_local = start_local + timedelta(days=1)
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
 
 
 def _communication_period_bounds(
     period: CommunicationPeriod,
     now_utc: datetime,
 ) -> tuple[datetime, datetime] | None:
-    today_start, today_end = _day_bounds(now_utc.date())
+    today_start, today_end = _day_bounds(now_utc.astimezone(ADMIN_COMMUNICATION_TIMEZONE).date())
     if period == CommunicationPeriod.ALL:
         return None
     if period == CommunicationPeriod.TODAY:

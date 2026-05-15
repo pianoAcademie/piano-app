@@ -15,6 +15,7 @@ import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } fro
 type SearchParams = Record<string, string | string[] | undefined>;
 type ChannelFilter = "ALL" | "EMAIL" | "SMS";
 type PerPage = 25 | 50 | 100;
+const ADMIN_COMMUNICATION_TIMEZONE = "Europe/Paris";
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -71,6 +72,7 @@ function formatDate(value: string, language: UiLanguage): string {
   return parsed.toLocaleString(localeForUiLanguage(language), {
     dateStyle: "medium",
     timeStyle: "short",
+    timeZone: ADMIN_COMMUNICATION_TIMEZONE,
   });
 }
 
