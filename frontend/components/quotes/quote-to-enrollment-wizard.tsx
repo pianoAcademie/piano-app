@@ -122,6 +122,17 @@ function normalizeClientSearch(value: string | null | undefined): string {
     .trim();
 }
 
+function hasSamePersonName(
+  left: { firstName: string | null; lastName: string | null },
+  right: { firstName: string | null; lastName: string | null },
+): boolean {
+  const leftFirst = normalizeClientSearch(left.firstName);
+  const leftLast = normalizeClientSearch(left.lastName);
+  const rightFirst = normalizeClientSearch(right.firstName);
+  const rightLast = normalizeClientSearch(right.lastName);
+  return Boolean(leftFirst && leftLast && leftFirst === rightFirst && leftLast === rightLast);
+}
+
 function isPlaceholderClientEmail(email: string | null | undefined): boolean {
   return String(email || "").toLowerCase().endsWith("@no-email.local");
 }
@@ -223,7 +234,12 @@ export default function QuoteToEnrollmentWizard({
   const hasStrongClientCandidate = (bestClientCandidate?.confidence || 0) >= 80;
   const bestAdultCandidate = clientCandidates
     .map((candidate) => ({ candidate, client: clientsById.get(candidate.clientId) || null }))
-    .find((entry) => entry.client && String(entry.client.clientKind || "").toUpperCase() === "ADULT" && entry.candidate.confidence >= 70) || null;
+    .find((entry) => (
+      entry.client
+      && String(entry.client.clientKind || "").toUpperCase() === "ADULT"
+      && entry.candidate.confidence >= 70
+      && !(quoteOwnerType === "child" && prospect && hasSamePersonName(entry.client, prospect))
+    )) || null;
   const sortedClients = useMemo(() => sortClientsByName(clients), [clients]);
 
   const initialClientMode: QuoteTransformClientResolutionMode =
@@ -313,7 +329,10 @@ export default function QuoteToEnrollmentWizard({
   const parentClientOptions = useMemo(() => {
     const output = new Map<string, { id: string; label: string }>();
     const query = normalizeClientSearch(parentClientSearch);
-    const adults = sortedClients.filter((client) => String(client.clientKind || "").toUpperCase() === "ADULT");
+    const adults = sortedClients.filter((client) => (
+      String(client.clientKind || "").toUpperCase() === "ADULT"
+      && !(quoteOwnerType === "child" && prospect && hasSamePersonName(client, prospect))
+    ));
 
     for (const client of adults) {
       if (output.size >= 120) {
@@ -337,7 +356,7 @@ export default function QuoteToEnrollmentWizard({
     }
 
     return Array.from(output.values());
-  }, [clientsById, parentClientSearch, selectedParentClientId, sortedClients]);
+  }, [clientsById, parentClientSearch, selectedParentClientId, sortedClients, prospect, quoteOwnerType]);
 
   const quoteOwnerName = prospect
     ? displayName(prospect.firstName, prospect.lastName, prospect.email)
@@ -1158,8 +1177,10 @@ export default function QuoteToEnrollmentWizard({
                       </thead>
                       <tbody>
                         {clientCandidates.map((candidate) => {
-                          const candidateClientKind = String(clientsById.get(candidate.clientId)?.clientKind || "").toUpperCase();
-                          const candidateIsAdultForChildProspect = quoteOwnerType === "child" && candidateClientKind === "ADULT";
+                          const candidateClient = clientsById.get(candidate.clientId) || null;
+                          const candidateClientKind = String(candidateClient?.clientKind || "").toUpperCase();
+                          const candidateHasChildIdentity = Boolean(quoteOwnerType === "child" && prospect && candidateClient && hasSamePersonName(candidateClient, prospect));
+                          const candidateIsAdultForChildProspect = quoteOwnerType === "child" && candidateClientKind === "ADULT" && !candidateHasChildIdentity;
                           return (
                           <tr key={candidate.clientId}>
                             <td>

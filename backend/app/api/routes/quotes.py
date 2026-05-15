@@ -5848,6 +5848,24 @@ def _normalized_phone(value: object | None) -> str | None:
     return raw or None
 
 
+def _normalized_person_name_part(value: object | None) -> str:
+    raw = unicodedata.normalize("NFD", str(value or "").strip().casefold())
+    return re.sub(r"[\W_]+", "", "".join(char for char in raw if unicodedata.category(char) != "Mn"))
+
+
+def _same_person_name(
+    left_first_name: object | None,
+    left_last_name: object | None,
+    right_first_name: object | None,
+    right_last_name: object | None,
+) -> bool:
+    left_first = _normalized_person_name_part(left_first_name)
+    left_last = _normalized_person_name_part(left_last_name)
+    right_first = _normalized_person_name_part(right_first_name)
+    right_last = _normalized_person_name_part(right_last_name)
+    return bool(left_first and left_last and left_first == right_first and left_last == right_last)
+
+
 def _synthetic_quote_client_email(*, prefix: str) -> str:
     return f"{prefix}+{uuid4().hex[:16]}@piano-academie.invalid"
 
@@ -6765,6 +6783,33 @@ def _resolve_followup_clients(
         billing = _load_user_for_update(db, parent_prospect.linked_client_id)
     if billing is None:
         billing = _find_adult_user_by_email_for_update(db, _normalized_email(parent_contact.get("email")))
+    if billing is not None and _same_person_name(
+        getattr(billing, "first_name", None),
+        getattr(billing, "last_name", None),
+        quote_prospect.first_name,
+        quote_prospect.last_name,
+    ):
+        parent_has_distinct_name = bool(
+            str(parent_contact.get("first_name") or "").strip()
+            and str(parent_contact.get("last_name") or "").strip()
+            and not _same_person_name(
+                parent_contact.get("first_name"),
+                parent_contact.get("last_name"),
+                quote_prospect.first_name,
+                quote_prospect.last_name,
+            )
+        )
+        if parent_has_distinct_name:
+            _remember_user_snapshot(user_snapshots, billing)
+            billing.first_name = str(parent_contact.get("first_name") or "").strip()
+            billing.last_name = str(parent_contact.get("last_name") or "").strip()
+            billing.updated_at = _utcnow()
+            db.add(billing)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="La fiche responsable selectionnee reprend le nom et le prenom de l'enfant. Selectionnez un vrai parent responsable ou renseignez le parent avant de finaliser.",
+            )
     if billing is None:
         for candidate_id in (selected_client_id, quote_prospect.linked_client_id, quote.client_id):
             candidate_child = _load_user_for_update(db, candidate_id)
