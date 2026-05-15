@@ -13,6 +13,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.api.routes.quotes import _public_quote_solfege_selection
 from app.api.routes.quotes import _apply_selected_solfege_slot_to_calendar_snapshot
 from app.api.routes.quotes import _calendar_snapshot_with_selected_solfege_block
+from app.api.routes.quotes import _public_selected_solfege_slot_from_snapshot
 from app.api.routes.quotes import _session_matches_quote_selected_solfege_slot
 from app.models.catalog import DeliveryMode
 
@@ -200,6 +201,38 @@ class QuotePublicSolfegeSelectionTests(unittest.TestCase):
         self.assertEqual(block["pending_slot_options"], [])
         assert isinstance(updated["solfege"], dict)
         self.assertEqual(updated["solfege"]["selected_slot"]["label"], "Mardi 17:05-17:35 · Online")
+
+    def test_selected_solfege_slot_can_be_rebuilt_from_saved_planning_block(self) -> None:
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_label": "Solfège - niveau 2",
+                    "weekday": 2,
+                    "weekday_label": "Mercredi",
+                    "start_time": "18:35",
+                    "end_time": "19:20",
+                    "duration_minutes": 45,
+                    "location_id": "90e90b51-e74a-4d94-86e7-7e2f132aa537",
+                    "location_label": "Online",
+                    "modality": "ONLINE",
+                    "selection_pending": False,
+                }
+            ]
+        }
+
+        selected_slot = _public_selected_solfege_slot_from_snapshot(
+            snapshot,
+            level_code="2",
+            duration_minutes=45,
+            language="fr",
+        )
+
+        self.assertEqual(selected_slot["weekday"], 2)
+        self.assertEqual(selected_slot["weekday_label"], "Mercredi")
+        self.assertEqual(selected_slot["start_time"], "18:35")
+        self.assertEqual(selected_slot["end_time"], "19:20")
+        self.assertEqual(selected_slot["location_label"], "Online")
+        self.assertEqual(selected_slot["level_code"], "2")
 
     def test_uses_pending_snapshot_options_on_public_quote(self) -> None:
         quote = SimpleNamespace(

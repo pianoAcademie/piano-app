@@ -4658,6 +4658,13 @@ def update_quote(
         document_dirty = True
     if payload.calendar_snapshot is not None:
         row.calendar_snapshot = payload.calendar_snapshot
+        if "selected_solfege_slot" not in payload.model_fields_set:
+            row.selected_solfege_slot = _public_selected_solfege_slot_from_snapshot(
+                _json_object(payload.calendar_snapshot),
+                level_code=row.estimated_solfege_level,
+                duration_minutes=row.solfege_duration_minutes,
+                language=_public_solfege_language(row.language),
+            )
         document_dirty = True
     if payload.payment_terms_snapshot is not None:
         row.payment_terms_snapshot = payload.payment_terms_snapshot
