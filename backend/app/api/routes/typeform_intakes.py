@@ -3491,10 +3491,24 @@ def _is_non_blocking_solfege_line(
     *,
     runtime_context: dict[str, object],
 ) -> bool:
+    _ = runtime_context
     haystack = _normalize_token(_preview_line_haystack(line))
     if "solfege" not in haystack:
         return False
-    return _is_online_runtime_context(runtime_context) or "en ligne" in haystack or "online" in haystack
+    return True
+
+
+def _should_search_onsite_solfege_without_main_slot_filters(
+    *,
+    line_is_solfege: bool,
+    line_solfege_modality: str,
+    solfege_requested_slot_preferences: list[object],
+) -> bool:
+    return bool(
+        line_is_solfege
+        and line_solfege_modality == "onsite"
+        and not solfege_requested_slot_preferences
+    )
 
 
 def _is_solfege_recommendation(
@@ -3871,6 +3885,13 @@ def _build_session_recommendations(
             second_course_requested_slot_preferences,
         ) = _slot_filters_from_preferences(second_course_preferences)
         line_solfege_modality = _text(normalized.get("requested_solfege_modality")) if line_is_solfege else ""
+        line_searches_onsite_solfege_without_main_slot_filters = (
+            _should_search_onsite_solfege_without_main_slot_filters(
+                line_is_solfege=line_is_solfege,
+                line_solfege_modality=line_solfege_modality,
+                solfege_requested_slot_preferences=solfege_requested_slot_preferences,
+            )
+        )
         line_second_course_modality = _text(_json_object(normalized.get("requested_second_course")).get("modality")) if line_is_second_course else ""
         line_resolved_location_id = (
             None
@@ -3889,6 +3910,8 @@ def _build_session_recommendations(
         effective_requested_days = (
             solfege_requested_days
             if line_uses_solfege_slot_request
+            else set()
+            if line_searches_onsite_solfege_without_main_slot_filters
             else second_course_requested_days
             if line_is_second_course and second_course_preferences
             else requested_days
@@ -3896,6 +3919,8 @@ def _build_session_recommendations(
         effective_requested_times = (
             solfege_requested_times
             if line_uses_solfege_slot_request
+            else []
+            if line_searches_onsite_solfege_without_main_slot_filters
             else second_course_requested_times
             if line_is_second_course and second_course_preferences
             else requested_times
@@ -3903,6 +3928,8 @@ def _build_session_recommendations(
         effective_requested_slot_preferences = (
             solfege_requested_slot_preferences
             if line_uses_solfege_slot_request
+            else []
+            if line_searches_onsite_solfege_without_main_slot_filters
             else second_course_requested_slot_preferences
             if line_is_second_course and second_course_preferences
             else requested_slot_preferences
@@ -3910,7 +3937,11 @@ def _build_session_recommendations(
         activity_rows = by_activity.get(line.activity_id, [])
         option_rows: list[tuple[CourseSession, TypeformSessionMatchOptionOut]] = []
         for session_obj, activity, location, booked_count in activity_rows:
-            if not _session_is_typeform_candidate(session_obj) and not line_uses_solfege_slot_request:
+            if (
+                not _session_is_typeform_candidate(session_obj)
+                and not line_uses_solfege_slot_request
+                and not line_searches_onsite_solfege_without_main_slot_filters
+            ):
                 continue
             if line_resolved_location_id is not None and location.id != line_resolved_location_id:
                 continue
@@ -3972,8 +4003,8 @@ def _build_session_recommendations(
                     location=location,
                     booked_count=int(booked_count or 0),
                     config=config,
-                    requested_location=requested_location,
-                    resolved_location_id=resolved_location_id,
+                    requested_location=line_requested_location,
+                    resolved_location_id=line_resolved_location_id,
                     requested_slot_preferences=effective_requested_slot_preferences,
                     requested_days=effective_requested_days,
                     requested_times=effective_requested_times,
@@ -4091,6 +4122,8 @@ def _build_session_recommendations(
                 requested_summary=(
                     _requested_slot_summary(_json_list(normalized.get("requested_solfege_slot_preferences")))
                     if line_uses_solfege_slot_request
+                    else "Solfege en presentiel"
+                    if line_searches_onsite_solfege_without_main_slot_filters
                     else _requested_slot_summary(second_course_preferences)
                     if line_is_second_course and second_course_preferences
                     else _requested_summary(normalized)

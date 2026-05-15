@@ -20,6 +20,7 @@ from app.api.routes.typeform_intakes import (
     _intake_list_out_fast,
     _normalize_payload,
     _session_recommendations_have_options,
+    _should_search_onsite_solfege_without_main_slot_filters,
     _should_try_future_school_year_config,
     _solfege_slot_proposal_from_normalized,
     _stored_messages,
@@ -466,6 +467,57 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
                     "segment": "enfants",
                 }
             ],
+        )
+
+    def test_onsite_solfege_without_explicit_slot_does_not_reuse_main_course_preferences(self) -> None:
+        config = SimpleNamespace(
+            configuration_json={"field_mapping": {}, "field_labels": {}},
+            audience_segment="enfants",
+            location_code="paris_scheffer",
+        )
+        payload = {
+            "form_response": {
+                "answers": [
+                    {
+                        "field": {"id": "main-day", "title": "Quel jour souhaitez vous prendre des cours"},
+                        "choice": {"label": "mardi"},
+                    },
+                    {
+                        "field": {"id": "main-time", "title": "Horaire de nos cours en semaine"},
+                        "choice": {"label": "17h"},
+                    },
+                    {
+                        "field": {"id": "onsite-solfege", "title": "Cours de solfège en présentiel"},
+                        "boolean": True,
+                    },
+                    {
+                        "field": {"id": "solfege-level-estimate", "title": "Estimation du niveau de votre enfant en solfège"},
+                        "choice": {"label": "Débutant - âge 5 ou 6 ans (Niveau 1)"},
+                    },
+                ]
+            }
+        }
+
+        normalized, _ = _normalize_payload(payload=payload, config=config)
+
+        self.assertEqual(normalized["requested_days"], ["mardi"])
+        self.assertEqual(normalized["requested_times"], ["17:00"])
+        self.assertEqual(normalized["requested_solfege_slot_preferences"], [])
+        self.assertTrue(normalized["requested_onsite_solfege"])
+        self.assertEqual(normalized["requested_solfege_modality"], "onsite")
+        self.assertTrue(
+            _should_search_onsite_solfege_without_main_slot_filters(
+                line_is_solfege=True,
+                line_solfege_modality="onsite",
+                solfege_requested_slot_preferences=[],
+            )
+        )
+        self.assertFalse(
+            _should_search_onsite_solfege_without_main_slot_filters(
+                line_is_solfege=True,
+                line_solfege_modality="onsite",
+                solfege_requested_slot_preferences=[{"day": "mercredi", "time": "17:00"}],
+            )
         )
 
     def test_normalize_payload_detects_pass_recup_reenrollment_and_solfege_level(self) -> None:

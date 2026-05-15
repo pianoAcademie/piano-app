@@ -161,10 +161,21 @@ class QuoteEventOut(BaseModel):
     created_at: datetime
 
 
+class QuoteIntakeSummaryOut(BaseModel):
+    parent_name: str | None = None
+    student_name: str | None = None
+    birth_date: date | None = None
+    requested_pass_recup: bool | None = None
+    quote_pass_recup: bool | None = None
+    pass_recup_status: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
 class QuoteDetailOut(BaseModel):
     quote: QuoteOut
     lines: list[QuoteLineOut] = Field(default_factory=list)
     events: list[QuoteEventOut] = Field(default_factory=list)
+    intake_summary: QuoteIntakeSummaryOut | None = None
 
 
 class QuoteCreateRequest(BaseModel):

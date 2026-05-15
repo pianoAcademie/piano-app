@@ -281,6 +281,43 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertEqual(info["selected_slot"]["start_time"], "18:50")
         self.assertIn("cours en ligne", info["selected_slot"]["label"].lower())
 
+    def test_current_solfege_document_info_ignores_stale_quote_fields_without_current_solfege(self) -> None:
+        stale_selected_slot = {
+            "weekday": 2,
+            "weekday_label": "Mercredi",
+            "start_time": "18:05",
+            "end_time": "18:35",
+            "duration_minutes": 30,
+            "location_label": "Online",
+            "level_code": "1",
+        }
+
+        info = _current_solfege_document_info(
+            lines=[],
+            calendar_snapshot={
+                "blocks": [
+                    {
+                        "activity_label": "Cours de piano collectif en présentiel (1h)",
+                        "location_label": "Rue de Richelieu",
+                        "weekday": 5,
+                        "weekday_label": "Samedi",
+                        "start_time": "11:00",
+                        "end_time": "12:00",
+                        "duration_minutes": 60,
+                    }
+                ]
+            },
+            quote_selected_slot=stale_selected_slot,
+            quote_level="1",
+            quote_duration_minutes=30,
+            language="fr",
+        )
+
+        self.assertFalse(info["has_current_solfege"])
+        self.assertEqual(info["level_code"], "")
+        self.assertIsNone(info["duration_minutes"])
+        self.assertEqual(info["selected_slot"], {})
+
     def test_current_solfege_block_is_added_to_planning_table_when_snapshot_lacks_it(self) -> None:
         activity_id = uuid4()
         line = SimpleNamespace(

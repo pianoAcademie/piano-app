@@ -2990,7 +2990,8 @@ def _current_solfege_document_info(
 
     active_block = min(matching_blocks, key=_block_score) if matching_blocks else None
     block_level = _solfege_level_from_block(active_block) if active_block is not None else ""
-    selected_slot = _json_object(quote_selected_slot)
+    has_current_source = bool(current_line or active_block)
+    selected_slot = _json_object(quote_selected_slot) if has_current_source else {}
     slot_level = str(selected_slot.get("level_code") or "").strip()
     if line_level and slot_level and slot_level != line_level:
         selected_slot = {}
@@ -3004,12 +3005,14 @@ def _current_solfege_document_info(
         duration_minutes = active_block.get("duration_minutes")
     if not duration_minutes:
         duration_minutes = selected_slot.get("duration_minutes")
-    if not duration_minutes:
+    if not duration_minutes and has_current_source:
         duration_minutes = quote_duration_minutes
 
     return {
-        "has_current_solfege": bool(current_line or active_block or selected_slot),
-        "level_code": line_level or block_level or str(selected_slot.get("level_code") or quote_level or "").strip(),
+        "has_current_solfege": has_current_source,
+        "level_code": line_level
+        or block_level
+        or (str(selected_slot.get("level_code") or quote_level or "").strip() if has_current_source else ""),
         "duration_minutes": duration_minutes,
         "selected_slot": selected_slot,
     }
@@ -3248,11 +3251,14 @@ def _extract_document_context(
         quote_duration_minutes=quote.solfege_duration_minutes,
         language=language,
     )
+    has_current_solfege = bool(current_solfege_info.get("has_current_solfege"))
     current_solfege_slot = _json_object(current_solfege_info.get("selected_slot"))
-    if current_solfege_info.get("has_current_solfege"):
+    if has_current_solfege:
         selected_solfege_slot = current_solfege_slot
+    else:
+        selected_solfege_slot = {}
     current_solfege_level = str(current_solfege_info.get("level_code") or "").strip()
-    current_solfege_duration = current_solfege_info.get("duration_minutes") or quote.solfege_duration_minutes
+    current_solfege_duration = current_solfege_info.get("duration_minutes")
     activity_solfege = [item for item in _json_list(meta.get("activity_solfege")) if isinstance(item, dict)]
     masterclass_blocks_meta = [item for item in _json_list(meta.get("masterclass_blocks")) if isinstance(item, dict)]
     masterclass_blocks_calendar = _masterclass_blocks_from_calendar_snapshot(calendar_snapshot, language=language)
@@ -3274,14 +3280,14 @@ def _extract_document_context(
     pass_recup_allowed = not _quote_template_disables_pass_recup(db=db, quote=quote)
     pass_recup_enabled = pass_recup_allowed and _resolve_pass_recup_enabled(meta=meta, lines=lines)
 
-    solfege_enabled = bool(
-        current_solfege_info.get("has_current_solfege")
-        or quote.estimated_solfege_level
-        or current_solfege_duration
-        or selected_solfege_slot
-        or activity_solfege
-        or pending_solfege_info.get("has_pending_selection")
-    )
+    has_pending_solfege = bool(pending_solfege_info.get("has_pending_selection"))
+    solfege_enabled = bool(has_current_solfege or activity_solfege or has_pending_solfege)
+    if solfege_enabled and current_solfege_duration is None:
+        current_solfege_duration = quote.solfege_duration_minutes
+    if not solfege_enabled:
+        current_solfege_level = ""
+        current_solfege_duration = None
+        selected_solfege_slot = {}
     masterclass_enabled = (
         bool(masterclass_blocks)
         or _is_true(meta.get("masterclass_enabled"))
@@ -3345,7 +3351,12 @@ def _extract_document_context(
         "deposit_amount_ttc": deposit_amount_ttc,
         "remaining_ttc_after_deposit": remaining_ttc_after_deposit,
         "solfege_enabled": solfege_enabled,
-        "solfege_level": str(current_solfege_level or pending_solfege_info.get("level_code") or quote.estimated_solfege_level or "").strip(),
+        "solfege_level": str(
+            current_solfege_level
+            or pending_solfege_info.get("level_code")
+            or (quote.estimated_solfege_level if solfege_enabled else "")
+            or ""
+        ).strip(),
         "solfege_duration_minutes": current_solfege_duration,
         "solfege_selected_slot": selected_solfege_slot,
         "solfege_pending_selection": bool(pending_solfege_info.get("has_pending_selection")),

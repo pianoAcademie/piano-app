@@ -95,6 +95,7 @@ from app.schemas.quote import (
     QuoteFollowupPaymentMethodRequest,
     QuoteFollowupSlotRequest,
     QuoteFollowupUpdateRequest,
+    QuoteIntakeSummaryOut,
     QuoteLineIn,
     QuoteLineOut,
     QuoteOut,
@@ -2529,6 +2530,7 @@ def _quote_detail_out(db: Session, quote: Quote) -> QuoteDetailOut:
         quote=_quote_out(quote, calendar_snapshot=calendar_snapshot),
         lines=[_line_out(row) for row in lines],
         events=events,
+        intake_summary=_quote_intake_summary_out(quote, lines),
     )
 
 
@@ -6153,6 +6155,94 @@ def _typeform_quote_normalized_payload(quote: Quote) -> dict[str, object]:
     return _json_object(typeform_meta.get("normalized_payload"))
 
 
+def _quote_first_nonempty(payload: dict[str, object], *keys: str) -> str | None:
+    for key in keys:
+        raw = str(payload.get(key) or "").strip()
+        if raw:
+            return raw
+    return None
+
+
+def _quote_join_name(*parts: str | None) -> str | None:
+    clean = [part.strip() for part in parts if part and part.strip()]
+    return " ".join(clean) if clean else None
+
+
+def _quote_birth_date_from_normalized(payload: dict[str, object]) -> date | None:
+    raw = _quote_first_nonempty(payload, "child_birth_date", "student_birth_date", "birth_date", "date_of_birth")
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _quote_requested_pass_recup(normalized: dict[str, object]) -> bool | None:
+    if "requested_pass_recup" in normalized:
+        return _bool_or_default(normalized.get("requested_pass_recup"), False)
+    for key in ("pass_recup_requested", "pass_recup", "requested_pass_recovery"):
+        if key in normalized:
+            return _bool_or_default(normalized.get(key), False)
+    return None
+
+
+def _quote_line_contains_pass_recup(lines: list[QuoteLine]) -> bool:
+    for line in lines:
+        meta = _json_object(line.meta)
+        parts = [
+            line.title,
+            line.description,
+            line.code,
+            line.line_type,
+            line.master_item_type,
+            str(meta.get("source") or ""),
+            str(meta.get("code") or ""),
+        ]
+        normalized = _normalize_discount_label(" ".join(part for part in parts if part))
+        if "passrecup" in normalized or "passrecuperation" in normalized:
+            return True
+    return False
+
+
+def _quote_pass_recup_enabled(quote: Quote, lines: list[QuoteLine]) -> bool:
+    meta = _quote_meta_dict(quote)
+    mode = str(meta.get("pass_recup_mode") or "").strip().casefold()
+    if mode == "enabled" or _bool_or_default(meta.get("pass_recup_enabled"), False):
+        return True
+    if mode == "disabled":
+        return False
+    return _quote_line_contains_pass_recup(lines)
+
+
+def _quote_intake_summary_out(quote: Quote, lines: list[QuoteLine]) -> QuoteIntakeSummaryOut | None:
+    normalized = _typeform_quote_normalized_payload(quote)
+    if not normalized:
+        return None
+    requested_pass_recup = _quote_requested_pass_recup(normalized)
+    quote_pass_recup = _quote_pass_recup_enabled(quote, lines)
+    warnings: list[str] = []
+    if requested_pass_recup is True and not quote_pass_recup:
+        warnings.append("requested_pass_recup_missing")
+    parent_name = _quote_join_name(
+        _quote_first_nonempty(normalized, "parent_first_name", "adult_first_name", "first_name"),
+        _quote_first_nonempty(normalized, "parent_last_name", "adult_last_name", "last_name"),
+    )
+    student_name = _quote_join_name(
+        _quote_first_nonempty(normalized, "child_first_name", "student_first_name", "first_name"),
+        _quote_first_nonempty(normalized, "child_last_name", "student_last_name", "last_name"),
+    )
+    return QuoteIntakeSummaryOut(
+        parent_name=parent_name,
+        student_name=student_name,
+        birth_date=_quote_birth_date_from_normalized(normalized),
+        requested_pass_recup=requested_pass_recup,
+        quote_pass_recup=quote_pass_recup,
+        pass_recup_status="mismatch" if warnings else "ok",
+        warnings=warnings,
+    )
+
+
 def _normalized_country_code(value: object | None) -> str | None:
     raw = str(value or "").strip()
     if not raw:
@@ -6281,14 +6371,7 @@ def _quote_parent_address_fields(
 
 
 def _quote_child_birth_date(quote: Quote) -> date | None:
-    normalized = _typeform_quote_normalized_payload(quote)
-    raw = str(normalized.get("child_birth_date") or "").strip()
-    if not raw:
-        return None
-    try:
-        return date.fromisoformat(raw)
-    except ValueError:
-        return None
+    return _quote_birth_date_from_normalized(_typeform_quote_normalized_payload(quote))
 
 
 def _apply_quote_client_contact_defaults(

@@ -163,6 +163,17 @@ type QuoteDetailOut = {
   quote: QuoteOut;
   lines: QuoteLineOut[];
   events: QuoteEventOut[];
+  intake_summary?: QuoteIntakeSummaryOut | null;
+};
+
+type QuoteIntakeSummaryOut = {
+  parent_name: string | null;
+  student_name: string | null;
+  birth_date: string | null;
+  requested_pass_recup: boolean | null;
+  quote_pass_recup: boolean | null;
+  pass_recup_status: string | null;
+  warnings: string[];
 };
 
 type QuoteEventOut = {
@@ -469,6 +480,21 @@ function formatDate(value: string | null, language: UiLanguage = "fr"): string {
     return "-";
   }
   return parsed.toLocaleString(localeForUiLanguage(language), { dateStyle: "short", timeStyle: "short" });
+}
+
+function formatDateOnly(value: string | null, language: UiLanguage = "fr"): string {
+  if (!value) {
+    return "-";
+  }
+  const parts = value.split("-").map(Number);
+  if (parts.length >= 3 && parts[0] && parts[1] && parts[2]) {
+    return new Intl.DateTimeFormat(localeForUiLanguage(language), {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    }).format(new Date(parts[0], parts[1] - 1, parts[2]));
+  }
+  return formatDate(value, language);
 }
 
 function formatAmount(value: string, currency: string, language: UiLanguage = "fr"): string {
@@ -2080,6 +2106,12 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const quoteDeposit = parseQuotePreRegistrationDeposit(detail.quote.meta || {});
   const passRecupModeRaw = String((detail.quote.meta || {}).pass_recup_mode || "").trim().toLowerCase();
   const passRecupMode = passRecupModeRaw === "enabled" || passRecupModeRaw === "disabled" ? passRecupModeRaw : "auto";
+  const intakeSummary = detail.intake_summary || null;
+  const formatNullableBoolean = (value: boolean | null | undefined) => {
+    if (value === true) return t("common.yes");
+    if (value === false) return t("common.no");
+    return t("admin.quote_detail.intake_summary_unknown");
+  };
   const defaultVatRate = resolveDefaultVatRate(detail);
   const signedAdjustment = adjustmentSignedAmount(quoteAdjustment);
   const totalTtcNumber = Number(detail.quote.total_ttc);
@@ -3039,6 +3071,42 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	            <section className="card" id="quote-cadre">
 	              <h3>{t("admin.quote_detail.settings_title")}</h3>
 	              <p className="muted">{t("admin.quote_detail.settings_subtitle")}</p>
+	              {intakeSummary ? (
+	                <article className="item top-gap-sm">
+	                  <strong>{t("admin.quote_detail.intake_summary_title")}</strong>
+	                  <p className="muted top-gap-sm">{t("admin.quote_detail.intake_summary_subtitle")}</p>
+	                  <div className="grid cols-3 top-gap-sm">
+	                    <p>
+	                      <span className="muted">{t("admin.quote_detail.intake_student")}</span>
+	                      <br />
+	                      <strong>{intakeSummary.student_name || "-"}</strong>
+	                    </p>
+	                    <p>
+	                      <span className="muted">{t("admin.quote_detail.intake_parent")}</span>
+	                      <br />
+	                      <strong>{intakeSummary.parent_name || "-"}</strong>
+	                    </p>
+	                    <p>
+	                      <span className="muted">{t("admin.quote_detail.intake_birth_date")}</span>
+	                      <br />
+	                      <strong>{formatDateOnly(intakeSummary.birth_date || null, language)}</strong>
+	                    </p>
+	                    <p>
+	                      <span className="muted">{t("admin.quote_detail.intake_pass_recup_requested")}</span>
+	                      <br />
+	                      <strong>{formatNullableBoolean(intakeSummary.requested_pass_recup)}</strong>
+	                    </p>
+	                    <p>
+	                      <span className="muted">{t("admin.quote_detail.intake_pass_recup_quote")}</span>
+	                      <br />
+	                      <strong>{formatNullableBoolean(intakeSummary.quote_pass_recup)}</strong>
+	                    </p>
+	                  </div>
+	                  {intakeSummary.warnings?.includes("requested_pass_recup_missing") ? (
+	                    <p className="form-error top-gap-sm">{t("admin.quote_detail.intake_summary_pass_recup_warning")}</p>
+	                  ) : null}
+	                </article>
+	              ) : null}
 	              <form action={updateQuoteSettingsAction} className="grid cols-3 config-form-grid top-gap-sm">
           <input type="hidden" name="quote_id" value={detail.quote.id} />
           <input type="hidden" name="return_to" value={selfPath} />
