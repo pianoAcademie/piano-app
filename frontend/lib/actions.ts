@@ -11450,6 +11450,89 @@ export async function resendQuoteAction(formData: FormData): Promise<void> {
   redirect(withUiMessageCode(successReturnTo, "ok", "quote_resent", { lang: language }));
 }
 
+export async function sendQuoteManualEmailAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const recipientEmail = String(formData.get("recipient_email") ?? "").trim();
+  const subject = String(formData.get("subject") ?? "").trim();
+  const body = String(formData.get("body") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes/${encodeURIComponent(quoteId)}?section=interactions`));
+  const successReturnTo = withUiLanguage(returnTo, language);
+  if (!quoteId) {
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_not_found", { lang: language }));
+  }
+  if (!recipientEmail || !recipientEmail.includes("@") || !subject || !body) {
+    redirect(appendQueryMessage(successReturnTo, "error", "Email, sujet et message sont obligatoires."));
+  }
+
+  const result = await backendRequest<{ quote: { id: string } }>(
+    `/api/v1/quotes/${encodeURIComponent(quoteId)}/manual-email`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        recipient_email: recipientEmail,
+        subject,
+        body,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(successReturnTo, "error", result.message));
+  }
+  revalidatePath("/admin/quotes");
+  revalidatePath("/admin/communications");
+  revalidatePath(`/admin/quotes/${quoteId}`);
+  redirect(appendQueryMessage(successReturnTo, "ok", "Email envoye et trace dans les interactions."));
+}
+
+export async function logQuoteManualReplyAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const senderEmail = String(formData.get("sender_email") ?? "").trim();
+  const subject = String(formData.get("subject") ?? "").trim();
+  const body = String(formData.get("body") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes/${encodeURIComponent(quoteId)}?section=interactions`));
+  const successReturnTo = withUiLanguage(returnTo, language);
+  if (!quoteId) {
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_not_found", { lang: language }));
+  }
+  if (!senderEmail || !senderEmail.includes("@") || !body) {
+    redirect(appendQueryMessage(successReturnTo, "error", "Email expediteur et reponse sont obligatoires."));
+  }
+
+  const result = await backendRequest<{ quote: { id: string } }>(
+    `/api/v1/quotes/${encodeURIComponent(quoteId)}/manual-reply`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        sender_email: senderEmail,
+        subject: subject || null,
+        body,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(successReturnTo, "error", result.message));
+  }
+  revalidatePath("/admin/quotes");
+  revalidatePath(`/admin/quotes/${quoteId}`);
+  redirect(appendQueryMessage(successReturnTo, "ok", "Reponse prospect ajoutee aux interactions."));
+}
+
 export async function cancelQuoteAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

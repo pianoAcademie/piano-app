@@ -26,6 +26,7 @@ import {
   duplicateQuoteAction,
   duplicateQuoteForChildAction,
   finalizeQuoteFollowupAction,
+  logQuoteManualReplyAction,
   quickTransformQuoteAction,
   regenerateQuoteDocumentAction,
   resendQuoteAction,
@@ -33,6 +34,7 @@ import {
   rollbackQuoteTransformationAction,
   restoreQuotePublicResponseAction,
   selectQuoteFollowupSlotAction,
+  sendQuoteManualEmailAction,
   sendQuoteAction,
   updateQuoteLinesAction,
   updateQuotePlanningAction,
@@ -1290,6 +1292,8 @@ const QUOTE_INTERACTION_EVENT_TYPES = new Set([
   "quote_created",
   "quote_document_regenerated",
   "quote_email_sent",
+  "quote_manual_email_sent",
+  "quote_manual_email_received",
   "quote_sms_sent",
   "quote_sent",
   "quote_resent",
@@ -1346,6 +1350,8 @@ function quoteEventTitle(event: QuoteEventOut, language: UiLanguage = "fr"): str
     quote_created: "admin.quote_events.title.created",
     quote_document_regenerated: "admin.quote_events.title.document_regenerated",
     quote_email_sent: "admin.quote_events.title.email_sent",
+    quote_manual_email_sent: "admin.quote_events.title.manual_email_sent",
+    quote_manual_email_received: "admin.quote_events.title.manual_email_received",
     quote_sms_sent: "admin.quote_events.title.sms_sent",
     quote_sent: "admin.quote_events.title.sent",
     quote_resent: "admin.quote_events.title.resent",
@@ -1366,7 +1372,7 @@ function quoteEventTitle(event: QuoteEventOut, language: UiLanguage = "fr"): str
 
 function quoteEventTone(event: QuoteEventOut): "client" | "admin" | "system" {
   const type = String(event.event_type || "").trim().toLowerCase();
-  if (["quote_approved", "quote_rejected", "quote_change_requested"].includes(type)) {
+  if (["quote_approved", "quote_rejected", "quote_change_requested", "quote_manual_email_received"].includes(type)) {
     return "client";
   }
   if (
@@ -1382,6 +1388,7 @@ function quoteEventTone(event: QuoteEventOut): "client" | "admin" | "system" {
       "quote_transformation_rolled_back",
       "quote_document_regenerated",
       "quote_email_sent",
+      "quote_manual_email_sent",
       "quote_sms_sent",
       "quote_sent",
       "quote_resent",
@@ -1404,6 +1411,8 @@ function quoteEventDescription(event: QuoteEventOut, language: UiLanguage = "fr"
   );
   const message = typeof payload.message === "string" ? payload.message.trim() : "";
   const recipientEmail = typeof payload.recipient_email === "string" ? payload.recipient_email.trim() : "";
+  const senderEmail = typeof payload.sender_email === "string" ? payload.sender_email.trim() : "";
+  const subject = typeof payload.subject === "string" ? payload.subject.trim() : "";
   const recipientPhone = typeof payload.recipient_phone === "string" ? payload.recipient_phone.trim() : "";
   const fromStatus = typeof payload.from_status === "string" ? payload.from_status.trim() : "";
   const toStatus = typeof payload.to_status === "string" ? payload.to_status.trim() : "";
@@ -1441,6 +1450,16 @@ function quoteEventDescription(event: QuoteEventOut, language: UiLanguage = "fr"
     return recipientEmail
       ? uiText(language, "admin.quote_events.description.email_sent_to", { email: recipientEmail })
       : uiText(language, "admin.quote_events.description.email_sent_by", { actor: actorLabel });
+  }
+  if (type === "quote_manual_email_sent") {
+    return recipientEmail
+      ? uiText(language, "admin.quote_events.description.manual_email_sent_to", { email: recipientEmail, subject: subject || "-" })
+      : uiText(language, "admin.quote_events.description.email_sent_by", { actor: actorLabel });
+  }
+  if (type === "quote_manual_email_received") {
+    return senderEmail
+      ? uiText(language, "admin.quote_events.description.manual_email_received_from", { email: senderEmail, subject: subject || "-" })
+      : uiText(language, "admin.quote_events.description.manual_email_received");
   }
   if (type === "quote_sms_sent") {
     return recipientPhone
@@ -1916,6 +1935,20 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const defaultPrimaryPhone = [lastRecipientPhone, resolvedParentReferentPhone, ownerPhone]
     .map((value) => String(value || "").trim())
     .find((value) => value && value !== "-") || "";
+  const manualEmailRecipients = Array.from(
+    new Set(
+      [
+        primaryRecipientEmail,
+        parentRecipientEmail,
+        ownerEmail,
+        lastRecipientEmail,
+      ]
+        .map((value) => String(value || "").trim().toLowerCase())
+        .filter((value) => value && value !== "-"),
+    ),
+  );
+  const defaultManualEmail = manualEmailRecipients[0] || "";
+  const defaultManualEmailSubject = t("admin.quote_detail.manual_email_default_subject", { quote: detail.quote.quote_number });
   const defaultSendTemplateRef =
     messagingSettings?.quote_send_template_ref ||
     (quoteSendTemplates[0] ? messagingTemplateRef(quoteSendTemplates[0]) : "");
@@ -1963,6 +1996,12 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                   </div>
                 </div>
                 <p className="top-gap-xs">{quoteEventDescription(event, language)}</p>
+                {typeof event.payload?.body === "string" && event.payload.body.trim() ? (
+                  <details className="quote-interaction-message top-gap-xs">
+                    <summary>{t("admin.quote_detail.interaction_message_toggle")}</summary>
+                    <pre>{event.payload.body.trim()}</pre>
+                  </details>
+                ) : null}
               </div>
             </li>
           ))}
@@ -2616,6 +2655,72 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 
         {activeSection === "interactions" ? (
           <>
+            <section className="card quote-mailbox-card">
+              <div className="row spread wrap gap-sm">
+                <div>
+                  <h3>{t("admin.quote_detail.manual_email_title")}</h3>
+                  <p className="muted">{t("admin.quote_detail.manual_email_subtitle")}</p>
+                </div>
+              </div>
+              <div className="quote-mailbox-grid top-gap-sm">
+                <form action={sendQuoteManualEmailAction} className="quote-mailbox-panel">
+                  <input type="hidden" name="quote_id" value={detail.quote.id} />
+                  <input type="hidden" name="return_to" value={selfPath} />
+                  <h4>{t("admin.quote_detail.manual_email_send_title")}</h4>
+                  <label>
+                    {t("admin.quote_detail.manual_email_recipient")}
+                    <input
+                      type="email"
+                      name="recipient_email"
+                      defaultValue={defaultManualEmail}
+                      list={`quote-email-recipients-${detail.quote.id}`}
+                      required
+                    />
+                  </label>
+                  <label>
+                    {t("admin.quote_detail.manual_email_subject")}
+                    <input type="text" name="subject" defaultValue={defaultManualEmailSubject} maxLength={255} required />
+                  </label>
+                  <label>
+                    {t("admin.quote_detail.manual_email_body")}
+                    <textarea name="body" rows={7} required placeholder={t("admin.quote_detail.manual_email_body_placeholder")} />
+                  </label>
+                  <button type="submit">{t("admin.quote_detail.manual_email_send_button")}</button>
+                </form>
+
+                <form action={logQuoteManualReplyAction} className="quote-mailbox-panel">
+                  <input type="hidden" name="quote_id" value={detail.quote.id} />
+                  <input type="hidden" name="return_to" value={selfPath} />
+                  <h4>{t("admin.quote_detail.manual_reply_title")}</h4>
+                  <label>
+                    {t("admin.quote_detail.manual_reply_sender")}
+                    <input
+                      type="email"
+                      name="sender_email"
+                      defaultValue={defaultManualEmail}
+                      list={`quote-email-recipients-${detail.quote.id}`}
+                      required
+                    />
+                  </label>
+                  <label>
+                    {t("admin.quote_detail.manual_email_subject")}
+                    <input type="text" name="subject" defaultValue={`Re: ${defaultManualEmailSubject}`} maxLength={255} />
+                  </label>
+                  <label>
+                    {t("admin.quote_detail.manual_reply_body")}
+                    <textarea name="body" rows={7} required placeholder={t("admin.quote_detail.manual_reply_body_placeholder")} />
+                  </label>
+                  <button type="submit" className="ghost">{t("admin.quote_detail.manual_reply_save_button")}</button>
+                </form>
+              </div>
+              <datalist id={`quote-email-recipients-${detail.quote.id}`}>
+                {manualEmailRecipients.map((email) => (
+                  <option value={email} key={email} />
+                ))}
+              </datalist>
+              <p className="muted top-gap-sm">{t("admin.quote_detail.manual_email_inbound_note")}</p>
+            </section>
+
 	            {hasPublicChangeRequest ? (
 	              <section className="card quote-public-feedback-card">
 	                <div className="row spread wrap gap-sm">

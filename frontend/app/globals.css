@@ -14588,6 +14588,59 @@ button.danger:focus-visible {
   margin: 0;
 }
 
+.quote-mailbox-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.quote-mailbox-panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fffdfa;
+}
+
+.quote-mailbox-panel label {
+  display: grid;
+  gap: 6px;
+}
+
+.quote-mailbox-panel textarea {
+  min-height: 140px;
+  resize: vertical;
+}
+
+.quote-interaction-message {
+  padding: 10px 12px;
+  border: 1px solid #e4d4bd;
+  border-radius: 8px;
+  background: #fffdfa;
+}
+
+.quote-interaction-message summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.quote-interaction-message pre {
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+@media (max-width: 900px) {
+  .quote-mailbox-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .quote-validation-integration-section {
   display: grid;
   gap: 8px;

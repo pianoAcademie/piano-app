@@ -250,6 +250,18 @@ class QuoteSendRequest(BaseModel):
     sms_template_ref: str | None = Field(default=None, max_length=120)
 
 
+class QuoteManualEmailRequest(BaseModel):
+    recipient_email: str = Field(min_length=3, max_length=255)
+    subject: str = Field(min_length=1, max_length=255)
+    body: str = Field(min_length=1, max_length=10000)
+
+
+class QuoteManualReplyRequest(BaseModel):
+    sender_email: str = Field(min_length=3, max_length=255)
+    subject: str | None = Field(default=None, max_length=255)
+    body: str = Field(min_length=1, max_length=10000)
+
+
 class QuoteEmailPreviewOut(BaseModel):
     recipient_email: str = Field(min_length=3, max_length=255)
     template_ref: str = Field(min_length=1, max_length=120)

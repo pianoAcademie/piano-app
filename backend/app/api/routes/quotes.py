@@ -40,7 +40,7 @@ from app.api.routes.bookings import (
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, SessionStatus
 from app.models.client_record import ClientInvoiceLine, ClientManualTransaction, ClientNoteEntry
 from app.models.family import ClientFamilyLink
-from app.models.ops import AppSetting, LegalEntity
+from app.models.ops import AppSetting, CommunicationSenderCategory, LegalEntity
 from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, SubscriptionStatus
 from app.models.product_catalog import CatalogKit, CatalogProduct
 from app.models.quote import (
@@ -98,6 +98,8 @@ from app.schemas.quote import (
     QuoteIntakeSummaryOut,
     QuoteLineIn,
     QuoteLineOut,
+    QuoteManualEmailRequest,
+    QuoteManualReplyRequest,
     QuoteOut,
     QuotePaymentSchedulePreviewRequest,
     QuotePublicApproveRequest,
@@ -2536,6 +2538,17 @@ def _quote_detail_out(db: Session, quote: Quote) -> QuoteDetailOut:
 
 def _resolve_recipient_email(db: Session, quote: Quote, explicit_email: str | None = None) -> str | None:
     return resolve_quote_recipient_email(db, quote, explicit_email=explicit_email)
+
+
+def _user_display_label(user: User) -> str:
+    return _display_name(user.first_name, user.last_name, user.email)
+
+
+def _validate_email_address(value: str, *, detail: str) -> str:
+    email = (value or "").strip().lower()
+    if not email or "@" not in email or email.startswith("@") or email.endswith("@"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
+    return email
 
 
 def _resolve_recipient_phone(db: Session, quote: Quote, explicit_phone: str | None = None) -> str | None:
@@ -5543,6 +5556,90 @@ def resend_quote(
                 "document_hash": snapshot.document_hash,
             },
             created_at=_utcnow(),
+        )
+    )
+    db.commit()
+    db.refresh(quote)
+    return _quote_detail_out(db, quote)
+
+
+@router.post("/quotes/{quote_id}/manual-email", response_model=QuoteDetailOut)
+def send_quote_manual_email(
+    quote_id: UUID,
+    payload: QuoteManualEmailRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteDetailOut:
+    quote = _load_quote(db, quote_id, lock=True)
+    recipient = _validate_email_address(payload.recipient_email, detail="Invalid recipient email")
+    subject = payload.subject.strip()
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Email body is required")
+
+    provider_message_id = send_email(
+        to_email=recipient,
+        subject=subject,
+        body=body,
+        body_format="TEXT",
+        context=f"QUOTE_MANUAL:{quote.id}",
+        sender_user_id=current_user.id,
+        sender_label=_user_display_label(current_user),
+        sender_category=CommunicationSenderCategory.OTHER_USER,
+        communication_type="OPERATIONAL",
+    )
+    now = _utcnow()
+    quote.meta = {**(quote.meta or {}), "recipient_email": recipient}
+    quote.updated_at = now
+    db.add(quote)
+    db.add(
+        QuoteEvent(
+            quote_id=quote.id,
+            event_type="quote_manual_email_sent",
+            actor_type="admin",
+            actor_id=current_user.id,
+            payload={
+                "recipient_email": recipient,
+                "subject": subject,
+                "body": body,
+                "provider_message_id": provider_message_id,
+            },
+            created_at=now,
+        )
+    )
+    db.commit()
+    db.refresh(quote)
+    return _quote_detail_out(db, quote)
+
+
+@router.post("/quotes/{quote_id}/manual-reply", response_model=QuoteDetailOut)
+def log_quote_manual_reply(
+    quote_id: UUID,
+    payload: QuoteManualReplyRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteDetailOut:
+    quote = _load_quote(db, quote_id, lock=True)
+    sender_email = _validate_email_address(payload.sender_email, detail="Invalid sender email")
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Reply body is required")
+    subject = (payload.subject or "").strip() or f"Re: Devis {quote.quote_number}"
+    now = _utcnow()
+    db.add(
+        QuoteEvent(
+            quote_id=quote.id,
+            event_type="quote_manual_email_received",
+            actor_type="prospect",
+            actor_id=None,
+            payload={
+                "sender_email": sender_email,
+                "subject": subject,
+                "body": body,
+                "logged_by_admin_id": str(current_user.id),
+                "logged_by_admin_label": _user_display_label(current_user),
+            },
+            created_at=now,
         )
     )
     db.commit()
