@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -53,6 +54,22 @@ def sms_delivery_disabled_reason(db: Session | None = None) -> str | None:
     return messaging_sms_delivery_disabled_reason(resolve_messaging_sms_delivery_config(db))
 
 
+def normalize_sms_recipient_number(value: str | None) -> str:
+    compact = re.sub(r"[^\d+]+", "", (value or "").strip())
+    if compact.startswith("00"):
+        compact = f"+{compact[2:]}"
+    if compact.startswith("+"):
+        plus_digits = re.sub(r"\D+", "", compact[1:])
+        return f"+{plus_digits}"
+
+    digits = re.sub(r"\D+", "", compact)
+    if len(digits) == 10 and digits.startswith("0"):
+        return f"+33{digits[1:]}"
+    if len(digits) == 11 and digits.startswith("33"):
+        return f"+{digits}"
+    return digits
+
+
 def _log_sms(
     *,
     to_phone: str,
@@ -91,7 +108,7 @@ def send_provider_sms(
     subject: str | None = None,
     db: Session | None = None,
 ) -> SmsProviderSendResult:
-    normalized_phone = (to_phone or "").strip()
+    normalized_phone = normalize_sms_recipient_number(to_phone)
     normalized_message = (message or "").strip()
     if not normalized_phone:
         return SmsProviderSendResult(
