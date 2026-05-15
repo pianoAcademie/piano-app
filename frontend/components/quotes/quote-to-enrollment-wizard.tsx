@@ -810,6 +810,11 @@ export default function QuoteToEnrollmentWizard({
 
   const saveDisabled = !followupId;
   const finalizeDisabled = !followupId || unresolvedBlockingIssues.length > 0;
+  const finalizeDisabledReason = !followupId
+    ? t("admin.quote_transform.no_followup_persistence")
+    : unresolvedBlockingIssues.length > 0
+      ? t("admin.quote_transform.critical_blocks_remaining", { count: unresolvedBlockingIssues.length })
+      : "";
 
   const draftPayload = useMemo<QuoteToEnrollmentDraft>(() => {
     const draftRows = billingRows.map((row) => ({
@@ -1625,6 +1630,7 @@ export default function QuoteToEnrollmentWizard({
                     description={t("admin.quote_transform.confirm_description")}
                     confirmLabel={t("admin.quote_transform.confirm_execute")}
                     disabled={finalizeDisabled}
+                    disabledReason={finalizeDisabledReason}
                   />
                 </form>
               </div>

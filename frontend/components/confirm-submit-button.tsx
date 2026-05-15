@@ -16,6 +16,7 @@ type ConfirmSubmitButtonProps = {
   language?: UiLanguage | string;
   className?: string;
   disabled?: boolean;
+  disabledReason?: string;
 };
 
 export default function ConfirmSubmitButton({
@@ -30,6 +31,7 @@ export default function ConfirmSubmitButton({
   language: languageProp = "fr",
   className,
   disabled = false,
+  disabledReason = "",
 }: ConfirmSubmitButtonProps): JSX.Element {
   const language = normalizeUiLanguage(languageProp);
   const resolvedConfirmLabel = confirmLabel ?? uiText(language, "common.confirm");
@@ -45,6 +47,10 @@ export default function ConfirmSubmitButton({
   };
 
   const confirm = (): void => {
+    if (disabled) {
+      setErrorMessage(disabledReason || resolvedMissingFormError);
+      return;
+    }
     const form = document.getElementById(formId);
     if (!(form instanceof HTMLFormElement)) {
       setErrorMessage(resolvedMissingFormError);
@@ -59,9 +65,14 @@ export default function ConfirmSubmitButton({
       <button
         type="button"
         className={className}
-        disabled={disabled}
+        disabled={disabled && !disabledReason}
+        aria-disabled={disabled || undefined}
         onClick={() => {
           if (disabled) {
+            if (disabledReason) {
+              setOpen(true);
+              setErrorMessage(disabledReason);
+            }
             return;
           }
           setOpen(true);
@@ -88,9 +99,11 @@ export default function ConfirmSubmitButton({
               <button type="button" className="ghost" onClick={close}>
                 {resolvedCancelLabel}
               </button>
-              <button type="button" onClick={confirm}>
-                {resolvedConfirmLabel}
-              </button>
+              {disabled ? null : (
+                <button type="button" onClick={confirm}>
+                  {resolvedConfirmLabel}
+                </button>
+              )}
             </div>
           </article>
         </section>
