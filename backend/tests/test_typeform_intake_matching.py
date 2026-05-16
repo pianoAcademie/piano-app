@@ -25,12 +25,302 @@ from app.api.routes.typeform_intakes import (
     _solfege_slot_proposal_from_normalized,
     _stored_messages,
     _template_matches_segment_target,
+    _typeform_default_quote_template,
+    _typeform_default_terms_template,
     _typeform_session_option_from_row,
 )
 from app.services.referrals import referral_category_for_location
 
 
 class TypeformIntakeMatchingTests(unittest.TestCase):
+    def test_normalize_payload_maps_bar_le_duc_adult_2026_form(self) -> None:
+        config = SimpleNamespace(
+            configuration_json={
+                "field_mapping": {
+                    "adult_first_name": ["2d3d1cd8-5215-4292-888f-c8688d356cc3", "ZN78ePa7AnX6"],
+                    "adult_last_name": ["0c0a414f-c030-4b18-b726-f46bd68ec3bd", "sYKCB2fi6fdH"],
+                    "adult_phone": ["c8ba5893-faae-440d-bf57-b2f8c76f917c", "BO1ssvO3bLJL"],
+                    "adult_email": ["30122284-9b96-4710-8ef9-85323f3b8cec", "hmdaAxufGIRz"],
+                    "requested_location": ["d2e24218-ca13-4d0f-9aee-aed62064f0f8", "RSRrFMDX3r4x"],
+                    "requested_course_mode": ["79fc9436-3876-45d8-a606-42aeb5b9c16e", "lPTgRaXnUe5o"],
+                    "requested_days": ["cd2aae75-5f1a-41da-8d11-bb06317aa9ec", "ABQSpJCI7SmU"],
+                    "requested_times": ["cd2aae75-5f1a-41da-8d11-bb06317aa9ec", "ABQSpJCI7SmU"],
+                    "requested_slot_preferences": ["cd2aae75-5f1a-41da-8d11-bb06317aa9ec", "ABQSpJCI7SmU"],
+                    "requested_formula_type": [
+                        "30e7993e-e094-441a-b91d-c7be27eb1855",
+                        "uWCHtvziDdRS",
+                        "f152efb5-e514-4942-98b5-3b015ffe5e93",
+                        "qC2pwm0mhUzu",
+                    ],
+                    "requested_payment_method": ["535e5e4f-d896-41d5-b50e-8a2b4e7f48da", "k9dOy8nuYY7K"],
+                    "referral_referrer_name": ["70497518-c91a-43c7-9920-6e90e8830e86", "Lb81oigIiqU6"],
+                    "parent_address_line_1": ["ec7d84dd-11cc-4be9-a83f-02ba534d22ae", "nZqbjdldKlGl"],
+                    "parent_address_line_2": ["5958df0f-5002-4bd6-a113-82aa86d34edf", "r9rqOu76ZxaF"],
+                    "parent_city": ["d83e7e5f-ccea-492f-9def-330ef62ba6c4", "MggGi7xdaaab"],
+                    "parent_postal_code": ["a3481f83-b489-4b87-a8e6-03f79dd319fc", "yMQwiMEkLC1g"],
+                    "parent_country": ["becf196f-056f-43cf-93fd-d2a7ed578167", "kJpVBNj2XTcx"],
+                    "notes": ["ebf82582-33fe-4051-ba9e-fdd8ffeaf2e2", "Fy01o3nzrQxK"],
+                },
+                "field_labels": {},
+                "default_course_mode": "onsite",
+            },
+            audience_segment="adult",
+            location_code="BAR_LE_DUC",
+        )
+        payload = {
+            "form_response": {
+                "form_id": "reOoXM3G",
+                "token": "01KRRF9W1935Q379JQ775ZDTVP",
+                "answers": [
+                    {"text": "Lorem ipsum dolor", "field": {"id": "ZN78ePa7AnX6", "ref": "2d3d1cd8-5215-4292-888f-c8688d356cc3"}},
+                    {"text": "Lorem ipsum dolor", "field": {"id": "sYKCB2fi6fdH", "ref": "0c0a414f-c030-4b18-b726-f46bd68ec3bd"}},
+                    {"phone_number": "+34123456789", "field": {"id": "BO1ssvO3bLJL", "ref": "c8ba5893-faae-440d-bf57-b2f8c76f917c"}},
+                    {"email": "an_account@example.com", "field": {"id": "hmdaAxufGIRz", "ref": "30122284-9b96-4710-8ef9-85323f3b8cec"}},
+                    {"text": "Famille Martin", "field": {"id": "Lb81oigIiqU6", "ref": "70497518-c91a-43c7-9920-6e90e8830e86"}},
+                    {"choice": {"label": "Ecole à Bar-le-Duc"}, "field": {"id": "RSRrFMDX3r4x", "ref": "d2e24218-ca13-4d0f-9aee-aed62064f0f8"}},
+                    {"choices": {"labels": ["21h"]}, "field": {"id": "px8eLzv9bFn9", "ref": "0649fefc-8b95-4d23-a1a2-51dfc1d21b99", "title": "lundi"}},
+                    {"choices": {"labels": ["21h"]}, "field": {"id": "aHzc7LQ5osRR", "ref": "0b6ea79b-3cfb-4743-a119-2d8d7e3f7313", "title": "mardi"}},
+                    {"choice": {"label": "Cours collectif"}, "field": {"id": "lPTgRaXnUe5o", "ref": "79fc9436-3876-45d8-a606-42aeb5b9c16e"}},
+                    {"choice": {"label": "Engagement 10 cours - 45€/h"}, "field": {"id": "qC2pwm0mhUzu", "ref": "f152efb5-e514-4942-98b5-3b015ffe5e93"}},
+                    {"choice": {"label": "Engagement sur 10 cours - 26€ / cours"}, "field": {"id": "uWCHtvziDdRS", "ref": "30e7993e-e094-441a-b91d-c7be27eb1855"}},
+                    {
+                        "choices": {
+                            "labels": [
+                                "Lundi 8h30",
+                                "Lundi 13h30",
+                                "Mardi 9h",
+                                "Mardi 13h30",
+                                "Mercredi 18h",
+                                "Jeudi 9h",
+                                "Jeudi 13h30",
+                                "Jeudi 18h",
+                                "Vendredi 9h",
+                                "Vendredi 13h30",
+                                "Vendredi 18h",
+                                "Samedi 11h",
+                            ]
+                        },
+                        "field": {"id": "ABQSpJCI7SmU", "ref": "cd2aae75-5f1a-41da-8d11-bb06317aa9ec"},
+                    },
+                    {"choice": {"label": "Carte bleue en 1 fois"}, "field": {"id": "k9dOy8nuYY7K", "ref": "535e5e4f-d896-41d5-b50e-8a2b4e7f48da"}},
+                    {"text": "12 rue test", "field": {"id": "nZqbjdldKlGl", "ref": "ec7d84dd-11cc-4be9-a83f-02ba534d22ae"}},
+                    {"text": "Bar-le-Duc", "field": {"id": "MggGi7xdaaab", "ref": "d83e7e5f-ccea-492f-9def-330ef62ba6c4"}},
+                    {"text": "55000", "field": {"id": "yMQwiMEkLC1g", "ref": "a3481f83-b489-4b87-a8e6-03f79dd319fc"}},
+                    {"text": "FR", "field": {"id": "kJpVBNj2XTcx", "ref": "becf196f-056f-43cf-93fd-d2a7ed578167"}},
+                    {"text": "A rappeler", "field": {"id": "Fy01o3nzrQxK", "ref": "ebf82582-33fe-4051-ba9e-fdd8ffeaf2e2"}},
+                ],
+            }
+        }
+
+        normalized, _ = _normalize_payload(payload=payload, config=config)
+
+        self.assertEqual(normalized["customer_type"], "adult")
+        self.assertEqual(normalized["parent_first_name"], "Lorem ipsum dolor")
+        self.assertEqual(normalized["parent_email"], "an_account@example.com")
+        self.assertIsNone(normalized["child_first_name"])
+        self.assertEqual(normalized["requested_location"], "Ecole à Bar-le-Duc")
+        self.assertEqual(normalized["requested_course_mode"], "Cours collectif")
+        self.assertEqual(normalized["requested_formula_type"], "Engagement sur 10 cours - 26€ / cours")
+        self.assertEqual(normalized["requested_payment_method"], "Carte bleue en 1 fois")
+        self.assertEqual(normalized["requested_days"], ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"])
+        self.assertEqual(normalized["requested_times"], ["08:30", "13:30", "09:00", "18:00", "11:00"])
+        self.assertIn(
+            {"day": "lundi", "time": "08:30", "location": "Ecole à Bar-le-Duc", "segment": "adult"},
+            normalized["requested_slot_preferences"],
+        )
+        self.assertNotIn(
+            {"day": "lundi", "time": "21:00", "location": "Ecole à Bar-le-Duc", "segment": "adult"},
+            normalized["requested_slot_preferences"],
+        )
+        self.assertEqual(normalized["referral_referrer_name"], "Famille Martin")
+        self.assertEqual(normalized["referral_category"], "BAR_LE_DUC")
+        self.assertEqual(normalized["notes"], "A rappeler")
+
+    def test_normalize_payload_maps_bar_le_duc_child_2026_form(self) -> None:
+        config = SimpleNamespace(
+            configuration_json={
+                "field_mapping": {
+                    "parent_first_name": ["77d16e29-8e2d-4867-aa7c-6cc2f6074a62", "qmBlUlA9XMO1"],
+                    "parent_last_name": ["73f75eee-a672-4dac-a55e-92ac04ac25d3", "AswXIZsbprkp"],
+                    "parent_phone": ["3b1048c2-8cd1-45e5-aa25-4605f77cba20", "WemFEoLBLCfg"],
+                    "parent_email": ["cd68bc34-56dd-4ac9-90ed-cdb079b9d326", "wwZMSEUL9FKT"],
+                    "child_first_name": ["990536e3-2dbd-4dc6-aa83-38b3e5d0c3b3", "9DWagra6QUSO"],
+                    "child_last_name": ["cc910847-903d-4e99-ad87-7ddcfa3376a4", "1rSy4mKm5FzS"],
+                    "child_birth_date": ["25c23245-2a27-491c-aca8-250e2813e68c", "K2HfGcFB6GPZ"],
+                    "requested_location": ["29b0a590-74e2-486c-af59-493e6f83ff67", "IwHJg6AeDOQh"],
+                    "requested_course_mode": ["73c6edff-7d0f-4baa-84fc-56ddd8b5c4b3", "H1LopXWsHma8"],
+                    "requested_days": ["3cabba30-1103-440a-b4b9-3dac258fdef3", "bJJJmkeJGVoM"],
+                    "requested_times": ["3cabba30-1103-440a-b4b9-3dac258fdef3", "bJJJmkeJGVoM"],
+                    "requested_slot_preferences": ["3cabba30-1103-440a-b4b9-3dac258fdef3", "bJJJmkeJGVoM"],
+                    "requested_products": [
+                        "73c6edff-7d0f-4baa-84fc-56ddd8b5c4b3",
+                        "H1LopXWsHma8",
+                        "f2bc039a-9456-46f0-b860-fd81fa342aca",
+                        "Q7leRDfe4wTM",
+                    ],
+                    "requested_payment_method": ["f152efb5-e514-4942-98b5-3b015ffe5e93", "W9ZnW7AdVH0G"],
+                    "parent_address_line_1": ["d84f87be-fe9c-43d5-a551-0fc4d8aabc66", "irKBXhUR5Ti2"],
+                    "parent_city": ["8c9d688e-d1d1-4e8b-8eb2-ab2cd6fbcd14", "7Fyg54gNOgGe"],
+                    "parent_postal_code": ["a57c3db2-7d59-4f11-96b1-791a72b3fa2e", "BOIx8tD4Z4r7"],
+                    "parent_country": ["8419db4d-e71f-4926-a222-58ac21279e2d", "9OMEruKHdKJp"],
+                },
+                "field_labels": {},
+                "default_course_mode": "onsite",
+            },
+            audience_segment="child",
+            location_code="BAR_LE_DUC",
+        )
+        payload = {
+            "form_response": {
+                "form_id": "G9u3xvbq",
+                "token": "0n5f6x9bhklqcpgy454d0n5y3hduvss5",
+                "definition": {
+                    "fields": [
+                        {"id": "qmBlUlA9XMO1", "ref": "77d16e29-8e2d-4867-aa7c-6cc2f6074a62", "title": "First name"},
+                        {"id": "AswXIZsbprkp", "ref": "73f75eee-a672-4dac-a55e-92ac04ac25d3", "title": "Last name"},
+                        {"id": "9DWagra6QUSO", "ref": "990536e3-2dbd-4dc6-aa83-38b3e5d0c3b3", "title": "First name"},
+                        {"id": "1rSy4mKm5FzS", "ref": "cc910847-903d-4e99-ad87-7ddcfa3376a4", "title": "Last name"},
+                    ]
+                },
+                "answers": [
+                    {"text": "Estela", "field": {"id": "qmBlUlA9XMO1", "ref": "77d16e29-8e2d-4867-aa7c-6cc2f6074a62"}},
+                    {"text": "Oliviero", "field": {"id": "AswXIZsbprkp", "ref": "73f75eee-a672-4dac-a55e-92ac04ac25d3"}},
+                    {"phone_number": "+33641387046", "field": {"id": "WemFEoLBLCfg", "ref": "3b1048c2-8cd1-45e5-aa25-4605f77cba20"}},
+                    {"email": "nomys2015@gmail.com", "field": {"id": "wwZMSEUL9FKT", "ref": "cd68bc34-56dd-4ac9-90ed-cdb079b9d326"}},
+                    {"text": "Alex", "field": {"id": "9DWagra6QUSO", "ref": "990536e3-2dbd-4dc6-aa83-38b3e5d0c3b3"}},
+                    {"text": "Oliviero", "field": {"id": "1rSy4mKm5FzS", "ref": "cc910847-903d-4e99-ad87-7ddcfa3376a4"}},
+                    {"boolean": True, "field": {"id": "0JAR3XxExv3M", "ref": "4ce9aa87-f9d3-4907-8db4-53155fdd8c60", "title": "S'agit-il d'une réinscription ?"}},
+                    {"date": "2000-02-03", "field": {"id": "K2HfGcFB6GPZ", "ref": "25c23245-2a27-491c-aca8-250e2813e68c"}},
+                    {"choice": {"label": "Bar-le-Duc"}, "field": {"id": "IwHJg6AeDOQh", "ref": "29b0a590-74e2-486c-af59-493e6f83ff67"}},
+                    {"choice": {"label": "Cours collectif de 1h  (22€/h)"}, "field": {"id": "H1LopXWsHma8", "ref": "73c6edff-7d0f-4baa-84fc-56ddd8b5c4b3"}},
+                    {"choices": {"labels": ["jeudi 15h30"]}, "field": {"id": "bJJJmkeJGVoM", "ref": "3cabba30-1103-440a-b4b9-3dac258fdef3"}},
+                    {"choice": {"label": "Ne sais pas"}, "field": {"id": "pAHENgKA6Qqu", "ref": "99a98c03-9418-4bca-8028-5ce334f5a696", "title": "Estimation du niveau de votre enfant en solfège"}},
+                    {"choice": {"label": "Non"}, "field": {"id": "Q7leRDfe4wTM", "ref": "f2bc039a-9456-46f0-b860-fd81fa342aca"}},
+                    {"choice": {"label": "CB mensuelle"}, "field": {"id": "W9ZnW7AdVH0G", "ref": "f152efb5-e514-4942-98b5-3b015ffe5e93"}},
+                    {"text": "3 All. de Vademont", "field": {"id": "irKBXhUR5Ti2", "ref": "d84f87be-fe9c-43d5-a551-0fc4d8aabc66"}},
+                    {"text": "Bar-le-Duc", "field": {"id": "7Fyg54gNOgGe", "ref": "8c9d688e-d1d1-4e8b-8eb2-ab2cd6fbcd14"}},
+                    {"text": "55000", "field": {"id": "BOIx8tD4Z4r7", "ref": "a57c3db2-7d59-4f11-96b1-791a72b3fa2e"}},
+                    {"text": "FR", "field": {"id": "9OMEruKHdKJp", "ref": "8419db4d-e71f-4926-a222-58ac21279e2d"}},
+                ],
+            }
+        }
+
+        normalized, _ = _normalize_payload(payload=payload, config=config)
+
+        self.assertEqual(normalized["customer_type"], "child")
+        self.assertEqual(normalized["parent_first_name"], "Estela")
+        self.assertEqual(normalized["parent_last_name"], "Oliviero")
+        self.assertEqual(normalized["parent_email"], "nomys2015@gmail.com")
+        self.assertEqual(normalized["child_first_name"], "Alex")
+        self.assertEqual(normalized["child_last_name"], "Oliviero")
+        self.assertEqual(normalized["child_birth_date"], "2000-02-03")
+        self.assertEqual(normalized["requested_location"], "Bar-le-Duc")
+        self.assertEqual(normalized["requested_course_mode"], "Cours collectif de 1h  (22€/h)")
+        self.assertEqual(normalized["requested_days"], ["jeudi"])
+        self.assertEqual(normalized["requested_times"], ["15:30"])
+        self.assertEqual(
+            normalized["requested_slot_preferences"],
+            [{"day": "jeudi", "time": "15:30", "location": "Bar-le-Duc", "segment": "child"}],
+        )
+        self.assertEqual(normalized["requested_payment_method"], "CB mensuelle")
+        self.assertEqual(normalized["parent_address_line_1"], "3 All. de Vademont")
+        self.assertEqual(normalized["parent_city"], "Bar-le-Duc")
+        self.assertEqual(normalized["parent_postal_code"], "55000")
+        self.assertTrue(normalized["is_reenrollment"])
+
+    def test_bar_le_duc_document_codes_are_preferred_for_intake_defaults(self) -> None:
+        class FakeScalars:
+            def __init__(self, rows: list[SimpleNamespace]) -> None:
+                self._rows = rows
+
+            def all(self) -> list[SimpleNamespace]:
+                return self._rows
+
+        class FakeDb:
+            def __init__(self, rows: list[SimpleNamespace]) -> None:
+                self._rows = rows
+
+            def scalars(self, _stmt: object) -> FakeScalars:
+                return FakeScalars(self._rows)
+
+        config = SimpleNamespace(
+            default_language="fr",
+            audience_segment="adult",
+            location_code="BAR_LE_DUC",
+            source_code="typeform_bld_adult_2026_2027",
+            configuration_json={
+                "default_quote_template_codes": ["TEMPLATE_BLD_ADULTES"],
+                "default_terms_template_codes": ["CGV_BLD_ADULTES_2026_2027"],
+            },
+        )
+        quote_template = SimpleNamespace(
+            code="TEMPLATE_BLD_ADULTES",
+            name="Template Adultes Bar-le-Duc",
+            description="",
+            target="adult",
+            language="fr",
+        )
+        terms_template = SimpleNamespace(
+            code="CGV_BLD_ADULTES_2026_2027",
+            name="CGV Adultes Bar-le-Duc",
+            description="",
+            target="adult",
+            language="fr",
+        )
+
+        self.assertIs(
+            _typeform_default_quote_template(FakeDb([quote_template]), config=config),  # type: ignore[arg-type]
+            quote_template,
+        )
+        self.assertIs(
+            _typeform_default_terms_template(FakeDb([terms_template]), config=config),  # type: ignore[arg-type]
+            terms_template,
+        )
+
+    def test_bar_le_duc_document_names_are_preferred_when_codes_are_unknown(self) -> None:
+        class FakeScalars:
+            def __init__(self, rows: list[SimpleNamespace]) -> None:
+                self._rows = rows
+
+            def all(self) -> list[SimpleNamespace]:
+                return self._rows
+
+        class FakeDb:
+            def __init__(self, rows: list[SimpleNamespace]) -> None:
+                self._rows = rows
+
+            def scalars(self, _stmt: object) -> FakeScalars:
+                return FakeScalars(self._rows)
+
+        config = SimpleNamespace(
+            default_language="fr",
+            audience_segment="child",
+            location_code="BAR_LE_DUC",
+            source_code="typeform_bld_child_2026_2027",
+            configuration_json={},
+        )
+        generic_child = SimpleNamespace(
+            code="TEMPLATE_COURS_COLLECTIF_ENFANT",
+            name="Template enfants generique",
+            description="",
+            target="child",
+            language="fr",
+        )
+        bar_le_duc_child = SimpleNamespace(
+            code="CUSTOM_CHILD_TERMS",
+            name="CGV enfants Bar-le-Duc",
+            description="",
+            target="child",
+            language="fr",
+        )
+
+        selected = _typeform_default_terms_template(
+            FakeDb([generic_child, bar_le_duc_child]),  # type: ignore[arg-type]
+            config=config,
+        )
+
+        self.assertIs(selected, bar_le_duc_child)
+
     def test_child_intake_does_not_select_parent_client_as_quote_target(self) -> None:
         adult_client_id = uuid4()
 

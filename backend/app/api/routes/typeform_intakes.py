@@ -205,6 +205,107 @@ def _template_matches_segment_target(template: QuoteTemplate | TermsTemplate, *,
     return any(token and token in haystack for token in target_tokens)
 
 
+def _configured_document_codes(config: TypeformFormConfig, key: str) -> list[str]:
+    configuration_json = getattr(config, "configuration_json", None)
+    if not isinstance(configuration_json, dict):
+        return []
+    raw_value = configuration_json.get(key)
+    if isinstance(raw_value, str):
+        raw_items = [raw_value]
+    elif isinstance(raw_value, list):
+        raw_items = raw_value
+    else:
+        return []
+    return [_text(item).upper() for item in raw_items if _text(item)]
+
+
+def _is_bar_le_duc_config(config: TypeformFormConfig) -> bool:
+    configuration_json = getattr(config, "configuration_json", None)
+    label = configuration_json.get("label") if isinstance(configuration_json, dict) else None
+    haystack = " ".join(
+        _normalize_token(value)
+        for value in (
+            getattr(config, "location_code", None),
+            getattr(config, "source_code", None),
+            getattr(config, "typeform_form_id", None),
+            label,
+        )
+        if value
+    )
+    compact = re.sub(r"[^a-z0-9]+", "", haystack)
+    words = set(re.split(r"[^a-z0-9]+", haystack))
+    return "barleduc" in compact or "bld" in words
+
+
+def _bar_le_duc_document_codes(*, segment: str, document_kind: str) -> list[str]:
+    if document_kind == "quote" and segment == "child":
+        return [
+            "TEMPLATE_BAR_LE_DUC_ENFANT",
+            "TEMPLATE_BAR_LE_DUC_ENFANTS",
+            "TEMPLATE_BLD_ENFANT",
+            "TEMPLATE_BLD_ENFANTS",
+            "TEMPLATE_COURS_COLLECTIF_ENFANT_BAR_LE_DUC",
+            "TEMPLATE_COURS_COLLECTIF_ENFANT_BLD",
+        ]
+    if document_kind == "quote" and segment == "adult":
+        return [
+            "TEMPLATE_BAR_LE_DUC_ADULTE",
+            "TEMPLATE_BAR_LE_DUC_ADULTES",
+            "TEMPLATE_BLD_ADULTE",
+            "TEMPLATE_BLD_ADULTES",
+            "TEMPLATE_COURS_ADULTE_BAR_LE_DUC",
+            "TEMPLATE_COURS_ADULTES_BLD",
+        ]
+    if document_kind == "terms" and segment == "child":
+        return [
+            "CGV_BAR_LE_DUC_ENFANTS_2026_2027",
+            "CGV_BLD_ENFANTS_2026_2027",
+            "CGV_ENFANTS_BAR_LE_DUC_2026_2027",
+            "CGV_ENFANTS_BLD_2026_2027",
+        ]
+    if document_kind == "terms" and segment == "adult":
+        return [
+            "CGV_BAR_LE_DUC_ADULTES_2026_2027",
+            "CGV_BLD_ADULTES_2026_2027",
+            "CGV_ADULTES_BAR_LE_DUC_2026_2027",
+            "CGV_ADULTES_BLD_2026_2027",
+        ]
+    return []
+
+
+def _template_matches_bar_le_duc(template: QuoteTemplate | TermsTemplate) -> bool:
+    haystack = _normalize_token(
+        " ".join(str(getattr(template, field, "") or "") for field in ("code", "name", "description", "target"))
+    )
+    compact = re.sub(r"[^a-z0-9]+", "", haystack)
+    words = set(re.split(r"[^a-z0-9]+", haystack))
+    return "barleduc" in compact or "bld" in words
+
+
+def _preferred_location_document_template(
+    candidates: list[QuoteTemplate] | list[TermsTemplate],
+    *,
+    config: TypeformFormConfig,
+    segment: str,
+    language: str,
+) -> QuoteTemplate | TermsTemplate | None:
+    if not _is_bar_le_duc_config(config):
+        return None
+    language_candidates = [
+        item
+        for item in candidates
+        if not getattr(item, "language", None) or _normalize_token(item.language) == language
+    ]
+    return next(
+        (
+            item
+            for item in language_candidates
+            if _template_matches_bar_le_duc(item) and _template_matches_segment_target(item, segment=segment)
+        ),
+        None,
+    )
+
+
 def _quote_template_by_code(db: Session, *, codes: list[str], language: str) -> QuoteTemplate | None:
     normalized_codes = {code.strip().upper() for code in codes if code.strip()}
     if not normalized_codes:
@@ -289,6 +390,26 @@ def _typeform_default_quote_template(
     language = _normalize_token(config.default_language) or "fr"
     segment = _normalize_token(config.audience_segment)
     primary_modality = _primary_course_modality_for_documents(db, preview_lines=preview_lines)
+    configured_codes = _configured_document_codes(config, "default_quote_template_codes")
+    location_codes = (
+        _bar_le_duc_document_codes(segment=segment, document_kind="quote") if _is_bar_le_duc_config(config) else []
+    )
+    template = _quote_template_by_code(db, codes=[*configured_codes, *location_codes], language=language)
+    if template is not None:
+        return template
+    candidates = db.scalars(
+        select(QuoteTemplate)
+        .where(QuoteTemplate.is_active.is_(True), QuoteTemplate.current_version_id.isnot(None))
+        .order_by(QuoteTemplate.is_default.desc(), QuoteTemplate.updated_at.desc())
+    ).all()
+    location_template = _preferred_location_document_template(
+        candidates,
+        config=config,
+        segment=segment,
+        language=language,
+    )
+    if location_template is not None:
+        return location_template
     if segment == "child" and primary_modality == "onsite":
         template = _quote_template_by_code(db, codes=["TEMPLATE_COURS_COLLECTIF_ENFANT"], language=language)
         if template is not None:
@@ -301,11 +422,6 @@ def _typeform_default_quote_template(
         )
         if template is not None:
             return template
-    candidates = db.scalars(
-        select(QuoteTemplate)
-        .where(QuoteTemplate.is_active.is_(True), QuoteTemplate.current_version_id.isnot(None))
-        .order_by(QuoteTemplate.is_default.desc(), QuoteTemplate.updated_at.desc())
-    ).all()
     language_candidates = [
         item
         for item in candidates
@@ -326,6 +442,26 @@ def _typeform_default_terms_template(
     language = _normalize_token(config.default_language) or "fr"
     segment = _normalize_token(config.audience_segment)
     primary_modality = _primary_course_modality_for_documents(db, preview_lines=preview_lines)
+    configured_codes = _configured_document_codes(config, "default_terms_template_codes")
+    location_codes = (
+        _bar_le_duc_document_codes(segment=segment, document_kind="terms") if _is_bar_le_duc_config(config) else []
+    )
+    template = _terms_template_by_code(db, codes=[*configured_codes, *location_codes], language=language)
+    if template is not None:
+        return template
+    candidates = db.scalars(
+        select(TermsTemplate)
+        .where(TermsTemplate.is_active.is_(True), TermsTemplate.current_version_id.isnot(None))
+        .order_by(TermsTemplate.updated_at.desc())
+    ).all()
+    location_template = _preferred_location_document_template(
+        candidates,
+        config=config,
+        segment=segment,
+        language=language,
+    )
+    if location_template is not None:
+        return location_template
     if segment == "child" and primary_modality == "onsite":
         template = _terms_template_by_code(
             db,
@@ -338,11 +474,6 @@ def _typeform_default_terms_template(
         template = _terms_template_by_code(db, codes=["CGV_COURS_EN_LIGNE_ENFANTS_2026_2027"], language=language)
         if template is not None:
             return template
-    candidates = db.scalars(
-        select(TermsTemplate)
-        .where(TermsTemplate.is_active.is_(True), TermsTemplate.current_version_id.isnot(None))
-        .order_by(TermsTemplate.updated_at.desc())
-    ).all()
     language_candidates = [
         item
         for item in candidates
@@ -1515,7 +1646,7 @@ def _normalize_payload(
     parent_email = _mapped_scalar(answer_map, field_mapping, "parent_email") or _mapped_scalar(answer_map, field_mapping, "adult_email")
     parent_phone = _mapped_scalar(answer_map, field_mapping, "parent_phone") or _mapped_scalar(answer_map, field_mapping, "adult_phone")
     child_first_name = _mapped_scalar(answer_map, field_mapping, "child_first_name")
-    child_last_name = _mapped_scalar(answer_map, field_mapping, "child_last_name") or parent_last_name
+    child_last_name = _mapped_scalar(answer_map, field_mapping, "child_last_name")
     child_birth_date = _mapped_scalar(answer_map, field_mapping, "child_birth_date")
     requested_course_mode = _mapped_scalar(answer_map, field_mapping, "requested_course_mode") or _text(config_json.get("default_course_mode")) or None
     requested_location = _mapped_scalar(answer_map, field_mapping, "requested_location") or (config.location_code if config is not None else None)
@@ -1535,6 +1666,8 @@ def _normalize_payload(
 
     config_segment = _lower(config.audience_segment if config is not None else None)
     customer_type = "child" if child_first_name or child_last_name or config_segment in {"child", "teen", "eveil"} else "adult"
+    if customer_type == "child" and not child_last_name:
+        child_last_name = parent_last_name
 
     if customer_type == "adult":
         child_first_name = None
