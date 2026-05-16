@@ -25,7 +25,7 @@ import type { AdminClientGroupOut, AdminClientOut, UserOut } from "../../../lib/
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
-type SortColumn = "last_name" | "first_name" | "family_name" | "client_status" | "client_kind" | "next_session";
+type SortColumn = "last_name" | "first_name" | "family_name" | "client_status" | "client_kind" | "student_site" | "next_session";
 type SortDirection = "asc" | "desc";
 type ClientsView = "students" | "groups";
 type PerPage = 5 | 50;
@@ -42,6 +42,7 @@ type MyMusicStaffImportStatus = {
 };
 
 const CLIENT_STATUS_OPTIONS = ["ACTIVE", "RESPONSABLE", "TRIAL", "PENDING", "INACTIVE", "ARCHIVED"] as const;
+const STUDENT_SITE_OPTIONS = ["PARIS", "BAR_LE_DUC", "ONLINE"] as const;
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -69,6 +70,7 @@ function parseSortColumn(value: string): SortColumn {
     value === "family_name" ||
     value === "client_status" ||
     value === "client_kind" ||
+    value === "student_site" ||
     value === "next_session"
   ) {
     return value;
@@ -134,9 +136,17 @@ function clientTypeLabel(kind: string, language: UiLanguage): string {
   return kind === "CHILD" ? uiText(language, "client.child") : uiText(language, "client.adult");
 }
 
+function studentSiteLabel(site: string | null | undefined): string {
+  if (site === "PARIS") return "Paris";
+  if (site === "BAR_LE_DUC") return "Bar-le-Duc";
+  if (site === "ONLINE") return "En ligne";
+  return "-";
+}
+
 function buildClientsHref(params: {
   search: string;
   status: string;
+  site: string;
   groupId: string;
   sortBy: SortColumn;
   sortDir: SortDirection;
@@ -150,6 +160,9 @@ function buildClientsHref(params: {
   }
   if (params.status && params.status !== "ALL") {
     query.set("status", params.status);
+  }
+  if (params.site && params.site !== "ALL") {
+    query.set("site", params.site);
   }
   if (params.groupId) {
     query.set("group_id", params.groupId);
@@ -177,6 +190,7 @@ function buildClientsHref(params: {
 function closeModalHref(params: {
   search: string;
   status: string;
+  site: string;
   groupId: string;
   sortBy: SortColumn;
   sortDir: SortDirection;
@@ -213,6 +227,7 @@ function sortHref(params: {
   targetSortBy: SortColumn;
   search: string;
   status: string;
+  site: string;
   groupId: string;
   view: ClientsView;
   page: number;
@@ -224,6 +239,7 @@ function sortHref(params: {
   return buildClientsHref({
     search: params.search,
     status: params.status,
+    site: params.site,
     groupId: params.groupId,
     sortBy: params.targetSortBy,
     sortDir: nextDir,
@@ -260,6 +276,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
 
   const search = readParam(searchParams, "search").trim();
   const selectedStatus = readParam(searchParams, "status") || "ALL";
+  const selectedSite = readParam(searchParams, "site") || "ALL";
   const selectedGroupId = readParam(searchParams, "group_id");
   const sortBy = parseSortColumn(readParam(searchParams, "sort_by"));
   const sortDir = parseSortDirection(readParam(searchParams, "sort_dir"));
@@ -279,6 +296,9 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
   }
   if (selectedStatus !== "ALL") {
     clientsQuery.set("client_status", selectedStatus);
+  }
+  if (selectedSite !== "ALL") {
+    clientsQuery.set("student_site", selectedSite);
   }
   if (selectedGroupId) {
     clientsQuery.set("group_id", selectedGroupId);
@@ -314,6 +334,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
   const baseHref = buildClientsHref({
     search,
     status: selectedStatus,
+    site: selectedSite,
     groupId: selectedGroupId,
     sortBy,
     sortDir,
@@ -324,6 +345,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
   const closeHref = closeModalHref({
     search,
     status: selectedStatus,
+    site: selectedSite,
     groupId: selectedGroupId,
     sortBy,
     sortDir,
@@ -370,6 +392,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
             href={buildClientsHref({
               search,
               status: selectedStatus,
+              site: selectedSite,
               groupId: selectedGroupId,
               sortBy,
               sortDir,
@@ -385,6 +408,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
             href={buildClientsHref({
               search,
               status: selectedStatus,
+              site: selectedSite,
               groupId: selectedGroupId,
               sortBy,
               sortDir,
@@ -449,6 +473,18 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
               </label>
 
               <label>
+                Site
+                <select name="site" defaultValue={selectedSite}>
+                  <option value="ALL">{uiText(language, "common.all")}</option>
+                  {STUDENT_SITE_OPTIONS.map((siteValue) => (
+                    <option key={siteValue} value={siteValue}>
+                      {studentSiteLabel(siteValue)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
                 {t("admin.clients.group_label")}
                 <select name="group_id" defaultValue={selectedGroupId}>
                   <option value="">{uiText(language, "common.all")}</option>
@@ -481,6 +517,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
             <input type="hidden" name="return_to" value={baseHref} />
             <input type="hidden" name="filter_search" value={search} />
             <input type="hidden" name="filter_status" value={selectedStatus !== "ALL" ? selectedStatus : ""} />
+            <input type="hidden" name="filter_student_site" value={selectedSite !== "ALL" ? selectedSite : ""} />
             <input type="hidden" name="filter_group_id" value={selectedGroupId} />
             <input type="hidden" name="filter_include_archived" value={includeArchived ? "true" : "false"} />
             <input type="hidden" name="filter_active_only" value="false" />
@@ -513,6 +550,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                           targetSortBy: "last_name",
                           search,
                           status: selectedStatus,
+                          site: selectedSite,
                           groupId: selectedGroupId,
                           view,
                           page: currentPage,
@@ -531,6 +569,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                           targetSortBy: "first_name",
                           search,
                           status: selectedStatus,
+                          site: selectedSite,
                           groupId: selectedGroupId,
                           view,
                           page: currentPage,
@@ -549,6 +588,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                           targetSortBy: "family_name",
                           search,
                           status: selectedStatus,
+                          site: selectedSite,
                           groupId: selectedGroupId,
                           view,
                           page: currentPage,
@@ -567,6 +607,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                           targetSortBy: "client_status",
                           search,
                           status: selectedStatus,
+                          site: selectedSite,
                           groupId: selectedGroupId,
                           view,
                           page: currentPage,
@@ -585,6 +626,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                           targetSortBy: "client_kind",
                           search,
                           status: selectedStatus,
+                          site: selectedSite,
                           groupId: selectedGroupId,
                           view,
                           page: currentPage,
@@ -600,9 +642,29 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                         href={sortHref({
                           currentSortBy: sortBy,
                           currentSortDir: sortDir,
+                          targetSortBy: "student_site",
+                          search,
+                          status: selectedStatus,
+                          site: selectedSite,
+                          groupId: selectedGroupId,
+                          view,
+                          page: currentPage,
+                          perPage,
+                        })}
+                      >
+                        Site {sortIndicator(sortBy, sortDir, "student_site")}
+                      </Link>
+                    </th>
+                    <th>
+                      <Link
+                        className="sort-link"
+                        href={sortHref({
+                          currentSortBy: sortBy,
+                          currentSortDir: sortDir,
                           targetSortBy: "next_session",
                           search,
                           status: selectedStatus,
+                          site: selectedSite,
                           groupId: selectedGroupId,
                           view,
                           page: currentPage,
@@ -634,6 +696,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                         <span className={`status-pill ${statusPillClass(client.client_status)}`}>{statusLabel(client.client_status, language)}</span>
                       </td>
                       <td>{clientTypeLabel(client.client_kind, language)}</td>
+                      <td>{studentSiteLabel(client.student_site)}</td>
                       <td>{client.next_session_start_at_utc ? formatDate(client.next_session_start_at_utc, language) : "-"}</td>
                     </tr>
                   ))}
@@ -656,6 +719,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                         href={buildClientsHref({
                           search,
                           status: selectedStatus,
+                          site: selectedSite,
                           groupId: selectedGroupId,
                           sortBy,
                           sortDir,
@@ -678,6 +742,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                         href={buildClientsHref({
                           search,
                           status: selectedStatus,
+                          site: selectedSite,
                           groupId: selectedGroupId,
                           sortBy,
                           sortDir,
@@ -845,6 +910,18 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                     {CLIENT_STATUS_OPTIONS.map((statusValue) => (
                       <option key={statusValue} value={statusValue}>
                         {statusLabel(statusValue, language)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label>
+                  Site
+                  <select name="student_site" defaultValue="">
+                    <option value="">Non renseigne</option>
+                    {STUDENT_SITE_OPTIONS.map((siteValue) => (
+                      <option key={siteValue} value={siteValue}>
+                        {studentSiteLabel(siteValue)}
                       </option>
                     ))}
                   </select>

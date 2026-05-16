@@ -3720,6 +3720,7 @@ export async function updateAdminClientAction(formData: FormData): Promise<void>
   const timezone = String(formData.get("timezone") ?? "").trim();
   const address_country = String(formData.get("address_country") ?? "").trim().toUpperCase();
   const client_status = String(formData.get("client_status") ?? "").trim().toUpperCase() || "ACTIVE";
+  const student_site = optionalField(formData, "student_site");
   const client_kind_raw = String(formData.get("client_kind") ?? "").trim().toUpperCase();
   const client_kind = client_kind_raw === "CHILD" ? "CHILD" : "ADULT";
   const birthDateRaw = String(formData.get("birth_date") ?? "").trim();
@@ -3756,6 +3757,7 @@ export async function updateAdminClientAction(formData: FormData): Promise<void>
     lesson_reminder_sms_opt_in: checkboxFieldWithDefault(formData, "lesson_reminder_sms_opt_in", false),
     client_kind,
     client_status,
+    student_site,
     is_active: isActiveFromClientStatus(client_status),
   };
 
@@ -5756,6 +5758,7 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
   const client_kind_raw = String(formData.get("client_kind") ?? "ADULT").trim().toUpperCase();
   const client_kind = client_kind_raw === "CHILD" ? "CHILD" : "ADULT";
   const client_status = String(formData.get("client_status") ?? "").trim().toUpperCase() || "ACTIVE";
+  const student_site = optionalField(formData, "student_site");
   const birthDateRaw = String(formData.get("birth_date") ?? "").trim();
   const addressLine = optionalField(formData, "address_line");
   const city = optionalField(formData, "city");
@@ -5791,6 +5794,7 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
     lesson_reminder_email_opt_in: isChildClient ? false : checkboxFieldWithDefault(formData, "lesson_reminder_email_opt_in", true),
     lesson_reminder_sms_opt_in: isChildClient ? false : checkboxFieldWithDefault(formData, "lesson_reminder_sms_opt_in", false),
     client_status,
+    student_site,
     is_active: isActiveFromClientStatus(client_status),
   };
 
@@ -5859,6 +5863,7 @@ export async function createAdminClientAction(formData: FormData): Promise<void>
             preferred_currency: newAdultCurrency,
             timezone: newAdultTimezone,
             client_status: newAdultStatus,
+            student_site,
             is_active: isActiveFromClientStatus(newAdultStatus),
           }),
         },
@@ -5940,6 +5945,7 @@ export async function createChildForAdultAction(formData: FormData): Promise<voi
   const relationship_label = optionalField(formData, "relationship_label");
   const billingRecipient = checkboxField(formData, "is_billing_recipient");
   const childStatus = String(formData.get("child_client_status") ?? "").trim().toUpperCase() || "ACTIVE";
+  const childStudentSite = optionalField(formData, "child_student_site");
 
   if (!firstName || !lastName || !residence_country || !preferred_currency || !timezone || !address_country) {
     redirect(appendQueryMessage(`/admin/clients/${adultClientId}?tab=famille`, "error", t("admin.client_action.incomplete_child_info")));
@@ -5974,6 +5980,7 @@ export async function createChildForAdultAction(formData: FormData): Promise<voi
         preferred_currency,
         timezone,
         client_status: childStatus,
+        student_site: childStudentSite,
         is_active: isActiveFromClientStatus(childStatus),
       }),
     },
@@ -6041,6 +6048,7 @@ export async function createAdultForChildAction(formData: FormData): Promise<voi
   const timezone = String(formData.get("adult_timezone") ?? "Europe/Paris").trim();
   const address_country = String(formData.get("adult_address_country") ?? "FR").trim().toUpperCase();
   const adultStatus = String(formData.get("adult_client_status") ?? "").trim().toUpperCase() || "ACTIVE";
+  const adultStudentSite = optionalField(formData, "adult_student_site");
   const relationship_label = optionalField(formData, "relationship_label");
   const adultAddressLine = optionalField(formData, "adult_address_line");
   const adultCity = optionalField(formData, "adult_city");
@@ -6071,6 +6079,7 @@ export async function createAdultForChildAction(formData: FormData): Promise<voi
         preferred_currency,
         timezone,
         client_status: adultStatus,
+        student_site: adultStudentSite,
         is_active: isActiveFromClientStatus(adultStatus),
       }),
     },
@@ -6243,6 +6252,8 @@ export async function bulkAdminClientsAction(formData: FormData): Promise<void> 
   const filterSearch = optionalField(formData, "filter_search");
   const filterStatusRaw = String(formData.get("filter_status") ?? "").trim().toUpperCase();
   const filterStatus = filterStatusRaw && filterStatusRaw !== "ALL" ? filterStatusRaw : null;
+  const filterStudentSiteRaw = String(formData.get("filter_student_site") ?? "").trim().toUpperCase();
+  const filterStudentSite = filterStudentSiteRaw && filterStudentSiteRaw !== "ALL" ? filterStudentSiteRaw : null;
   const filterGroupId = String(formData.get("filter_group_id") ?? "").trim();
   const filterIncludeArchived = String(formData.get("filter_include_archived") ?? "").trim().toLowerCase() === "true";
   const filterActiveOnly = String(formData.get("filter_active_only") ?? "").trim().toLowerCase() === "true";
@@ -6273,6 +6284,7 @@ export async function bulkAdminClientsAction(formData: FormData): Promise<void> 
     selection_scope: selectionScope,
     filter_search: filterSearch,
     filter_status: filterStatus,
+    filter_student_site: filterStudentSite,
     filter_group_id: filterGroupId || null,
     filter_include_archived: filterIncludeArchived,
     filter_active_only: filterActiveOnly,

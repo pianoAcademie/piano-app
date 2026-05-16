@@ -13,7 +13,7 @@ from app.models.ops import ReminderStatus
 from app.models.payout import PayoutStatus, SalaryPaymentMethod
 from app.models.plan import PlanCreditGrantsRelation, PlanKind, PlanPriceTaxMode, PlanRestrictionPeriod, SubscriptionStatus
 from app.models.professor_contract import ProfessorContractLineMode
-from app.models.user import ClientKind, ClientStatus, UserRole
+from app.models.user import ClientKind, ClientStatus, StudentSite, UserRole
 
 
 class AppSettingOut(BaseModel):
@@ -798,6 +798,7 @@ class AdminClientOut(BaseModel):
     phone_suspended_at: datetime | None = None
     phone_suspension_reason: str | None = None
     client_status: ClientStatus = ClientStatus.ACTIVE
+    student_site: StudentSite | None = None
     family_name: str | None = None
     group_ids: list[UUID] = Field(default_factory=list)
     group_names: list[str] = Field(default_factory=list)
@@ -887,6 +888,7 @@ class AdminClientUpdateRequest(BaseModel):
     lesson_reminder_email_opt_in: bool | None = None
     lesson_reminder_sms_opt_in: bool | None = None
     client_status: ClientStatus | None = None
+    student_site: StudentSite | None = None
     is_active: bool | None = None
 
 
@@ -916,6 +918,7 @@ class AdminClientCreateRequest(BaseModel):
     lesson_reminder_email_opt_in: bool = True
     lesson_reminder_sms_opt_in: bool = False
     client_status: ClientStatus | None = None
+    student_site: StudentSite | None = None
     is_active: bool = True
 
 
@@ -967,6 +970,7 @@ class AdminClientBulkRequest(BaseModel):
     group_id: UUID | None = None
     filter_search: str | None = Field(default=None, min_length=1, max_length=255)
     filter_status: ClientStatus | None = None
+    filter_student_site: StudentSite | None = None
     filter_group_id: UUID | None = None
     filter_include_archived: bool = False
     filter_active_only: bool = False

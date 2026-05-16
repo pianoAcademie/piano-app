@@ -206,6 +206,7 @@ export type AdminClientOut = {
   client_kind: "ADULT" | "CHILD" | string;
   photo_url: string | null;
   client_status: "ACTIVE" | "RESPONSABLE" | "INACTIVE" | "TRIAL" | "PENDING" | "ARCHIVED" | string;
+  student_site: "PARIS" | "BAR_LE_DUC" | "ONLINE" | string | null;
   first_name: string | null;
   last_name: string | null;
   family_name: string | null;

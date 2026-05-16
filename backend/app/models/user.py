@@ -31,6 +31,12 @@ class ClientStatus(str, enum.Enum):
     ARCHIVED = "ARCHIVED"
 
 
+class StudentSite(str, enum.Enum):
+    PARIS = "PARIS"
+    BAR_LE_DUC = "BAR_LE_DUC"
+    ONLINE = "ONLINE"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -106,6 +112,17 @@ class User(Base):
         ),
         nullable=False,
         server_default=text("'ACTIVE'::client_status"),
+    )
+    student_site: Mapped[StudentSite | None] = mapped_column(
+        Enum(
+            StudentSite,
+            name="student_site",
+            native_enum=True,
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            validate_strings=True,
+            create_type=False,
+        ),
+        nullable=True,
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean,

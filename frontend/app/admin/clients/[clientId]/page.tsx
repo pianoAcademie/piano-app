@@ -1124,6 +1124,7 @@ function messagesHref(clientId: string, params: Record<string, string>): string 
 const MANUAL_TRANSACTION_MODAL_TYPES = ["payment", "refund", "charge", "discount", "fees"] as const;
 type ManualTransactionModalType = (typeof MANUAL_TRANSACTION_MODAL_TYPES)[number];
 const CLIENT_STATUS_OPTIONS = ["ACTIVE", "RESPONSABLE", "TRIAL", "PENDING", "INACTIVE", "ARCHIVED"] as const;
+const STUDENT_SITE_OPTIONS = ["PARIS", "BAR_LE_DUC", "ONLINE"] as const;
 
 const DEFAULT_PAYMENT_METHOD_OPTIONS: Array<{
   code: string;
@@ -1428,6 +1429,13 @@ function clientStatusLabel(status: string, language: UiLanguage): string {
   if (normalized === "INACTIVE") return uiText(language, "admin.clients.status_inactive");
   if (normalized === "ARCHIVED") return uiText(language, "admin.clients.status_archived");
   return normalized || uiText(language, "admin.client_detail.unknown");
+}
+
+function studentSiteLabel(site: string | null | undefined): string {
+  if (site === "PARIS") return "Paris";
+  if (site === "BAR_LE_DUC") return "Bar-le-Duc";
+  if (site === "ONLINE") return "En ligne";
+  return "-";
 }
 
 function localizedBillingMethodLabel(code: string | null, language: UiLanguage): string {
@@ -3835,6 +3843,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <span className={`status-pill ${statusClass(client.client_status)}`}>{clientStatusLabel(client.client_status, language)}</span>
                 </article>
                 <article className="item row spread">
+                  <span className="muted">Site</span>
+                  <strong>{studentSiteLabel(client.student_site)}</strong>
+                </article>
+                <article className="item row spread">
                   <span className="muted">{t("admin.client_detail.country_residence")}</span>
                   <strong>{labelFromOptions(COUNTRY_OPTIONS, client.residence_country)}</strong>
                 </article>
@@ -4075,6 +4087,18 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         <option value="PENDING">{uiText(language, "admin.clients.status_pending")}</option>
                         <option value="INACTIVE">{uiText(language, "admin.clients.status_inactive")}</option>
                         <option value="ARCHIVED">{uiText(language, "admin.clients.status_archived")}</option>
+                      </select>
+                    </label>
+
+                    <label>
+                      Site
+                      <select name="student_site" defaultValue={client.student_site ?? ""}>
+                        <option value="">Non renseigne</option>
+                        {STUDENT_SITE_OPTIONS.map((siteValue) => (
+                          <option key={siteValue} value={siteValue}>
+                            {studentSiteLabel(siteValue)}
+                          </option>
+                        ))}
                       </select>
                     </label>
 
@@ -4461,6 +4485,17 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     ))}
                   </select>
                 </label>
+                <label>
+                  Site
+                  <select name="child_student_site" defaultValue={client.student_site ?? ""}>
+                    <option value="">Non renseigne</option>
+                    {STUDENT_SITE_OPTIONS.map((siteValue) => (
+                      <option key={siteValue} value={siteValue}>
+                        {studentSiteLabel(siteValue)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <label className="checkline">
                   <input name="is_billing_recipient" type="checkbox" defaultChecked />
                   {t("admin.client_detail.adult_receives_invoices")}
@@ -4574,6 +4609,17 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     {CLIENT_STATUS_OPTIONS.map((status) => (
                       <option key={status} value={status}>
                         {clientStatusLabel(status, language)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Site
+                  <select name="adult_student_site" defaultValue={client.student_site ?? ""}>
+                    <option value="">Non renseigne</option>
+                    {STUDENT_SITE_OPTIONS.map((siteValue) => (
+                      <option key={siteValue} value={siteValue}>
+                        {studentSiteLabel(siteValue)}
                       </option>
                     ))}
                   </select>

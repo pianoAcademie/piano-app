@@ -59,7 +59,7 @@ from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduc
 from app.models.quote import Prospect, Quote, QuoteLine
 from app.models.referral import ReferralReward
 from app.models.notification_engine import ContactDeliveryStatus
-from app.models.user import ClientKind, ClientStatus, User, UserRole
+from app.models.user import ClientKind, ClientStatus, StudentSite, User, UserRole
 from app.schemas.admin import (
     AdminClientBulkAction,
     AdminClientBulkOut,
@@ -3961,6 +3961,7 @@ def _client_out(
         phone_suspended_at=(delivery_status.phone_suspended_at if delivery_status is not None else None),
         phone_suspension_reason=(delivery_status.phone_suspension_reason if delivery_status is not None else None),
         client_status=client.client_status,
+        student_site=client.student_site,
         family_name=family_name,
         group_ids=group_ids or [],
         group_names=group_names or [],
@@ -4772,6 +4773,7 @@ def _filtered_clients_stmt(
     *,
     search: str | None,
     client_status: ClientStatus | None,
+    student_site: StudentSite | None,
     group_id: UUID | None,
     include_archived: bool,
     active_only: bool,
@@ -4786,6 +4788,9 @@ def _filtered_clients_stmt(
 
     if client_status is not None:
         stmt = stmt.where(User.client_status == client_status)
+
+    if student_site is not None:
+        stmt = stmt.where(User.student_site == student_site)
 
     if search:
         pattern = f"%{search.strip()}%"
@@ -4809,6 +4814,7 @@ def _filtered_clients_stmt(
 def list_admin_clients(
     search: str | None = Query(default=None, min_length=1, max_length=255),
     client_status: ClientStatus | None = None,
+    student_site: StudentSite | None = None,
     group_id: UUID | None = None,
     include_archived: bool = False,
     sort_by: str = Query(default="created_at"),
@@ -4821,6 +4827,7 @@ def list_admin_clients(
     stmt = _filtered_clients_stmt(
         search=search,
         client_status=client_status,
+        student_site=student_site,
         group_id=group_id,
         include_archived=include_archived,
         active_only=active_only,
@@ -4904,6 +4911,7 @@ def list_admin_clients(
                 _safe_sort_text(item.first_name),
             ),
             "client_kind": (_safe_sort_text(item.client_kind.value), _safe_sort_text(item.last_name), item.email.casefold()),
+            "student_site": (_safe_sort_text(item.student_site.value if item.student_site else ""), _safe_sort_text(item.last_name), item.email.casefold()),
             "next_session": (next_sort, _safe_sort_text(item.last_name), item.email.casefold()),
             "created_at": (item.created_at, _safe_sort_text(item.last_name), item.email.casefold()),
         }
@@ -5098,6 +5106,7 @@ def bulk_admin_clients(
         filtered_stmt = _filtered_clients_stmt(
             search=payload.filter_search,
             client_status=payload.filter_status,
+            student_site=payload.filter_student_site,
             group_id=payload.filter_group_id,
             include_archived=payload.filter_include_archived,
             active_only=payload.filter_active_only,
@@ -5683,6 +5692,7 @@ def create_admin_client(
         lesson_reminder_email_opt_in=bool(payload.lesson_reminder_email_opt_in),
         lesson_reminder_sms_opt_in=bool(payload.lesson_reminder_sms_opt_in),
         client_status=client_status,
+        student_site=payload.student_site,
         is_active=_status_implies_active(client_status),
         updated_at=now,
     )
@@ -5829,6 +5839,9 @@ def patch_admin_client(
             client.client_status = ClientStatus.ACTIVE
         if not desired_active and client.client_status in {ClientStatus.ACTIVE, ClientStatus.RESPONSABLE, ClientStatus.TRIAL, ClientStatus.PENDING}:
             client.client_status = ClientStatus.INACTIVE
+
+    if "student_site" in changes:
+        client.student_site = changes["student_site"]
 
     if client.client_kind == ClientKind.ADULT:
         refresh_responsable_status(db, client)
