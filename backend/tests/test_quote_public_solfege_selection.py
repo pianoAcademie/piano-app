@@ -61,33 +61,6 @@ class QuotePublicSolfegeSelectionTests(unittest.TestCase):
             )
         )
 
-    def test_selected_solfege_slot_match_accepts_nearby_live_time(self) -> None:
-        selected_slot = {
-            "weekday": 3,
-            "start_time": "19:00",
-            "end_time": "19:45",
-            "location_label": "En ligne",
-            "modality": "online",
-        }
-        location = SimpleNamespace(name="Online", timezone="Europe/Paris")
-        course_type = SimpleNamespace(mode=DeliveryMode.ANY)
-        live_session = SimpleNamespace(
-            timezone="Europe/Paris",
-            location_id=uuid4(),
-            start_at_utc=datetime(2026, 10, 1, 16, 50, tzinfo=timezone.utc),
-            end_at_utc=datetime(2026, 10, 1, 17, 35, tzinfo=timezone.utc),
-        )
-
-        self.assertTrue(
-            _session_matches_quote_selected_solfege_slot(
-                live_session,
-                course_type=course_type,
-                location=location,
-                selected_slot=selected_slot,
-                expected_date_set=set(),
-            )
-        )
-
     def test_selected_solfege_slot_adds_missing_planning_block(self) -> None:
         quote = SimpleNamespace(
             language="fr",

@@ -1666,41 +1666,6 @@ def _quote_line_solfege_level(row: QuoteLine) -> str:
     return ""
 
 
-def _hhmm_to_minutes(value: str | None) -> int | None:
-    raw = str(value or "").strip()
-    match = re.fullmatch(r"(\d{1,2}):(\d{2})", raw)
-    if not match:
-        return None
-    hours = int(match.group(1))
-    minutes = int(match.group(2))
-    if hours < 0 or hours > 23 or minutes < 0 or minutes > 59:
-        return None
-    return hours * 60 + minutes
-
-
-def _time_close_enough(left: str | None, right: str | None, *, tolerance_minutes: int = 15) -> bool:
-    left_minutes = _hhmm_to_minutes(left)
-    right_minutes = _hhmm_to_minutes(right)
-    if left_minutes is None or right_minutes is None:
-        return False
-    return abs(left_minutes - right_minutes) <= tolerance_minutes
-
-
-def _solfege_session_time_matches(
-    *,
-    session_start: str,
-    session_end: str,
-    selected_start: str,
-    selected_end: str,
-) -> bool:
-    if session_start == selected_start and session_end == selected_end:
-        return True
-    return (
-        _time_close_enough(session_start, selected_start)
-        and _time_close_enough(session_end, selected_end)
-    )
-
-
 def _selected_solfege_live_series_for_slot(
     db: Session | None,
     *,
@@ -1756,12 +1721,7 @@ def _selected_solfege_live_series_for_slot(
             continue
         if local_start.weekday() != selected_weekday:
             continue
-        if not _solfege_session_time_matches(
-            session_start=local_start.strftime("%H:%M"),
-            session_end=local_end.strftime("%H:%M"),
-            selected_start=selected_start_time,
-            selected_end=selected_end_time,
-        ):
+        if local_start.strftime("%H:%M") != selected_start_time or local_end.strftime("%H:%M") != selected_end_time:
             continue
         if selected_location_id is not None:
             if session_obj.location_id != selected_location_id:
@@ -6621,12 +6581,7 @@ def _session_matches_quote_selected_solfege_slot(
         return False
     if expected_date_set and local_start.date() not in expected_date_set:
         return False
-    if not _solfege_session_time_matches(
-        session_start=local_start.strftime("%H:%M"),
-        session_end=local_end.strftime("%H:%M"),
-        selected_start=selected_start_time,
-        selected_end=selected_end_time,
-    ):
+    if local_start.strftime("%H:%M") != selected_start_time or local_end.strftime("%H:%M") != selected_end_time:
         return False
 
     selected_location_id = _parse_uuid_value(selected_slot.get("location_id"))
