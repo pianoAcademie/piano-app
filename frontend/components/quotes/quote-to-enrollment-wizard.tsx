@@ -195,6 +195,16 @@ function selectedSessionLabel(options: SessionMatchOption[], selectedSessionId: 
   return `${selected.label} (${selected.dateLabel})`;
 }
 
+function defaultSessionAssignment(
+  row: { activityId: string },
+  options: SessionMatchOption[],
+  scenario: QuoteTransformScenario,
+): string | null {
+  const firstUsable = options.find((option) => option.seatsRemaining > 0) || options[0];
+  const shouldAutoAssign = scenario === "A" || options.length === 1;
+  return shouldAutoAssign && firstUsable ? firstUsable.sessionId : null;
+}
+
 export default function QuoteToEnrollmentWizard({
   quote,
   prospect,
@@ -447,14 +457,51 @@ export default function QuoteToEnrollmentWizard({
     const defaults: Record<string, string> = {};
     for (const row of baseActivityRows) {
       const options = sessionOptionsByActivityId.get(row.activityId) || [];
-      const firstUsable = options.find((option) => option.seatsRemaining > 0) || options[0];
-      const shouldAutoAssign = scenario === "A" || options.length === 1;
-      if (shouldAutoAssign && firstUsable) {
-        defaults[row.activityId] = firstUsable.sessionId;
+      const defaultSessionId = defaultSessionAssignment(row, options, scenario);
+      if (defaultSessionId) {
+        defaults[row.activityId] = defaultSessionId;
       }
     }
     return defaults;
   });
+
+  useEffect(() => {
+    setAssignedSessionByActivityId((current) => {
+      const next: Record<string, string> = {};
+      let changed = false;
+      const activityIds = new Set(activityRows.map((row) => row.activityId));
+
+      for (const row of activityRows) {
+        const options = sessionOptionsByActivityId.get(row.activityId) || [];
+        const currentSessionId = current[row.activityId] || "";
+        const stillAvailable = Boolean(currentSessionId && options.some((option) => option.sessionId === currentSessionId));
+        if (stillAvailable) {
+          next[row.activityId] = currentSessionId;
+          continue;
+        }
+
+        if (currentSessionId) {
+          changed = true;
+        }
+        const defaultSessionId = defaultSessionAssignment(row, options, scenario);
+        if (defaultSessionId) {
+          next[row.activityId] = defaultSessionId;
+          if (defaultSessionId !== currentSessionId) {
+            changed = true;
+          }
+        }
+      }
+
+      for (const activityId of Object.keys(current)) {
+        if (!activityIds.has(activityId)) {
+          changed = true;
+          break;
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [activityRows, sessionOptionsByActivityId, scenario]);
 
   const suggestedBillingRows = useMemo(
     () => buildBillingExtraRows(lines, activityRows, offPlanningActivityIds),
