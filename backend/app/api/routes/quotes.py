@@ -6664,6 +6664,26 @@ def _load_live_series_sessions(
     expected_start = min(expected_date_set) if expected_date_set else None
     expected_end = max(expected_date_set) if expected_date_set else None
 
+    def _dedupe_same_local_slot(rows: list[CourseSession]) -> list[CourseSession]:
+        selected_id = selected_session.id
+        unique_by_slot: dict[tuple[object, ...], CourseSession] = {}
+        for session_obj in rows:
+            zone = _safe_zoneinfo(session_obj.timezone)
+            local_start = session_obj.start_at_utc.astimezone(zone)
+            local_end = session_obj.end_at_utc.astimezone(zone)
+            key = (
+                session_obj.course_type_id,
+                session_obj.location_id,
+                session_obj.timezone,
+                local_start.date(),
+                local_start.timetz().replace(second=0, microsecond=0, tzinfo=None),
+                local_end.timetz().replace(second=0, microsecond=0, tzinfo=None),
+            )
+            current = unique_by_slot.get(key)
+            if current is None or session_obj.id == selected_id:
+                unique_by_slot[key] = session_obj
+        return sorted(unique_by_slot.values(), key=lambda session_obj: session_obj.start_at_utc)
+
     def _matches_selected_series(session_obj: CourseSession, *, require_expected_date: bool = True) -> bool:
         if session_obj.course_type_id != selected_session.course_type_id:
             return False
@@ -6702,7 +6722,9 @@ def _load_live_series_sessions(
             .order_by(CourseSession.start_at_utc.asc())
             .with_for_update()
         ).all()
-        return [session_obj for session_obj in rows if _matches_selected_series(session_obj, require_expected_date=require_expected_date)]
+        return _dedupe_same_local_slot(
+            [session_obj for session_obj in rows if _matches_selected_series(session_obj, require_expected_date=require_expected_date)]
+        )
 
     if selected_session.recurrence_group_id is None:
         filtered = _load_signature_matches()
@@ -6718,7 +6740,7 @@ def _load_live_series_sessions(
         .with_for_update()
     ).all()
     if not expected_dates:
-        return rows
+        return _dedupe_same_local_slot(rows)
 
     filtered: list[CourseSession] = [session_obj for session_obj in rows if _matches_selected_series(session_obj)]
     if len(filtered) < len(expected_date_set):
@@ -6733,7 +6755,7 @@ def _load_live_series_sessions(
         for session_obj in _load_signature_matches(require_expected_date=False):
             merged_by_id.setdefault(session_obj.id, session_obj)
         filtered = sorted(merged_by_id.values(), key=lambda session_obj: session_obj.start_at_utc)
-    return filtered
+    return _dedupe_same_local_slot(filtered)
 
 
 def _serialize_uuid_list(values: list[UUID]) -> list[str]:

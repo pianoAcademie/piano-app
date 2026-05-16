@@ -223,6 +223,47 @@ class QuoteLiveSeriesMatchingTests(unittest.TestCase):
         self.assertEqual(db.scalar_calls, 2)
         self.assertEqual([row.id for row in rows], ["selected", "current-2", "current-3"])
 
+    def test_deduplicates_live_sessions_with_same_local_slot(self) -> None:
+        course_type_id = uuid4()
+        location_id = uuid4()
+        recurrence_group_id = uuid4()
+        selected = _session(
+            session_id="selected",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2026, 9, 16, 14, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 16, 15, 0, tzinfo=timezone.utc),
+            recurrence_group_id=recurrence_group_id,
+        )
+        duplicate_same_slot = _session(
+            session_id="duplicate",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2026, 9, 16, 14, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 16, 15, 0, tzinfo=timezone.utc),
+            recurrence_group_id=recurrence_group_id,
+        )
+        next_week = _session(
+            session_id="next-week",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2026, 9, 23, 14, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 23, 15, 0, tzinfo=timezone.utc),
+            recurrence_group_id=recurrence_group_id,
+        )
+        db = _FakeSession([duplicate_same_slot, selected, next_week])
+
+        rows = _load_live_series_sessions(
+            db,
+            selected_session=selected,
+            expected_dates=[
+                date(2026, 9, 16),
+                date(2026, 9, 23),
+            ],
+        )
+
+        self.assertEqual([row.id for row in rows], ["selected", "next-week"])
+
 
 if __name__ == "__main__":
     unittest.main()
