@@ -20,6 +20,8 @@ from app.services.session_automation import PAYMENT_TIMEOUT_CANCELLATION_REASON
 from scripts.cleanup_prod_duplicate_local_slot_bookings import run_cleanup as run_duplicate_local_slot_cleanup
 
 SCRIPT_PREFIX = "PROD_STALE_PENDING_BOOKING_CLEANUP"
+# Also run the idempotent quote-transformation duplicate cleanup from this
+# existing production-maintenance workflow.
 DUPLICATE_SLOT_CLEANUP_START_DATE = date(2026, 9, 1)
 
 
