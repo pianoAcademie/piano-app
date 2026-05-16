@@ -254,6 +254,11 @@ def run_cleanup(*, apply: bool = False, start_date: date = DEFAULT_START_DATE) -
         print(f"[{SCRIPT_PREFIX}] sample={sample}")
     for sample in blocked_samples[:50]:
         print(f"[{SCRIPT_PREFIX}] blocked={sample}")
+    if apply and summary["blocked_duplicate_bookings"] > 0:
+        raise RuntimeError(
+            f"{summary['blocked_duplicate_bookings']} duplicate booking(s) are linked to invoices or paid receipts "
+            "and require manual accounting review."
+        )
     return summary
 
 
