@@ -97,6 +97,35 @@ function validBlock(block: LivePlanningBlockInput): boolean {
     && block.weekday <= 6;
 }
 
+function hhmmToMinutes(value: string | null | undefined): number | null {
+  const match = String(value || "").trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+  const hours = Number.parseInt(match[1] || "", 10);
+  const minutes = Number.parseInt(match[2] || "", 10);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+  return hours * 60 + minutes;
+}
+
+function timeCloseEnough(left: string, right: string, toleranceMinutes = 15): boolean {
+  const leftMinutes = hhmmToMinutes(left);
+  const rightMinutes = hhmmToMinutes(right);
+  if (leftMinutes === null || rightMinutes === null) {
+    return false;
+  }
+  return Math.abs(leftMinutes - rightMinutes) <= toleranceMinutes;
+}
+
+function sessionTimeMatchesBlock(local: LocalSessionParts, block: LivePlanningBlockInput): boolean {
+  if (local.start_time === block.start_time && local.end_time === block.end_time) {
+    return true;
+  }
+  return timeCloseEnough(local.start_time, block.start_time) && timeCloseEnough(local.end_time, block.end_time);
+}
+
 function blockIsOnline(block: LivePlanningBlockInput): boolean {
   const haystack = [
     block.modality,
@@ -154,8 +183,7 @@ export async function loadLivePlanningMatchForBlock({
       }
       return (
         local.weekday === block.weekday
-        && local.start_time === block.start_time
-        && local.end_time === block.end_time
+        && sessionTimeMatchesBlock(local, block)
       );
     })
     .sort((left, right) => {
@@ -186,6 +214,8 @@ export async function loadLivePlanningMatchForBlock({
     series_key: seriesKey || null,
     start_date: first.local.date,
     end_date: last.local.date,
+    start_time: first.local.start_time,
+    end_time: first.local.end_time,
     source: "live_planning",
   };
 
