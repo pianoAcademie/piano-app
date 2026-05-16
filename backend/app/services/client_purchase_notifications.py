@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.services.email_delivery import send_email
 from app.services.i18n import normalize_language
 from app.services.messaging_templates import (
+    recipient_display_name,
     render_template_content,
     resolve_frontend_base_url,
     resolve_predefined_template,
@@ -102,6 +103,7 @@ def send_payment_success_notifications(
     safe_first_name = (first_name or "").strip() or to_email
     safe_last_name = (last_name or "").strip()
     full_name = f"{safe_first_name} {safe_last_name}".strip() or to_email
+    recipient_name = recipient_display_name(first_name=first_name, last_name=last_name, email=to_email)
     normalized_currency = (currency or "EUR").strip().upper() or "EUR"
     amount_text = ""
     if amount_paid is not None:
@@ -117,6 +119,7 @@ def send_payment_success_notifications(
         "last_name": safe_last_name,
         "full_name": full_name,
         "client_name": full_name,
+        "recipient_name": recipient_name,
         "email": to_email,
         "plan_name": normalized_payment_label,
         "payment_label": normalized_payment_label,

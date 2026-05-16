@@ -16,10 +16,20 @@ from app.services.client_purchase_notifications import (
     send_client_payment_success_notifications,
     send_payment_success_notifications,
 )
-from app.services.messaging_templates import render_template_content
+from app.services.messaging_templates import recipient_display_name, render_template_content
 
 
 class ClientEmailTemplateTests(unittest.TestCase):
+    def test_recipient_display_name_prefers_civility_first_and_last_name(self) -> None:
+        self.assertEqual(
+            recipient_display_name(civility="Madame", first_name="Nora", last_name="Martin", email="nora@example.com"),
+            "Madame Nora Martin",
+        )
+        self.assertEqual(
+            recipient_display_name(first_name="Nora", last_name="Martin", email="nora@example.com"),
+            "Nora Martin",
+        )
+
     def test_render_template_content_keeps_html_or_css_braces_and_replaces_placeholders(self) -> None:
         template = (
             "<style>.hero{color:#172033;}</style>"
@@ -66,6 +76,7 @@ class ClientEmailTemplateTests(unittest.TestCase):
         self.assertEqual(result["invoice_message_id"], "msg-invoice")
         self.assertEqual(send_template_email.call_args_list[1].kwargs["template_code"], "INVOICE_PAID")
         self.assertEqual(send_template_email.call_args_list[1].kwargs["delivery_context"], "CLIENT_INVOICE_PAID")
+        self.assertEqual(send_template_email.call_args_list[1].kwargs["context"]["recipient_name"], "Hector Souza")
         self.assertEqual(
             send_template_email.call_args_list[1].kwargs["context"]["account_url"],
             "https://app.piano-academie.com/client?tab=finance",

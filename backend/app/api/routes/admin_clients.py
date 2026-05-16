@@ -170,6 +170,7 @@ from app.services.invoice_documents import (
 from app.services.invoice_number_service import InvoiceNumberService
 from app.services.messaging_templates import (
     PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD,
+    recipient_display_name,
     render_template_content,
     resolve_messaging_delivery_config,
     resolve_frontend_base_url,
@@ -1859,11 +1860,19 @@ def _build_range_invoice_email_defaults(
     first_currency = next(iter(sorted(amount_by_currency.keys())), "EUR")
     amount_due = str(amount_by_currency.get(first_currency) or "0.00")
     fallback_first_name = "Customer" if language == "en" else "Client"
+    recipient_name = recipient_display_name(
+        civility=getattr(billing_profile, "civility", None) or getattr(billing_profile, "civilite", None),
+        first_name=billing_profile.first_name or client.first_name,
+        last_name=billing_profile.last_name or client.last_name,
+        email=billing_profile.email or client.email,
+        fallback=fallback_first_name,
+    )
     context = {
         "first_name": (billing_profile.first_name or client.first_name or "").strip() or client.email or fallback_first_name,
         "last_name": (billing_profile.last_name or client.last_name or "").strip(),
         "full_name": _display_name(billing_profile.first_name, billing_profile.last_name, client.email),
         "client_name": _display_name(billing_profile.first_name, billing_profile.last_name, client.email),
+        "recipient_name": recipient_name,
         "invoice_number": str(metadata.get("invoice_number") or ""),
         "invoice_url": invoice_url,
         "payment_url": payment_url,

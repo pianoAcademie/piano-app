@@ -159,6 +159,23 @@ class MessagingSmsDeliveryConfig:
     frontend_base_url: str
 
 
+def recipient_display_name(
+    *,
+    civility: object | None = None,
+    first_name: object | None = None,
+    last_name: object | None = None,
+    email: object | None = None,
+    fallback: str = "Client",
+) -> str:
+    parts = [
+        str(value or "").strip()
+        for value in (civility, first_name, last_name)
+        if str(value or "").strip()
+    ]
+    value = " ".join(parts).strip()
+    return value or str(email or "").strip() or fallback
+
+
 def _resolve_template_text(
     base_value: object,
     translations: dict[str, object] | None,
@@ -969,7 +986,7 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         body=_email_layout(
             _email_title(
                 "Votre facture est disponible",
-                "Bonjour {first_name}, vous pouvez consulter votre facture et proceder au reglement en ligne.",
+                "Bonjour {recipient_name}, vous pouvez consulter votre facture et proceder au reglement en ligne.",
             ),
             _email_summary(
                 [
@@ -988,6 +1005,7 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         description="Envoi de facture.",
         variables_hint=(
             "{first_name} {last_name} {full_name} {client_name} {invoice_number} {invoice_url} "
+            "{recipient_name} "
             "{payment_url} {amount_due} {amount_paid} {total_incl_vat} {currency} {due_date} {issued_date} "
             "{invoice_status} {account_url}"
         ),
@@ -1001,7 +1019,7 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         body=_email_layout(
             _email_title(
                 "Votre facture est disponible",
-                "Bonjour {first_name}, cette facture est deja reglee. Aucun paiement supplementaire n est attendu.",
+                "Bonjour {recipient_name}, cette facture est deja reglee. Aucun paiement supplementaire n est attendu.",
             ),
             _email_summary(
                 [
@@ -1020,6 +1038,7 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         description="Envoi de facture deja integralement reglee.",
         variables_hint=(
             "{first_name} {last_name} {full_name} {client_name} {invoice_number} {invoice_url} "
+            "{recipient_name} "
             "{payment_url} {amount_due} {amount_paid} {total_incl_vat} {currency} {due_date} {issued_date} "
             "{invoice_status} {account_url}"
         ),
@@ -1033,7 +1052,7 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         body=_email_layout(
             _email_title(
                 "Rappel de facture",
-                "Bonjour {first_name}, votre facture est toujours disponible et reste a regler avant son echeance.",
+                "Bonjour {recipient_name}, votre facture est toujours disponible et reste a regler avant son echeance.",
             ),
             _email_summary(
                 [
@@ -1052,6 +1071,7 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         description="Relance de facture.",
         variables_hint=(
             "{first_name} {last_name} {full_name} {client_name} {invoice_number} {invoice_url} "
+            "{recipient_name} "
             "{payment_url} {amount_due} {total_incl_vat} {currency} {due_date} {issued_date} {account_url}"
         ),
         body_format="HTML",
@@ -1565,7 +1585,7 @@ PREDEFINED_TEMPLATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
         "subject": {"en": "Your Piano Academie invoice"},
         "body": {
             "en": (
-                "Hello {first_name},\n\n"
+                "Hello {recipient_name},\n\n"
                 "Your invoice {invoice_number} is now available.\n"
                 "Download: {invoice_url}\n\n"
                 "Piano Academie"
@@ -1576,7 +1596,7 @@ PREDEFINED_TEMPLATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
         "subject": {"en": "Your invoice {invoice_number} is available and already paid"},
         "body": {
             "en": (
-                "Hello {first_name},\n\n"
+                "Hello {recipient_name},\n\n"
                 "Your invoice {invoice_number} is available and has already been paid.\n"
                 "Download: {invoice_url}\n\n"
                 "Piano Academie"
@@ -1587,7 +1607,7 @@ PREDEFINED_TEMPLATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
         "subject": {"en": "Invoice reminder"},
         "body": {
             "en": (
-                "Hello {first_name},\n\n"
+                "Hello {recipient_name},\n\n"
                 "This is a reminder regarding your invoice.\n\n"
                 "Piano Academie"
             )

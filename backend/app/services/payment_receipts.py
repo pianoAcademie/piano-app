@@ -29,6 +29,7 @@ from app.services.invoice_documents import (
 from app.services.invoice_number_service import InvoiceNumberService
 from app.services.i18n import normalize_language
 from app.services.messaging_templates import (
+    recipient_display_name,
     render_template_content,
     resolve_frontend_base_url,
     resolve_predefined_template,
@@ -1107,6 +1108,12 @@ def send_final_invoice_email(
     invoice_status = str(metadata.get("invoice_status") or "").strip().upper() or "ISSUED"
     is_already_paid = invoice_status == "PAID" or amount_due in {"0", "0.0", "0.00"}
     account_url = _frontend_url("/client?tab=finance")
+    recipient_name = recipient_display_name(
+        civility=getattr(billing_profile, "civility", None) or getattr(billing_profile, "civilite", None),
+        first_name=billing_profile.first_name,
+        last_name=billing_profile.last_name,
+        email=billing_profile.email,
+    )
 
     def _format_invoice_date(raw_value: object) -> str:
         raw = str(raw_value or "").strip()
@@ -1126,6 +1133,7 @@ def send_final_invoice_email(
         "last_name": (billing_profile.last_name or "").strip(),
         "full_name": _display_name(billing_profile.first_name, billing_profile.last_name, billing_profile.email),
         "client_name": _display_name(billing_profile.first_name, billing_profile.last_name, billing_profile.email),
+        "recipient_name": recipient_name,
         "invoice_number": invoice_number,
         "invoice_url": invoice_url,
         "payment_url": (
