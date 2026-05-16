@@ -4,7 +4,7 @@ import argparse
 import os
 import sys
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
@@ -17,8 +17,10 @@ from app.models.client_record import PaymentReceipt
 from app.models.user import User
 from app.services.reminders import skip_pending_reminders_for_booking
 from app.services.session_automation import PAYMENT_TIMEOUT_CANCELLATION_REASON
+from scripts.cleanup_prod_duplicate_local_slot_bookings import run_cleanup as run_duplicate_local_slot_cleanup
 
 SCRIPT_PREFIX = "PROD_STALE_PENDING_BOOKING_CLEANUP"
+DUPLICATE_SLOT_CLEANUP_START_DATE = date(2026, 9, 1)
 
 
 def utcnow() -> datetime:
@@ -154,6 +156,11 @@ def main() -> None:
     print(f"[{SCRIPT_PREFIX}] expired_orphan_receipts={summary['expired_orphan_receipts']}")
     for sample in samples[:25]:
         print(f"[{SCRIPT_PREFIX}] sample={sample}")
+
+    run_duplicate_local_slot_cleanup(
+        apply=args.apply,
+        start_date=DUPLICATE_SLOT_CLEANUP_START_DATE,
+    )
 
 
 if __name__ == "__main__":
