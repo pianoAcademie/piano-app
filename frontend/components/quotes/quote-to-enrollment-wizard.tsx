@@ -823,6 +823,9 @@ export default function QuoteToEnrollmentWizard({
     }
     return displayName(selectedClient.firstName, selectedClient.lastName, selectedClient.email);
   }, [clientMode, clientCandidates, selectedClientId, selectedParentClientId, clientsById, language]);
+  const selectedClientHref = clientMode === "existing" && selectedClientId
+    ? `/admin/clients/${encodeURIComponent(selectedClientId)}`
+    : null;
 
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) || null;
   const selectedLegalEntity = legalEntities.find((entity) => entity.id === quote.legalEntityId) || null;
@@ -1033,7 +1036,16 @@ export default function QuoteToEnrollmentWizard({
         <aside className="card quote-transform-sidebar">
           <h3>{t("admin.quote_transform.summary_title")}</h3>
           <div className="quote-transform-sidebar-grid top-gap-sm">
-            <p><strong>{t("admin.quote_transform.summary_target_client")}:</strong> {selectedClientName}</p>
+            <p>
+              <strong>{t("admin.quote_transform.summary_target_client")}:</strong>{" "}
+              {selectedClientHref ? (
+                <Link className="mode-link" href={selectedClientHref}>
+                  {selectedClientName}
+                </Link>
+              ) : (
+                selectedClientName
+              )}
+            </p>
             <p><strong>{t("admin.quote_transform.summary_plan")}:</strong> {selectedPlan?.name || t("admin.quote_transform.none")}</p>
             <p><strong>{t("admin.quote_transform.summary_activities")}:</strong> {activityRows.length}</p>
             <p><strong>{t("admin.quote_transform.summary_off_planning")}:</strong> {offPlanningActivityIds.size}</p>
