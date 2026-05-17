@@ -3607,6 +3607,27 @@ def _preview_line_haystack(line: TypeformQuotePreviewLineOut) -> str:
     return " ".join(_text(part) for part in parts if _text(part)).lower()
 
 
+def _matching_words(value: object | None) -> set[str]:
+    return {
+        word
+        for word in re.findall(r"[a-z0-9]+", _normalize_token(value))
+        if len(word) >= 3
+    }
+
+
+def _activity_matches_line_for_slot_fallback(activity: CourseType, line: TypeformQuotePreviewLineOut) -> bool:
+    line_words = _matching_words(_preview_line_haystack(line))
+    activity_words = _matching_words(" ".join([_text(activity.code), _text(activity.name)]))
+    if not line_words or not activity_words:
+        return False
+    shared_words = line_words & activity_words
+    collective_words = {"collectif", "collectifs"}
+    teen_adult_words = {"ado", "ados", "adult", "adulte", "adultes"}
+    if shared_words & collective_words and (line_words & teen_adult_words) and (activity_words & teen_adult_words):
+        return True
+    return len(shared_words) >= 3
+
+
 def _is_online_runtime_context(runtime_context: dict[str, object]) -> bool:
     tokens = {
         _normalize_token(runtime_context.get("location_code")),
@@ -3968,10 +3989,8 @@ def _build_session_recommendations(
         inferred_location, _ = _find_location_by_request_value(db, requested_location)
         if inferred_location is not None:
             manual_location_id = inferred_location.id
-    if manual_location_id is not None:
-        manual_rows_stmt = manual_rows_stmt.where(CourseSession.location_id == manual_location_id)
     elif not requested_location and config is not None and config.default_location_id is not None:
-        manual_rows_stmt = manual_rows_stmt.where(CourseSession.location_id == config.default_location_id)
+        manual_location_id = config.default_location_id
     requested_days = {_weekday_from_label(day) for day in _json_list(normalized.get("requested_days"))}
     requested_days.discard(None)
     requested_times = [_minutes_from_hhmm(_text(value)) for value in _json_list(normalized.get("requested_times"))]
@@ -3984,13 +4003,18 @@ def _build_session_recommendations(
         solfege_requested_times,
         solfege_requested_slot_preferences,
     ) = _slot_filters_from_preferences(_json_list(normalized.get("requested_solfege_slot_preferences")))
-    manual_rows = db.execute(
+    manual_rows_all = db.execute(
         manual_rows_stmt.order_by(CourseSession.start_at_utc.asc())
     ).all()
-    manual_rows = [
+    manual_rows_all = [
         (session_obj, activity, location, booked_count)
-        for session_obj, activity, location, booked_count in manual_rows
+        for session_obj, activity, location, booked_count in manual_rows_all
         if _session_is_typeform_candidate(session_obj)
+    ]
+    manual_rows = [
+        row
+        for row in manual_rows_all
+        if manual_location_id is None or row[2].id == manual_location_id
     ]
     selected_session_ids = _json_object(_json_object(resolution.get("slot_resolution")).get("selected_session_ids"))
 
@@ -4067,6 +4091,11 @@ def _build_session_recommendations(
             if line_is_second_course and second_course_preferences
             else requested_slot_preferences
         )
+        has_explicit_slot_request = bool(
+            effective_requested_slot_preferences
+            or effective_requested_days
+            or effective_requested_times
+        )
         activity_rows = by_activity.get(line.activity_id, [])
         option_rows: list[tuple[CourseSession, TypeformSessionMatchOptionOut]] = []
         for session_obj, activity, location, booked_count in activity_rows:
@@ -4098,6 +4127,69 @@ def _build_session_recommendations(
             option_rows,
             selected_session_id=selected_session_id,
         )
+        if not options and has_explicit_slot_request and line_resolved_location_id is not None:
+            relaxed_option_rows: list[tuple[CourseSession, TypeformSessionMatchOptionOut]] = []
+            for session_obj, activity, location, booked_count in activity_rows:
+                if (
+                    not _session_is_typeform_candidate(session_obj)
+                    and not line_uses_solfege_slot_request
+                    and not line_searches_onsite_solfege_without_main_slot_filters
+                ):
+                    continue
+                option = _typeform_session_option_from_row(
+                    session_obj=session_obj,
+                    activity=activity,
+                    location=location,
+                    booked_count=int(booked_count or 0),
+                    config=config,
+                    requested_location=line_requested_location,
+                    resolved_location_id=None,
+                    requested_slot_preferences=effective_requested_slot_preferences,
+                    requested_days=effective_requested_days,
+                    requested_times=effective_requested_times,
+                )
+                if option is not None:
+                    relaxed_option_rows.append((session_obj, option))
+            options = _collapse_session_option_groups(
+                relaxed_option_rows,
+                selected_session_id=selected_session_id,
+            )
+        if not options and has_explicit_slot_request:
+            compatible_option_rows: list[tuple[CourseSession, TypeformSessionMatchOptionOut]] = []
+            seen_compatible_session_ids: set[UUID] = set()
+            compatible_row_groups = [manual_rows]
+            if manual_rows_all is not manual_rows:
+                compatible_row_groups.append(manual_rows_all)
+            for compatible_rows in compatible_row_groups:
+                for session_obj, activity, location, booked_count in compatible_rows:
+                    if session_obj.id in seen_compatible_session_ids:
+                        continue
+                    if activity.id == line.activity_id or not _activity_matches_line_for_slot_fallback(activity, line):
+                        continue
+                    option = _typeform_session_option_from_row(
+                        session_obj=session_obj,
+                        activity=activity,
+                        location=location,
+                        booked_count=int(booked_count or 0),
+                        config=config,
+                        requested_location=line_requested_location,
+                        resolved_location_id=line_resolved_location_id if location.id == line_resolved_location_id else None,
+                        requested_slot_preferences=effective_requested_slot_preferences,
+                        requested_days=effective_requested_days,
+                        requested_times=effective_requested_times,
+                        include_activity_in_label=True,
+                        extra_reasons=[f"activite compatible: {activity.name}"],
+                        allow_low_score=True,
+                    )
+                    if option is not None:
+                        seen_compatible_session_ids.add(session_obj.id)
+                        compatible_option_rows.append((session_obj, option))
+                if compatible_option_rows:
+                    break
+            options = _collapse_session_option_groups(
+                compatible_option_rows,
+                selected_session_id=selected_session_id,
+            )
         available_options = [item for item in options if not item.is_full]
         option_session_ids = {item.session_id for item in options}
         manual_options: list[TypeformSessionMatchOptionOut] = []
@@ -4111,24 +4203,15 @@ def _build_session_recommendations(
             )
             if solfege_slot_proposal:
                 slot_proposals.append(solfege_slot_proposal)
-        has_explicit_slot_request = bool(
-            effective_requested_slot_preferences
-            or effective_requested_days
-            or effective_requested_times
-        )
         if not options or (selected_session_id is not None and selected_session_id not in option_session_ids):
             manual_series_rows: dict[str, tuple[CourseSession, CourseType, Location, int]] = {}
             for session_obj, activity, location, booked_count in manual_rows:
-                if activity.id == line.activity_id:
-                    continue
                 series_key = str(session_obj.recurrence_group_id or session_obj.id)
                 existing = manual_series_rows.get(series_key)
                 if existing is None or session_obj.start_at_utc < existing[0].start_at_utc:
                     manual_series_rows[series_key] = (session_obj, activity, location, int(booked_count or 0))
 
             for session_obj, activity, location, booked_count in manual_series_rows.values():
-                if activity.id == line.activity_id:
-                    continue
                 option = _typeform_session_option_from_row(
                     session_obj=session_obj,
                     activity=activity,
@@ -4141,7 +4224,11 @@ def _build_session_recommendations(
                     requested_days=effective_requested_days,
                     requested_times=effective_requested_times,
                     include_activity_in_label=True,
-                    extra_reasons=[f"activite differente: {activity.name}"],
+                    extra_reasons=(
+                        [f"activite differente: {activity.name}"]
+                        if activity.id != line.activity_id
+                        else None
+                    ),
                     allow_low_score=True,
                 )
                 if option is not None:

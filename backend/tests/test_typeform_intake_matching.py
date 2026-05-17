@@ -17,6 +17,7 @@ from app.api.routes.typeform_intakes import (
     _extract_estimated_solfege_level,
     _find_existing_adult_parent_client,
     _future_school_year_candidate_configs,
+    _activity_matches_line_for_slot_fallback,
     _intake_list_out_fast,
     _normalize_payload,
     _session_recommendations_have_options,
@@ -1048,6 +1049,24 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
         )
 
         self.assertIsNone(option)
+
+    def test_collective_teen_adult_activity_matches_fallback_line_label(self) -> None:
+        line = SimpleNamespace(
+            code="",
+            title="Cours collectifs ado/adultes",
+            description="",
+            meta={
+                "typeform_template": {
+                    "title": "Cours collectifs ado/adultes",
+                }
+            },
+        )
+        activity = SimpleNamespace(
+            code="ACT_COURS_COLLECTIFS_ADO_ADULTES_394F7E",
+            name="Cours collectif Ado /adultes",
+        )
+
+        self.assertTrue(_activity_matches_line_for_slot_fallback(activity, line))  # type: ignore[arg-type]
 
     def test_should_try_future_school_year_config_when_slots_are_requested_but_no_option_matches(self) -> None:
         should_try = _should_try_future_school_year_config(
