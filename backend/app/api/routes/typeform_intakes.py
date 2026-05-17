@@ -3985,7 +3985,7 @@ def _build_session_recommendations(
         solfege_requested_slot_preferences,
     ) = _slot_filters_from_preferences(_json_list(normalized.get("requested_solfege_slot_preferences")))
     manual_rows = db.execute(
-        manual_rows_stmt.order_by(CourseSession.start_at_utc.asc()).limit(250)
+        manual_rows_stmt.order_by(CourseSession.start_at_utc.asc())
     ).all()
     manual_rows = [
         (session_obj, activity, location, booked_count)
@@ -4127,6 +4127,8 @@ def _build_session_recommendations(
                     manual_series_rows[series_key] = (session_obj, activity, location, int(booked_count or 0))
 
             for session_obj, activity, location, booked_count in manual_series_rows.values():
+                if activity.id == line.activity_id:
+                    continue
                 option = _typeform_session_option_from_row(
                     session_obj=session_obj,
                     activity=activity,
