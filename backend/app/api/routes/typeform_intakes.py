@@ -4116,10 +4116,7 @@ def _build_session_recommendations(
             or effective_requested_days
             or effective_requested_times
         )
-        if (
-            not has_explicit_slot_request
-            and (not options or (selected_session_id is not None and selected_session_id not in option_session_ids))
-        ):
+        if not options or (selected_session_id is not None and selected_session_id not in option_session_ids):
             manual_series_rows: dict[str, tuple[CourseSession, CourseType, Location, int]] = {}
             for session_obj, activity, location, booked_count in manual_rows:
                 if activity.id == line.activity_id:
