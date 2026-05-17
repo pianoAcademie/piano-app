@@ -4154,15 +4154,16 @@ def _build_session_recommendations(
                 relaxed_option_rows,
                 selected_session_id=selected_session_id,
             )
-        if not options and has_explicit_slot_request:
+        if has_explicit_slot_request:
             compatible_option_rows: list[tuple[CourseSession, TypeformSessionMatchOptionOut]] = []
+            existing_option_ids = {item.session_id for item in options}
             seen_compatible_session_ids: set[UUID] = set()
             compatible_row_groups = [manual_rows]
             if manual_rows_all is not manual_rows:
                 compatible_row_groups.append(manual_rows_all)
             for compatible_rows in compatible_row_groups:
                 for session_obj, activity, location, booked_count in compatible_rows:
-                    if session_obj.id in seen_compatible_session_ids:
+                    if session_obj.id in existing_option_ids or session_obj.id in seen_compatible_session_ids:
                         continue
                     if activity.id == line.activity_id or not _activity_matches_line_for_slot_fallback(activity, line):
                         continue
@@ -4184,12 +4185,28 @@ def _build_session_recommendations(
                     if option is not None:
                         seen_compatible_session_ids.add(session_obj.id)
                         compatible_option_rows.append((session_obj, option))
-                if compatible_option_rows:
+                if compatible_option_rows and options:
                     break
-            options = _collapse_session_option_groups(
-                compatible_option_rows,
-                selected_session_id=selected_session_id,
-            )
+            if compatible_option_rows:
+                compatible_options = _collapse_session_option_groups(
+                    compatible_option_rows,
+                    selected_session_id=selected_session_id,
+                )
+                merged_options: list[TypeformSessionMatchOptionOut] = []
+                seen_option_ids: set[UUID] = set()
+                for item in [*options, *compatible_options]:
+                    if item.session_id in seen_option_ids:
+                        continue
+                    seen_option_ids.add(item.session_id)
+                    merged_options.append(item)
+                merged_options.sort(
+                    key=lambda item: (
+                        item.is_full,
+                        -item.score,
+                        item.start_at.timestamp(),
+                    )
+                )
+                options = merged_options
         available_options = [item for item in options if not item.is_full]
         option_session_ids = {item.session_id for item in options}
         manual_options: list[TypeformSessionMatchOptionOut] = []
