@@ -22,6 +22,7 @@ from app.services.quotes.quote_documents import (
     _line_groups,
     _line_matches_end_year_concert,
     _pass_recup_compact_notice_markup,
+    _planning_block_pdf_row,
     _planning_blocks_table_html,
     _quote_template_allows_end_year_concert,
     _solfege_pending_block_info,
@@ -255,6 +256,37 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertIn("Mardi", html)
         self.assertIn("17:05 - 17:35", html)
         self.assertNotIn("à choisir", html)
+
+    def test_pdf_planning_row_uses_selected_solfege_slot_when_pending_block_was_chosen(self) -> None:
+        block = {
+            "activity_label": "Cours de solfège en ligne - niveau 4",
+            "location_label": "Online",
+            "weekday": -1,
+            "weekday_label": "Selection a faire",
+            "start_time": "",
+            "end_time": "",
+            "duration_minutes": 45,
+            "selection_pending": True,
+            "pending_solfege_level": "4",
+            "modality": "ONLINE",
+        }
+        selected_slot = {
+            "weekday": 3,
+            "weekday_label": "Jeudi",
+            "start_time": "18:50",
+            "end_time": "19:35",
+            "duration_minutes": 45,
+            "location_label": "Online",
+            "level_code": "4",
+        }
+
+        row = _planning_block_pdf_row(block, selected_solfege_slot=selected_slot, language="fr")
+
+        self.assertEqual(row[1], "Online")
+        self.assertEqual(row[2], "Jeudi")
+        self.assertEqual(row[3], "18:50 - 19:35")
+        self.assertEqual(row[4], "45 min")
+        self.assertNotIn("à choisir", " ".join(row))
 
     def test_current_solfege_document_info_prefers_saved_line_and_planning_over_stale_quote_fields(self) -> None:
         activity_id = uuid4()

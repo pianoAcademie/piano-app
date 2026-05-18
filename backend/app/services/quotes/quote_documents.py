@@ -2231,6 +2231,52 @@ def _planning_blocks_table_html(
     )
 
 
+def _planning_block_pdf_row(
+    block: dict[str, Any],
+    *,
+    selected_solfege_slot: dict[str, Any] | None = None,
+    language: str | None = None,
+) -> list[str]:
+    activity = _harmonize_display_text(str(block.get("activity_label") or "-"))
+    location = str(block.get("location_label") or "-").strip() or "-"
+    day = str(block.get("weekday_label") or "").strip() or _weekday_label(block.get("weekday"), language=language) or "-"
+    start = str(block.get("start_time") or "").strip()
+    end = str(block.get("end_time") or "").strip()
+    time_range = f"{start} - {end}" if start and end else "-"
+    duration = _duration_label(
+        start_time=block.get("start_time"),
+        end_time=block.get("end_time"),
+        fallback_minutes=block.get("duration_minutes"),
+    )
+    try:
+        weekday_value = int(block.get("weekday") or -99)
+    except (TypeError, ValueError):
+        weekday_value = -99
+    selection_pending = bool(block.get("selection_pending")) or weekday_value == -1
+    if not selection_pending:
+        return [activity, location, day, time_range, duration]
+
+    is_solfege_block = _is_solfege_planning_block(block)
+    slot = _json_object(selected_solfege_slot)
+    if is_solfege_block and slot:
+        activity, _, _, _ = _pending_planning_block_display(block, language=language)
+        slot_day = str(slot.get("weekday_label") or "").strip() or _weekday_label(slot.get("weekday"), language=language)
+        slot_start = str(slot.get("start_time") or slot.get("start") or "").strip()
+        slot_end = str(slot.get("end_time") or slot.get("end") or "").strip()
+        slot_time_range = f"{slot_start} - {slot_end}" if slot_start and slot_end else "-"
+        slot_duration = _duration_label(
+            start_time=slot_start,
+            end_time=slot_end,
+            fallback_minutes=slot.get("duration_minutes") or block.get("duration_minutes"),
+        )
+        slot_location = str(slot.get("location_label") or block.get("location_label") or "-").strip() or "-"
+        if slot_day and slot_day != "-" and slot_time_range != "-":
+            return [activity, slot_location, slot_day, slot_time_range, slot_duration]
+
+    activity, day, time_range, duration = _pending_planning_block_display(block, language=language)
+    return [activity, location, day, time_range, duration]
+
+
 def _is_adjustment_line(line: QuoteLine) -> bool:
     line_type = (line.line_type or "").strip().lower()
     master_item_type = (line.master_item_type or "").strip().lower()
@@ -5739,6 +5785,7 @@ def _render_quote_pdf_blocks(
     calendar_snapshot = _json_object(context.get("calendar_snapshot")) or _calendar_snapshot_with_planning_sessions(db, _json_object(quote.calendar_snapshot))
     sessions = [item for item in _json_list(calendar_snapshot.get("sessions")) if isinstance(item, dict)]
     planning_blocks = [item for item in _json_list(calendar_snapshot.get("blocks")) if isinstance(item, dict)]
+    selected_solfege_slot = _json_object(context.get("solfege_selected_slot"))
     service_product_ids = _service_product_ids_for_lines(db=db, lines=lines)
     services, products, kits, adjustments, other_fees = _line_groups(lines, service_product_ids=service_product_ids)
     product_long_descriptions = _product_long_descriptions_by_id(db=db, products=products)
@@ -5819,25 +5866,13 @@ def _render_quote_pdf_blocks(
     story.append(Paragraph(_quote_doc_text("section_courses_options", language=language), styles["h1"]))
     planning_rows: list[list[str]] = []
     for block in planning_blocks:
-        activity = _harmonize_display_text(str(block.get("activity_label") or "-"))
-        location = str(block.get("location_label") or "-")
-        day = str(block.get("weekday_label") or _weekday_label(block.get("weekday"), language=language) or "-")
-        start = str(block.get("start_time") or "").strip()
-        end = str(block.get("end_time") or "").strip()
-        time_range = f"{start} - {end}" if start and end else "-"
-        duration = _duration_label(
-            start_time=block.get("start_time"),
-            end_time=block.get("end_time"),
-            fallback_minutes=block.get("duration_minutes"),
+        planning_rows.append(
+            _planning_block_pdf_row(
+                block,
+                selected_solfege_slot=selected_solfege_slot,
+                language=language,
+            )
         )
-        try:
-            weekday_value = int(block.get("weekday") or -99)
-        except (TypeError, ValueError):
-            weekday_value = -99
-        selection_pending = bool(block.get("selection_pending")) or weekday_value == -1
-        if selection_pending:
-            activity, day, time_range, duration = _pending_planning_block_display(block, language=language)
-        planning_rows.append([activity, location, day, time_range, duration])
     story.append(
         _table_for_pdf(
             [
