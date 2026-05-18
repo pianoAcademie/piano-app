@@ -572,6 +572,27 @@ def _template_matches_when(
     return True
 
 
+_ONLINE_ACTIVITY_SUBSTITUTIONS = {
+    "PIANO_GROUP_ONSITE_1H": "PIANO_GROUP_ONLINE_1H",
+}
+
+
+def _template_for_runtime_context(
+    template: dict[str, object],
+    *,
+    runtime_context: dict[str, object],
+) -> dict[str, object]:
+    if not _is_online_runtime_context(runtime_context):
+        return template
+    activity_code = _text(template.get("activity_code")).strip().upper()
+    online_code = _ONLINE_ACTIVITY_SUBSTITUTIONS.get(activity_code)
+    if not online_code:
+        return template
+    adjusted = dict(template)
+    adjusted["activity_code"] = online_code
+    return adjusted
+
+
 def _merge_normalized_payload_patch(
     current: dict[str, object],
     patch: dict[str, object | None],
@@ -3073,7 +3094,7 @@ def _build_preview_lines(
         return preview_lines, quote_lines, warnings, blockages
 
     for index, raw_template in enumerate(applicable_templates):
-        template = dict(raw_template)
+        template = _template_for_runtime_context(dict(raw_template), runtime_context=runtime_context)
         kind, activity_id, product_id, kit_id, issues = _resolve_template_item(db, template)
         if issues:
             blockages.extend(issues)

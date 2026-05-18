@@ -1458,6 +1458,15 @@ def _parse_iso_date(value: Any) -> date | None:
         return None
 
 
+def _parse_iso_date_set(value: Any) -> set[date]:
+    out: set[date] = set()
+    for item in _json_list(value):
+        parsed = _parse_iso_date(item)
+        if parsed is not None:
+            out.add(parsed)
+    return out
+
+
 def _school_year_bounds_from_label(label: str | None) -> tuple[date, date] | None:
     normalized = (label or "").strip()
     match = re.fullmatch(r"(\d{4})\s*[-/]\s*(\d{4})", normalized)
@@ -1559,6 +1568,7 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
         weekday = -1
     location_id = _parse_uuid(block.get("location_id"))
     enforce_location = location_id is not None and not _block_is_online(block)
+    excluded_dates = _parse_iso_date_set(block.get("holiday_dates")) | _parse_iso_date_set(block.get("closure_dates"))
 
     lower_bound = datetime.combine(start_date - timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
     upper_bound = datetime.combine(end_date + timedelta(days=2), datetime.min.time(), tzinfo=timezone.utc)
@@ -1584,6 +1594,8 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
         local_start = session_obj.start_at_utc.astimezone(zone)
         local_end = session_obj.end_at_utc.astimezone(zone)
         if local_start.date() < start_date or local_start.date() > end_date:
+            continue
+        if local_start.date() in excluded_dates:
             continue
         if weekday >= 0 and local_start.weekday() != weekday:
             continue

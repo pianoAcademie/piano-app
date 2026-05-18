@@ -25,6 +25,7 @@ from app.api.routes.typeform_intakes import (
     _should_try_future_school_year_config,
     _solfege_slot_proposal_from_normalized,
     _stored_messages,
+    _template_for_runtime_context,
     _template_matches_segment_target,
     _typeform_default_quote_template,
     _typeform_default_terms_template,
@@ -34,6 +35,25 @@ from app.services.referrals import referral_category_for_location
 
 
 class TypeformIntakeMatchingTests(unittest.TestCase):
+    def test_online_runtime_context_switches_main_piano_template_to_online_activity(self) -> None:
+        template = {
+            "kind": "activity",
+            "activity_code": "PIANO_GROUP_ONSITE_1H",
+            "quantity": "1",
+        }
+
+        adjusted = _template_for_runtime_context(
+            template,
+            runtime_context={
+                "location_code": "ONLINE",
+                "location_name": "Online",
+                "requested_location": "Online",
+            },
+        )
+
+        self.assertEqual(adjusted["activity_code"], "PIANO_GROUP_ONLINE_1H")
+        self.assertEqual(template["activity_code"], "PIANO_GROUP_ONSITE_1H")
+
     def test_normalize_payload_maps_bar_le_duc_adult_2026_form(self) -> None:
         config = SimpleNamespace(
             configuration_json={
