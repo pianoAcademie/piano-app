@@ -2583,6 +2583,8 @@ def _update_public_response_meta(
             next_meta[QUOTE_PUBLIC_RESPONSE_LAST_MESSAGE_META_KEY] = trimmed_message
         else:
             next_meta.pop(QUOTE_PUBLIC_RESPONSE_LAST_MESSAGE_META_KEY, None)
+    elif action.strip().lower() != "change_requested":
+        next_meta.pop(QUOTE_PUBLIC_RESPONSE_LAST_MESSAGE_META_KEY, None)
     quote.meta = next_meta
 
 
@@ -3446,7 +3448,11 @@ def _try_send_public_quote_admin_notification_email(
     admin_url = f"{resolve_frontend_base_url().rstrip('/')}/admin/quotes/{quote.id}"
     response_label = _public_response_admin_label(normalized_action)
     response_time = _format_admin_quote_response_time(quote.approved_at or quote.rejected_at or now)
-    message = str(_quote_meta_dict(quote).get(QUOTE_PUBLIC_RESPONSE_LAST_MESSAGE_META_KEY) or "").strip()
+    quote_meta = _quote_meta_dict(quote)
+    last_public_action = str(quote_meta.get(QUOTE_PUBLIC_RESPONSE_LAST_ACTION_META_KEY) or "").strip().lower()
+    message = ""
+    if normalized_action == "change_requested" and last_public_action == normalized_action:
+        message = str(quote_meta.get(QUOTE_PUBLIC_RESPONSE_LAST_MESSAGE_META_KEY) or "").strip()
     client_status_label = (client_message_status or "unknown").strip() or "unknown"
     if client_message_error:
         client_status_label = f"{client_status_label} ({client_message_error})"

@@ -148,6 +148,94 @@ class QuotePublicConfirmationEmailTests(unittest.TestCase):
         self.assertEqual(sent_events[0].payload.get("sent_recipients"), ["admin@piano-academie.com"])
         send_email_mock.assert_called_once()
 
+    def test_admin_approval_notification_ignores_previous_change_request_message(self) -> None:
+        db = _FakeSession()
+        quote = SimpleNamespace(
+            id=uuid4(),
+            quote_number="DV-TEST",
+            total_ttc=Decimal("650.00"),
+            currency="EUR",
+            approved_at=datetime(2026, 5, 18, 12, 51, tzinfo=timezone.utc),
+            rejected_at=None,
+            meta={
+                "public_response_last_action": "approved",
+                "public_response_last_message": "Pourriez-vous modifier pour le vendredi a 19h ?",
+            },
+        )
+
+        with patch(
+            "app.api.routes.quotes.email_delivery_disabled_reason",
+            return_value=None,
+        ), patch(
+            "app.api.routes.quotes.resolve_admin_booking_notification_recipients",
+            return_value=[SimpleNamespace(email="admin@piano-academie.com")],
+        ), patch(
+            "app.api.routes.quotes.build_quote_email_context",
+            return_value={"recipient_name": "Sophie Barberis"},
+        ), patch(
+            "app.api.routes.quotes.resolve_frontend_base_url",
+            return_value="https://app.piano-academie.com",
+        ), patch(
+            "app.api.routes.quotes.send_email",
+            return_value="mail-admin",
+        ) as send_email_mock:
+            _try_send_public_quote_admin_notification_email(
+                db,
+                quote=quote,
+                lines=[],
+                action="approved",
+                client_recipient_email="sophie@example.com",
+                client_message_status="sent",
+            )
+
+        body = str(send_email_mock.call_args.kwargs.get("body") or "")
+        self.assertNotIn("Message client:", body)
+        self.assertNotIn("vendredi a 19h", body)
+
+    def test_admin_change_request_notification_includes_current_message(self) -> None:
+        db = _FakeSession()
+        quote = SimpleNamespace(
+            id=uuid4(),
+            quote_number="DV-TEST",
+            total_ttc=Decimal("650.00"),
+            currency="EUR",
+            approved_at=None,
+            rejected_at=None,
+            meta={
+                "public_response_last_action": "change_requested",
+                "public_response_last_message": "Pourriez-vous modifier pour le vendredi a 19h ?",
+            },
+        )
+
+        with patch(
+            "app.api.routes.quotes.email_delivery_disabled_reason",
+            return_value=None,
+        ), patch(
+            "app.api.routes.quotes.resolve_admin_booking_notification_recipients",
+            return_value=[SimpleNamespace(email="admin@piano-academie.com")],
+        ), patch(
+            "app.api.routes.quotes.build_quote_email_context",
+            return_value={"recipient_name": "Sophie Barberis"},
+        ), patch(
+            "app.api.routes.quotes.resolve_frontend_base_url",
+            return_value="https://app.piano-academie.com",
+        ), patch(
+            "app.api.routes.quotes.send_email",
+            return_value="mail-admin",
+        ) as send_email_mock:
+            _try_send_public_quote_admin_notification_email(
+                db,
+                quote=quote,
+                lines=[],
+                action="change_requested",
+                client_recipient_email="sophie@example.com",
+                client_message_status="sent",
+            )
+
+        body = str(send_email_mock.call_args.kwargs.get("body") or "")
+        self.assertIn("Message client:", body)
+        self.assertIn("vendredi a 19h", body)
+
     def test_records_skipped_admin_notification_when_admin_recipient_is_missing(self) -> None:
         db = _FakeSession()
         quote = SimpleNamespace(id=uuid4(), meta={})
