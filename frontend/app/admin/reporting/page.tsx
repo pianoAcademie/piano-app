@@ -2,7 +2,14 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { backendRequest } from "../../../lib/backend";
-import type { AttendanceReportRow, ProfessorStatementRow, ReservationReportRow, UserOut } from "../../../lib/types";
+import type {
+  AttendanceReportRow,
+  IntakeFamilyChildSummary,
+  IntakeFamilySummaryRow,
+  ProfessorStatementRow,
+  ReservationReportRow,
+  UserOut,
+} from "../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 
 function formatDate(value: string, language: UiLanguage): string {
@@ -11,6 +18,14 @@ function formatDate(value: string, language: UiLanguage): string {
     timeStyle: "short",
   });
 }
+
+const FAMILY_SUMMARY_ROWS: Array<{ key: keyof Pick<IntakeFamilyChildSummary, "course_1" | "course_2" | "solfege" | "masterclass" | "pass_recup">; labelKey: string }> = [
+  { key: "course_1", labelKey: "admin.reporting.family_course_1" },
+  { key: "course_2", labelKey: "admin.reporting.family_course_2" },
+  { key: "solfege", labelKey: "admin.reporting.family_solfege" },
+  { key: "masterclass", labelKey: "admin.reporting.family_masterclass" },
+  { key: "pass_recup", labelKey: "admin.reporting.family_pass_recup" },
+];
 
 export default async function AdminReportingPage(): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
@@ -25,10 +40,11 @@ export default async function AdminReportingPage(): Promise<JSX.Element> {
   const language = normalizeUiLanguage(meResult.data.preferred_language);
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
-  const [reservationsResult, attendanceResult, statementsResult] = await Promise.all([
+  const [reservationsResult, attendanceResult, statementsResult, intakeFamiliesResult] = await Promise.all([
     backendRequest<ReservationReportRow[]>("/api/v1/admin/reports/reservations", {}, token),
     backendRequest<AttendanceReportRow[]>("/api/v1/admin/reports/attendance", {}, token),
     backendRequest<ProfessorStatementRow[]>("/api/v1/admin/reports/professor-statements", {}, token),
+    backendRequest<IntakeFamilySummaryRow[]>("/api/v1/admin/reports/intake-families", {}, token),
   ]);
 
   return (
@@ -53,6 +69,63 @@ export default async function AdminReportingPage(): Promise<JSX.Element> {
           <h3>{t("admin.reporting.professor_statements")}</h3>
           <p className="muted">{statementsResult.ok ? t("admin.reporting.rows_count", { count: statementsResult.data.length }) : t("admin.reporting.error_prefix", { message: statementsResult.message })}</p>
         </article>
+
+        <article className="card">
+          <h3>{t("admin.reporting.intake_families")}</h3>
+          <p className="muted">{intakeFamiliesResult.ok ? t("admin.reporting.rows_count", { count: intakeFamiliesResult.data.length }) : t("admin.reporting.error_prefix", { message: intakeFamiliesResult.message })}</p>
+        </article>
+      </section>
+
+      <section className="card">
+        <h3>{t("admin.reporting.intake_families_title")}</h3>
+        <p className="muted">{t("admin.reporting.intake_families_help")}</p>
+        {intakeFamiliesResult.ok ? (
+          intakeFamiliesResult.data.length > 0 ? (
+            <div className="list top-gap-sm">
+              {intakeFamiliesResult.data.map((family) => (
+                <article key={family.family_key} className="item">
+                  <strong>{family.family_label}</strong>
+                  <p className="muted">
+                    {t("admin.reporting.intake_family_meta", {
+                      count: family.intake_count,
+                      contact: family.parent_email || family.parent_phone || "-",
+                    })}
+                  </p>
+                  <div className="table-wrap top-gap-sm">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>{t("admin.reporting.family_row")}</th>
+                          {family.children.map((child) => (
+                            <th key={child.intake_id}>
+                              {child.child_name}
+                              <br />
+                              <span className="muted">{child.source_form_label || child.source_form_id}</span>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {FAMILY_SUMMARY_ROWS.map((summaryRow) => (
+                          <tr key={summaryRow.key}>
+                            <th>{t(summaryRow.labelKey)}</th>
+                            {family.children.map((child) => (
+                              <td key={`${child.intake_id}-${summaryRow.key}`}>{child[summaryRow.key] || "-"}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="muted">{t("admin.reporting.no_intake_family")}</p>
+          )
+        ) : (
+          <p className="muted">{t("admin.reporting.unable_to_load")}</p>
+        )}
       </section>
 
       <section className="grid cols-2">

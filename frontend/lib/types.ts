@@ -2197,6 +2197,31 @@ export type ProfessorStatementRow = {
   payout_status: "PENDING" | "APPROVED" | "PAID" | null;
 };
 
+export type IntakeFamilyChildSummary = {
+  intake_id: string;
+  received_at: string;
+  source_form_id: string;
+  source_form_label: string | null;
+  child_name: string;
+  segment: string | null;
+  status: string;
+  course_1: string | null;
+  course_2: string | null;
+  solfege: string | null;
+  masterclass: string | null;
+  pass_recup: string | null;
+};
+
+export type IntakeFamilySummaryRow = {
+  family_key: string;
+  family_label: string;
+  parent_name: string | null;
+  parent_email: string | null;
+  parent_phone: string | null;
+  intake_count: number;
+  children: IntakeFamilyChildSummary[];
+};
+
 export type CommunicationReportRow = {
   id: string;
   channel: "EMAIL" | "SMS";

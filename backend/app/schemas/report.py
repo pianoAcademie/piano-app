@@ -61,6 +61,31 @@ class ProfessorStatementRow(BaseModel):
     payout_status: Literal['PENDING', 'APPROVED', 'PAID'] | None
 
 
+class IntakeFamilyChildSummary(BaseModel):
+    intake_id: UUID
+    received_at: datetime
+    source_form_id: str
+    source_form_label: str | None = None
+    child_name: str
+    segment: str | None = None
+    status: str
+    course_1: str | None = None
+    course_2: str | None = None
+    solfege: str | None = None
+    masterclass: str | None = None
+    pass_recup: str | None = None
+
+
+class IntakeFamilySummaryRow(BaseModel):
+    family_key: str
+    family_label: str
+    parent_name: str | None = None
+    parent_email: str | None = None
+    parent_phone: str | None = None
+    intake_count: int
+    children: list[IntakeFamilyChildSummary] = Field(default_factory=list)
+
+
 class CommunicationChannel(str, enum.Enum):
     EMAIL = "EMAIL"
     SMS = "SMS"

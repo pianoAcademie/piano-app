@@ -5,12 +5,13 @@ from decimal import Decimal
 import io
 import json
 import re
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
-from sqlalchemy import Numeric, case, cast, extract, func, or_, select, update
+from sqlalchemy import Numeric, Text, case, cast, extract, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
@@ -18,6 +19,7 @@ from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType
 from app.models.client_record import ClientInvoiceLine, ClientNoteEntry
 from app.models.ops import CommunicationChannel as CommunicationChannelModel, CommunicationLog, LegalEntity
 from app.models.payout import ProfessorSessionPayout
+from app.models.typeform_intake import TypeformFormConfig, TypeformIntake
 from app.models.user import User, UserRole
 from app.schemas.report import (
     AttendanceReportRow,
@@ -29,6 +31,8 @@ from app.schemas.report import (
     CommunicationReportRow,
     CommunicationResendRequest,
     CommunicationTypeFilterOut,
+    IntakeFamilyChildSummary,
+    IntakeFamilySummaryRow,
     ProfessorStatementRow,
     ReservationReportRow,
 )
@@ -165,6 +169,171 @@ def _communication_row_out(row: CommunicationLog) -> CommunicationReportRow:
         content_format=row.content_format.value,
         error_message=row.error_message,
     )
+
+
+def _text(value: object | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return str(value).strip()
+
+
+def _json_object(value: object | None) -> dict[str, object]:
+    return value if isinstance(value, dict) else {}
+
+
+def _json_list(value: object | None) -> list[object]:
+    return value if isinstance(value, list) else []
+
+
+def _bool_or_default(value: object | None, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    lowered = _text(value).casefold()
+    if lowered in {"1", "true", "yes", "on", "oui"}:
+        return True
+    if lowered in {"0", "false", "no", "off", "non"}:
+        return False
+    return default
+
+
+def _normalize_token(value: object | None) -> str:
+    raw = unicodedata.normalize("NFKD", _text(value))
+    ascii_text = raw.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", "", ascii_text.casefold())
+
+
+def _display_name(first_name: object | None, last_name: object | None, fallback: str = "-") -> str:
+    label = " ".join(part for part in [_text(first_name), _text(last_name)] if part).strip()
+    return label or fallback
+
+
+def _form_label(config: TypeformFormConfig | None) -> str | None:
+    if config is None:
+        return None
+    config_json = _json_object(config.configuration_json)
+    return _text(config_json.get("label")) or config.source_code
+
+
+def _intake_family_key(normalized: dict[str, object]) -> str | None:
+    email = _text(normalized.get("parent_email")).casefold()
+    if email:
+        return f"email:{email}"
+    phone = re.sub(r"\D+", "", _text(normalized.get("parent_phone")))
+    if phone:
+        return f"phone:{phone}"
+    parent_name = _normalize_token(
+        " ".join(
+            part
+            for part in [
+                _text(normalized.get("parent_last_name")),
+                _text(normalized.get("parent_first_name")),
+            ]
+            if part
+        )
+    )
+    return f"name:{parent_name}" if parent_name else None
+
+
+def _format_slot_preferences(preferences: list[object], *, include_location: bool = False) -> str | None:
+    labels: list[str] = []
+    for item in preferences:
+        if not isinstance(item, dict):
+            continue
+        day = _text(item.get("day"))
+        time = _text(item.get("time"))
+        location = _text(item.get("location"))
+        parts: list[str] = []
+        if day and time:
+            parts.append(f"{day.capitalize()} {time}")
+        elif day:
+            parts.append(day.capitalize())
+        elif time:
+            parts.append(time)
+        if include_location and location:
+            parts.append(location)
+        label = " | ".join(parts).strip()
+        if label:
+            labels.append(label)
+    return ", ".join(dict.fromkeys(labels)) or None
+
+
+def _format_day_time_summary(normalized: dict[str, object]) -> str | None:
+    days = [_text(item) for item in _json_list(normalized.get("requested_days")) if _text(item)]
+    times = [_text(item) for item in _json_list(normalized.get("requested_times")) if _text(item)]
+    labels: list[str] = []
+    if days and times:
+        for day in days:
+            for time in times:
+                labels.append(f"{day.capitalize()} {time}")
+    elif days:
+        labels.extend(day.capitalize() for day in days)
+    else:
+        labels.extend(times)
+    return ", ".join(dict.fromkeys(labels)) or None
+
+
+def _format_intake_course_1(normalized: dict[str, object]) -> str | None:
+    location = _text(normalized.get("requested_location"))
+    mode = _text(normalized.get("requested_course_mode"))
+    formula = _text(normalized.get("requested_formula_type"))
+    slots = _format_slot_preferences(_json_list(normalized.get("requested_slot_preferences"))) or _format_day_time_summary(normalized)
+    parts = [part for part in [location, slots, mode or formula] if part]
+    return " | ".join(parts) or None
+
+
+def _format_intake_course_2(normalized: dict[str, object]) -> str | None:
+    second_course = _json_object(normalized.get("requested_second_course"))
+    if not _bool_or_default(second_course.get("requested"), False):
+        return None
+    value = _text(second_course.get("value")) or _text(second_course.get("label")) or "2e cours"
+    modality = _text(second_course.get("modality"))
+    slots = _format_slot_preferences(_json_list(second_course.get("slot_preferences")), include_location=True)
+    parts = [part for part in [value, modality, slots] if part]
+    return " | ".join(parts) or value
+
+
+def _format_intake_solfege(normalized: dict[str, object]) -> str | None:
+    products = [_text(item) for item in _json_list(normalized.get("requested_products")) if _text(item)]
+    has_solfege = (
+        _bool_or_default(normalized.get("requested_onsite_solfege"), False)
+        or _bool_or_default(normalized.get("requested_online_solfege"), False)
+        or any("solfege" in _normalize_token(item) for item in products)
+        or bool(_json_list(normalized.get("requested_solfege_slot_preferences")))
+    )
+    if not has_solfege:
+        return None
+    level = _text(normalized.get("estimated_solfege_level"))
+    modality = _text(normalized.get("requested_solfege_modality"))
+    if modality == "online":
+        modality = "en ligne"
+    elif modality == "onsite":
+        modality = "presentiel"
+    slots = _format_slot_preferences(_json_list(normalized.get("requested_solfege_slot_preferences")), include_location=True)
+    parts = [part for part in [f"Niveau {level}" if level else None, modality, slots] if part]
+    return " | ".join(parts) or "Oui"
+
+
+def _requested_product_contains(normalized: dict[str, object], *tokens: str) -> bool:
+    normalized_tokens = tuple(_normalize_token(token) for token in tokens)
+    for item in _json_list(normalized.get("requested_products")):
+        product = _normalize_token(item)
+        if all(token in product for token in normalized_tokens):
+            return True
+    return False
+
+
+def _format_intake_masterclass(normalized: dict[str, object]) -> str | None:
+    return "Oui" if _requested_product_contains(normalized, "masterclass") else None
+
+
+def _format_intake_pass_recup(normalized: dict[str, object]) -> str | None:
+    if _bool_or_default(normalized.get("requested_pass_recup"), False):
+        return "Oui"
+    return "Oui" if _requested_product_contains(normalized, "pass", "recup") else None
 
 
 @router.post("/communications/{communication_id}/resend", response_model=CommunicationReportRow)
@@ -445,6 +614,123 @@ def report_professor_statements(
         )
 
     return result
+
+
+@router.get("/intake-families", response_model=list[IntakeFamilySummaryRow])
+def report_intake_families(
+    q: str | None = None,
+    school_year_label: str | None = None,
+    min_children: int = Query(default=2, ge=1, le=20),
+    limit: int = Query(default=1000, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[IntakeFamilySummaryRow]:
+    stmt = (
+        select(TypeformIntake, TypeformFormConfig)
+        .outerjoin(TypeformFormConfig, TypeformFormConfig.id == TypeformIntake.form_config_id)
+        .order_by(TypeformIntake.received_at.desc(), TypeformIntake.created_at.desc())
+        .limit(limit)
+    )
+    if school_year_label:
+        stmt = stmt.where(TypeformIntake.detected_school_year == school_year_label)
+    if q:
+        like = f"%{q.strip()}%"
+        stmt = stmt.where(
+            or_(
+                TypeformIntake.source_form_id.ilike(like),
+                TypeformIntake.source_response_id.ilike(like),
+                TypeformIntake.detected_location.ilike(like),
+                TypeformIntake.detected_segment.ilike(like),
+                cast(TypeformIntake.normalized_payload_json, Text).ilike(like),
+                cast(TypeformIntake.simplified_response_json, Text).ilike(like),
+            )
+        )
+
+    grouped: dict[str, IntakeFamilySummaryRow] = {}
+    latest_received: dict[str, datetime] = {}
+    for intake, config in db.execute(stmt).all():
+        normalized = _json_object(intake.normalized_payload_json)
+        customer_type = _text(normalized.get("customer_type")).casefold()
+        child_name = _display_name(
+            normalized.get("child_first_name"),
+            normalized.get("child_last_name"),
+            fallback="",
+        )
+        if customer_type == "adult" and not child_name:
+            continue
+        if not child_name:
+            child_name = _display_name(
+                normalized.get("student_first_name"),
+                normalized.get("student_last_name"),
+                fallback="Enfant sans nom",
+            )
+        family_key = _intake_family_key(normalized)
+        if not family_key:
+            family_key = f"intake:{intake.id}"
+
+        parent_name = _display_name(
+            normalized.get("parent_first_name"),
+            normalized.get("parent_last_name"),
+            fallback="",
+        ) or None
+        parent_email = _text(normalized.get("parent_email")) or None
+        parent_phone = _text(normalized.get("parent_phone")) or None
+        family_label = parent_name or parent_email or parent_phone or "Famille sans contact"
+        bucket = grouped.get(family_key)
+        if bucket is None:
+            bucket = IntakeFamilySummaryRow(
+                family_key=family_key,
+                family_label=family_label,
+                parent_name=parent_name,
+                parent_email=parent_email,
+                parent_phone=parent_phone,
+                intake_count=0,
+                children=[],
+            )
+            grouped[family_key] = bucket
+            latest_received[family_key] = intake.received_at
+        else:
+            bucket.parent_name = bucket.parent_name or parent_name
+            bucket.parent_email = bucket.parent_email or parent_email
+            bucket.parent_phone = bucket.parent_phone or parent_phone
+            if bucket.family_label == "Famille sans contact" and family_label != "Famille sans contact":
+                bucket.family_label = family_label
+            if intake.received_at > latest_received[family_key]:
+                latest_received[family_key] = intake.received_at
+
+        bucket.intake_count += 1
+        bucket.children.append(
+            IntakeFamilyChildSummary(
+                intake_id=intake.id,
+                received_at=intake.received_at,
+                source_form_id=intake.source_form_id,
+                source_form_label=_form_label(config),
+                child_name=child_name,
+                segment=intake.detected_segment,
+                status=intake.intake_status,
+                course_1=_format_intake_course_1(normalized),
+                course_2=_format_intake_course_2(normalized),
+                solfege=_format_intake_solfege(normalized),
+                masterclass=_format_intake_masterclass(normalized),
+                pass_recup=_format_intake_pass_recup(normalized),
+            )
+        )
+
+    families = [
+        family
+        for family in grouped.values()
+        if len({child.child_name.casefold() for child in family.children}) >= min_children
+    ]
+    for family in families:
+        family.children.sort(key=lambda child: (child.child_name.casefold(), child.received_at))
+    families.sort(
+        key=lambda family: (
+            -len(family.children),
+            family.family_label.casefold(),
+            latest_received.get(family.family_key, datetime.min.replace(tzinfo=timezone.utc)),
+        )
+    )
+    return families
 
 
 @router.get("/sap/{year}/csv")
