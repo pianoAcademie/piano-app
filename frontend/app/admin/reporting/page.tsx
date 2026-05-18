@@ -1,23 +1,129 @@
 import { cookies } from "next/headers";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { backendRequest } from "../../../lib/backend";
 import type {
-  AttendanceReportRow,
   IntakeFamilyChildSummary,
   IntakeFamilySummaryRow,
-  ProfessorStatementRow,
-  ReservationReportRow,
   UserOut,
 } from "../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 
-function formatDate(value: string, language: UiLanguage): string {
-  return new Date(value).toLocaleString(localeForUiLanguage(language), {
-    dateStyle: "short",
-    timeStyle: "short",
-  });
-}
+type SearchParams = Record<string, string | string[] | undefined>;
+
+type ReportingPageProps = {
+  searchParams: SearchParams;
+};
+
+type ReportType =
+  | "intake-families"
+  | "reservations"
+  | "attendance"
+  | "professor-statements"
+  | "communications"
+  | "payments"
+  | "quotes"
+  | "subscriptions"
+  | "planning-fill"
+  | "check-deposits"
+  | "referrals"
+  | "teacher-payments";
+
+type ReportDefinition = {
+  type: ReportType;
+  label: string;
+  description: string;
+  status: "available" | "planned";
+  filterHint: string;
+};
+
+const REPORT_DEFINITIONS: ReportDefinition[] = [
+  {
+    type: "intake-families",
+    label: "Synthese intakes par famille",
+    description: "Demandes Typeform regroupees par famille, avec une colonne par enfant.",
+    status: "available",
+    filterHint: "Periode, annee scolaire, famille, enfant, segment, statut.",
+  },
+  {
+    type: "reservations",
+    label: "Reservations",
+    description: "Liste des reservations et prestations planifiees.",
+    status: "planned",
+    filterHint: "Periode, lieu, professeur, eleve, statut.",
+  },
+  {
+    type: "attendance",
+    label: "Presence eleves",
+    description: "Suivi des presents, absences excusees et no-shows.",
+    status: "planned",
+    filterHint: "Periode, eleve, professeur, type de cours.",
+  },
+  {
+    type: "professor-statements",
+    label: "Releves professeurs",
+    description: "Synthese des heures, montants et statuts de paiement professeurs.",
+    status: "planned",
+    filterHint: "Mois, professeur, statut, type de cours.",
+  },
+  {
+    type: "communications",
+    label: "Communications",
+    description: "Emails et SMS envoyes, statuts de livraison et renvois.",
+    status: "planned",
+    filterHint: "Periode, canal, type, destinataire, statut.",
+  },
+  {
+    type: "payments",
+    label: "Paiements clients",
+    description: "Encaissements, echeances, impayes et transactions manuelles.",
+    status: "planned",
+    filterHint: "Periode, client, statut, mode de paiement.",
+  },
+  {
+    type: "quotes",
+    label: "Devis",
+    description: "Suivi commercial des devis, validations et transformations.",
+    status: "planned",
+    filterHint: "Periode, statut, formule, lieu, commercial.",
+  },
+  {
+    type: "subscriptions",
+    label: "Abonnements",
+    description: "Etat des forfaits, consommations, renouvellements et arrets.",
+    status: "planned",
+    filterHint: "Periode, client, formule, statut.",
+  },
+  {
+    type: "planning-fill",
+    label: "Remplissage planning",
+    description: "Taux de remplissage par lieu, jour, creneau et type de cours.",
+    status: "planned",
+    filterHint: "Periode, lieu, type de cours, professeur.",
+  },
+  {
+    type: "check-deposits",
+    label: "Depots de cheques",
+    description: "Lots de cheques, montants et rapprochements.",
+    status: "planned",
+    filterHint: "Periode, statut, lot, client.",
+  },
+  {
+    type: "referrals",
+    label: "Parrainages",
+    description: "Demandes recommandees, parrains et avantages associes.",
+    status: "planned",
+    filterHint: "Periode, parrain, filleul, statut.",
+  },
+  {
+    type: "teacher-payments",
+    label: "Paiement des salaires",
+    description: "Synthese des paiements professeurs et restes a traiter.",
+    status: "planned",
+    filterHint: "Mois, professeur, statut de paiement.",
+  },
+];
 
 const FAMILY_SUMMARY_ROWS: Array<{ key: keyof Pick<IntakeFamilyChildSummary, "course_1" | "course_2" | "solfege" | "masterclass" | "pass_recup">; labelKey: string }> = [
   { key: "course_1", labelKey: "admin.reporting.family_course_1" },
@@ -27,7 +133,56 @@ const FAMILY_SUMMARY_ROWS: Array<{ key: keyof Pick<IntakeFamilyChildSummary, "co
   { key: "pass_recup", labelKey: "admin.reporting.family_pass_recup" },
 ];
 
-export default async function AdminReportingPage(): Promise<JSX.Element> {
+function firstParam(searchParams: SearchParams, key: string): string {
+  const value = searchParams[key];
+  return Array.isArray(value) ? String(value[0] || "") : String(value || "");
+}
+
+function selectedReportType(searchParams: SearchParams): ReportType {
+  const raw = firstParam(searchParams, "type");
+  return REPORT_DEFINITIONS.some((item) => item.type === raw) ? (raw as ReportType) : "intake-families";
+}
+
+function withParams(values: Record<string, string | number | null | undefined>): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(values)) {
+    if (value === null || value === undefined) {
+      continue;
+    }
+    const normalized = String(value).trim();
+    if (normalized) {
+      params.set(key, normalized);
+    }
+  }
+  const query = params.toString();
+  return query ? `/admin/reporting?${query}` : "/admin/reporting";
+}
+
+function reportApiQuery(searchParams: SearchParams): string {
+  const params = new URLSearchParams();
+  for (const key of ["q", "school_year_label", "received_from", "received_to", "segment", "status", "min_children"]) {
+    const value = firstParam(searchParams, key).trim();
+    if (value) {
+      params.set(key, value);
+    }
+  }
+  params.set("limit", "5000");
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+function formatDate(value: string, language: UiLanguage): string {
+  return new Date(value).toLocaleString(localeForUiLanguage(language), {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+}
+
+function reportFilterValue(searchParams: SearchParams, key: string, fallback = ""): string {
+  return firstParam(searchParams, key) || fallback;
+}
+
+export default async function AdminReportingPage({ searchParams }: ReportingPageProps): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
     redirect("/login?error_code=session_expired");
@@ -39,133 +194,195 @@ export default async function AdminReportingPage(): Promise<JSX.Element> {
   }
   const language = normalizeUiLanguage(meResult.data.preferred_language);
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const reportType = selectedReportType(searchParams);
+  const reportDefinition = REPORT_DEFINITIONS.find((item) => item.type === reportType) || REPORT_DEFINITIONS[0];
+  const printMode = firstParam(searchParams, "print") === "1";
+  const reportHrefParams = {
+    type: reportType,
+    q: firstParam(searchParams, "q"),
+    school_year_label: firstParam(searchParams, "school_year_label"),
+    received_from: firstParam(searchParams, "received_from"),
+    received_to: firstParam(searchParams, "received_to"),
+    segment: firstParam(searchParams, "segment"),
+    status: firstParam(searchParams, "status"),
+    min_children: firstParam(searchParams, "min_children") || "2",
+  };
+  const printHref = withParams({ ...reportHrefParams, print: "1" });
 
-  const [reservationsResult, attendanceResult, statementsResult, intakeFamiliesResult] = await Promise.all([
-    backendRequest<ReservationReportRow[]>("/api/v1/admin/reports/reservations", {}, token),
-    backendRequest<AttendanceReportRow[]>("/api/v1/admin/reports/attendance", {}, token),
-    backendRequest<ProfessorStatementRow[]>("/api/v1/admin/reports/professor-statements", {}, token),
-    backendRequest<IntakeFamilySummaryRow[]>("/api/v1/admin/reports/intake-families", {}, token),
-  ]);
+  const intakeFamiliesResult = reportType === "intake-families"
+    ? await backendRequest<IntakeFamilySummaryRow[]>(`/api/v1/admin/reports/intake-families${reportApiQuery(searchParams)}`, {}, token)
+    : null;
+  const intakeFamilies = intakeFamiliesResult?.ok ? intakeFamiliesResult.data : [];
+  const generatedAt = new Date().toISOString();
 
   return (
-    <section className="admin-page-grid">
-      <section className="card">
+    <section className="admin-page-grid reporting-shell">
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
+            @media print {
+              .admin-sidebar, .admin-header, .no-print { display: none !important; }
+              .reporting-shell { display: block !important; padding: 0 !important; }
+              .report-print-area { box-shadow: none !important; border: 0 !important; }
+              .report-print-area table { break-inside: auto; }
+              .report-print-area tr, .report-print-area article { break-inside: avoid; }
+            }
+          `,
+        }}
+      />
+      {printMode ? (
+        <script
+          dangerouslySetInnerHTML={{
+            __html: "setTimeout(function(){ window.print(); }, 300);",
+          }}
+        />
+      ) : null}
+
+      <section className="card no-print">
         <h2>{t("admin.reporting.title")}</h2>
         <p className="muted">{t("admin.reporting.subtitle")}</p>
       </section>
 
-      <section className="grid cols-3">
-        <article className="card">
-          <h3>{t("admin.reporting.reservations")}</h3>
-          <p className="muted">{reservationsResult.ok ? t("admin.reporting.rows_count", { count: reservationsResult.data.length }) : t("admin.reporting.error_prefix", { message: reservationsResult.message })}</p>
-        </article>
-
-        <article className="card">
-          <h3>{t("admin.reporting.attendance")}</h3>
-          <p className="muted">{attendanceResult.ok ? t("admin.reporting.rows_count", { count: attendanceResult.data.length }) : t("admin.reporting.error_prefix", { message: attendanceResult.message })}</p>
-        </article>
-
-        <article className="card">
-          <h3>{t("admin.reporting.professor_statements")}</h3>
-          <p className="muted">{statementsResult.ok ? t("admin.reporting.rows_count", { count: statementsResult.data.length }) : t("admin.reporting.error_prefix", { message: statementsResult.message })}</p>
-        </article>
-
-        <article className="card">
-          <h3>{t("admin.reporting.intake_families")}</h3>
-          <p className="muted">{intakeFamiliesResult.ok ? t("admin.reporting.rows_count", { count: intakeFamiliesResult.data.length }) : t("admin.reporting.error_prefix", { message: intakeFamiliesResult.message })}</p>
-        </article>
+      <section className="grid cols-3 no-print">
+        {REPORT_DEFINITIONS.map((definition) => {
+          const active = definition.type === reportType;
+          return (
+            <article key={definition.type} className={active ? "card selected-card" : "card"}>
+              <h3>{definition.label}</h3>
+              <p className="muted">{definition.description}</p>
+              <p className="muted">{definition.filterHint}</p>
+              {definition.status === "available" ? (
+                <Link className="button-link" href={withParams({ type: definition.type, min_children: "2" })}>
+                  {active ? "Selectionne" : "Choisir"}
+                </Link>
+              ) : (
+                <span className="status-pill">{t("admin.reporting.planned")}</span>
+              )}
+            </article>
+          );
+        })}
       </section>
 
-      <section className="card">
-        <h3>{t("admin.reporting.intake_families_title")}</h3>
-        <p className="muted">{t("admin.reporting.intake_families_help")}</p>
-        {intakeFamiliesResult.ok ? (
-          intakeFamiliesResult.data.length > 0 ? (
-            <div className="list top-gap-sm">
-              {intakeFamiliesResult.data.map((family) => (
-                <article key={family.family_key} className="item">
-                  <strong>{family.family_label}</strong>
-                  <p className="muted">
-                    {t("admin.reporting.intake_family_meta", {
-                      count: family.intake_count,
-                      contact: family.parent_email || family.parent_phone || "-",
-                    })}
-                  </p>
-                  <div className="table-wrap top-gap-sm">
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>{t("admin.reporting.family_row")}</th>
-                          {family.children.map((child) => (
-                            <th key={child.intake_id}>
-                              {child.child_name}
-                              <br />
-                              <span className="muted">{child.source_form_label || child.source_form_id}</span>
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {FAMILY_SUMMARY_ROWS.map((summaryRow) => (
-                          <tr key={summaryRow.key}>
-                            <th>{t(summaryRow.labelKey)}</th>
+      <section className="card no-print">
+        <h3>{t("admin.reporting.criteria_title")}</h3>
+        <p className="muted">{reportDefinition.filterHint}</p>
+        <form className="grid cols-4 config-form-grid top-gap-sm" method="get" action="/admin/reporting">
+          <input type="hidden" name="type" value={reportType} />
+          <label>
+            {t("admin.reporting.period_from")}
+            <input type="date" name="received_from" defaultValue={reportFilterValue(searchParams, "received_from")} />
+          </label>
+          <label>
+            {t("admin.reporting.period_to")}
+            <input type="date" name="received_to" defaultValue={reportFilterValue(searchParams, "received_to")} />
+          </label>
+          <label>
+            {t("admin.reporting.school_year")}
+            <input name="school_year_label" placeholder="2026-2027" defaultValue={reportFilterValue(searchParams, "school_year_label")} />
+          </label>
+          <label>
+            {t("admin.reporting.student_or_prospect")}
+            <input name="q" placeholder="Tardieu, Rossillon, email..." defaultValue={reportFilterValue(searchParams, "q")} />
+          </label>
+          <label>
+            {t("admin.reporting.segment")}
+            <select name="segment" defaultValue={reportFilterValue(searchParams, "segment")}>
+              <option value="">{t("admin.reporting.all")}</option>
+              <option value="eveil">Eveil</option>
+              <option value="child">Enfants</option>
+              <option value="teen">Ados</option>
+              <option value="adult">Adultes</option>
+            </select>
+          </label>
+          <label>
+            {t("admin.reporting.status")}
+            <select name="status" defaultValue={reportFilterValue(searchParams, "status")}>
+              <option value="">{t("admin.reporting.all")}</option>
+              <option value="new">New</option>
+              <option value="normalized">Normalized</option>
+              <option value="matching_required">Matching required</option>
+              <option value="ready_draft">Ready draft</option>
+              <option value="blocked">Blocked</option>
+              <option value="processed">Processed</option>
+              <option value="ignored">Ignored</option>
+            </select>
+          </label>
+          <label>
+            {t("admin.reporting.min_children")}
+            <input type="number" name="min_children" min="1" max="20" defaultValue={reportFilterValue(searchParams, "min_children", "2")} />
+          </label>
+          <div className="form-actions">
+            <button type="submit">{t("admin.reporting.generate")}</button>
+            <Link className="button-link" href={printHref} target="_blank">
+              {t("admin.reporting.download_pdf")}
+            </Link>
+          </div>
+        </form>
+      </section>
+
+      <section className="card report-print-area">
+        <div className="section-title-row">
+          <div>
+            <h3>{reportDefinition.label}</h3>
+            <p className="muted">
+              {t("admin.reporting.generated_at", { date: formatDate(generatedAt, language) })}
+            </p>
+          </div>
+          <p className="muted no-print">
+            {intakeFamiliesResult?.ok ? t("admin.reporting.rows_count", { count: intakeFamilies.length }) : ""}
+          </p>
+        </div>
+        {reportType === "intake-families" ? (
+          intakeFamiliesResult?.ok ? (
+            intakeFamilies.length > 0 ? (
+              <div className="list top-gap-sm">
+                {intakeFamilies.map((family) => (
+                  <article key={family.family_key} className="item">
+                    <strong>{family.family_label}</strong>
+                    <p className="muted">
+                      {t("admin.reporting.intake_family_meta", {
+                        count: family.intake_count,
+                        contact: family.parent_email || family.parent_phone || "-",
+                      })}
+                    </p>
+                    <div className="table-wrap top-gap-sm">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>{t("admin.reporting.family_row")}</th>
                             {family.children.map((child) => (
-                              <td key={`${child.intake_id}-${summaryRow.key}`}>{child[summaryRow.key] || "-"}</td>
+                              <th key={child.intake_id}>
+                                {child.child_name}
+                                <br />
+                                <span className="muted">{child.source_form_label || child.source_form_id}</span>
+                              </th>
                             ))}
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </article>
-              ))}
-            </div>
+                        </thead>
+                        <tbody>
+                          {FAMILY_SUMMARY_ROWS.map((summaryRow) => (
+                            <tr key={summaryRow.key}>
+                              <th>{t(summaryRow.labelKey)}</th>
+                              {family.children.map((child) => (
+                                <td key={`${child.intake_id}-${summaryRow.key}`}>{child[summaryRow.key] || "-"}</td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="muted">{t("admin.reporting.no_intake_family")}</p>
+            )
           ) : (
-            <p className="muted">{t("admin.reporting.no_intake_family")}</p>
+            <p className="muted">{t("admin.reporting.error_prefix", { message: intakeFamiliesResult?.message || t("admin.reporting.unable_to_load") })}</p>
           )
         ) : (
-          <p className="muted">{t("admin.reporting.unable_to_load")}</p>
+          <p className="muted">{t("admin.reporting.report_not_available")}</p>
         )}
-      </section>
-
-      <section className="grid cols-2">
-        <article className="card">
-          <h3>{t("admin.reporting.latest_reservations")}</h3>
-          {reservationsResult.ok ? (
-            <div className="list">
-              {reservationsResult.data.slice(0, 8).map((row) => (
-                <article key={row.booking_id} className="item">
-                  <strong>{row.course_type_name}</strong>
-                  <p className="muted">
-                    {formatDate(row.start_at_utc, language)} | {row.location_name} | {row.client_email}
-                  </p>
-                </article>
-              ))}
-              {reservationsResult.data.length === 0 ? <p className="muted">{t("admin.reporting.no_reservation")}</p> : null}
-            </div>
-          ) : (
-            <p className="muted">{t("admin.reporting.unable_to_load")}</p>
-          )}
-        </article>
-
-        <article className="card">
-          <h3>{t("admin.reporting.latest_professor_statements")}</h3>
-          {statementsResult.ok ? (
-            <div className="list">
-              {statementsResult.data.slice(0, 8).map((row) => (
-                <article key={row.session_id} className="item">
-                  <strong>{row.professor_name}</strong>
-                  <p className="muted">
-                    {formatDate(row.start_at_utc, language)} | {row.course_type_name} | {t("admin.reporting.session_status", { status: row.session_status })}
-                  </p>
-                </article>
-              ))}
-              {statementsResult.data.length === 0 ? <p className="muted">{t("admin.reporting.no_statement")}</p> : null}
-            </div>
-          ) : (
-            <p className="muted">{t("admin.reporting.unable_to_load")}</p>
-          )}
-        </article>
       </section>
     </section>
   );

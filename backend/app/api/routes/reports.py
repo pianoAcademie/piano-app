@@ -620,11 +620,20 @@ def report_professor_statements(
 def report_intake_families(
     q: str | None = None,
     school_year_label: str | None = None,
+    received_from: date | None = None,
+    received_to: date | None = None,
+    segment: str | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
     min_children: int = Query(default=2, ge=1, le=20),
     limit: int = Query(default=1000, ge=1, le=5000),
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> list[IntakeFamilySummaryRow]:
+    if received_from is not None and received_to is not None and received_from > received_to:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="'received_from' must be before 'received_to'",
+        )
     stmt = (
         select(TypeformIntake, TypeformFormConfig)
         .outerjoin(TypeformFormConfig, TypeformFormConfig.id == TypeformIntake.form_config_id)
@@ -633,6 +642,16 @@ def report_intake_families(
     )
     if school_year_label:
         stmt = stmt.where(TypeformIntake.detected_school_year == school_year_label)
+    if received_from is not None:
+        start_local, _ = _day_bounds(received_from)
+        stmt = stmt.where(TypeformIntake.received_at >= start_local)
+    if received_to is not None:
+        _, end_local = _day_bounds(received_to)
+        stmt = stmt.where(TypeformIntake.received_at < end_local)
+    if segment:
+        stmt = stmt.where(TypeformIntake.detected_segment.ilike(segment.strip()))
+    if status_filter:
+        stmt = stmt.where(TypeformIntake.intake_status.ilike(status_filter.strip()))
     if q:
         like = f"%{q.strip()}%"
         stmt = stmt.where(
