@@ -26,6 +26,7 @@ import { hasAnyAdminAccess } from "./admin-access";
 import { loadLivePlanningMatchForBlock, type LivePlanningBlockInput } from "./quote-planning-live";
 import {
   analyzeQuoteQuickTransformStatus,
+  quoteTransformFinancialAdjustmentFromMeta,
   type QuoteQuickTransformAnalysis,
   type QuoteTransformActivityCatalog,
   type QuoteTransformClient,
@@ -15256,6 +15257,7 @@ type QuoteTransformQuoteOut = {
   location_id: string | null;
   client_id: string | null;
   prospect_id: string | null;
+  meta: Record<string, unknown>;
   calendar_snapshot: Record<string, unknown>;
   payment_terms_snapshot: Record<string, unknown>;
 };
@@ -15462,6 +15464,7 @@ async function loadQuoteQuickTransformAnalysis(
     vatRate: transformToNumber(line.vat_rate),
     meta: {},
   }));
+  const defaultVatRate = lines.find((line) => line.vatRate > 0)?.vatRate ?? 20;
 
   const quote: QuoteTransformQuote = {
     id: detail.quote.id,
@@ -15479,6 +15482,7 @@ async function loadQuoteQuickTransformAnalysis(
     quoteTypeFormulaName: quoteType?.formula_name || null,
     locationId: detail.quote.location_id,
     locationName: transformLocationNameById(locationsRaw, detail.quote.location_id),
+    financialAdjustment: quoteTransformFinancialAdjustmentFromMeta(detail.quote.meta || {}, defaultVatRate),
   };
 
   const analysis = analyzeQuoteQuickTransformStatus({

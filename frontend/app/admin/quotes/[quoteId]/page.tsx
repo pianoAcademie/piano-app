@@ -2372,6 +2372,12 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     quoteTypeFormulaName: selectedQuoteType?.formula_name || null,
     locationId: detail.quote.location_id,
     locationName: locationNameById(locations, detail.quote.location_id, language),
+    financialAdjustment: {
+      type: quoteAdjustment.type,
+      amountTtc: quoteAdjustment.amountTtc,
+      label: quoteAdjustment.label || null,
+      vatRate: toNumber(defaultVatRate, 20),
+    },
   };
 
   const quickLines: QuoteTransformLine[] = detail.lines.map((line) => ({

@@ -504,8 +504,8 @@ export default function QuoteToEnrollmentWizard({
   }, [activityRows, sessionOptionsByActivityId, scenario]);
 
   const suggestedBillingRows = useMemo(
-    () => buildBillingExtraRows(lines, activityRows, offPlanningActivityIds),
-    [lines, activityRows, offPlanningActivityIds],
+    () => buildBillingExtraRows(lines, activityRows, offPlanningActivityIds, quote),
+    [lines, activityRows, offPlanningActivityIds, quote],
   );
 
   const [billingRows, setBillingRows] = useState<BillingExtraRow[]>(() => {

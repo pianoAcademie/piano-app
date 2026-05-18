@@ -71,6 +71,13 @@ export type QuoteTransformLine = {
   meta: Record<string, unknown>;
 };
 
+export type QuoteTransformFinancialAdjustment = {
+  type: "none" | "credit" | "debt";
+  amountTtc: number;
+  label: string | null;
+  vatRate: number;
+};
+
 export type QuoteTransformQuote = {
   id: string;
   quoteNumber: string;
@@ -87,7 +94,30 @@ export type QuoteTransformQuote = {
   quoteTypeFormulaName: string | null;
   locationId: string | null;
   locationName: string;
+  financialAdjustment?: QuoteTransformFinancialAdjustment | null;
 };
+
+export function quoteTransformFinancialAdjustmentFromMeta(
+  meta: Record<string, unknown> | null | undefined,
+  defaultVatRate = 20,
+): QuoteTransformFinancialAdjustment | null {
+  const row = readObject(meta?.financial_adjustment);
+  const rawType = String(row?.type ?? "").trim().toLowerCase();
+  const type = rawType === "credit" || rawType === "debt" ? rawType : "none";
+  const amountTtc = readNumber(row?.amount_ttc ?? row?.amountTtc, 0);
+  if (type === "none" || !Number.isFinite(amountTtc) || amountTtc <= 0) {
+    return null;
+  }
+  const rawVatRate = readNumber(row?.vat_rate ?? row?.vatRate, defaultVatRate);
+  const vatRate = Number.isFinite(rawVatRate) && rawVatRate >= 0 ? rawVatRate : defaultVatRate;
+  const label = readString(row?.label) || null;
+  return {
+    type,
+    amountTtc,
+    label,
+    vatRate,
+  };
+}
 
 export type QuoteScheduleHint = {
   activityId: string | null;
@@ -1087,6 +1117,7 @@ export function buildBillingExtraRows(
   lines: QuoteTransformLine[],
   activityRows: ActivityPricingRow[],
   offPlanningActivityIds: Set<string>,
+  quote?: QuoteTransformQuote,
 ): BillingExtraRow[] {
   const explicitExtras = lines
     .filter((line) => !line.activityId)
@@ -1133,7 +1164,32 @@ export function buildBillingExtraRows(
       return extra;
     });
 
-  return [...explicitExtras, ...offPlanningRows];
+  const adjustment = quote?.financialAdjustment;
+  const adjustmentAmount = Number(adjustment?.amountTtc ?? 0);
+  const adjustmentRows: BillingExtraRow[] = [];
+  if (adjustment && adjustment.type !== "none" && Number.isFinite(adjustmentAmount) && adjustmentAmount > 0) {
+    const signedAmountTtc = adjustment.type === "credit" ? -adjustmentAmount : adjustmentAmount;
+    const vatRate = Number.isFinite(adjustment.vatRate) && adjustment.vatRate >= 0 ? adjustment.vatRate : 0;
+    const amountHt = vatRate > 0
+      ? Number((signedAmountTtc / (1 + vatRate / 100)).toFixed(2))
+      : Number(signedAmountTtc.toFixed(2));
+    const row: BillingExtraRow = {
+      rowId: "quote-financial-adjustment",
+      sourceLineId: null,
+      type: adjustment.type === "credit" ? "discount" : "surcharge",
+      label: adjustment.label || "Ajustement financier du devis",
+      amountHt,
+      vatRate,
+      amountVat: Number((signedAmountTtc - amountHt).toFixed(2)),
+      amountTtc: Number(signedAmountTtc.toFixed(2)),
+      status: "ok",
+      editable: true,
+    };
+    row.status = rowStatusFromBilling(row);
+    adjustmentRows.push(row);
+  }
+
+  return [...explicitExtras, ...offPlanningRows, ...adjustmentRows];
 }
 
 export function deriveScheduleHints(calendarSnapshot: Record<string, unknown>): Map<string, QuoteScheduleHint> {
@@ -1516,7 +1572,7 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
   }
 
   const offPlanningActivityIds = new Set<string>();
-  const billingRows = buildBillingExtraRows(input.lines, activityRows, offPlanningActivityIds);
+  const billingRows = buildBillingExtraRows(input.lines, activityRows, offPlanningActivityIds, input.quote);
   if (billingRows.length === 0) {
     pushOk(4, "Aucune ligne hors planning a reprendre.");
   }

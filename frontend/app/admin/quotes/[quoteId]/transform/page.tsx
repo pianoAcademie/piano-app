@@ -11,6 +11,7 @@ import { backendRequest } from "../../../../../lib/backend";
 import {
   coerceQuoteToEnrollmentDraft,
   deriveActivityLocationIdById,
+  quoteTransformFinancialAdjustmentFromMeta,
   readObject,
   type QuoteTransformActivityCatalog,
   type QuoteTransformClient,
@@ -475,6 +476,7 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
     vatRate: toNumber(line.vat_rate),
     meta: line.meta || {},
   }));
+  const defaultVatRate = lines.find((line) => line.vatRate > 0)?.vatRate ?? 20;
 
   const quote: QuoteTransformQuote = {
     id: detail.quote.id,
@@ -492,6 +494,7 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
     quoteTypeFormulaName: quoteType?.formula_name || null,
     locationId: detail.quote.location_id,
     locationName: locationNameById(locationsRaw, detail.quote.location_id, language),
+    financialAdjustment: quoteTransformFinancialAdjustmentFromMeta(detail.quote.meta || {}, defaultVatRate),
   };
 
   const basePath = `/admin/quotes/${encodeURIComponent(quoteId)}/transform?back=${encodeURIComponent(backPath)}`;
