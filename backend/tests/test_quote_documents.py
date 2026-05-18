@@ -26,9 +26,36 @@ from app.services.quotes.quote_documents import (
     _quote_template_allows_end_year_concert,
     _solfege_pending_block_info,
 )
+from app.api.routes.quotes import _resolve_quote_pdf_bytes
 
 
 class QuoteDocumentMarkupTests(unittest.TestCase):
+    def test_public_pdf_regenerates_when_quote_document_is_not_frozen(self) -> None:
+        quote = SimpleNamespace(
+            id=uuid4(),
+            document_status="generated",
+            document_snapshot_id=uuid4(),
+        )
+        db = SimpleNamespace(scalar=lambda _query: (_ for _ in ()).throw(AssertionError("stale snapshot reused")))
+
+        with patch(
+            "app.api.routes.quotes._freeze_quote_document_snapshot",
+            return_value=SimpleNamespace(combined_html_snapshot="<html>fresh</html>"),
+        ) as freeze_mock, patch(
+            "app.api.routes.quotes.render_quote_pdf_from_combined_html",
+            return_value=b"%PDF fresh",
+        ) as render_mock:
+            pdf_bytes = _resolve_quote_pdf_bytes(
+                db,
+                quote=quote,
+                lines=[],
+                freeze_state="frozen",
+            )
+
+        self.assertEqual(pdf_bytes, b"%PDF fresh")
+        freeze_mock.assert_called_once()
+        render_mock.assert_called_once()
+
     def test_calendar_snapshot_hydrates_missing_block_sessions_from_planning(self) -> None:
         activity_id = uuid4()
         location_id = uuid4()

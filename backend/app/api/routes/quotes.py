@@ -3647,7 +3647,11 @@ def _resolve_quote_pdf_bytes(
     freeze_state: str,
     audience: str = AUDIENCE_CLIENT_PDF,
 ) -> bytes:
-    if freeze_state == "generated" and (quote.document_status or "") != "frozen":
+    should_regenerate_snapshot = (
+        (freeze_state == "generated" and (quote.document_status or "") != "frozen")
+        or (freeze_state == "frozen" and (quote.document_status or "") != "frozen")
+    )
+    if should_regenerate_snapshot:
         snapshot = _freeze_quote_document_snapshot(
             db,
             quote=quote,
