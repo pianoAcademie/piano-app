@@ -1119,6 +1119,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
               <input type="text" name="description" maxLength={2000} />
             </label>
             <label className="checkline">
+              <input type="hidden" name="is_active" value="false" />
               <input type="checkbox" name="is_active" defaultChecked />
               {t("common.active")}
             </label>
@@ -1178,6 +1179,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                       <input type="text" name="description" defaultValue={row.description || ""} maxLength={2000} />
                     </label>
                     <label className="checkline">
+                      <input type="hidden" name="is_active" value="false" />
                       <input type="checkbox" name="is_active" defaultChecked={row.is_active} />
                       {t("common.active")}
                     </label>
