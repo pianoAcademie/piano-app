@@ -89,18 +89,7 @@ jobs:
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "echo '[OK] SSH connected to' \$(hostname) && docker --version && docker compose version"
-      - name: Install personal SSH key
-        run: |
-          set -euo pipefail
-          ssh -i ~/.ssh/id_ed25519 -p "${VPS_PORT:-22}" "${VPS_USER}@${VPS_HOST}" "bash -s" <<'REMOTE'
-          set -euo pipefail
-          KEY='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIQS9TOysvE9ZW3GXqenE6uXi+nmZ06PsSBXo6Nv4q0G piano-academie'
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          touch ~/.ssh/authorized_keys
-          chmod 600 ~/.ssh/authorized_keys
-          grep -qxF "$KEY" ~/.ssh/authorized_keys || printf '%s\n' "$KEY" >> ~/.ssh/authorized_keys
-          REMOTE
+     
       - name: Sync project to VPS
         run: |
           set -euo pipefail
