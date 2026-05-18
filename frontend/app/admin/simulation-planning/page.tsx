@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import type { CSSProperties } from "react";
 
 import { backendRequest } from "../../../lib/backend";
 import { hasAdminPermission } from "../../../lib/admin-access";
@@ -34,6 +35,12 @@ type CalendarDayGroup = {
   weekday: number;
   weekdayLabel: string;
   slots: AdminPlanningSimulationSlotOut[];
+};
+
+type PositionedCalendarSlot = {
+  slot: AdminPlanningSimulationSlotOut;
+  column: number;
+  columns: number;
 };
 
 const VACATION_COURSE_TYPE_CODE = "VACATION_DAY";
@@ -208,23 +215,84 @@ function groupByWeekday(slots: AdminPlanningSimulationSlotOut[]): CalendarDayGro
         .sort(
           (a, b) =>
             (parseTimeToMinutes(a.start_time) ?? 0) - (parseTimeToMinutes(b.start_time) ?? 0) ||
+            (parseTimeToMinutes(a.end_time) ?? 0) - (parseTimeToMinutes(b.end_time) ?? 0) ||
             a.course_type_name.localeCompare(b.course_type_name, "fr"),
         ),
     }));
 }
 
+function positionedCalendarSlots(slots: AdminPlanningSimulationSlotOut[]): PositionedCalendarSlot[] {
+  const sorted = slots
+    .slice()
+    .sort(
+      (a, b) =>
+        (parseTimeToMinutes(a.start_time) ?? 0) - (parseTimeToMinutes(b.start_time) ?? 0) ||
+        (parseTimeToMinutes(a.end_time) ?? 0) - (parseTimeToMinutes(b.end_time) ?? 0) ||
+        a.course_type_name.localeCompare(b.course_type_name, "fr") ||
+        a.slot_key.localeCompare(b.slot_key, "fr"),
+    );
+  const positioned: PositionedCalendarSlot[] = [];
+  let cluster: AdminPlanningSimulationSlotOut[] = [];
+  let clusterEnd = -1;
+
+  function flushCluster(): void {
+    if (cluster.length === 0) {
+      return;
+    }
+    const columnEnds: number[] = [];
+    const clusterPositions: PositionedCalendarSlot[] = [];
+    for (const slot of cluster) {
+      const start = parseTimeToMinutes(slot.start_time) ?? 0;
+      const end = parseTimeToMinutes(slot.end_time) ?? start + 60;
+      let column = columnEnds.findIndex((value) => value <= start);
+      if (column < 0) {
+        column = columnEnds.length;
+        columnEnds.push(end);
+      } else {
+        columnEnds[column] = end;
+      }
+      clusterPositions.push({ slot, column, columns: 1 });
+    }
+    const columns = Math.max(1, columnEnds.length);
+    for (const item of clusterPositions) {
+      positioned.push({ ...item, columns });
+    }
+    cluster = [];
+    clusterEnd = -1;
+  }
+
+  for (const slot of sorted) {
+    const start = parseTimeToMinutes(slot.start_time) ?? 0;
+    const end = parseTimeToMinutes(slot.end_time) ?? start + 60;
+    if (cluster.length > 0 && start >= clusterEnd) {
+      flushCluster();
+    }
+    cluster.push(slot);
+    clusterEnd = Math.max(clusterEnd, end);
+  }
+  flushCluster();
+  return positioned;
+}
+
 function calendarSlotStyle(
-  slot: AdminPlanningSimulationSlotOut,
+  item: PositionedCalendarSlot,
   bounds: { start: number; end: number; height: number },
-): { top: string; height: string } {
+): CSSProperties {
+  const slot = item.slot;
   const start = parseTimeToMinutes(slot.start_time) ?? bounds.start;
   const end = parseTimeToMinutes(slot.end_time) ?? start + 60;
   const total = Math.max(60, bounds.end - bounds.start);
   const top = ((Math.max(bounds.start, start) - bounds.start) / total) * 100;
   const height = (Math.max(30, end - start) / total) * 100;
+  const columnGap = 6;
+  const sideInset = 8;
+  const width = `calc((100% - ${sideInset * 2}px - ${(item.columns - 1) * columnGap}px) / ${item.columns})`;
   return {
     top: `${Math.max(0, Math.min(100, top))}%`,
     height: `${Math.max(8, height)}%`,
+    left: `calc(${sideInset}px + ${item.column} * (${width} + ${columnGap}px))`,
+    right: "auto",
+    width,
   };
 }
 
@@ -628,7 +696,8 @@ export default async function AdminSimulationPlanningPage({
                                   }}
                                 />
                               ))}
-                              {dayGroup.slots.map((slot) => {
+                              {positionedCalendarSlots(dayGroup.slots).map((positionedSlot) => {
+                                const slot = positionedSlot.slot;
                                 const tone = projectionTone(slot);
                                 const percent = fillPercent(slot.projected_fill_rate);
                                 const peopleSections = slotPeopleSections(slot, language);
@@ -637,7 +706,7 @@ export default async function AdminSimulationPlanningPage({
                                   <article
                                     className={`simulation-calendar-slot simulation-calendar-slot-${tone}`}
                                     key={slot.slot_key}
-                                    style={calendarSlotStyle(slot, bounds)}
+                                    style={calendarSlotStyle(positionedSlot, bounds)}
                                     tabIndex={0}
                                     title={slotHoverTitle(slot, language)}
                                   >
