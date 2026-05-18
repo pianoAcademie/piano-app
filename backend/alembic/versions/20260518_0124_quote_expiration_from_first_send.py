@@ -1,4 +1,4 @@
-"""derive quote expiration from first send date
+"""clear draft quote expiration before first send
 
 Revision ID: 20260518_0124
 Revises: 20260518_0123
@@ -21,25 +21,6 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     connection = op.get_bind()
-    connection.execute(
-        sa.text(
-            """
-            WITH first_delivery AS (
-                SELECT quote_id, min(created_at) AS first_sent_at
-                FROM quote_events
-                WHERE event_type IN ('quote_sent', 'quote_resent')
-                GROUP BY quote_id
-            )
-            UPDATE quotes AS q
-            SET sent_at = first_delivery.first_sent_at,
-                expires_at = first_delivery.first_sent_at + make_interval(days => COALESCE(q.expiry_days, 10)::int),
-                updated_at = now()
-            FROM first_delivery
-            WHERE q.id = first_delivery.quote_id
-              AND q.status IN ('sent', 'approved', 'rejected', 'expired', 'change_requested')
-            """
-        )
-    )
     connection.execute(
         sa.text(
             """
