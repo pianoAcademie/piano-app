@@ -295,6 +295,18 @@ function quoteChangeRequestSummary(row: QuoteOut): { message: string; at: string
   };
 }
 
+function quoteChangeRequestRevision(row: QuoteOut): { id: string; number: string } | null {
+  const meta = row.meta || {};
+  const id = readStringMeta(meta, "change_request_revision_quote_id", "");
+  if (!id) {
+    return null;
+  }
+  return {
+    id,
+    number: readStringMeta(meta, "change_request_revision_quote_number", ""),
+  };
+}
+
 function buildQuotesListHref(params: {
   status: string;
   contextType: string;
@@ -831,6 +843,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                   const integrationState = quoteIntegrationState(row, commercialState);
                   const nextAction = quoteNextAction(commercialState, integrationState);
                   const changeRequest = quoteChangeRequestSummary(row);
+                  const changeRequestRevision = quoteChangeRequestRevision(row);
 
                   return (
                     <tr key={row.id} className="quote-list-row">
@@ -872,6 +885,11 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                           <QuoteRowNextAction action={nextAction} language={language} />
                           {changeRequest ? (
                             <span className="quote-list-inline-hint">{t("admin.quotes.open_to_handle_request")}</span>
+                          ) : null}
+                          {changeRequestRevision ? (
+                            <Link className="quote-list-inline-hint" href={withUiLanguage(`/admin/quotes/${changeRequestRevision.id}`, language)}>
+                              Version brouillon {changeRequestRevision.number || ""}
+                            </Link>
                           ) : null}
                         </div>
                       </td>

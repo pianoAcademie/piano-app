@@ -191,6 +191,8 @@ QUOTE_PUBLIC_RESPONSE_LAST_ACTION_META_KEY = "public_response_last_action"
 QUOTE_PUBLIC_RESPONSE_LAST_AT_META_KEY = "public_response_last_at"
 QUOTE_PUBLIC_RESPONSE_LAST_MESSAGE_META_KEY = "public_response_last_message"
 QUOTE_PUBLIC_RESPONSE_LAST_RESTORED_FROM_META_KEY = "public_response_last_restored_from"
+QUOTE_CHANGE_REQUEST_REVISION_ID_META_KEY = "change_request_revision_quote_id"
+QUOTE_CHANGE_REQUEST_REVISION_NUMBER_META_KEY = "change_request_revision_quote_number"
 QUOTE_TRANSFORMATION_PAYLOAD_KEY = "quote_to_enrollment"
 QUOTE_TRANSFORMATION_EXECUTION_KEY = "quote_to_enrollment_execution"
 
@@ -4015,6 +4017,12 @@ def _remove_orphan_activity_quote_lines(
 
 
 def _ensure_quote_editable(quote: Quote) -> None:
+    meta = _quote_meta_dict(quote)
+    if meta.get(QUOTE_CHANGE_REQUEST_REVISION_ID_META_KEY):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Quote has a newer draft revision for this change request",
+        )
     if quote.status not in {"created", "change_requested"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote is immutable once sent")
 
@@ -4031,6 +4039,159 @@ def _apply_quote_expiry_days_update(
     quote.expiry_days = next_expiry_days
     quote.expires_at = (now or _utcnow()) + timedelta(days=next_expiry_days)
     return True
+
+
+def _quote_meta_without_public_response(meta: dict[str, object] | None) -> dict[str, object]:
+    next_meta = deepcopy(meta or {})
+    for key in (
+        QUOTE_PUBLIC_RESPONSE_PREVIOUS_STATUS_META_KEY,
+        QUOTE_PUBLIC_RESPONSE_LAST_ACTION_META_KEY,
+        QUOTE_PUBLIC_RESPONSE_LAST_AT_META_KEY,
+        QUOTE_PUBLIC_RESPONSE_LAST_MESSAGE_META_KEY,
+        QUOTE_PUBLIC_RESPONSE_LAST_RESTORED_FROM_META_KEY,
+        QUOTE_CHANGE_REQUEST_REVISION_ID_META_KEY,
+        QUOTE_CHANGE_REQUEST_REVISION_NUMBER_META_KEY,
+    ):
+        next_meta.pop(key, None)
+    return next_meta
+
+
+def _create_quote_revision_from_change_request(
+    db: Session,
+    *,
+    source: Quote,
+    lines: list[QuoteLine],
+    message: str,
+    requested_at: datetime,
+) -> Quote:
+    existing_revision_id = _quote_meta_dict(source).get(QUOTE_CHANGE_REQUEST_REVISION_ID_META_KEY)
+    if existing_revision_id:
+        try:
+            existing_revision_uuid = UUID(str(existing_revision_id))
+        except (TypeError, ValueError):
+            existing_revision_uuid = None
+        existing_revision = db.scalar(select(Quote).where(Quote.id == existing_revision_uuid)) if existing_revision_uuid else None
+        if existing_revision is not None:
+            return existing_revision
+
+    clone_meta = _quote_meta_without_public_response(source.meta or {})
+    clone_meta.update(
+        {
+            "duplicated_from": str(source.id),
+            "revision_reason": "public_change_request",
+            "revision_source_quote_id": str(source.id),
+            "revision_source_quote_number": source.quote_number,
+            "revision_change_request_message": message.strip(),
+            "revision_change_request_at": requested_at.isoformat(),
+        }
+    )
+    clone = Quote(
+        quote_number=_new_quote_number(),
+        context_type=source.context_type,
+        quote_type=source.quote_type,
+        quote_type_id=source.quote_type_id,
+        pricing_catalog_id=source.pricing_catalog_id,
+        prospect_id=source.prospect_id,
+        client_id=source.client_id,
+        location_id=source.location_id,
+        legal_entity_id=source.legal_entity_id,
+        payment_plan_id=source.payment_plan_id,
+        quote_template_id=source.quote_template_id,
+        quote_template_version_id=source.quote_template_version_id,
+        terms_template_id=source.terms_template_id,
+        terms_template_version_id=source.terms_template_version_id,
+        status="created",
+        version_number=int(source.version_number or 1) + 1,
+        parent_quote_id=source.id,
+        currency=source.currency,
+        total_ttc=source.total_ttc,
+        expiry_days=source.expiry_days,
+        expires_at=requested_at + timedelta(days=int(source.expiry_days or 10)),
+        school_year_label=source.school_year_label,
+        language=source.language,
+        vat_rate=source.vat_rate,
+        estimated_solfege_level=source.estimated_solfege_level,
+        solfege_duration_minutes=source.solfege_duration_minutes,
+        selected_solfege_slot=deepcopy(source.selected_solfege_slot or {}),
+        calendar_snapshot=deepcopy(source.calendar_snapshot or {}),
+        payment_terms_snapshot=deepcopy(source.payment_terms_snapshot or {}),
+        cgv_snapshot=deepcopy(source.cgv_snapshot or {}),
+        price_snapshot=deepcopy(source.price_snapshot or {}),
+        meta=clone_meta,
+        document_status="stale",
+        document_snapshot_id=None,
+        document_hash=None,
+        document_generated_at=None,
+        created_at=requested_at,
+        updated_at=requested_at,
+    )
+    db.add(clone)
+    db.flush()
+
+    for line in lines:
+        db.add(
+            QuoteLine(
+                quote_id=clone.id,
+                line_category=line.line_category,
+                line_type=line.line_type,
+                master_item_type=line.master_item_type,
+                master_item_id=line.master_item_id,
+                activity_id=line.activity_id,
+                product_id=line.product_id,
+                kit_id=line.kit_id,
+                code=line.code,
+                title=line.title,
+                description=line.description,
+                duration_minutes=line.duration_minutes,
+                pricing_unit=line.pricing_unit,
+                quantity=line.quantity,
+                vat_rate=line.vat_rate,
+                unit_price_ht=line.unit_price_ht,
+                unit_vat_amount=line.unit_vat_amount,
+                unit_price_ttc=line.unit_price_ttc,
+                amount_ht=line.amount_ht,
+                amount_vat=line.amount_vat,
+                amount_ttc=line.amount_ttc,
+                sort_order=line.sort_order,
+                meta=deepcopy(line.meta or {}),
+                created_at=requested_at,
+                updated_at=requested_at,
+            )
+        )
+
+    source.meta = {
+        **_quote_meta_dict(source),
+        QUOTE_CHANGE_REQUEST_REVISION_ID_META_KEY: str(clone.id),
+        QUOTE_CHANGE_REQUEST_REVISION_NUMBER_META_KEY: clone.quote_number,
+    }
+    source.updated_at = requested_at
+    db.add(source)
+    db.add(
+        QuoteEvent(
+            quote_id=source.id,
+            event_type="quote_change_request_revision_created",
+            actor_type="system",
+            payload={
+                "revision_quote_id": str(clone.id),
+                "revision_quote_number": clone.quote_number,
+            },
+            created_at=requested_at,
+        )
+    )
+    db.add(
+        QuoteEvent(
+            quote_id=clone.id,
+            event_type="quote_created_from_change_request",
+            actor_type="system",
+            payload={
+                "source_quote_id": str(source.id),
+                "source_quote_number": source.quote_number,
+                "message": message.strip(),
+            },
+            created_at=requested_at,
+        )
+    )
+    return clone
 
 
 def _ensure_public_token(quote: Quote) -> None:
@@ -5490,6 +5651,11 @@ def resend_quote(
     current_user: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> QuoteDetailOut:
     quote = _load_quote(db, quote_id, lock=True)
+    if _quote_meta_dict(quote).get(QUOTE_CHANGE_REQUEST_REVISION_ID_META_KEY):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Quote has a newer draft revision for this change request",
+        )
     if quote.status not in {"sent", "approved", "rejected", "expired", "change_requested"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote cannot be resent in current status")
     _ensure_public_token(quote)
@@ -8217,9 +8383,28 @@ def public_change_request_quote(
             created_at=now,
         )
     )
+    lines = _load_quote_lines(db, quote.id)
+    revision = _create_quote_revision_from_change_request(
+        db,
+        source=quote,
+        lines=lines,
+        message=payload.message,
+        requested_at=now,
+    )
+    db.add(
+        QuoteEvent(
+            quote_id=quote.id,
+            event_type="quote_change_request_revision_ready",
+            actor_type="system",
+            payload={
+                "revision_quote_id": str(revision.id),
+                "revision_quote_number": revision.quote_number,
+            },
+            created_at=now,
+        )
+    )
     db.commit()
     db.refresh(quote)
-    lines = _load_quote_lines(db, quote.id)
     client_email_result = _try_send_public_quote_confirmation_email(
         db,
         quote=quote,

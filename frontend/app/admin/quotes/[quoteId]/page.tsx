@@ -1902,14 +1902,17 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     .toLowerCase();
   const publicResponseLastMessage = readStringMeta(detail.quote.meta || {}, "public_response_last_message", "");
   const publicResponseLastAt = readStringMeta(detail.quote.meta || {}, "public_response_last_at", "");
+  const changeRequestRevisionQuoteId = readStringMeta(detail.quote.meta || {}, "change_request_revision_quote_id", "");
+  const changeRequestRevisionQuoteNumber = readStringMeta(detail.quote.meta || {}, "change_request_revision_quote_number", "");
   const hasPublicChangeRequest = quoteStatus === "change_requested" || publicResponseLastAction === "change_requested";
+  const hasChangeRequestRevision = Boolean(changeRequestRevisionQuoteId);
   const publicChangeRequestReceivedLabel = publicResponseLastAt
     ? formatDate(publicResponseLastAt, language)
     : t("admin.quote_detail.date_not_available");
   const publicChangeRequestMessage = publicResponseLastMessage || t("admin.quote_detail.public_change_request_fallback");
-  const canEditQuote = ["created", "change_requested"].includes(quoteStatus);
+  const canEditQuote = ["created", "change_requested"].includes(quoteStatus) && !hasChangeRequestRevision;
   const canSendQuote = quoteStatus === "created";
-  const canResendQuote = ["sent", "approved", "rejected", "expired", "change_requested"].includes(quoteStatus);
+  const canResendQuote = ["sent", "approved", "rejected", "expired", "change_requested"].includes(quoteStatus) && !hasChangeRequestRevision;
   const canCancelQuote = !["cancelled", "approved"].includes(quoteStatus);
   const canReopenCancelledQuote = quoteStatus === "cancelled";
   const canRestorePublicResponse = ["approved", "rejected", "change_requested"].includes(quoteStatus);
@@ -2773,11 +2776,20 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	                    <Link className="ghost" href={sectionHref("pricing")}>{t("admin.quote_detail.check_billed_lines")}</Link>
 	                  </div>
 	                </div>
-	                <div className="quote-public-feedback-message top-gap-sm">
-	                  <strong>{t("admin.quote_detail.client_message")}</strong>
-	                  <p>{publicChangeRequestMessage}</p>
-	                </div>
-	              </section>
+                <div className="quote-public-feedback-message top-gap-sm">
+                  <strong>{t("admin.quote_detail.client_message")}</strong>
+                  <p>{publicChangeRequestMessage}</p>
+                </div>
+                {hasChangeRequestRevision ? (
+                  <p className="muted top-gap-sm">
+                    Nouvelle version brouillon creee automatiquement :{" "}
+                    <Link className="quote-list-row-link" href={`/admin/quotes/${encodeURIComponent(changeRequestRevisionQuoteId)}`}>
+                      {changeRequestRevisionQuoteNumber || "ouvrir la version"}
+                    </Link>
+                    . Cette version envoyee reste conservee comme archive figee.
+                  </p>
+                ) : null}
+              </section>
             ) : null}
 
             {interactionHistorySection}

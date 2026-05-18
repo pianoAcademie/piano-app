@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 import sys
@@ -10,7 +11,7 @@ from uuid import uuid4
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.api.routes.quotes import duplicate_quote, duplicate_quote_for_child
+from app.api.routes.quotes import _create_quote_revision_from_change_request, duplicate_quote, duplicate_quote_for_child
 from app.schemas.quote import QuoteDuplicateForChildRequest
 from app.models.quote import Prospect, Quote, QuoteEvent, QuoteLine
 
@@ -27,12 +28,18 @@ class _FakeSession:
 
     def flush(self) -> None:
         self.flush_count += 1
+        for item in self.added:
+            if isinstance(item, Quote) and getattr(item, "id", None) is None:
+                item.id = uuid4()
 
     def commit(self) -> None:
         self.commit_count += 1
 
     def refresh(self, value: object) -> None:
         self.refreshed.append(value)
+
+    def scalar(self, _statement: object) -> object | None:
+        return None
 
 
 class QuoteDuplicationTests(unittest.TestCase):
@@ -144,6 +151,81 @@ class QuoteDuplicationTests(unittest.TestCase):
 
         self.assertEqual(duplicate_event.event_type, "quote_duplicated")
         self.assertEqual(duplicate_event.payload.get("source_quote_id"), str(source_id))
+
+    def test_change_request_revision_creates_editable_draft_and_locks_source(self) -> None:
+        source_id = uuid4()
+        now = datetime(2026, 5, 18, 10, 30, tzinfo=timezone.utc)
+        db = _FakeSession()
+        source = Quote(
+            id=source_id,
+            quote_number="DV-SOURCE",
+            context_type="acquisition",
+            quote_type="forfait",
+            quote_type_id=uuid4(),
+            pricing_catalog_id=uuid4(),
+            prospect_id=uuid4(),
+            client_id=None,
+            location_id=uuid4(),
+            legal_entity_id=uuid4(),
+            payment_plan_id=uuid4(),
+            quote_template_id=uuid4(),
+            quote_template_version_id=uuid4(),
+            terms_template_id=uuid4(),
+            terms_template_version_id=uuid4(),
+            status="change_requested",
+            version_number=1,
+            currency="EUR",
+            total_ttc=Decimal("1432.00"),
+            expiry_days=10,
+            school_year_label="2026-2027",
+            language="fr",
+            vat_rate=Decimal("20.00"),
+            selected_solfege_slot={},
+            calendar_snapshot={"sessions": []},
+            payment_terms_snapshot={"schedule": []},
+            cgv_snapshot={"version": "Bar-le-Duc"},
+            price_snapshot={"total_ttc": "1432.00"},
+            meta={
+                "recipient_email": "parent@example.com",
+                "public_response_last_action": "change_requested",
+                "public_response_last_message": "Changer le creneau",
+            },
+            document_status="frozen",
+        )
+        line = QuoteLine(
+            quote_id=source_id,
+            line_category="service",
+            line_type="item",
+            code="PIANO",
+            title="Cours",
+            quantity=Decimal("32.00"),
+            amount_ttc=Decimal("1216.00"),
+            meta={"source": "activity"},
+        )
+
+        with patch("app.api.routes.quotes._new_quote_number", return_value="DV-REVISION"):
+            clone = _create_quote_revision_from_change_request(
+                db,
+                source=source,
+                lines=[line],
+                message="Changer le creneau",
+                requested_at=now,
+            )
+
+        copied_line = next(item for item in db.added if isinstance(item, QuoteLine))
+        events = [item for item in db.added if isinstance(item, QuoteEvent)]
+
+        self.assertEqual(clone.status, "created")
+        self.assertEqual(clone.document_status, "stale")
+        self.assertEqual(clone.parent_quote_id, source_id)
+        self.assertEqual(clone.version_number, 2)
+        self.assertEqual(clone.meta.get("revision_reason"), "public_change_request")
+        self.assertNotIn("public_response_last_action", clone.meta)
+        self.assertEqual(source.meta.get("change_request_revision_quote_id"), str(clone.id))
+        self.assertEqual(source.meta.get("change_request_revision_quote_number"), "DV-REVISION")
+        self.assertEqual(copied_line.quote_id, clone.id)
+        self.assertIn("quote_change_request_revision_created", {event.event_type for event in events})
+        self.assertIn("quote_created_from_change_request", {event.event_type for event in events})
 
     def test_duplicate_quote_for_child_creates_sibling_prospect_and_quote(self) -> None:
         source_id = uuid4()
