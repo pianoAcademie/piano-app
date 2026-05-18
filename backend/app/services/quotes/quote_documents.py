@@ -1003,6 +1003,21 @@ def _date_label(value: datetime | None) -> str:
     return value.astimezone(timezone.utc).strftime("%d/%m/%Y")
 
 
+def display_quote_expires_at(quote: Quote, *, reference_at: datetime | None = None) -> datetime | None:
+    if quote.expires_at is not None:
+        return quote.expires_at
+    expiry_days = int(getattr(quote, "expiry_days", None) or 10)
+    if quote.sent_at is not None:
+        return quote.sent_at + timedelta(days=expiry_days)
+    normalized_status = str(getattr(quote, "status", "") or "").strip().lower()
+    if normalized_status in {"created", "change_requested"}:
+        base = reference_at or _utcnow()
+        if base.tzinfo is None:
+            base = base.replace(tzinfo=timezone.utc)
+        return base.astimezone(timezone.utc) + timedelta(days=expiry_days)
+    return None
+
+
 def _datetime_label(value: datetime | None) -> str:
     if value is None:
         return "-"
@@ -1029,7 +1044,7 @@ def _quote_status_date_display(quote: Quote) -> tuple[str, str, str]:
             approval_value,
             f"{_quote_doc_text('quote_status_approved', language=language)} {approval_value}",
         )
-    expiry_value = _date_label(quote.expires_at)
+    expiry_value = _date_label(display_quote_expires_at(quote))
     return (
         _quote_doc_text("quote_status_validity", language=language),
         expiry_value,
@@ -1044,7 +1059,7 @@ def _replace_expiration_mentions_for_approved_quote(content: str, quote: Quote) 
     rendered = str(content or "")
     if not rendered:
         return rendered
-    expiry_value = _date_label(quote.expires_at)
+    expiry_value = _date_label(display_quote_expires_at(quote))
     approval_value = _paris_datetime_label(quote.approved_at)
     replacements = {
         f"Validité : <strong>{expiry_value}</strong>": f"Approuvé le : <strong>{approval_value}</strong>",
@@ -4675,7 +4690,7 @@ def _build_template_values(
         "vat_amount_before_adjustment": _decimal_str(vat_amount_before_adjustment),
         "vat_amount_after_adjustment": _decimal_str(vat_amount_after_adjustment),
         "currency": currency,
-        "expires_at": _date_label(quote.expires_at),
+        "expires_at": _date_label(display_quote_expires_at(quote)),
         "sent_at": _datetime_label(quote.sent_at),
         "generated_at": _datetime_label(_utcnow()),
         "school_year_label": (quote.school_year_label or "-"),

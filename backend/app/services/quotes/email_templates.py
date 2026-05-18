@@ -34,7 +34,11 @@ from app.services.messaging_templates import (
     resolve_sender_profile,
 )
 from app.services.providers.sms import SmsProviderSendResult, send_provider_sms
-from app.services.quotes.quote_documents import AUDIENCE_PUBLIC_PAGE, build_quote_template_values
+from app.services.quotes.quote_documents import (
+    AUDIENCE_PUBLIC_PAGE,
+    build_quote_template_values,
+    display_quote_expires_at,
+)
 
 logger = logging.getLogger(__name__)
 MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
@@ -196,6 +200,7 @@ def build_quote_email_context(
         if frontend_base:
             pdf_url = f"{frontend_base}/q/{quote.id}/pdf?t={quote.pdf_token}"
 
+    display_expires_at = display_quote_expires_at(quote)
     context = dict(values)
     context.update(
         {
@@ -206,7 +211,7 @@ def build_quote_email_context(
             "quote_timezone": timezone_name,
             "quote_public_url": public_url,
             "quote_pdf_url": pdf_url,
-            "expires_at_local": _format_local_datetime(quote.expires_at, timezone_name),
+            "expires_at_local": _format_local_datetime(display_expires_at, timezone_name),
             "sent_at_local": _format_local_datetime(quote.sent_at, timezone_name),
             "cancelled_at_local": _format_local_datetime(quote.cancelled_at, timezone_name),
         }

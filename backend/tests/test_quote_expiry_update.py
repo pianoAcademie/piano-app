@@ -9,6 +9,7 @@ from types import SimpleNamespace
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.quotes import _apply_quote_expiry_days_update, _mark_quote_sent_for_first_delivery
+from app.services.quotes.quote_documents import display_quote_expires_at
 
 
 class QuoteExpiryUpdateTests(unittest.TestCase):
@@ -52,6 +53,38 @@ class QuoteExpiryUpdateTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertEqual(quote.expiry_days, 15)
         self.assertIsNone(quote.expires_at)
+
+    def test_draft_display_expiration_projects_from_reference_date(self) -> None:
+        reference_at = datetime(2026, 5, 18, 12, 0, tzinfo=timezone.utc)
+        quote = SimpleNamespace(
+            status="created",
+            expiry_days=7,
+            sent_at=None,
+            expires_at=None,
+        )
+
+        self.assertEqual(
+            display_quote_expires_at(quote, reference_at=reference_at),
+            reference_at + timedelta(days=7),
+        )
+
+    def test_sent_display_expiration_uses_frozen_value(self) -> None:
+        sent_at = datetime(2026, 5, 16, 10, 0, tzinfo=timezone.utc)
+        frozen_expiration = datetime(2026, 5, 26, 10, 0, tzinfo=timezone.utc)
+        quote = SimpleNamespace(
+            status="sent",
+            expiry_days=7,
+            sent_at=sent_at,
+            expires_at=frozen_expiration,
+        )
+
+        self.assertEqual(
+            display_quote_expires_at(
+                quote,
+                reference_at=datetime(2026, 5, 18, 12, 0, tzinfo=timezone.utc),
+            ),
+            frozen_expiration,
+        )
 
     def test_first_send_sets_expiration_from_send_date_even_if_draft_had_expiration(self) -> None:
         sent_at = datetime(2026, 5, 18, 10, 0, tzinfo=timezone.utc)
