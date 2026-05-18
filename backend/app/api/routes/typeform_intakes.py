@@ -3649,6 +3649,27 @@ def _activity_matches_line_for_slot_fallback(activity: CourseType, line: Typefor
     return len(shared_words) >= 3
 
 
+def _line_expected_modality_for_slot_fallback(line: TypeformQuotePreviewLineOut) -> str | None:
+    haystack = _normalize_token(_preview_line_haystack(line)).replace("_", " ")
+    if "online" in haystack or "en ligne" in haystack or "ligne" in haystack:
+        return "online"
+    if "onsite" in haystack or "presentiel" in haystack:
+        return "onsite"
+    return None
+
+
+def _line_allows_session_modality(
+    line: TypeformQuotePreviewLineOut,
+    *,
+    activity: CourseType,
+    location: Location,
+) -> bool:
+    expected_modality = _line_expected_modality_for_slot_fallback(line)
+    if expected_modality is None:
+        return True
+    return _modality_from_activity_location(activity, location) == expected_modality
+
+
 def _is_online_runtime_context(runtime_context: dict[str, object]) -> bool:
     tokens = {
         _normalize_token(runtime_context.get("location_code")),
@@ -4188,6 +4209,8 @@ def _build_session_recommendations(
                         continue
                     if activity.id == line.activity_id or not _activity_matches_line_for_slot_fallback(activity, line):
                         continue
+                    if not _line_allows_session_modality(line, activity=activity, location=location):
+                        continue
                     option = _typeform_session_option_from_row(
                         session_obj=session_obj,
                         activity=activity,
@@ -4250,6 +4273,8 @@ def _build_session_recommendations(
                     manual_series_rows[series_key] = (session_obj, activity, location, int(booked_count or 0))
 
             for session_obj, activity, location, booked_count in manual_series_rows.values():
+                if not _line_allows_session_modality(line, activity=activity, location=location):
+                    continue
                 option = _typeform_session_option_from_row(
                     session_obj=session_obj,
                     activity=activity,

@@ -19,6 +19,7 @@ from app.api.routes.typeform_intakes import (
     _future_school_year_candidate_configs,
     _activity_matches_line_for_slot_fallback,
     _intake_list_out_fast,
+    _line_allows_session_modality,
     _normalize_payload,
     _session_recommendations_have_options,
     _should_search_onsite_solfege_without_main_slot_filters,
@@ -53,6 +54,32 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
 
         self.assertEqual(adjusted["activity_code"], "PIANO_GROUP_ONLINE_1H")
         self.assertEqual(template["activity_code"], "PIANO_GROUP_ONSITE_1H")
+
+    def test_online_preview_line_rejects_onsite_fallback_session_activity(self) -> None:
+        line = SimpleNamespace(
+            code="PIANO_GROUP_ONLINE_1H",
+            title="Cours de piano collectif en ligne - enfants (1h)",
+            description="",
+            meta={},
+        )
+        onsite_activity = SimpleNamespace(
+            code="PIANO_GROUP_ONSITE_1H",
+            name="Cours de piano collectif en presentiel (1h)",
+            mode="ONSITE",
+        )
+        onsite_location = SimpleNamespace(
+            code="RICHELIEU",
+            name="Rue de Richelieu",
+            is_online=False,
+        )
+
+        self.assertFalse(
+            _line_allows_session_modality(  # type: ignore[arg-type]
+                line,
+                activity=onsite_activity,
+                location=onsite_location,
+            )
+        )
 
     def test_normalize_payload_maps_bar_le_duc_adult_2026_form(self) -> None:
         config = SimpleNamespace(
