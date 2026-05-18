@@ -4037,8 +4037,18 @@ def _apply_quote_expiry_days_update(
     if int(quote.expiry_days or 0) == next_expiry_days:
         return False
     quote.expiry_days = next_expiry_days
-    quote.expires_at = (now or _utcnow()) + timedelta(days=next_expiry_days)
+    sent_at = getattr(quote, "sent_at", None)
+    quote.expires_at = sent_at + timedelta(days=next_expiry_days) if sent_at is not None else None
     return True
+
+
+def _mark_quote_sent_for_first_delivery(quote: Quote, *, sent_at: datetime) -> None:
+    quote.status = "sent"
+    if quote.sent_at is None:
+        quote.sent_at = sent_at
+        quote.expires_at = sent_at + timedelta(days=int(quote.expiry_days or 10))
+    elif quote.expires_at is None:
+        quote.expires_at = quote.sent_at + timedelta(days=int(quote.expiry_days or 10))
 
 
 def _quote_meta_without_public_response(meta: dict[str, object] | None) -> dict[str, object]:
@@ -4106,7 +4116,7 @@ def _create_quote_revision_from_change_request(
         currency=source.currency,
         total_ttc=source.total_ttc,
         expiry_days=source.expiry_days,
-        expires_at=requested_at + timedelta(days=int(source.expiry_days or 10)),
+        expires_at=None,
         school_year_label=source.school_year_label,
         language=source.language,
         vat_rate=source.vat_rate,
@@ -4552,8 +4562,6 @@ def create_quote_from_payload(
     )
 
     now = _utcnow()
-    quote_dt = datetime.combine(payload.quote_date or now.date(), time(0, 0), tzinfo=timezone.utc)
-    expires_at = quote_dt + timedelta(days=effective_expiry_days)
     quote_meta = _normalize_quote_meta(payload.meta)
     if payload.language is not None and payload.language.strip():
         quote_meta["language"] = payload.language.strip().lower()
@@ -4624,7 +4632,7 @@ def create_quote_from_payload(
         currency=payload.currency.upper(),
         total_ttc=Decimal("0"),
         expiry_days=effective_expiry_days,
-        expires_at=expires_at,
+        expires_at=None,
         school_year_label=effective_school_year_label,
         language=resolved_language or None,
         vat_rate=payload.vat_rate if payload.vat_rate is not None else _extract_vat_rate(quote_meta),
@@ -5030,7 +5038,7 @@ def duplicate_quote(
         currency=source.currency,
         total_ttc=source.total_ttc,
         expiry_days=source.expiry_days,
-        expires_at=now + timedelta(days=int(source.expiry_days or 10)),
+        expires_at=None,
         school_year_label=source.school_year_label,
         language=source.language,
         vat_rate=source.vat_rate,
@@ -5195,7 +5203,7 @@ def duplicate_quote_for_child(
         currency=source.currency,
         total_ttc=source.total_ttc,
         expiry_days=source.expiry_days,
-        expires_at=now + timedelta(days=int(source.expiry_days or 10)),
+        expires_at=None,
         school_year_label=source.school_year_label,
         language=source.language,
         vat_rate=source.vat_rate,
@@ -5536,10 +5544,7 @@ def send_quote(
     _ensure_public_token(quote)
 
     now = _utcnow()
-    quote.status = "sent"
-    quote.sent_at = now
-    if quote.expires_at is None:
-        quote.expires_at = now + timedelta(days=int(quote.expiry_days or 10))
+    _mark_quote_sent_for_first_delivery(quote, sent_at=now)
     quote.updated_at = now
 
     recipient = _resolve_recipient_email(db, quote, explicit_email=payload.recipient_email)
@@ -5660,8 +5665,7 @@ def resend_quote(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote cannot be resent in current status")
     _ensure_public_token(quote)
     if quote.status == "change_requested":
-        quote.status = "sent"
-        quote.sent_at = _utcnow()
+        _mark_quote_sent_for_first_delivery(quote, sent_at=_utcnow())
 
     recipient = _resolve_recipient_email(db, quote, explicit_email=payload.recipient_email)
     if recipient is None:

@@ -139,6 +139,7 @@ class QuoteDuplicationTests(unittest.TestCase):
         self.assertEqual(clone.vat_rate, Decimal("20.00"))
         self.assertEqual(clone.parent_quote_id, source_id)
         self.assertEqual(clone.version_number, 3)
+        self.assertIsNone(clone.expires_at)
         self.assertEqual(clone.meta.get("duplicated_from"), str(source_id))
 
         self.assertEqual(duplicated_line.vat_rate, Decimal("20.000"))
@@ -219,6 +220,7 @@ class QuoteDuplicationTests(unittest.TestCase):
         self.assertEqual(clone.document_status, "stale")
         self.assertEqual(clone.parent_quote_id, source_id)
         self.assertEqual(clone.version_number, 2)
+        self.assertIsNone(clone.expires_at)
         self.assertEqual(clone.meta.get("revision_reason"), "public_change_request")
         self.assertNotIn("public_response_last_action", clone.meta)
         self.assertEqual(source.meta.get("change_request_revision_quote_id"), str(clone.id))
@@ -341,6 +343,7 @@ class QuoteDuplicationTests(unittest.TestCase):
         self.assertEqual(clone.prospect_id, child.id)
         self.assertIsNone(clone.client_id)
         self.assertEqual(clone.parent_quote_id, source_id)
+        self.assertIsNone(clone.expires_at)
         self.assertEqual(clone.meta.get("duplicated_for_child_name"), "Archibald De Vilmarest")
         ensure_referral.assert_called_once_with(
             db,
