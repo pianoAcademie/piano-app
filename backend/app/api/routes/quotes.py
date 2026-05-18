@@ -4042,6 +4042,26 @@ def _apply_quote_expiry_days_update(
     return True
 
 
+def _sync_draft_quote_expiry_days_from_type(db: Session, quote: Quote) -> bool:
+    if quote.sent_at is not None or quote.quote_type_id is None:
+        return False
+    quote_type = db.scalar(select(QuoteType).where(QuoteType.id == quote.quote_type_id))
+    if quote_type is None:
+        return False
+    next_expiry_days = int(quote_type.default_expiry_days or 10)
+    if int(quote.expiry_days or 0) == next_expiry_days:
+        return False
+    quote.expiry_days = next_expiry_days
+    quote.expires_at = None
+    quote.document_status = "stale"
+    quote.document_hash = None
+    quote.document_snapshot_id = None
+    quote.document_generated_at = None
+    quote.updated_at = _utcnow()
+    db.add(quote)
+    return True
+
+
 def _mark_quote_sent_for_first_delivery(quote: Quote, *, sent_at: datetime) -> None:
     quote.status = "sent"
     if quote.sent_at is None:
@@ -5291,6 +5311,7 @@ def generate_quote_pdf(
     _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> StreamingResponse:
     quote = _load_quote(db, quote_id)
+    _sync_draft_quote_expiry_days_from_type(db, quote)
     lines = _load_quote_lines(db, quote_id)
     pdf_bytes = _resolve_quote_pdf_bytes(db, quote=quote, lines=lines, freeze_state="generated")
     db.commit()
@@ -5315,6 +5336,10 @@ def preview_quote_document(
     _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> dict[str, object]:
     quote = _load_quote(db, quote_id)
+    synced_expiry = _sync_draft_quote_expiry_days_from_type(db, quote)
+    if synced_expiry:
+        db.commit()
+        db.refresh(quote)
     lines = _load_quote_lines(db, quote_id)
     resolved_audience = audience.strip().lower() if audience else AUDIENCE_ADMIN_PREVIEW
     if resolved_audience not in {AUDIENCE_ADMIN_PREVIEW, AUDIENCE_PUBLIC_PAGE, AUDIENCE_CLIENT_PDF}:
@@ -5346,6 +5371,7 @@ def regenerate_quote_document(
 ) -> dict[str, object]:
     quote = _load_quote(db, quote_id, lock=True)
     _ensure_quote_editable(quote)
+    _sync_draft_quote_expiry_days_from_type(db, quote)
     if quote.quote_template_id is not None:
         template = db.scalar(select(QuoteTemplate).where(QuoteTemplate.id == quote.quote_template_id))
         if template is not None and template.current_version_id is not None:
@@ -5393,6 +5419,7 @@ def download_quote_pdf(
     _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> StreamingResponse:
     quote = _load_quote(db, quote_id)
+    _sync_draft_quote_expiry_days_from_type(db, quote)
     lines = _load_quote_lines(db, quote_id)
     pdf_bytes = _resolve_quote_pdf_bytes(db, quote=quote, lines=lines, freeze_state="generated")
     db.commit()
@@ -5542,6 +5569,7 @@ def send_quote(
     quote = _load_quote(db, quote_id, lock=True)
     _ensure_quote_editable(quote)
     _ensure_public_token(quote)
+    _sync_draft_quote_expiry_days_from_type(db, quote)
 
     now = _utcnow()
     _mark_quote_sent_for_first_delivery(quote, sent_at=now)
@@ -5619,9 +5647,10 @@ def preview_quote_email(
     _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> QuoteEmailPreviewOut:
     quote = _load_quote(db, quote_id)
+    synced_expiry = _sync_draft_quote_expiry_days_from_type(db, quote)
     token_updated = not quote.public_token or not quote.pdf_token
     _ensure_public_token(quote)
-    if token_updated:
+    if token_updated or synced_expiry:
         db.add(quote)
         db.commit()
         db.refresh(quote)
