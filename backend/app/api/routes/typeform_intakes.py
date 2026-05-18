@@ -4273,6 +4273,8 @@ def _build_session_recommendations(
                     manual_series_rows[series_key] = (session_obj, activity, location, int(booked_count or 0))
 
             for session_obj, activity, location, booked_count in manual_series_rows.values():
+                if activity.id != line.activity_id and not _activity_matches_line_for_slot_fallback(activity, line):
+                    continue
                 if not _line_allows_session_modality(line, activity=activity, location=location):
                     continue
                 option = _typeform_session_option_from_row(
