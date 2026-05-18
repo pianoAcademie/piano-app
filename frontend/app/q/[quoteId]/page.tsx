@@ -344,21 +344,14 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
                   <button type="submit" className="quote-cta-success">{t("quote_public.approve_cta")}</button>
                 </form>
 
-                <form action={rejectPublicQuoteAction} className="quote-public-form-action top-gap-sm">
-                  <input type="hidden" name="quote_id" value={quoteId} />
-                  <input type="hidden" name="public_token" value={token} />
-                  <input type="hidden" name="return_to" value={selfPath} />
-                  <input type="hidden" name="language" value={language} />
-                  <button type="submit" className="quote-cta-danger">{t("quote_public.reject_cta")}</button>
-                </form>
-
                 <form action={changeRequestPublicQuoteAction} className="quote-public-change-request top-gap-sm">
                   <input type="hidden" name="quote_id" value={quoteId} />
                   <input type="hidden" name="public_token" value={token} />
                   <input type="hidden" name="return_to" value={selfPath} />
                   <input type="hidden" name="language" value={language} />
                   <label>
-                    {t("quote_public.change_request_label")}
+                    <span className="quote-public-change-title">{t("quote_public.change_request_title")}</span>
+                    <span className="quote-public-change-help">{t("quote_public.change_request_help")}</span>
                     <textarea
                       name="change_message"
                       required
@@ -366,7 +359,16 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
                       placeholder={t("quote_public.change_request_placeholder")}
                     />
                   </label>
-                  <button type="submit" className="ghost">{t("quote_public.change_request_submit")}</button>
+                  <button type="submit" className="quote-cta-change">{t("quote_public.change_request_submit")}</button>
+                </form>
+
+                <form action={rejectPublicQuoteAction} className="quote-public-form-action quote-public-reject-action top-gap-sm">
+                  <input type="hidden" name="quote_id" value={quoteId} />
+                  <input type="hidden" name="public_token" value={token} />
+                  <input type="hidden" name="return_to" value={selfPath} />
+                  <input type="hidden" name="language" value={language} />
+                  <p className="muted">{t("quote_public.reject_help")}</p>
+                  <button type="submit" className="quote-cta-danger">{t("quote_public.reject_cta")}</button>
                 </form>
               </>
             ) : (

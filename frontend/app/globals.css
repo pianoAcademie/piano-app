@@ -14207,7 +14207,7 @@ button.danger:focus-visible {
   position: sticky;
   top: 1rem;
   display: grid;
-  gap: 0.45rem;
+  gap: 0.7rem;
 }
 
 .quote-public-action {
@@ -14220,6 +14220,11 @@ button.danger:focus-visible {
   gap: 0.45rem;
 }
 
+.quote-public-reject-action {
+  border-top: 1px solid var(--line);
+  padding-top: 0.7rem;
+}
+
 .quote-public-solfege-box {
   display: grid;
   gap: 0.45rem;
@@ -14230,12 +14235,39 @@ button.danger:focus-visible {
 }
 
 .quote-public-change-request textarea {
-  min-height: 6.25rem;
+  min-height: 8rem;
   resize: vertical;
+  background: #fff;
+  border-color: #d8b56d;
+}
+
+.quote-public-change-request {
+  border: 1px solid #d8b56d;
+  border-radius: 0.9rem;
+  background: #fff8e8;
+  padding: 0.8rem;
+}
+
+.quote-public-change-request label {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.quote-public-change-title {
+  color: #1d2733;
+  font-size: 1.02rem;
+  font-weight: 800;
+}
+
+.quote-public-change-help {
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.35;
 }
 
 .quote-cta-success,
-.quote-cta-danger {
+.quote-cta-danger,
+.quote-cta-change {
   width: 100%;
 }
 
@@ -14248,6 +14280,12 @@ button.danger:focus-visible {
 .quote-cta-danger {
   background: #9f2c2c;
   border-color: #9f2c2c;
+  color: #fff;
+}
+
+.quote-cta-change {
+  background: #28476c;
+  border-color: #28476c;
   color: #fff;
 }
 
