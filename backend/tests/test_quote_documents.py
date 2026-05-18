@@ -281,6 +281,49 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertEqual(info["selected_slot"]["start_time"], "18:50")
         self.assertIn("cours en ligne", info["selected_slot"]["label"].lower())
 
+    def test_current_solfege_document_info_matches_same_level_when_activity_ids_differ(self) -> None:
+        line_activity_id = uuid4()
+        planning_activity_id = uuid4()
+        line = SimpleNamespace(
+            activity_id=line_activity_id,
+            title="Cours de solfège en ligne - niveau 4",
+            description="Cours de solfège en ligne",
+            code="SOLFEGE_NIVEAU_4",
+            duration_minutes=45,
+            meta={},
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(planning_activity_id),
+                    "activity_label": "Solfège niveau 4",
+                    "location_label": "Online",
+                    "weekday": 3,
+                    "weekday_label": "Jeudi",
+                    "start_time": "18:50",
+                    "end_time": "19:35",
+                    "duration_minutes": 45,
+                    "selection_pending": False,
+                    "pending_solfege_level": "4",
+                    "modality": "ONLINE",
+                }
+            ]
+        }
+
+        info = _current_solfege_document_info(
+            lines=[line],
+            calendar_snapshot=snapshot,
+            quote_selected_slot={},
+            quote_level="4",
+            quote_duration_minutes=45,
+            language="fr",
+        )
+
+        self.assertTrue(info["has_current_solfege"])
+        self.assertEqual(info["level_code"], "4")
+        self.assertEqual(info["selected_slot"]["weekday_label"], "Jeudi")
+        self.assertEqual(info["selected_slot"]["start_time"], "18:50")
+
     def test_current_solfege_document_info_ignores_stale_quote_fields_without_current_solfege(self) -> None:
         stale_selected_slot = {
             "weekday": 2,

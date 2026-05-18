@@ -2945,6 +2945,18 @@ def _solfege_block_is_pending(block: dict[str, Any]) -> bool:
     return bool(block.get("selection_pending")) or weekday < 0
 
 
+def _solfege_activity_ids_are_compatible(
+    *,
+    line_activity_id: str,
+    block_activity_id: str,
+    line_level: str,
+    block_level: str,
+) -> bool:
+    if not line_activity_id or not block_activity_id or block_activity_id == line_activity_id:
+        return True
+    return bool(line_level and block_level and line_level == block_level)
+
+
 def _slot_from_solfege_block(block: dict[str, Any], *, level_code: str = "", language: str | None = None) -> dict[str, Any]:
     slot = {
         "weekday": block.get("weekday"),
@@ -2986,9 +2998,14 @@ def _current_solfege_document_info(
         if not _is_solfege_planning_block(block):
             continue
         block_activity_id = str(block.get("activity_id") or "").strip()
-        if line_activity_id and block_activity_id and block_activity_id != line_activity_id:
-            continue
         block_level = _solfege_level_from_block(block)
+        if not _solfege_activity_ids_are_compatible(
+            line_activity_id=line_activity_id,
+            block_activity_id=block_activity_id,
+            line_level=line_level,
+            block_level=block_level,
+        ):
+            continue
         if line_level and block_level and block_level != line_level:
             continue
         matching_blocks.append(block)
@@ -3061,9 +3078,14 @@ def _calendar_snapshot_with_current_solfege_block(
         if not _is_solfege_planning_block(block):
             return False
         block_activity_id = str(block.get("activity_id") or "").strip()
-        if line_activity_id and block_activity_id and block_activity_id != line_activity_id:
-            return False
         block_level = _solfege_level_from_block(block)
+        if not _solfege_activity_ids_are_compatible(
+            line_activity_id=line_activity_id,
+            block_activity_id=block_activity_id,
+            line_level=line_level,
+            block_level=block_level,
+        ):
+            return False
         if line_level and block_level and block_level != line_level:
             return False
         return True
