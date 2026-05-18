@@ -16990,6 +16990,19 @@ button.danger:focus-visible {
   text-decoration: none;
 }
 
+.danger-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid #b23b32;
+  border-radius: 8px;
+  background: #b23b32;
+  color: #ffffff;
+  font-weight: 800;
+}
+
 .form-actions {
   display: flex;
   align-items: end;

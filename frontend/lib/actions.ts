@@ -15717,3 +15717,66 @@ export async function quickTransformQuoteAction(formData: FormData): Promise<voi
 
   await finalizeQuoteTransformationAction(delegated);
 }
+
+function safeAdminReportingPath(formData: FormData, fallback = "/admin/reporting"): string {
+  const raw = String(formData.get("return_to") ?? "").trim();
+  if (raw.startsWith("/admin/reporting")) {
+    return raw;
+  }
+  return fallback;
+}
+
+export async function createGeneratedReportAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const returnTo = safeAdminReportingPath(formData);
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const criteria = {
+    q: String(formData.get("q") ?? "").trim(),
+    school_year_label: String(formData.get("school_year_label") ?? "").trim(),
+    received_from: String(formData.get("received_from") ?? "").trim(),
+    received_to: String(formData.get("received_to") ?? "").trim(),
+    segment: String(formData.get("segment") ?? "").trim(),
+    status: String(formData.get("status") ?? "").trim(),
+    min_children: String(formData.get("min_children") ?? "2").trim() || "2",
+  };
+  const result = await backendRequest<{ id: string }>(
+    "/api/v1/admin/reports/generated",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        report_type: String(formData.get("report_type") ?? "intake-families").trim(),
+        period_start: criteria.received_from || null,
+        period_end: criteria.received_to || null,
+        note: String(formData.get("note") ?? "").trim() || null,
+        criteria,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/reporting");
+  redirect(appendQueryMessage(returnTo, "ok", "Rapport genere"));
+}
+
+export async function deleteGeneratedReportAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const returnTo = safeAdminReportingPath(formData);
+  const reportId = String(formData.get("report_id") ?? "").trim();
+  if (!token || !reportId) {
+    redirect(appendQueryMessage(returnTo, "error", "Suppression impossible"));
+  }
+  const result = await backendRequest<Record<string, never>>(
+    `/api/v1/admin/reports/generated/${encodeURIComponent(reportId)}`,
+    { method: "DELETE" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/reporting");
+  redirect(appendQueryMessage(returnTo, "ok", "Rapport supprime"));
+}

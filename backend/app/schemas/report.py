@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import enum
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
@@ -84,6 +84,27 @@ class IntakeFamilySummaryRow(BaseModel):
     parent_phone: str | None = None
     intake_count: int
     children: list[IntakeFamilyChildSummary] = Field(default_factory=list)
+
+
+class GeneratedReportCreate(BaseModel):
+    report_type: str = Field(min_length=1, max_length=80)
+    period_start: date | None = None
+    period_end: date | None = None
+    note: str | None = Field(default=None, max_length=500)
+    criteria: dict[str, object] = Field(default_factory=dict)
+
+
+class GeneratedReportOut(BaseModel):
+    id: UUID
+    report_type: str
+    report_label: str
+    file_format: str
+    period_start: date | None = None
+    period_end: date | None = None
+    note: str | None = None
+    row_count: int
+    created_by_user_id: UUID | None = None
+    created_at: datetime
 
 
 class CommunicationChannel(str, enum.Enum):

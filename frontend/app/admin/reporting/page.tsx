@@ -2,8 +2,10 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { createGeneratedReportAction, deleteGeneratedReportAction } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
 import type {
+  GeneratedReportOut,
   IntakeFamilyChildSummary,
   IntakeFamilySummaryRow,
   UserOut,
@@ -34,7 +36,6 @@ type ReportDefinition = {
   type: ReportType;
   label: string;
   description: string;
-  status: "available" | "planned";
   filterHint: string;
 };
 
@@ -43,84 +44,72 @@ const REPORT_DEFINITIONS: ReportDefinition[] = [
     type: "intake-families",
     label: "Synthese intakes par famille",
     description: "Demandes Typeform regroupees par famille, avec une colonne par enfant.",
-    status: "available",
     filterHint: "Periode, annee scolaire, famille, enfant, segment, statut.",
   },
   {
     type: "reservations",
     label: "Reservations",
     description: "Liste des reservations et prestations planifiees.",
-    status: "planned",
     filterHint: "Periode, lieu, professeur, eleve, statut.",
   },
   {
     type: "attendance",
     label: "Presence eleves",
     description: "Suivi des presents, absences excusees et no-shows.",
-    status: "planned",
     filterHint: "Periode, eleve, professeur, type de cours.",
   },
   {
     type: "professor-statements",
     label: "Releves professeurs",
     description: "Synthese des heures, montants et statuts de paiement professeurs.",
-    status: "planned",
     filterHint: "Mois, professeur, statut, type de cours.",
   },
   {
     type: "communications",
     label: "Communications",
     description: "Emails et SMS envoyes, statuts de livraison et renvois.",
-    status: "planned",
     filterHint: "Periode, canal, type, destinataire, statut.",
   },
   {
     type: "payments",
     label: "Paiements clients",
     description: "Encaissements, echeances, impayes et transactions manuelles.",
-    status: "planned",
     filterHint: "Periode, client, statut, mode de paiement.",
   },
   {
     type: "quotes",
     label: "Devis",
     description: "Suivi commercial des devis, validations et transformations.",
-    status: "planned",
     filterHint: "Periode, statut, formule, lieu, commercial.",
   },
   {
     type: "subscriptions",
     label: "Abonnements",
     description: "Etat des forfaits, consommations, renouvellements et arrets.",
-    status: "planned",
     filterHint: "Periode, client, formule, statut.",
   },
   {
     type: "planning-fill",
     label: "Remplissage planning",
     description: "Taux de remplissage par lieu, jour, creneau et type de cours.",
-    status: "planned",
     filterHint: "Periode, lieu, type de cours, professeur.",
   },
   {
     type: "check-deposits",
     label: "Depots de cheques",
     description: "Lots de cheques, montants et rapprochements.",
-    status: "planned",
     filterHint: "Periode, statut, lot, client.",
   },
   {
     type: "referrals",
     label: "Parrainages",
     description: "Demandes recommandees, parrains et avantages associes.",
-    status: "planned",
     filterHint: "Periode, parrain, filleul, statut.",
   },
   {
     type: "teacher-payments",
     label: "Paiement des salaires",
     description: "Synthese des paiements professeurs et restes a traiter.",
-    status: "planned",
     filterHint: "Mois, professeur, statut de paiement.",
   },
 ];
@@ -178,6 +167,26 @@ function formatDate(value: string, language: UiLanguage): string {
   });
 }
 
+function formatDateOnly(value: string | null, language: UiLanguage): string {
+  if (!value) {
+    return "-";
+  }
+  return new Date(`${value}T00:00:00`).toLocaleDateString(localeForUiLanguage(language));
+}
+
+function reportPeriod(row: GeneratedReportOut, language: UiLanguage): string {
+  if (row.period_start && row.period_end) {
+    return `${formatDateOnly(row.period_start, language)} - ${formatDateOnly(row.period_end, language)}`;
+  }
+  if (row.period_start) {
+    return `Depuis ${formatDateOnly(row.period_start, language)}`;
+  }
+  if (row.period_end) {
+    return `Jusqu au ${formatDateOnly(row.period_end, language)}`;
+  }
+  return "-";
+}
+
 function reportFilterValue(searchParams: SearchParams, key: string, fallback = ""): string {
   return firstParam(searchParams, key) || fallback;
 }
@@ -207,11 +216,12 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
     status: firstParam(searchParams, "status"),
     min_children: firstParam(searchParams, "min_children") || "2",
   };
-  const printHref = withParams({ ...reportHrefParams, print: "1" });
 
   const intakeFamiliesResult = reportType === "intake-families"
     ? await backendRequest<IntakeFamilySummaryRow[]>(`/api/v1/admin/reports/intake-families${reportApiQuery(searchParams)}`, {}, token)
     : null;
+  const generatedReportsResult = await backendRequest<GeneratedReportOut[]>("/api/v1/admin/reports/generated", {}, token);
+  const generatedReports = generatedReportsResult.ok ? generatedReportsResult.data : [];
   const intakeFamilies = intakeFamiliesResult?.ok ? intakeFamiliesResult.data : [];
   const generatedAt = new Date().toISOString();
 
@@ -251,13 +261,9 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
               <h3>{definition.label}</h3>
               <p className="muted">{definition.description}</p>
               <p className="muted">{definition.filterHint}</p>
-              {definition.status === "available" ? (
-                <Link className="button-link" href={withParams({ type: definition.type, min_children: "2" })}>
-                  {active ? "Selectionne" : "Choisir"}
-                </Link>
-              ) : (
-                <span className="status-pill">{t("admin.reporting.planned")}</span>
-              )}
+              <Link className="button-link" href={withParams({ type: definition.type, min_children: "2" })}>
+                {active ? "Selectionne" : "Choisir"}
+              </Link>
             </article>
           );
         })}
@@ -266,8 +272,9 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
       <section className="card no-print">
         <h3>{t("admin.reporting.criteria_title")}</h3>
         <p className="muted">{reportDefinition.filterHint}</p>
-        <form className="grid cols-4 config-form-grid top-gap-sm" method="get" action="/admin/reporting">
-          <input type="hidden" name="type" value={reportType} />
+        <form className="grid cols-4 config-form-grid top-gap-sm" action={createGeneratedReportAction}>
+          <input type="hidden" name="report_type" value={reportType} />
+          <input type="hidden" name="return_to" value={withParams(reportHrefParams)} />
           <label>
             {t("admin.reporting.period_from")}
             <input type="date" name="received_from" defaultValue={reportFilterValue(searchParams, "received_from")} />
@@ -311,13 +318,74 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
             {t("admin.reporting.min_children")}
             <input type="number" name="min_children" min="1" max="20" defaultValue={reportFilterValue(searchParams, "min_children", "2")} />
           </label>
+          <label>
+            Note
+            <input name="note" placeholder="Note interne facultative" />
+          </label>
           <div className="form-actions">
-            <button type="submit">{t("admin.reporting.generate")}</button>
-            <Link className="button-link" href={printHref} target="_blank">
-              {t("admin.reporting.download_pdf")}
+            <Link className="button-link" href={withParams(reportHrefParams)}>
+              Visualiser
             </Link>
+            <button type="submit">{t("admin.reporting.generate")}</button>
           </div>
         </form>
+      </section>
+
+      <section className="card no-print">
+        <div className="section-title-row">
+          <div>
+            <h3>{t("admin.reporting.generated_reports_title")}</h3>
+            <p className="muted">{t("admin.reporting.generated_reports_help")}</p>
+          </div>
+          <span className="status-pill status-info">{t("admin.reporting.rows_count", { count: generatedReports.length })}</span>
+        </div>
+        {generatedReportsResult.ok ? (
+          generatedReports.length > 0 ? (
+            <div className="table-wrap top-gap-sm">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>{t("admin.reporting.report_type")}</th>
+                    <th>{t("admin.reporting.created_at")}</th>
+                    <th>{t("admin.reporting.format")}</th>
+                    <th>{t("admin.reporting.report_period")}</th>
+                    <th>Note</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {generatedReports.map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.report_label}</td>
+                      <td>{formatDate(row.created_at, language)}</td>
+                      <td>{row.file_format}</td>
+                      <td>{reportPeriod(row, language)}</td>
+                      <td>{row.note || "-"}</td>
+                      <td>
+                        <div className="form-actions">
+                          <Link className="button-link" href={`/admin/reporting/generated/${encodeURIComponent(row.id)}/pdf`}>
+                            {t("admin.reporting.download_pdf")}
+                          </Link>
+                          <form action={deleteGeneratedReportAction}>
+                            <input type="hidden" name="report_id" value={row.id} />
+                            <input type="hidden" name="return_to" value={withParams(reportHrefParams)} />
+                            <button className="danger-button" type="submit">
+                              Supprimer
+                            </button>
+                          </form>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="muted">{t("admin.reporting.no_generated_report")}</p>
+          )
+        ) : (
+          <p className="muted">{t("admin.reporting.error_prefix", { message: generatedReportsResult.message })}</p>
+        )}
       </section>
 
       <section className="card report-print-area">

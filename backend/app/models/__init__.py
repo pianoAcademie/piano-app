@@ -114,6 +114,7 @@ from app.models.product_catalog import (
     ProductTransferStatus,
 )
 from app.models.referral import ReferralReward
+from app.models.reporting import GeneratedReport
 from app.models.quote import (
     CgvVersion,
     PaymentPlan,
@@ -173,6 +174,7 @@ __all__ = [
     "DomainEvent",
     "DocumentTemplate",
     "EmailReminder",
+    "GeneratedReport",
     "ExternalContentCourse",
     "ExternalContentLesson",
     "ExternalContentProvider",

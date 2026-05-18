@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from decimal import Decimal
+import html
 import io
 import json
 import re
@@ -11,6 +12,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
+from xhtml2pdf import pisa
 from sqlalchemy import Numeric, Text, case, cast, extract, func, or_, select, update
 from sqlalchemy.orm import Session
 
@@ -19,6 +21,7 @@ from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType
 from app.models.client_record import ClientInvoiceLine, ClientNoteEntry
 from app.models.ops import CommunicationChannel as CommunicationChannelModel, CommunicationLog, LegalEntity
 from app.models.payout import ProfessorSessionPayout
+from app.models.reporting import GeneratedReport
 from app.models.typeform_intake import TypeformFormConfig, TypeformIntake
 from app.models.user import User, UserRole
 from app.schemas.report import (
@@ -31,6 +34,8 @@ from app.schemas.report import (
     CommunicationReportRow,
     CommunicationResendRequest,
     CommunicationTypeFilterOut,
+    GeneratedReportCreate,
+    GeneratedReportOut,
     IntakeFamilyChildSummary,
     IntakeFamilySummaryRow,
     ProfessorStatementRow,
@@ -44,6 +49,20 @@ router = APIRouter(prefix="/admin/reports")
 INVOICE_RANGE_NOTE_PREFIX = "INVOICE_RANGE::"
 COMMUNICATION_ARCHIVE_RETENTION_DAYS = 365
 ADMIN_COMMUNICATION_TIMEZONE = ZoneInfo("Europe/Paris")
+REPORT_TYPE_LABELS: dict[str, str] = {
+    "intake-families": "Synthese intakes par famille",
+    "reservations": "Reservations",
+    "attendance": "Presence eleves",
+    "professor-statements": "Releves professeurs",
+    "communications": "Communications",
+    "payments": "Paiements clients",
+    "quotes": "Devis",
+    "subscriptions": "Abonnements",
+    "planning-fill": "Remplissage planning",
+    "check-deposits": "Depots de cheques",
+    "referrals": "Parrainages",
+    "teacher-payments": "Paiement des salaires",
+}
 
 
 def _professor_name(prof: Professor) -> str:
@@ -209,6 +228,41 @@ def _normalize_token(value: object | None) -> str:
 def _display_name(first_name: object | None, last_name: object | None, fallback: str = "-") -> str:
     label = " ".join(part for part in [_text(first_name), _text(last_name)] if part).strip()
     return label or fallback
+
+
+def _generated_report_out(row: GeneratedReport) -> GeneratedReportOut:
+    return GeneratedReportOut(
+        id=row.id,
+        report_type=row.report_type,
+        report_label=row.report_label,
+        file_format=row.file_format,
+        period_start=row.period_start,
+        period_end=row.period_end,
+        note=row.note,
+        row_count=row.row_count,
+        created_by_user_id=row.created_by_user_id,
+        created_at=row.created_at,
+    )
+
+
+def _parse_report_date(value: object | None) -> date | None:
+    raw = _text(value)
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _report_period_label(start: date | None, end: date | None) -> str:
+    if start and end:
+        return f"{start.isoformat()} - {end.isoformat()}"
+    if start:
+        return f"Depuis {start.isoformat()}"
+    if end:
+        return f"Jusqu au {end.isoformat()}"
+    return "-"
 
 
 def _form_label(config: TypeformFormConfig | None) -> str | None:
@@ -616,18 +670,17 @@ def report_professor_statements(
     return result
 
 
-@router.get("/intake-families", response_model=list[IntakeFamilySummaryRow])
-def report_intake_families(
+def _build_intake_family_summary_rows(
+    db: Session,
+    *,
     q: str | None = None,
     school_year_label: str | None = None,
     received_from: date | None = None,
     received_to: date | None = None,
     segment: str | None = None,
-    status_filter: str | None = Query(default=None, alias="status"),
-    min_children: int = Query(default=2, ge=1, le=20),
-    limit: int = Query(default=1000, ge=1, le=5000),
-    db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    status_filter: str | None = None,
+    min_children: int = 2,
+    limit: int = 1000,
 ) -> list[IntakeFamilySummaryRow]:
     if received_from is not None and received_to is not None and received_from > received_to:
         raise HTTPException(
@@ -750,6 +803,198 @@ def report_intake_families(
         )
     )
     return families
+
+
+@router.get("/intake-families", response_model=list[IntakeFamilySummaryRow])
+def report_intake_families(
+    q: str | None = None,
+    school_year_label: str | None = None,
+    received_from: date | None = None,
+    received_to: date | None = None,
+    segment: str | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
+    min_children: int = Query(default=2, ge=1, le=20),
+    limit: int = Query(default=1000, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[IntakeFamilySummaryRow]:
+    return _build_intake_family_summary_rows(
+        db,
+        q=q,
+        school_year_label=school_year_label,
+        received_from=received_from,
+        received_to=received_to,
+        segment=segment,
+        status_filter=status_filter,
+        min_children=min_children,
+        limit=limit,
+    )
+
+
+def _generated_report_html(row: GeneratedReport) -> str:
+    content = _json_object(row.content_json)
+    families = _json_list(content.get("families"))
+    criteria = _json_object(row.criteria_json)
+    title = html.escape(row.report_label)
+    generated_at = row.created_at.astimezone(ADMIN_COMMUNICATION_TIMEZONE).strftime("%d/%m/%Y %H:%M")
+    period_label = html.escape(_report_period_label(row.period_start, row.period_end))
+    note = html.escape(row.note or "-")
+    criteria_parts = [
+        f"{html.escape(str(key))}: {html.escape(str(value))}"
+        for key, value in criteria.items()
+        if value not in (None, "", [])
+    ]
+    criteria_html = " | ".join(criteria_parts) or "-"
+    blocks: list[str] = []
+    for family_raw in families:
+        family = _json_object(family_raw)
+        children = _json_list(family.get("children"))
+        headers = "".join(
+            f"<th>{html.escape(_text(_json_object(child).get('child_name')) or '-')}</th>"
+            for child in children
+        )
+        rows: list[str] = []
+        for key, label in [
+            ("course_1", "Cours 1"),
+            ("course_2", "Cours 2"),
+            ("solfege", "Solfege"),
+            ("masterclass", "Masterclass"),
+            ("pass_recup", "Pass recup"),
+        ]:
+            cells = "".join(
+                f"<td>{html.escape(_text(_json_object(child).get(key)) or '-')}</td>"
+                for child in children
+            )
+            rows.append(f"<tr><th>{label}</th>{cells}</tr>")
+        blocks.append(
+            "<section class='family'>"
+            f"<h2>{html.escape(_text(family.get('family_label')) or 'Famille')}</h2>"
+            f"<p>{html.escape(_text(family.get('parent_email')) or _text(family.get('parent_phone')) or '-')}</p>"
+            "<table><thead><tr><th>Element</th>"
+            f"{headers}</tr></thead><tbody>{''.join(rows)}</tbody></table>"
+            "</section>"
+        )
+    if not blocks:
+        blocks.append("<p>Aucune donnee pour ce rapport.</p>")
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<style>"
+        "@page { size: A4 landscape; margin: 18mm; }"
+        "body { font-family: Arial, sans-serif; color: #222; font-size: 10pt; }"
+        "h1 { font-size: 20pt; margin: 0 0 8px; } h2 { font-size: 13pt; margin: 18px 0 4px; }"
+        ".meta { color: #555; margin-bottom: 14px; }"
+        "table { width: 100%; border-collapse: collapse; margin-top: 8px; }"
+        "th, td { border: 1px solid #ccd3dd; padding: 6px; vertical-align: top; }"
+        "th { background: #eef2f6; text-align: left; } .family { page-break-inside: avoid; }"
+        "</style></head><body>"
+        f"<h1>{title}</h1>"
+        f"<p class='meta'>Genere le {generated_at} | Periode: {period_label} | Format: PDF | Note: {note}</p>"
+        f"<p class='meta'>Criteres: {criteria_html}</p>"
+        f"{''.join(blocks)}"
+        "</body></html>"
+    )
+
+
+def _render_generated_report_pdf(row: GeneratedReport) -> bytes:
+    output = io.BytesIO()
+    result = pisa.CreatePDF(src=_generated_report_html(row), dest=output, encoding="utf-8")
+    if result.err:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Generation PDF impossible")
+    return output.getvalue()
+
+
+@router.get("/generated", response_model=list[GeneratedReportOut])
+def list_generated_reports(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[GeneratedReportOut]:
+    rows = db.scalars(select(GeneratedReport).order_by(GeneratedReport.created_at.desc()).limit(500)).all()
+    return [_generated_report_out(row) for row in rows]
+
+
+@router.post("/generated", response_model=GeneratedReportOut, status_code=status.HTTP_201_CREATED)
+def create_generated_report(
+    payload: GeneratedReportCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> GeneratedReportOut:
+    report_type = payload.report_type.strip()
+    report_label = REPORT_TYPE_LABELS.get(report_type, report_type)
+    criteria = dict(payload.criteria or {})
+    period_start = payload.period_start or _parse_report_date(criteria.get("received_from"))
+    period_end = payload.period_end or _parse_report_date(criteria.get("received_to"))
+    if period_start is not None and period_end is not None and period_start > period_end:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="'period_start' must be before 'period_end'")
+
+    content: dict[str, object] = {"items": []}
+    row_count = 0
+    if report_type == "intake-families":
+        try:
+            min_children = int(criteria.get("min_children") or 2)
+        except (TypeError, ValueError):
+            min_children = 2
+        min_children = max(1, min(20, min_children))
+        families = _build_intake_family_summary_rows(
+            db,
+            q=_text(criteria.get("q")) or None,
+            school_year_label=_text(criteria.get("school_year_label")) or None,
+            received_from=period_start,
+            received_to=period_end,
+            segment=_text(criteria.get("segment")) or None,
+            status_filter=_text(criteria.get("status")) or None,
+            min_children=min_children,
+            limit=5000,
+        )
+        content = {"families": [family.model_dump(mode="json") for family in families]}
+        row_count = len(families)
+
+    row = GeneratedReport(
+        report_type=report_type,
+        report_label=report_label,
+        file_format="PDF",
+        period_start=period_start,
+        period_end=period_end,
+        note=_text(payload.note) or None,
+        criteria_json=criteria,
+        content_json=content,
+        row_count=row_count,
+        created_by_user_id=current_user.id,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _generated_report_out(row)
+
+
+@router.get("/generated/{report_id}/pdf")
+def download_generated_report_pdf(
+    report_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> Response:
+    row = db.get(GeneratedReport, report_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rapport introuvable")
+    filename = f"rapport-{row.report_type}-{row.created_at.strftime('%Y%m%d')}.pdf".replace('"', "")
+    return Response(
+        content=_render_generated_report_pdf(row),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.delete("/generated/{report_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_generated_report(
+    report_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> Response:
+    row = db.get(GeneratedReport, report_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rapport introuvable")
+    db.delete(row)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/sap/{year}/csv")

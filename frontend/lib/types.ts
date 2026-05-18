@@ -2222,6 +2222,19 @@ export type IntakeFamilySummaryRow = {
   children: IntakeFamilyChildSummary[];
 };
 
+export type GeneratedReportOut = {
+  id: string;
+  report_type: string;
+  report_label: string;
+  file_format: string;
+  period_start: string | null;
+  period_end: string | null;
+  note: string | null;
+  row_count: number;
+  created_by_user_id: string | null;
+  created_at: string;
+};
+
 export type CommunicationReportRow = {
   id: string;
   channel: "EMAIL" | "SMS";
