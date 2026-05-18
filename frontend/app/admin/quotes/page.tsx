@@ -282,6 +282,36 @@ function quoteNextAction(
   return "aucune_action";
 }
 
+function matchesCommercialStatusFilter(row: QuoteOut, filter: string): boolean {
+  const normalized = filter.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  const commercialState = quoteValidationState(row);
+  if (normalized === commercialState) {
+    return true;
+  }
+  if (normalized === "created") {
+    return commercialState === "incomplet" || commercialState === "brouillon" || commercialState === "pret_a_envoyer";
+  }
+  if (normalized === "sent") {
+    return commercialState === "envoye" || commercialState === "consulte";
+  }
+  if (normalized === "change_requested") {
+    return commercialState === "modification_demandee";
+  }
+  if (normalized === "approved") {
+    return commercialState === "valide";
+  }
+  if (normalized === "rejected" || normalized === "cancelled") {
+    return commercialState === "refuse";
+  }
+  if (normalized === "expired") {
+    return commercialState === "expire";
+  }
+  return false;
+}
+
 function quoteChangeRequestSummary(row: QuoteOut): { message: string; at: string } | null {
   const meta = row.meta || {};
   const publicResponseLastAction = readStringMeta(meta, "public_response_last_action", "").toLowerCase();
@@ -396,7 +426,6 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
   const expiresToFilter = parseIsoDateOnly(expiresToFilterRaw);
 
   const listQuery = new URLSearchParams();
-  if (statusFilter) listQuery.set("status", statusFilter);
   if (contextFilter) listQuery.set("context_type", contextFilter);
   if (activityFilter) listQuery.set("activity_id", activityFilter);
   listQuery.set("limit", "1000");
@@ -452,6 +481,10 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
       .join(" ")
       .toLowerCase();
     if (query && !textHaystack.includes(query.trim().toLowerCase())) {
+      return false;
+    }
+
+    if (!matchesCommercialStatusFilter(row, statusFilter)) {
       return false;
     }
 
@@ -575,18 +608,23 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
   const currencyValues = Array.from(new Set(quotes.map((row) => (row.currency || "").toUpperCase()).filter(Boolean))).sort();
   const quoteTypeValues = Array.from(new Set(quotes.map((row) => (row.quote_type || "").trim()).filter(Boolean))).sort();
   const quoteStatusOptions = [
-    { value: "created", label: t("admin.quotes.status_created") },
-    { value: "sent", label: t("admin.quotes.status_sent") },
-    { value: "change_requested", label: t("admin.quotes.status_change_requested") },
-    { value: "approved", label: t("admin.quotes.status_approved") },
-    { value: "rejected", label: t("admin.quotes.status_rejected") },
-    { value: "expired", label: t("admin.quotes.status_expired") },
-    { value: "cancelled", label: t("admin.quotes.status_cancelled") },
+    { value: "incomplet", label: t("admin.quotes.validation.incomplet") },
+    { value: "brouillon", label: t("admin.quotes.validation.brouillon") },
+    { value: "pret_a_envoyer", label: t("admin.quotes.validation.pret_a_envoyer") },
+    { value: "envoye", label: t("admin.quotes.validation.envoye") },
+    { value: "consulte", label: t("admin.quotes.validation.consulte") },
+    { value: "modification_demandee", label: t("admin.quotes.validation.modification_demandee") },
+    { value: "valide", label: t("admin.quotes.validation.valide") },
+    { value: "refuse", label: t("admin.quotes.validation.refuse") },
+    { value: "expire", label: t("admin.quotes.validation.expire") },
   ];
   const quoteStats = filteredQuotes.reduce(
     (acc, row) => {
       const commercialState = quoteValidationState(row);
       const integrationState = quoteIntegrationState(row, commercialState);
+      if (commercialState === "incomplet") {
+        acc.incomplete += 1;
+      }
       if (commercialState === "pret_a_envoyer") {
         acc.readyToSend += 1;
       }
@@ -604,7 +642,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
       }
       return acc;
     },
-    { total: filteredQuotes.length, readyToSend: 0, changeRequests: 0, approved: 0, integrationTodo: 0, integrationErrors: 0 },
+    { total: filteredQuotes.length, incomplete: 0, readyToSend: 0, changeRequests: 0, approved: 0, integrationTodo: 0, integrationErrors: 0 },
   );
   return (
     <section className="admin-page-grid">
@@ -638,6 +676,10 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
           <article>
             <span>{t("admin.quotes.metrics_filtered")}</span>
             <strong>{quoteStats.total}</strong>
+          </article>
+          <article className={quoteStats.incomplete > 0 ? "is-warning" : ""}>
+            <span>{t("admin.quotes.metrics_incomplete")}</span>
+            <strong>{quoteStats.incomplete}</strong>
           </article>
           <article>
             <span>{t("admin.quotes.metrics_ready_to_send")}</span>
