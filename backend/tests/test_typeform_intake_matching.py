@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import importlib.util
 from pathlib import Path
 import sys
 import unittest
@@ -27,6 +28,7 @@ from app.api.routes.typeform_intakes import (
     _solfege_slot_proposal_from_normalized,
     _stored_messages,
     _template_for_runtime_context,
+    _template_matches_when,
     _template_matches_segment_target,
     _typeform_default_quote_template,
     _typeform_default_terms_template,
@@ -36,6 +38,42 @@ from app.services.referrals import referral_category_for_location
 
 
 class TypeformIntakeMatchingTests(unittest.TestCase):
+    def test_bar_le_duc_child_course_mode_templates_match_full_typeform_labels(self) -> None:
+        migration_path = (
+            Path(__file__).resolve().parents[1]
+            / "alembic"
+            / "versions"
+            / "20260516_0116_register_typeform_bld_child_2026_2027.py"
+        )
+        spec = importlib.util.spec_from_file_location("bld_child_config", migration_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        line_templates = module._build_configuration_json()["line_templates"]
+
+        self.assertTrue(
+            any(
+                template.get("activity_code") == "PIANO_GROUP_ONSITE_1H"
+                and _template_matches_when(
+                    template,
+                    {"requested_course_mode": "Cours collectif de 1h  (22€/h)"},
+                )
+                for template in line_templates
+            )
+        )
+        self.assertTrue(
+            any(
+                template.get("activity_code") == "ACT_COURS_PARTICULIER_5DFFD9"
+                and _template_matches_when(
+                    template,
+                    {"requested_course_mode": "Cours particulier de 1h (40€/h)"},
+                )
+                for template in line_templates
+            )
+        )
+
     def test_online_runtime_context_switches_main_piano_template_to_online_activity(self) -> None:
         template = {
             "kind": "activity",

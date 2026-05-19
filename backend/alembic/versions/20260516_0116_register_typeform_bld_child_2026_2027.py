@@ -152,7 +152,14 @@ def _build_configuration_json() -> dict[str, Any]:
             "unit_price_ttc": "22.00",
             "price_mode": "override",
             "allow_price_override": True,
-            "when": {"requested_course_mode": ["Cours collectif"]},
+            "when": {
+                "requested_course_mode": [
+                    "Cours collectif",
+                    "Cours collectif de 1h",
+                    "Cours collectif de 1h (22€/h)",
+                    "Cours collectif de 1h  (22€/h)",
+                ]
+            },
         },
         {
             "kind": "activity",
@@ -161,7 +168,13 @@ def _build_configuration_json() -> dict[str, Any]:
             "unit_price_ttc": "40.00",
             "price_mode": "override",
             "allow_price_override": True,
-            "when": {"requested_course_mode": ["Cours particulier"]},
+            "when": {
+                "requested_course_mode": [
+                    "Cours particulier",
+                    "Cours particulier de 1h",
+                    "Cours particulier de 1h (40€/h)",
+                ]
+            },
         },
     ]
     return {
