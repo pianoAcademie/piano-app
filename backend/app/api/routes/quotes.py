@@ -7821,7 +7821,7 @@ def _create_followup_deposit_invoice(
 
     deposit_amount_ttc, deposit_amount_ht, deposit_vat_rate, deposit_vat_amount = breakdown
     now = _utcnow()
-    issued_date = (quote.approved_at or now).astimezone(timezone.utc).date()
+    issued_date = now.astimezone(timezone.utc).date()
     due_date = issued_date + timedelta(days=7)
     issued_at = _invoice_issued_at_for_date(issued_date=issued_date, now=now)
     invoice_number = _allocate_invoice_number_for_seller_entity(
