@@ -6821,6 +6821,31 @@ def _apply_quote_client_contact_defaults(
     if address_country and (prefer_address or not str(user.address_country or "").strip()):
         user.address_country = address_country
     user.updated_at = _utcnow()
+
+
+def _quote_line_schedule_key(line: QuoteLine) -> str | None:
+    if line.activity_id is None:
+        return None
+    meta = _json_object(line.meta)
+    source = str(meta.get("typeform_automatic_line") or "").strip()
+    if source:
+        return f"{line.activity_id}:{source}"
+    return str(line.activity_id)
+
+
+def _planning_session_limit_from_quote_line(line: QuoteLine) -> int | None:
+    meta = _json_object(line.meta)
+    template = _json_object(meta.get("typeform_template"))
+    raw_limit = meta.get("planning_session_limit")
+    if raw_limit is None:
+        raw_limit = template.get("planning_session_limit")
+    try:
+        limit = int(str(raw_limit).strip())
+    except (TypeError, ValueError):
+        return None
+    return limit if limit > 0 else None
+
+
 def _expected_activity_dates_from_snapshot(
     quote: Quote,
     *,
@@ -7690,7 +7715,6 @@ def _apply_followup_forfait_discount_rows(
         for item in _json_list(activity_resolution.get("offPlanningActivityIds"))
         if str(item).strip()
     }
-
     quote_lines = db.scalars(select(QuoteLine).where(QuoteLine.quote_id == quote.id)).all()
     line_by_id = {line.id: line for line in quote_lines}
     service_lines = [
@@ -8082,6 +8106,17 @@ def _execute_quote_followup_transformation(
         for item in _json_list(activity_resolution.get("offPlanningActivityIds"))
         if str(item).strip()
     }
+    quote_lines = db.scalars(select(QuoteLine).where(QuoteLine.quote_id == quote.id)).all()
+    session_limit_by_key: dict[str, int] = {}
+    for line in quote_lines:
+        limit = _planning_session_limit_from_quote_line(line)
+        if limit is None:
+            continue
+        schedule_key = _quote_line_schedule_key(line)
+        if schedule_key:
+            session_limit_by_key[schedule_key] = limit
+        if line.activity_id is not None:
+            session_limit_by_key.setdefault(str(line.activity_id), limit)
 
     def _activity_id_from_schedule_key(raw: object) -> UUID | None:
         key = str(raw or "").strip()
@@ -8105,6 +8140,9 @@ def _execute_quote_followup_transformation(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Creneau selectionne introuvable")
 
         expected_dates = _expected_activity_dates_from_snapshot(quote, activity_id=activity_id, schedule_key=schedule_key)
+        session_limit = session_limit_by_key.get(schedule_key) or session_limit_by_key.get(str(activity_id))
+        if session_limit is not None:
+            expected_dates = expected_dates[:session_limit]
         if selected_session.status != SessionStatus.SCHEDULED:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Le creneau selectionne n'est plus reservable")
 
@@ -8113,6 +8151,8 @@ def _execute_quote_followup_transformation(
             selected_session=selected_session,
             expected_dates=expected_dates,
         )
+        if session_limit is not None:
+            live_sessions = live_sessions[:session_limit]
         if expected_dates and not live_sessions:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,

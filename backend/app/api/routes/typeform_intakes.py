@@ -3112,6 +3112,18 @@ def _build_preview_lines(
                 typeform_price_mode = "fallback"
 
         line_category = "service" if kind == "activity" else "product"
+        meta_payload: dict[str, object] = {
+            "typeform_template": template,
+            "typeform_price_mode": typeform_price_mode or None,
+            "typeform_unit_price_ttc": str(template_unit_price) if template_unit_price > Decimal("0") else None,
+        }
+        planning_session_limit = _planning_session_limit_from_meta(meta_payload)
+        if planning_session_limit is not None:
+            meta_payload["planning_session_limit"] = planning_session_limit
+        commitment_kind = _text(template.get("commitment_kind"))
+        if commitment_kind:
+            meta_payload["commitment_kind"] = commitment_kind
+
         line_in = QuoteLineIn(
             line_category=line_category,
             line_type="item",
@@ -3126,11 +3138,7 @@ def _build_preview_lines(
             unit_price_ttc=template_unit_price if typeform_price_mode == "override" else Decimal("0.00"),
             pricing_unit="session" if kind == "activity" else "item",
             sort_order=index,
-            meta={
-                "typeform_template": template,
-                "typeform_price_mode": typeform_price_mode or None,
-                "typeform_unit_price_ttc": str(template_unit_price) if template_unit_price > Decimal("0") else None,
-            },
+            meta=meta_payload,
         )
         code, title, description, _duration, unit_price, meta = _effective_item_price(
             db,
@@ -3780,6 +3788,29 @@ def _line_recommendation_key(line: TypeformQuotePreviewLineOut) -> str:
     if source:
         return f"{line.activity_id}:{source}"
     return str(line.activity_id)
+
+
+def _quote_line_recommendation_key(line: QuoteLineIn) -> str | None:
+    if line.activity_id is None:
+        return None
+    meta = _json_object(line.meta)
+    source = _text(meta.get("typeform_automatic_line"))
+    if source:
+        return f"{line.activity_id}:{source}"
+    return str(line.activity_id)
+
+
+def _planning_session_limit_from_meta(meta: object | None) -> int | None:
+    meta_obj = _json_object(meta)
+    template = _json_object(meta_obj.get("typeform_template"))
+    raw_limit = meta_obj.get("planning_session_limit")
+    if raw_limit is None:
+        raw_limit = template.get("planning_session_limit")
+    try:
+        limit = int(str(raw_limit).strip())
+    except (TypeError, ValueError):
+        return None
+    return limit if limit > 0 else None
 
 
 def _session_recommendation_key(recommendation: TypeformSessionRecommendationOut) -> str:
@@ -5512,6 +5543,7 @@ def _calendar_snapshot_from_analysis(
     resolution: dict[str, object],
     session_recommendations: list[TypeformSessionRecommendationOut],
     runtime_context: dict[str, object],
+    quote_lines: list[QuoteLineIn] | None = None,
 ) -> dict[str, object]:
     selected_session_ids = _effective_selected_session_ids(
         resolution=resolution,
@@ -5553,6 +5585,16 @@ def _calendar_snapshot_from_analysis(
         session_recommendations=session_recommendations,
     )
     solfege_selected_slot: dict[str, object] = {}
+    session_limit_by_key: dict[str, int] = {}
+    for line in quote_lines or []:
+        limit = _planning_session_limit_from_meta(line.meta)
+        if limit is None:
+            continue
+        recommendation_key = _quote_line_recommendation_key(line)
+        if recommendation_key:
+            session_limit_by_key[recommendation_key] = limit
+        if line.activity_id is not None:
+            session_limit_by_key.setdefault(str(line.activity_id), limit)
 
     selected_uuid_map: dict[str, UUID] = {}
     for activity_id, session_id in selected_session_ids.items():
@@ -5595,6 +5637,11 @@ def _calendar_snapshot_from_analysis(
                 series_sessions = [session_obj]
             if not series_sessions:
                 series_sessions = [session_obj]
+            session_limit = session_limit_by_key.get(_session_recommendation_key(recommendation)) or session_limit_by_key.get(
+                str(recommendation.activity_id)
+            )
+            if session_limit is not None:
+                series_sessions = list(series_sessions)[:session_limit]
 
             zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
             first_local_start = series_sessions[0].start_at_utc.astimezone(zone)
@@ -6158,6 +6205,7 @@ def create_draft_quote_from_typeform_intake(
             resolution=resolution,
             session_recommendations=analysis["session_recommendations"],
             runtime_context=_json_object(analysis.get("runtime_context")),
+            quote_lines=preview_lines_in,
         )
     estimated_solfege_level = _extract_estimated_solfege_level(
         normalized=normalized,

@@ -74,6 +74,36 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
             )
         )
 
+    def test_bar_le_duc_adult_ten_course_templates_limit_quantity_and_planning(self) -> None:
+        migration_path = (
+            Path(__file__).resolve().parents[1]
+            / "alembic"
+            / "versions"
+            / "20260516_0117_register_typeform_bld_adult_2026_2027.py"
+        )
+        spec = importlib.util.spec_from_file_location("bld_adult_config", migration_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        line_templates = module._build_configuration_json()["line_templates"]
+        templates_by_product = {}
+        for template in line_templates:
+            when = template.get("when") or {}
+            for product_label in when.get("requested_products") or []:
+                templates_by_product[product_label] = template
+
+        collective_pack = templates_by_product["Engagement sur 10 cours - 26€ / cours"]
+        private_pack = templates_by_product["Engagement 10 cours - 45€/h"]
+
+        self.assertEqual(collective_pack["quantity"], "10")
+        self.assertEqual(collective_pack["unit_price_ttc"], "26.00")
+        self.assertEqual(collective_pack["planning_session_limit"], 10)
+        self.assertEqual(private_pack["quantity"], "10")
+        self.assertEqual(private_pack["unit_price_ttc"], "45.00")
+        self.assertEqual(private_pack["planning_session_limit"], 10)
+
     def test_online_runtime_context_switches_main_piano_template_to_online_activity(self) -> None:
         template = {
             "kind": "activity",

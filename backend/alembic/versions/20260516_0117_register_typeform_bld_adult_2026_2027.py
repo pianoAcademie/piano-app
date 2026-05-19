@@ -165,10 +165,12 @@ def _build_configuration_json() -> dict[str, Any]:
         {
             "kind": "activity",
             "activity_code": "ACT_COURS_COLLECTIF_ADULTE_2342BD",
-            "quantity": "1",
+            "quantity": "10",
             "unit_price_ttc": "26.00",
             "price_mode": "override",
             "allow_price_override": True,
+            "commitment_kind": "ten_course_pack",
+            "planning_session_limit": 10,
             "when": {
                 "requested_course_mode": ["Cours collectif"],
                 "requested_products": ["Engagement sur 10 cours - 26€ / cours"],
@@ -189,10 +191,12 @@ def _build_configuration_json() -> dict[str, Any]:
         {
             "kind": "activity",
             "activity_code": "ACT_COURS_PARTICULIER_5DFFD9",
-            "quantity": "1",
+            "quantity": "10",
             "unit_price_ttc": "45.00",
             "price_mode": "override",
             "allow_price_override": True,
+            "commitment_kind": "ten_course_pack",
+            "planning_session_limit": 10,
             "when": {
                 "requested_course_mode": ["Cours particulier"],
                 "requested_products": ["Engagement 10 cours - 45€/h"],

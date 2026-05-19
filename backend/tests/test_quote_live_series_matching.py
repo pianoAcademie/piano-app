@@ -9,7 +9,11 @@ from uuid import uuid4
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.api.routes.quotes import _load_live_series_sessions
+from app.api.routes.quotes import (
+    _load_live_series_sessions,
+    _planning_session_limit_from_quote_line,
+    _quote_line_schedule_key,
+)
 
 
 class _FakeScalarResult:
@@ -62,6 +66,37 @@ def _session(
 
 
 class QuoteLiveSeriesMatchingTests(unittest.TestCase):
+    def test_quote_line_schedule_key_keeps_automatic_line_source(self) -> None:
+        activity_id = uuid4()
+        line = SimpleNamespace(
+            activity_id=activity_id,
+            meta={"typeform_automatic_line": "adult_collective_main"},
+        )
+
+        self.assertEqual(_quote_line_schedule_key(line), f"{activity_id}:adult_collective_main")
+
+    def test_planning_session_limit_reads_top_level_or_template_meta(self) -> None:
+        top_level_line = SimpleNamespace(
+            meta={
+                "planning_session_limit": "10",
+                "typeform_template": {"planning_session_limit": 32},
+            },
+        )
+        template_line = SimpleNamespace(
+            meta={
+                "typeform_template": {"planning_session_limit": "10"},
+            },
+        )
+        invalid_line = SimpleNamespace(
+            meta={
+                "planning_session_limit": "0",
+            },
+        )
+
+        self.assertEqual(_planning_session_limit_from_quote_line(top_level_line), 10)
+        self.assertEqual(_planning_session_limit_from_quote_line(template_line), 10)
+        self.assertIsNone(_planning_session_limit_from_quote_line(invalid_line))
+
     def test_detached_first_occurrence_recovers_full_series_from_expected_dates(self) -> None:
         course_type_id = uuid4()
         location_id = uuid4()
