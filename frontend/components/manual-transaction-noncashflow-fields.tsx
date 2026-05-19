@@ -98,7 +98,7 @@ export default function ManualTransactionNonCashFlowFields({
         />
       </label>
       <label>
-        {t("admin.client_detail.manual_category_optional")}
+        {t("admin.client_detail.manual_category_required")}
         <select
           name="category"
           value={selectedCategory}
@@ -111,6 +111,7 @@ export default function ManualTransactionNonCashFlowFields({
               setVatRate(defaultVatRate);
             }
           }}
+          required
         >
           <option value="">{t("admin.client_detail.manual_select_placeholder")}</option>
           {categories.map((category) => (

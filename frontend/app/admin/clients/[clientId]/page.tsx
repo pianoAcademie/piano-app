@@ -2694,6 +2694,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const editManualOccurredAt = selectedManualTransactionForEdit
     ? formatDateForInput(selectedManualTransactionForEdit.occurred_at, todayInputValue)
     : todayInputValue;
+  const editManualCategory = (selectedManualTransactionForEdit?.category ?? "").trim();
+  const editManualCategoryIsConfigured =
+    editManualCategory.length > 0 &&
+    manualChargeCategories.some((category) => category.toLocaleLowerCase(sortLocale) === editManualCategory.toLocaleLowerCase(sortLocale));
   const invoiceFieldError = (fieldName: string): string | null => invoiceErrorFieldMap[fieldName] ?? null;
   const invoiceFieldInvalid = (fieldName: string): boolean => invoiceFieldError(fieldName) !== null;
   const invoiceFieldAutoFocus = (fieldName: string): boolean => invoiceFirstInvalidField === fieldName;
@@ -5766,10 +5770,28 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   {t("admin.client_detail.label_optional")}
                   <input type="text" name="label" maxLength={255} defaultValue={selectedManualTransactionForEdit.label} />
                 </label>
-                <label>
-                  {t("admin.client_detail.category_optional")}
-                  <input type="text" name="category" maxLength={120} defaultValue={selectedManualTransactionForEdit.category ?? ""} />
-                </label>
+                {!editManualIsPayment ? (
+                  <label>
+                    {t("admin.client_detail.category_required")}
+                    <select
+                      name="category"
+                      defaultValue={editManualCategoryIsConfigured ? editManualCategory : ""}
+                      required
+                    >
+                      <option value="">{t("admin.client_detail.manual_select_placeholder")}</option>
+                      {manualChargeCategories.map((category) => (
+                        <option key={category} value={category}>
+                          {category}
+                        </option>
+                      ))}
+                    </select>
+                    {editManualCategory && !editManualCategoryIsConfigured ? (
+                      <small className="muted">
+                        {t("admin.client_detail.unknown_transaction_category_help", { category: editManualCategory })}
+                      </small>
+                    ) : null}
+                  </label>
+                ) : null}
                 <label>
                   {t("admin.client_detail.reference_optional")}
                   <input type="text" name="reference" maxLength={120} defaultValue={selectedManualTransactionForEdit.reference ?? ""} />

@@ -3227,6 +3227,53 @@ def _configured_product_categories(db: Session) -> list[str]:
     return _parse_product_categories(setting.value or "")
 
 
+def _product_category_lookup(db: Session) -> dict[str, str]:
+    category_rows = db.scalars(
+        select(ProductCategory)
+        .where(ProductCategory.active.is_(True))
+        .order_by(ProductCategory.name.asc())
+    ).all()
+    out: dict[str, str] = {}
+    for row in category_rows:
+        name = (row.name or "").strip()
+        if not name:
+            continue
+        out.setdefault(name.casefold(), name)
+        code = (row.code or "").strip()
+        if code:
+            out.setdefault(code.casefold(), name)
+    if out:
+        return out
+    return {name.casefold(): name for name in _configured_product_categories(db)}
+
+
+def _normalize_manual_transaction_category(
+    db: Session,
+    category_raw: object,
+    *,
+    required: bool,
+) -> str | None:
+    category = _normalize_optional(category_raw)
+    if category is None:
+        if required:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="La categorie est obligatoire pour une transaction de facturation",
+            )
+        return None
+
+    allowed_categories = _product_category_lookup(db)
+    if allowed_categories:
+        canonical_category = allowed_categories.get(category.casefold())
+        if canonical_category is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Unknown category. Update products categories in admin config first.",
+            )
+        return canonical_category
+    return category
+
+
 def _payment_method_legal_entity_defaults(db: Session) -> dict[str, UUID]:
     setting = db.scalar(select(AppSetting).where(AppSetting.key == PAYMENT_METHODS_LEGAL_ENTITY_MAP_SETTING_KEY))
     if setting is None or not (setting.value or "").strip():
@@ -7682,14 +7729,11 @@ def create_admin_client_manual_transaction(
 
     label = _manual_transaction_label(transaction_type, _normalize_optional(payload.label))
     description = _normalize_optional(payload.description)
-    category = _normalize_optional(payload.category)
-    if category:
-        allowed_categories = _configured_product_categories(db)
-        if allowed_categories and category.casefold() not in {item.casefold() for item in allowed_categories}:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Unknown category. Update products categories in admin config first.",
-            )
+    category = (
+        _normalize_optional(payload.category)
+        if transaction_type == "PAYMENT"
+        else _normalize_manual_transaction_category(db, payload.category, required=True)
+    )
     custom_reference = _normalize_optional(payload.reference)
     if custom_reference and custom_reference.upper().startswith("MODE:"):
         custom_reference = _manual_custom_reference(custom_reference)
@@ -8563,15 +8607,11 @@ def update_admin_client_manual_transaction(
     if "description" in update_values:
         row.description = _normalize_optional(update_values.get("description"))
     if "category" in update_values:
-        category = _normalize_optional(update_values.get("category"))
-        if category:
-            allowed_categories = _configured_product_categories(db)
-            if allowed_categories and category.casefold() not in {item.casefold() for item in allowed_categories}:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Unknown category. Update products categories in admin config first.",
-                )
-        row.category = category
+        row.category = (
+            _normalize_optional(update_values.get("category"))
+            if transaction_type == "PAYMENT"
+            else _normalize_manual_transaction_category(db, update_values.get("category"), required=True)
+        )
     if "occurred_at" in update_values and update_values.get("occurred_at") is not None:
         row.occurred_at = update_values["occurred_at"]
     if "currency" in update_values:
