@@ -7991,19 +7991,6 @@ def _execute_quote_followup_transformation(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Creneau selectionne introuvable")
 
         expected_dates = _expected_activity_dates_from_snapshot(quote, activity_id=activity_id, schedule_key=schedule_key)
-        selected_solfege_session = _resolve_selected_solfege_live_session(
-            db,
-            quote=quote,
-            activity_id=activity_id,
-            expected_dates=expected_dates,
-        )
-        if selected_solfege_session is not None:
-            selected_session = selected_solfege_session
-        elif _quote_snapshot_activity_is_solfege(quote, activity_id=activity_id) and _quote_selected_solfege_slot(quote):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Le creneau de solfege choisi sur le devis n'a plus de correspondance live",
-            )
         if selected_session.status != SessionStatus.SCHEDULED:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Le creneau selectionne n'est plus reservable")
 

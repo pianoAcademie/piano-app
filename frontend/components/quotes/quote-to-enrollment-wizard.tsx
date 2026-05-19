@@ -527,6 +527,11 @@ export default function QuoteToEnrollmentWizard({
           editable: true,
         };
         return { ...mapped, status: billingStatus(mapped) };
+      }).filter((row) => {
+        if (suggestedById.has(row.rowId)) {
+          return true;
+        }
+        return !row.rowId.startsWith("off-planning-") && billingStatus(row) !== "blocked";
       });
     }
     return suggestedBillingRows.map((row) => ({ ...row, status: billingStatus(row) }));
@@ -553,7 +558,15 @@ export default function QuoteToEnrollmentWizard({
         return { ...next, status: billingStatus(next) };
       });
 
-      const preservedCustom = previous.filter((row) => !suggestedBillingRows.some((suggested) => suggested.rowId === row.rowId));
+      const preservedCustom = previous.filter((row) => {
+        if (suggestedBillingRows.some((suggested) => suggested.rowId === row.rowId)) {
+          return false;
+        }
+        if (row.rowId.startsWith("off-planning-")) {
+          return false;
+        }
+        return billingStatus(row) !== "blocked";
+      });
       return [...merged, ...preservedCustom];
     });
   }, [suggestedBillingRows]);
@@ -1019,6 +1032,14 @@ export default function QuoteToEnrollmentWizard({
 
   function assignSession(activityId: string, sessionId: string): void {
     setAssignedSessionByActivityId((previous) => ({ ...previous, [activityId]: sessionId }));
+    setOffPlanningActivityIds((previous) => {
+      if (!previous.has(activityId)) {
+        return previous;
+      }
+      const next = new Set(previous);
+      next.delete(activityId);
+      return next;
+    });
   }
 
   function updateBillingRow(rowId: string, patch: Partial<BillingExtraRow>): void {
