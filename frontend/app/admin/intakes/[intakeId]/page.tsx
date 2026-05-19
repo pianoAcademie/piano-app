@@ -367,6 +367,14 @@ function answerRequested(answers: TypeformAnswerOut[], tokens: string[]): boolea
   });
 }
 
+function answerValueByTokens(answers: TypeformAnswerOut[], tokens: string[]): string {
+  const found = answers.find((answer) => {
+    const haystack = `${answer.label} ${answer.key}`;
+    return tokens.every((token) => normalizeSearchText(haystack).includes(token));
+  });
+  return found?.value?.trim() || "";
+}
+
 function recommendationSummary(recommendation: TypeformSessionRecommendationOut | null): string {
   if (!recommendation) return "";
   const selected = recommendation.options.find((option) => option.session_id === recommendation.selected_session_id)
@@ -418,6 +426,7 @@ function intakeKeyFacts(
   const secondCourseMode = normalizedScalarValue(secondCourse, "modality") === "online"
     ? (language === "fr" ? "En ligne" : "Online")
     : (language === "fr" ? "Presentiel" : "Onsite");
+  const otherNotes = normalizedScalarValue(payload, "notes") || answerValueByTokens(detail.answers, ["autres", "points"]);
 
   return [
     {
@@ -465,6 +474,11 @@ function intakeKeyFacts(
       title: "MasterClass",
       value: boolLabel(masterclassRequested, language),
       tone: masterclassRequested ? "ok" : "off",
+    },
+    {
+      title: language === "fr" ? "Autres points" : "Other notes",
+      value: otherNotes || "-",
+      tone: otherNotes ? "warn" : "off",
     },
   ];
 }
