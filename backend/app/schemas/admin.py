@@ -624,6 +624,7 @@ class AdminActivityOut(BaseModel):
     mode: DeliveryMode
     requires_professor: bool
     allows_student_bookings: bool
+    supports_student_time_overrides: bool
     default_capacity: int
     default_hourly_rate: Decimal | None
     default_course_rate_ttc: Decimal | None
@@ -653,6 +654,7 @@ class AdminActivityUpsertRequest(BaseModel):
     mode: DeliveryMode = DeliveryMode.ANY
     requires_professor: bool = True
     allows_student_bookings: bool = True
+    supports_student_time_overrides: bool = False
     default_capacity: int = Field(default=8, ge=0, le=500)
     default_hourly_rate: Decimal | None = Field(default=None, ge=0)
     default_course_rate_ttc: Decimal | None = Field(default=None, ge=0)
@@ -680,6 +682,7 @@ class AdminActivityUpdateRequest(BaseModel):
     mode: DeliveryMode | None = None
     requires_professor: bool | None = None
     allows_student_bookings: bool | None = None
+    supports_student_time_overrides: bool | None = None
     default_capacity: int | None = Field(default=None, ge=0, le=500)
     default_hourly_rate: Decimal | None = Field(default=None, ge=0)
     default_course_rate_ttc: Decimal | None = Field(default=None, ge=0)
@@ -2093,6 +2096,7 @@ class AdminSessionOut(BaseModel):
     effective_teacher_display_name: str
     requires_professor: bool
     allows_student_bookings: bool
+    supports_student_time_overrides: bool
     location_label: str
     type_label: str
     status_label: str
@@ -2140,6 +2144,8 @@ class AdminSessionBookingOut(BaseModel):
     booked_at: datetime
     cancelled_at: datetime | None
     cancellation_reason: str | None
+    student_start_at_utc: datetime | None
+    student_end_at_utc: datetime | None
     waitlist_position: int | None
     student_note: str | None
 
@@ -2148,6 +2154,8 @@ class AdminSessionBookingCreateRequest(BaseModel):
     client_id: UUID
     client_plan_subscription_id: UUID | None = None
     recurrence_end_date: date | None = None
+    student_start_time_local: str | None = Field(default=None, max_length=5)
+    student_end_time_local: str | None = Field(default=None, max_length=5)
 
 
 class AdminSessionBookingAttendanceUpdateRequest(BaseModel):
@@ -2160,6 +2168,11 @@ class AdminSessionGroupNoteUpdateRequest(BaseModel):
 
 class AdminSessionBookingNoteUpdateRequest(BaseModel):
     student_note: str | None = Field(default=None, max_length=12000)
+
+
+class AdminSessionBookingStudentTimeUpdateRequest(BaseModel):
+    student_start_time_local: str | None = Field(default=None, max_length=5)
+    student_end_time_local: str | None = Field(default=None, max_length=5)
 
 
 class AdminSessionBookingOperationOut(BaseModel):

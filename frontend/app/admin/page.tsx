@@ -7,6 +7,7 @@ import {
   adminSendSessionBroadcastAction,
   adminUpdateSessionAttendanceAction,
   adminUpdateSessionBookingNoteAction,
+  adminUpdateSessionBookingStudentTimeAction,
   adminUpdateSessionGroupNoteAction,
   cancelAdminSessionAction,
   createAdminSessionAction,
@@ -469,6 +470,17 @@ function sessionTimeRangeLabel(session: AdminSessionOut, language: UiLanguage = 
     return pickText(language, "Toute la journee", "All day");
   }
   return `${formatTime(session.start_at_utc, session.timezone, language)} - ${formatTime(session.end_at_utc, session.timezone, language)}`;
+}
+
+function bookingStudentTimeRangeLabel(
+  booking: AdminSessionBookingOut,
+  session: AdminSessionOut,
+  language: UiLanguage = "fr",
+): string | null {
+  if (!booking.student_start_at_utc || !booking.student_end_at_utc) {
+    return null;
+  }
+  return `${formatTime(booking.student_start_at_utc, session.timezone, language)} - ${formatTime(booking.student_end_at_utc, session.timezone, language)}`;
 }
 
 function sessionDurationMinutes(session: AdminSessionOut): number | null {
@@ -1357,6 +1369,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     : false;
   const selectedSessionRequiresProfessor = selectedSession ? selectedSession.requires_professor !== false : true;
   const selectedSessionAllowsStudentBookings = selectedSession ? selectedSession.allows_student_bookings !== false : true;
+  const selectedSessionSupportsStudentTimeOverrides = selectedSession ? selectedSession.supports_student_time_overrides === true : false;
   const selectedHabitualProfessorName = selectedSession
     ? (selectedSession.habitual_teacher_display_name || "").trim() ||
       (selectedHabitualProfessorDetail ? `${selectedHabitualProfessorDetail.first_name} ${selectedHabitualProfessorDetail.last_name}`.trim() : "") ||
@@ -2226,6 +2239,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       {selectedSessionBookings.map((booking, index) => {
                         const presence = bookingPresenceLabel(booking.status, language);
                         const enrollment = bookingEnrollmentLabel(booking.status, language);
+                        const studentTime = bookingStudentTimeRangeLabel(booking, selectedSession, language);
                         return (
                           <article key={booking.id} className="session-slot-attendee-row">
                             <div className="session-slot-attendee-identity">
@@ -2243,6 +2257,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                                 <strong>{booking.client_display_name || `Participant ${index + 1}`}</strong>
                               )}
                               <small className="muted">{booking.client_email}</small>
+                              {studentTime ? (
+                                <small className="muted">{isEnglish ? "Student time" : "Horaire eleve"}: {studentTime}</small>
+                              ) : null}
                             </div>
                             <div className="session-slot-attendee-badges">
                               <span className={`status-pill ${statusClass(booking.status)}`}>
@@ -2397,6 +2414,34 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                           maxSelections={1}
                           requiredSelection
                         />
+
+                        {selectedSessionSupportsStudentTimeOverrides ? (
+                          <div className="grid cols-2 config-form-grid">
+                            <label>
+                              {isEnglish ? "Student start" : "Debut eleve"}
+                              <input
+                                type="time"
+                                name="student_start_time_local"
+                                min={toTimeInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)}
+                                max={toTimeInputInTimezone(selectedSession.end_at_utc, selectedSession.timezone)}
+                              />
+                            </label>
+                            <label>
+                              {isEnglish ? "Student end" : "Fin eleve"}
+                              <input
+                                type="time"
+                                name="student_end_time_local"
+                                min={toTimeInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)}
+                                max={toTimeInputInTimezone(selectedSession.end_at_utc, selectedSession.timezone)}
+                              />
+                            </label>
+                            <small className="muted span-2">
+                              {isEnglish
+                                ? "Optional. Keep empty to use the full teacher slot."
+                                : "Optionnel. Laisser vide pour utiliser tout le creneau professeur."}
+                            </small>
+                          </div>
+                        ) : null}
 
                         <div className="session-enroll-submit">
                           {selectedSession.recurrence_group_id ? (
@@ -2960,6 +3005,52 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     ) : (
                       <p className="muted">{isEnglish ? "Attendance cannot be edited for this status." : "Presence non editable pour ce statut."}</p>
                     )}
+
+                    {selectedSessionSupportsStudentTimeOverrides ? (
+                      <details className="attendance-v2-notes" open={Boolean(focusedAttendanceBooking.student_start_at_utc)}>
+                        <summary>{isEnglish ? "Student reminder time" : "Horaire de rappel eleve"}</summary>
+                        <form action={adminUpdateSessionBookingStudentTimeAction} className="attendance-v2-note-form">
+                          <input type="hidden" name="session_id" value={selectedSession.id} />
+                          <input type="hidden" name="booking_id" value={focusedAttendanceBooking.id} />
+                          <input type="hidden" name="return_to" value={attendanceBookingHref(focusedAttendanceBooking.id)} />
+                          <div className="grid cols-2 config-form-grid">
+                            <label>
+                              {isEnglish ? "Start" : "Debut"}
+                              <input
+                                type="time"
+                                name="student_start_time_local"
+                                defaultValue={
+                                  focusedAttendanceBooking.student_start_at_utc
+                                    ? toTimeInputInTimezone(focusedAttendanceBooking.student_start_at_utc, selectedSession.timezone)
+                                    : ""
+                                }
+                                min={toTimeInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)}
+                                max={toTimeInputInTimezone(selectedSession.end_at_utc, selectedSession.timezone)}
+                              />
+                            </label>
+                            <label>
+                              {isEnglish ? "End" : "Fin"}
+                              <input
+                                type="time"
+                                name="student_end_time_local"
+                                defaultValue={
+                                  focusedAttendanceBooking.student_end_at_utc
+                                    ? toTimeInputInTimezone(focusedAttendanceBooking.student_end_at_utc, selectedSession.timezone)
+                                    : ""
+                                }
+                                min={toTimeInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)}
+                                max={toTimeInputInTimezone(selectedSession.end_at_utc, selectedSession.timezone)}
+                              />
+                            </label>
+                          </div>
+                          <div className="row">
+                            <button type="submit" className="ghost">
+                              {isEnglish ? "Save time" : "Enregistrer l horaire"}
+                            </button>
+                          </div>
+                        </form>
+                      </details>
+                    ) : null}
 
                     <details className="attendance-v2-notes">
                       <summary>{isEnglish ? "Notes (optional)" : "Notes (optionnel)"}</summary>

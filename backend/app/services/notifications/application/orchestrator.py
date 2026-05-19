@@ -494,11 +494,16 @@ def schedule_reminder_notifications_for_booking(
         payload_json={"booking_id": str(booking.id), "session_id": str(session_obj.id), "course_type_id": str(course_type.id)},
     )
     out: list[OrchestratedNotification] = []
-    start_label = session_obj.start_at_utc.strftime("%d/%m/%Y %H:%M UTC")
+    booking_start_at = booking.student_start_at_utc or session_obj.start_at_utc
+    booking_end_at = booking.student_end_at_utc or session_obj.end_at_utc
+    if booking_start_at.date() == booking_end_at.date():
+        start_label = f"{booking_start_at.strftime('%d/%m/%Y %H:%M')} - {booking_end_at.strftime('%H:%M')} UTC"
+    else:
+        start_label = f"{booking_start_at.strftime('%d/%m/%Y %H:%M')} - {booking_end_at.strftime('%d/%m/%Y %H:%M')} UTC"
 
     for recipient in recipients:
         if email_enabled:
-            scheduled_for = session_obj.start_at_utc - timedelta(minutes=email_offset_minutes)
+            scheduled_for = booking_start_at - timedelta(minutes=email_offset_minutes)
             status = NOTIFICATION_STATUS_PENDING
             failure_reason = None
             if recipient.email is None:
@@ -537,7 +542,7 @@ def schedule_reminder_notifications_for_booking(
                 out.append(OrchestratedNotification(notification_id=created.id, queue_name=QUEUE_NOTIFICATIONS_SCHEDULED))
 
         if sms_enabled:
-            scheduled_for = session_obj.start_at_utc - timedelta(minutes=sms_offset_minutes)
+            scheduled_for = booking_start_at - timedelta(minutes=sms_offset_minutes)
             status = NOTIFICATION_STATUS_PENDING
             failure_reason = None
             if recipient.phone is None:

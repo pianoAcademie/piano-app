@@ -1357,6 +1357,8 @@ def _book_session_internal(
         vat_amount_snapshot=booking.vat_amount_snapshot,
         total_incl_vat_snapshot=booking.total_incl_vat_snapshot,
         currency_snapshot=booking.currency_snapshot,
+        student_start_at_utc=booking.student_start_at_utc,
+        student_end_at_utc=booking.student_end_at_utc,
         waitlist_position=_waitlist_position(db, booking),
     )
 
@@ -1505,6 +1507,8 @@ def list_my_bookings(
             vat_amount_snapshot=booking.vat_amount_snapshot,
             total_incl_vat_snapshot=booking.total_incl_vat_snapshot,
             currency_snapshot=booking.currency_snapshot,
+            student_start_at_utc=booking.student_start_at_utc,
+            student_end_at_utc=booking.student_end_at_utc,
             session=SessionMiniOut(
                 id=session.id,
                 title=session.title,

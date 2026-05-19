@@ -47,11 +47,19 @@ from app.models.ops import (
     CommunicationSenderCategory,
     MessageFormat,
 )
+from app.models.notification_engine import Notification
 from app.models.quote import Prospect, Quote, QuoteAcceptanceFollowup
 from app.models.user import ClientStatus, User, UserRole
 from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
 from app.services.invoice_documents import normalize_billing_entity
 from app.services.notifications.application.orchestrator import enqueue_notifications, schedule_slot_cancelled_notifications
+from app.services.notifications.domain.constants import (
+    NOTIFICATION_STATUS_CANCELLED,
+    NOTIFICATION_STATUS_PENDING,
+    NOTIFICATION_STATUS_QUEUED,
+    NOTIFICATION_TYPE_REMINDER_EMAIL,
+    NOTIFICATION_TYPE_REMINDER_SMS,
+)
 from app.services.payment_receipts import (
     FINAL_INVOICE_ELIGIBLE_BOOKING_STATUSES,
     generate_final_invoice_for_booking,
@@ -103,6 +111,7 @@ from app.schemas.admin import (
     AdminSessionBookingNoteUpdateRequest,
     AdminSessionBookingOperationOut,
     AdminSessionBookingOut,
+    AdminSessionBookingStudentTimeUpdateRequest,
     AdminSessionCreateRequest,
     AdminSessionGroupNoteUpdateRequest,
     AdminSessionOut,
@@ -341,6 +350,7 @@ def _to_admin_session_out(
         effective_teacher_display_name=effective_teacher_display_name,
         requires_professor=bool(course_type.requires_professor) if course_type is not None else True,
         allows_student_bookings=bool(course_type.allows_student_bookings) if course_type is not None else True,
+        supports_student_time_overrides=bool(course_type.supports_student_time_overrides) if course_type is not None else False,
         location_label=location_label,
         type_label=type_label,
         status_label=status_label,
@@ -418,6 +428,53 @@ def _client_display_name(user: User) -> str:
     return full_name or user.email
 
 
+def _parse_student_time_local(value: str | None) -> time | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    match = re.match(r"^([01]\d|2[0-3]):([0-5]\d)$", raw)
+    if match is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Horaire eleve invalide")
+    return time(hour=int(match.group(1)), minute=int(match.group(2)))
+
+
+def _student_time_override_for_session(
+    *,
+    session_obj: CourseSession,
+    course_type: CourseType,
+    start_time_local: str | None,
+    end_time_local: str | None,
+) -> tuple[datetime | None, datetime | None]:
+    start_time = _parse_student_time_local(start_time_local)
+    end_time = _parse_student_time_local(end_time_local)
+    if start_time is None and end_time is None:
+        return None, None
+    if start_time is None or end_time is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Renseigner le debut et la fin de l horaire eleve",
+        )
+    if not bool(course_type.supports_student_time_overrides):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cette activite ne permet pas les horaires eleves decales",
+        )
+
+    tz = ZoneInfo(_normalize_session_timezone(session_obj.timezone))
+    session_start_local = session_obj.start_at_utc.astimezone(tz)
+    session_end_local = session_obj.end_at_utc.astimezone(tz)
+    student_start_local = datetime.combine(session_start_local.date(), start_time, tzinfo=tz)
+    student_end_local = datetime.combine(session_start_local.date(), end_time, tzinfo=tz)
+    if student_end_local <= student_start_local:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="La fin doit etre apres le debut")
+    if student_start_local < session_start_local or student_end_local > session_end_local:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="L horaire eleve doit rester dans le creneau professeur",
+        )
+    return student_start_local.astimezone(timezone.utc), student_end_local.astimezone(timezone.utc)
+
+
 def _to_admin_session_booking_out(db: Session, booking: Booking, client: User) -> AdminSessionBookingOut:
     return AdminSessionBookingOut(
         id=booking.id,
@@ -432,6 +489,8 @@ def _to_admin_session_booking_out(db: Session, booking: Booking, client: User) -
         booked_at=booking.booked_at,
         cancelled_at=booking.cancelled_at,
         cancellation_reason=booking.cancellation_reason,
+        student_start_at_utc=booking.student_start_at_utc,
+        student_end_at_utc=booking.student_end_at_utc,
         waitlist_position=_waitlist_position(db, booking),
         student_note=booking.student_note,
     )
@@ -553,6 +612,35 @@ def _copy_booking_payload(source: Booking, target: Booking) -> None:
     target.student_note = source.student_note
 
 
+def _cancel_pending_notification_reminders_for_booking(
+    db: Session,
+    *,
+    booking_id: UUID,
+    reason: str,
+    now: datetime,
+) -> int:
+    notifications = db.scalars(
+        select(Notification).where(
+            Notification.booking_id == booking_id,
+            Notification.notification_type.in_(
+                [
+                    NOTIFICATION_TYPE_REMINDER_EMAIL,
+                    NOTIFICATION_TYPE_REMINDER_SMS,
+                ]
+            ),
+            Notification.status.in_([NOTIFICATION_STATUS_PENDING, NOTIFICATION_STATUS_QUEUED]),
+        )
+    ).all()
+
+    for notification in notifications:
+        notification.status = NOTIFICATION_STATUS_CANCELLED
+        notification.skipped_at = now
+        notification.failure_reason = reason
+        notification.updated_at = now
+
+    return len(notifications)
+
+
 def _move_planning_reorganization_booking_occurrence(
     db: Session,
     *,
@@ -598,9 +686,13 @@ def _move_planning_reorganization_booking_occurrence(
 
     if target_booking.id == booking.id:
         booking.session_id = target_session.id
+        booking.student_start_at_utc = None
+        booking.student_end_at_utc = None
         moved_booking = booking
     else:
         _copy_booking_payload(booking, target_booking)
+        target_booking.student_start_at_utc = None
+        target_booking.student_end_at_utc = None
         booking.status = BookingStatus.CANCELLED
         booking.cancelled_at = now
         booking.cancellation_reason = "ADMIN_MOVED_TO_ANOTHER_SLOT"
@@ -610,9 +702,21 @@ def _move_planning_reorganization_booking_occurrence(
             reason="Booking moved by admin",
             now=now,
         )
+        _cancel_pending_notification_reminders_for_booking(
+            db,
+            booking_id=booking.id,
+            reason="Booking moved by admin",
+            now=now,
+        )
         moved_booking = target_booking
 
     if moved_booking.status == BookingStatus.BOOKED:
+        _cancel_pending_notification_reminders_for_booking(
+            db,
+            booking_id=moved_booking.id,
+            reason="Booking moved by admin",
+            now=now,
+        )
         ensure_booking_reminder(
             db,
             booking=moved_booking,
@@ -3595,6 +3699,64 @@ def update_admin_session_booking_note(
     return _to_admin_session_booking_out(db, booking, client)
 
 
+@router.patch("/sessions/{session_id}/bookings/{booking_id}/student-time", response_model=AdminSessionBookingOut)
+def update_admin_session_booking_student_time(
+    session_id: UUID,
+    booking_id: UUID,
+    payload: AdminSessionBookingStudentTimeUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
+) -> AdminSessionBookingOut:
+    row = db.execute(
+        select(Booking, CourseSession, CourseType)
+        .join(CourseSession, CourseSession.id == Booking.session_id)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .where(
+            Booking.id == booking_id,
+            Booking.session_id == session_id,
+            Booking.status.in_(BOOKING_STATUSES_ACTIVE),
+        )
+        .with_for_update()
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+
+    booking, session_obj, course_type = row
+    student_start_at_utc, student_end_at_utc = _student_time_override_for_session(
+        session_obj=session_obj,
+        course_type=course_type,
+        start_time_local=payload.student_start_time_local,
+        end_time_local=payload.student_end_time_local,
+    )
+    booking.student_start_at_utc = student_start_at_utc
+    booking.student_end_at_utc = student_end_at_utc
+
+    now = _utcnow()
+    if booking.status == BookingStatus.BOOKED:
+        skip_pending_reminders_for_booking(
+            db,
+            booking_id=booking.id,
+            reason="Student reminder time changed by admin",
+            now=now,
+        )
+        _cancel_pending_notification_reminders_for_booking(
+            db,
+            booking_id=booking.id,
+            reason="Student reminder time changed by admin",
+            now=now,
+        )
+        ensure_booking_reminder(db, booking=booking, session_obj=session_obj, now=now)
+
+    db.commit()
+    db.refresh(booking)
+
+    client = db.scalar(select(User).where(User.id == booking.user_id))
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+
+    return _to_admin_session_booking_out(db, booking, client)
+
+
 @router.post("/sessions/{session_id}/bookings", response_model=AdminSessionBookingOperationOut)
 def add_admin_session_booking(
     session_id: UUID,
@@ -3656,6 +3818,12 @@ def add_admin_session_booking(
                 skipped_count += 1
                 add_detail("Creneau sans eleve: inscription impossible")
                 continue
+            student_start_at_utc, student_end_at_utc = _student_time_override_for_session(
+                session_obj=target,
+                course_type=target_course_type,
+                start_time_local=payload.student_start_time_local,
+                end_time_local=payload.student_end_time_local,
+            )
 
             existing = db.scalar(
                 select(Booking)
@@ -3741,6 +3909,8 @@ def add_admin_session_booking(
                     vat_amount_snapshot=vat_amount,
                     total_incl_vat_snapshot=total,
                     currency_snapshot=currency,
+                    student_start_at_utc=student_start_at_utc,
+                    student_end_at_utc=student_end_at_utc,
                 )
                 db.add(booking)
                 db.flush()
@@ -3755,6 +3925,8 @@ def add_admin_session_booking(
                 existing.vat_amount_snapshot = vat_amount
                 existing.total_incl_vat_snapshot = total
                 existing.currency_snapshot = currency
+                existing.student_start_at_utc = student_start_at_utc
+                existing.student_end_at_utc = student_end_at_utc
                 booking = existing
 
             if next_status == BookingStatus.BOOKED:
@@ -4699,6 +4871,15 @@ def duplicate_session_operation(
                 duplicate_status = source_booking.status
                 if duplicate_status in (BookingStatus.ATTENDED, BookingStatus.NO_SHOW, BookingStatus.EXCUSED_ABSENCE):
                     duplicate_status = BookingStatus.BOOKED
+                duplicate_student_start_at_utc = None
+                duplicate_student_end_at_utc = None
+                if source_booking.student_start_at_utc is not None and source_booking.student_end_at_utc is not None:
+                    duplicate_student_start_at_utc = duplicate_session.start_at_utc + (
+                        source_booking.student_start_at_utc - target.start_at_utc
+                    )
+                    duplicate_student_end_at_utc = duplicate_session.start_at_utc + (
+                        source_booking.student_end_at_utc - target.start_at_utc
+                    )
 
                 duplicate_booking = Booking(
                     session_id=duplicate_session.id,
@@ -4714,6 +4895,8 @@ def duplicate_session_operation(
                     total_incl_vat_snapshot=source_booking.total_incl_vat_snapshot,
                     currency_snapshot=source_booking.currency_snapshot,
                     student_note=source_booking.student_note,
+                    student_start_at_utc=duplicate_student_start_at_utc,
+                    student_end_at_utc=duplicate_student_end_at_utc,
                 )
                 db.add(duplicate_booking)
                 db.flush()

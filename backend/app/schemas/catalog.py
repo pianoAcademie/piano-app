@@ -23,6 +23,7 @@ class CourseTypeOut(BaseModel):
     mode: DeliveryMode
     requires_professor: bool
     allows_student_bookings: bool
+    supports_student_time_overrides: bool
     default_capacity: int
     default_hourly_rate: Decimal | None
     default_course_rate_ttc: Decimal | None
@@ -33,6 +34,7 @@ class LocationOut(BaseModel):
     id: UUID
     code: str
     name: str
+    supports_student_time_overrides: bool = False
     address_line: str | None
     city: str | None
     country_code: str | None

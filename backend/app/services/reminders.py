@@ -35,6 +35,14 @@ EMAIL_REMINDER_HOURS_BEFORE_START = 24
 SMS_REMINDER_HOURS_BEFORE_START = 1
 
 
+def _booking_start_at_utc(booking: Booking, session_obj: CourseSession) -> datetime:
+    return booking.student_start_at_utc or session_obj.start_at_utc
+
+
+def _booking_end_at_utc(booking: Booking, session_obj: CourseSession) -> datetime:
+    return booking.student_end_at_utc or session_obj.end_at_utc
+
+
 @dataclass(frozen=True)
 class ReminderJobResult:
     created: int
@@ -117,7 +125,7 @@ def ensure_booking_reminder(
         course_type_id=session_obj.course_type_id,
         channel="EMAIL",
     )
-    scheduled_for = session_obj.start_at_utc - timedelta(hours=reminder_hours)
+    scheduled_for = _booking_start_at_utc(booking, session_obj) - timedelta(hours=reminder_hours)
 
     reminder = db.scalar(
         select(EmailReminder)
@@ -186,7 +194,13 @@ def backfill_future_booking_reminders(db: Session, *, now: datetime, limit: int 
     return created_or_updated
 
 
-def _format_session_datetime(session_obj: CourseSession, timezone_preference: str | None, location: Location) -> str:
+def _format_session_datetime(
+    session_obj: CourseSession,
+    timezone_preference: str | None,
+    location: Location,
+    *,
+    booking: Booking | None = None,
+) -> str:
     tz_name = timezone_preference or location.timezone or "UTC"
     try:
         tz = ZoneInfo(tz_name)
@@ -198,8 +212,13 @@ def _format_session_datetime(session_obj: CourseSession, timezone_preference: st
             tz_name = "UTC"
             tz = ZoneInfo("UTC")
 
-    local_dt = session_obj.start_at_utc.astimezone(tz)
-    return f"{local_dt.strftime('%Y-%m-%d %H:%M')} ({tz_name})"
+    start_at = _booking_start_at_utc(booking, session_obj) if booking is not None else session_obj.start_at_utc
+    end_at = _booking_end_at_utc(booking, session_obj) if booking is not None else session_obj.end_at_utc
+    local_start = start_at.astimezone(tz)
+    local_end = end_at.astimezone(tz)
+    if local_start.date() == local_end.date():
+        return f"{local_start.strftime('%Y-%m-%d %H:%M')} - {local_end.strftime('%H:%M')} ({tz_name})"
+    return f"{local_start.strftime('%Y-%m-%d %H:%M')} - {local_end.strftime('%Y-%m-%d %H:%M')} ({tz_name})"
 
 
 def _build_email_payload(
@@ -208,8 +227,9 @@ def _build_email_payload(
     session_obj: CourseSession,
     course_type: CourseType,
     location: Location,
+    booking: Booking | None = None,
 ) -> tuple[str, str]:
-    start_human = _format_session_datetime(session_obj, user.timezone, location)
+    start_human = _format_session_datetime(session_obj, user.timezone, location, booking=booking)
     location_label = "Online" if location.is_online else location.name
 
     subject = f"Rappel cours: {course_type.name} - {start_human}"
@@ -380,7 +400,7 @@ def run_send_reminders_job(db: Session, *, now: datetime, limit: int = 200) -> R
         if (
             booking.status != BookingStatus.BOOKED
             or session_obj.status != SessionStatus.SCHEDULED
-            or session_obj.start_at_utc <= now
+            or _booking_start_at_utc(booking, session_obj) <= now
         ):
             reminder.status = ReminderStatus.SKIPPED
             reminder.sent_at = now
@@ -397,7 +417,7 @@ def run_send_reminders_job(db: Session, *, now: datetime, limit: int = 200) -> R
             skipped += 1
         else:
             try:
-                subject, body = _build_email_payload(db, user, session_obj, course_type, location)
+                subject, body = _build_email_payload(db, user, session_obj, course_type, location, booking=booking)
                 message_id = f"dev-{uuid4()}"
                 logger.info("Reminder sent | id=%s | to=%s | subject=%s | body=%s", message_id, user.email, subject, body)
 

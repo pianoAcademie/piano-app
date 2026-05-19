@@ -260,6 +260,7 @@ class CourseType(Base):
     )
     requires_professor: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     allows_student_bookings: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    supports_student_time_overrides: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     default_capacity: Mapped[int] = mapped_column(Integer, nullable=False)
     default_hourly_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     default_course_rate_ttc: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
@@ -441,6 +442,8 @@ class Booking(Base):
     vat_amount_snapshot: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
     total_incl_vat_snapshot: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
     currency_snapshot: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'EUR'"))
+    student_start_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    student_end_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     student_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 

@@ -112,6 +112,7 @@ def _serialize_public_session(
             id=course_type.id,
             code=course_type.code,
             name=course_type.name,
+            supports_student_time_overrides=bool(course_type.supports_student_time_overrides),
         ),
         location=SessionLocationOut(
             id=location.id,
@@ -180,6 +181,7 @@ def list_course_types(
             mode=row.mode,
             requires_professor=bool(row.requires_professor),
             allows_student_bookings=bool(row.allows_student_bookings),
+            supports_student_time_overrides=bool(row.supports_student_time_overrides),
             default_capacity=row.default_capacity,
             default_hourly_rate=row.default_hourly_rate,
             default_course_rate_ttc=row.default_course_rate_ttc,

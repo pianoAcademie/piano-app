@@ -345,6 +345,7 @@ def _serialize_activity(
         mode=activity.mode,
         requires_professor=bool(activity.requires_professor),
         allows_student_bookings=bool(activity.allows_student_bookings),
+        supports_student_time_overrides=bool(activity.supports_student_time_overrides),
         default_capacity=activity.default_capacity,
         default_hourly_rate=activity.default_hourly_rate,
         default_course_rate_ttc=activity.default_course_rate_ttc,
@@ -1882,6 +1883,9 @@ def create_admin_activity(
         mode=DeliveryMode(payload.mode),
         requires_professor=bool(payload.requires_professor) if payload.allows_student_bookings else False,
         allows_student_bookings=bool(payload.allows_student_bookings),
+        supports_student_time_overrides=(
+            bool(payload.supports_student_time_overrides) if payload.allows_student_bookings else False
+        ),
         default_capacity=_normalize_activity_capacity(
             allows_student_bookings=bool(payload.allows_student_bookings),
             capacity=int(payload.default_capacity),
@@ -2002,7 +2006,13 @@ def update_admin_activity(
         activity.allows_student_bookings = bool(changes["allows_student_bookings"])
         if not activity.allows_student_bookings:
             activity.requires_professor = False
+            activity.supports_student_time_overrides = False
             activity.default_capacity = 0
+
+    if "supports_student_time_overrides" in changes:
+        activity.supports_student_time_overrides = (
+            bool(changes["supports_student_time_overrides"]) if activity.allows_student_bookings else False
+        )
 
     if "default_capacity" in changes:
         activity.default_capacity = _normalize_activity_capacity(
@@ -2012,6 +2022,7 @@ def update_admin_activity(
 
     if not activity.allows_student_bookings:
         activity.requires_professor = False
+        activity.supports_student_time_overrides = False
         activity.default_capacity = 0
 
     _validate_activity_duration(

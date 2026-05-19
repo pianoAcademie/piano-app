@@ -60,6 +60,7 @@ export type CourseTypeOut = {
   mode: string;
   requires_professor: boolean;
   allows_student_bookings: boolean;
+  supports_student_time_overrides: boolean;
   default_capacity: number;
   default_hourly_rate: string | null;
   default_course_rate_ttc: string | null;
@@ -190,6 +191,8 @@ export type ClientBookingOut = {
   vat_amount_snapshot: string;
   total_incl_vat_snapshot: string;
   currency_snapshot: string;
+  student_start_at_utc: string | null;
+  student_end_at_utc: string | null;
   session: {
     id: string;
     title: string;
@@ -1259,6 +1262,7 @@ export type AdminSessionOut = {
   effective_teacher_display_name: string;
   requires_professor: boolean;
   allows_student_bookings: boolean;
+  supports_student_time_overrides: boolean;
   location_label: string;
   type_label: string;
   status_label: string;
@@ -1306,6 +1310,8 @@ export type AdminSessionBookingOut = {
   booked_at: string;
   cancelled_at: string | null;
   cancellation_reason: string | null;
+  student_start_at_utc: string | null;
+  student_end_at_utc: string | null;
   waitlist_position: number | null;
   student_note: string | null;
 };
@@ -1943,6 +1949,7 @@ export type AdminActivityOut = {
   mode: "ONLINE" | "ONSITE" | "ANY" | string;
   requires_professor: boolean;
   allows_student_bookings: boolean;
+  supports_student_time_overrides: boolean;
   default_capacity: number;
   default_hourly_rate: string | null;
   default_course_rate_ttc: string | null;

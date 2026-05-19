@@ -481,6 +481,10 @@ function yesNoLabel(language: UiLanguage, value: boolean): string {
   return uiText(language, value ? "common.yes" : "common.no");
 }
 
+function pickText(language: UiLanguage, fr: string, en: string): string {
+  return language === "en" ? en : fr;
+}
+
 const REFERRAL_CONFIG_TEXT: Record<UiLanguage, Record<string, string>> = {
   fr: {
     load_error: "Parametres de parrainage indisponibles : {message}",
@@ -3711,6 +3715,15 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                       defaultChecked
                                     />
                                     <ActivityToggleCard
+                                      name="supports_student_time_overrides"
+                                      label={pickText(language, "Horaires eleves decales", "Staggered student times")}
+                                      description={pickText(
+                                        language,
+                                        "Permet de definir un horaire par eleve a l interieur du creneau professeur.",
+                                        "Allow a per-student time inside the teacher slot.",
+                                      )}
+                                    />
+                                    <ActivityToggleCard
                                       name="exclude_holidays_in_recurrence"
                                       label={t("admin.activity_modal.exclude_holidays")}
                                       description={t("admin.activity_modal.exclude_holidays_desc")}
@@ -4023,6 +4036,16 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                       label={t("admin.activity_modal.requires_professor")}
                                       description={t("admin.activity_modal.requires_professor_desc")}
                                       defaultChecked={selectedActivity.requires_professor}
+                                    />
+                                    <ActivityToggleCard
+                                      name="supports_student_time_overrides"
+                                      label={pickText(language, "Horaires eleves decales", "Staggered student times")}
+                                      description={pickText(
+                                        language,
+                                        "Permet de definir un horaire par eleve a l interieur du creneau professeur.",
+                                        "Allow a per-student time inside the teacher slot.",
+                                      )}
+                                      defaultChecked={selectedActivity.supports_student_time_overrides}
                                     />
                                     <ActivityToggleCard
                                       name="exclude_holidays_in_recurrence"

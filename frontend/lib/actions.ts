@@ -3194,6 +3194,8 @@ export async function adminAddClientToSessionAction(formData: FormData): Promise
   const scope = parseBookingScope(scopeRaw);
   const recurrenceChecked = checkboxField(formData, "apply_recurrence");
   const recurrenceEndDate = String(formData.get("recurrence_end_date") ?? "").trim();
+  const studentStartTimeLocal = String(formData.get("student_start_time_local") ?? "").trim();
+  const studentEndTimeLocal = String(formData.get("student_end_time_local") ?? "").trim();
   const shouldApplyFuture = scope === "SERIES_FUTURE" || recurrenceChecked;
 
   if (!sessionId || !clientId) {
@@ -3211,6 +3213,10 @@ export async function adminAddClientToSessionAction(formData: FormData): Promise
   }
   if (shouldApplyFuture && recurrenceEndDate) {
     payload.recurrence_end_date = recurrenceEndDate;
+  }
+  if (studentStartTimeLocal || studentEndTimeLocal) {
+    payload.student_start_time_local = studentStartTimeLocal || null;
+    payload.student_end_time_local = studentEndTimeLocal || null;
   }
 
   const result = await backendRequest<{
@@ -3528,6 +3534,43 @@ export async function adminUpdateSessionBookingNoteAction(formData: FormData): P
 
   revalidatePath("/admin");
   redirect(appendQueryMessage(returnTo, "ok", t("admin.planning_action.internal_note_saved")));
+}
+
+export async function adminUpdateSessionBookingStudentTimeAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+
+  await ensureAdminAndGetLanguage(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin?edit=1");
+
+  const sessionId = String(formData.get("session_id") ?? "").trim();
+  const bookingId = String(formData.get("booking_id") ?? "").trim();
+  const studentStartTimeLocal = String(formData.get("student_start_time_local") ?? "").trim();
+  const studentEndTimeLocal = String(formData.get("student_end_time_local") ?? "").trim();
+  if (!sessionId || !bookingId) {
+    redirect(appendQueryMessage(returnTo, "error", "Inscription invalide."));
+  }
+
+  const result = await backendRequest<{ id: string }>(
+    `/api/v1/admin/sessions/${sessionId}/bookings/${bookingId}/student-time`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        student_start_time_local: studentStartTimeLocal || null,
+        student_end_time_local: studentEndTimeLocal || null,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin");
+  redirect(appendQueryMessage(returnTo, "ok", "Horaire eleve enregistre."));
 }
 
 export async function adminSendSessionBroadcastAction(formData: FormData): Promise<void> {
@@ -7451,6 +7494,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   const mode = modeRaw === "ONLINE" || modeRaw === "ONSITE" ? modeRaw : "ANY";
   const requiresProfessor = checkboxField(formData, "requires_professor");
   const allowsStudentBookings = !checkboxField(formData, "without_students");
+  const supportsStudentTimeOverrides = checkboxField(formData, "supports_student_time_overrides");
   const emailReminderHours = parseReminderHoursOverride(String(formData.get("email_reminder_hours_before_start") ?? ""));
   const smsReminderHours = parseReminderHoursOverride(String(formData.get("sms_reminder_hours_before_start") ?? ""));
   const minBookingNoticeHoursOverride = parseOptionalPlanningRuleOverride(String(formData.get("min_booking_notice_hours_override") ?? ""));
@@ -7521,6 +7565,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
     mode,
     requires_professor: allowsStudentBookings ? requiresProfessor : false,
     allows_student_bookings: allowsStudentBookings,
+    supports_student_time_overrides: allowsStudentBookings ? supportsStudentTimeOverrides : false,
     default_capacity: allowsStudentBookings ? defaultCapacity : 0,
     default_hourly_rate: defaultHourlyRateRaw ? defaultHourlyRate : null,
     default_course_rate_ttc: defaultCourseRateRaw ? defaultCourseRate : null,
@@ -7624,6 +7669,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   const mode = modeRaw === "ONLINE" || modeRaw === "ONSITE" ? modeRaw : "ANY";
   const requiresProfessor = checkboxField(formData, "requires_professor");
   const allowsStudentBookings = !checkboxField(formData, "without_students");
+  const supportsStudentTimeOverrides = checkboxField(formData, "supports_student_time_overrides");
   const emailReminderHours = parseReminderHoursOverride(String(formData.get("email_reminder_hours_before_start") ?? ""));
   const smsReminderHours = parseReminderHoursOverride(String(formData.get("sms_reminder_hours_before_start") ?? ""));
   const minBookingNoticeHoursOverride = parseOptionalPlanningRuleOverride(String(formData.get("min_booking_notice_hours_override") ?? ""));
@@ -7695,6 +7741,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
     mode,
     requires_professor: allowsStudentBookings ? requiresProfessor : false,
     allows_student_bookings: allowsStudentBookings,
+    supports_student_time_overrides: allowsStudentBookings ? supportsStudentTimeOverrides : false,
     default_capacity: allowsStudentBookings ? defaultCapacity : 0,
     default_hourly_rate: defaultHourlyRateRaw ? defaultHourlyRate : null,
     default_course_rate_ttc: defaultCourseRateRaw ? defaultCourseRate : null,
