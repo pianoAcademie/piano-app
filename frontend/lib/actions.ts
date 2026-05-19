@@ -15240,6 +15240,7 @@ type QuoteTransformLineOut = {
   vat_rate: string;
   amount_ht: string;
   amount_ttc: string;
+  meta?: Record<string, unknown>;
 };
 
 type QuoteTransformQuoteOut = {
@@ -15462,7 +15463,7 @@ async function loadQuoteQuickTransformAnalysis(
     amountHt: transformToNumber(line.amount_ht),
     amountTtc: transformToNumber(line.amount_ttc),
     vatRate: transformToNumber(line.vat_rate),
-    meta: {},
+    meta: line.meta || {},
   }));
   const defaultVatRate = lines.find((line) => line.vatRate > 0)?.vatRate ?? 20;
 

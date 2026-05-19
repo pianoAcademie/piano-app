@@ -157,6 +157,7 @@ export type ClientMatchCandidate = {
 export type ActivityPricingRow = {
   rowId: string;
   lineId: string;
+  scheduleKey: string;
   activityId: string;
   activityName: string;
   locationName: string;
@@ -660,6 +661,22 @@ function statusFromAmountDelta(deltaTtc: number): QuoteTransformStatus {
   return "blocked";
 }
 
+function planningKeyFromActivityAndSource(activityId: string, source: string): string {
+  return source ? `${activityId}:${source}` : activityId;
+}
+
+function planningKeyFromLine(line: QuoteTransformLine, activityId: string): string {
+  return planningKeyFromActivityAndSource(activityId, readString(line.meta?.typeform_automatic_line));
+}
+
+function planningKeyFromSnapshotRow(row: Record<string, unknown>, activityId: string): string {
+  const recommendationKey = readString(row.recommendation_key);
+  if (recommendationKey) {
+    return recommendationKey;
+  }
+  return planningKeyFromActivityAndSource(activityId, readString(row.typeform_automatic_line));
+}
+
 function amountReason(deltaTtc: number): string {
   const absolute = Math.abs(deltaTtc);
   if (absolute <= 0.5) {
@@ -682,6 +699,7 @@ export function buildActivityPricingRows(
     .filter((line) => line.activityId)
     .map((line, index) => {
       const activityId = line.activityId || "";
+      const scheduleKey = planningKeyFromLine(line, activityId);
       const activity = activitiesById.get(activityId);
       const quantity = line.quantity > 0 ? line.quantity : 1;
       const expectedTtc = Number(line.amountTtc.toFixed(2));
@@ -699,10 +717,11 @@ export function buildActivityPricingRows(
       }
 
       const deltaTtc = Number((currentSystemTtc - expectedTtc).toFixed(2));
-      const locationName = activityLocationNameById.get(activityId) || fallbackLocationName;
+      const locationName = activityLocationNameById.get(scheduleKey) || activityLocationNameById.get(activityId) || fallbackLocationName;
       return {
         rowId: `${line.id}-${activityId}`,
         lineId: line.id,
+        scheduleKey,
         activityId,
         activityName: activity?.name || line.title,
         locationName,
@@ -725,6 +744,7 @@ export function buildActivityPricingRows(
       {
         rowId: "demo-activity-1",
         lineId: "demo-line-1",
+        scheduleKey: "demo-activity",
         activityId: "demo-activity",
         activityName: "Cours individuel piano",
         locationName: fallbackLocationName,
@@ -927,7 +947,7 @@ export function buildSessionMatches(
   locale = "fr-FR",
   language: UiLanguage = "fr",
 ): SessionMatchOption[] {
-  const hint = hintsByActivityId.get(activityRow.activityId) ?? null;
+  const hint = hintsByActivityId.get(activityRow.scheduleKey) ?? hintsByActivityId.get(activityRow.activityId) ?? null;
   const selectionModeRef: { value: "exact_date_time" | "exact_date" | "nearest_date_time" | "nearest_date" | "all" } = { value: "all" };
   const scopedSessions = (() => {
     if (!hint || !hint.startDate) {
@@ -1144,12 +1164,12 @@ export function buildBillingExtraRows(
     });
 
   const offPlanningRows = activityRows
-    .filter((row) => offPlanningActivityIds.has(row.activityId))
+    .filter((row) => offPlanningActivityIds.has(row.scheduleKey) || offPlanningActivityIds.has(row.activityId))
     .map((row) => {
       const amountTtc = Number(row.expectedTtc.toFixed(2));
       const amountHt = Number((amountTtc / 1.2).toFixed(2));
       const extra: BillingExtraRow = {
-        rowId: `off-planning-${row.activityId}`,
+        rowId: `off-planning-${row.scheduleKey}`,
         sourceLineId: row.lineId,
         type: "off_planning_activity",
         label: `${row.activityName} (hors planning)`,
@@ -1204,6 +1224,7 @@ export function deriveScheduleHints(calendarSnapshot: Record<string, unknown>): 
     if (!activityId) {
       continue;
     }
+    const scheduleKey = planningKeyFromSnapshotRow(block, activityId);
     const startDateRaw = readString(block.start_date);
     const startTimeRaw = readString(block.start_time);
     const endTimeRaw = readString(block.end_time);
@@ -1212,19 +1233,19 @@ export function deriveScheduleHints(calendarSnapshot: Record<string, unknown>): 
     const weekdayFromBlock = Number.isFinite(weekdayRaw) && weekdayRaw >= 0 && weekdayRaw <= 6 ? weekdayRaw : null;
     const computedWeekday = startDate ? weekdayFromDateKey(startDate) : null;
     const candidate: QuoteScheduleHint = {
-      activityId,
+      activityId: scheduleKey,
       startDate,
       weekday: weekdayFromBlock ?? computedWeekday,
       startTime: isHhmm(startTimeRaw) ? startTimeRaw : null,
       endTime: isHhmm(endTimeRaw) ? endTimeRaw : null,
     };
-    const existing = hints.get(activityId);
+    const existing = hints.get(scheduleKey);
     if (!existing) {
-      hints.set(activityId, candidate);
+      hints.set(scheduleKey, candidate);
       continue;
     }
     if (candidate.startDate && (!existing.startDate || candidate.startDate < existing.startDate)) {
-      hints.set(activityId, candidate);
+      hints.set(scheduleKey, candidate);
       continue;
     }
     if (
@@ -1234,7 +1255,7 @@ export function deriveScheduleHints(calendarSnapshot: Record<string, unknown>): 
       && !existing.startTime
       && candidate.startTime
     ) {
-      hints.set(activityId, { ...existing, startTime: candidate.startTime, endTime: candidate.endTime });
+      hints.set(scheduleKey, { ...existing, startTime: candidate.startTime, endTime: candidate.endTime });
     }
   }
 
@@ -1248,6 +1269,7 @@ export function deriveScheduleHints(calendarSnapshot: Record<string, unknown>): 
     if (!activityId) {
       continue;
     }
+    const scheduleKey = planningKeyFromSnapshotRow(session, activityId);
     const isoDate = readString(session.date);
     const startTime = readString(session.start_time);
     const endTime = readString(session.end_time);
@@ -1261,10 +1283,10 @@ export function deriveScheduleHints(calendarSnapshot: Record<string, unknown>): 
       }
     }
 
-    const existing = hints.get(activityId);
+    const existing = hints.get(scheduleKey);
     if (!existing) {
-      hints.set(activityId, {
-        activityId,
+      hints.set(scheduleKey, {
+        activityId: scheduleKey,
         startDate: isIsoDate(isoDate) ? isoDate : null,
         weekday,
         startTime: isHhmm(startTime) ? startTime : null,
@@ -1285,7 +1307,7 @@ export function deriveScheduleHints(calendarSnapshot: Record<string, unknown>): 
     if (!existing.endTime && isHhmm(endTime)) {
       existing.endTime = endTime;
     }
-    hints.set(activityId, existing);
+    hints.set(scheduleKey, existing);
   }
   return hints;
 }
@@ -1300,17 +1322,28 @@ export function deriveActivityLocationNameById(calendarSnapshot: Record<string, 
         continue;
       }
       const activityId = readString(row.activity_id);
-      if (!activityId || output.has(activityId)) {
+      if (!activityId) {
         continue;
       }
+      const scheduleKey = planningKeyFromSnapshotRow(row, activityId);
       const locationLabel = readString(row.location_label);
       if (locationLabel) {
-        output.set(activityId, locationLabel);
+        if (!output.has(scheduleKey)) {
+          output.set(scheduleKey, locationLabel);
+        }
+        if (!output.has(activityId)) {
+          output.set(activityId, locationLabel);
+        }
         continue;
       }
       const locationId = readString(row.location_id);
       if (locationId) {
-        output.set(activityId, locationId);
+        if (!output.has(scheduleKey)) {
+          output.set(scheduleKey, locationId);
+        }
+        if (!output.has(activityId)) {
+          output.set(activityId, locationId);
+        }
       }
     }
   };
@@ -1334,10 +1367,16 @@ export function deriveActivityLocationIdById(calendarSnapshot: Record<string, un
       }
       const activityId = readString(row.activity_id);
       const locationId = readString(row.location_id);
-      if (!activityId || !locationId || output.has(activityId)) {
+      if (!activityId || !locationId) {
         continue;
       }
-      output.set(activityId, locationId);
+      const scheduleKey = planningKeyFromSnapshotRow(row, activityId);
+      if (!output.has(scheduleKey)) {
+        output.set(scheduleKey, locationId);
+      }
+      if (!output.has(activityId)) {
+        output.set(activityId, locationId);
+      }
     }
   };
 
@@ -1509,7 +1548,7 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
 
   for (const row of activityRows) {
     const sessions = input.sessionsByActivityId[row.activityId] || [];
-    const expectedLocationId = activityLocationIdById.get(row.activityId) || input.quote.locationId;
+    const expectedLocationId = activityLocationIdById.get(row.scheduleKey) || activityLocationIdById.get(row.activityId) || input.quote.locationId;
     const options = buildSessionMatches(row, sessions, expectedLocationId, scheduleHints, scenario);
     if (options.length > 0) {
       slotsFoundCount += 1;
@@ -1517,7 +1556,7 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
     if (options.length === 0) {
       pushBlocked(3, `${row.activityName}: aucun creneau coherent trouve.`);
       proposedScheduleAssignments.push({
-        activityId: row.activityId,
+        activityId: row.scheduleKey,
         activityName: row.activityName,
         status: "missing",
         sessionId: null,
@@ -1533,7 +1572,7 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
       const first = options[0];
       pushBlocked(3, `${row.activityName}: creneau complet sans alternative.`);
       proposedScheduleAssignments.push({
-        activityId: row.activityId,
+        activityId: row.scheduleKey,
         activityName: row.activityName,
         status: "full",
         sessionId: first?.sessionId || null,
@@ -1549,7 +1588,7 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
       autoAssignableCount += 1;
       pushOk(3, `${row.activityName}: creneau unique auto-assignable.`);
       proposedScheduleAssignments.push({
-        activityId: row.activityId,
+        activityId: row.scheduleKey,
         activityName: row.activityName,
         status: "auto_assigned",
         sessionId: recommended.sessionId,
@@ -1560,7 +1599,7 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
     } else {
       pushWarning(3, `${row.activityName}: plusieurs creneaux possibles, recommandation disponible.`);
       proposedScheduleAssignments.push({
-        activityId: row.activityId,
+        activityId: row.scheduleKey,
         activityName: row.activityName,
         status: "choice_required",
         sessionId: recommended.sessionId,
@@ -1734,10 +1773,10 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
 
     if (finalProposedScheduleAssignments.length === 0 && activityRows.length > 0) {
       finalProposedScheduleAssignments = activityRows.map((row) => ({
-        activityId: row.activityId,
+        activityId: row.scheduleKey,
         activityName: row.activityName,
         status: "auto_assigned",
-        sessionId: `demo-${row.activityId}`,
+        sessionId: `demo-${row.scheduleKey}`,
         sessionLabel: `${row.activityName} · Creneau recommande`,
         seatsRemaining: 3,
         warning: null,

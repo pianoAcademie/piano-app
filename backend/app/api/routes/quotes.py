@@ -6721,6 +6721,7 @@ def _expected_activity_dates_from_snapshot(
     quote: Quote,
     *,
     activity_id: UUID,
+    schedule_key: str | None = None,
 ) -> list[date]:
     snapshot = _json_object(quote.calendar_snapshot)
     out: set[date] = set()
@@ -6728,6 +6729,12 @@ def _expected_activity_dates_from_snapshot(
         row = _json_object(raw)
         if _parse_uuid_value(row.get("activity_id")) != activity_id:
             continue
+        if schedule_key:
+            recommendation_key = str(row.get("recommendation_key") or "").strip()
+            automatic_line = str(row.get("typeform_automatic_line") or "").strip()
+            row_key = recommendation_key or (f"{activity_id}:{automatic_line}" if automatic_line else str(activity_id))
+            if row_key != schedule_key:
+                continue
         parsed = _parse_iso_date(str(row.get("date") or ""))
         if parsed is not None:
             out.add(parsed)
@@ -7962,11 +7969,18 @@ def _execute_quote_followup_transformation(
         if str(item).strip()
     }
 
+    def _activity_id_from_schedule_key(raw: object) -> UUID | None:
+        key = str(raw or "").strip()
+        if not key:
+            return None
+        return _parse_uuid_value(key.split(":", 1)[0])
+
     now = _utcnow()
     for activity_id_str, session_id_raw in assigned_session_by_activity.items():
-        activity_id = _parse_uuid_value(activity_id_str)
+        schedule_key = str(activity_id_str or "").strip()
+        activity_id = _activity_id_from_schedule_key(schedule_key)
         session_id = _parse_uuid_value(session_id_raw)
-        if activity_id is None or session_id is None or activity_id_str in off_planning_activity_ids:
+        if activity_id is None or session_id is None or schedule_key in off_planning_activity_ids or str(activity_id) in off_planning_activity_ids:
             continue
         selected_session = db.scalar(
             select(CourseSession)
@@ -7976,7 +7990,7 @@ def _execute_quote_followup_transformation(
         if selected_session is None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Creneau selectionne introuvable")
 
-        expected_dates = _expected_activity_dates_from_snapshot(quote, activity_id=activity_id)
+        expected_dates = _expected_activity_dates_from_snapshot(quote, activity_id=activity_id, schedule_key=schedule_key)
         selected_solfege_session = _resolve_selected_solfege_live_session(
             db,
             quote=quote,

@@ -413,7 +413,7 @@ export default function QuoteToEnrollmentWizard({
 
   const activityRows = useMemo(
     () => baseActivityRows.map((row) => {
-      if (!alignedActivityIds.has(row.activityId)) {
+      if (!alignedActivityIds.has(row.scheduleKey)) {
         return row;
       }
       return {
@@ -433,7 +433,7 @@ export default function QuoteToEnrollmentWizard({
     const output = new Map<string, SessionMatchOption[]>();
     for (const row of activityRows) {
       const sessions = sessionsByActivityId[row.activityId] || [];
-      const expectedLocationId = activityLocationIdById.get(row.activityId) || quote.locationId;
+      const expectedLocationId = activityLocationIdById.get(row.scheduleKey) || activityLocationIdById.get(row.activityId) || quote.locationId;
       const options = buildSessionMatches(
         row,
         sessions,
@@ -443,7 +443,7 @@ export default function QuoteToEnrollmentWizard({
         localeForUiLanguage(language),
         language,
       );
-      output.set(row.activityId, options);
+      output.set(row.scheduleKey, options);
     }
     return output;
   }, [activityRows, sessionsByActivityId, activityLocationIdById, quote.locationId, scheduleHints, scenario, language]);
@@ -456,10 +456,10 @@ export default function QuoteToEnrollmentWizard({
 
     const defaults: Record<string, string> = {};
     for (const row of baseActivityRows) {
-      const options = sessionOptionsByActivityId.get(row.activityId) || [];
+      const options = sessionOptionsByActivityId.get(row.scheduleKey) || [];
       const defaultSessionId = defaultSessionAssignment(row, options, scenario);
       if (defaultSessionId) {
-        defaults[row.activityId] = defaultSessionId;
+        defaults[row.scheduleKey] = defaultSessionId;
       }
     }
     return defaults;
@@ -469,14 +469,14 @@ export default function QuoteToEnrollmentWizard({
     setAssignedSessionByActivityId((current) => {
       const next: Record<string, string> = {};
       let changed = false;
-      const activityIds = new Set(activityRows.map((row) => row.activityId));
+      const scheduleKeys = new Set(activityRows.map((row) => row.scheduleKey));
 
       for (const row of activityRows) {
-        const options = sessionOptionsByActivityId.get(row.activityId) || [];
-        const currentSessionId = current[row.activityId] || "";
+        const options = sessionOptionsByActivityId.get(row.scheduleKey) || [];
+        const currentSessionId = current[row.scheduleKey] || "";
         const stillAvailable = Boolean(currentSessionId && options.some((option) => option.sessionId === currentSessionId));
         if (stillAvailable) {
-          next[row.activityId] = currentSessionId;
+          next[row.scheduleKey] = currentSessionId;
           continue;
         }
 
@@ -485,15 +485,15 @@ export default function QuoteToEnrollmentWizard({
         }
         const defaultSessionId = defaultSessionAssignment(row, options, scenario);
         if (defaultSessionId) {
-          next[row.activityId] = defaultSessionId;
+          next[row.scheduleKey] = defaultSessionId;
           if (defaultSessionId !== currentSessionId) {
             changed = true;
           }
         }
       }
 
-      for (const activityId of Object.keys(current)) {
-        if (!activityIds.has(activityId)) {
+      for (const scheduleKey of Object.keys(current)) {
+        if (!scheduleKeys.has(scheduleKey)) {
           changed = true;
           break;
         }
@@ -660,7 +660,7 @@ export default function QuoteToEnrollmentWizard({
         continue;
       }
       issues.push({
-        issueId: `step2-pricing-${row.activityId}`,
+        issueId: `step2-pricing-${row.scheduleKey}`,
         step: 2,
         level: row.status === "blocked" ? "blocked" : "warning",
         message: t("admin.quote_transform.issue_pricing_gap", {
@@ -682,9 +682,9 @@ export default function QuoteToEnrollmentWizard({
   const step3Issues = useMemo(() => {
     const issues: StepIssue[] = [];
     for (const row of activityRows) {
-      if (offPlanningActivityIds.has(row.activityId)) {
+      if (offPlanningActivityIds.has(row.scheduleKey)) {
         issues.push({
-          issueId: `step3-off-planning-${row.activityId}`,
+          issueId: `step3-off-planning-${row.scheduleKey}`,
           step: 3,
           level: "warning",
           message: t("admin.quote_transform.issue_off_planning_switch", { activity: row.activityName }),
@@ -693,10 +693,10 @@ export default function QuoteToEnrollmentWizard({
         continue;
       }
 
-      const options = sessionOptionsByActivityId.get(row.activityId) || [];
+      const options = sessionOptionsByActivityId.get(row.scheduleKey) || [];
       if (options.length === 0) {
         issues.push({
-          issueId: `step3-no-session-${row.activityId}`,
+          issueId: `step3-no-session-${row.scheduleKey}`,
           step: 3,
           level: "blocked",
           message: t("admin.quote_transform.issue_no_compatible_slot", { activity: row.activityName }),
@@ -705,10 +705,10 @@ export default function QuoteToEnrollmentWizard({
         continue;
       }
 
-      const selectedSessionId = assignedSessionByActivityId[row.activityId] || "";
+      const selectedSessionId = assignedSessionByActivityId[row.scheduleKey] || "";
       if (!selectedSessionId) {
         issues.push({
-          issueId: `step3-session-choice-required-${row.activityId}`,
+          issueId: `step3-session-choice-required-${row.scheduleKey}`,
           step: 3,
           level: "blocked",
           message: t("admin.quote_transform.issue_session_required", { activity: row.activityName }),
@@ -720,7 +720,7 @@ export default function QuoteToEnrollmentWizard({
       const selectedOption = options.find((option) => option.sessionId === selectedSessionId);
       if (!selectedOption) {
         issues.push({
-          issueId: `step3-session-choice-invalid-${row.activityId}`,
+          issueId: `step3-session-choice-invalid-${row.scheduleKey}`,
           step: 3,
           level: "blocked",
           message: t("admin.quote_transform.issue_session_invalid", { activity: row.activityName }),
@@ -731,7 +731,7 @@ export default function QuoteToEnrollmentWizard({
 
       if (selectedOption.seatsRemaining <= 0) {
         issues.push({
-          issueId: `step3-session-full-${row.activityId}`,
+          issueId: `step3-session-full-${row.scheduleKey}`,
           step: 3,
           level: "blocked",
           message: t("admin.quote_transform.issue_session_full", { activity: row.activityName }),
@@ -739,7 +739,7 @@ export default function QuoteToEnrollmentWizard({
         });
       } else if (options.length > 1) {
         issues.push({
-          issueId: `step3-session-multiple-${row.activityId}`,
+          issueId: `step3-session-multiple-${row.scheduleKey}`,
           step: 3,
           level: "warning",
           message: t("admin.quote_transform.issue_multiple_slots", { activity: row.activityName }),
@@ -782,7 +782,7 @@ export default function QuoteToEnrollmentWizard({
 
   const scheduledActivitiesTotal = useMemo(
     () => activityRows
-      .filter((row) => !offPlanningActivityIds.has(row.activityId))
+      .filter((row) => !offPlanningActivityIds.has(row.scheduleKey))
       .reduce((sum, row) => Number((sum + row.currentSystemTtc).toFixed(2)), 0),
     [activityRows, offPlanningActivityIds],
   );
@@ -1427,9 +1427,9 @@ export default function QuoteToEnrollmentWizard({
                           <button
                             type="button"
                             className="ghost"
-                            onClick={() => toggleAlignedActivity(row.activityId)}
+                            onClick={() => toggleAlignedActivity(row.scheduleKey)}
                           >
-                            {alignedActivityIds.has(row.activityId) ? t("admin.quote_transform.remove_alignment") : t("admin.quote_transform.align_to_quote")}
+                            {alignedActivityIds.has(row.scheduleKey) ? t("admin.quote_transform.remove_alignment") : t("admin.quote_transform.align_to_quote")}
                           </button>
                         </td>
                       </tr>
@@ -1447,8 +1447,8 @@ export default function QuoteToEnrollmentWizard({
 
               <div className="quote-transform-schedule-stack top-gap-sm">
                 {activityRows.map((row) => {
-                  const options = sessionOptionsByActivityId.get(row.activityId) || [];
-                  const selectedSessionId = assignedSessionByActivityId[row.activityId] || "";
+                  const options = sessionOptionsByActivityId.get(row.scheduleKey) || [];
+                  const selectedSessionId = assignedSessionByActivityId[row.scheduleKey] || "";
                   return (
                     <article key={`schedule-${row.rowId}`} className="quote-transform-schedule-card">
                       <div className="row spread wrap gap-sm">
@@ -1457,8 +1457,8 @@ export default function QuoteToEnrollmentWizard({
                           <p className="muted">{t("admin.quote_transform.current_selection")}: {selectedSessionLabel(options, selectedSessionId || null, language)}</p>
                         </div>
                         <div className="row wrap gap-sm">
-                          <span className={`status-pill ${offPlanningActivityIds.has(row.activityId) ? "status-warn" : options.length === 0 ? "quote-transform-status-blocked" : "status-ok"}`}>
-                            {offPlanningActivityIds.has(row.activityId)
+                          <span className={`status-pill ${offPlanningActivityIds.has(row.scheduleKey) ? "status-warn" : options.length === 0 ? "quote-transform-status-blocked" : "status-ok"}`}>
+                            {offPlanningActivityIds.has(row.scheduleKey)
                               ? t("admin.quote_transform.off_planning_badge")
                               : options.length === 0
                               ? t("admin.quote_transform.no_match_badge")
@@ -1467,18 +1467,18 @@ export default function QuoteToEnrollmentWizard({
                           <button
                             type="button"
                             className="ghost"
-                            onClick={() => toggleOffPlanningActivity(row.activityId)}
+                            onClick={() => toggleOffPlanningActivity(row.scheduleKey)}
                           >
-                            {offPlanningActivityIds.has(row.activityId) ? t("admin.quote_transform.move_back_to_schedule") : t("admin.quote_transform.move_off_planning")}
+                            {offPlanningActivityIds.has(row.scheduleKey) ? t("admin.quote_transform.move_back_to_schedule") : t("admin.quote_transform.move_off_planning")}
                           </button>
                         </div>
                       </div>
 
-                      {offPlanningActivityIds.has(row.activityId) ? (
+                      {offPlanningActivityIds.has(row.scheduleKey) ? (
                         <p className="flash-warn top-gap-sm">{t("admin.quote_transform.off_planning_message")}</p>
                       ) : null}
 
-                      {!offPlanningActivityIds.has(row.activityId) ? (
+                      {!offPlanningActivityIds.has(row.scheduleKey) ? (
                         <div className="quote-transform-session-grid top-gap-sm">
                           {options.length === 0 ? (
                             <p className="flash-err">{t("admin.quote_transform.no_compatible_slot")}</p>
@@ -1487,10 +1487,10 @@ export default function QuoteToEnrollmentWizard({
                               <label key={option.sessionId} className={`quote-transform-session-option ${selectedSessionId === option.sessionId ? "active" : ""}`.trim()}>
                                 <input
                                   type="radio"
-                                  name={`session-${row.activityId}`}
+                                  name={`session-${row.scheduleKey}`}
                                   value={option.sessionId}
                                   checked={selectedSessionId === option.sessionId}
-                                  onChange={() => assignSession(row.activityId, option.sessionId)}
+                                  onChange={() => assignSession(row.scheduleKey, option.sessionId)}
                                 />
                                 <div>
                                   <strong>{option.label}</strong>
