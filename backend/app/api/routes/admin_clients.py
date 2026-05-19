@@ -2588,7 +2588,14 @@ def _computed_invoice_range_display_totals(
 ) -> tuple[dict[str, str], dict[str, str]]:
     totals = _invoice_range_decimal_map(metadata.get("totals_by_currency"))
     total_to_pay = _invoice_range_decimal_map(metadata.get("total_to_pay_by_currency"))
-    if totals and total_to_pay:
+    applied_payments = _invoice_range_decimal_map(metadata.get("applied_payment_totals_by_currency"))
+    raw_auto_include_previous_balance = metadata.get("auto_include_previous_balance")
+    auto_include_previous_balance = (
+        bool(raw_auto_include_previous_balance)
+        if isinstance(raw_auto_include_previous_balance, bool)
+        else True
+    )
+    if totals and total_to_pay and auto_include_previous_balance:
         return _invoice_range_money_payload(totals), _invoice_range_money_payload(total_to_pay)
 
     all_payments = _build_admin_client_payments(db, client_id=client_id)
@@ -2616,6 +2623,14 @@ def _computed_invoice_range_display_totals(
             totals[currency] = _quantize_money(
                 totals.get(currency, Decimal("0.00")) + Decimal(row.total_incl_vat)
             )
+
+    if totals and not auto_include_previous_balance:
+        total_to_pay = {}
+        for currency in sorted(set(totals.keys()) | set(applied_payments.keys())):
+            total_to_pay[currency] = _quantize_money(
+                totals.get(currency, Decimal("0.00")) + applied_payments.get(currency, Decimal("0.00"))
+            )
+        return _invoice_range_money_payload(totals), _invoice_range_money_payload(total_to_pay)
 
     if not total_to_pay:
         total_to_pay = dict(totals)
@@ -9048,6 +9063,9 @@ def create_admin_client_range_invoice(
                 )
                 carry_balance = opening_balance if payload.auto_include_previous_balance else Decimal("0.00")
                 total_to_pay_by_currency[currency] = _quantize_money(period_total + carry_balance + applied_payments)
+        display_opening_balance_by_currency = (
+            opening_balance_by_currency if payload.auto_include_previous_balance else {}
+        )
 
         if requested_invoice_number is not None:
             resolved_invoice_number = requested_invoice_number
@@ -9100,10 +9118,10 @@ def create_admin_client_range_invoice(
         }
         if split_part_count == 1 and auto_reconciled_payment_ids:
             metadata["reconciled_manual_payment_ids"] = [str(value) for value in auto_reconciled_payment_ids]
-        if split_part_count == 1 and opening_balance_by_currency:
+        if split_part_count == 1 and display_opening_balance_by_currency:
             metadata["opening_balance_by_currency"] = {
                 currency: f"{_quantize_money(amount):.2f}"
-                for currency, amount in sorted(opening_balance_by_currency.items())
+                for currency, amount in sorted(display_opening_balance_by_currency.items())
             }
         if split_part_count == 1 and applied_payment_totals_by_currency:
             metadata["applied_payment_totals_by_currency"] = {
@@ -9746,6 +9764,9 @@ def download_admin_client_range_invoice(
         applied_payments = _quantize_money(Decimal(applied_payment_totals_by_currency.get(currency, Decimal("0.00"))))
         carry_balance = opening_balance if auto_include_previous_balance else Decimal("0.00")
         total_to_pay_by_currency[currency] = _quantize_money(period_total + carry_balance + applied_payments)
+    display_opening_balance_by_currency = (
+        opening_balance_by_currency if auto_include_previous_balance else {}
+    )
 
     manual_quote_line_id_by_payment_id = {
         row.id: quote_line_id
@@ -10092,7 +10113,7 @@ def download_admin_client_range_invoice(
         }
         opening_balance_payload = {
             currency: f"{_quantize_money(amount):.2f}"
-            for currency, amount in sorted(opening_balance_by_currency.items())
+            for currency, amount in sorted(display_opening_balance_by_currency.items())
         }
         total_to_pay_payload = {
             currency: f"{_quantize_money(amount):.2f}"
@@ -10127,7 +10148,6 @@ def download_admin_client_range_invoice(
             "include_cancelled": bool(include_cancelled),
             "included_payment_keys": [_payment_key(source=row.source, payment_id=row.id) for row in payments],
             "totals_by_currency": totals_payload,
-            "opening_balance_by_currency": opening_balance_payload,
             "total_to_pay_by_currency": total_to_pay_payload,
             "invoice_status": "ISSUED",
             "client_name": client_label_live,
@@ -10139,6 +10159,8 @@ def download_admin_client_range_invoice(
             ),
             "issuer_identity": issuer_identity_snapshot,
         }
+        if opening_balance_payload:
+            metadata["opening_balance_by_currency"] = opening_balance_payload
         if normalized_auto_footer_note:
             metadata["auto_footer_note"] = normalized_auto_footer_note
         if normalized_public_note:
@@ -10196,7 +10218,7 @@ def download_admin_client_range_invoice(
         note=normalized_public_note,
         client_billing_address=client_billing_address,
         due_date=(None if no_due_date else due_date_value),
-        opening_balance_by_currency=opening_balance_by_currency,
+        opening_balance_by_currency=display_opening_balance_by_currency,
         applied_payment_totals_by_currency=applied_payment_totals_by_currency,
         applied_payment_lines=applied_payment_lines,
         total_to_pay_by_currency=total_to_pay_by_currency,

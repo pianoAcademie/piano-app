@@ -531,6 +531,31 @@ def _normalize_invoice_range_payment_keys(raw: object) -> list[str]:
 
 
 def _first_currency_total(metadata: dict[str, object]) -> tuple[Decimal, str]:
+    raw_auto_include_previous_balance = metadata.get("auto_include_previous_balance")
+    auto_include_previous_balance = (
+        bool(raw_auto_include_previous_balance)
+        if isinstance(raw_auto_include_previous_balance, bool)
+        else True
+    )
+    if not auto_include_previous_balance:
+        totals = metadata.get("totals_by_currency")
+        applied_payments = metadata.get("applied_payment_totals_by_currency")
+        if isinstance(totals, dict) and totals:
+            currencies = set(totals.keys())
+            if isinstance(applied_payments, dict):
+                currencies |= set(applied_payments.keys())
+            for first_currency in sorted(currencies):
+                currency_code = str(first_currency).strip().upper() or "EUR"
+                try:
+                    amount = Decimal(str(totals.get(first_currency, "0.00"))).quantize(Decimal("0.01"))
+                    if isinstance(applied_payments, dict):
+                        amount += Decimal(str(applied_payments.get(first_currency, "0.00"))).quantize(
+                            Decimal("0.01")
+                        )
+                except Exception:
+                    continue
+                return amount.quantize(Decimal("0.01")), currency_code
+
     for key in ("total_to_pay_by_currency", "totals_by_currency"):
         totals = metadata.get(key)
         if not isinstance(totals, dict) or not totals:
@@ -3673,8 +3698,15 @@ def download_client_invoice(
 
         totals_by_currency = _invoice_period_totals_from_lines_or_metadata(invoice_lines, metadata)
 
+        raw_auto_include_previous_balance = metadata.get("auto_include_previous_balance")
+        auto_include_previous_balance = (
+            bool(raw_auto_include_previous_balance)
+            if isinstance(raw_auto_include_previous_balance, bool)
+            else True
+        )
+
         opening_balance_by_currency: dict[str, Decimal] = {}
-        if not is_single_booking_invoice_scope(metadata):
+        if auto_include_previous_balance and not is_single_booking_invoice_scope(metadata):
             raw_opening = metadata.get("opening_balance_by_currency")
             if isinstance(raw_opening, dict):
                 for currency_code, value in raw_opening.items():
@@ -3698,6 +3730,14 @@ def download_client_invoice(
                     applied_payment_totals_by_currency[str(currency_code).strip().upper() or "EUR"] = Decimal(str(value)).quantize(Decimal("0.01"))
                 except Exception:
                     continue
+        if not auto_include_previous_balance:
+            total_to_pay_by_currency = {}
+            for currency_code in sorted(set(totals_by_currency.keys()) | set(applied_payment_totals_by_currency.keys())):
+                period_amount = Decimal(totals_by_currency.get(currency_code, Decimal("0.00"))).quantize(Decimal("0.01"))
+                applied_amount = Decimal(
+                    applied_payment_totals_by_currency.get(currency_code, Decimal("0.00"))
+                ).quantize(Decimal("0.01"))
+                total_to_pay_by_currency[currency_code] = (period_amount + applied_amount).quantize(Decimal("0.01"))
         applied_payment_lines = _invoice_applied_payment_lines_from_metadata(metadata)
 
         public_note = _normalize_optional(str(metadata.get("public_note") or ""))
