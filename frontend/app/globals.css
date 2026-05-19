@@ -4511,6 +4511,57 @@ button.danger:focus-visible {
   min-height: 34px;
 }
 
+.session-slot-staggered-time-panel {
+  grid-column: 1 / -1;
+  border-top: 1px solid #edf1f6;
+  margin-top: 2px;
+  padding-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.session-slot-staggered-time-head,
+.session-slot-staggered-presets,
+.session-slot-staggered-manual-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.session-slot-staggered-time-head strong {
+  color: #1f2a3d;
+}
+
+.session-slot-staggered-presets form {
+  margin: 0;
+}
+
+.session-slot-staggered-presets button,
+.session-slot-staggered-manual-form button {
+  min-height: 32px;
+  padding: 6px 10px;
+}
+
+.session-slot-staggered-presets button.active {
+  border-color: #8bbf9a;
+  background: #e6f7ea;
+  color: #24643a;
+}
+
+.session-slot-staggered-manual-form label {
+  display: grid;
+  gap: 3px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.session-slot-staggered-manual-form input[type="time"] {
+  min-height: 32px;
+  max-width: 118px;
+}
+
 .session-slot-inline-confirm {
   position: relative;
   display: grid;

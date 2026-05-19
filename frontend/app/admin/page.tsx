@@ -495,6 +495,57 @@ function sessionDurationMinutes(session: AdminSessionOut): number | null {
   return Math.floor((endMs - startMs) / 60000);
 }
 
+type StudentTimePreset = {
+  start: string;
+  end: string;
+  label: string;
+};
+
+function timeInputToMinutes(value: string): number | null {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) {
+    return null;
+  }
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+  return hours * 60 + minutes;
+}
+
+function minutesToTimeInput(value: number): string {
+  const hours = Math.floor(value / 60);
+  const minutes = value % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function studentTimePresetOptions(session: AdminSessionOut): StudentTimePreset[] {
+  const duration = sessionDurationMinutes(session);
+  if (!duration || duration <= 60) {
+    return [];
+  }
+  const start = timeInputToMinutes(toTimeInputInTimezone(session.start_at_utc, session.timezone));
+  const end = timeInputToMinutes(toTimeInputInTimezone(session.end_at_utc, session.timezone));
+  if (start === null || end === null || end <= start) {
+    return [];
+  }
+
+  const studentDuration = Math.min(60, end - start);
+  const options: StudentTimePreset[] = [];
+  for (let optionStart = start; optionStart + studentDuration <= end; optionStart += 15) {
+    const optionEnd = optionStart + studentDuration;
+    const startLabel = minutesToTimeInput(optionStart);
+    const endLabel = minutesToTimeInput(optionEnd);
+    options.push({
+      start: startLabel,
+      end: endLabel,
+      label: `${startLabel} - ${endLabel}`,
+    });
+  }
+  return options;
+}
+
 function occupancyClass(bookedCount: number, capacityMax: number): string {
   if (capacityMax <= 0) {
     return "occ-low";
@@ -1422,6 +1473,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     : selectedSessionDurationValue === null
       ? pickText(language, "Toute la journee", "All day")
       : `${selectedSessionDurationValue} min`;
+  const selectedSessionStudentTimePresets =
+    selectedSession && selectedSessionSupportsStudentTimeOverrides ? studentTimePresetOptions(selectedSession) : [];
   const selectedSessionRecurrenceLabel = selectedSession ? recurrenceLabel(selectedSession, language) : "";
   const selectedSessionRecurrenceEndLabel =
     selectedSession?.recurrence_end_date && selectedSession.recurrence_group_id
@@ -2304,6 +2357,80 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                                 <span className="muted">{isEnglish ? "Locked" : "Verrouille"}</span>
                               )}
                             </div>
+                            {selectedSessionSupportsStudentTimeOverrides ? (
+                              <div className="session-slot-staggered-time-panel">
+                                <div className="session-slot-staggered-time-head">
+                                  <strong>{isEnglish ? "Student schedule" : "Horaire individuel"}</strong>
+                                  <span className="muted">
+                                    {studentTime
+                                      ? studentTime
+                                      : pickText(language, "Creneau professeur complet", "Full teacher slot")}
+                                  </span>
+                                </div>
+                                {selectedSessionStudentTimePresets.length > 0 ? (
+                                  <div className="session-slot-staggered-presets" aria-label={isEnglish ? "Suggested schedules" : "Horaires proposes"}>
+                                    {selectedSessionStudentTimePresets.map((preset) => (
+                                      <form key={`${booking.id}-${preset.start}-${preset.end}`} action={adminUpdateSessionBookingStudentTimeAction}>
+                                        <input type="hidden" name="session_id" value={selectedSession.id} />
+                                        <input type="hidden" name="booking_id" value={booking.id} />
+                                        <input type="hidden" name="return_to" value={modalHref} />
+                                        <input type="hidden" name="student_start_time_local" value={preset.start} />
+                                        <input type="hidden" name="student_end_time_local" value={preset.end} />
+                                        <button
+                                          type="submit"
+                                          className={studentTime === preset.label ? "ghost active" : "ghost"}
+                                          aria-pressed={studentTime === preset.label}
+                                        >
+                                          {preset.label}
+                                        </button>
+                                      </form>
+                                    ))}
+                                    <form action={adminUpdateSessionBookingStudentTimeAction}>
+                                      <input type="hidden" name="session_id" value={selectedSession.id} />
+                                      <input type="hidden" name="booking_id" value={booking.id} />
+                                      <input type="hidden" name="return_to" value={modalHref} />
+                                      <input type="hidden" name="student_start_time_local" value="" />
+                                      <input type="hidden" name="student_end_time_local" value="" />
+                                      <button type="submit" className={!studentTime ? "ghost active" : "ghost"} aria-pressed={!studentTime}>
+                                        {isEnglish ? "Full slot" : "Creneau complet"}
+                                      </button>
+                                    </form>
+                                  </div>
+                                ) : null}
+                                <form action={adminUpdateSessionBookingStudentTimeAction} className="session-slot-staggered-manual-form">
+                                  <input type="hidden" name="session_id" value={selectedSession.id} />
+                                  <input type="hidden" name="booking_id" value={booking.id} />
+                                  <input type="hidden" name="return_to" value={modalHref} />
+                                  <label>
+                                    {isEnglish ? "Start" : "Debut"}
+                                    <input
+                                      type="time"
+                                      name="student_start_time_local"
+                                      defaultValue={
+                                        booking.student_start_at_utc ? toTimeInputInTimezone(booking.student_start_at_utc, selectedSession.timezone) : ""
+                                      }
+                                      min={toTimeInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)}
+                                      max={toTimeInputInTimezone(selectedSession.end_at_utc, selectedSession.timezone)}
+                                    />
+                                  </label>
+                                  <label>
+                                    {isEnglish ? "End" : "Fin"}
+                                    <input
+                                      type="time"
+                                      name="student_end_time_local"
+                                      defaultValue={
+                                        booking.student_end_at_utc ? toTimeInputInTimezone(booking.student_end_at_utc, selectedSession.timezone) : ""
+                                      }
+                                      min={toTimeInputInTimezone(selectedSession.start_at_utc, selectedSession.timezone)}
+                                      max={toTimeInputInTimezone(selectedSession.end_at_utc, selectedSession.timezone)}
+                                    />
+                                  </label>
+                                  <button type="submit" className="ghost">
+                                    {isEnglish ? "Save" : "Enregistrer"}
+                                  </button>
+                                </form>
+                              </div>
+                            ) : null}
                           </article>
                         );
                       })}
