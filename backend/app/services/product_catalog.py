@@ -383,6 +383,18 @@ def create_billable_product_transaction(
     category_name = None
     if product.category_id is not None:
         category_name = db.scalar(select(ProductCategory.name).where(ProductCategory.id == product.category_id))
+    if category_name is None:
+        category_name = db.scalar(
+            select(ProductCategory.name)
+            .where(ProductCategory.active.is_(True), ProductCategory.code == "PRODUCT")
+            .limit(1)
+        )
+    if category_name is None:
+        category_name = db.scalar(
+            select(ProductCategory.name)
+            .where(ProductCategory.active.is_(True), ProductCategory.name == "Produit")
+            .limit(1)
+        )
 
     row = ClientManualTransaction(
         user_id=billing_profile.id,

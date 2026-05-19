@@ -731,7 +731,7 @@ def grant_referral_credit(
         status="COMPLETED",
         label=label[:255],
         description=description,
-        category="REFERRAL_CREDIT",
+        category="Parrainage",
         occurred_at=now,
         amount_excl_vat=Decimal("0.00") - amount,
         vat_rate=Decimal("0.000"),

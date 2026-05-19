@@ -42,7 +42,7 @@ from app.models.client_record import ClientInvoiceLine, ClientManualTransaction,
 from app.models.family import ClientFamilyLink
 from app.models.ops import AppSetting, CommunicationSenderCategory, LegalEntity
 from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, SubscriptionStatus
-from app.models.product_catalog import CatalogKit, CatalogProduct
+from app.models.product_catalog import CatalogKit, CatalogProduct, ProductCategory
 from app.models.quote import (
     PaymentPlan,
     PricingActivityPrice,
@@ -6150,6 +6150,110 @@ def _source_line_id_from_billing_row(row: dict[str, object]) -> UUID | None:
     return None
 
 
+def _product_category_lookup(db: Session) -> dict[str, str]:
+    category_rows = db.scalars(
+        select(ProductCategory)
+        .where(ProductCategory.active.is_(True))
+        .order_by(ProductCategory.name.asc())
+    ).all()
+    out: dict[str, str] = {}
+    for row in category_rows:
+        name = (row.name or "").strip()
+        if not name:
+            continue
+        out.setdefault(name.casefold(), name)
+        code = (row.code or "").strip()
+        if code:
+            out.setdefault(code.casefold(), name)
+    return out
+
+
+def _resolve_configured_product_category(
+    db: Session,
+    candidates: list[object | None],
+    *,
+    fallback_label: str,
+) -> str:
+    lookup = _product_category_lookup(db)
+    for candidate in candidates:
+        raw = str(candidate or "").strip()
+        if not raw:
+            continue
+        resolved = lookup.get(raw.casefold())
+        if resolved is not None:
+            return resolved
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=(
+            "Categorie produit introuvable pour "
+            f"{fallback_label}. Configurez d'abord cette categorie dans Configuration > Produits."
+        ),
+    )
+
+
+def _category_from_catalog_product(db: Session, product_id: UUID | None) -> str | None:
+    if product_id is None:
+        return None
+    return db.scalar(
+        select(ProductCategory.name)
+        .join(CatalogProduct, CatalogProduct.category_id == ProductCategory.id)
+        .where(CatalogProduct.id == product_id, ProductCategory.active.is_(True))
+    )
+
+
+def _category_from_catalog_kit(db: Session, kit_id: UUID | None) -> str | None:
+    if kit_id is None:
+        return None
+    return db.scalar(
+        select(ProductCategory.name)
+        .join(CatalogKit, CatalogKit.category_id == ProductCategory.id)
+        .where(CatalogKit.id == kit_id, ProductCategory.active.is_(True))
+    )
+
+
+def _resolve_quote_transaction_category(
+    db: Session,
+    *,
+    row: dict[str, object],
+    source_line: QuoteLine | None,
+) -> str:
+    if source_line is not None:
+        product_category = _category_from_catalog_product(db, source_line.product_id)
+        if product_category:
+            return product_category
+        kit_category = _category_from_catalog_kit(db, source_line.kit_id)
+        if kit_category:
+            return kit_category
+
+    row_type = str(row.get("type") or "").strip().lower()
+    line_category = str(source_line.line_category if source_line is not None else "").strip().lower()
+    master_item_type = str(source_line.master_item_type if source_line is not None else "").strip().lower()
+    label = str(row.get("label") or (source_line.title if source_line is not None else "") or "").strip()
+
+    if row_type == "discount" or line_category == "discount":
+        candidates: list[object | None] = ["DISCOUNT", "Remise", "Remises", row_type, line_category]
+        return _resolve_configured_product_category(db, candidates, fallback_label=label or "remise")
+
+    if row_type == "surcharge" or line_category == "surcharge":
+        candidates = ["SURCHARGE", "Supplement", "Supplements", "Surcharge", row_type, line_category]
+        return _resolve_configured_product_category(db, candidates, fallback_label=label or "supplement")
+
+    if row_type == "kit" or master_item_type == "kit":
+        candidates = ["KIT", "Kit", "Kits", row_type, master_item_type]
+        return _resolve_configured_product_category(db, candidates, fallback_label=label or "kit")
+
+    if row_type == "product" or master_item_type == "product":
+        candidates = ["PRODUCT", "Produit", "Produits", row_type, master_item_type]
+        return _resolve_configured_product_category(db, candidates, fallback_label=label or "produit")
+
+    if row_type in {"off_planning_activity", "service"} or line_category == "service" or master_item_type == "activity":
+        candidates = ["COURSE", "Cours", "Cours hors planning", "Service hors planning", row_type, line_category, master_item_type]
+        return _resolve_configured_product_category(db, candidates, fallback_label=label or "cours hors planning")
+
+    candidates = [row_type, line_category, master_item_type, "Gestion"]
+    return _resolve_configured_product_category(db, candidates, fallback_label=label or "ligne de devis")
+
+
 def _safe_zoneinfo(value: str | None) -> ZoneInfo:
     try:
         return ZoneInfo((value or "").strip() or "Europe/Paris")
@@ -7708,6 +7812,8 @@ def _create_followup_manual_transactions(
 ) -> None:
     billing_resolution = _json_object(transformation_payload.get("billingResolution"))
     rows = _json_list(billing_resolution.get("rows"))
+    quote_lines = db.scalars(select(QuoteLine).where(QuoteLine.quote_id == quote.id)).all()
+    line_by_id = {line.id: line for line in quote_lines}
     now = _utcnow()
     for raw in rows:
         row = _json_object(raw)
@@ -7737,6 +7843,8 @@ def _create_followup_manual_transactions(
             signed_vat_amount = _q2(Decimal("0.00") - abs(signed_vat_amount))
         if transaction_type != "DISCOUNT" and signed_vat_amount < Decimal("0.00"):
             continue
+        source_line = line_by_id.get(_source_line_id_from_billing_row(row))
+        category = _resolve_quote_transaction_category(db, row=row, source_line=source_line)
         transaction = ClientManualTransaction(
             user_id=billing.id,
             student_user_id=student.id,
@@ -7745,7 +7853,7 @@ def _create_followup_manual_transactions(
             status=status_value,
             label=str(row.get("label") or "Montant facture").strip() or "Montant facture",
             description=f"Transformation devis {quote.quote_number}",
-            category=str(row.get("type") or "quote_transformation").strip() or "quote_transformation",
+            category=category,
             occurred_at=now,
             amount_excl_vat=signed_amount_ht,
             vat_rate=vat_rate,
@@ -7824,6 +7932,11 @@ def _create_followup_deposit_invoice(
     issued_date = now.astimezone(timezone.utc).date()
     due_date = issued_date + timedelta(days=7)
     issued_at = _invoice_issued_at_for_date(issued_date=issued_date, now=now)
+    category = _resolve_configured_product_category(
+        db,
+        ["PRE_REGISTRATION_DEPOSIT", "Acompte preinscription", "Acompte pre-inscription"],
+        fallback_label="acompte de preinscription",
+    )
     invoice_number = _allocate_invoice_number_for_seller_entity(
         db,
         seller_legal_entity_id=quote.legal_entity_id,
@@ -7842,7 +7955,7 @@ def _create_followup_deposit_invoice(
         status="PENDING",
         label=f"Acompte preinscription - {quote.quote_number}",
         description=f"Acompte preinscription genere a la transformation du devis {quote.quote_number}",
-        category="PRE_REGISTRATION_DEPOSIT",
+        category=category,
         occurred_at=issued_at,
         amount_excl_vat=deposit_amount_ht,
         vat_rate=deposit_vat_rate,

@@ -662,7 +662,7 @@ def refund_payment_receipt(
                 f"Remboursement du justificatif {receipt.receipt_number or receipt.id}"
                 + (f" | Motif: {normalized_reason}" if normalized_reason else "")
             ),
-            category="BOOKING_PAYMENT_RECEIPT_REFUND",
+            category="Remboursement",
             occurred_at=effective_refunded_at,
             amount_excl_vat=amount_paid,
             vat_rate=Decimal("0.00"),
