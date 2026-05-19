@@ -303,6 +303,172 @@ function stringifyValue(value: unknown): string {
   return String(value);
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function asList(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function boolLabel(value: unknown, language: UiLanguage): string {
+  if (value === true) return language === "fr" ? "Oui" : "Yes";
+  if (value === false) return language === "fr" ? "Non" : "No";
+  return "-";
+}
+
+function normalizeSearchText(value: unknown): string {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function valueIncludesAny(value: unknown, tokens: string[]): boolean {
+  const normalized = normalizeSearchText(value);
+  return tokens.some((token) => normalized.includes(token));
+}
+
+function preferenceLabel(value: unknown): string {
+  const item = asRecord(value);
+  const day = typeof item.day === "string" ? item.day.trim() : "";
+  const time = typeof item.time === "string" ? item.time.trim() : "";
+  const location = typeof item.location === "string" ? item.location.trim() : "";
+  const label = [day, time].filter(Boolean).join(" ");
+  return [label, location].filter(Boolean).join(" · ");
+}
+
+function preferenceSummary(value: unknown): string {
+  const items = asList(value)
+    .map((item) => preferenceLabel(item))
+    .filter(Boolean);
+  return items.length > 0 ? items.join(", ") : "-";
+}
+
+function productRequested(payload: Record<string, unknown>, tokens: string[]): boolean {
+  return asList(payload.requested_products).some((item) => valueIncludesAny(item, tokens));
+}
+
+function answerLooksTruthy(value: string): boolean {
+  const normalized = normalizeSearchText(value);
+  if (!normalized || normalized === "-") return false;
+  if (["non", "no", "false", "faux", "0", "ne sais pas"].some((token) => normalized.includes(token))) return false;
+  return true;
+}
+
+function answerRequested(answers: TypeformAnswerOut[], tokens: string[]): boolean {
+  return answers.some((answer) => {
+    const haystack = `${answer.label} ${answer.key} ${answer.value}`;
+    return tokens.every((token) => normalizeSearchText(haystack).includes(token)) && answerLooksTruthy(answer.value);
+  });
+}
+
+function recommendationSummary(recommendation: TypeformSessionRecommendationOut | null): string {
+  if (!recommendation) return "";
+  const selected = recommendation.options.find((option) => option.session_id === recommendation.selected_session_id)
+    || recommendation.manual_options.find((option) => option.session_id === recommendation.selected_session_id)
+    || recommendation.options[0]
+    || recommendation.manual_options[0];
+  if (selected) {
+    return `${selected.occurrence_label} · ${selected.location_name}`;
+  }
+  if (recommendation.slot_proposals.length > 0) {
+    return recommendation.slot_proposals.map((proposal) => solfegeProposalLabel(proposal)).filter(Boolean).join(", ");
+  }
+  return recommendation.requested_summary || recommendation.summary_label || "";
+}
+
+function recommendationFor(
+  recommendations: TypeformSessionRecommendationOut[],
+  predicate: (recommendation: TypeformSessionRecommendationOut) => boolean,
+): TypeformSessionRecommendationOut | null {
+  return recommendations.find(predicate) || null;
+}
+
+function intakeKeyFacts(
+  detail: TypeformIntakeDetailOut,
+  language: UiLanguage,
+): Array<{ title: string; value: string; detail?: string; tone?: "ok" | "warn" | "off" }> {
+  const payload = detail.normalized_payload_json || {};
+  const secondCourse = asRecord(payload.requested_second_course);
+  const solfegeLevel = normalizedScalarValue(payload, "estimated_solfege_level");
+  const mainCourseRecommendation = recommendationFor(
+    detail.session_recommendations,
+    (recommendation) => !valueIncludesAny(recommendation.activity_name, ["solfege"]) && !valueIncludesAny(recommendation.recommendation_key, ["second"]),
+  );
+  const secondCourseRecommendation = recommendationFor(
+    detail.session_recommendations,
+    (recommendation) => valueIncludesAny(recommendation.recommendation_key, ["second"]) || valueIncludesAny(recommendation.activity_name, ["2e", "second"]),
+  );
+  const solfegeRecommendation = recommendationFor(
+    detail.session_recommendations,
+    (recommendation) => valueIncludesAny(recommendation.activity_name, ["solfege"]) || valueIncludesAny(recommendation.recommendation_key, ["solfege"]),
+  );
+  const onlineSolfege = payload.requested_online_solfege === true;
+  const onsiteSolfege = payload.requested_onsite_solfege === true;
+  const masterclassRequested = productRequested(payload, ["master"]) || answerRequested(detail.answers, ["master"]);
+  const mainCourseSlot = preferenceSummary(payload.requested_slot_preferences);
+  const secondCourseSlot = preferenceSummary(secondCourse.slot_preferences);
+  const solfegeSlot = preferenceSummary(payload.requested_solfege_slot_preferences);
+  const secondCourseRequested = secondCourse.requested === true;
+  const secondCourseMode = normalizedScalarValue(secondCourse, "modality") === "online"
+    ? (language === "fr" ? "En ligne" : "Online")
+    : (language === "fr" ? "Presentiel" : "Onsite");
+
+  return [
+    {
+      title: language === "fr" ? "Enfant" : "Child",
+      value: [normalizedScalarValue(payload, "child_first_name"), normalizedScalarValue(payload, "child_last_name")].filter(Boolean).join(" ") || "-",
+      detail: `${language === "fr" ? "Naissance" : "Birth date"}: ${normalizedScalarValue(payload, "child_birth_date") || "-"}`,
+    },
+    {
+      title: language === "fr" ? "Reinscription" : "Re-enrollment",
+      value: boolLabel(payload.is_reenrollment, language),
+      tone: payload.is_reenrollment === true ? "ok" : "off",
+    },
+    {
+      title: language === "fr" ? "1er cours" : "First course",
+      value: normalizedScalarValue(payload, "requested_course_mode") || mainCourseRecommendation?.activity_name || "-",
+      detail: `${language === "fr" ? "Lieu" : "Location"}: ${normalizedScalarValue(payload, "requested_location") || detail.detected_location || "-"} · ${language === "fr" ? "Creneau" : "Slot"}: ${recommendationSummary(mainCourseRecommendation) || mainCourseSlot}`,
+      tone: mainCourseSlot !== "-" || mainCourseRecommendation ? "ok" : "warn",
+    },
+    {
+      title: language === "fr" ? "2e cours" : "Second course",
+      value: secondCourseRequested ? boolLabel(true, language) : boolLabel(false, language),
+      detail: secondCourseRequested
+        ? `${secondCourseMode} · ${recommendationSummary(secondCourseRecommendation) || secondCourseSlot}`
+        : undefined,
+      tone: secondCourseRequested ? "ok" : "off",
+    },
+    {
+      title: language === "fr" ? "Solfege presentiel" : "Onsite solfege",
+      value: boolLabel(onsiteSolfege, language),
+      detail: onsiteSolfege ? `${language === "fr" ? "Niveau" : "Level"}: ${solfegeLevel || "-"} · ${recommendationSummary(solfegeRecommendation) || solfegeSlot}` : undefined,
+      tone: onsiteSolfege ? "ok" : "off",
+    },
+    {
+      title: language === "fr" ? "Solfege en ligne" : "Online solfege",
+      value: boolLabel(onlineSolfege, language),
+      detail: onlineSolfege ? `${language === "fr" ? "Niveau" : "Level"}: ${solfegeLevel || "-"} · ${solfegeProposalLabel(detail.solfege_slot_proposal || {}) || recommendationSummary(solfegeRecommendation) || solfegeSlot}` : undefined,
+      tone: onlineSolfege ? "ok" : "off",
+    },
+    {
+      title: "Pass recup",
+      value: boolLabel(payload.requested_pass_recup, language),
+      tone: payload.requested_pass_recup === true ? "ok" : "off",
+    },
+    {
+      title: "MasterClass",
+      value: boolLabel(masterclassRequested, language),
+      tone: masterclassRequested ? "ok" : "off",
+    },
+  ];
+}
+
 function normalizedEntries(payload: Record<string, unknown>): Array<{ key: string; value: string }> {
   return Object.entries(payload).map(([key, value]) => ({
     key,
@@ -526,6 +692,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
   const showErrorModal = Boolean(error) && editor !== "normalized";
   const showResolutionSavedModal = successModal === "resolution_saved" && Boolean(ok);
   const normalizedPayload = detail.normalized_payload_json || {};
+  const keyFacts = intakeKeyFacts(detail, language);
   const draftQuoteNeedsArbitrage = detail.intake_status === "MATCHING_REQUIRED";
   const emptyPreviewOnlyBlockage =
     !detail.related_quote_id
@@ -855,6 +1022,32 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
             </div>
           </article>
         ) : null}
+
+        <article className="card span-2">
+          <div className="row spread wrap gap-sm">
+            <div>
+              <h3>{language === "fr" ? "Synthese questionnaire" : "Questionnaire summary"}</h3>
+              <p className="muted">
+                {language === "fr"
+                  ? "Les points a verifier en priorite avant arbitrage et generation du devis."
+                  : "The key points to check first before arbitration and quote generation."}
+              </p>
+            </div>
+            <Link className="ghost" href={normalizedEditorHref}>{t("admin.intakes.correct_complete")}</Link>
+          </div>
+          <div className={`${styles.keyFactsGrid} top-gap-sm`}>
+            {keyFacts.map((item) => (
+              <div className={styles.keyFactCard} key={item.title}>
+                <div className="row spread gap-sm">
+                  <strong>{item.title}</strong>
+                  {item.tone ? <span className={`status-pill ${item.tone === "ok" ? "status-ok" : item.tone === "warn" ? "status-warn" : "status-off"}`}>{item.value}</span> : null}
+                </div>
+                {item.tone ? null : <p>{item.value}</p>}
+                {item.detail ? <p className="muted">{item.detail}</p> : null}
+              </div>
+            ))}
+          </div>
+        </article>
 
         <article className="card span-2">
           <h3>{t("admin.intakes.response_simplified")}</h3>

@@ -22,6 +22,32 @@
   margin: 4px 0 0;
 }
 
+.keyFactsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.keyFactCard {
+  border: 1px solid #dbe3ed;
+  border-radius: 12px;
+  padding: 12px;
+  background: #fbfdff;
+  display: grid;
+  gap: 7px;
+  min-height: 104px;
+}
+
+.keyFactCard p {
+  margin: 0;
+}
+
+.keyFactCard > p:not(:global(.muted)) {
+  color: #1f2f46;
+  font-size: 17px;
+  font-weight: 700;
+}
+
 .messageList {
   margin: 8px 0 0;
   padding-left: 18px;
@@ -185,6 +211,7 @@
 
 @media (max-width: 1080px) {
   .kvGrid,
+  .keyFactsGrid,
   .totalRow,
   .editorGrid,
   .resolutionGrid {
