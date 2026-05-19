@@ -7877,6 +7877,7 @@ def _create_followup_deposit_invoice(
         "auto_exclude_pack_subscription_lines": True,
         "include_pending": True,
         "include_cancelled": False,
+        "auto_include_previous_balance": False,
         "included_payment_keys": [f"MANUAL:{transaction.id}"],
         "totals_by_currency": {currency: f"{deposit_amount_ttc:.2f}"},
         "invoice_status": "ISSUED",
