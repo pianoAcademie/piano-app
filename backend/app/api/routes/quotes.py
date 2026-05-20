@@ -34,6 +34,7 @@ from app.api.routes.bookings import (
     _consume_pack_credit,
     _enforce_plan_restrictions,
     _mark_first_course_if_needed,
+    _resolve_activity_base_hourly_ttc,
     _resolve_booking_snapshot,
     _restore_pack_credit,
 )
@@ -7836,8 +7837,6 @@ def _apply_followup_forfait_discount_rows(
 
     billing_resolution = _json_object(transformation_payload.get("billingResolution"))
     rows = _json_list(billing_resolution.get("rows"))
-    if not rows:
-        return set()
 
     activity_resolution = _json_object(transformation_payload.get("activityResolution"))
     off_planning_activity_ids = {
@@ -7857,6 +7856,63 @@ def _apply_followup_forfait_discount_rows(
     ]
 
     adjustments_by_activity: dict[UUID, dict[str, Decimal]] = {}
+
+    service_line_totals_by_activity: dict[UUID, dict[str, Decimal]] = {}
+    course_type_by_id: dict[UUID, CourseType] = {}
+    for line in service_lines:
+        if line.activity_id is None:
+            continue
+        course_type = course_type_by_id.get(line.activity_id)
+        if course_type is None:
+            course_type = db.scalar(select(CourseType).where(CourseType.id == line.activity_id))
+            if course_type is None:
+                continue
+            course_type_by_id[line.activity_id] = course_type
+        quantity = _q2(Decimal(line.quantity or 0))
+        duration_minutes = int(line.duration_minutes or course_type.duration_minutes or 0)
+        if quantity <= Decimal("0.00") or duration_minutes <= 0:
+            continue
+        total_hours = (quantity * Decimal(duration_minutes)) / Decimal("60")
+        if total_hours <= Decimal("0.00"):
+            continue
+        bucket = service_line_totals_by_activity.setdefault(
+            line.activity_id,
+            {
+                "hours": Decimal("0.00"),
+                "amount_ttc": Decimal("0.00"),
+            },
+        )
+        bucket["hours"] += total_hours
+        bucket["amount_ttc"] += _q2(Decimal(line.amount_ttc or 0))
+
+    for activity_id, totals in service_line_totals_by_activity.items():
+        course_type = course_type_by_id.get(activity_id)
+        if course_type is None:
+            continue
+        total_hours = totals["hours"]
+        if total_hours <= Decimal("0.00"):
+            continue
+        expected_hourly_ttc = _q2(totals["amount_ttc"] / total_hours)
+        try:
+            base_hourly_ttc = _q2(_resolve_activity_base_hourly_ttc(course_type))
+        except HTTPException:
+            continue
+        delta = _q2(base_hourly_ttc - expected_hourly_ttc)
+        if abs(delta) <= Decimal("0.01"):
+            continue
+        bucket = adjustments_by_activity.setdefault(
+            activity_id,
+            {
+                "loyalty": Decimal("0.00"),
+                "family": Decimal("0.00"),
+                "short_commitment": Decimal("0.00"),
+            },
+        )
+        if delta > Decimal("0.00"):
+            bucket["loyalty"] = _q2(bucket["loyalty"] + delta)
+        else:
+            bucket["short_commitment"] = _q2(bucket["short_commitment"] + abs(delta))
+
     consumed_row_ids: set[str] = set()
 
     for raw in rows:
@@ -7897,7 +7953,12 @@ def _apply_followup_forfait_discount_rows(
             continue
 
         quantity = _q2(Decimal(target_service_line.quantity or 0))
-        duration_minutes = int(target_service_line.duration_minutes or 0)
+        course_type = course_type_by_id.get(target_service_line.activity_id)
+        if course_type is None:
+            course_type = db.scalar(select(CourseType).where(CourseType.id == target_service_line.activity_id))
+            if course_type is not None:
+                course_type_by_id[target_service_line.activity_id] = course_type
+        duration_minutes = int(target_service_line.duration_minutes or (course_type.duration_minutes if course_type is not None else 0) or 0)
         if quantity <= Decimal("0.00") or duration_minutes <= 0:
             continue
         total_hours = (quantity * Decimal(duration_minutes)) / Decimal("60")
@@ -7910,6 +7971,7 @@ def _apply_followup_forfait_discount_rows(
             {
                 "loyalty": Decimal("0.00"),
                 "family": Decimal("0.00"),
+                "short_commitment": Decimal("0.00"),
             },
         )
         bucket[target_bucket] = _q2(bucket[target_bucket] + hourly_discount_ttc)
@@ -7937,13 +7999,14 @@ def _apply_followup_forfait_discount_rows(
                 course_type_id=activity_id,
                 loyalty_discount_per_hour_ttc=values["loyalty"],
                 family_discount_per_hour_ttc=values["family"],
-                short_commitment_supplement_per_hour_ttc=Decimal("0.00"),
+                short_commitment_supplement_per_hour_ttc=values["short_commitment"],
                 second_course_weekly_discount_per_hour_ttc=Decimal("0.00"),
                 updated_at=now,
             )
         else:
             pricing_row.loyalty_discount_per_hour_ttc = values["loyalty"]
             pricing_row.family_discount_per_hour_ttc = values["family"]
+            pricing_row.short_commitment_supplement_per_hour_ttc = values["short_commitment"]
             pricing_row.updated_at = now
         db.add(pricing_row)
 
