@@ -677,6 +677,24 @@ def _move_planning_reorganization_booking_occurrence(
     else:
         target_booking = booking
 
+    same_time_booking = db.scalar(
+        select(Booking)
+        .join(CourseSession, CourseSession.id == Booking.session_id)
+        .where(
+            Booking.user_id == booking.user_id,
+            Booking.status.in_(BOOKING_STATUSES_ACTIVE),
+            Booking.id != booking.id,
+            Booking.id != target_booking.id,
+            CourseSession.location_id == target_session.location_id,
+            CourseSession.start_at_utc == target_session.start_at_utc,
+            CourseSession.status != SessionStatus.CANCELLED,
+        )
+        .limit(1)
+        .with_for_update()
+    )
+    if same_time_booking is not None:
+        return False, "Eleve deja inscrit sur un creneau au meme horaire"
+
     if booking.status in BOOKING_STATUSES_COUNTED_AS_RESERVED:
         reserved_count = _booked_count_by_session(db, target_session.id)
         if reserved_count >= target_session.capacity_max and target_booking.id == booking.id:
@@ -1356,6 +1374,16 @@ def _planning_simulation_signature(
             end_time.strip(),
         ]
     )
+
+
+def _planning_simulation_quote_person_key(quote: Quote, prospect: Prospect | None) -> str | None:
+    if quote.client_id is not None:
+        return f"client:{quote.client_id}"
+    if prospect is not None and prospect.linked_client_id is not None:
+        return f"client:{prospect.linked_client_id}"
+    if quote.prospect_id is not None:
+        return f"prospect:{quote.prospect_id}"
+    return None
 
 
 def _planning_simulation_collective_piano_course_type_ids(db: Session) -> set[UUID]:
@@ -2391,7 +2419,9 @@ def get_planning_simulation(
 
     slot_entries: dict[str, dict[str, object]] = {}
     session_slot_by_id: dict[UUID, str] = {}
+    session_signature_by_id: dict[UUID, str] = {}
     live_slot_keys_by_signature: dict[str, set[str]] = {}
+    live_signatures_by_person_key: dict[str, set[str]] = {}
     quote_location_name_by_id: dict[UUID, str] = {}
     quote_course_type_by_id: dict[UUID, CourseType | None] = {}
 
@@ -2492,6 +2522,7 @@ def get_planning_simulation(
         )
         live_slot_keys_by_signature.setdefault(signature, set()).add(slot_key)
         session_slot_by_id[session_obj.id] = slot_key
+        session_signature_by_id[session_obj.id] = signature
 
         entry = ensure_slot(
             slot_key=slot_key,
@@ -2534,6 +2565,9 @@ def get_planning_simulation(
             slot_key = session_slot_by_id.get(session_id)
             if slot_key is None:
                 continue
+            signature = session_signature_by_id.get(session_id)
+            if signature:
+                live_signatures_by_person_key.setdefault(f"client:{user_id}", set()).add(signature)
             slot_entries[slot_key]["_booked_user_ids"].add(str(user_id))
             slot_entries[slot_key]["_booked_students"][str(user_id)] = _planning_simulation_person_name(
                 first_name=first_name,
@@ -2557,6 +2591,7 @@ def get_planning_simulation(
         normalized_status = str(quote.status or "").strip().lower()
         if normalized_status in PLANNING_SIMULATION_QUOTE_APPROVED_STATUSES and followup is not None and followup.status == "completed":
             continue
+        quote_person_key = _planning_simulation_quote_person_key(quote, prospect)
 
         if normalized_status in PLANNING_SIMULATION_QUOTE_APPROVED_STATUSES:
             bucket_name = "_approved_quote_ids"
@@ -2631,6 +2666,8 @@ def get_planning_simulation(
                 start_time=block_start_time,
                 end_time=block_end_time,
             )
+            if quote_person_key and signature in live_signatures_by_person_key.get(quote_person_key, set()):
+                continue
             block_series_key = str(block.get("series_key") or "").strip()
             resolved_slot_key: str | None = None
             if block_series_key:

@@ -11,6 +11,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.api.routes.admin import (
     _parse_school_year_bounds,
     _planning_simulation_clean_location_label,
+    _planning_simulation_quote_person_key,
     _planning_simulation_quote_location_name,
     _safe_zoneinfo,
 )
@@ -50,6 +51,18 @@ class AdminPlanningSimulationTests(unittest.TestCase):
 
     def test_planning_simulation_falls_back_to_unknown_location_label(self) -> None:
         self.assertEqual(_planning_simulation_quote_location_name({}), "Lieu non defini")
+
+    def test_planning_simulation_quote_person_key_prefers_client(self) -> None:
+        quote = SimpleNamespace(client_id="client-id", prospect_id="prospect-id")
+        prospect = SimpleNamespace(linked_client_id="linked-client-id")
+
+        self.assertEqual(_planning_simulation_quote_person_key(quote, prospect), "client:client-id")
+
+    def test_planning_simulation_quote_person_key_uses_linked_prospect_client(self) -> None:
+        quote = SimpleNamespace(client_id=None, prospect_id="prospect-id")
+        prospect = SimpleNamespace(linked_client_id="linked-client-id")
+
+        self.assertEqual(_planning_simulation_quote_person_key(quote, prospect), "client:linked-client-id")
 
 
 if __name__ == "__main__":
