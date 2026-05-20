@@ -104,6 +104,23 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
         self.assertEqual(private_pack["unit_price_ttc"], "45.00")
         self.assertEqual(private_pack["planning_session_limit"], 10)
 
+    def test_bar_le_duc_typeform_configs_use_sixty_euro_deposit(self) -> None:
+        for module_name, filename in (
+            ("bld_child_config_deposit", "20260516_0116_register_typeform_bld_child_2026_2027.py"),
+            ("bld_adult_config_deposit", "20260516_0117_register_typeform_bld_adult_2026_2027.py"),
+        ):
+            migration_path = Path(__file__).resolve().parents[1] / "alembic" / "versions" / filename
+            spec = importlib.util.spec_from_file_location(module_name, migration_path)
+            self.assertIsNotNone(spec)
+            self.assertIsNotNone(spec.loader)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            config = module._build_configuration_json()
+
+            self.assertIs(config["default_pre_registration_deposit_enabled"], True)
+            self.assertEqual(config["default_pre_registration_deposit_amount_ttc"], "60.00")
+
     def test_online_runtime_context_switches_main_piano_template_to_online_activity(self) -> None:
         template = {
             "kind": "activity",

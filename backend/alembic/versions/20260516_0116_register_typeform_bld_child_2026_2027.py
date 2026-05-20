@@ -199,7 +199,7 @@ def _build_configuration_json() -> dict[str, Any]:
         "default_vat_rate": "20.00",
         "default_course_mode": "onsite",
         "default_pre_registration_deposit_enabled": True,
-        "default_pre_registration_deposit_amount_ttc": "200.00",
+        "default_pre_registration_deposit_amount_ttc": "60.00",
         "location_overrides": [
             {
                 "match_values": ["Bar-le-Duc", "Bar le Duc", "BAR_LE_DUC"],
