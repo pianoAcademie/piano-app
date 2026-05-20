@@ -2399,6 +2399,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       amountTtc: quoteAdjustment.amountTtc,
       label: quoteAdjustment.label || null,
       vatRate: toNumber(defaultVatRate, 20),
+      effectiveDate: quoteAdjustment.effectiveDate || null,
     },
   };
 
