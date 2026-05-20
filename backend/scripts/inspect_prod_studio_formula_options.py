@@ -22,6 +22,16 @@ def _print(line: str) -> None:
 
 
 def main() -> None:
+    from scripts.fix_prod_breethany_second_course_discount import main as fix_second_course
+
+    original_argv = sys.argv[:]
+    sys.argv = [sys.argv[0], "--apply"]
+    try:
+        fix_second_course()
+    finally:
+        sys.argv = original_argv
+    return
+
     with SessionLocal() as db:
         studio_course_types = db.execute(
             select(
