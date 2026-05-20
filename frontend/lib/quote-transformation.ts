@@ -76,6 +76,7 @@ export type QuoteTransformFinancialAdjustment = {
   amountTtc: number;
   label: string | null;
   vatRate: number;
+  effectiveDate: string | null;
 };
 
 export type QuoteTransformQuote = {
@@ -111,11 +112,13 @@ export function quoteTransformFinancialAdjustmentFromMeta(
   const rawVatRate = readNumber(row?.vat_rate ?? row?.vatRate, defaultVatRate);
   const vatRate = Number.isFinite(rawVatRate) && rawVatRate >= 0 ? rawVatRate : defaultVatRate;
   const label = readString(row?.label) || null;
+  const effectiveDate = readString(row?.effective_date ?? row?.effectiveDate) || null;
   return {
     type,
     amountTtc,
     label,
     vatRate,
+    effectiveDate,
   };
 }
 
@@ -196,6 +199,7 @@ export type BillingExtraRow = {
   amountTtc: number;
   status: QuoteTransformStatus;
   editable: boolean;
+  effectiveDate?: string | null;
 };
 
 export type StepIssue = {
@@ -219,6 +223,7 @@ export type QuoteToEnrollmentBillingDraftRow = {
   amountHt: number;
   vatRate: number;
   amountTtc: number;
+  effectiveDate?: string | null;
 };
 
 export type QuoteToEnrollmentDraft = {
@@ -1204,6 +1209,7 @@ export function buildBillingExtraRows(
       amountTtc: Number(signedAmountTtc.toFixed(2)),
       status: "ok",
       editable: true,
+      effectiveDate: adjustment.effectiveDate,
     };
     row.status = rowStatusFromBilling(row);
     adjustmentRows.push(row);
@@ -1688,6 +1694,7 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
       amountHt: Number(row.amountHt.toFixed(2)),
       vatRate: Number(row.vatRate.toFixed(2)),
       amountTtc: Number(row.amountTtc.toFixed(2)),
+      effectiveDate: row.effectiveDate || null,
     }));
     const idempotencyKey = buildIdempotencyKey({
       quoteId: input.quote.id,
@@ -1962,6 +1969,7 @@ export function coerceQuoteToEnrollmentDraft(raw: unknown): QuoteToEnrollmentDra
       amountHt: readNumber(entry.item.amountHt, 0),
       vatRate: readNumber(entry.item.vatRate, 20),
       amountTtc: readNumber(entry.item.amountTtc, 0),
+      effectiveDate: readString(entry.item.effectiveDate ?? entry.item.effective_date) || null,
     }));
 
   const assignedRaw = readObject(scheduleResolutionRaw.assignedSessionByActivityId) || {};

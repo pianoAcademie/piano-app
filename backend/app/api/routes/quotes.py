@@ -6281,6 +6281,17 @@ def _source_line_id_from_billing_row(row: dict[str, object]) -> UUID | None:
     return None
 
 
+def _effective_at_from_billing_row(row: dict[str, object], *, now: datetime) -> datetime:
+    raw = str(row.get("effectiveDate") or row.get("effective_date") or "").strip()
+    if not raw:
+        return now
+    try:
+        effective_date = date.fromisoformat(raw)
+    except ValueError:
+        return now
+    return _invoice_issued_at_for_date(issued_date=effective_date, now=now)
+
+
 def _product_category_lookup(db: Session) -> dict[str, str]:
     category_rows = db.scalars(
         select(ProductCategory)
@@ -8062,6 +8073,7 @@ def _create_followup_manual_transactions(
             continue
         source_line = line_by_id.get(_source_line_id_from_billing_row(row))
         category = _resolve_quote_transaction_category(db, row=row, source_line=source_line)
+        occurred_at = _effective_at_from_billing_row(row, now=now)
         transaction = ClientManualTransaction(
             user_id=billing.id,
             student_user_id=student.id,
@@ -8071,7 +8083,7 @@ def _create_followup_manual_transactions(
             label=str(row.get("label") or "Montant facture").strip() or "Montant facture",
             description=f"Transformation devis {quote.quote_number}",
             category=category,
-            occurred_at=now,
+            occurred_at=occurred_at,
             amount_excl_vat=signed_amount_ht,
             vat_rate=vat_rate,
             vat_amount=signed_vat_amount,

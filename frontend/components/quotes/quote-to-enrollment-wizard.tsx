@@ -525,6 +525,7 @@ export default function QuoteToEnrollmentWizard({
           amountTtc: row.amountTtc,
           status: "ok",
           editable: true,
+          effectiveDate: row.effectiveDate || suggested?.effectiveDate || null,
         };
         return { ...mapped, status: billingStatus(mapped) };
       }).filter((row) => {
@@ -906,6 +907,7 @@ export default function QuoteToEnrollmentWizard({
       amountHt: Number(row.amountHt.toFixed(2)),
       vatRate: Number(row.vatRate.toFixed(2)),
       amountTtc: Number(row.amountTtc.toFixed(2)),
+      effectiveDate: row.effectiveDate || null,
     }));
 
     const logs = [
