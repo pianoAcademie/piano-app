@@ -19,6 +19,7 @@ class PaymentPlanScheduleInput:
     schedule_type: str = "single"
     schedule_rules: dict[str, Any] | None = None
     payment_method_label: str | None = None
+    fixed_fees_ttc: Decimal = Decimal("0.00")
 
 
 def _split_amount(total: Decimal, parts: int) -> list[Decimal]:
@@ -28,6 +29,18 @@ def _split_amount(total: Decimal, parts: int) -> list[Decimal]:
     out = [base for _ in range(parts)]
     delta = _quantize(total - sum(out))
     out[-1] = _quantize(out[-1] + delta)
+    return out
+
+
+def _monthly_parts_with_first_fixed_fees(total: Decimal, installments: int, fixed_fees_ttc: Decimal) -> list[Decimal]:
+    if installments <= 1:
+        return [_quantize(total)]
+    fixed_fees = max(Decimal("0.00"), min(_quantize(fixed_fees_ttc), total))
+    if fixed_fees <= Decimal("0.00"):
+        return _split_amount(total, installments)
+    recurring_total = _quantize(total - fixed_fees)
+    out = _split_amount(recurring_total, installments)
+    out[0] = _quantize(out[0] + fixed_fees)
     return out
 
 
@@ -163,7 +176,12 @@ def build_payment_schedule(payload: PaymentPlanScheduleInput) -> list[dict[str, 
     if method_code in check_method_codes and len(deferred_months) >= 1:
         deferred_months[0] = 12
 
-    parts = _split_amount(total, installments)
+    is_monthly_schedule = schedule_type == "monthly" or method_code in {"CARD_MONTHLY", "CB_MONTHLY"}
+    parts = (
+        _monthly_parts_with_first_fixed_fees(total, installments, _quantize(payload.fixed_fees_ttc))
+        if is_monthly_schedule
+        else _split_amount(total, installments)
+    )
     is_check = method_code in check_method_codes
     out: list[dict[str, object]] = []
     for index, amount in enumerate(parts):

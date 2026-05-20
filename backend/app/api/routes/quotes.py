@@ -443,8 +443,31 @@ def _monthly_first_due_label() -> str:
     return "a la validation du devis, avant votre 1er cours"
 
 
+def _quote_fixed_fees_ttc_for_monthly_schedule(db: Session, quote: Quote) -> Decimal:
+    lines = db.scalars(select(QuoteLine).where(QuoteLine.quote_id == quote.id)).all()
+    total = Decimal("0.00")
+    for line in lines:
+        line_category = (line.line_category or "").strip().lower()
+        line_type = (line.line_type or "").strip().lower()
+        master_item_type = (line.master_item_type or "").strip().lower()
+        if line_type == "discount":
+            continue
+        if line_category == "service":
+            continue
+        if (
+            line_category == "product"
+            or line.product_id is not None
+            or line.kit_id is not None
+            or master_item_type in {"product", "kit", "option", "surcharge_rule"}
+            or line_type == "surcharge"
+        ):
+            total += Decimal(line.amount_ttc or 0)
+    return _q2(max(Decimal("0.00"), total))
+
+
 def _build_payment_terms_snapshot_from_plan(
     *,
+    db: Session | None = None,
     quote: Quote,
     plan: PaymentPlan,
     total_ttc: Decimal,
@@ -479,6 +502,11 @@ def _build_payment_terms_snapshot_from_plan(
                 total_ttc=remaining_ttc_after_deposit,
                 registration_date=registration_date,
                 currency=(quote.currency or "EUR").upper(),
+                fixed_fees_ttc=(
+                    _quote_fixed_fees_ttc_for_monthly_schedule(db, quote)
+                    if db is not None
+                    else Decimal("0.00")
+                ),
             )
         )
     normalized_payment_method = plan.payment_method.strip().upper()
@@ -3519,6 +3547,7 @@ def _build_payment_schedule_for_quote(db: Session, quote: Quote, *, total_ttc: D
     if plan is None:
         return []
     snapshot = _build_payment_terms_snapshot_from_plan(
+        db=db,
         quote=quote,
         plan=plan,
         total_ttc=total_ttc,
@@ -3562,6 +3591,7 @@ def _build_payment_terms_snapshot_for_quote(db: Session, quote: Quote, *, total_
             "total_ttc_after_adjustment": str(total_ttc_after_adjustment),
         }
     return _build_payment_terms_snapshot_from_plan(
+        db=db,
         quote=quote,
         plan=plan,
         total_ttc=total_ttc,
@@ -8833,6 +8863,7 @@ def change_quote_followup_payment_method(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment plan not found")
         quote.payment_plan_id = plan.id
         quote.payment_terms_snapshot = _build_payment_terms_snapshot_from_plan(
+            db=db,
             quote=quote,
             plan=plan,
             total_ttc=_q2(Decimal(quote.total_ttc or 0)),
