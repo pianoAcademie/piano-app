@@ -276,6 +276,9 @@ function quoteValidationState(row: QuoteOut): QuoteValidationUiState {
 
 function quoteIntegrationState(row: QuoteOut, commercialState: QuoteValidationUiState): QuoteIntegrationUiState {
   const meta = row.meta || {};
+  if (readStringMeta(meta, "change_request_revision_quote_id", "")) {
+    return "non_concerne";
+  }
   if (commercialState === "refuse" || commercialState === "expire") {
     return "non_concerne";
   }

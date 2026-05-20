@@ -1301,6 +1301,7 @@ const QUOTE_INTERACTION_EVENT_TYPES = new Set([
   "quote_approved",
   "quote_rejected",
   "quote_change_requested",
+  "quote_created_from_change_request",
   "quote_public_confirmation_email_failed",
   "quote_public_confirmation_email_skipped",
   "quote_public_response_restored",
@@ -1359,6 +1360,7 @@ function quoteEventTitle(event: QuoteEventOut, language: UiLanguage = "fr"): str
     quote_approved: "admin.quote_events.title.approved",
     quote_rejected: "admin.quote_events.title.rejected",
     quote_change_requested: "admin.quote_events.title.change_requested",
+    quote_created_from_change_request: "admin.quote_events.title.created_from_change_request",
     quote_public_confirmation_email_failed: "admin.quote_events.title.confirmation_failed",
     quote_public_confirmation_email_skipped: "admin.quote_events.title.confirmation_skipped",
     quote_public_response_restored: "admin.quote_events.title.public_response_restored",
@@ -1423,6 +1425,16 @@ function quoteEventDescription(event: QuoteEventOut, language: UiLanguage = "fr"
   const detail = typeof payload.detail === "string" ? payload.detail.trim() : "";
   if (type === "quote_change_requested") {
     return message || uiText(language, "admin.quote_events.description.change_requested_fallback");
+  }
+  if (type === "quote_created_from_change_request") {
+    const sourceQuoteNumber = typeof payload.source_quote_number === "string" ? payload.source_quote_number.trim() : "";
+    const sourceLabel = sourceQuoteNumber || "-";
+    return message
+      ? uiText(language, "admin.quote_events.description.created_from_change_request_with_message", {
+        quote: sourceLabel,
+        message,
+      })
+      : uiText(language, "admin.quote_events.description.created_from_change_request", { quote: sourceLabel });
   }
   if (type === "quote_public_response_restored") {
     return fromStatus || toStatus
@@ -1904,12 +1916,19 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const publicResponseLastAt = readStringMeta(detail.quote.meta || {}, "public_response_last_at", "");
   const changeRequestRevisionQuoteId = readStringMeta(detail.quote.meta || {}, "change_request_revision_quote_id", "");
   const changeRequestRevisionQuoteNumber = readStringMeta(detail.quote.meta || {}, "change_request_revision_quote_number", "");
-  const hasPublicChangeRequest = quoteStatus === "change_requested" || publicResponseLastAction === "change_requested";
+  const revisionSourceQuoteId = readStringMeta(detail.quote.meta || {}, "revision_source_quote_id", "");
+  const revisionSourceQuoteNumber = readStringMeta(detail.quote.meta || {}, "revision_source_quote_number", "");
+  const revisionChangeRequestMessage = readStringMeta(detail.quote.meta || {}, "revision_change_request_message", "");
+  const revisionChangeRequestAt = readStringMeta(detail.quote.meta || {}, "revision_change_request_at", "");
+  const hasRevisionChangeRequest = Boolean(revisionSourceQuoteId && revisionChangeRequestMessage);
+  const hasPublicChangeRequest = quoteStatus === "change_requested" || publicResponseLastAction === "change_requested" || hasRevisionChangeRequest;
   const hasChangeRequestRevision = Boolean(changeRequestRevisionQuoteId);
   const publicChangeRequestReceivedLabel = publicResponseLastAt
     ? formatDate(publicResponseLastAt, language)
+    : revisionChangeRequestAt
+    ? formatDate(revisionChangeRequestAt, language)
     : t("admin.quote_detail.date_not_available");
-  const publicChangeRequestMessage = publicResponseLastMessage || t("admin.quote_detail.public_change_request_fallback");
+  const publicChangeRequestMessage = publicResponseLastMessage || revisionChangeRequestMessage || t("admin.quote_detail.public_change_request_fallback");
   const canEditQuote = ["created", "change_requested"].includes(quoteStatus) && !hasChangeRequestRevision;
   const canSendQuote = quoteStatus === "created";
   const canResendQuote = ["sent", "approved", "rejected", "expired", "change_requested"].includes(quoteStatus) && !hasChangeRequestRevision;
@@ -2787,6 +2806,15 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                       {changeRequestRevisionQuoteNumber || "ouvrir la version"}
                     </Link>
                     . Cette version envoyee reste conservee comme archive figee.
+                  </p>
+                ) : null}
+                {hasRevisionChangeRequest ? (
+                  <p className="muted top-gap-sm">
+                    Demande issue du devis{" "}
+                    <Link className="quote-list-row-link" href={`/admin/quotes/${encodeURIComponent(revisionSourceQuoteId)}`}>
+                      {revisionSourceQuoteNumber || "source"}
+                    </Link>
+                    .
                   </p>
                 ) : null}
               </section>
