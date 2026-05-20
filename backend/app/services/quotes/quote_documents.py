@@ -2506,6 +2506,11 @@ def _quote_template_disables_pass_recup(*, db: Session | None, quote: Quote) -> 
     )
     if target in {"eveil", "initiation"}:
         return True
+    searchable = " ".join(_searchable_text(item) for item in candidates if item)
+    compact = re.sub(r"[^a-z0-9]+", "", searchable)
+    words = set(re.split(r"[^a-z0-9]+", searchable))
+    if "barleduc" in compact or "bld" in words:
+        return True
     return any(("eveil" in item) or ("initiation" in item) for item in candidates if item)
 
 

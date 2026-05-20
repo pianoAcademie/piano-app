@@ -24,6 +24,7 @@ from app.services.quotes.quote_documents import (
     _pass_recup_compact_notice_markup,
     _planning_block_pdf_row,
     _planning_blocks_table_html,
+    _quote_template_disables_pass_recup,
     _quote_template_allows_end_year_concert,
     _solfege_pending_block_info,
 )
@@ -180,6 +181,21 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertIsNotNone(paragraph)
         self.assertIn("<font", markup)
         self.assertNotIn("<span", markup)
+
+    def test_bar_le_duc_quote_templates_disable_pass_recup_pdf_option(self) -> None:
+        child_quote = SimpleNamespace(
+            meta={"quote_template_code": "TEMPLATE_BAR_LE_DUC_ENFANT"},
+            quote_template_id=None,
+            quote_template_version_id=None,
+        )
+        adult_quote = SimpleNamespace(
+            meta={"quote_template_code": "TEMPLATE_BLD_ADULTES"},
+            quote_template_id=None,
+            quote_template_version_id=None,
+        )
+
+        self.assertTrue(_quote_template_disables_pass_recup(db=None, quote=child_quote))
+        self.assertTrue(_quote_template_disables_pass_recup(db=None, quote=adult_quote))
 
     def test_end_year_concert_line_match_detects_billed_option(self) -> None:
         line = SimpleNamespace(
