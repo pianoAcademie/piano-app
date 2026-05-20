@@ -465,6 +465,101 @@ def _quote_fixed_fees_ttc_for_monthly_schedule(db: Session, quote: Quote) -> Dec
     return _q2(max(Decimal("0.00"), total))
 
 
+def _quote_line_recommendation_key_for_monthly_schedule(line: QuoteLine) -> str | None:
+    activity_id = str(line.activity_id or "").strip()
+    if not activity_id:
+        return None
+    meta = _json_object(line.meta)
+    automatic_key = str(meta.get("typeform_automatic_line") or "").strip()
+    return f"{activity_id}:{automatic_key}" if automatic_key else activity_id
+
+
+def _month_key_from_session_date(value: object | None) -> str | None:
+    raw = str(value or "").strip()
+    if len(raw) < 7:
+        return None
+    month_key = raw[:7]
+    try:
+        year_text, month_text = month_key.split("-", 1)
+        year = int(year_text)
+        month = int(month_text)
+    except Exception:
+        return None
+    if year < 1 or not 1 <= month <= 12:
+        return None
+    return f"{year:04d}-{month:02d}"
+
+
+def _quote_monthly_service_amounts_ttc_for_schedule(db: Session, quote: Quote) -> dict[str, Decimal]:
+    lines = db.scalars(
+        select(QuoteLine).where(QuoteLine.quote_id == quote.id).order_by(QuoteLine.sort_order, QuoteLine.created_at)
+    ).all()
+    service_lines = [
+        line
+        for line in lines
+        if (line.line_category or "").strip().lower() == "service" or line.activity_id is not None
+    ]
+    if not service_lines:
+        return {}
+
+    calendar_snapshot = _calendar_snapshot_with_planning_sessions(db, quote.calendar_snapshot or {})
+    calendar_snapshot = _calendar_snapshot_with_line_recommendation_keys(db, calendar_snapshot, lines=lines)
+    sessions_by_key: dict[str, list[dict[str, object]]] = {}
+    sessions_by_activity: dict[str, list[dict[str, object]]] = {}
+    for item in _json_list(calendar_snapshot.get("sessions")):
+        if not isinstance(item, dict):
+            continue
+        session = dict(item)
+        session_month = _month_key_from_session_date(session.get("date"))
+        if session_month is None:
+            continue
+        activity_id = str(session.get("activity_id") or "").strip()
+        recommendation_key = str(session.get("recommendation_key") or "").strip()
+        if activity_id:
+            sessions_by_activity.setdefault(activity_id, []).append(session)
+        if recommendation_key:
+            sessions_by_key.setdefault(recommendation_key, []).append(session)
+
+    monthly_amounts: dict[str, Decimal] = {}
+    unallocated_amount = Decimal("0.00")
+    for line in service_lines:
+        amount = _q2(Decimal(line.amount_ttc or 0))
+        if amount == Decimal("0.00"):
+            continue
+        recommendation_key = _quote_line_recommendation_key_for_monthly_schedule(line)
+        activity_id = str(line.activity_id or "").strip()
+        sessions = (
+            sessions_by_key.get(recommendation_key or "")
+            or sessions_by_activity.get(activity_id)
+            or []
+        )
+        if not sessions:
+            unallocated_amount = _q2(unallocated_amount + amount)
+            continue
+        amount_parts = _split_quote_amount_by_count(amount, len(sessions))
+        for session, session_amount in zip(sessions, amount_parts):
+            month_key = _month_key_from_session_date(session.get("date"))
+            if month_key is None:
+                unallocated_amount = _q2(unallocated_amount + session_amount)
+                continue
+            monthly_amounts[month_key] = _q2(monthly_amounts.get(month_key, Decimal("0.00")) + session_amount)
+
+    if unallocated_amount and monthly_amounts:
+        first_month = sorted(monthly_amounts)[0]
+        monthly_amounts[first_month] = _q2(monthly_amounts[first_month] + unallocated_amount)
+    return {month: amount for month, amount in sorted(monthly_amounts.items())}
+
+
+def _split_quote_amount_by_count(amount: Decimal, count: int) -> list[Decimal]:
+    if count <= 0:
+        return [_q2(amount)]
+    base = _q2(amount / Decimal(count))
+    parts = [base for _ in range(count)]
+    delta = _q2(amount - sum(parts))
+    parts[-1] = _q2(parts[-1] + delta)
+    return parts
+
+
 def _build_payment_terms_snapshot_from_plan(
     *,
     db: Session | None = None,
@@ -506,6 +601,11 @@ def _build_payment_terms_snapshot_from_plan(
                     _quote_fixed_fees_ttc_for_monthly_schedule(db, quote)
                     if db is not None
                     else Decimal("0.00")
+                ),
+                monthly_service_amounts_ttc=(
+                    _quote_monthly_service_amounts_ttc_for_schedule(db, quote)
+                    if db is not None
+                    else None
                 ),
             )
         )
