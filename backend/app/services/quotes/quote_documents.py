@@ -530,11 +530,18 @@ def _format_address_parts(
 def _typeform_parent_address_parts_from_normalized_payload(normalized: dict[str, Any]) -> dict[str, str]:
     normalized = _json_object(normalized)
     return {
-        "address_line": str(normalized.get("parent_address_line_1") or normalized.get("parent_address") or "").strip(),
-        "address_line_2": str(normalized.get("parent_address_line_2") or "").strip(),
-        "postal_code": str(normalized.get("parent_postal_code") or "").strip(),
-        "city": str(normalized.get("parent_city") or "").strip(),
-        "country": str(normalized.get("parent_country") or "").strip(),
+        "address_line": str(
+            normalized.get("parent_address_line_1")
+            or normalized.get("adult_address_line_1")
+            or normalized.get("parent_address")
+            or normalized.get("adult_address")
+            or normalized.get("address")
+            or ""
+        ).strip(),
+        "address_line_2": str(normalized.get("parent_address_line_2") or normalized.get("adult_address_line_2") or "").strip(),
+        "postal_code": str(normalized.get("parent_postal_code") or normalized.get("adult_postal_code") or "").strip(),
+        "city": str(normalized.get("parent_city") or normalized.get("adult_city") or "").strip(),
+        "country": str(normalized.get("parent_country") or normalized.get("adult_country") or "").strip(),
     }
 
 
@@ -562,6 +569,33 @@ def _typeform_simplified_answer_value(simplified_answers: list[Any], *labels: st
         if value:
             return value
     return ""
+
+
+def _typeform_contact_phone_from_normalized_payload(normalized: dict[str, Any]) -> str:
+    normalized = _json_object(normalized)
+    return str(
+        normalized.get("parent_phone")
+        or normalized.get("adult_phone")
+        or normalized.get("phone")
+        or normalized.get("telephone")
+        or ""
+    ).strip()
+
+
+def _typeform_contact_phone_from_intake(intake: TypeformIntake | None) -> str:
+    if intake is None:
+        return ""
+    phone = _typeform_contact_phone_from_normalized_payload(_json_object(intake.normalized_payload_json))
+    if phone:
+        return phone
+    return _typeform_simplified_answer_value(
+        _json_list(intake.simplified_response_json),
+        "Phone number",
+        "Telephone",
+        "Téléphone",
+        "Phone",
+        "telephone",
+    )
 
 
 def _typeform_parent_address_from_intake(intake: TypeformIntake | None) -> str:
@@ -637,6 +671,28 @@ def _typeform_parent_address_parts_from_quote(*, db: Session | None, quote: Quot
         return {"address_line": "", "address_line_2": "", "postal_code": "", "city": "", "country": ""}
     intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == intake_uuid))
     return _typeform_parent_address_parts_from_intake(intake)
+
+
+def _typeform_contact_phone_from_quote(*, db: Session | None, quote: Quote) -> str:
+    quote_meta = _json_object(quote.meta)
+    typeform_meta = _json_object(quote_meta.get("typeform_intake"))
+    phone = _typeform_contact_phone_from_normalized_payload(_json_object(typeform_meta.get("normalized_payload")))
+    if phone:
+        return phone
+    intake_id = str(typeform_meta.get("intake_id") or "").strip()
+    if not intake_id and db is not None and quote.prospect_id is not None:
+        prospect = db.scalar(select(Prospect).where(Prospect.id == quote.prospect_id))
+        if prospect is not None:
+            prospect_meta = _json_object(prospect.meta)
+            intake_id = str(prospect_meta.get("typeform_intake_id") or "").strip()
+    if db is None or not intake_id:
+        return ""
+    try:
+        intake_uuid = UUID(intake_id)
+    except ValueError:
+        return ""
+    intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == intake_uuid))
+    return _typeform_contact_phone_from_intake(intake)
 
 
 def _utcnow() -> datetime:
@@ -2671,6 +2727,7 @@ def _resolve_prospect_data(*, db: Session | None, quote: Quote) -> dict[str, str
 
     meta = prospect.meta or {}
     typeform_parent_address = _typeform_parent_address_from_quote(db=db, quote=quote).strip()
+    typeform_contact_phone = _typeform_contact_phone_from_quote(db=db, quote=quote).strip()
     prospect_type = "child" if str(meta.get("prospect_type") or "").strip().lower() == "child" else "adult"
     values["prospect_type"] = prospect_type
     values["prospect_type_label"] = "Enfant" if prospect_type == "child" else "Adulte"
@@ -2688,7 +2745,7 @@ def _resolve_prospect_data(*, db: Session | None, quote: Quote) -> dict[str, str
         parent_first_name = str((parent_meta or {}).get("first_name") or "").strip()
         parent_last_name = str((parent_meta or {}).get("last_name") or "").strip()
         parent_email = _public_email(str((parent_meta or {}).get("email") or prospect.email or ""))
-        parent_phone = str((parent_meta or {}).get("phone") or prospect.phone or "").strip()
+        parent_phone = str((parent_meta or {}).get("phone") or prospect.phone or typeform_contact_phone or "").strip()
         parent_address = str((parent_meta or {}).get("address") or "").strip()
         if prospect.parent_prospect_id is not None:
             parent = db.scalar(select(Prospect).where(Prospect.id == prospect.parent_prospect_id))
@@ -2714,7 +2771,7 @@ def _resolve_prospect_data(*, db: Session | None, quote: Quote) -> dict[str, str
         values["adult_last_name"] = (prospect.last_name or "").strip()
         values["adult_full_name"] = _name(prospect.first_name, prospect.last_name, fallback="")
         values["adult_email"] = _public_email(prospect.email)
-        values["adult_phone"] = (prospect.phone or "").strip()
+        values["adult_phone"] = (prospect.phone or typeform_contact_phone or "").strip()
         values["adult_address"] = str(meta.get("adult_address") or typeform_parent_address or "").strip()
 
     return _apply_child_client_family_data(db=db, quote=quote, values=values)

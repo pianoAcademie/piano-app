@@ -26,12 +26,44 @@ from app.services.quotes.quote_documents import (
     _planning_blocks_table_html,
     _quote_template_disables_pass_recup,
     _quote_template_allows_end_year_concert,
+    _resolve_prospect_data,
     _solfege_pending_block_info,
 )
 from app.api.routes.quotes import _resolve_quote_pdf_bytes
 
 
 class QuoteDocumentMarkupTests(unittest.TestCase):
+    def test_adult_pdf_identity_uses_typeform_contact_details_when_prospect_is_incomplete(self) -> None:
+        prospect_id = uuid4()
+        quote = SimpleNamespace(
+            prospect_id=prospect_id,
+            client_id=None,
+            meta={
+                "typeform_intake": {
+                    "normalized_payload": {
+                        "parent_phone": "+33674473945",
+                        "parent_address_line_1": "11 rue Landry Gillon",
+                        "parent_city": "Bar-le-Duc",
+                        "parent_postal_code": "55000",
+                        "parent_country": "FR",
+                    }
+                }
+            },
+        )
+        prospect = SimpleNamespace(
+            first_name="Perrine",
+            last_name="Vacher",
+            email="perrine.vacher@gmail.com",
+            phone="",
+            meta={"prospect_type": "adult"},
+        )
+        db = SimpleNamespace(scalar=lambda _query: prospect)
+
+        prospect_data = _resolve_prospect_data(db=db, quote=quote)  # type: ignore[arg-type]
+
+        self.assertEqual(prospect_data["adult_phone"], "+33674473945")
+        self.assertEqual(prospect_data["adult_address"], "11 rue Landry Gillon, 55000 Bar-le-Duc, FR")
+
     def test_public_pdf_regenerates_when_quote_document_is_not_frozen(self) -> None:
         quote = SimpleNamespace(
             id=uuid4(),
