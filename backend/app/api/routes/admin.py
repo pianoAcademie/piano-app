@@ -2420,6 +2420,7 @@ def get_planning_simulation(
     slot_entries: dict[str, dict[str, object]] = {}
     session_slot_by_id: dict[UUID, str] = {}
     session_signature_by_id: dict[UUID, str] = {}
+    reference_session_id_by_slot_key: dict[str, UUID] = {}
     live_slot_keys_by_signature: dict[str, set[str]] = {}
     live_signatures_by_person_key: dict[str, set[str]] = {}
     quote_location_name_by_id: dict[UUID, str] = {}
@@ -2523,6 +2524,7 @@ def get_planning_simulation(
         live_slot_keys_by_signature.setdefault(signature, set()).add(slot_key)
         session_slot_by_id[session_obj.id] = slot_key
         session_signature_by_id[session_obj.id] = signature
+        reference_session_id_by_slot_key.setdefault(slot_key, session_obj.id)
 
         entry = ensure_slot(
             slot_key=slot_key,
@@ -2553,6 +2555,9 @@ def get_planning_simulation(
         entry["capacity_max"] = capacity_value if current_max is None else max(int(current_max), capacity_value)
 
     if session_slot_by_id:
+        reference_session_slot_by_id = {
+            session_id: slot_key for slot_key, session_id in reference_session_id_by_slot_key.items()
+        }
         booking_rows = db.execute(
             select(Booking.session_id, User.id, User.first_name, User.last_name, User.email)
             .join(User, User.id == Booking.user_id)
@@ -2568,8 +2573,11 @@ def get_planning_simulation(
             signature = session_signature_by_id.get(session_id)
             if signature:
                 live_signatures_by_person_key.setdefault(f"client:{user_id}", set()).add(signature)
-            slot_entries[slot_key]["_booked_user_ids"].add(str(user_id))
-            slot_entries[slot_key]["_booked_students"][str(user_id)] = _planning_simulation_person_name(
+            counted_slot_key = reference_session_slot_by_id.get(session_id)
+            if counted_slot_key is None:
+                continue
+            slot_entries[counted_slot_key]["_booked_user_ids"].add(str(user_id))
+            slot_entries[counted_slot_key]["_booked_students"][str(user_id)] = _planning_simulation_person_name(
                 first_name=first_name,
                 last_name=last_name,
                 fallback=email,
