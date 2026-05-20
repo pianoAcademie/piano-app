@@ -785,6 +785,46 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
             ],
         )
 
+    def test_normalize_payload_resolves_multisite_location_from_creneau_label(self) -> None:
+        config = SimpleNamespace(
+            configuration_json={
+                "field_mapping": {
+                    "requested_location": ["obsolete-requested-location-id"],
+                    "requested_slot_preferences": ["obsolete-slot-pref-id"],
+                },
+                "field_labels": {},
+            },
+            audience_segment="eveil",
+            location_code="PARIS_MULTI_SITE",
+        )
+        payload = {
+            "form_response": {
+                "answers": [
+                    {
+                        "field": {"id": "pompe-slot", "title": "Créneau initiation - Rue de la Pompe"},
+                        "choice": {"label": "Samedi 11h"},
+                    },
+                ]
+            }
+        }
+
+        normalized, _ = _normalize_payload(payload=payload, config=config)
+
+        self.assertEqual(normalized["requested_location"], "Rue de la Pompe")
+        self.assertEqual(normalized["requested_days"], ["samedi"])
+        self.assertEqual(normalized["requested_times"], ["11:00"])
+        self.assertEqual(
+            normalized["requested_slot_preferences"],
+            [
+                {
+                    "day": "samedi",
+                    "time": "11:00",
+                    "location": "Rue de la Pompe",
+                    "segment": "eveil",
+                }
+            ],
+        )
+
     def test_normalize_payload_falls_back_to_time_row_labels_when_mapping_is_stale(self) -> None:
         config = SimpleNamespace(
             configuration_json={

@@ -946,6 +946,65 @@ def _normalize_slot_preferences(
     return out
 
 
+def _is_multisite_location_placeholder(value: object | None) -> bool:
+    token = _normalize_token(value)
+    compact = re.sub(r"[^a-z0-9]+", "", token)
+    return compact in {"multisite", "parismultisite", "parismultisites"}
+
+
+def _location_hint_from_text(*values: object | None) -> str | None:
+    token = " ".join(_normalize_token(value) for value in values if _text(value))
+    compact = re.sub(r"[^a-z0-9]+", "", token)
+    if not compact:
+        return None
+    if "barleduc" in compact or compact == "bld":
+        return "Bar-le-Duc"
+    if "pompe" in compact:
+        return "Rue de la Pompe"
+    if "scheffer" in compact:
+        return "Rue Scheffer"
+    if "richelieu" in compact:
+        return "Rue de Richelieu"
+    if "assas" in compact:
+        return "Rue d'Assas"
+    return None
+
+
+def _location_for_slot_preference(
+    requested_location: str | None,
+    *hints: object | None,
+) -> str | None:
+    hinted_location = _location_hint_from_text(*hints)
+    if hinted_location and (not requested_location or _is_multisite_location_placeholder(requested_location)):
+        return hinted_location
+    return requested_location
+
+
+def _resolve_requested_location_from_slot_preferences(
+    requested_location: str | None,
+    slot_preferences: list[dict[str, object]],
+) -> tuple[str | None, list[dict[str, object]]]:
+    if not _is_multisite_location_placeholder(requested_location):
+        return requested_location, slot_preferences
+    concrete_locations = [
+        _text(item.get("location"))
+        for item in slot_preferences
+        if _text(item.get("location")) and not _is_multisite_location_placeholder(item.get("location"))
+    ]
+    unique_locations = list(dict.fromkeys(concrete_locations))
+    if len(unique_locations) != 1:
+        return requested_location, slot_preferences
+    resolved_location = unique_locations[0]
+    resolved_preferences = [
+        {
+            **item,
+            "location": resolved_location if _is_multisite_location_placeholder(item.get("location")) else item.get("location"),
+        }
+        for item in slot_preferences
+    ]
+    return resolved_location, resolved_preferences
+
+
 def _slot_preference_like_label(value: object | None) -> bool:
     token = _normalize_token(value)
     return "creneau" in token or "slot" in token
@@ -965,10 +1024,11 @@ def _fallback_requested_slot_preferences_from_simplified_answers(
         label = _text(item.get("label"))
         value = _text(item.get("value"))
         nested: list[dict[str, object]] = []
+        slot_location = _location_for_slot_preference(requested_location, label, value)
         if _slot_preference_like_label(label):
             nested = _normalize_slot_preferences(
                 [value],
-                requested_location=requested_location,
+                requested_location=slot_location,
                 segment=segment,
             )
         else:
@@ -984,7 +1044,7 @@ def _fallback_requested_slot_preferences_from_simplified_answers(
                     {
                         "day": label_day,
                         "time": time_value,
-                        "location": requested_location,
+                        "location": slot_location,
                         "segment": segment,
                     }
                     for time_value in value_times
@@ -994,7 +1054,7 @@ def _fallback_requested_slot_preferences_from_simplified_answers(
                     {
                         "day": value_day,
                         "time": label_times[0],
-                        "location": requested_location,
+                        "location": slot_location,
                         "segment": segment,
                     }
                 ]
@@ -1730,6 +1790,10 @@ def _normalize_payload(
             requested_location=requested_location,
             segment=config_segment or None,
         )
+    requested_location, requested_slot_preferences = _resolve_requested_location_from_slot_preferences(
+        requested_location,
+        requested_slot_preferences,
+    )
     requested_second_course = _second_course_request_from_simplified_answers(
         simplified_answers,
         requested_location=requested_location,
