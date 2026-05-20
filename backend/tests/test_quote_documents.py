@@ -64,6 +64,33 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertEqual(prospect_data["adult_phone"], "+33674473945")
         self.assertEqual(prospect_data["adult_address"], "11 rue Landry Gillon, 55000 Bar-le-Duc, FR")
 
+    def test_active_adult_quote_pdf_identity_uses_typeform_contact_details_without_prospect(self) -> None:
+        quote = SimpleNamespace(
+            prospect_id=None,
+            client_id=None,
+            meta={
+                "typeform_intake": {
+                    "normalized_payload": {
+                        "customer_type": "adult",
+                        "parent_first_name": "Perrine",
+                        "parent_last_name": "Vacher",
+                        "parent_email": "perrine.vacher@gmail.com",
+                        "parent_phone": "+33674473945",
+                        "parent_address_line_1": "11 rue Landry Gillon",
+                        "parent_city": "Bar-le-Duc",
+                    }
+                }
+            },
+        )
+
+        prospect_data = _resolve_prospect_data(db=None, quote=quote)  # type: ignore[arg-type]
+
+        self.assertEqual(prospect_data["prospect_type"], "adult")
+        self.assertEqual(prospect_data["adult_full_name"], "Perrine Vacher")
+        self.assertEqual(prospect_data["adult_email"], "perrine.vacher@gmail.com")
+        self.assertEqual(prospect_data["adult_phone"], "+33674473945")
+        self.assertEqual(prospect_data["adult_address"], "11 rue Landry Gillon, Bar-le-Duc")
+
     def test_public_pdf_regenerates_when_quote_document_is_not_frozen(self) -> None:
         quote = SimpleNamespace(
             id=uuid4(),

@@ -2697,6 +2697,53 @@ def _apply_child_client_family_data(*, db: Session | None, quote: Quote, values:
     return values
 
 
+def _apply_typeform_contact_data(*, db: Session | None, quote: Quote, values: dict[str, str]) -> dict[str, str]:
+    quote_meta = _json_object(quote.meta)
+    normalized_payload = _json_object(_json_object(quote_meta.get("typeform_intake")).get("normalized_payload"))
+    if not normalized_payload:
+        return values
+
+    typeform_address = _typeform_parent_address_from_quote(db=db, quote=quote).strip()
+    typeform_phone = _typeform_contact_phone_from_quote(db=db, quote=quote).strip()
+    customer_type = str(normalized_payload.get("customer_type") or "").strip().lower()
+    has_child_fields = any(
+        str(normalized_payload.get(key) or "").strip()
+        for key in ("child_first_name", "child_last_name", "child_birth_date")
+    )
+    prospect_type = "child" if customer_type == "child" or has_child_fields else "adult"
+    values["prospect_type"] = prospect_type
+    values["prospect_type_label"] = "Enfant" if prospect_type == "child" else "Adulte"
+
+    parent_first_name = str(
+        normalized_payload.get("parent_first_name") or normalized_payload.get("adult_first_name") or ""
+    ).strip()
+    parent_last_name = str(
+        normalized_payload.get("parent_last_name") or normalized_payload.get("adult_last_name") or ""
+    ).strip()
+    parent_email = _public_email(str(normalized_payload.get("parent_email") or normalized_payload.get("adult_email") or ""))
+    if prospect_type == "child":
+        child_first_name = str(normalized_payload.get("child_first_name") or "").strip()
+        child_last_name = str(normalized_payload.get("child_last_name") or "").strip()
+        values["child_first_name"] = values.get("child_first_name") or child_first_name
+        values["child_last_name"] = values.get("child_last_name") or child_last_name
+        values["child_full_name"] = values.get("child_full_name") or _name(child_first_name, child_last_name, fallback="")
+        values["child_birth_date"] = values.get("child_birth_date") or str(normalized_payload.get("child_birth_date") or "").strip()
+        values["parent_first_name"] = values.get("parent_first_name") or parent_first_name
+        values["parent_last_name"] = values.get("parent_last_name") or parent_last_name
+        values["parent_full_name"] = values.get("parent_full_name") or _name(parent_first_name, parent_last_name, fallback="")
+        values["parent_email"] = values.get("parent_email") or parent_email
+        values["parent_phone"] = values.get("parent_phone") or typeform_phone
+        values["parent_address"] = values.get("parent_address") or typeform_address
+    else:
+        values["adult_first_name"] = values.get("adult_first_name") or parent_first_name
+        values["adult_last_name"] = values.get("adult_last_name") or parent_last_name
+        values["adult_full_name"] = values.get("adult_full_name") or _name(parent_first_name, parent_last_name, fallback="")
+        values["adult_email"] = values.get("adult_email") or parent_email
+        values["adult_phone"] = values.get("adult_phone") or typeform_phone
+        values["adult_address"] = values.get("adult_address") or typeform_address
+    return values
+
+
 def _resolve_prospect_data(*, db: Session | None, quote: Quote) -> dict[str, str]:
     values: dict[str, str] = {
         "prospect_type": "adult",
@@ -2719,6 +2766,7 @@ def _resolve_prospect_data(*, db: Session | None, quote: Quote) -> dict[str, str
         "child_birth_date": "",
     }
     if db is None or quote.prospect_id is None:
+        values = _apply_typeform_contact_data(db=db, quote=quote, values=values)
         return _apply_child_client_family_data(db=db, quote=quote, values=values)
 
     prospect = db.scalar(select(Prospect).where(Prospect.id == quote.prospect_id))
