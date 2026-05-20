@@ -14,6 +14,7 @@ from app.api.routes.admin import (
     _planning_simulation_quote_person_key,
     _planning_simulation_quote_location_name,
     _planning_simulation_search_text,
+    _planning_simulation_select_live_slot_for_quote,
     _safe_zoneinfo,
 )
 from app.models.catalog import DeliveryMode
@@ -46,6 +47,29 @@ class AdminPlanningSimulationTests(unittest.TestCase):
         self.assertEqual(
             _planning_simulation_search_text("Cours collectif Éveil musical - Répétition"),
             "cours collectif eveil musical - repetition",
+        )
+
+    def test_planning_simulation_selects_least_loaded_live_slot_for_quote(self) -> None:
+        slot_entries = {
+            "series:full": {
+                "capacity_max": 6,
+                "_booked_user_ids": {"1", "2", "3", "4", "5", "6"},
+                "_approved_quote_ids": set(),
+                "_pending_quote_ids": set(),
+                "_draft_quote_ids": set(),
+            },
+            "series:available": {
+                "capacity_max": 6,
+                "_booked_user_ids": {"1", "2"},
+                "_approved_quote_ids": {"quote-1"},
+                "_pending_quote_ids": set(),
+                "_draft_quote_ids": set(),
+            },
+        }
+
+        self.assertEqual(
+            _planning_simulation_select_live_slot_for_quote(slot_entries, ["series:full", "series:available"]),
+            "series:available",
         )
 
     def test_planning_simulation_labels_online_quote_slots(self) -> None:

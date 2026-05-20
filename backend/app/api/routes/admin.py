@@ -1393,6 +1393,34 @@ def _planning_simulation_search_text(value: str) -> str:
     )
 
 
+def _planning_simulation_entry_projected_count(entry: dict[str, object]) -> int:
+    return (
+        len(entry.get("_booked_user_ids", set()))
+        + len(entry.get("_approved_quote_ids", set()))
+        + len(entry.get("_pending_quote_ids", set()))
+        + len(entry.get("_draft_quote_ids", set()))
+    )
+
+
+def _planning_simulation_select_live_slot_for_quote(
+    slot_entries: dict[str, dict[str, object]],
+    matching_live_keys: list[str],
+) -> str | None:
+    candidates: list[tuple[bool, int, int, str]] = []
+    for slot_key in matching_live_keys:
+        entry = slot_entries.get(slot_key)
+        if entry is None:
+            continue
+        projected_count = _planning_simulation_entry_projected_count(entry)
+        raw_capacity = entry.get("capacity_max")
+        capacity = int(raw_capacity) if raw_capacity is not None else None
+        remaining_capacity = 999_999 if capacity is None else capacity - projected_count
+        candidates.append((remaining_capacity <= 0, projected_count, -remaining_capacity, slot_key))
+    if not candidates:
+        return None
+    return sorted(candidates)[0][3]
+
+
 def _planning_simulation_collective_piano_course_type_ids(db: Session) -> set[UUID]:
     rows = db.scalars(
         select(CourseType).where(
@@ -2691,16 +2719,11 @@ def get_planning_simulation(
                     resolved_slot_key = candidate_key
             if resolved_slot_key is None:
                 matching_live_keys = sorted(live_slot_keys_by_signature.get(signature, set()))
-                if len(matching_live_keys) == 1:
-                    resolved_slot_key = matching_live_keys[0]
+                resolved_slot_key = _planning_simulation_select_live_slot_for_quote(slot_entries, matching_live_keys)
             slot_note: str | None = None
             if resolved_slot_key is None:
                 resolved_slot_key = f"quote::{signature}"
-                matching_live_keys = sorted(live_slot_keys_by_signature.get(signature, set()))
-                if len(matching_live_keys) > 1:
-                    slot_note = "Serie live ambigue pour ce devis"
-                else:
-                    slot_note = "Aucun creneau live correspondant"
+                slot_note = "Aucun creneau live correspondant"
 
             entry = ensure_slot(
                 slot_key=resolved_slot_key,
