@@ -24,6 +24,7 @@ def _print(line: str) -> None:
 def main() -> None:
     from scripts.fix_prod_breethany_second_course_discount import main as fix_second_course
 
+    # Temporary production data correction for Breethany second-course pricing.
     original_argv = sys.argv[:]
     sys.argv = [sys.argv[0], "--apply", "--extra-discount-per-hour", "2.00"]
     try:
