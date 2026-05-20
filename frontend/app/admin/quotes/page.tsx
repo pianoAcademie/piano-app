@@ -628,6 +628,12 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
       if (commercialState === "pret_a_envoyer") {
         acc.readyToSend += 1;
       }
+      if (commercialState === "brouillon") {
+        acc.draft += 1;
+      }
+      if (commercialState === "envoye" || commercialState === "consulte") {
+        acc.sent += 1;
+      }
       if (commercialState === "modification_demandee") {
         acc.changeRequests += 1;
       }
@@ -642,8 +648,26 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
       }
       return acc;
     },
-    { total: filteredQuotes.length, incomplete: 0, readyToSend: 0, changeRequests: 0, approved: 0, integrationTodo: 0, integrationErrors: 0 },
+    {
+      total: filteredQuotes.length,
+      potentialEnrollments: 0,
+      incomplete: 0,
+      draft: 0,
+      readyToSend: 0,
+      sent: 0,
+      changeRequests: 0,
+      approved: 0,
+      integrationTodo: 0,
+      integrationErrors: 0,
+    },
   );
+  quoteStats.potentialEnrollments =
+    quoteStats.incomplete +
+    quoteStats.draft +
+    quoteStats.readyToSend +
+    quoteStats.sent +
+    quoteStats.changeRequests +
+    quoteStats.approved;
   return (
     <section className="admin-page-grid">
       <section className="card">
@@ -674,8 +698,8 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
       <section className="card">
         <div className="config-metric-grid">
           <article>
-            <span>{t("admin.quotes.metrics_filtered")}</span>
-            <strong>{quoteStats.total}</strong>
+            <span>{t("admin.quotes.metrics_potential_enrollments")}</span>
+            <strong>{quoteStats.potentialEnrollments}</strong>
           </article>
           <article className={quoteStats.incomplete > 0 ? "is-warning" : ""}>
             <span>{t("admin.quotes.metrics_incomplete")}</span>
