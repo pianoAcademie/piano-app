@@ -25,7 +25,7 @@ def main() -> None:
     from scripts.fix_prod_breethany_second_course_discount import main as fix_second_course
 
     original_argv = sys.argv[:]
-    sys.argv = [sys.argv[0], "--apply"]
+    sys.argv = [sys.argv[0], "--apply", "--extra-discount-per-hour", "2.00"]
     try:
         fix_second_course()
     finally:

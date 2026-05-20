@@ -69,7 +69,18 @@ def _is_second_course_transaction(row: ClientManualTransaction) -> bool:
 def main() -> None:
     parser = argparse.ArgumentParser(description=f"Apply {QUOTE_NUMBER} 2nd-course discount on bookings.")
     parser.add_argument("--apply", action="store_true", help="Write changes. Without this flag, dry-run only.")
+    parser.add_argument(
+        "--extra-discount-per-hour",
+        default="2.00",
+        help="TTC discount to add on each second-course booking hour.",
+    )
     args = parser.parse_args()
+    try:
+        configured_extra_discount_per_hour = _q2(Decimal(str(args.extra_discount_per_hour).replace(",", ".")))
+    except Exception as exc:
+        raise SystemExit(f"[{SCRIPT_PREFIX}] invalid_extra_discount_per_hour={args.extra_discount_per_hour}") from exc
+    if configured_extra_discount_per_hour <= Decimal("0.00"):
+        raise SystemExit(f"[{SCRIPT_PREFIX}] invalid_extra_discount_per_hour={configured_extra_discount_per_hour}")
 
     with SessionLocal() as db:
         quote = db.scalar(select(Quote).where(Quote.quote_number == QUOTE_NUMBER).limit(1))
@@ -89,7 +100,7 @@ def main() -> None:
         transaction_ids = _uuid_values(execution.get("created_transaction_ids"))
         subscription_id_raw = str(execution.get("subscription_id") or "").strip()
         subscription_id = UUID(subscription_id_raw) if subscription_id_raw else None
-        if not booking_ids or not transaction_ids or subscription_id is None:
+        if not booking_ids or subscription_id is None:
             raise SystemExit(
                 f"[{SCRIPT_PREFIX}] missing_execution_ids bookings={len(booking_ids)} transactions={len(transaction_ids)} subscription={subscription_id_raw or '-'}"
             )
@@ -107,22 +118,21 @@ def main() -> None:
             ).all()
             if _is_second_course_transaction(row)
         ]
-        if not discount_transactions:
-            raise SystemExit(f"[{SCRIPT_PREFIX}] second_course_discount_transaction_not_found")
         if len(discount_transactions) > 1:
             raise SystemExit(f"[{SCRIPT_PREFIX}] ambiguous_second_course_discount_transactions count={len(discount_transactions)}")
-        discount_transaction = discount_transactions[0]
+        discount_transaction = discount_transactions[0] if discount_transactions else None
 
-        invoice_line = db.scalar(
-            select(ClientInvoiceLine.id)
-            .where(
-                ClientInvoiceLine.source == "MANUAL",
-                ClientInvoiceLine.source_payment_id == discount_transaction.id,
+        if discount_transaction is not None:
+            invoice_line = db.scalar(
+                select(ClientInvoiceLine.id)
+                .where(
+                    ClientInvoiceLine.source == "MANUAL",
+                    ClientInvoiceLine.source_payment_id == discount_transaction.id,
+                )
+                .limit(1)
             )
-            .limit(1)
-        )
-        if invoice_line is not None:
-            raise SystemExit(f"[{SCRIPT_PREFIX}] abort_discount_transaction_locked_by_invoice_line={discount_transaction.id}")
+            if invoice_line is not None:
+                raise SystemExit(f"[{SCRIPT_PREFIX}] abort_discount_transaction_locked_by_invoice_line={discount_transaction.id}")
 
         booking_rows = db.execute(
             select(Booking, CourseSession, CourseType, Location, User)
@@ -158,9 +168,7 @@ def main() -> None:
         if total_second_hours <= Decimal("0.00"):
             raise SystemExit(f"[{SCRIPT_PREFIX}] no_second_course_booking_hours")
 
-        extra_second_discount_per_hour = _q2(abs(Decimal(discount_transaction.total_incl_vat or 0)) / total_second_hours)
-        if extra_second_discount_per_hour <= Decimal("0.00"):
-            raise SystemExit(f"[{SCRIPT_PREFIX}] invalid_second_discount_per_hour")
+        extra_second_discount_per_hour = configured_extra_discount_per_hour
 
         pricing_rows: dict[UUID, ClientForfaitActivityPricing] = {}
         for _, session_obj, course_type, _, _ in booking_rows:
@@ -268,7 +276,7 @@ def main() -> None:
                 changed_receipts += 1
 
         removed_transaction = False
-        if args.apply:
+        if args.apply and discount_transaction is not None:
             db.delete(discount_transaction)
             removed_transaction = True
             execution["created_transaction_ids"] = [
@@ -279,6 +287,7 @@ def main() -> None:
             payload["quote_to_enrollment_execution"] = execution
             followup.payload = payload
             db.add(followup)
+        if args.apply:
             db.commit()
         else:
             db.rollback()
@@ -293,7 +302,7 @@ def main() -> None:
     print(f"[{SCRIPT_PREFIX}] changed_bookings={changed_bookings}")
     print(f"[{SCRIPT_PREFIX}] changed_pending_receipts={changed_receipts}")
     print(f"[{SCRIPT_PREFIX}] removed_global_discount_transaction={removed_transaction}")
-    print(f"[{SCRIPT_PREFIX}] global_discount_transaction={discount_transaction.id}")
+    print(f"[{SCRIPT_PREFIX}] global_discount_transaction={discount_transaction.id if discount_transaction is not None else '-'}")
     for sample in samples[:40]:
         print(f"[{SCRIPT_PREFIX}] sample={sample}")
 
