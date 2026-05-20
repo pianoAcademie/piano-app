@@ -1245,6 +1245,20 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
 
         self.assertTrue(_activity_matches_line_for_slot_fallback(activity, line))  # type: ignore[arg-type]
 
+    def test_generic_onsite_collective_line_matches_child_collective_slot(self) -> None:
+        line = SimpleNamespace(
+            code="PIANO_GROUP_ONSITE_1H",
+            title="Cours de piano collectif en presentiel (1h)",
+            description="",
+            meta={"activity_code": "PIANO_GROUP_ONSITE_1H"},
+        )
+        activity = SimpleNamespace(
+            code="ACT_COURS_COLLECTIF_ENFANTS_BAR_LE_DUC",
+            name="Cours collectif enfants",
+        )
+
+        self.assertTrue(_activity_matches_line_for_slot_fallback(activity, line))  # type: ignore[arg-type]
+
     def test_should_try_future_school_year_config_when_slots_are_requested_but_no_option_matches(self) -> None:
         should_try = _should_try_future_school_year_config(
             config=SimpleNamespace(source_code="typeform_paris_child_2025_2026_multisite", school_year_label="2025-2026"),

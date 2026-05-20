@@ -3665,7 +3665,16 @@ def _activity_matches_line_for_slot_fallback(activity: CourseType, line: Typefor
     shared_words = line_words & activity_words
     collective_words = {"collectif", "collectifs"}
     teen_adult_words = {"ado", "ados", "adult", "adulte", "adultes"}
+    child_words = {"child", "children", "enfant", "enfants"}
+    onsite_words = {"onsite", "presentiel"}
     if shared_words & collective_words and (line_words & teen_adult_words) and (activity_words & teen_adult_words):
+        return True
+    if (
+        shared_words & collective_words
+        and (line_words & onsite_words)
+        and (activity_words & child_words)
+        and not (activity_words & teen_adult_words)
+    ):
         return True
     return len(shared_words) >= 3
 
