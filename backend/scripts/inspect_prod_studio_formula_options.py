@@ -22,16 +22,6 @@ def _print(line: str) -> None:
 
 
 def main() -> None:
-    from scripts.fix_prod_quote_financial_adjustment_dates import main as fix_adjustment_dates
-
-    original_argv = sys.argv[:]
-    sys.argv = [sys.argv[0], "--apply"]
-    try:
-        fix_adjustment_dates()
-    finally:
-        sys.argv = original_argv
-    return
-
     with SessionLocal() as db:
         studio_course_types = db.execute(
             select(
