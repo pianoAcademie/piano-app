@@ -6271,6 +6271,19 @@ def _normalize_discount_label(value: object | None) -> str:
     )
 
 
+def _is_second_course_discount_token(value: object | None) -> bool:
+    token = _normalize_discount_label(value)
+    return (
+        "2e cours" in token
+        or "2eme cours" in token
+        or "2nd cours" in token
+        or "second cours" in token
+        or "deuxieme cours" in token
+        or "second_course" in token
+        or "secondcourse" in token
+    )
+
+
 def _source_line_id_from_billing_row(row: dict[str, object]) -> UUID | None:
     direct = _parse_uuid_value(row.get("sourceLineId"))
     if direct is not None:
@@ -7917,6 +7930,7 @@ def _apply_followup_forfait_discount_rows(
                 "loyalty": Decimal("0.00"),
                 "family": Decimal("0.00"),
                 "short_commitment": Decimal("0.00"),
+                "second_course": Decimal("0.00"),
             },
         )
         if delta > Decimal("0.00"):
@@ -7943,6 +7957,8 @@ def _apply_followup_forfait_discount_rows(
             target_bucket = "family"
         elif "fidel" in normalized_label or "loyal" in discount_code or "fidel" in discount_code:
             target_bucket = "loyalty"
+        elif _is_second_course_discount_token(normalized_label) or _is_second_course_discount_token(discount_code):
+            target_bucket = "second_course"
         else:
             continue
 
@@ -7983,6 +7999,7 @@ def _apply_followup_forfait_discount_rows(
                 "loyalty": Decimal("0.00"),
                 "family": Decimal("0.00"),
                 "short_commitment": Decimal("0.00"),
+                "second_course": Decimal("0.00"),
             },
         )
         bucket[target_bucket] = _q2(bucket[target_bucket] + hourly_discount_ttc)
@@ -7995,6 +8012,9 @@ def _apply_followup_forfait_discount_rows(
 
     now = _utcnow()
     for activity_id, values in adjustments_by_activity.items():
+        second_course_weekly_discount = values["second_course"]
+        if second_course_weekly_discount > Decimal("0.00"):
+            second_course_weekly_discount = _q2(values["loyalty"] + second_course_weekly_discount)
         pricing_row = db.scalar(
             select(ClientForfaitActivityPricing)
             .where(
@@ -8011,13 +8031,14 @@ def _apply_followup_forfait_discount_rows(
                 loyalty_discount_per_hour_ttc=values["loyalty"],
                 family_discount_per_hour_ttc=values["family"],
                 short_commitment_supplement_per_hour_ttc=values["short_commitment"],
-                second_course_weekly_discount_per_hour_ttc=Decimal("0.00"),
+                second_course_weekly_discount_per_hour_ttc=second_course_weekly_discount,
                 updated_at=now,
             )
         else:
             pricing_row.loyalty_discount_per_hour_ttc = values["loyalty"]
             pricing_row.family_discount_per_hour_ttc = values["family"]
             pricing_row.short_commitment_supplement_per_hour_ttc = values["short_commitment"]
+            pricing_row.second_course_weekly_discount_per_hour_ttc = second_course_weekly_discount
             pricing_row.updated_at = now
         db.add(pricing_row)
 
