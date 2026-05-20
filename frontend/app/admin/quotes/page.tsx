@@ -109,6 +109,55 @@ function getCalendarSessionsCount(snapshot: Record<string, unknown>): number {
   return raw.length;
 }
 
+function normalizeLocationSignal(value: unknown): string {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function snapshotRows(snapshot: Record<string, unknown>): Array<Record<string, unknown>> {
+  const blocks = Array.isArray(snapshot.blocks) ? snapshot.blocks : [];
+  const sessions = Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
+  return [...blocks, ...sessions].filter(
+    (row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row),
+  );
+}
+
+function quotePotentialLocation(row: QuoteOut): "paris" | "bar_le_duc" {
+  const rows = snapshotRows(row.calendar_snapshot || {});
+  const hasBarLeDucPhysicalBlock = rows.some((item) => {
+    const haystack = normalizeLocationSignal([
+      item.location_label,
+      item.location_name,
+      item.location,
+      item.location_code,
+      item.location_id,
+      item.modality,
+      item.mode,
+      item.activity_label,
+      item.activity_name,
+      item.title,
+    ].join(" "));
+    const isOnline = haystack.includes("online") || haystack.includes("en ligne") || haystack.includes("ligne");
+    const isBarLeDuc = haystack.includes("bar-le-duc") || haystack.includes("bar le duc") || haystack.includes("bar_le_duc");
+    return isBarLeDuc && !isOnline;
+  });
+  return hasBarLeDucPhysicalBlock ? "bar_le_duc" : "paris";
+}
+
+function isPotentialEnrollmentState(state: QuoteValidationUiState): boolean {
+  return (
+    state === "incomplet"
+    || state === "brouillon"
+    || state === "pret_a_envoyer"
+    || state === "envoye"
+    || state === "consulte"
+    || state === "modification_demandee"
+    || state === "valide"
+  );
+}
+
 function parseIsoDateOnly(raw: string): Date | null {
   const value = raw.trim();
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -622,6 +671,14 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
     (acc, row) => {
       const commercialState = quoteValidationState(row);
       const integrationState = quoteIntegrationState(row, commercialState);
+      if (isPotentialEnrollmentState(commercialState)) {
+        acc.potentialEnrollments += 1;
+        if (quotePotentialLocation(row) === "bar_le_duc") {
+          acc.potentialBarLeDuc += 1;
+        } else {
+          acc.potentialParis += 1;
+        }
+      }
       if (commercialState === "incomplet") {
         acc.incomplete += 1;
       }
@@ -651,6 +708,8 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
     {
       total: filteredQuotes.length,
       potentialEnrollments: 0,
+      potentialParis: 0,
+      potentialBarLeDuc: 0,
       incomplete: 0,
       draft: 0,
       readyToSend: 0,
@@ -661,13 +720,6 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
       integrationErrors: 0,
     },
   );
-  quoteStats.potentialEnrollments =
-    quoteStats.incomplete +
-    quoteStats.draft +
-    quoteStats.readyToSend +
-    quoteStats.sent +
-    quoteStats.changeRequests +
-    quoteStats.approved;
   return (
     <section className="admin-page-grid">
       <section className="card">
@@ -700,6 +752,14 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
           <article>
             <span>{t("admin.quotes.metrics_potential_enrollments")}</span>
             <strong>{quoteStats.potentialEnrollments}</strong>
+          </article>
+          <article>
+            <span>{t("admin.quotes.metrics_potential_paris")}</span>
+            <strong>{quoteStats.potentialParis}</strong>
+          </article>
+          <article>
+            <span>{t("admin.quotes.metrics_potential_bar_le_duc")}</span>
+            <strong>{quoteStats.potentialBarLeDuc}</strong>
           </article>
           <article className={quoteStats.incomplete > 0 ? "is-warning" : ""}>
             <span>{t("admin.quotes.metrics_incomplete")}</span>
