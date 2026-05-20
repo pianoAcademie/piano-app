@@ -122,6 +122,42 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
             self.assertIs(config["default_pre_registration_deposit_enabled"], True)
             self.assertEqual(config["default_pre_registration_deposit_amount_ttc"], "60.00")
 
+    def test_paris_eveil_2026_typeform_uses_unconditional_initiation_line(self) -> None:
+        migration_path = (
+            Path(__file__).resolve().parents[1]
+            / "alembic"
+            / "versions"
+            / "20260520_0131_fix_paris_eveil_initiation_typeform.py"
+        )
+        spec = importlib.util.spec_from_file_location("paris_eveil_2026_config", migration_path)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        [template] = module._build_line_templates(module.INITIATION_ACTIVITY_CODE)
+
+        self.assertEqual(template["activity_code"], module.INITIATION_ACTIVITY_CODE)
+        self.assertNotIn("when", template)
+        self.assertTrue(
+            _template_matches_when(
+                template,
+                {
+                    "requested_location": "Rue de la Pompe",
+                    "requested_days": ["samedi"],
+                    "requested_times": ["11:00"],
+                    "requested_slot_preferences": [
+                        {
+                            "day": "samedi",
+                            "time": "11:00",
+                            "location": "Rue de la Pompe",
+                            "segment": "eveil",
+                        }
+                    ],
+                },
+            )
+        )
+
     def test_online_runtime_context_switches_main_piano_template_to_online_activity(self) -> None:
         template = {
             "kind": "activity",
