@@ -13,6 +13,7 @@ from app.api.routes.admin import (
     _planning_simulation_clean_location_label,
     _planning_simulation_quote_person_key,
     _planning_simulation_quote_location_name,
+    _planning_simulation_search_text,
     _safe_zoneinfo,
 )
 from app.models.catalog import DeliveryMode
@@ -39,6 +40,12 @@ class AdminPlanningSimulationTests(unittest.TestCase):
         self.assertEqual(
             _planning_simulation_clean_location_label("1be3c4dc-2f55-4712-bcf9-32a4624ff1ad"),
             "",
+        )
+
+    def test_planning_simulation_search_text_strips_accents(self) -> None:
+        self.assertEqual(
+            _planning_simulation_search_text("Cours collectif Éveil musical - Répétition"),
+            "cours collectif eveil musical - repetition",
         )
 
     def test_planning_simulation_labels_online_quote_slots(self) -> None:

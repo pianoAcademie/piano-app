@@ -5,6 +5,7 @@ from datetime import date, datetime, time, timedelta, timezone
 import json
 import logging
 import re
+import unicodedata
 from typing import Literal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -1386,6 +1387,12 @@ def _planning_simulation_quote_person_key(quote: Quote, prospect: Prospect | Non
     return None
 
 
+def _planning_simulation_search_text(value: str) -> str:
+    return "".join(
+        char for char in unicodedata.normalize("NFD", value.casefold()) if unicodedata.category(char) != "Mn"
+    )
+
+
 def _planning_simulation_collective_piano_course_type_ids(db: Session) -> set[UUID]:
     rows = db.scalars(
         select(CourseType).where(
@@ -1396,7 +1403,7 @@ def _planning_simulation_collective_piano_course_type_ids(db: Session) -> set[UU
     out: set[UUID] = set()
     excluded_terms = ("solfege", "eveil", "initiation", "studio", "repetition", "booster", "rattrap")
     for course_type in rows:
-        searchable = f"{course_type.code or ''} {course_type.name or ''}".casefold()
+        searchable = _planning_simulation_search_text(f"{course_type.code or ''} {course_type.name or ''}")
         if "collectif" not in searchable and "collective" not in searchable:
             continue
         if any(term in searchable for term in excluded_terms):
