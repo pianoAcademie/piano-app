@@ -219,22 +219,22 @@ def _configured_document_codes(config: TypeformFormConfig, key: str) -> list[str
     return [_text(item).upper() for item in raw_items if _text(item)]
 
 
-def _is_bar_le_duc_config(config: TypeformFormConfig) -> bool:
-    configuration_json = getattr(config, "configuration_json", None)
-    label = configuration_json.get("label") if isinstance(configuration_json, dict) else None
-    haystack = " ".join(
-        _normalize_token(value)
-        for value in (
-            getattr(config, "location_code", None),
-            getattr(config, "source_code", None),
-            getattr(config, "typeform_form_id", None),
-            label,
-        )
-        if value
-    )
+def _is_bar_le_duc_value(*values: object | None) -> bool:
+    haystack = " ".join(_normalize_token(value) for value in values if value)
     compact = re.sub(r"[^a-z0-9]+", "", haystack)
     words = set(re.split(r"[^a-z0-9]+", haystack))
     return "barleduc" in compact or "bld" in words
+
+
+def _is_bar_le_duc_config(config: TypeformFormConfig) -> bool:
+    configuration_json = getattr(config, "configuration_json", None)
+    label = configuration_json.get("label") if isinstance(configuration_json, dict) else None
+    return _is_bar_le_duc_value(
+        getattr(config, "location_code", None),
+        getattr(config, "source_code", None),
+        getattr(config, "typeform_form_id", None),
+        label,
+    )
 
 
 def _bar_le_duc_document_codes(*, segment: str, document_kind: str) -> list[str]:
@@ -274,12 +274,25 @@ def _bar_le_duc_document_codes(*, segment: str, document_kind: str) -> list[str]
 
 
 def _template_matches_bar_le_duc(template: QuoteTemplate | TermsTemplate) -> bool:
-    haystack = _normalize_token(
-        " ".join(str(getattr(template, field, "") or "") for field in ("code", "name", "description", "target"))
+    return _is_bar_le_duc_value(
+        *(getattr(template, field, None) for field in ("code", "name", "description", "target"))
     )
-    compact = re.sub(r"[^a-z0-9]+", "", haystack)
-    words = set(re.split(r"[^a-z0-9]+", haystack))
-    return "barleduc" in compact or "bld" in words
+
+
+def _requires_strict_typeform_location_matching(
+    *,
+    config: TypeformFormConfig | None,
+    normalized: dict[str, object],
+    runtime_context: dict[str, object],
+    resolved_location_id: UUID | None,
+) -> bool:
+    if resolved_location_id is None:
+        return False
+    return (
+        (config is not None and _is_bar_le_duc_config(config))
+        or _is_bar_le_duc_value(normalized.get("requested_location"))
+        or _is_bar_le_duc_value(runtime_context.get("location_code"), runtime_context.get("location_name"))
+    )
 
 
 def _preferred_location_document_template(
@@ -4164,6 +4177,12 @@ def _build_session_recommendations(
             if line_is_second_course and second_course_preferences
             else requested_slot_preferences
         )
+        strict_location_matching = _requires_strict_typeform_location_matching(
+            config=config,
+            normalized=normalized,
+            runtime_context=runtime_context,
+            resolved_location_id=line_resolved_location_id,
+        )
         has_explicit_slot_request = bool(
             effective_requested_slot_preferences
             or effective_requested_days
@@ -4200,7 +4219,12 @@ def _build_session_recommendations(
             option_rows,
             selected_session_id=selected_session_id,
         )
-        if not options and has_explicit_slot_request and line_resolved_location_id is not None:
+        if (
+            not options
+            and has_explicit_slot_request
+            and line_resolved_location_id is not None
+            and not strict_location_matching
+        ):
             relaxed_option_rows: list[tuple[CourseSession, TypeformSessionMatchOptionOut]] = []
             for session_obj, activity, location, booked_count in activity_rows:
                 if (
@@ -4232,7 +4256,7 @@ def _build_session_recommendations(
             existing_option_ids = {item.session_id for item in options}
             seen_compatible_session_ids: set[UUID] = set()
             compatible_row_groups = [manual_rows]
-            if manual_rows_all is not manual_rows:
+            if not strict_location_matching and manual_rows_all is not manual_rows:
                 compatible_row_groups.append(manual_rows_all)
             for compatible_rows in compatible_row_groups:
                 for session_obj, activity, location, booked_count in compatible_rows:

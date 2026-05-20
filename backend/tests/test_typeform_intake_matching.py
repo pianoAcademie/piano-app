@@ -22,6 +22,7 @@ from app.api.routes.typeform_intakes import (
     _intake_list_out_fast,
     _line_allows_session_modality,
     _normalize_payload,
+    _requires_strict_typeform_location_matching,
     _session_recommendations_have_options,
     _should_search_onsite_solfege_without_main_slot_filters,
     _should_try_future_school_year_config,
@@ -360,6 +361,50 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
         self.assertEqual(normalized["parent_city"], "Bar-le-Duc")
         self.assertEqual(normalized["parent_postal_code"], "55000")
         self.assertTrue(normalized["is_reenrollment"])
+
+    def test_bar_le_duc_intakes_keep_strict_slot_location_matching(self) -> None:
+        location_id = uuid4()
+        config = SimpleNamespace(
+            location_code="BAR_LE_DUC",
+            source_code="typeform_bld_child_2026_2027",
+            typeform_form_id="G9u3xvbq",
+            configuration_json={"label": "Bar-le-Duc Enfants"},
+        )
+
+        self.assertTrue(
+            _requires_strict_typeform_location_matching(
+                config=config,  # type: ignore[arg-type]
+                normalized={"requested_location": "Bar-le-Duc"},
+                runtime_context={
+                    "location_id": str(location_id),
+                    "location_code": "BAR_LE_DUC",
+                    "location_name": "Bar-le-Duc",
+                },
+                resolved_location_id=location_id,
+            )
+        )
+
+    def test_paris_intakes_can_still_relax_slot_location_matching(self) -> None:
+        location_id = uuid4()
+        config = SimpleNamespace(
+            location_code="PARIS_RICHELIEU",
+            source_code="typeform_paris_child_2026_2027_multisite",
+            typeform_form_id="PARIS",
+            configuration_json={"label": "Paris Enfants"},
+        )
+
+        self.assertFalse(
+            _requires_strict_typeform_location_matching(
+                config=config,  # type: ignore[arg-type]
+                normalized={"requested_location": "Paris 1 - Rue de Richelieu"},
+                runtime_context={
+                    "location_id": str(location_id),
+                    "location_code": "RICHELIEU",
+                    "location_name": "Rue de Richelieu",
+                },
+                resolved_location_id=location_id,
+            )
+        )
 
     def test_bar_le_duc_document_codes_are_preferred_for_intake_defaults(self) -> None:
         class FakeScalars:
