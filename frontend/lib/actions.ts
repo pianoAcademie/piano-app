@@ -1261,6 +1261,15 @@ function adminReferralActionText(language: UiLanguage, key: string, values?: Rec
   return template.replace(/\{(\w+)\}/g, (_match, token) => String(values[token] ?? ""));
 }
 
+function normalizeReferralLookupText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9@+._-]+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 async function ensureProfessorAndGetLanguage(token: string): Promise<UiLanguage> {
   const me = await fetchCurrentUser(token);
   if (!me || me.role !== "prof") {
@@ -5663,9 +5672,51 @@ export async function validateAdminReferralRewardAction(formData: FormData): Pro
   const language = await ensureAdminAndGetLanguage(token);
 
   const rewardId = parseUuid(String(formData.get("reward_id") ?? ""));
-  const referrerUserId = parseUuid(String(formData.get("referrer_user_id") ?? ""));
+  let referrerUserId = parseUuid(String(formData.get("referrer_user_id") ?? ""));
+  const referrerQuery = String(formData.get("referrer_query") ?? "").trim();
   const requestedReturnTo = String(formData.get("return_to") ?? "").trim();
   const returnTo = requestedReturnTo.startsWith("/admin/referrals") ? requestedReturnTo : "/admin/referrals";
+  if (rewardId && !referrerUserId && referrerQuery) {
+    const normalizedQuery = normalizeReferralLookupText(referrerQuery);
+    const tokens = normalizedQuery
+      .split(/\s+/)
+      .map((item) => item.trim())
+      .filter((item) => item.length >= 2);
+    const primaryToken = tokens.find((item) => item.length >= 3) ?? normalizedQuery;
+    const clientsResult = await backendRequest<AdminClientOut[]>(
+      `/api/v1/admin/clients?search=${encodeURIComponent(primaryToken)}&include_archived=true&limit=50`,
+      {},
+      token,
+    );
+    if (!clientsResult.ok) {
+      redirect(appendQueryMessage(returnTo, "error", clientsResult.message));
+    }
+    const matches = clientsResult.data
+      .filter((client) => client.client_kind === "ADULT")
+      .filter((client) => {
+        const haystack = normalizeReferralLookupText([
+          client.first_name ?? "",
+          client.last_name ?? "",
+          client.email ?? "",
+          client.phone ?? "",
+          client.mobile_phone_1 ?? "",
+          client.mobile_phone_2 ?? "",
+          client.home_phone ?? "",
+        ].join(" "));
+        return tokens.every((item) => haystack.includes(item));
+      });
+    if (matches.length === 1) {
+      referrerUserId = matches[0].id;
+    } else if (matches.length === 0) {
+      redirect(appendQueryMessage(returnTo, "error", `Aucun client adulte trouve pour "${referrerQuery}"`));
+    } else {
+      const preview = matches
+        .slice(0, 5)
+        .map((client) => `${client.first_name ?? ""} ${client.last_name ?? ""}`.trim() || client.email)
+        .join(", ");
+      redirect(appendQueryMessage(returnTo, "error", `Plusieurs parrains possibles pour "${referrerQuery}" : ${preview}`));
+    }
+  }
   if (!rewardId || !referrerUserId) {
     redirect(appendQueryMessage(returnTo, "error", adminReferralActionText(language, "referral_incomplete")));
   }
