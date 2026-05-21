@@ -172,6 +172,24 @@ function reportFilterValue(searchParams: SearchParams, key: string, fallback = "
   return firstParam(searchParams, key) || fallback;
 }
 
+function currentReportingSchoolYear(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const startYear = now.getMonth() >= 6 ? year : year - 1;
+  return `${startYear}-${startYear + 1}`;
+}
+
+function schoolYearOptions(selectedValue: string): string[] {
+  const now = new Date();
+  const year = now.getFullYear();
+  const startYear = now.getMonth() >= 6 ? year : year - 1;
+  const values = Array.from({ length: 7 }, (_, index) => {
+    const firstYear = startYear - 2 + index;
+    return `${firstYear}-${firstYear + 1}`;
+  });
+  return Array.from(new Set([selectedValue, ...values].filter(Boolean)));
+}
+
 function requiresSchoolYear(reportType: ReportType): boolean {
   return ["intake-families", "quote-families", "quotes", "subscriptions", "planning-fill"].includes(reportType);
 }
@@ -195,6 +213,8 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
   const createMode = firstParam(searchParams, "create") === "1";
   const reportType = selectedReportType(searchParams);
   const reportDefinition = reportType ? REPORT_DEFINITIONS.find((item) => item.type === reportType) || null : null;
+  const selectedSchoolYear = reportFilterValue(searchParams, "school_year_label", currentReportingSchoolYear());
+  const availableSchoolYears = schoolYearOptions(selectedSchoolYear);
 
   const generatedReportsResult = await backendRequest<GeneratedReportOut[]>("/api/v1/admin/reports/generated", {}, token);
   const generatedReports = generatedReportsResult.ok ? generatedReportsResult.data : [];
@@ -321,7 +341,13 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
                   {requiresSchoolYear(reportDefinition.type) ? (
                     <label>
                       {t("admin.reporting.school_year")}
-                      <input name="school_year_label" placeholder="2026-2027" defaultValue={reportFilterValue(searchParams, "school_year_label")} />
+                      <select name="school_year_label" defaultValue={selectedSchoolYear}>
+                        {availableSchoolYears.map((schoolYear) => (
+                          <option key={schoolYear} value={schoolYear}>
+                            {schoolYear}
+                          </option>
+                        ))}
+                      </select>
                     </label>
                   ) : null}
                   <label>
