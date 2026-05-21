@@ -15,6 +15,7 @@ type ReportingPageProps = {
 
 type ReportType =
   | "intake-families"
+  | "quote-families"
   | "reservations"
   | "attendance"
   | "professor-statements"
@@ -40,6 +41,12 @@ const REPORT_DEFINITIONS: ReportDefinition[] = [
     label: "Synthese intakes par famille",
     description: "Demandes Typeform regroupees par famille, avec une colonne par enfant.",
     filterHint: "Periode, annee scolaire, famille, enfant, segment, statut.",
+  },
+  {
+    type: "quote-families",
+    label: "Synthese devis par famille",
+    description: "Devis regroupes par famille, avec une colonne par enfant pour comparer avant envoi.",
+    filterHint: "Periode de creation, annee scolaire, famille, enfant, statut commercial.",
   },
   {
     type: "reservations",
@@ -166,11 +173,11 @@ function reportFilterValue(searchParams: SearchParams, key: string, fallback = "
 }
 
 function requiresSchoolYear(reportType: ReportType): boolean {
-  return ["intake-families", "quotes", "subscriptions", "planning-fill"].includes(reportType);
+  return ["intake-families", "quote-families", "quotes", "subscriptions", "planning-fill"].includes(reportType);
 }
 
 function requiresStatus(reportType: ReportType): boolean {
-  return ["intake-families", "payments", "quotes", "subscriptions", "check-deposits", "communications"].includes(reportType);
+  return ["intake-families", "quote-families", "payments", "quotes", "subscriptions", "check-deposits", "communications"].includes(reportType);
 }
 
 export default async function AdminReportingPage({ searchParams }: ReportingPageProps): Promise<JSX.Element> {
@@ -339,7 +346,7 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
                       <input name="status" placeholder="Statut" defaultValue={reportFilterValue(searchParams, "status")} />
                     </label>
                   ) : null}
-                  {reportDefinition.type === "intake-families" ? (
+                  {reportDefinition.type === "intake-families" || reportDefinition.type === "quote-families" ? (
                     <label>
                       {t("admin.reporting.min_children")}
                       <input type="number" name="min_children" min="1" max="20" defaultValue={reportFilterValue(searchParams, "min_children", "2")} />

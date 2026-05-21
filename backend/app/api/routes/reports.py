@@ -21,6 +21,7 @@ from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType
 from app.models.client_record import ClientInvoiceLine, ClientNoteEntry
 from app.models.ops import CommunicationChannel as CommunicationChannelModel, CommunicationLog, LegalEntity
 from app.models.payout import ProfessorSessionPayout
+from app.models.quote import Prospect, Quote, QuoteLine
 from app.models.reporting import GeneratedReport
 from app.models.typeform_intake import TypeformFormConfig, TypeformIntake
 from app.models.user import User, UserRole
@@ -51,6 +52,7 @@ COMMUNICATION_ARCHIVE_RETENTION_DAYS = 365
 ADMIN_COMMUNICATION_TIMEZONE = ZoneInfo("Europe/Paris")
 REPORT_TYPE_LABELS: dict[str, str] = {
     "intake-families": "Synthese intakes par famille",
+    "quote-families": "Synthese devis par famille",
     "reservations": "Reservations",
     "attendance": "Presence eleves",
     "professor-statements": "Releves professeurs",
@@ -388,6 +390,298 @@ def _format_intake_pass_recup(normalized: dict[str, object]) -> str | None:
     if _bool_or_default(normalized.get("requested_pass_recup"), False):
         return "Oui"
     return "Oui" if _requested_product_contains(normalized, "pass", "recup") else None
+
+
+def _format_money(value: object | None, currency: str | None = "EUR") -> str:
+    try:
+        amount = Decimal(str(value or "0")).quantize(Decimal("0.01"))
+    except Exception:
+        amount = Decimal("0.00")
+    return f"{amount:.2f} {(currency or 'EUR').upper()}"
+
+
+def _quote_parent_contact_from_meta(meta: dict[str, object]) -> dict[str, str]:
+    typeform_meta = _json_object(meta.get("typeform_intake"))
+    normalized = _json_object(typeform_meta.get("normalized_payload"))
+    parent_referent = _json_object(meta.get("parent_referent"))
+    return {
+        "name": _display_name(
+            parent_referent.get("first_name") or normalized.get("parent_first_name"),
+            parent_referent.get("last_name") or normalized.get("parent_last_name"),
+            fallback="",
+        ),
+        "email": _text(parent_referent.get("email") or normalized.get("parent_email") or meta.get("recipient_email")),
+        "phone": _text(parent_referent.get("phone") or normalized.get("parent_phone")),
+    }
+
+
+def _quote_family_key(quote: Quote, prospect: Prospect | None, parent: Prospect | None, client: User | None) -> str:
+    meta = _json_object(quote.meta)
+    contact = _quote_parent_contact_from_meta(meta)
+    if parent is not None:
+        return f"parent-prospect:{parent.id}"
+    if prospect is not None and prospect.parent_prospect_id is not None:
+        return f"parent-prospect:{prospect.parent_prospect_id}"
+    if contact["email"]:
+        return f"email:{contact['email'].casefold()}"
+    if client is not None and client.email:
+        return f"client-email:{client.email.casefold()}"
+    if prospect is not None and prospect.email:
+        return f"prospect-email:{prospect.email.casefold()}"
+    return f"quote:{quote.id}"
+
+
+def _quote_family_contact(
+    quote: Quote,
+    prospect: Prospect | None,
+    parent: Prospect | None,
+    client: User | None,
+) -> tuple[str, str | None, str | None, str | None]:
+    meta_contact = _quote_parent_contact_from_meta(_json_object(quote.meta))
+    parent_name = _display_name(parent.first_name, parent.last_name, fallback="") if parent is not None else ""
+    client_name = _display_name(client.first_name, client.last_name, fallback="") if client is not None else ""
+    prospect_name = _display_name(prospect.first_name, prospect.last_name, fallback="") if prospect is not None else ""
+    label = parent_name or meta_contact["name"] or client_name or prospect_name or "Famille sans contact"
+    email = (
+        (parent.email if parent is not None else None)
+        or meta_contact["email"]
+        or (client.email if client is not None else None)
+        or (prospect.email if prospect is not None else None)
+    )
+    phone = (
+        (parent.phone if parent is not None else None)
+        or meta_contact["phone"]
+        or (client.mobile_phone_1 if client is not None else None)
+        or (client.phone if client is not None else None)
+        or (prospect.phone if prospect is not None else None)
+    )
+    return label, label if label != "Famille sans contact" else None, email, phone
+
+
+def _quote_student_name(quote: Quote, prospect: Prospect | None, client: User | None) -> str:
+    meta = _json_object(quote.meta)
+    duplicated_name = _text(meta.get("duplicated_for_child_name"))
+    if duplicated_name:
+        return duplicated_name
+    typeform_meta = _json_object(meta.get("typeform_intake"))
+    normalized = _json_object(typeform_meta.get("normalized_payload"))
+    normalized_child = _display_name(
+        normalized.get("child_first_name") or normalized.get("student_first_name"),
+        normalized.get("child_last_name") or normalized.get("student_last_name"),
+        fallback="",
+    )
+    if normalized_child:
+        return normalized_child
+    if prospect is not None:
+        return _display_name(prospect.first_name, prospect.last_name, fallback=prospect.email)
+    if client is not None:
+        return _display_name(client.first_name, client.last_name, fallback=client.email)
+    return "Eleve non renseigne"
+
+
+def _quote_line_summary(lines: list[QuoteLine], *, categories: set[str], max_items: int = 8) -> str | None:
+    labels: list[str] = []
+    for line in lines:
+        category = (line.line_category or "").strip().lower()
+        line_type = (line.line_type or "").strip().lower()
+        if category not in categories or line_type == "subtotal":
+            continue
+        qty = Decimal(line.quantity or 0).quantize(Decimal("0.01"))
+        amount = Decimal(line.amount_ttc or 0).quantize(Decimal("0.01"))
+        title = _text(line.title) or _text(line.code) or "Ligne"
+        if qty != Decimal("1.00"):
+            title = f"{title} x{qty.normalize()}"
+        labels.append(f"{title} ({amount:.2f})")
+    if not labels:
+        return None
+    visible = labels[:max_items]
+    if len(labels) > max_items:
+        visible.append(f"+{len(labels) - max_items} ligne(s)")
+    return " | ".join(visible)
+
+
+def _quote_planning_summary(quote: Quote, max_items: int = 8) -> str | None:
+    snapshot = _json_object(quote.calendar_snapshot)
+    sessions = _json_list(snapshot.get("sessions"))
+    labels: list[str] = []
+    for raw in sessions:
+        item = _json_object(raw)
+        title = _text(item.get("course_type_name") or item.get("activity_name") or item.get("title"))
+        location = _text(item.get("location_name") or item.get("location"))
+        day = _text(item.get("day") or item.get("weekday_label"))
+        start = _text(item.get("start_time") or item.get("start") or item.get("local_start_time"))
+        end = _text(item.get("end_time") or item.get("end") or item.get("local_end_time"))
+        if not day:
+            starts_at = _text(item.get("start_at") or item.get("start_at_local") or item.get("start_at_utc"))
+            day = starts_at[:10] if starts_at else ""
+        time_label = f"{start}-{end}" if start and end else start or end
+        parts = [part for part in [title, location, day, time_label] if part]
+        if parts:
+            labels.append(" · ".join(parts))
+    if not labels:
+        return None
+    visible = list(dict.fromkeys(labels))[:max_items]
+    if len(labels) > max_items:
+        visible.append(f"+{len(labels) - max_items} seance(s)")
+    return " | ".join(visible)
+
+
+def _quote_payment_summary(quote: Quote) -> str | None:
+    snapshot = _json_object(quote.payment_terms_snapshot)
+    plan_label = _text(snapshot.get("payment_plan_name") or snapshot.get("plan_name") or snapshot.get("payment_method_label"))
+    schedule = _json_list(snapshot.get("schedule"))
+    schedule_labels: list[str] = []
+    for raw in schedule[:4]:
+        item = _json_object(raw)
+        amount = _text(item.get("amount_ttc") or item.get("amount") or item.get("total_ttc"))
+        due = _text(item.get("due_date") or item.get("label") or item.get("deposit_label"))
+        if amount or due:
+            schedule_labels.append(" ".join(part for part in [due, amount] if part))
+    parts = [plan_label, " | ".join(schedule_labels)]
+    return " ; ".join(part for part in parts if part) or None
+
+
+def _build_quote_family_summary_rows(
+    db: Session,
+    *,
+    q: str | None = None,
+    school_year_label: str | None = None,
+    received_from: date | None = None,
+    received_to: date | None = None,
+    status_filter: str | None = None,
+    min_children: int = 2,
+    limit: int = 1000,
+) -> list[dict[str, object]]:
+    if received_from is not None and received_to is not None and received_from > received_to:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="'received_from' must be before 'received_to'",
+        )
+
+    stmt = (
+        select(Quote, Prospect, User)
+        .outerjoin(Prospect, Prospect.id == Quote.prospect_id)
+        .outerjoin(User, User.id == Quote.client_id)
+        .order_by(Quote.created_at.desc())
+        .limit(limit)
+    )
+    if school_year_label:
+        stmt = stmt.where(Quote.school_year_label == school_year_label)
+    if received_from is not None:
+        start_local, _ = _day_bounds(received_from)
+        stmt = stmt.where(Quote.created_at >= start_local)
+    if received_to is not None:
+        _, end_local = _day_bounds(received_to)
+        stmt = stmt.where(Quote.created_at < end_local)
+    if status_filter:
+        stmt = stmt.where(Quote.status.ilike(status_filter.strip()))
+    if q:
+        like = f"%{q.strip()}%"
+        stmt = stmt.where(
+            or_(
+                Quote.quote_number.ilike(like),
+                Quote.status.ilike(like),
+                Quote.school_year_label.ilike(like),
+                cast(Quote.meta, Text).ilike(like),
+                Prospect.first_name.ilike(like),
+                Prospect.last_name.ilike(like),
+                Prospect.email.ilike(like),
+                User.first_name.ilike(like),
+                User.last_name.ilike(like),
+                User.email.ilike(like),
+            )
+        )
+
+    rows = db.execute(stmt).all()
+    parent_ids = {
+        prospect.parent_prospect_id
+        for _, prospect, _ in rows
+        if prospect is not None and prospect.parent_prospect_id is not None
+    }
+    parents_by_id: dict[UUID, Prospect] = {}
+    if parent_ids:
+        parents_by_id = {
+            parent.id: parent
+            for parent in db.scalars(select(Prospect).where(Prospect.id.in_(list(parent_ids)))).all()
+        }
+    quote_ids = [quote.id for quote, _, _ in rows]
+    lines_by_quote_id: dict[UUID, list[QuoteLine]] = {quote_id: [] for quote_id in quote_ids}
+    if quote_ids:
+        for line in db.scalars(
+            select(QuoteLine)
+            .where(QuoteLine.quote_id.in_(quote_ids))
+            .order_by(QuoteLine.quote_id.asc(), QuoteLine.sort_order.asc(), QuoteLine.created_at.asc())
+        ).all():
+            lines_by_quote_id.setdefault(line.quote_id, []).append(line)
+
+    grouped: dict[str, dict[str, object]] = {}
+    latest_created: dict[str, datetime] = {}
+    for quote, prospect, client in rows:
+        parent = parents_by_id.get(prospect.parent_prospect_id) if prospect is not None and prospect.parent_prospect_id is not None else None
+        family_key = _quote_family_key(quote, prospect, parent, client)
+        family_label, parent_name, parent_email, parent_phone = _quote_family_contact(quote, prospect, parent, client)
+        bucket = grouped.get(family_key)
+        if bucket is None:
+            bucket = {
+                "family_key": family_key,
+                "family_label": family_label,
+                "parent_name": parent_name,
+                "parent_email": parent_email,
+                "parent_phone": parent_phone,
+                "quote_count": 0,
+                "children": [],
+            }
+            grouped[family_key] = bucket
+            latest_created[family_key] = quote.created_at
+        else:
+            bucket["parent_name"] = bucket.get("parent_name") or parent_name
+            bucket["parent_email"] = bucket.get("parent_email") or parent_email
+            bucket["parent_phone"] = bucket.get("parent_phone") or parent_phone
+            if bucket.get("family_label") == "Famille sans contact" and family_label != "Famille sans contact":
+                bucket["family_label"] = family_label
+            if quote.created_at > latest_created[family_key]:
+                latest_created[family_key] = quote.created_at
+
+        lines = lines_by_quote_id.get(quote.id, [])
+        bucket["quote_count"] = int(bucket.get("quote_count") or 0) + 1
+        _json_list(bucket["children"]).append(
+            {
+                "quote_id": str(quote.id),
+                "quote_number": quote.quote_number,
+                "created_at": quote.created_at.isoformat(),
+                "sent_at": quote.sent_at.isoformat() if quote.sent_at else None,
+                "expires_at": quote.expires_at.isoformat() if quote.expires_at else None,
+                "child_name": _quote_student_name(quote, prospect, client),
+                "status": quote.status,
+                "total_ttc": _format_money(quote.total_ttc, quote.currency),
+                "services": _quote_line_summary(lines, categories={"service"}),
+                "products": _quote_line_summary(lines, categories={"product", "kit"}),
+                "discounts": _quote_line_summary(lines, categories={"discount", "adjustment", "fee"}),
+                "planning": _quote_planning_summary(quote),
+                "payment": _quote_payment_summary(quote),
+            }
+        )
+
+    families = [
+        family
+        for family in grouped.values()
+        if len({_text(_json_object(child).get("child_name")).casefold() for child in _json_list(family.get("children"))}) >= min_children
+    ]
+    for family in families:
+        _json_list(family.get("children")).sort(
+            key=lambda child: (
+                _text(_json_object(child).get("child_name")).casefold(),
+                _text(_json_object(child).get("quote_number")),
+            )
+        )
+    families.sort(
+        key=lambda family: (
+            -len(_json_list(family.get("children"))),
+            _text(family.get("family_label")).casefold(),
+            latest_created.get(_text(family.get("family_key")), datetime.min.replace(tzinfo=timezone.utc)),
+        )
+    )
+    return families
 
 
 @router.post("/communications/{communication_id}/resend", response_model=CommunicationReportRow)
@@ -846,6 +1140,22 @@ def _generated_report_html(row: GeneratedReport) -> str:
     ]
     criteria_html = " | ".join(criteria_parts) or "-"
     blocks: list[str] = []
+    report_rows = [
+        ("quote_number", "Devis"),
+        ("status", "Statut"),
+        ("total_ttc", "Total TTC"),
+        ("services", "Cours / prestations"),
+        ("products", "Produits / kits"),
+        ("discounts", "Remises / ajustements"),
+        ("planning", "Planning"),
+        ("payment", "Paiement"),
+    ] if row.report_type == "quote-families" else [
+        ("course_1", "Cours 1"),
+        ("course_2", "Cours 2"),
+        ("solfege", "Solfege"),
+        ("masterclass", "Masterclass"),
+        ("pass_recup", "Pass recup"),
+    ]
     for family_raw in families:
         family = _json_object(family_raw)
         children = _json_list(family.get("children"))
@@ -854,22 +1164,18 @@ def _generated_report_html(row: GeneratedReport) -> str:
             for child in children
         )
         rows: list[str] = []
-        for key, label in [
-            ("course_1", "Cours 1"),
-            ("course_2", "Cours 2"),
-            ("solfege", "Solfege"),
-            ("masterclass", "Masterclass"),
-            ("pass_recup", "Pass recup"),
-        ]:
+        for key, label in report_rows:
             cells = "".join(
                 f"<td>{html.escape(_text(_json_object(child).get(key)) or '-')}</td>"
                 for child in children
             )
             rows.append(f"<tr><th>{label}</th>{cells}</tr>")
+        contact = _text(family.get("parent_email")) or _text(family.get("parent_phone")) or "-"
+        count_label = f"{len(children)} devis" if row.report_type == "quote-families" else f"{len(children)} demande(s)"
         blocks.append(
             "<section class='family'>"
             f"<h2>{html.escape(_text(family.get('family_label')) or 'Famille')}</h2>"
-            f"<p>{html.escape(_text(family.get('parent_email')) or _text(family.get('parent_phone')) or '-')}</p>"
+            f"<p>{html.escape(count_label)} | {html.escape(contact)}</p>"
             "<table><thead><tr><th>Element</th>"
             f"{headers}</tr></thead><tbody>{''.join(rows)}</tbody></table>"
             "</section>"
@@ -946,6 +1252,24 @@ def create_generated_report(
             limit=5000,
         )
         content = {"families": [family.model_dump(mode="json") for family in families]}
+        row_count = len(families)
+    elif report_type == "quote-families":
+        try:
+            min_children = int(criteria.get("min_children") or 2)
+        except (TypeError, ValueError):
+            min_children = 2
+        min_children = max(1, min(20, min_children))
+        families = _build_quote_family_summary_rows(
+            db,
+            q=_text(criteria.get("q")) or None,
+            school_year_label=_text(criteria.get("school_year_label")) or None,
+            received_from=period_start,
+            received_to=period_end,
+            status_filter=_text(criteria.get("status")) or None,
+            min_children=min_children,
+            limit=5000,
+        )
+        content = {"families": families}
         row_count = len(families)
 
     row = GeneratedReport(
