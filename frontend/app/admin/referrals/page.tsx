@@ -50,6 +50,7 @@ const REFERRAL_TEXT: Record<UiLanguage, Record<string, string>> = {
     links: "Liens",
     validate: "Valider",
     match: "Matcher",
+    change_match: "Changer",
     manual_match_placeholder: "Nom ou email du parrain",
     referred_family: "Famille filleule",
     not_linked: "Non rattache",
@@ -99,6 +100,7 @@ const REFERRAL_TEXT: Record<UiLanguage, Record<string, string>> = {
     links: "Links",
     validate: "Validate",
     match: "Match",
+    change_match: "Change",
     manual_match_placeholder: "Referrer name or email",
     referred_family: "Referred family",
     not_linked: "Not linked",
@@ -381,7 +383,7 @@ export default async function AdminReferralsPage({ searchParams }: { searchParam
                         <button type="submit">{rt(language, "validate")}</button>
                       </form>
                     ) : null}
-                    {!row.referrer_user_id ? (
+                    {row.status !== "CREDIT_GRANTED" ? (
                       <form action={validateAdminReferralRewardAction} className="row wrap gap-sm top-gap-sm">
                         <input type="hidden" name="reward_id" value={row.id} />
                         <input type="hidden" name="return_to" value={returnHref} />
@@ -390,7 +392,7 @@ export default async function AdminReferralsPage({ searchParams }: { searchParam
                           placeholder={rt(language, "manual_match_placeholder")}
                           aria-label={rt(language, "manual_match_placeholder")}
                         />
-                        <button className="ghost" type="submit">{rt(language, "match")}</button>
+                        <button className="ghost" type="submit">{rt(language, row.referrer_user_id ? "change_match" : "match")}</button>
                       </form>
                     ) : null}
                   </td>
