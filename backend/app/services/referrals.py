@@ -420,6 +420,64 @@ def refresh_referral_self_family_guard(db: Session, reward: ReferralReward) -> b
     return False
 
 
+def _referral_is_active_for_dedupe(reward: ReferralReward) -> bool:
+    return reward.status != REFERRAL_STATUS_CANCELLED
+
+
+def _referral_keep_key(reward: ReferralReward) -> tuple[int, datetime, str]:
+    credited = reward.status == REFERRAL_STATUS_CREDIT_GRANTED or reward.credit_transaction_id is not None
+    created_at = reward.created_at or datetime.min.replace(tzinfo=timezone.utc)
+    return (0 if credited else 1, created_at, str(reward.id))
+
+
+def refresh_duplicate_referral_guard(db: Session, reward: ReferralReward) -> bool:
+    if not _referral_is_active_for_dedupe(reward):
+        return False
+    referred_student_id = reward.referred_student_id
+    referred_client_id = reward.referred_client_id
+    if referred_student_id is None and referred_client_id is None:
+        return False
+
+    stmt = select(ReferralReward).where(
+        ReferralReward.id != reward.id,
+        ReferralReward.status != REFERRAL_STATUS_CANCELLED,
+    )
+    if referred_student_id is not None:
+        stmt = stmt.where(ReferralReward.referred_student_id == referred_student_id)
+    else:
+        stmt = stmt.where(
+            ReferralReward.referred_student_id.is_(None),
+            ReferralReward.referred_client_id == referred_client_id,
+        )
+    duplicates = list(db.scalars(stmt.with_for_update()).all())
+    active_rewards = [item for item in [reward, *duplicates] if _referral_is_active_for_dedupe(item)]
+    if len(active_rewards) <= 1:
+        return False
+
+    keep = min(active_rewards, key=_referral_keep_key)
+    now = utcnow()
+    changed = False
+    for duplicate in active_rewards:
+        if duplicate.id == keep.id:
+            continue
+        if duplicate.status == REFERRAL_STATUS_CREDIT_GRANTED or duplicate.credit_transaction_id is not None:
+            continue
+        duplicate.status = REFERRAL_STATUS_CANCELLED
+        duplicate.match_status = REFERRAL_MATCH_UNMATCHED
+        duplicate.referrer_user_id = None
+        duplicate.match_confidence = 0
+        duplicate.cancelled_at = now
+        duplicate.metadata_json = {
+            **(duplicate.metadata_json or {}),
+            "duplicate_referral_cancelled": True,
+            "duplicate_of_reward_id": str(keep.id),
+        }
+        duplicate.updated_at = now
+        db.add(duplicate)
+        changed = True
+    return changed
+
+
 def is_same_referral_family(
     db: Session,
     *,
@@ -654,6 +712,7 @@ def bind_referral_after_quote_transformation(
             reward.validated_at = utcnow()
     reward.updated_at = utcnow()
     db.add(reward)
+    refresh_duplicate_referral_guard(db, reward)
     if reward.status == REFERRAL_STATUS_AWAITING_PAYMENT:
         try:
             send_referral_announcement_email(db, reward=reward)

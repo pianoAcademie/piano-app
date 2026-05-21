@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 import sys
@@ -195,6 +196,52 @@ class ReferralPaymentRuleTests(unittest.TestCase):
         self.assertIsNone(reward.referrer_user_id)
         self.assertEqual(reward.match_confidence, 0)
         self.assertTrue(reward.metadata_json["self_referral_blocked"])
+
+    def test_binding_quote_cancels_duplicate_reward_for_same_student(self) -> None:
+        referred_client_id = uuid4()
+        referred_student_id = uuid4()
+        older_reward = SimpleNamespace(
+            id=uuid4(),
+            referred_client_id=referred_client_id,
+            referred_student_id=referred_student_id,
+            status=referrals.REFERRAL_STATUS_AWAITING_PAYMENT,
+            credit_transaction_id=None,
+            created_at=datetime(2026, 5, 1, tzinfo=timezone.utc),
+            metadata_json={},
+        )
+        current_reward = SimpleNamespace(
+            id=uuid4(),
+            quote_id=uuid4(),
+            referrer_user_id=uuid4(),
+            referred_client_id=None,
+            referred_student_id=None,
+            status=referrals.REFERRAL_STATUS_NEEDS_REVIEW,
+            match_status=referrals.REFERRAL_MATCH_AUTO,
+            match_confidence=95,
+            credit_transaction_id=None,
+            created_at=datetime(2026, 5, 2, tzinfo=timezone.utc),
+            validated_at=None,
+            metadata_json={},
+        )
+        db = _ScalarFakeDb([current_reward])
+        db.rows = [older_reward]
+
+        with (
+            patch.object(referrals, "is_same_referral_family", return_value=False),
+            patch.object(referrals, "send_referral_announcement_email"),
+        ):
+            updated = referrals.bind_referral_after_quote_transformation(
+                db,
+                quote_id=current_reward.quote_id,
+                referred_client_id=referred_client_id,
+                referred_student_id=referred_student_id,
+            )
+
+        self.assertIs(updated, current_reward)
+        self.assertEqual(current_reward.status, referrals.REFERRAL_STATUS_CANCELLED)
+        self.assertIsNone(current_reward.referrer_user_id)
+        self.assertTrue(current_reward.metadata_json["duplicate_referral_cancelled"])
+        self.assertEqual(current_reward.metadata_json["duplicate_of_reward_id"], str(older_reward.id))
 
     def test_reward_candidates_hide_same_family_options(self) -> None:
         blocked_id = uuid4()

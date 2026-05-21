@@ -205,6 +205,7 @@ from app.services.referrals import (
     evaluate_referrals_for_invoice,
     ensure_referrals_for_sibling_quotes,
     manually_validate_referral,
+    refresh_duplicate_referral_guard,
     refresh_referral_self_family_guard,
     referral_match_candidates_for_reward,
 )
@@ -8189,6 +8190,7 @@ def list_admin_referral_rewards(
     guard_updated = False
     for reward in rewards:
         guard_updated = refresh_referral_self_family_guard(db, reward) or guard_updated
+        guard_updated = refresh_duplicate_referral_guard(db, reward) or guard_updated
     if guard_updated:
         db.commit()
         rewards = db.scalars(stmt.order_by(ReferralReward.updated_at.desc()).limit(500)).all()
@@ -8244,6 +8246,8 @@ def recompute_admin_referral_rewards(
             updated_count += 1
         if before[1] is None and recomputed.credit_transaction_id is not None:
             credit_granted_count += 1
+        if refresh_duplicate_referral_guard(db, recomputed):
+            updated_count += 1
     db.commit()
     return AdminReferralBulkRecomputeOut(
         scanned_count=len(rewards) + sibling_created_count,
