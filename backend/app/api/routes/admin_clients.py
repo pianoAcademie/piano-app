@@ -201,6 +201,7 @@ from app.services.payment_checkout import CheckoutCreateRequest, create_checkout
 from app.services.payment_provider import detect_provider_from_reference, parse_provider, resolve_provider, resolve_webhook_secret
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.referrals import (
+    cancel_referral_reward,
     evaluate_referrals_for_invoice,
     ensure_referrals_for_sibling_quotes,
     manually_validate_referral,
@@ -8270,6 +8271,35 @@ def update_admin_referral_reward_referrer(
     db.commit()
     db.refresh(reward)
     reward = _recompute_referral_reward_payment(db, reward=reward)
+    db.commit()
+    db.refresh(reward)
+    user_ids = {
+        user_id
+        for user_id in (reward.referrer_user_id, reward.referred_client_id, reward.referred_student_id)
+        if user_id is not None
+    }
+    users_by_id = {
+        user.id: user
+        for user in db.scalars(select(User).where(User.id.in_(list(user_ids)))).all()
+    } if user_ids else {}
+    return _referral_reward_out(db, reward, users_by_id)
+
+
+@router.post("/referrals/rewards/{reward_id}/cancel", response_model=AdminReferralRewardOut)
+def cancel_admin_referral_reward(
+    reward_id: UUID,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminReferralRewardOut:
+    try:
+        reward = cancel_referral_reward(
+            db,
+            reward_id=reward_id,
+            actor_user_id=actor.id,
+            reason="ADMIN_CANCELLED",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     db.commit()
     db.refresh(reward)
     user_ids = {

@@ -296,6 +296,44 @@ class ReferralPaymentRuleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot refer itself"):
             referrals.manually_validate_referral(db, reward_id=reward.id, referrer_user_id=referrer_id)
 
+    def test_cancel_referral_reward_clears_referrer_and_marks_cancelled(self) -> None:
+        reward = SimpleNamespace(
+            id=uuid4(),
+            status=referrals.REFERRAL_STATUS_AWAITING_PAYMENT,
+            credit_transaction_id=None,
+            referrer_user_id=uuid4(),
+            match_status=referrals.REFERRAL_MATCH_MANUAL,
+            match_confidence=100,
+            metadata_json={},
+            cancelled_at=None,
+            updated_at=None,
+        )
+        actor_id = uuid4()
+        db = _ScalarFakeDb([reward])
+
+        cancelled = referrals.cancel_referral_reward(db, reward_id=reward.id, actor_user_id=actor_id, reason="INTRAFAMILIAL")
+
+        self.assertIs(cancelled, reward)
+        self.assertEqual(reward.status, referrals.REFERRAL_STATUS_CANCELLED)
+        self.assertEqual(reward.match_status, referrals.REFERRAL_MATCH_UNMATCHED)
+        self.assertIsNone(reward.referrer_user_id)
+        self.assertEqual(reward.match_confidence, 0)
+        self.assertEqual(reward.metadata_json["cancelled_by"], str(actor_id))
+        self.assertEqual(reward.metadata_json["cancel_reason"], "INTRAFAMILIAL")
+        self.assertIsNotNone(reward.cancelled_at)
+        self.assertEqual(db.added, [reward])
+
+    def test_cancel_referral_reward_rejects_credited_reward(self) -> None:
+        reward = SimpleNamespace(
+            id=uuid4(),
+            status=referrals.REFERRAL_STATUS_CREDIT_GRANTED,
+            credit_transaction_id=uuid4(),
+        )
+        db = _ScalarFakeDb([reward])
+
+        with self.assertRaisesRegex(ValueError, "cannot be cancelled"):
+            referrals.cancel_referral_reward(db, reward_id=reward.id)
+
     def test_invoice_below_threshold_updates_progress_without_granting_credit(self) -> None:
         reward = SimpleNamespace(
             quote_id=uuid4(),

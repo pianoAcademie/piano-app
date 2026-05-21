@@ -1233,6 +1233,7 @@ const ADMIN_REFERRAL_ACTION_TEXT: Record<UiLanguage, Record<string, string>> = {
     referral_validated: "Parrainage valide",
     referral_not_found: "Parrainage introuvable",
     referral_recomputed: "Parrainage recalcule",
+    referral_cancelled: "Parrainage annule",
     referrals_recomputed: "{updated} parrainage(s) recalcules, {credits} avoir(s) genere(s)",
     referral_settings_saved: "Parametres de parrainage enregistres",
   },
@@ -1248,6 +1249,7 @@ const ADMIN_REFERRAL_ACTION_TEXT: Record<UiLanguage, Record<string, string>> = {
     referral_validated: "Referral validated",
     referral_not_found: "Referral not found",
     referral_recomputed: "Referral recomputed",
+    referral_cancelled: "Referral cancelled",
     referrals_recomputed: "{updated} referral(s) recomputed, {credits} credit(s) granted",
     referral_settings_saved: "Referral settings saved",
   },
@@ -5765,6 +5767,34 @@ export async function recomputeAdminReferralRewardAction(formData: FormData): Pr
 
   revalidatePath("/admin/referrals");
   redirect(appendQueryMessage(returnTo, "ok", adminReferralActionText(language, "referral_recomputed")));
+}
+
+export async function cancelAdminReferralRewardAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+
+  const rewardId = parseUuid(String(formData.get("reward_id") ?? ""));
+  const requestedReturnTo = String(formData.get("return_to") ?? "").trim();
+  const returnTo = requestedReturnTo.startsWith("/admin/referrals") ? requestedReturnTo : "/admin/referrals";
+  if (!rewardId) {
+    redirect(appendQueryMessage(returnTo, "error", adminReferralActionText(language, "referral_not_found")));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/admin/clients/referrals/rewards/${encodeURIComponent(rewardId)}/cancel`,
+    { method: "POST" },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/referrals");
+  redirect(appendQueryMessage(returnTo, "ok", adminReferralActionText(language, "referral_cancelled")));
 }
 
 export async function recomputeAllAdminReferralRewardsAction(formData: FormData): Promise<void> {

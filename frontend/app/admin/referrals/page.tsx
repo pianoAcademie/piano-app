@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import {
+  cancelAdminReferralRewardAction,
   recomputeAdminReferralRewardAction,
   recomputeAllAdminReferralRewardsAction,
   validateAdminReferralRewardAction,
@@ -64,6 +65,7 @@ const REFERRAL_TEXT: Record<UiLanguage, Record<string, string>> = {
     quote: "Devis",
     credit_created: "Avoir cree",
     recompute: "Recalculer",
+    cancel: "Annuler",
     empty: "Aucun parrainage dans ce filtre.",
   },
   en: {
@@ -114,6 +116,7 @@ const REFERRAL_TEXT: Record<UiLanguage, Record<string, string>> = {
     quote: "Quote",
     credit_created: "Credit created",
     recompute: "Recompute",
+    cancel: "Cancel",
     empty: "No referrals for this filter.",
   },
 };
@@ -436,6 +439,13 @@ export default async function AdminReferralsPage({ searchParams }: { searchParam
                           <input type="hidden" name="reward_id" value={row.id} />
                           <input type="hidden" name="return_to" value={returnHref} />
                           <button className="ghost" type="submit">{rt(language, "recompute")}</button>
+                        </form>
+                      ) : null}
+                      {row.status !== "CREDIT_GRANTED" && row.status !== "CANCELLED" ? (
+                        <form action={cancelAdminReferralRewardAction}>
+                          <input type="hidden" name="reward_id" value={row.id} />
+                          <input type="hidden" name="return_to" value={returnHref} />
+                          <button className="ghost" type="submit">{rt(language, "cancel")}</button>
                         </form>
                       ) : null}
                     </div>

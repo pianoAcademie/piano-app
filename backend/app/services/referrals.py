@@ -698,6 +698,34 @@ def manually_validate_referral(
     return reward
 
 
+def cancel_referral_reward(
+    db: Session,
+    *,
+    reward_id: UUID,
+    actor_user_id: UUID | None = None,
+    reason: str | None = None,
+) -> ReferralReward:
+    reward = db.scalar(select(ReferralReward).where(ReferralReward.id == reward_id).with_for_update())
+    if reward is None:
+        raise ValueError("Referral reward not found")
+    if reward.status == REFERRAL_STATUS_CREDIT_GRANTED or reward.credit_transaction_id is not None:
+        raise ValueError("A credited referral cannot be cancelled")
+    now = utcnow()
+    reward.status = REFERRAL_STATUS_CANCELLED
+    reward.match_status = REFERRAL_MATCH_UNMATCHED
+    reward.referrer_user_id = None
+    reward.match_confidence = 0
+    reward.cancelled_at = now
+    reward.metadata_json = {
+        **(reward.metadata_json or {}),
+        "cancelled_by": str(actor_user_id) if actor_user_id else None,
+        "cancel_reason": (reason or "ADMIN_CANCELLED")[:255],
+    }
+    reward.updated_at = now
+    db.add(reward)
+    return reward
+
+
 def _invoice_total(metadata: dict[str, object], *, currency: str) -> Decimal:
     totals = metadata.get("totals_by_currency")
     if not isinstance(totals, dict):
