@@ -1910,8 +1910,6 @@ def _calendar_snapshot_with_planning_sessions(db: Session | None, calendar_snaps
     changed = deduped_existing
     seen: set[tuple[str, str, str, str]] = {_calendar_session_dedupe_key(item) for item in sessions}
     for block in blocks:
-        if any(_session_snapshot_matches_block(item, block) for item in sessions):
-            continue
         for item in _sessions_from_planning_block(db, block):
             key = _calendar_session_dedupe_key(item)
             if key in seen:

@@ -7006,8 +7006,9 @@ def _expected_activity_dates_from_snapshot(
     *,
     activity_id: UUID,
     schedule_key: str | None = None,
+    calendar_snapshot: dict[str, object] | None = None,
 ) -> list[date]:
-    snapshot = _json_object(quote.calendar_snapshot)
+    snapshot = _json_object(calendar_snapshot if calendar_snapshot is not None else quote.calendar_snapshot)
     out: set[date] = set()
     for raw in _json_list(snapshot.get("sessions")):
         row = _json_object(raw)
@@ -8355,6 +8356,13 @@ def _execute_quote_followup_transformation(
         if line.activity_id is not None:
             session_limit_by_key.setdefault(str(line.activity_id), limit)
 
+    calendar_snapshot_for_transform = _calendar_snapshot_with_line_recommendation_keys(
+        db,
+        _json_object(quote.calendar_snapshot),
+        lines=quote_lines,
+    )
+    calendar_snapshot_for_transform = _calendar_snapshot_with_planning_sessions(db, calendar_snapshot_for_transform)
+
     def _activity_id_from_schedule_key(raw: object) -> UUID | None:
         key = str(raw or "").strip()
         if not key:
@@ -8376,7 +8384,12 @@ def _execute_quote_followup_transformation(
         if selected_session is None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Creneau selectionne introuvable")
 
-        expected_dates = _expected_activity_dates_from_snapshot(quote, activity_id=activity_id, schedule_key=schedule_key)
+        expected_dates = _expected_activity_dates_from_snapshot(
+            quote,
+            activity_id=activity_id,
+            schedule_key=schedule_key,
+            calendar_snapshot=calendar_snapshot_for_transform,
+        )
         session_limit = session_limit_by_key.get(schedule_key) or session_limit_by_key.get(str(activity_id))
         if session_limit is not None:
             expected_dates = expected_dates[:session_limit]

@@ -232,6 +232,81 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertEqual(hydrated["sessions_count"], 1)
         self.assertEqual([item["date"] for item in hydrated["sessions"]], ["2026-11-04"])
 
+    def test_calendar_snapshot_hydrates_partial_block_sessions_from_planning(self) -> None:
+        activity_id = uuid4()
+        location_id = uuid4()
+        recurrence_id = uuid4()
+        fake_db = SimpleNamespace(
+            execute=lambda _query: SimpleNamespace(
+                all=lambda: [
+                    (
+                        SimpleNamespace(
+                            id=uuid4(),
+                            course_type_id=activity_id,
+                            location_id=location_id,
+                            status="SCHEDULED",
+                            start_at_utc=datetime(2026, 9, 8, 10, 0, tzinfo=timezone.utc),
+                            end_at_utc=datetime(2026, 9, 8, 11, 0, tzinfo=timezone.utc),
+                            timezone="Europe/Paris",
+                            recurrence_group_id=recurrence_id,
+                        ),
+                        SimpleNamespace(id=activity_id, name="Cours collectif", mode="ONSITE"),
+                        SimpleNamespace(id=location_id, name="Rue de la Pompe", timezone="Europe/Paris", is_online=False),
+                    ),
+                    (
+                        SimpleNamespace(
+                            id=uuid4(),
+                            course_type_id=activity_id,
+                            location_id=location_id,
+                            status="SCHEDULED",
+                            start_at_utc=datetime(2026, 9, 15, 10, 0, tzinfo=timezone.utc),
+                            end_at_utc=datetime(2026, 9, 15, 11, 0, tzinfo=timezone.utc),
+                            timezone="Europe/Paris",
+                            recurrence_group_id=recurrence_id,
+                        ),
+                        SimpleNamespace(id=activity_id, name="Cours collectif", mode="ONSITE"),
+                        SimpleNamespace(id=location_id, name="Rue de la Pompe", timezone="Europe/Paris", is_online=False),
+                    ),
+                ]
+            )
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(activity_id),
+                    "activity_label": "Cours collectif",
+                    "location_id": str(location_id),
+                    "location_label": "Rue de la Pompe",
+                    "weekday": 1,
+                    "weekday_label": "Mardi",
+                    "start_date": "2026-09-08",
+                    "end_date": "2026-09-22",
+                    "start_time": "12:00",
+                    "end_time": "13:00",
+                    "selection_pending": False,
+                }
+            ],
+            "sessions": [
+                {
+                    "date": "2026-09-08",
+                    "start_time": "12:00",
+                    "end_time": "13:00",
+                    "activity_id": str(activity_id),
+                    "activity_label": "Cours collectif",
+                    "location_id": str(location_id),
+                    "location_label": "Rue de la Pompe",
+                    "weekday": 1,
+                    "weekday_label": "Mardi",
+                }
+            ],
+            "sessions_count": 1,
+        }
+
+        hydrated = _calendar_snapshot_with_planning_sessions(fake_db, snapshot)
+
+        self.assertEqual([item["date"] for item in hydrated["sessions"]], ["2026-09-08", "2026-09-15"])
+        self.assertEqual(hydrated["sessions_count"], 2)
+
     def test_pass_recup_compact_pdf_markup_is_reportlab_compatible(self) -> None:
         markup = _pass_recup_compact_notice_markup(language="fr", pdf_compatible=True)
         markup = markup.replace("<p>", "").replace("</p>", "")
