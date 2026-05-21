@@ -500,6 +500,184 @@ def _quote_line_summary(lines: list[QuoteLine], *, categories: set[str], max_ite
     return " | ".join(visible)
 
 
+def _quote_line_search_text(line: QuoteLine) -> str:
+    meta = _json_object(line.meta)
+    return _normalize_token(
+        " ".join(
+            _text(value)
+            for value in [
+                line.title,
+                line.description,
+                line.code,
+                line.line_category,
+                line.line_type,
+                line.master_item_type,
+                meta.get("typeform_automatic_line"),
+                meta.get("recommendation_key"),
+            ]
+        )
+    )
+
+
+def _quote_line_schedule_keys(line: QuoteLine) -> set[str]:
+    keys: set[str] = set()
+    activity_id = _text(line.activity_id)
+    meta = _json_object(line.meta)
+    automatic_key = _text(meta.get("typeform_automatic_line"))
+    recommendation_key = _text(meta.get("recommendation_key"))
+    if activity_id:
+        keys.add(activity_id)
+    if automatic_key:
+        keys.add(automatic_key)
+    if recommendation_key:
+        keys.add(recommendation_key)
+    if activity_id and automatic_key:
+        keys.add(f"{activity_id}:{automatic_key}")
+    return {key for key in keys if key}
+
+
+def _quote_line_strong_schedule_keys(line: QuoteLine) -> set[str]:
+    activity_id = _text(line.activity_id)
+    meta = _json_object(line.meta)
+    automatic_key = _text(meta.get("typeform_automatic_line"))
+    recommendation_key = _text(meta.get("recommendation_key"))
+    keys = {key for key in [automatic_key, recommendation_key] if key}
+    if activity_id and automatic_key:
+        keys.add(f"{activity_id}:{automatic_key}")
+    return keys
+
+
+def _quote_schedule_item_keys(item: dict[str, object]) -> set[str]:
+    keys: set[str] = set()
+    for key in ("recommendation_key", "line_recommendation_key", "activity_id", "source_key", "typeform_automatic_line"):
+        value = _text(item.get(key))
+        if value:
+            keys.add(value)
+    activity_id = _text(item.get("activity_id"))
+    source_key = _text(item.get("source_key") or item.get("typeform_automatic_line"))
+    if activity_id and source_key:
+        keys.add(f"{activity_id}:{source_key}")
+    return keys
+
+
+def _quote_schedule_items(quote: Quote) -> list[dict[str, object]]:
+    snapshot = _json_object(quote.calendar_snapshot)
+    items: list[dict[str, object]] = []
+    for collection_key in ("blocks", "sessions"):
+        for raw in _json_list(snapshot.get(collection_key)):
+            item = _json_object(raw)
+            if item:
+                items.append(item)
+    selected_slot = _json_object(quote.selected_solfege_slot) or _json_object(
+        _json_object(snapshot.get("solfege")).get("selected_slot")
+    )
+    if selected_slot:
+        slot_item = dict(selected_slot)
+        slot_item.setdefault("activity_label", "Solfege")
+        slot_item.setdefault("source", "selected_solfege_slot")
+        slot_item.setdefault("pending_solfege_level", quote.estimated_solfege_level)
+        items.append(slot_item)
+    return items
+
+
+def _quote_schedule_item_label(
+    item: dict[str, object],
+    *,
+    include_level: bool = False,
+    fallback_title: str | None = None,
+) -> str | None:
+    day = _text(item.get("weekday_label") or item.get("day") or item.get("date_label"))
+    start = _text(item.get("start_time") or item.get("start") or item.get("local_start_time"))
+    end = _text(item.get("end_time") or item.get("end") or item.get("local_end_time"))
+    if not day:
+        starts_at = _text(item.get("start_at") or item.get("start_at_local") or item.get("start_at_utc") or item.get("date"))
+        day = starts_at[:10] if starts_at else ""
+    time_label = f"{start}-{end}" if start and end else start or end
+    location = _text(
+        item.get("location_label")
+        or item.get("location_name")
+        or item.get("location")
+        or item.get("modality_label")
+        or item.get("modality")
+    )
+    level = _text(item.get("pending_solfege_level") or item.get("level_code") or item.get("level"))
+    parts = []
+    if include_level and level:
+        parts.append(f"Niveau {level}")
+    parts.extend(part for part in [day, time_label, location] if part)
+    if parts:
+        return " · ".join(parts)
+    label = _text(item.get("label"))
+    if label:
+        return label
+    return fallback_title
+
+
+def _quote_line_schedule_label(quote: Quote, line: QuoteLine | None, *, include_level: bool = False) -> str | None:
+    if line is None:
+        return None
+    strong_line_keys = _quote_line_strong_schedule_keys(line)
+    activity_id = _text(line.activity_id)
+    line_text = _quote_line_search_text(line)
+    fallback_title = _text(line.title or line.description or line.code) or None
+    items = _quote_schedule_items(quote)
+    for item in items:
+        if strong_line_keys and strong_line_keys.intersection(_quote_schedule_item_keys(item)):
+            return _quote_schedule_item_label(item, include_level=include_level, fallback_title=fallback_title)
+    if activity_id:
+        activity_matches = [item for item in items if activity_id in _quote_schedule_item_keys(item)]
+        if len(activity_matches) == 1:
+            return _quote_schedule_item_label(activity_matches[0], include_level=include_level, fallback_title=fallback_title)
+    for item in items:
+        item_text = _normalize_token(
+            " ".join(
+                _text(item.get(key))
+                for key in ("activity_label", "activity_name", "course_type_name", "title", "label")
+            )
+        )
+        if item_text and ("solfege" in line_text and "solfege" in item_text):
+            return _quote_schedule_item_label(item, include_level=include_level, fallback_title=fallback_title)
+        if item_text and ("masterclass" in line_text and "masterclass" in item_text):
+            return _quote_schedule_item_label(item, include_level=include_level, fallback_title=fallback_title)
+    return fallback_title
+
+
+def _quote_family_child_schedule(quote: Quote, lines: list[QuoteLine]) -> dict[str, str | None]:
+    service_lines: list[QuoteLine] = []
+    solfege_line: QuoteLine | None = None
+    masterclass_line: QuoteLine | None = None
+    second_course_line: QuoteLine | None = None
+
+    for line in lines:
+        line_type = (line.line_type or "").strip().lower()
+        if line_type == "subtotal":
+            continue
+        text = _quote_line_search_text(line)
+        if "masterclass" in text:
+            masterclass_line = masterclass_line or line
+            continue
+        if "solfege" in text:
+            solfege_line = solfege_line or line
+            continue
+        is_service = (line.line_category or "").strip().lower() == "service" or line.activity_id is not None
+        if not is_service:
+            continue
+        if any(token in text for token in ("second", "deuxieme", "2e", "2eme", "secondaire")):
+            second_course_line = second_course_line or line
+        service_lines.append(line)
+
+    course_1_line = next((line for line in service_lines if line is not second_course_line), None)
+    if second_course_line is None and len(service_lines) >= 2:
+        second_course_line = service_lines[1]
+
+    return {
+        "course_1": _quote_line_schedule_label(quote, course_1_line),
+        "course_2": _quote_line_schedule_label(quote, second_course_line),
+        "solfege": _quote_line_schedule_label(quote, solfege_line, include_level=True),
+        "masterclass": _quote_line_schedule_label(quote, masterclass_line),
+    }
+
+
 def _quote_planning_summary(quote: Quote, max_items: int = 8) -> str | None:
     snapshot = _json_object(quote.calendar_snapshot)
     sessions = _json_list(snapshot.get("sessions"))
@@ -643,6 +821,7 @@ def _build_quote_family_summary_rows(
                 latest_created[family_key] = quote.created_at
 
         lines = lines_by_quote_id.get(quote.id, [])
+        child_schedule = _quote_family_child_schedule(quote, lines)
         bucket["quote_count"] = int(bucket.get("quote_count") or 0) + 1
         _json_list(bucket["children"]).append(
             {
@@ -654,6 +833,10 @@ def _build_quote_family_summary_rows(
                 "child_name": _quote_student_name(quote, prospect, client),
                 "status": quote.status,
                 "total_ttc": _format_money(quote.total_ttc, quote.currency),
+                "course_1": child_schedule.get("course_1"),
+                "course_2": child_schedule.get("course_2"),
+                "solfege": child_schedule.get("solfege"),
+                "masterclass": child_schedule.get("masterclass"),
                 "services": _quote_line_summary(lines, categories={"service"}),
                 "products": _quote_line_summary(lines, categories={"product", "kit"}),
                 "discounts": _quote_line_summary(lines, categories={"discount", "adjustment", "fee"}),
@@ -1141,14 +1324,10 @@ def _generated_report_html(row: GeneratedReport) -> str:
     criteria_html = " | ".join(criteria_parts) or "-"
     blocks: list[str] = []
     report_rows = [
-        ("quote_number", "Devis"),
-        ("status", "Statut"),
-        ("total_ttc", "Total TTC"),
-        ("services", "Cours / prestations"),
-        ("products", "Produits / kits"),
-        ("discounts", "Remises / ajustements"),
-        ("planning", "Planning"),
-        ("payment", "Paiement"),
+        ("course_1", "Cours 1"),
+        ("course_2", "Cours 2"),
+        ("solfege", "Solfege"),
+        ("masterclass", "MasterClass"),
     ] if row.report_type == "quote-families" else [
         ("course_1", "Cours 1"),
         ("course_2", "Cours 2"),
@@ -1159,10 +1338,21 @@ def _generated_report_html(row: GeneratedReport) -> str:
     for family_raw in families:
         family = _json_object(family_raw)
         children = _json_list(family.get("children"))
-        headers = "".join(
-            f"<th>{html.escape(_text(_json_object(child).get('child_name')) or '-')}</th>"
-            for child in children
-        )
+        header_cells: list[str] = []
+        for child in children:
+            child_obj = _json_object(child)
+            child_name = html.escape(_text(child_obj.get("child_name")) or "-")
+            if row.report_type == "quote-families":
+                quote_bits = [
+                    _text(child_obj.get("quote_number")),
+                    _text(child_obj.get("status")),
+                    _text(child_obj.get("total_ttc")),
+                ]
+                meta = " · ".join(bit for bit in quote_bits if bit)
+                header_cells.append(f"<th>{child_name}<br><span class='small'>{html.escape(meta)}</span></th>")
+            else:
+                header_cells.append(f"<th>{child_name}</th>")
+        headers = "".join(header_cells)
         rows: list[str] = []
         for key, label in report_rows:
             cells = "".join(
@@ -1192,6 +1382,7 @@ def _generated_report_html(row: GeneratedReport) -> str:
         "table { width: 100%; border-collapse: collapse; margin-top: 8px; }"
         "th, td { border: 1px solid #ccd3dd; padding: 6px; vertical-align: top; }"
         "th { background: #eef2f6; text-align: left; } .family { page-break-inside: avoid; }"
+        ".small { color: #596579; font-size: 8pt; font-weight: normal; }"
         "</style></head><body>"
         f"<h1>{title}</h1>"
         f"<p class='meta'>Genere le {generated_at} | Periode: {period_label} | Format: PDF | Note: {note}</p>"
