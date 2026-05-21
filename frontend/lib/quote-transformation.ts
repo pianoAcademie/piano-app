@@ -842,6 +842,31 @@ function toLocalDateLabel(iso: string, timezone: string, locale = "fr-FR"): stri
   }
 }
 
+function timeToMinutes(value: string | null): number | null {
+  if (!value || !isHhmm(value)) {
+    return null;
+  }
+  const [hours, minutes] = value.split(":").map((item) => Number.parseInt(item, 10));
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return null;
+  }
+  return hours * 60 + minutes;
+}
+
+function sessionContainsHintTime(session: QuoteTransformSession, hint: QuoteScheduleHint | null): boolean {
+  if (!hint?.startTime || !hint.endTime) {
+    return false;
+  }
+  const sessionStart = timeToMinutes(isoPartsInTimezone(session.startAtUtc, session.timezone).timeKey);
+  const sessionEnd = timeToMinutes(isoPartsInTimezone(session.endAtUtc, session.timezone).timeKey);
+  const hintStart = timeToMinutes(hint.startTime);
+  const hintEnd = timeToMinutes(hint.endTime);
+  if (sessionStart === null || sessionEnd === null || hintStart === null || hintEnd === null) {
+    return false;
+  }
+  return sessionStart <= hintStart && hintEnd <= sessionEnd;
+}
+
 function matchScore(
   session: QuoteTransformSession,
   hint: QuoteScheduleHint | null,
@@ -884,6 +909,9 @@ function matchScore(
     if (hint.startTime && sessionParts.timeKey && hint.startTime === sessionParts.timeKey) {
       score += 18;
       reasons.push("horaire demarrage coherent");
+    } else if (sessionContainsHintTime(session, hint)) {
+      score += 14;
+      reasons.push("horaire eleve inclus dans le creneau professeur");
     }
   }
 
@@ -971,7 +999,7 @@ export function buildSessionMatches(
       if (!hint.startTime) {
         return items;
       }
-      return items.filter((item) => item.local.timeKey === hint.startTime);
+      return items.filter((item) => item.local.timeKey === hint.startTime || sessionContainsHintTime(item.session, hint));
     };
 
     const nearestByDate = (

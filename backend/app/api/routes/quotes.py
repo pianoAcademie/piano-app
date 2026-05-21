@@ -7023,7 +7023,71 @@ def _expected_activity_dates_from_snapshot(
         parsed = _parse_iso_date(str(row.get("date") or ""))
         if parsed is not None:
             out.add(parsed)
+    for raw in _json_list(snapshot.get("blocks")):
+        row = _json_object(raw)
+        if _parse_uuid_value(row.get("activity_id")) != activity_id:
+            continue
+        if schedule_key:
+            recommendation_key = str(row.get("recommendation_key") or "").strip()
+            automatic_line = str(row.get("typeform_automatic_line") or "").strip()
+            row_key = recommendation_key or (f"{activity_id}:{automatic_line}" if automatic_line else str(activity_id))
+            if row_key != schedule_key:
+                continue
+        parsed_start = _parse_iso_date(str(row.get("start_date") or ""))
+        parsed_end = _parse_iso_date(str(row.get("end_date") or ""))
+        if parsed_start is None:
+            continue
+        try:
+            weekday = int(row.get("weekday"))
+        except (TypeError, ValueError):
+            weekday = parsed_start.weekday()
+        excluded_dates = {
+            parsed
+            for source in (row.get("holiday_dates"), row.get("closure_dates"))
+            for item in _json_list(source)
+            if (parsed := _parse_iso_date(str(item or ""))) is not None
+        }
+        if parsed_end is None:
+            if parsed_start not in excluded_dates:
+                out.add(parsed_start)
+            continue
+        cursor = parsed_start
+        while cursor <= parsed_end:
+            if cursor.weekday() == weekday and cursor not in excluded_dates:
+                out.add(cursor)
+            cursor += timedelta(days=1)
     return sorted(out)
+
+
+def _expected_activity_time_window_from_snapshot(
+    quote: Quote,
+    *,
+    activity_id: UUID,
+    schedule_key: str | None = None,
+    calendar_snapshot: dict[str, object] | None = None,
+) -> tuple[str | None, str | None]:
+    snapshot = _json_object(calendar_snapshot if calendar_snapshot is not None else quote.calendar_snapshot)
+
+    def _row_matches(row: dict[str, object]) -> bool:
+        if _parse_uuid_value(row.get("activity_id")) != activity_id:
+            return False
+        if not schedule_key:
+            return True
+        recommendation_key = str(row.get("recommendation_key") or "").strip()
+        automatic_line = str(row.get("typeform_automatic_line") or "").strip()
+        row_key = recommendation_key or (f"{activity_id}:{automatic_line}" if automatic_line else str(activity_id))
+        return row_key == schedule_key
+
+    for collection_name in ("blocks", "sessions"):
+        for raw in _json_list(snapshot.get(collection_name)):
+            row = _json_object(raw)
+            if not _row_matches(row):
+                continue
+            start_time = str(row.get("student_start_time") or row.get("start_time") or "").strip()
+            end_time = str(row.get("student_end_time") or row.get("end_time") or "").strip()
+            if re.match(r"^([01]\d|2[0-3]):[0-5]\d$", start_time) and re.match(r"^([01]\d|2[0-3]):[0-5]\d$", end_time):
+                return start_time, end_time
+    return None, None
 
 
 def _quote_snapshot_activity_is_solfege(quote: Quote, *, activity_id: UUID) -> bool:
@@ -7256,6 +7320,115 @@ def _load_live_series_sessions(
             if _matches_selected_series(session_obj)
         ]
     return _dedupe_same_local_slot(filtered)
+
+
+def _parse_followup_student_time_local(value: str | None) -> time | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    match = re.match(r"^([01]\d|2[0-3]):([0-5]\d)$", raw)
+    if match is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Horaire eleve invalide")
+    return time(hour=int(match.group(1)), minute=int(match.group(2)))
+
+
+def _student_time_override_for_followup_session(
+    *,
+    session_obj: CourseSession,
+    course_type: CourseType,
+    start_time_local: str | None,
+    end_time_local: str | None,
+) -> tuple[datetime | None, datetime | None]:
+    start_time = _parse_followup_student_time_local(start_time_local)
+    end_time = _parse_followup_student_time_local(end_time_local)
+    if start_time is None and end_time is None:
+        return None, None
+    if start_time is None or end_time is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Renseigner le debut et la fin de l horaire eleve",
+        )
+    if not bool(course_type.supports_student_time_overrides):
+        return None, None
+
+    tz = _safe_zoneinfo(session_obj.timezone)
+    session_start_local = session_obj.start_at_utc.astimezone(tz)
+    session_end_local = session_obj.end_at_utc.astimezone(tz)
+    student_start_local = datetime.combine(session_start_local.date(), start_time, tzinfo=tz)
+    student_end_local = datetime.combine(session_start_local.date(), end_time, tzinfo=tz)
+    if student_end_local <= student_start_local:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="La fin doit etre apres le debut")
+    if student_start_local < session_start_local or student_end_local > session_end_local:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="L horaire eleve du devis ne rentre pas dans le creneau professeur selectionne",
+        )
+
+    session_start_time = session_start_local.timetz().replace(second=0, microsecond=0, tzinfo=None)
+    session_end_time = session_end_local.timetz().replace(second=0, microsecond=0, tzinfo=None)
+    if start_time == session_start_time and end_time == session_end_time:
+        return None, None
+    return student_start_local.astimezone(timezone.utc), student_end_local.astimezone(timezone.utc)
+
+
+def _resolve_envelope_session_for_student_time(
+    db: Session,
+    *,
+    selected_session: CourseSession,
+    student_start_time_local: str | None,
+    student_end_time_local: str | None,
+) -> CourseSession:
+    start_time = _parse_followup_student_time_local(student_start_time_local)
+    end_time = _parse_followup_student_time_local(student_end_time_local)
+    if start_time is None or end_time is None:
+        return selected_session
+
+    course_type = db.scalar(select(CourseType).where(CourseType.id == selected_session.course_type_id))
+    if course_type is None or not bool(course_type.supports_student_time_overrides):
+        return selected_session
+
+    selected_zone = _safe_zoneinfo(selected_session.timezone)
+    selected_local = selected_session.start_at_utc.astimezone(selected_zone)
+    student_start_local = datetime.combine(selected_local.date(), start_time, tzinfo=selected_zone)
+    student_end_local = datetime.combine(selected_local.date(), end_time, tzinfo=selected_zone)
+    if student_end_local <= student_start_local:
+        return selected_session
+
+    day_start_utc = datetime.combine(selected_local.date(), time.min, tzinfo=selected_zone).astimezone(timezone.utc)
+    day_end_utc = datetime.combine(selected_local.date(), time.max, tzinfo=selected_zone).astimezone(timezone.utc)
+    rows = db.scalars(
+        select(CourseSession)
+        .where(
+            CourseSession.course_type_id == selected_session.course_type_id,
+            CourseSession.location_id == selected_session.location_id,
+            CourseSession.status == SessionStatus.SCHEDULED,
+            CourseSession.start_at_utc >= day_start_utc,
+            CourseSession.start_at_utc <= day_end_utc,
+        )
+        .order_by(CourseSession.start_at_utc.asc(), CourseSession.end_at_utc.desc())
+        .with_for_update()
+    ).all()
+    candidates: list[CourseSession] = []
+    for session_obj in rows:
+        zone = _safe_zoneinfo(session_obj.timezone)
+        local_start = session_obj.start_at_utc.astimezone(zone)
+        local_end = session_obj.end_at_utc.astimezone(zone)
+        student_start_in_zone = student_start_local.astimezone(zone)
+        student_end_in_zone = student_end_local.astimezone(zone)
+        if local_start <= student_start_in_zone and student_end_in_zone <= local_end:
+            candidates.append(session_obj)
+    if not candidates:
+        return selected_session
+
+    def _candidate_sort_key(session_obj: CourseSession) -> tuple[int, int]:
+        zone = _safe_zoneinfo(session_obj.timezone)
+        local_start = session_obj.start_at_utc.astimezone(zone)
+        local_end = session_obj.end_at_utc.astimezone(zone)
+        duration_minutes = int((local_end - local_start).total_seconds() // 60)
+        exact_match = local_start.time().replace(second=0, microsecond=0) == start_time and local_end.time().replace(second=0, microsecond=0) == end_time
+        return (0 if not exact_match else 1, -duration_minutes)
+
+    return sorted(candidates, key=_candidate_sort_key)[0]
 
 
 def _missing_expected_live_session_dates(
@@ -7792,6 +7965,8 @@ def _create_followup_booking(
     plan: Plan | None,
     now: datetime,
     created_booking_ids: list[UUID],
+    student_start_time_local: str | None = None,
+    student_end_time_local: str | None = None,
 ) -> Booking | None:
     existing = db.scalar(
         select(Booking)
@@ -7834,6 +8009,16 @@ def _create_followup_booking(
         subscription=subscription,
         plan=plan,
     )
+    course_type = db.scalar(select(CourseType).where(CourseType.id == session_obj.course_type_id))
+    student_start_at_utc: datetime | None = None
+    student_end_at_utc: datetime | None = None
+    if course_type is not None:
+        student_start_at_utc, student_end_at_utc = _student_time_override_for_followup_session(
+            session_obj=session_obj,
+            course_type=course_type,
+            start_time_local=student_start_time_local,
+            end_time_local=student_end_time_local,
+        )
     booking = Booking(
         session_id=session_obj.id,
         user_id=student.id,
@@ -7845,6 +8030,8 @@ def _create_followup_booking(
         vat_amount_snapshot=vat_amount,
         total_incl_vat_snapshot=total_ttc,
         currency_snapshot=currency,
+        student_start_at_utc=student_start_at_utc,
+        student_end_at_utc=student_end_at_utc,
     )
     db.add(booking)
     db.flush()
@@ -8390,11 +8577,24 @@ def _execute_quote_followup_transformation(
             schedule_key=schedule_key,
             calendar_snapshot=calendar_snapshot_for_transform,
         )
+        student_start_time_local, student_end_time_local = _expected_activity_time_window_from_snapshot(
+            quote,
+            activity_id=activity_id,
+            schedule_key=schedule_key,
+            calendar_snapshot=calendar_snapshot_for_transform,
+        )
         session_limit = session_limit_by_key.get(schedule_key) or session_limit_by_key.get(str(activity_id))
         if session_limit is not None:
             expected_dates = expected_dates[:session_limit]
         if selected_session.status != SessionStatus.SCHEDULED:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Le creneau selectionne n'est plus reservable")
+
+        selected_session = _resolve_envelope_session_for_student_time(
+            db,
+            selected_session=selected_session,
+            student_start_time_local=student_start_time_local,
+            student_end_time_local=student_end_time_local,
+        )
 
         live_sessions = _load_live_series_sessions(
             db,
@@ -8429,6 +8629,8 @@ def _execute_quote_followup_transformation(
                 plan=plan,
                 now=now,
                 created_booking_ids=created_booking_ids,
+                student_start_time_local=student_start_time_local,
+                student_end_time_local=student_end_time_local,
             )
 
     _create_followup_manual_transactions(
