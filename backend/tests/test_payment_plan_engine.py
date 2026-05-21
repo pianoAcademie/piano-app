@@ -101,3 +101,22 @@ def test_non_monthly_schedule_ignores_fixed_fees() -> None:
     )
 
     assert _amounts(schedule) == [Decimal("50.00"), Decimal("50.00")]
+
+
+def test_check_split_2_respects_configured_deferred_month() -> None:
+    schedule = build_payment_schedule(
+        PaymentPlanScheduleInput(
+            payment_method_code="CHECK",
+            payment_method_label="Cheque",
+            schedule_type="split_2",
+            schedule_rules={"installment_count": 2, "deferred_due_months": [2]},
+            total_ttc=Decimal("3610.00"),
+            registration_date=date(2026, 5, 21),
+        )
+    )
+
+    assert schedule[0]["label"] == "1er cheque"
+    assert schedule[0]["due_label"] == "avant le démarrage du 1er cours"
+    assert schedule[1]["label"] == "2e cheque"
+    assert schedule[1]["due_month"] == 2
+    assert schedule[1]["due_label"] == "fevrier"

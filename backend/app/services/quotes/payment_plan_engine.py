@@ -219,7 +219,7 @@ def build_payment_schedule(payload: PaymentPlanScheduleInput) -> list[dict[str, 
         "CHEQUE_X3",
         "CHEQUE_X4",
     }
-    if method_code in check_method_codes and len(deferred_months) >= 1:
+    if method_code in {"CHECK", "CHEQUE"} and len(deferred_months) >= 1 and not isinstance(deferred_raw, list):
         deferred_months[0] = 12
 
     is_monthly_schedule = schedule_type == "monthly" or method_code in {"CARD_MONTHLY", "CB_MONTHLY"}
