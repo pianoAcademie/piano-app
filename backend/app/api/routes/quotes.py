@@ -7257,6 +7257,18 @@ def _load_live_series_sessions(
     return _dedupe_same_local_slot(filtered)
 
 
+def _missing_expected_live_session_dates(
+    *,
+    expected_dates: list[date],
+    live_sessions: list[CourseSession],
+) -> list[date]:
+    live_dates: set[date] = set()
+    for session_obj in live_sessions:
+        zone = _safe_zoneinfo(session_obj.timezone)
+        live_dates.add(session_obj.start_at_utc.astimezone(zone).date())
+    return sorted({expected_date for expected_date in expected_dates if expected_date not in live_dates})
+
+
 def _serialize_uuid_list(values: list[UUID]) -> list[str]:
     return [str(value) for value in values]
 
@@ -8378,10 +8390,22 @@ def _execute_quote_followup_transformation(
         )
         if session_limit is not None:
             live_sessions = live_sessions[:session_limit]
-        if expected_dates and not live_sessions:
+        missing_dates = (
+            _missing_expected_live_session_dates(expected_dates=expected_dates, live_sessions=live_sessions)
+            if expected_dates
+            else []
+        )
+        if missing_dates:
+            displayed_dates = ", ".join(missing_date.strftime("%d/%m/%Y") for missing_date in missing_dates[:8])
+            hidden_count = len(missing_dates) - 8
+            hidden_suffix = f" (+{hidden_count})" if hidden_count > 0 else ""
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Certains creneaux du devis n'ont plus de correspondance live",
+                detail=(
+                    "Transformation bloquee : "
+                    f"{len(missing_dates)} creneau(x) du devis ne sont plus presents dans le planning live "
+                    f"({displayed_dates}{hidden_suffix}). Regenerer ou corriger le planning avant integration."
+                ),
             )
         for session_obj in live_sessions:
             _create_followup_booking(

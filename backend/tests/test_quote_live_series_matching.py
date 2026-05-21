@@ -11,6 +11,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.quotes import (
     _load_live_series_sessions,
+    _missing_expected_live_session_dates,
     _planning_session_limit_from_quote_line,
     _quote_line_schedule_key,
 )
@@ -357,6 +358,17 @@ class QuoteLiveSeriesMatchingTests(unittest.TestCase):
 
         self.assertEqual(db.scalar_calls, 2)
         self.assertEqual([row.id for row in rows], ["selected", "expected-after-holiday"])
+        self.assertEqual(
+            _missing_expected_live_session_dates(
+                expected_dates=[
+                    date(2027, 3, 31),
+                    date(2027, 4, 21),
+                    date(2027, 4, 28),
+                ],
+                live_sessions=rows,
+            ),
+            [date(2027, 4, 28)],
+        )
 
     def test_deduplicates_live_sessions_with_same_local_slot(self) -> None:
         course_type_id = uuid4()
