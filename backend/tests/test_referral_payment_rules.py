@@ -225,6 +225,77 @@ class ReferralPaymentRuleTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "cannot refer itself"):
                 referrals.manually_validate_referral(db, reward_id=reward.id, referrer_user_id=uuid4())
 
+    def test_intake_self_referral_candidate_is_cancelled_before_family_link_exists(self) -> None:
+        referrer_id = uuid4()
+        referrer = SimpleNamespace(
+            id=referrer_id,
+            first_name="Elise",
+            last_name="GUIGOU",
+            email="eliseguigou@gmail.com",
+            phone=None,
+            mobile_phone_1=None,
+            mobile_phone_2=None,
+            home_phone=None,
+        )
+        intake = SimpleNamespace(id=uuid4())
+        normalized = {
+            "parent_first_name": "Elise",
+            "parent_last_name": "GUIGOU",
+            "parent_email": "eliseguigou@gmail.com",
+            "child_first_name": "Cosima",
+            "child_last_name": "GUIGOU",
+            "referral_referrer_name": "Elise GUIGOU",
+            "referral_category": "PARIS",
+        }
+        db = _ScalarFakeDb([None, None, referrer, None])
+
+        with patch.object(
+            referrals,
+            "match_referrer_candidates",
+            return_value=[{"user_id": str(referrer_id), "display_name": "Elise GUIGOU", "confidence": 95}],
+        ):
+            reward = referrals.ensure_referral_for_intake(db, intake=intake, normalized=normalized)
+
+        self.assertIsNotNone(reward)
+        self.assertEqual(reward.status, referrals.REFERRAL_STATUS_CANCELLED)
+        self.assertEqual(reward.match_status, referrals.REFERRAL_MATCH_UNMATCHED)
+        self.assertIsNone(reward.referrer_user_id)
+        self.assertEqual(reward.match_confidence, 0)
+        self.assertTrue(reward.metadata_json["self_referral_blocked"])
+
+    def test_manual_validation_rejects_intake_family_identity_before_family_link_exists(self) -> None:
+        reward = SimpleNamespace(
+            id=uuid4(),
+            referred_client_id=None,
+            referred_student_id=None,
+            typeform_intake_id=None,
+            quote_id=None,
+            metadata_json={
+                "referred_family_identity": {
+                    "parent_first_name": "Elise",
+                    "parent_last_name": "GUIGOU",
+                    "parent_email": "eliseguigou@gmail.com",
+                    "child_first_name": "Cosima",
+                    "child_last_name": "GUIGOU",
+                }
+            },
+        )
+        referrer_id = uuid4()
+        referrer = SimpleNamespace(
+            id=referrer_id,
+            first_name="Elise",
+            last_name="GUIGOU",
+            email="eliseguigou@gmail.com",
+            phone=None,
+            mobile_phone_1=None,
+            mobile_phone_2=None,
+            home_phone=None,
+        )
+        db = _ScalarFakeDb([reward, referrer])
+
+        with self.assertRaisesRegex(ValueError, "cannot refer itself"):
+            referrals.manually_validate_referral(db, reward_id=reward.id, referrer_user_id=referrer_id)
+
     def test_invoice_below_threshold_updates_progress_without_granting_credit(self) -> None:
         reward = SimpleNamespace(
             quote_id=uuid4(),

@@ -274,6 +274,152 @@ def _linked_child_ids_for_adult(db: Session, user_id: UUID | None) -> set[UUID]:
     return out
 
 
+def _identity_token(value: object | None) -> str:
+    return normalize_referral_text(value).replace(" ", "")
+
+
+def _phone_token(value: object | None) -> str:
+    return re.sub(r"\D+", "", str(value or ""))
+
+
+def _intake_family_identity(normalized: dict[str, object]) -> dict[str, str]:
+    identity = {
+        "parent_first_name": str(normalized.get("parent_first_name") or "").strip(),
+        "parent_last_name": str(normalized.get("parent_last_name") or "").strip(),
+        "parent_email": str(normalized.get("parent_email") or "").strip().lower(),
+        "parent_phone": str(normalized.get("parent_phone") or "").strip(),
+        "child_first_name": str(normalized.get("child_first_name") or "").strip(),
+        "child_last_name": str(normalized.get("child_last_name") or "").strip(),
+    }
+    return {key: value for key, value in identity.items() if value}
+
+
+def _user_matches_person_identity(user: User | None, *, first_name: str, last_name: str, email: str = "", phone: str = "") -> bool:
+    if user is None:
+        return False
+    if email and normalize_referral_text(user.email) == normalize_referral_text(email):
+        return True
+    if phone:
+        user_phones = [user.phone, user.mobile_phone_1, user.mobile_phone_2, user.home_phone]
+        expected_phone = _phone_token(phone)
+        if expected_phone and any(_phone_token(value) == expected_phone for value in user_phones):
+            return True
+    expected_first = _identity_token(first_name)
+    expected_last = _identity_token(last_name)
+    if expected_first and expected_last:
+        return _identity_token(user.first_name) == expected_first and _identity_token(user.last_name) == expected_last
+    return False
+
+
+def _referrer_matches_intake_family(db: Session, *, referrer_user_id: UUID | None, normalized: dict[str, object]) -> bool:
+    if referrer_user_id is None:
+        return False
+    identity = _intake_family_identity(normalized)
+    if not identity:
+        return False
+    referrer = db.scalar(select(User).where(User.id == referrer_user_id))
+    if _user_matches_person_identity(
+        referrer,
+        first_name=identity.get("parent_first_name", ""),
+        last_name=identity.get("parent_last_name", ""),
+        email=identity.get("parent_email", ""),
+        phone=identity.get("parent_phone", ""),
+    ):
+        return True
+
+    child_first_name = identity.get("child_first_name", "")
+    child_last_name = identity.get("child_last_name", "")
+    if not child_first_name or not child_last_name:
+        return False
+    child_ids = _linked_child_ids_for_adult(db, referrer_user_id)
+    if not child_ids:
+        return False
+    children = db.scalars(select(User).where(User.id.in_(list(child_ids)))).all()
+    return any(
+        _user_matches_person_identity(child, first_name=child_first_name, last_name=child_last_name)
+        for child in children
+    )
+
+
+def _filter_intake_self_referral_candidates(
+    db: Session,
+    *,
+    candidates: list[dict[str, object]],
+    normalized: dict[str, object],
+) -> tuple[list[dict[str, object]], bool]:
+    filtered: list[dict[str, object]] = []
+    blocked = False
+    for candidate in candidates:
+        raw_user_id = candidate.get("user_id") if isinstance(candidate, dict) else None
+        try:
+            candidate_user_id = UUID(str(raw_user_id))
+        except (TypeError, ValueError):
+            continue
+        if _referrer_matches_intake_family(db, referrer_user_id=candidate_user_id, normalized=normalized):
+            blocked = True
+            continue
+        filtered.append(candidate)
+    return filtered, blocked
+
+
+def _reward_intake_family_identity(db: Session, reward: ReferralReward) -> dict[str, str]:
+    metadata = reward.metadata_json or {}
+    raw_identity = metadata.get("referred_family_identity")
+    if isinstance(raw_identity, dict):
+        identity = {str(key): str(value).strip() for key, value in raw_identity.items() if str(value or "").strip()}
+        if identity:
+            return identity
+    if not hasattr(db, "scalar"):
+        return {}
+    typeform_intake_id = getattr(reward, "typeform_intake_id", None)
+    if typeform_intake_id is not None:
+        intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == typeform_intake_id))
+        if intake is not None:
+            identity = _intake_family_identity(intake.normalized_payload_json or {})
+            if identity:
+                return identity
+    quote_id = getattr(reward, "quote_id", None)
+    if quote_id is not None:
+        quote = db.scalar(select(Quote).where(Quote.id == quote_id))
+        if quote is not None:
+            quote_meta = quote.meta or {}
+            typeform_meta = quote_meta.get("typeform_intake") if isinstance(quote_meta, dict) else None
+            normalized = typeform_meta.get("normalized_payload") if isinstance(typeform_meta, dict) else None
+            if isinstance(normalized, dict):
+                return _intake_family_identity(normalized)
+    return {}
+
+
+def _referrer_matches_reward_intake_family(
+    db: Session,
+    *,
+    referrer_user_id: UUID | None,
+    reward: ReferralReward,
+) -> bool:
+    if referrer_user_id is None:
+        return False
+    identity = _reward_intake_family_identity(db, reward)
+    if not identity:
+        return False
+    return _referrer_matches_intake_family(db, referrer_user_id=referrer_user_id, normalized=identity)
+
+
+def refresh_referral_self_family_guard(db: Session, reward: ReferralReward) -> bool:
+    if reward.status == REFERRAL_STATUS_CREDIT_GRANTED or reward.referrer_user_id is None:
+        return False
+    if is_same_referral_family(
+        db,
+        referrer_user_id=reward.referrer_user_id,
+        referred_client_id=reward.referred_client_id,
+        referred_student_id=reward.referred_student_id,
+    ) or _referrer_matches_reward_intake_family(db, referrer_user_id=reward.referrer_user_id, reward=reward):
+        _block_self_referral(reward)
+        reward.updated_at = utcnow()
+        db.add(reward)
+        return True
+    return False
+
+
 def is_same_referral_family(
     db: Session,
     *,
@@ -348,15 +494,31 @@ def ensure_referral_for_intake(
     )
     amount, currency, trigger_ratio = referral_reward_amount(db, category=category)
     candidates = match_referrer_candidates(db, declared_text=declared_text)
+    candidates, intake_self_referral_blocked = _filter_intake_self_referral_candidates(
+        db,
+        candidates=candidates,
+        normalized=normalized,
+    )
     match_status, referrer_id, confidence = _match_status_for_candidates(candidates)
+    reward_status = REFERRAL_STATUS_AWAITING_PAYMENT if referrer_id is not None else REFERRAL_STATUS_NEEDS_REVIEW
+    if intake_self_referral_blocked and referrer_id is None:
+        match_status = REFERRAL_MATCH_UNMATCHED
+        confidence = 0
+        reward_status = REFERRAL_STATUS_CANCELLED
     now = utcnow()
+    metadata = {
+        "source": "typeform",
+        "referred_family_identity": _intake_family_identity(normalized),
+    }
+    if intake_self_referral_blocked:
+        metadata["self_referral_blocked"] = True
     reward = db.scalar(select(ReferralReward).where(ReferralReward.typeform_intake_id == intake.id).with_for_update())
     if reward is None:
         reward = ReferralReward(
             typeform_intake_id=intake.id,
             declared_referrer_text=declared_text,
             category=category,
-            status=REFERRAL_STATUS_AWAITING_PAYMENT if referrer_id is not None else REFERRAL_STATUS_NEEDS_REVIEW,
+            status=reward_status,
             match_status=match_status,
             referrer_user_id=referrer_id,
             match_confidence=confidence,
@@ -365,7 +527,7 @@ def ensure_referral_for_intake(
             currency=currency,
             trigger_ratio=trigger_ratio,
             validated_at=now if referrer_id is not None else None,
-            metadata_json={"source": "typeform"},
+            metadata_json=metadata,
             created_at=now,
             updated_at=now,
         )
@@ -380,8 +542,9 @@ def ensure_referral_for_intake(
         if reward.match_status != REFERRAL_MATCH_MANUAL:
             reward.match_status = match_status
             reward.referrer_user_id = referrer_id
-            reward.status = REFERRAL_STATUS_AWAITING_PAYMENT if referrer_id is not None else REFERRAL_STATUS_NEEDS_REVIEW
+            reward.status = reward_status
             reward.validated_at = now if referrer_id is not None else None
+        reward.metadata_json = {**(reward.metadata_json or {}), **metadata}
         reward.updated_at = now
     db.add(reward)
     return reward
@@ -514,7 +677,7 @@ def manually_validate_referral(
         referrer_user_id=referrer_user_id,
         referred_client_id=reward.referred_client_id,
         referred_student_id=reward.referred_student_id,
-    ):
+    ) or _referrer_matches_reward_intake_family(db, referrer_user_id=referrer_user_id, reward=reward):
         raise ValueError("A family cannot refer itself")
     referrer = db.scalar(select(User).where(User.id == referrer_user_id, User.role == UserRole.CLIENT))
     if referrer is None:
@@ -657,15 +820,7 @@ def evaluate_referrals_for_invoice(
             continue
         if reward.referred_client_id is None:
             reward.referred_client_id = client_id
-        if is_same_referral_family(
-            db,
-            referrer_user_id=reward.referrer_user_id,
-            referred_client_id=reward.referred_client_id,
-            referred_student_id=reward.referred_student_id,
-        ):
-            _block_self_referral(reward)
-            reward.updated_at = utcnow()
-            db.add(reward)
+        if refresh_referral_self_family_guard(db, reward):
             continue
         threshold_ratio = Decimal(reward.trigger_ratio or config.trigger_ratio).quantize(Decimal("0.0001"))
         if paid_total < (invoice_total * threshold_ratio).quantize(Decimal("0.01")):

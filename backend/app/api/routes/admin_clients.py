@@ -204,6 +204,7 @@ from app.services.referrals import (
     evaluate_referrals_for_invoice,
     ensure_referrals_for_sibling_quotes,
     manually_validate_referral,
+    refresh_referral_self_family_guard,
     referral_match_candidates_for_reward,
 )
 from app.services.reminders import skip_pending_reminders_for_booking
@@ -8130,6 +8131,8 @@ def _referral_reward_out(db: Session, row: ReferralReward, users_by_id: dict[UUI
 
 
 def _recompute_referral_reward_payment(db: Session, *, reward: ReferralReward) -> ReferralReward:
+    if refresh_referral_self_family_guard(db, reward):
+        return reward
     if reward.referred_client_id is None or reward.status == "CREDIT_GRANTED":
         return reward
     note_ids_seen: set[UUID] = set()
@@ -8182,6 +8185,12 @@ def list_admin_referral_rewards(
     if filtered_statuses is not None:
         stmt = stmt.where(ReferralReward.status.in_(sorted(filtered_statuses)))
     rewards = db.scalars(stmt.order_by(ReferralReward.updated_at.desc()).limit(500)).all()
+    guard_updated = False
+    for reward in rewards:
+        guard_updated = refresh_referral_self_family_guard(db, reward) or guard_updated
+    if guard_updated:
+        db.commit()
+        rewards = db.scalars(stmt.order_by(ReferralReward.updated_at.desc()).limit(500)).all()
     user_ids = {
         user_id
         for reward in rewards
