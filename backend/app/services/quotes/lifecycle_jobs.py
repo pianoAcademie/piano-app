@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
+from html import escape
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -10,9 +11,12 @@ from sqlalchemy.orm import Session
 
 from app.models.catalog import Location
 from app.models.quote import Prospect, Quote, QuoteEmailOutbox, QuoteEvent, QuoteLine
+from app.models.user import User
 from app.services.email_delivery import email_delivery_disabled_reason
+from app.services.email_delivery import send_email
 from app.services.messaging_templates import load_messaging_settings
-from app.services.notifications.infrastructure.repository import append_job_run_log, finish_job_run, start_job_run
+from app.services.notifications.application.recipients import resolve_admin_quote_expiry_digest_recipients
+from app.services.notifications.infrastructure.repository import append_job_run_log, finish_job_run, get_job_cursor, start_job_run, upsert_job_cursor
 from app.services.quotes.email_templates import (
     USAGE_CONTEXT_QUOTE_CANCEL,
     USAGE_CONTEXT_QUOTE_REMINDER,
@@ -23,6 +27,8 @@ from app.services.quotes.recipient_resolution import resolve_quote_recipient_pho
 from app.services.providers.sms import sms_delivery_disabled_reason
 
 JOB_NAME = "quote_daily_lifecycle_job"
+QUOTE_EXPIRY_DIGEST_CURSOR = "quote_expiring_today_admin_digest"
+QUOTE_EXPIRY_DIGEST_UTC_TIME = time(hour=5, minute=0)
 DEFAULT_QUOTE_TIMEZONE = "Europe/Paris"
 REMINDER_ELIGIBLE_STATUSES = {"sent", "change_requested"}
 EXPIRABLE_STATUSES = {"sent", "change_requested"}
@@ -51,6 +57,7 @@ class QuoteDailyLifecycleSettings:
 class QuoteDailyJobResult:
     checked: int
     reminders_sent: int
+    expiry_digest_sent: int
     expired: int
     cancelled: int
     archived_prospects: int
@@ -60,6 +67,10 @@ class QuoteDailyJobResult:
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _json_object(value: object | None) -> dict[str, object]:
+    return value if isinstance(value, dict) else {}
 
 
 def _load_quote_lifecycle_settings(db: Session) -> QuoteDailyLifecycleSettings:
@@ -178,6 +189,172 @@ def _load_lines_for_quotes(db: Session, quote_ids: list[UUID]) -> dict[UUID, lis
     return out
 
 
+def _quote_expiry_digest_date(now: datetime) -> date | None:
+    today = now.astimezone(UTC).date()
+    trigger_at = datetime.combine(today, QUOTE_EXPIRY_DIGEST_UTC_TIME, tzinfo=UTC)
+    return today if now.astimezone(UTC) >= trigger_at else None
+
+
+def _quote_expiry_digest_already_processed(db: Session, *, digest_date: date) -> bool:
+    cursor = get_job_cursor(db, job_name=QUOTE_EXPIRY_DIGEST_CURSOR)
+    if cursor is None or cursor.last_processed_at is None:
+        return False
+    return cursor.last_processed_at.astimezone(UTC).date() >= digest_date
+
+
+def _mark_quote_expiry_digest_processed(db: Session, *, digest_date: date, now: datetime) -> None:
+    processed_at = datetime.combine(digest_date, QUOTE_EXPIRY_DIGEST_UTC_TIME, tzinfo=UTC)
+    upsert_job_cursor(db, job_name=QUOTE_EXPIRY_DIGEST_CURSOR, last_processed_at=processed_at, updated_at=now)
+
+
+def _quote_meta_student_name(quote: Quote) -> str:
+    quote_meta = _json_object(quote.meta)
+    normalized = _json_object(_json_object(quote_meta.get("typeform_intake")).get("normalized_payload"))
+    for first_key, last_key in (
+        ("child_first_name", "child_last_name"),
+        ("student_first_name", "student_last_name"),
+        ("first_name", "last_name"),
+    ):
+        full_name = _join_name(normalized.get(first_key), normalized.get(last_key))
+        if full_name:
+            return full_name
+    return ""
+
+
+def _join_name(first_name: object | None, last_name: object | None) -> str:
+    return f"{str(first_name or '').strip()} {str(last_name or '').strip()}".strip()
+
+
+def _quote_student_name(quote: Quote, prospect: Prospect | None, client: User | None) -> str:
+    meta_name = _quote_meta_student_name(quote)
+    if meta_name:
+        return meta_name
+    if client is not None:
+        client_name = _join_name(client.first_name, client.last_name)
+        if client_name:
+            return client_name
+    if prospect is not None:
+        prospect_name = _join_name(prospect.first_name, prospect.last_name)
+        if prospect_name:
+            return prospect_name
+    return "Eleve non renseigne"
+
+
+def _format_utc_day_label(day: date) -> str:
+    return day.strftime("%d/%m/%Y")
+
+
+def _quote_expiry_digest_rows(db: Session, *, digest_date: date, limit: int) -> list[tuple[Quote, Prospect | None, User | None]]:
+    day_start = datetime.combine(digest_date, time.min, tzinfo=UTC)
+    day_end = day_start + timedelta(days=1)
+    return db.execute(
+        select(Quote, Prospect, User)
+        .join(Prospect, Prospect.id == Quote.prospect_id, isouter=True)
+        .join(User, User.id == Quote.client_id, isouter=True)
+        .where(
+            Quote.status.in_(sorted(EXPIRABLE_STATUSES)),
+            Quote.expires_at.is_not(None),
+            Quote.expires_at >= day_start,
+            Quote.expires_at < day_end,
+        )
+        .order_by(Quote.expires_at.asc(), Quote.quote_number.asc())
+        .limit(limit)
+    ).all()
+
+
+def _build_quote_expiry_digest_body(
+    rows: list[tuple[Quote, Prospect | None, User | None]],
+    *,
+    digest_date: date,
+) -> str:
+    day_label = escape(_format_utc_day_label(digest_date))
+    rendered_rows = []
+    for quote, prospect, client in rows:
+        student_name = escape(_quote_student_name(quote, prospect, client))
+        quote_number = escape(str(quote.quote_number or "-"))
+        expires_at = quote.expires_at.astimezone(UTC).strftime("%H:%M UTC") if quote.expires_at else "-"
+        rendered_rows.append(
+            "<tr>"
+            f"<td style='padding:8px 10px;border-bottom:1px solid #e5e7eb;'>{student_name}</td>"
+            f"<td style='padding:8px 10px;border-bottom:1px solid #e5e7eb;'>{quote_number}</td>"
+            f"<td style='padding:8px 10px;border-bottom:1px solid #e5e7eb;'>{escape(expires_at)}</td>"
+            "</tr>"
+        )
+    return (
+        "<div style='font-family:Arial,sans-serif;color:#1f2937;line-height:1.45;'>"
+        f"<h1 style='font-size:18px;margin:0 0 12px;'>Devis expirant le {day_label}</h1>"
+        "<p style='margin:0 0 14px;'>Voici la liste des devis qui expirent aujourd'hui.</p>"
+        "<table style='border-collapse:collapse;width:100%;max-width:760px;'>"
+        "<thead><tr>"
+        "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Eleve</th>"
+        "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Devis</th>"
+        "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Expiration</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(rendered_rows)}</tbody>"
+        "</table>"
+        "</div>"
+    )
+
+
+def _send_quote_expiry_admin_digest(
+    db: Session,
+    *,
+    digest_date: date,
+    now: datetime,
+    limit: int,
+    delivery_enabled: bool,
+    job_run_id: UUID,
+) -> int:
+    if _quote_expiry_digest_already_processed(db, digest_date=digest_date):
+        return 0
+
+    rows = _quote_expiry_digest_rows(db, digest_date=digest_date, limit=limit)
+    if not rows:
+        _mark_quote_expiry_digest_processed(db, digest_date=digest_date, now=now)
+        append_job_run_log(
+            db,
+            job_run_id=job_run_id,
+            level="info",
+            message="Quote expiry admin digest skipped: no quotes expiring today",
+            context_json={"digest_date": digest_date.isoformat()},
+        )
+        return 0
+
+    recipients = resolve_admin_quote_expiry_digest_recipients(db)
+    body = _build_quote_expiry_digest_body(rows, digest_date=digest_date)
+    subject = f"Devis qui expirent aujourd'hui - {_format_utc_day_label(digest_date)}"
+    sent = 0
+    for recipient in recipients:
+        if not recipient.email:
+            continue
+        if not delivery_enabled:
+            continue
+        message_id = send_email(
+            to_email=recipient.email,
+            subject=subject,
+            body=body,
+            body_format="HTML",
+            context="QUOTE_EXPIRY_ADMIN_DIGEST",
+        )
+        if message_id:
+            sent += 1
+
+    _mark_quote_expiry_digest_processed(db, digest_date=digest_date, now=now)
+    append_job_run_log(
+        db,
+        job_run_id=job_run_id,
+        level="info",
+        message="Quote expiry admin digest processed",
+        context_json={
+            "digest_date": digest_date.isoformat(),
+            "quote_count": len(rows),
+            "recipient_count": len([recipient for recipient in recipients if recipient.email]),
+            "sent": sent,
+        },
+    )
+    return sent
+
+
 def _queue_email_if_new(
     db: Session,
     *,
@@ -286,6 +463,7 @@ def run_quote_daily_lifecycle_job(
     ts = now or _utcnow()
     settings = _load_quote_lifecycle_settings(db)
     reminders_sent = 0
+    expiry_digest_sent = 0
     expired = 0
     cancelled = 0
     archived_prospects = 0
@@ -407,6 +585,27 @@ def run_quote_daily_lifecycle_job(
                                 created_at=ts,
                             )
                         )
+
+        digest_date = _quote_expiry_digest_date(ts)
+        if digest_date is not None:
+            try:
+                expiry_digest_sent = _send_quote_expiry_admin_digest(
+                    db,
+                    digest_date=digest_date,
+                    now=ts,
+                    limit=limit,
+                    delivery_enabled=settings.delivery_enabled,
+                    job_run_id=job_run.id,
+                )
+            except Exception as exc:
+                failed += 1
+                append_job_run_log(
+                    db,
+                    job_run_id=job_run.id,
+                    level="error",
+                    message="Quote expiry admin digest failed",
+                    context_json={"digest_date": digest_date.isoformat(), "error": str(exc)},
+                )
 
         expiring_quotes = db.scalars(
             select(Quote)
@@ -564,17 +763,18 @@ def run_quote_daily_lifecycle_job(
             finished_at=ts,
             items_scanned=checked,
             items_processed=checked,
-            items_sent=reminders_sent,
-            items_skipped=max(checked - reminders_sent - failed, 0),
+            items_sent=reminders_sent + expiry_digest_sent,
+            items_skipped=max(checked - reminders_sent - expiry_digest_sent - failed, 0),
             items_failed=failed,
             summary_text=(
-                f"reminders={reminders_sent} expired={expired} "
+                f"reminders={reminders_sent} expiry_digest={expiry_digest_sent} expired={expired} "
                 f"cancelled={cancelled} archived_marked={archived_prospects}"
             ),
         )
         return QuoteDailyJobResult(
             checked=checked,
             reminders_sent=reminders_sent,
+            expiry_digest_sent=expiry_digest_sent,
             expired=expired,
             cancelled=cancelled,
             archived_prospects=archived_prospects,
@@ -589,7 +789,7 @@ def run_quote_daily_lifecycle_job(
             finished_at=ts,
             items_scanned=checked,
             items_processed=checked,
-            items_sent=reminders_sent,
+            items_sent=reminders_sent + expiry_digest_sent,
             items_skipped=0,
             items_failed=max(failed, 1),
             error_text=str(exc),

@@ -9205,6 +9205,7 @@ def run_quotes_daily_job(
     return {
         "checked": result.checked,
         "reminders_sent": result.reminders_sent,
+        "expiry_digest_sent": result.expiry_digest_sent,
         "expired": result.expired,
         "cancelled": result.cancelled,
         "archived_prospects": result.archived_prospects,

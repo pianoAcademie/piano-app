@@ -12,6 +12,7 @@ from app.models.user import ClientKind, User, UserRole
 from app.services.notifications.domain.constants import (
     NOTIFICATION_TYPE_ADMIN_BOOKING_CANCELLATION,
     NOTIFICATION_TYPE_ADMIN_BOOKING_CONFIRMATION,
+    NOTIFICATION_TYPE_ADMIN_QUOTES_EXPIRING_TODAY,
     NOTIFICATION_TYPE_ADMIN_SLOT_CANCELLATION,
 )
 from app.services.notifications.infrastructure.repository import list_admin_recipients_for_type
@@ -145,4 +146,11 @@ def resolve_admin_cancellation_recipients(db: Session) -> list[ResolvedRecipient
     return [
         ResolvedRecipient(contact_type="ADMIN_EMAIL", contact_id=None, email=email, phone=None)
         for email in _admin_recipients_for_type(db, notification_type=NOTIFICATION_TYPE_ADMIN_SLOT_CANCELLATION)
+    ]
+
+
+def resolve_admin_quote_expiry_digest_recipients(db: Session) -> list[ResolvedRecipient]:
+    return [
+        ResolvedRecipient(contact_type="ADMIN_EMAIL", contact_id=None, email=email, phone=None)
+        for email in _admin_recipients_for_type(db, notification_type=NOTIFICATION_TYPE_ADMIN_QUOTES_EXPIRING_TODAY)
     ]
