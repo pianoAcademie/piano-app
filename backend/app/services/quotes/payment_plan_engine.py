@@ -168,6 +168,17 @@ def _legacy_deferred_months_from_method_code(method_code: str, installments: int
     return _default_deferred_months("single", installments)
 
 
+def _check_deferred_months_for_installments(installments: int, deferred_months: list[int]) -> list[int]:
+    expected_by_count = {
+        3: [12, 2],
+        4: [12, 2, 4],
+    }
+    expected = expected_by_count.get(installments)
+    if expected is None:
+        return deferred_months
+    return expected[: max(0, installments - 1)]
+
+
 def build_payment_schedule(payload: PaymentPlanScheduleInput) -> list[dict[str, object]]:
     method_code = payload.payment_method_code.strip().upper()
     schedule_type = payload.schedule_type.strip().lower()
@@ -219,7 +230,10 @@ def build_payment_schedule(payload: PaymentPlanScheduleInput) -> list[dict[str, 
         "CHEQUE_X3",
         "CHEQUE_X4",
     }
-    if method_code in {"CHECK", "CHEQUE"} and len(deferred_months) >= 1 and not isinstance(deferred_raw, list):
+    is_check = method_code in check_method_codes
+    if is_check and installments in {3, 4}:
+        deferred_months = _check_deferred_months_for_installments(installments, deferred_months)
+    elif method_code in {"CHECK", "CHEQUE"} and len(deferred_months) >= 1 and not isinstance(deferred_raw, list):
         deferred_months[0] = 12
 
     is_monthly_schedule = schedule_type == "monthly" or method_code in {"CARD_MONTHLY", "CB_MONTHLY"}
@@ -239,7 +253,6 @@ def build_payment_schedule(payload: PaymentPlanScheduleInput) -> list[dict[str, 
             else _split_amount(total, installments)
         )
     )
-    is_check = method_code in check_method_codes
     out: list[dict[str, object]] = []
     for index, amount in enumerate(parts):
         item: dict[str, object] = {

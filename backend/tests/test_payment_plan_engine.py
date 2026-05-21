@@ -120,3 +120,21 @@ def test_check_split_2_respects_configured_deferred_month() -> None:
     assert schedule[1]["label"] == "2e cheque"
     assert schedule[1]["due_month"] == 2
     assert schedule[1]["due_label"] == "fevrier"
+
+
+def test_check_split_4_uses_december_february_april_deposits() -> None:
+    schedule = build_payment_schedule(
+        PaymentPlanScheduleInput(
+            payment_method_code="CHECK",
+            payment_method_label="Cheque",
+            schedule_type="split_4",
+            schedule_rules={"installment_count": 4, "deferred_due_months": [2, 2, 4]},
+            total_ttc=Decimal("1246.00"),
+            registration_date=date(2026, 5, 21),
+        )
+    )
+
+    assert [item["label"] for item in schedule] == ["1er cheque", "2e cheque", "3e cheque", "4e cheque"]
+    assert schedule[0]["due_label"] == "avant le démarrage du 1er cours"
+    assert [schedule[index]["due_month"] for index in range(1, 4)] == [12, 2, 4]
+    assert [schedule[index]["due_label"] for index in range(1, 4)] == ["decembre", "fevrier", "avril"]
