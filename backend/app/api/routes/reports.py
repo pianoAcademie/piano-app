@@ -479,6 +479,19 @@ def _quote_student_name(quote: Quote, prospect: Prospect | None, client: User | 
     return "Eleve non renseigne"
 
 
+def _quote_child_family_surname(child_name: object | None) -> str:
+    raw = unicodedata.normalize("NFKD", _text(child_name))
+    ascii_text = raw.encode("ascii", "ignore").decode("ascii")
+    normalized = re.sub(r"[^a-z0-9]+", " ", ascii_text.casefold()).strip()
+    parts = [part for part in normalized.split() if part]
+    return parts[-1] if len(parts) >= 2 else ""
+
+
+def _quote_child_family_surname_label(child_name: object | None) -> str:
+    parts = [part for part in _text(child_name).split() if part]
+    return parts[-1] if len(parts) >= 2 else ""
+
+
 def _quote_line_summary(lines: list[QuoteLine], *, categories: set[str], max_items: int = 8) -> str | None:
     labels: list[str] = []
     for line in lines:
@@ -613,6 +626,45 @@ def _quote_schedule_item_label(
     return fallback_title
 
 
+def _quote_schedule_item_is_kind(item: dict[str, object], token: str) -> bool:
+    item_text = _normalize_token(
+        " ".join(
+            _text(item.get(key))
+            for key in (
+                "activity_label",
+                "activity_name",
+                "course_type_name",
+                "title",
+                "label",
+                "activity_code",
+                "activity_service_code",
+            )
+        )
+    )
+    return token in item_text
+
+
+def _quote_primary_course_schedule_items(quote: Quote) -> list[dict[str, object]]:
+    items: list[dict[str, object]] = []
+    for item in _quote_schedule_items(quote):
+        if _quote_schedule_item_is_kind(item, "solfege"):
+            continue
+        if _quote_schedule_item_is_kind(item, "masterclass"):
+            continue
+        if _text(item.get("pending_solfege_level")):
+            continue
+        label = _quote_schedule_item_label(item)
+        if label:
+            items.append(item)
+    return items
+
+
+def _quote_schedule_label_has_slot(label: str | None) -> bool:
+    if not label:
+        return False
+    return bool(re.search(r"\d{1,2}:\d{2}", label)) and " · " in label
+
+
 def _quote_line_schedule_label(quote: Quote, line: QuoteLine | None, *, include_level: bool = False) -> str | None:
     if line is None:
         return None
@@ -629,15 +681,9 @@ def _quote_line_schedule_label(quote: Quote, line: QuoteLine | None, *, include_
         if len(activity_matches) == 1:
             return _quote_schedule_item_label(activity_matches[0], include_level=include_level, fallback_title=fallback_title)
     for item in items:
-        item_text = _normalize_token(
-            " ".join(
-                _text(item.get(key))
-                for key in ("activity_label", "activity_name", "course_type_name", "title", "label")
-            )
-        )
-        if item_text and ("solfege" in line_text and "solfege" in item_text):
+        if "solfege" in line_text and _quote_schedule_item_is_kind(item, "solfege"):
             return _quote_schedule_item_label(item, include_level=include_level, fallback_title=fallback_title)
-        if item_text and ("masterclass" in line_text and "masterclass" in item_text):
+        if "masterclass" in line_text and _quote_schedule_item_is_kind(item, "masterclass"):
             return _quote_schedule_item_label(item, include_level=include_level, fallback_title=fallback_title)
     return fallback_title
 
@@ -670,9 +716,17 @@ def _quote_family_child_schedule(quote: Quote, lines: list[QuoteLine]) -> dict[s
     if second_course_line is None and len(service_lines) >= 2:
         second_course_line = service_lines[1]
 
+    course_items = _quote_primary_course_schedule_items(quote)
+    course_1 = _quote_line_schedule_label(quote, course_1_line)
+    course_2 = _quote_line_schedule_label(quote, second_course_line)
+    if not _quote_schedule_label_has_slot(course_1) and course_items:
+        course_1 = _quote_schedule_item_label(course_items[0], fallback_title=course_1)
+    if not _quote_schedule_label_has_slot(course_2) and len(course_items) >= 2:
+        course_2 = _quote_schedule_item_label(course_items[1], fallback_title=course_2)
+
     return {
-        "course_1": _quote_line_schedule_label(quote, course_1_line),
-        "course_2": _quote_line_schedule_label(quote, second_course_line),
+        "course_1": course_1,
+        "course_2": course_2,
         "solfege": _quote_line_schedule_label(quote, solfege_line, include_level=True),
         "masterclass": _quote_line_schedule_label(quote, masterclass_line),
     }
@@ -717,6 +771,66 @@ def _quote_payment_summary(quote: Quote) -> str | None:
             schedule_labels.append(" ".join(part for part in [due, amount] if part))
     parts = [plan_label, " | ".join(schedule_labels)]
     return " ; ".join(part for part in parts if part) or None
+
+
+def _merge_quote_family_groups_by_child_surname(
+    grouped: dict[str, dict[str, object]],
+    latest_created: dict[str, datetime],
+) -> tuple[dict[str, dict[str, object]], dict[str, datetime]]:
+    buckets_by_surname: dict[tuple[str, str], list[dict[str, object]]] = {}
+    for family in grouped.values():
+        surnames = {
+            _quote_child_family_surname(_json_object(child).get("child_name"))
+            for child in _json_list(family.get("children"))
+        }
+        surnames.discard("")
+        family_label_key = _normalize_token(family.get("family_label"))
+        if len(surnames) == 1 and family_label_key and family_label_key != "famillesanscontact":
+            buckets_by_surname.setdefault((next(iter(surnames)), family_label_key), []).append(family)
+
+    merged_keys: set[str] = set()
+    merged_grouped: dict[str, dict[str, object]] = {}
+    merged_latest: dict[str, datetime] = {}
+    for (surname, _), families in buckets_by_surname.items():
+        if len(families) <= 1:
+            continue
+        merged_children: list[object] = []
+        contacts_email: list[str] = []
+        contacts_phone: list[str] = []
+        surname_label = ""
+        quote_count = 0
+        latest = datetime.min.replace(tzinfo=timezone.utc)
+        for family in families:
+            family_key = _text(family.get("family_key"))
+            merged_keys.add(family_key)
+            latest = max(latest, latest_created.get(family_key, latest))
+            quote_count += int(family.get("quote_count") or 0)
+            for child in _json_list(family.get("children")):
+                child_obj = _json_object(child)
+                surname_label = surname_label or _quote_child_family_surname_label(child_obj.get("child_name"))
+                merged_children.append(child)
+            for key, target in (("parent_email", contacts_email), ("parent_phone", contacts_phone)):
+                value = _text(family.get(key))
+                if value and value not in target:
+                    target.append(value)
+        merged_key = f"child-surname:{surname}"
+        merged_grouped[merged_key] = {
+            "family_key": merged_key,
+            "family_label": f"Famille {surname_label or surname.title()}",
+            "parent_name": None,
+            "parent_email": " / ".join(contacts_email[:3]) if contacts_email else None,
+            "parent_phone": " / ".join(contacts_phone[:3]) if contacts_phone else None,
+            "quote_count": quote_count,
+            "children": merged_children,
+        }
+        merged_latest[merged_key] = latest
+
+    for family_key, family in grouped.items():
+        if family_key in merged_keys:
+            continue
+        merged_grouped[family_key] = family
+        merged_latest[family_key] = latest_created.get(family_key, datetime.min.replace(tzinfo=timezone.utc))
+    return merged_grouped, merged_latest
 
 
 def _build_quote_family_summary_rows(
@@ -845,6 +959,7 @@ def _build_quote_family_summary_rows(
             }
         )
 
+    grouped, latest_created = _merge_quote_family_groups_by_child_surname(grouped, latest_created)
     families = [
         family
         for family in grouped.values()
