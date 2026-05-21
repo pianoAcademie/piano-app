@@ -7196,6 +7196,8 @@ def _load_live_series_sessions(
         local_end_time = local_end.timetz().replace(second=0, microsecond=0, tzinfo=None)
         if require_expected_date and expected_date_set and local_start.date() not in expected_date_set:
             return False
+        if not require_expected_date and local_start.weekday() != selected_local_start.weekday():
+            return False
         if not require_expected_date and expected_start is not None and expected_end is not None:
             if local_start.date() < expected_start or local_start.date() > expected_end:
                 return False
