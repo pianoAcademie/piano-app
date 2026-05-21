@@ -265,7 +265,7 @@ class QuoteLiveSeriesMatchingTests(unittest.TestCase):
         self.assertEqual(db.scalar_calls, 2)
         self.assertEqual([row.id for row in rows], ["selected", "monday-2"])
 
-    def test_recurrence_group_uses_current_live_series_when_quote_snapshot_has_extra_dates(self) -> None:
+    def test_recurrence_group_fallback_keeps_only_expected_dates(self) -> None:
         course_type_id = uuid4()
         location_id = uuid4()
         recurrence_group_id = uuid4()
@@ -311,6 +311,52 @@ class QuoteLiveSeriesMatchingTests(unittest.TestCase):
 
         self.assertEqual(db.scalar_calls, 2)
         self.assertEqual([row.id for row in rows], ["selected", "current-2", "current-3"])
+
+    def test_recurrence_group_fallback_does_not_fill_missing_expected_dates_with_holidays(self) -> None:
+        course_type_id = uuid4()
+        location_id = uuid4()
+        recurrence_group_id = uuid4()
+        selected = _session(
+            session_id="selected",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2027, 3, 31, 9, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2027, 3, 31, 10, 0, tzinfo=timezone.utc),
+            recurrence_group_id=recurrence_group_id,
+        )
+        holiday = _session(
+            session_id="holiday",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2027, 4, 7, 9, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2027, 4, 7, 10, 0, tzinfo=timezone.utc),
+            recurrence_group_id=recurrence_group_id,
+        )
+        expected_after_holiday = _session(
+            session_id="expected-after-holiday",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2027, 4, 21, 9, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2027, 4, 21, 10, 0, tzinfo=timezone.utc),
+            recurrence_group_id=recurrence_group_id,
+        )
+        db = _FakeSequentialSession([
+            [selected, holiday, expected_after_holiday],
+            [selected, holiday, expected_after_holiday],
+        ])
+
+        rows = _load_live_series_sessions(
+            db,
+            selected_session=selected,
+            expected_dates=[
+                date(2027, 3, 31),
+                date(2027, 4, 21),
+                date(2027, 4, 28),
+            ],
+        )
+
+        self.assertEqual(db.scalar_calls, 2)
+        self.assertEqual([row.id for row in rows], ["selected", "expected-after-holiday"])
 
     def test_deduplicates_live_sessions_with_same_local_slot(self) -> None:
         course_type_id = uuid4()

@@ -7246,17 +7246,14 @@ def _load_live_series_sessions(
 
     filtered: list[CourseSession] = [session_obj for session_obj in rows if _matches_selected_series(session_obj)]
     if len(filtered) < len(expected_date_set):
-        # Prefer the current live series over a stale quote snapshot when the series
-        # has been regenerated, holidays have been resynced, or occurrences changed.
-        current_series_rows = [
-            session_obj
-            for session_obj in rows
-            if _matches_selected_series(session_obj, require_expected_date=False)
-        ]
-        merged_by_id = {session_obj.id: session_obj for session_obj in current_series_rows or filtered}
+        merged_by_id = {session_obj.id: session_obj for session_obj in filtered}
         for session_obj in _load_signature_matches(require_expected_date=False):
             merged_by_id.setdefault(session_obj.id, session_obj)
-        filtered = sorted(merged_by_id.values(), key=lambda session_obj: session_obj.start_at_utc)
+        filtered = [
+            session_obj
+            for session_obj in sorted(merged_by_id.values(), key=lambda session_obj: session_obj.start_at_utc)
+            if _matches_selected_series(session_obj)
+        ]
     return _dedupe_same_local_slot(filtered)
 
 
