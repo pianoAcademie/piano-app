@@ -845,6 +845,8 @@ def _normalise_check_schedule_deposit_months(
     second_label = _searchable_text(second.get("label"))
     if "cheque" not in second_label and "check" not in second_label:
         return normalised
+    if second.get("due_month") or str(second.get("due_label") or "").strip():
+        return normalised
     second["due_month"] = 12
     second["due_label"] = _quote_doc_text("calendar_month_12", language=language).lower()
     return normalised

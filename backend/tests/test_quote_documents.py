@@ -24,6 +24,7 @@ from app.services.quotes.quote_documents import (
     _pass_recup_compact_notice_markup,
     _planning_block_pdf_row,
     _planning_blocks_table_html,
+    _normalise_check_schedule_deposit_months,
     _quote_template_disables_pass_recup,
     _quote_template_allows_end_year_concert,
     _resolve_prospect_data,
@@ -660,6 +661,19 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertIn("avec le lien de paiement", joined)
         self.assertIn("l’ensemble des chèques doit être envoyé avant le démarrage des cours", joined)
         self.assertNotIn("Lorsqu’un acompte est demandé", joined)
+
+    def test_check_schedule_normalisation_keeps_configured_second_check_month(self) -> None:
+        schedule = _normalise_check_schedule_deposit_months(
+            [
+                {"label": "1er cheque", "payment_method": "Cheque"},
+                {"label": "2e cheque", "payment_method": "Cheque", "due_month": 2, "due_label": "fevrier"},
+            ],
+            language="fr",
+        )
+
+        self.assertEqual(schedule[0]["due_label"], "avant le démarrage du 1er cours")
+        self.assertEqual(schedule[1]["due_month"], 2)
+        self.assertEqual(schedule[1]["due_label"], "fevrier")
 
 
 if __name__ == "__main__":
