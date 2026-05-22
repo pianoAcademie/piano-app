@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 
 import {
   cancelAdminReferralRewardAction,
+  createAdminReferralRewardAction,
   recomputeAdminReferralRewardAction,
   recomputeAllAdminReferralRewardsAction,
   validateAdminReferralRewardAction,
@@ -38,6 +39,17 @@ const REFERRAL_TEXT: Record<UiLanguage, Record<string, string>> = {
     search_placeholder: "Nom, email, filleul, categorie...",
     filter: "Filtrer",
     clear: "Effacer",
+    add_manual: "Ajouter un parrainage",
+    add_referrer: "Parrain",
+    add_referred: "Filleul",
+    add_category: "Categorie",
+    add_category_auto: "Categorie auto",
+    add_amount: "Avoir",
+    add_note: "Note interne",
+    add_submit: "Ajouter",
+    add_referrer_placeholder: "Nom ou email du parrain",
+    add_referred_placeholder: "Nom ou email du filleul",
+    add_amount_placeholder: "Montant par defaut",
     referrals: "Parrainage(s)",
     needs_review: "A verifier",
     awaiting: "En attente",
@@ -89,6 +101,17 @@ const REFERRAL_TEXT: Record<UiLanguage, Record<string, string>> = {
     search_placeholder: "Name, email, referred family, category...",
     filter: "Filter",
     clear: "Clear",
+    add_manual: "Add referral",
+    add_referrer: "Referrer",
+    add_referred: "Referred",
+    add_category: "Category",
+    add_category_auto: "Auto category",
+    add_amount: "Credit",
+    add_note: "Internal note",
+    add_submit: "Add",
+    add_referrer_placeholder: "Referrer name or email",
+    add_referred_placeholder: "Referred name or email",
+    add_amount_placeholder: "Default amount",
     referrals: "Referral(s)",
     needs_review: "To review",
     awaiting: "Awaiting",
@@ -314,6 +337,37 @@ export default async function AdminReferralsPage({ searchParams }: { searchParam
           </label>
           <button type="submit">{rt(language, "filter")}</button>
           {status || searchText ? <Link className="ghost" href="/admin/referrals">{rt(language, "clear")}</Link> : null}
+        </form>
+        <form className="row wrap gap-sm top-gap" action={createAdminReferralRewardAction}>
+          <input type="hidden" name="return_to" value={returnHref} />
+          <strong>{rt(language, "add_manual")}</strong>
+          <label>
+            {rt(language, "add_referrer")}
+            <input name="referrer_query" placeholder={rt(language, "add_referrer_placeholder")} required />
+          </label>
+          <label>
+            {rt(language, "add_referred")}
+            <input name="referred_query" placeholder={rt(language, "add_referred_placeholder")} required />
+          </label>
+          <label>
+            {rt(language, "add_category")}
+            <select name="category" defaultValue="">
+              <option value="">{rt(language, "add_category_auto")}</option>
+              <option value="PARIS">Paris</option>
+              <option value="BAR_LE_DUC">Bar-le-Duc</option>
+              <option value="ONLINE">{rt(language, "category_online")}</option>
+              <option value="DOMICILE">{rt(language, "category_home")}</option>
+            </select>
+          </label>
+          <label>
+            {rt(language, "add_amount")}
+            <input name="reward_amount" inputMode="decimal" placeholder={rt(language, "add_amount_placeholder")} />
+          </label>
+          <label>
+            {rt(language, "add_note")}
+            <input name="note" />
+          </label>
+          <button type="submit">{rt(language, "add_submit")}</button>
         </form>
       </section>
 

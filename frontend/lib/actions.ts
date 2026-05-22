@@ -1234,6 +1234,9 @@ const ADMIN_REFERRAL_ACTION_TEXT: Record<UiLanguage, Record<string, string>> = {
     referral_not_found: "Parrainage introuvable",
     referral_recomputed: "Parrainage recalcule",
     referral_cancelled: "Parrainage annule",
+    referral_created: "Parrainage ajoute",
+    referral_referrer_not_found: "Parrain introuvable ou ambigu",
+    referral_referred_not_found: "Filleul introuvable ou ambigu",
     referrals_recomputed: "{updated} parrainage(s) recalcules, {credits} avoir(s) genere(s)",
     referral_settings_saved: "Parametres de parrainage enregistres",
   },
@@ -1250,6 +1253,9 @@ const ADMIN_REFERRAL_ACTION_TEXT: Record<UiLanguage, Record<string, string>> = {
     referral_not_found: "Referral not found",
     referral_recomputed: "Referral recomputed",
     referral_cancelled: "Referral cancelled",
+    referral_created: "Referral added",
+    referral_referrer_not_found: "Referrer not found or ambiguous",
+    referral_referred_not_found: "Referred client not found or ambiguous",
     referrals_recomputed: "{updated} referral(s) recomputed, {credits} credit(s) granted",
     referral_settings_saved: "Referral settings saved",
   },
@@ -1270,6 +1276,54 @@ function normalizeReferralLookupText(value: string): string {
     .replace(/[^a-zA-Z0-9@+._-]+/g, " ")
     .trim()
     .toLowerCase();
+}
+
+async function resolveReferralClientQuery(
+  token: string,
+  query: string,
+  options: { adultOnly?: boolean } = {},
+): Promise<{ id: string; preview?: string; count: number; error?: string }> {
+  const { adultOnly = false } = options;
+  const normalizedQuery = normalizeReferralLookupText(query);
+  const tokens = normalizedQuery
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 2);
+  const primaryToken = tokens.find((item) => item.length >= 3) ?? normalizedQuery;
+  if (!primaryToken) {
+    return { id: "", count: 0, error: "empty" };
+  }
+  const clientsResult = await backendRequest<AdminClientOut[]>(
+    `/api/v1/admin/clients?search=${encodeURIComponent(primaryToken)}&include_archived=true&limit=50`,
+    {},
+    token,
+  );
+  if (!clientsResult.ok) {
+    return { id: "", count: 0, error: clientsResult.message };
+  }
+  const matches = clientsResult.data
+    .filter((client) => !adultOnly || client.client_kind === "ADULT")
+    .filter((client) => {
+      const haystack = normalizeReferralLookupText([
+        client.first_name ?? "",
+        client.last_name ?? "",
+        client.email ?? "",
+        client.phone ?? "",
+        client.mobile_phone_1 ?? "",
+        client.mobile_phone_2 ?? "",
+        client.home_phone ?? "",
+        client.family_name ?? "",
+      ].join(" "));
+      return tokens.every((item) => haystack.includes(item));
+    });
+  if (matches.length !== 1) {
+    const preview = matches
+      .slice(0, 5)
+      .map((client) => `${client.first_name ?? ""} ${client.last_name ?? ""}`.trim() || client.email)
+      .join(", ");
+    return { id: "", count: matches.length, preview };
+  }
+  return { id: matches[0].id, count: 1 };
 }
 
 async function ensureProfessorAndGetLanguage(token: string): Promise<UiLanguage> {
@@ -5679,44 +5733,16 @@ export async function validateAdminReferralRewardAction(formData: FormData): Pro
   const requestedReturnTo = String(formData.get("return_to") ?? "").trim();
   const returnTo = requestedReturnTo.startsWith("/admin/referrals") ? requestedReturnTo : "/admin/referrals";
   if (rewardId && !referrerUserId && referrerQuery) {
-    const normalizedQuery = normalizeReferralLookupText(referrerQuery);
-    const tokens = normalizedQuery
-      .split(/\s+/)
-      .map((item) => item.trim())
-      .filter((item) => item.length >= 2);
-    const primaryToken = tokens.find((item) => item.length >= 3) ?? normalizedQuery;
-    const clientsResult = await backendRequest<AdminClientOut[]>(
-      `/api/v1/admin/clients?search=${encodeURIComponent(primaryToken)}&include_archived=true&limit=50`,
-      {},
-      token,
-    );
-    if (!clientsResult.ok) {
-      redirect(appendQueryMessage(returnTo, "error", clientsResult.message));
+    const resolved = await resolveReferralClientQuery(token, referrerQuery, { adultOnly: true });
+    if (resolved.error) {
+      redirect(appendQueryMessage(returnTo, "error", resolved.error === "empty" ? adminReferralActionText(language, "referral_referrer_not_found") : resolved.error));
     }
-    const matches = clientsResult.data
-      .filter((client) => client.client_kind === "ADULT")
-      .filter((client) => {
-        const haystack = normalizeReferralLookupText([
-          client.first_name ?? "",
-          client.last_name ?? "",
-          client.email ?? "",
-          client.phone ?? "",
-          client.mobile_phone_1 ?? "",
-          client.mobile_phone_2 ?? "",
-          client.home_phone ?? "",
-        ].join(" "));
-        return tokens.every((item) => haystack.includes(item));
-      });
-    if (matches.length === 1) {
-      referrerUserId = matches[0].id;
-    } else if (matches.length === 0) {
+    if (resolved.count === 1) {
+      referrerUserId = resolved.id;
+    } else if (resolved.count === 0) {
       redirect(appendQueryMessage(returnTo, "error", `Aucun client adulte trouve pour "${referrerQuery}"`));
     } else {
-      const preview = matches
-        .slice(0, 5)
-        .map((client) => `${client.first_name ?? ""} ${client.last_name ?? ""}`.trim() || client.email)
-        .join(", ");
-      redirect(appendQueryMessage(returnTo, "error", `Plusieurs parrains possibles pour "${referrerQuery}" : ${preview}`));
+      redirect(appendQueryMessage(returnTo, "error", `Plusieurs parrains possibles pour "${referrerQuery}" : ${resolved.preview || ""}`));
     }
   }
   if (!rewardId || !referrerUserId) {
@@ -5739,6 +5765,59 @@ export async function validateAdminReferralRewardAction(formData: FormData): Pro
   revalidatePath("/admin/referrals");
   revalidatePath("/admin/intakes");
   redirect(appendQueryMessage(returnTo, "ok", adminReferralActionText(language, "referral_validated")));
+}
+
+export async function createAdminReferralRewardAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+  const requestedReturnTo = String(formData.get("return_to") ?? "").trim();
+  const returnTo = requestedReturnTo.startsWith("/admin/referrals") ? requestedReturnTo : "/admin/referrals";
+
+  const referrerQuery = String(formData.get("referrer_query") ?? "").trim();
+  const referredQuery = String(formData.get("referred_query") ?? "").trim();
+  const category = String(formData.get("category") ?? "").trim().toUpperCase() || null;
+  const rewardAmountRaw = String(formData.get("reward_amount") ?? "").trim().replace(",", ".");
+  const rewardAmount = rewardAmountRaw ? Number(rewardAmountRaw) : null;
+  const note = String(formData.get("note") ?? "").trim() || null;
+
+  const referrer = await resolveReferralClientQuery(token, referrerQuery, { adultOnly: true });
+  if (referrer.error || referrer.count !== 1) {
+    const detail = referrer.preview ? ` : ${referrer.preview}` : "";
+    redirect(appendQueryMessage(returnTo, "error", `${adminReferralActionText(language, "referral_referrer_not_found")}${detail}`));
+  }
+  const referred = await resolveReferralClientQuery(token, referredQuery);
+  if (referred.error || referred.count !== 1) {
+    const detail = referred.preview ? ` : ${referred.preview}` : "";
+    redirect(appendQueryMessage(returnTo, "error", `${adminReferralActionText(language, "referral_referred_not_found")}${detail}`));
+  }
+  if (rewardAmount !== null && (!Number.isFinite(rewardAmount) || rewardAmount < 0)) {
+    redirect(appendQueryMessage(returnTo, "error", adminReferralActionText(language, "referral_incomplete")));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    "/api/v1/admin/clients/referrals/rewards",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        referrer_user_id: referrer.id,
+        referred_user_id: referred.id,
+        category,
+        reward_amount: rewardAmount === null ? null : rewardAmount.toFixed(2),
+        note,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/referrals");
+  redirect(appendQueryMessage(returnTo, "ok", adminReferralActionText(language, "referral_created")));
 }
 
 export async function recomputeAdminReferralRewardAction(formData: FormData): Promise<void> {

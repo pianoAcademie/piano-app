@@ -92,6 +92,7 @@ from app.schemas.admin import (
     AdminCheckDepositPaymentOut,
     AdminReferralBulkRecomputeOut,
     AdminReferralRewardOut,
+    AdminReferralRewardManualCreateRequest,
     AdminReferralRewardManualMatchRequest,
     AdminClientSubscriptionMiniOut,
     AdminClientSubscriptionOut,
@@ -204,10 +205,13 @@ from app.services.referrals import (
     cancel_referral_reward,
     evaluate_referrals_for_invoice,
     ensure_referrals_for_sibling_quotes,
+    is_same_referral_family,
     manually_validate_referral,
     refresh_duplicate_referral_guard,
     refresh_referral_self_family_guard,
+    referral_category_for_location,
     referral_match_candidates_for_reward,
+    referral_reward_amount,
 )
 from app.services.reminders import skip_pending_reminders_for_booking
 from app.services.security import create_access_token, hash_password
@@ -8132,10 +8136,79 @@ def _referral_reward_out(db: Session, row: ReferralReward, users_by_id: dict[UUI
     )
 
 
+def _billing_client_id_for_manual_referral(db: Session, referred: User) -> UUID:
+    if referred.client_kind != ClientKind.CHILD:
+        return referred.id
+    link = db.scalar(
+        select(ClientFamilyLink)
+        .where(ClientFamilyLink.child_user_id == referred.id)
+        .order_by(ClientFamilyLink.is_billing_recipient.desc(), ClientFamilyLink.created_at.asc())
+        .limit(1)
+    )
+    return link.adult_user_id if link is not None else referred.id
+
+
+def _create_manual_referral_reward(
+    db: Session,
+    *,
+    payload: AdminReferralRewardManualCreateRequest,
+    actor_user_id: UUID | None,
+) -> ReferralReward:
+    referrer = db.scalar(select(User).where(User.id == payload.referrer_user_id, User.role == UserRole.CLIENT))
+    if referrer is None or referrer.client_kind != ClientKind.ADULT:
+        raise ValueError("Referrer adult client not found")
+    referred = db.scalar(select(User).where(User.id == payload.referred_user_id, User.role == UserRole.CLIENT))
+    if referred is None:
+        raise ValueError("Referred client not found")
+    referred_client_id = _billing_client_id_for_manual_referral(db, referred)
+    referred_student_id = referred.id if referred.client_kind == ClientKind.CHILD else None
+    if is_same_referral_family(
+        db,
+        referrer_user_id=referrer.id,
+        referred_client_id=referred_client_id,
+        referred_student_id=referred_student_id,
+    ):
+        raise ValueError("A family cannot refer itself")
+
+    referred_site = referred.student_site.value if hasattr(referred.student_site, "value") else referred.student_site
+    category = (payload.category or referral_category_for_location(referred_site) or "PARIS").strip().upper()
+    default_amount, default_currency, trigger_ratio = referral_reward_amount(db, category=category)
+    reward_amount = (payload.reward_amount if payload.reward_amount is not None else default_amount).quantize(Decimal("0.01"))
+    currency = _normalize_currency(payload.currency or default_currency, fallback=default_currency)
+    now = _utcnow()
+    reward = ReferralReward(
+        referrer_user_id=referrer.id,
+        referred_client_id=referred_client_id,
+        referred_student_id=referred_student_id,
+        declared_referrer_text=_user_display_for_referral(referrer) or referrer.email,
+        category=category,
+        status="AWAITING_PAYMENT",
+        match_status="MANUAL_MATCHED",
+        match_confidence=100,
+        reward_amount=reward_amount,
+        currency=currency,
+        trigger_ratio=trigger_ratio,
+        validated_at=now,
+        metadata_json={
+            "manual_created": True,
+            "created_by": str(actor_user_id) if actor_user_id else None,
+            "manual_referred_user_id": str(referred.id),
+            "manual_note": (payload.note or "").strip()[:500] or None,
+        },
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(reward)
+    db.flush()
+    if refresh_duplicate_referral_guard(db, reward):
+        db.flush()
+    return reward
+
+
 def _recompute_referral_reward_payment(db: Session, *, reward: ReferralReward) -> ReferralReward:
     if refresh_referral_self_family_guard(db, reward):
         return reward
-    if reward.referred_client_id is None or reward.status == "CREDIT_GRANTED":
+    if reward.referred_client_id is None or reward.status in {"CREDIT_GRANTED", "CANCELLED"}:
         return reward
     note_ids_seen: set[UUID] = set()
     ordered_notes: list[ClientNoteEntry] = []
@@ -8205,6 +8278,37 @@ def list_admin_referral_rewards(
         for user in db.scalars(select(User).where(User.id.in_(list(user_ids)))).all()
     } if user_ids else {}
     return [_referral_reward_out(db, row, users_by_id) for row in rewards]
+
+
+@router.post("/referrals/rewards", response_model=AdminReferralRewardOut, status_code=status.HTTP_201_CREATED)
+def create_admin_referral_reward(
+    payload: AdminReferralRewardManualCreateRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminReferralRewardOut:
+    try:
+        reward = _create_manual_referral_reward(
+            db,
+            payload=payload,
+            actor_user_id=actor.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(reward)
+    reward = _recompute_referral_reward_payment(db, reward=reward)
+    db.commit()
+    db.refresh(reward)
+    user_ids = {
+        user_id
+        for user_id in (reward.referrer_user_id, reward.referred_client_id, reward.referred_student_id)
+        if user_id is not None
+    }
+    users_by_id = {
+        user.id: user
+        for user in db.scalars(select(User).where(User.id.in_(list(user_ids)))).all()
+    } if user_ids else {}
+    return _referral_reward_out(db, reward, users_by_id)
 
 
 @router.post("/referrals/rewards/recompute", response_model=AdminReferralBulkRecomputeOut)

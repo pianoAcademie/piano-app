@@ -1632,6 +1632,15 @@ class AdminReferralRewardManualMatchRequest(BaseModel):
     referrer_user_id: UUID
 
 
+class AdminReferralRewardManualCreateRequest(BaseModel):
+    referrer_user_id: UUID
+    referred_user_id: UUID
+    category: str | None = Field(default=None, max_length=40)
+    reward_amount: Decimal | None = Field(default=None, ge=Decimal("0"))
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    note: str | None = Field(default=None, max_length=500)
+
+
 class AdminClientPaymentRefundRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=1000)
 
