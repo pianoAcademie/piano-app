@@ -1899,10 +1899,12 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
               {t("admin.quote_config.collect_all_checks_upfront")}
             </label>
             <label className="checkline">
+              <input type="hidden" name="show_schedule_public" value="false" />
               <input type="checkbox" name="show_schedule_public" defaultChecked />
               {t("admin.quote_config.show_schedule_public")}
             </label>
             <label className="checkline">
+              <input type="hidden" name="show_schedule_pdf" value="false" />
               <input type="checkbox" name="show_schedule_pdf" defaultChecked />
               {t("admin.quote_config.show_schedule_pdf")}
             </label>
@@ -2058,6 +2060,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                               {t("admin.quote_config.collect_all_checks_upfront")}
                             </label>
                             <label className="checkline">
+                              <input type="hidden" name="show_schedule_public" value="false" />
                               <input
                                 type="checkbox"
                                 name="show_schedule_public"
@@ -2066,6 +2069,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                               {t("admin.quote_config.show_schedule_public")}
                             </label>
                             <label className="checkline">
+                              <input type="hidden" name="show_schedule_pdf" value="false" />
                               <input
                                 type="checkbox"
                                 name="show_schedule_pdf"

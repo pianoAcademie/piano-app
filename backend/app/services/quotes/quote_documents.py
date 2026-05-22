@@ -3011,12 +3011,12 @@ def _resolve_schedule_visibility_by_audience(*, quote: Quote) -> dict[str, bool]
 def _resolve_payment_method_label(*, quote: Quote) -> str:
     language = _quote_doc_language(quote=quote)
     snapshot = _json_object(quote.payment_terms_snapshot)
-    for key in ("payment_method_label", "plan_name", "payment_plan_name", "payment_method"):
+    for key in ("plan_name", "payment_plan_name", "payment_method_label", "payment_method"):
         value = str(snapshot.get(key) or "").strip()
         if value:
             return value
     meta = _json_object(quote.meta)
-    for key in ("payment_plan_label", "payment_method_label", "payment_method", "payment_plan_name"):
+    for key in ("payment_plan_label", "payment_plan_name", "payment_method_label", "payment_method"):
         value = str(meta.get(key) or "").strip()
         if value:
             return value
