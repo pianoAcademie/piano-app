@@ -2748,11 +2748,17 @@ def _find_pass_recup_product(db: Session) -> CatalogProduct | None:
         .where(CatalogProduct.active.is_(True))
         .order_by(CatalogProduct.title.asc())
     ).all()
+    candidates: list[tuple[int, str, CatalogProduct]] = []
     for row in rows:
         haystack = _catalog_product_haystack(row)
         if "passrecup" in haystack.replace(" ", "") or ("pass" in haystack and "recup" in haystack):
-            return row
-    return None
+            price = _q2(Decimal(getattr(row, "price_incl_vat", None) or Decimal("0.00")))
+            excluded_automatic_label = any(token in haystack for token in ("offert", "gratuit", "famille"))
+            if excluded_automatic_label or price <= Decimal("0.00"):
+                continue
+            priority = 0 if price == Decimal("50.00") else 1
+            candidates.append((priority, _text(getattr(row, "title", "")), row))
+    return sorted(candidates, key=lambda item: (item[0], item[1]))[0][2] if candidates else None
 
 
 def _find_solfege_book_product(db: Session, level_code: str | None) -> CatalogProduct | None:

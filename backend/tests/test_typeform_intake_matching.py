@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 import importlib.util
 from pathlib import Path
 import sys
@@ -17,6 +18,7 @@ from app.api.routes.typeform_intakes import (
     _default_resolution,
     _extract_estimated_solfege_level,
     _find_existing_adult_parent_client,
+    _find_pass_recup_product,
     _future_school_year_candidate_configs,
     _activity_matches_line_for_slot_fallback,
     _intake_list_out_fast,
@@ -39,6 +41,59 @@ from app.services.referrals import referral_category_for_location
 
 
 class TypeformIntakeMatchingTests(unittest.TestCase):
+    def test_find_pass_recup_product_prefers_paid_standard_product(self) -> None:
+        rows = [
+            SimpleNamespace(
+                title="Pass Recup' Offert",
+                barcode=None,
+                short_description=None,
+                long_description=None,
+                price_incl_vat=Decimal("0.00"),
+            ),
+            SimpleNamespace(
+                title="Pass Recup'",
+                barcode=None,
+                short_description=None,
+                long_description=None,
+                price_incl_vat=Decimal("50.00"),
+            ),
+            SimpleNamespace(
+                title="Pass Recup' - famille",
+                barcode=None,
+                short_description=None,
+                long_description=None,
+                price_incl_vat=Decimal("25.00"),
+            ),
+        ]
+        db = SimpleNamespace(scalars=lambda _stmt: SimpleNamespace(all=lambda: rows))
+
+        product = _find_pass_recup_product(db)
+
+        self.assertIsNotNone(product)
+        self.assertEqual(product.title, "Pass Recup'")
+        self.assertEqual(product.price_incl_vat, Decimal("50.00"))
+
+    def test_find_pass_recup_product_ignores_only_free_or_family_variants(self) -> None:
+        rows = [
+            SimpleNamespace(
+                title="Pass Recup' Offert",
+                barcode=None,
+                short_description=None,
+                long_description=None,
+                price_incl_vat=Decimal("0.00"),
+            ),
+            SimpleNamespace(
+                title="Pass Recup' - famille",
+                barcode=None,
+                short_description=None,
+                long_description=None,
+                price_incl_vat=Decimal("25.00"),
+            ),
+        ]
+        db = SimpleNamespace(scalars=lambda _stmt: SimpleNamespace(all=lambda: rows))
+
+        self.assertIsNone(_find_pass_recup_product(db))
+
     def test_bar_le_duc_child_course_mode_templates_match_full_typeform_labels(self) -> None:
         migration_path = (
             Path(__file__).resolve().parents[1]
