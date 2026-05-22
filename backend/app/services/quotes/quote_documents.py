@@ -6,6 +6,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from html import escape, unescape as html_unescape
 from html.parser import HTMLParser
 import io
+import json
 import logging
 import re
 from typing import Any
@@ -39,6 +40,7 @@ AUDIENCE_PUBLIC_PAGE = "public_page"
 AUDIENCE_CLIENT_PDF = "client_pdf"
 DEFAULT_AUDIENCE = AUDIENCE_CLIENT_PDF
 ACCOUNT_LOGO_SETTING_KEY = "config_account_logo_data_url"
+QUOTE_SCHOOL_CALENDARS_SETTING_KEY = "quote_school_calendars_v1"
 CARD_4X_FEES_PAYMENT_METHOD = "CARD_4X_FEES"
 CARD_4X_FEES_PAYMENT_INSTRUCTION = (
     "Le paiement par carte bancaire en 4 fois est géré par notre partenaire Oney.\n"
@@ -1812,6 +1814,121 @@ def _dedupe_calendar_sessions(items: list[dict[str, Any]]) -> tuple[list[dict[st
     return deduped, changed
 
 
+def _quote_school_calendar_rows(db: Session) -> list[dict[str, Any]]:
+    setting = db.scalar(select(AppSetting).where(AppSetting.key == QUOTE_SCHOOL_CALENDARS_SETTING_KEY))
+    if setting is None:
+        return []
+    try:
+        parsed = json.loads(setting.value or "[]")
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict) and _is_true(item.get("is_active", True))]
+
+
+def _calendar_row_location_ids(row: dict[str, Any]) -> set[str]:
+    out: set[str] = set()
+    location_id = _parse_uuid(row.get("location_id"))
+    if location_id is not None:
+        out.add(str(location_id))
+    for item in _json_list(row.get("location_ids")):
+        parsed = _parse_uuid(item)
+        if parsed is not None:
+            out.add(str(parsed))
+    return out
+
+
+def _calendar_row_applies_to_session(row: dict[str, Any], *, location_id: str, session_date: date) -> bool:
+    location_ids = _calendar_row_location_ids(row)
+    if location_ids and location_id not in location_ids:
+        return False
+    bounds = _school_year_bounds_from_label(str(row.get("school_year_label") or ""))
+    if bounds is not None and not (bounds[0] <= session_date <= bounds[1]):
+        return False
+    return True
+
+
+def _expand_calendar_vacation_dates(row: dict[str, Any]) -> set[date]:
+    out: set[date] = set()
+    for raw_period in _json_list(row.get("vacation_periods")):
+        if not isinstance(raw_period, dict):
+            continue
+        start = _parse_iso_date(raw_period.get("start_date"))
+        end = _parse_iso_date(raw_period.get("end_date"))
+        if start is None or end is None or end < start:
+            continue
+        current = start
+        while current <= end:
+            out.add(current)
+            current += timedelta(days=1)
+    return out
+
+
+def _session_blocked_by_quote_school_calendar(
+    *,
+    session: dict[str, Any],
+    calendar_rows: list[dict[str, Any]],
+    activity_exclusion_flags: dict[str, tuple[bool, bool]],
+) -> bool:
+    session_date = _parse_iso_date(session.get("date"))
+    activity_id = str(session.get("activity_id") or "").strip()
+    location_id = str(session.get("location_id") or "").strip()
+    if session_date is None or not activity_id or not location_id:
+        return False
+
+    include_holidays, include_school_vacations = activity_exclusion_flags.get(activity_id, (True, True))
+    if not include_holidays and not include_school_vacations:
+        return False
+
+    for row in calendar_rows:
+        if not _calendar_row_applies_to_session(row, location_id=location_id, session_date=session_date):
+            continue
+        if include_holidays and session_date in _parse_iso_date_set(row.get("holiday_dates")):
+            return True
+        if include_school_vacations and (
+            session_date in _parse_iso_date_set(row.get("closure_dates"))
+            or session_date in _expand_calendar_vacation_dates(row)
+        ):
+            return True
+    return False
+
+
+def _filter_sessions_blocked_by_quote_school_calendar(
+    db: Session,
+    sessions: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], bool]:
+    if not sessions:
+        return sessions, False
+    calendar_rows = _quote_school_calendar_rows(db)
+    if not calendar_rows:
+        return sessions, False
+
+    activity_ids = {
+        parsed
+        for parsed in (_parse_uuid(item.get("activity_id")) for item in sessions)
+        if parsed is not None
+    }
+    rows = db.scalars(select(CourseType).where(CourseType.id.in_(activity_ids))).all() if activity_ids else []
+    activity_exclusion_flags = {
+        str(row.id): (
+            bool(getattr(row, "exclude_holidays_in_recurrence", True)),
+            bool(getattr(row, "exclude_school_vacations_in_recurrence", True)),
+        )
+        for row in rows
+    }
+    filtered = [
+        item
+        for item in sessions
+        if not _session_blocked_by_quote_school_calendar(
+            session=item,
+            calendar_rows=calendar_rows,
+            activity_exclusion_flags=activity_exclusion_flags,
+        )
+    ]
+    return filtered, len(filtered) != len(sessions)
+
+
 def _quote_line_recommendation_key(line: QuoteLine) -> str:
     activity_id = str(getattr(line, "activity_id", None) or "").strip()
     if not activity_id:
@@ -1924,6 +2041,8 @@ def _calendar_snapshot_with_planning_sessions(db: Session | None, calendar_snaps
             seen.add(key)
             sessions.append(item)
             changed = True
+    sessions, filtered_by_school_calendar = _filter_sessions_blocked_by_quote_school_calendar(db, sessions)
+    changed = changed or filtered_by_school_calendar
     if changed:
         sessions.sort(
             key=lambda item: (

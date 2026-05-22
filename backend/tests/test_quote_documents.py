@@ -28,12 +28,64 @@ from app.services.quotes.quote_documents import (
     _quote_template_disables_pass_recup,
     _quote_template_allows_end_year_concert,
     _resolve_prospect_data,
+    _session_blocked_by_quote_school_calendar,
     _solfege_pending_block_info,
 )
 from app.api.routes.quotes import _resolve_quote_pdf_bytes
 
 
 class QuoteDocumentMarkupTests(unittest.TestCase):
+    def test_session_blocked_by_quote_school_calendar_honors_vacation_periods(self) -> None:
+        session = {
+            "date": "2026-10-20",
+            "activity_id": str(uuid4()),
+            "location_id": str(uuid4()),
+        }
+        calendar_rows = [
+            {
+                "is_active": True,
+                "location_id": session["location_id"],
+                "school_year_label": "2026-2027",
+                "holiday_dates": [],
+                "closure_dates": [],
+                "vacation_periods": [{"start_date": "2026-10-18", "end_date": "2026-11-02"}],
+            }
+        ]
+
+        blocked = _session_blocked_by_quote_school_calendar(
+            session=session,
+            calendar_rows=calendar_rows,
+            activity_exclusion_flags={session["activity_id"]: (True, True)},
+        )
+
+        self.assertTrue(blocked)
+
+    def test_session_blocked_by_quote_school_calendar_honors_activity_flags(self) -> None:
+        activity_id = str(uuid4())
+        session = {
+            "date": "2026-10-20",
+            "activity_id": activity_id,
+            "location_id": str(uuid4()),
+        }
+        calendar_rows = [
+            {
+                "is_active": True,
+                "location_id": session["location_id"],
+                "school_year_label": "2026-2027",
+                "holiday_dates": ["2026-10-20"],
+                "closure_dates": [],
+                "vacation_periods": [{"start_date": "2026-10-18", "end_date": "2026-11-02"}],
+            }
+        ]
+
+        blocked = _session_blocked_by_quote_school_calendar(
+            session=session,
+            calendar_rows=calendar_rows,
+            activity_exclusion_flags={activity_id: (False, False)},
+        )
+
+        self.assertFalse(blocked)
+
     def test_adult_pdf_identity_uses_typeform_contact_details_when_prospect_is_incomplete(self) -> None:
         prospect_id = uuid4()
         quote = SimpleNamespace(
