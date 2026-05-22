@@ -1028,6 +1028,63 @@ def _location_hint_from_text(*values: object | None) -> str | None:
     return None
 
 
+def _typeform_site_key(*values: object | None) -> str | None:
+    token = " ".join(_normalize_token(value) for value in values if _text(value))
+    compact = re.sub(r"[^a-z0-9]+", "", token)
+    if not compact:
+        return None
+    if "barleduc" in compact or "bld" in re.split(r"[^a-z0-9]+", token):
+        return "bar_le_duc"
+    if "pompe" in compact:
+        return "pompe"
+    if "scheffer" in compact:
+        return "scheffer"
+    if "richelieu" in compact:
+        return "richelieu"
+    if "assas" in compact:
+        return "assas"
+    if "paris" in compact:
+        return "paris"
+    if "online" in compact or "enligne" in compact:
+        return "online"
+    return None
+
+
+def _typeform_location_allowed_for_alternative(
+    *,
+    requested_location: object | None,
+    runtime_context: dict[str, object],
+    candidate_location: Location,
+) -> bool:
+    requested_key = _typeform_site_key(requested_location)
+    if requested_key is None or requested_key == "paris":
+        requested_key = _typeform_site_key(
+            requested_location,
+            runtime_context.get("location_code"),
+            runtime_context.get("location_name"),
+            runtime_context.get("requested_location"),
+        )
+    candidate_key = _typeform_site_key(
+        getattr(candidate_location, "code", None),
+        getattr(candidate_location, "name", None),
+    )
+    if requested_key is None or candidate_key is None:
+        return True
+    if requested_key == "online":
+        return candidate_key == "online"
+    if requested_key == "bar_le_duc":
+        return candidate_key == "bar_le_duc"
+    if candidate_key == "bar_le_duc":
+        return False
+    if requested_key == "paris":
+        return candidate_key != "bar_le_duc"
+    if requested_key in {"pompe", "scheffer"}:
+        return candidate_key in {"pompe", "scheffer"}
+    if requested_key in {"richelieu", "assas"}:
+        return candidate_key == requested_key
+    return True
+
+
 def _location_for_slot_preference(
     requested_location: str | None,
     *hints: object | None,
@@ -4389,6 +4446,12 @@ def _build_session_recommendations(
         activity_rows = by_activity.get(line.activity_id, [])
         option_rows: list[tuple[CourseSession, TypeformSessionMatchOptionOut]] = []
         for session_obj, activity, location, booked_count in activity_rows:
+            if not _typeform_location_allowed_for_alternative(
+                requested_location=line_requested_location,
+                runtime_context=runtime_context,
+                candidate_location=location,
+            ):
+                continue
             if (
                 not _session_is_typeform_candidate(session_obj)
                 and not line_uses_solfege_slot_request
@@ -4425,6 +4488,12 @@ def _build_session_recommendations(
         ):
             relaxed_option_rows: list[tuple[CourseSession, TypeformSessionMatchOptionOut]] = []
             for session_obj, activity, location, booked_count in activity_rows:
+                if not _typeform_location_allowed_for_alternative(
+                    requested_location=line_requested_location,
+                    runtime_context=runtime_context,
+                    candidate_location=location,
+                ):
+                    continue
                 if (
                     not _session_is_typeform_candidate(session_obj)
                     and not line_uses_solfege_slot_request
@@ -4458,6 +4527,12 @@ def _build_session_recommendations(
                 compatible_row_groups.append(manual_rows_all)
             for compatible_rows in compatible_row_groups:
                 for session_obj, activity, location, booked_count in compatible_rows:
+                    if not _typeform_location_allowed_for_alternative(
+                        requested_location=line_requested_location,
+                        runtime_context=runtime_context,
+                        candidate_location=location,
+                    ):
+                        continue
                     if session_obj.id in existing_option_ids or session_obj.id in seen_compatible_session_ids:
                         continue
                     if activity.id == line.activity_id or not _activity_matches_line_for_slot_fallback(activity, line):
@@ -4526,6 +4601,12 @@ def _build_session_recommendations(
                     manual_series_rows[series_key] = (session_obj, activity, location, int(booked_count or 0))
 
             for session_obj, activity, location, booked_count in manual_series_rows.values():
+                if not _typeform_location_allowed_for_alternative(
+                    requested_location=line_requested_location,
+                    runtime_context=runtime_context,
+                    candidate_location=location,
+                ):
+                    continue
                 if activity.id != line.activity_id and not _activity_matches_line_for_slot_fallback(activity, line):
                     continue
                 if not _line_allows_session_modality(line, activity=activity, location=location):

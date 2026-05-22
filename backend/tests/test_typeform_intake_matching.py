@@ -33,6 +33,7 @@ from app.api.routes.typeform_intakes import (
     _template_for_runtime_context,
     _template_matches_when,
     _template_matches_segment_target,
+    _typeform_location_allowed_for_alternative,
     _typeform_default_quote_template,
     _typeform_default_terms_template,
     _typeform_session_option_from_row,
@@ -93,6 +94,90 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
         db = SimpleNamespace(scalars=lambda _stmt: SimpleNamespace(all=lambda: rows))
 
         self.assertIsNone(_find_pass_recup_product(db))
+
+    def test_typeform_alternatives_do_not_cross_between_paris_and_bar_le_duc(self) -> None:
+        runtime_context = {
+            "location_code": "RICHELIEU",
+            "location_name": "Rue de Richelieu",
+        }
+
+        self.assertFalse(
+            _typeform_location_allowed_for_alternative(
+                requested_location="Paris 1 - Rue de Richelieu",
+                runtime_context=runtime_context,
+                candidate_location=SimpleNamespace(code="BAR_LE_DUC", name="Bar-le-Duc"),
+            )
+        )
+        self.assertFalse(
+            _typeform_location_allowed_for_alternative(
+                requested_location="Bar-le-Duc",
+                runtime_context={"location_code": "BAR_LE_DUC", "location_name": "Bar-le-Duc"},
+                candidate_location=SimpleNamespace(code="RICHELIEU", name="Rue de Richelieu"),
+            )
+        )
+
+    def test_typeform_alternatives_allow_pompe_scheffer_pair_only(self) -> None:
+        runtime_context = {
+            "location_code": "POMPE",
+            "location_name": "Rue de la Pompe",
+        }
+
+        self.assertTrue(
+            _typeform_location_allowed_for_alternative(
+                requested_location="Rue de la Pompe",
+                runtime_context=runtime_context,
+                candidate_location=SimpleNamespace(code="SCHEFFER", name="Rue Scheffer"),
+            )
+        )
+        self.assertFalse(
+            _typeform_location_allowed_for_alternative(
+                requested_location="Rue de la Pompe",
+                runtime_context=runtime_context,
+                candidate_location=SimpleNamespace(code="RICHELIEU", name="Rue de Richelieu"),
+            )
+        )
+
+    def test_typeform_alternatives_keep_richelieu_on_same_site(self) -> None:
+        runtime_context = {
+            "location_code": "RICHELIEU",
+            "location_name": "Rue de Richelieu",
+        }
+
+        self.assertTrue(
+            _typeform_location_allowed_for_alternative(
+                requested_location="Paris 1 - Rue de Richelieu",
+                runtime_context=runtime_context,
+                candidate_location=SimpleNamespace(code="RICHELIEU", name="Rue de Richelieu"),
+            )
+        )
+        self.assertFalse(
+            _typeform_location_allowed_for_alternative(
+                requested_location="Paris 1 - Rue de Richelieu",
+                runtime_context=runtime_context,
+                candidate_location=SimpleNamespace(code="POMPE", name="Rue de la Pompe"),
+            )
+        )
+
+    def test_typeform_alternatives_keep_online_request_online_despite_site_context(self) -> None:
+        runtime_context = {
+            "location_code": "RICHELIEU",
+            "location_name": "Rue de Richelieu",
+        }
+
+        self.assertTrue(
+            _typeform_location_allowed_for_alternative(
+                requested_location="online",
+                runtime_context=runtime_context,
+                candidate_location=SimpleNamespace(code="ONLINE", name="En ligne"),
+            )
+        )
+        self.assertFalse(
+            _typeform_location_allowed_for_alternative(
+                requested_location="online",
+                runtime_context=runtime_context,
+                candidate_location=SimpleNamespace(code="RICHELIEU", name="Rue de Richelieu"),
+            )
+        )
 
     def test_bar_le_duc_child_course_mode_templates_match_full_typeform_labels(self) -> None:
         migration_path = (
