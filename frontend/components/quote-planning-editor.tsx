@@ -74,6 +74,23 @@ type PlanningCalendarPreset = {
   closure_dates: string[];
 };
 
+type LivePlanningSeriesOption = {
+  key: string;
+  activity_id: string;
+  activity_label: string | null;
+  location_id: string;
+  location_label: string | null;
+  series_key: string;
+  weekday: number;
+  start_date: string;
+  end_date: string;
+  start_time: string;
+  end_time: string;
+  sessions_count: number;
+  modality: string | null;
+  label: string;
+};
+
 type QuotePlanningEditorProps = {
   quoteId: string;
   returnTo: string;
@@ -83,6 +100,7 @@ type QuotePlanningEditorProps = {
   locations: LocationOption[];
   calendarPresets?: PlanningCalendarPreset[];
   solfegeRules?: SolfegeRule[];
+  livePlanningSeries?: LivePlanningSeriesOption[];
   initialSnapshot: Record<string, unknown>;
   initialMeta: Record<string, unknown>;
   language?: UiLanguage | string;
@@ -772,6 +790,7 @@ export default function QuotePlanningEditor({
   locations,
   calendarPresets = [],
   solfegeRules = [],
+  livePlanningSeries = [],
   initialSnapshot,
   initialMeta,
   language: languageProp = "fr",
@@ -819,6 +838,25 @@ export default function QuotePlanningEditor({
   const [editorState, setEditorState] = useState<PlanningEditorState | null>(null);
   const [expandedUid, setExpandedUid] = useState<string | null>(null);
   const snapshotSessions = useMemo(() => parseSnapshotSessions(initialSnapshot), [initialSnapshot]);
+  const liveSeriesBySelector = useMemo(() => {
+    const map = new Map<string, LivePlanningSeriesOption[]>();
+    for (const option of livePlanningSeries) {
+      const key = `${option.activity_id}|${option.location_id}|${option.weekday}`;
+      const list = map.get(key) ?? [];
+      list.push(option);
+      map.set(key, list);
+    }
+    for (const list of map.values()) {
+      list.sort((left, right) => {
+        const byTime = left.start_time.localeCompare(right.start_time);
+        if (byTime !== 0) {
+          return byTime;
+        }
+        return left.start_date.localeCompare(right.start_date);
+      });
+    }
+    return map;
+  }, [livePlanningSeries]);
 
   // Keep client-side editor state aligned with server snapshot after save/redirect.
   useEffect(() => {
@@ -929,7 +967,35 @@ export default function QuotePlanningEditor({
     setEditorState(null);
   }
 
-  function updateEditor(patch: Partial<PlanningBlock>): void {
+  function matchingLiveSeriesOptions(block: PlanningBlock): LivePlanningSeriesOption[] {
+    if (!block.activity_id || !block.location_id || block.weekday === WEEKDAY_UNSET) {
+      return [];
+    }
+    return liveSeriesBySelector.get(`${block.activity_id}|${block.location_id}|${block.weekday}`) ?? [];
+  }
+
+  function applyLiveSeriesToBlock(block: PlanningBlock, option: LivePlanningSeriesOption): PlanningBlock {
+    return {
+      ...block,
+      activity_id: option.activity_id,
+      location_id: option.location_id,
+      series_key: option.series_key,
+      source: "live_planning",
+      sessions_count: option.sessions_count,
+      weekday: option.weekday,
+      recurrence_frequency: "weekly",
+      start_date: option.start_date,
+      end_date: option.end_date,
+      start_time: option.start_time,
+      end_time: option.end_time,
+      modality: option.modality || block.modality,
+    };
+  }
+
+  function updateEditor(
+    patch: Partial<PlanningBlock>,
+    options: { autoApplyLiveSeries?: boolean; preserveLiveIdentity?: boolean } = {},
+  ): void {
     setEditorState((prev) => {
       if (!prev) {
         return prev;
@@ -945,7 +1011,7 @@ export default function QuotePlanningEditor({
         "end_time",
         "modality",
       ];
-      const resetLiveIdentity = liveIdentityKeys.some((key) =>
+      const resetLiveIdentity = !options.preserveLiveIdentity && liveIdentityKeys.some((key) =>
         Object.prototype.hasOwnProperty.call(patch, key) && patch[key] !== prev.block[key],
       );
       const nextInput = {
@@ -960,11 +1026,22 @@ export default function QuotePlanningEditor({
             }
           : {}),
       };
-      const nextBlock = normalizePlanningBlockWithActivity(
+      let nextBlock = normalizePlanningBlockWithActivity(
         nextInput,
         activities,
         calendarPresetMap,
       );
+      if (options.autoApplyLiveSeries) {
+        const matches = matchingLiveSeriesOptions(nextBlock);
+        if (matches.length > 0) {
+          const preferred = matches.find((option) => option.start_time === nextBlock.start_time) ?? matches[0];
+          nextBlock = normalizePlanningBlockWithActivity(
+            applyLiveSeriesToBlock(nextBlock, preferred),
+            activities,
+            calendarPresetMap,
+          );
+        }
+      }
       return {
         ...prev,
         block: nextBlock,
@@ -977,7 +1054,7 @@ export default function QuotePlanningEditor({
     updateEditor({
       activity_id: activityId,
       modality: resolvePlanningModality(activity, activity?.mode),
-    });
+    }, { autoApplyLiveSeries: true });
   }
 
   function commitEditor(): void {
@@ -1221,6 +1298,11 @@ export default function QuotePlanningEditor({
                 : null;
               const pendingSlotOptions =
                 selectionPending && blockSolfegeLevel ? slotOptionsFromRule(blockSolfegeRule, locationLabel, language) : [];
+              const liveOptions = matchingLiveSeriesOptions(editorBlock);
+              const selectedLiveOptionKey =
+                liveOptions.find((option) => option.series_key === editorBlock.series_key)?.key
+                ?? liveOptions.find((option) => option.start_time === editorBlock.start_time && option.end_time === editorBlock.end_time)?.key
+                ?? "";
               return (
                 <article className="quote-line-card quote-line-card-modal">
                   <div className="row spread wrap gap-sm">
@@ -1259,7 +1341,7 @@ export default function QuotePlanningEditor({
                       {t("common.location")}
                       <select
                         value={editorBlock.location_id}
-                        onChange={(event) => updateEditor({ location_id: event.target.value })}
+                        onChange={(event) => updateEditor({ location_id: event.target.value }, { autoApplyLiveSeries: true })}
                         disabled={!editable}
                       >
                         <option value="">{t("admin.quote_detail.none")}</option>
@@ -1295,7 +1377,7 @@ export default function QuotePlanningEditor({
                             weekday: parsed,
                             start_time: nextStart,
                             end_time: addMinutesToTime(nextStart, duration),
-                          });
+                          }, { autoApplyLiveSeries: true });
                         }}
                         disabled={!editable}
                       >
@@ -1318,6 +1400,28 @@ export default function QuotePlanningEditor({
                         <option value="ONSITE">{t("admin.quote_planning.modality_onsite")}</option>
                       </select>
                     </label>
+                    {liveOptions.length > 0 ? (
+                      <label className="span-2">
+                        {t("admin.quote_planning.live_slot")}
+                        <select
+                          value={selectedLiveOptionKey}
+                          onChange={(event) => {
+                            const selected = liveOptions.find((option) => option.key === event.target.value);
+                            if (!selected) {
+                              return;
+                            }
+                            updateEditor(applyLiveSeriesToBlock(editorBlock, selected), { preserveLiveIdentity: true });
+                          }}
+                          disabled={!editable || selectionPending}
+                        >
+                          {liveOptions.map((option) => (
+                            <option key={option.key} value={option.key}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
                     <label>
                       {t("admin.quote_planning.frequency")}
                       <select

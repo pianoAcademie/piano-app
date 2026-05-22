@@ -3315,6 +3315,8 @@ def list_admin_sessions(
     client_ids: list[UUID] | None = Query(default=None),
     status: SessionStatus | None = None,
     client_status: ClientStatus | None = None,
+    from_: datetime | None = Query(default=None, alias="from"),
+    to: datetime | None = None,
     db: Session = Depends(get_db),
     _: User = Depends(require_admin_or_permissions("can_view_planning")),
 ) -> list[AdminSessionOut]:
@@ -3352,6 +3354,10 @@ def list_admin_sessions(
 
     if status is not None:
         stmt = stmt.where(CourseSession.status == status)
+    if from_ is not None:
+        stmt = stmt.where(CourseSession.start_at_utc >= from_)
+    if to is not None:
+        stmt = stmt.where(CourseSession.start_at_utc <= to)
 
     client_filter_ids = list(dict.fromkeys(client_ids or []))
     if client_status is not None or client_filter_ids:

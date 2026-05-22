@@ -680,6 +680,33 @@ type PlanningSummaryBlock = {
   semester2: Array<{ monthLabel: string; days: string }>;
 };
 
+type LivePlanningSeriesOption = {
+  key: string;
+  activity_id: string;
+  activity_label: string | null;
+  location_id: string;
+  location_label: string | null;
+  series_key: string;
+  weekday: number;
+  start_date: string;
+  end_date: string;
+  start_time: string;
+  end_time: string;
+  sessions_count: number;
+  modality: string | null;
+  label: string;
+};
+
+const QUOTE_PLANNING_WEEKDAY_KEYS: Record<number, string> = {
+  0: "common.weekday_monday",
+  1: "common.weekday_tuesday",
+  2: "common.weekday_wednesday",
+  3: "common.weekday_thursday",
+  4: "common.weekday_friday",
+  5: "common.weekday_saturday",
+  6: "common.weekday_sunday",
+};
+
 function planningVisualSummary(sessions: Array<Record<string, unknown>>, language: UiLanguage = "fr"): PlanningSummaryBlock[] {
   const grouped = new Map<string, Map<number, number[]>>();
   for (const session of sessions) {
@@ -868,6 +895,22 @@ function deriveSchoolYearLabelFromDate(value: unknown): string | null {
   return `${startYear}-${startYear + 1}`;
 }
 
+function schoolYearDateRangeFromLabel(label: string | null | undefined): { from: string; to: string } | null {
+  const match = String(label ?? "").match(/(20\d{2})\s*[-/]\s*(20\d{2})/);
+  if (!match) {
+    return null;
+  }
+  const startYear = Number.parseInt(match[1], 10);
+  const endYear = Number.parseInt(match[2], 10);
+  if (!Number.isFinite(startYear) || !Number.isFinite(endYear) || endYear !== startYear + 1) {
+    return null;
+  }
+  return {
+    from: `${startYear}-09-01T00:00:00.000Z`,
+    to: `${endYear}-08-31T23:59:59.999Z`,
+  };
+}
+
 function derivePlanningSnapshotSchoolYearLabel(
   snapshot: Record<string, unknown>,
   fallback: string | null | undefined,
@@ -891,6 +934,175 @@ function normalizePlanningBlockModality(value: unknown): "ONLINE" | "ONSITE" | n
     return normalized;
   }
   return null;
+}
+
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+function adminSessionLocalParts(session: AdminSessionOut): { date: string; start_time: string; end_time: string; weekday: number } | null {
+  const timezone = session.timezone || "Europe/Paris";
+  const partsFor = (iso: string): { date: string; time: string; weekday: number } | null => {
+    const instant = new Date(iso);
+    if (Number.isNaN(instant.getTime())) {
+      return null;
+    }
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(instant);
+    const pick = (type: Intl.DateTimeFormatPartTypes): number => {
+      const value = parts.find((part) => part.type === type)?.value ?? "0";
+      return Number.parseInt(value, 10);
+    };
+    const year = pick("year");
+    const month = pick("month");
+    const day = pick("day");
+    const hour = pick("hour");
+    const minute = pick("minute");
+    if (![year, month, day, hour, minute].every(Number.isFinite)) {
+      return null;
+    }
+    const date = `${year}-${pad2(month)}-${pad2(day)}`;
+    const utcDay = new Date(`${date}T00:00:00Z`).getUTCDay();
+    return {
+      date,
+      time: `${pad2(hour)}:${pad2(minute)}`,
+      weekday: utcDay === 0 ? 6 : utcDay - 1,
+    };
+  };
+  const start = partsFor(session.start_at_utc);
+  const end = partsFor(session.end_at_utc);
+  if (!start || !end) {
+    return null;
+  }
+  return {
+    date: start.date,
+    start_time: start.time,
+    end_time: end.time,
+    weekday: start.weekday,
+  };
+}
+
+function formatDateForLivePlanningLabel(value: string): string {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return value;
+  }
+  return `${match[3]}/${match[2]}/${match[1]}`;
+}
+
+async function loadLivePlanningSeriesOptions({
+  token,
+  schoolYearLabel,
+  activities,
+  language,
+}: {
+  token: string;
+  schoolYearLabel: string | null;
+  activities: AdminActivityOut[];
+  language: UiLanguage;
+}): Promise<LivePlanningSeriesOption[]> {
+  const range = schoolYearDateRangeFromLabel(schoolYearLabel);
+  if (!range) {
+    return [];
+  }
+  const activityById = new Map(activities.map((activity) => [activity.id, activity]));
+  const query = new URLSearchParams();
+  query.set("status", "SCHEDULED");
+  query.set("from", range.from);
+  query.set("to", range.to);
+  const result = await backendRequest<AdminSessionOut[]>(`/api/v1/admin/sessions?${query.toString()}`, {}, token);
+  if (!result.ok) {
+    return [];
+  }
+
+  const groups = new Map<string, Array<{ session: AdminSessionOut; local: { date: string; start_time: string; end_time: string; weekday: number } }>>();
+  for (const session of result.data) {
+    const local = adminSessionLocalParts(session);
+    if (!local) {
+      continue;
+    }
+    const recurrenceKey = String(session.recurrence_group_id || "").trim();
+    const fallbackKey = [
+      session.course_type_id,
+      session.location_id,
+      local.weekday,
+      local.start_time,
+      local.end_time,
+    ].join("|");
+    const key = recurrenceKey ? `${session.course_type_id}|${session.location_id}|${recurrenceKey}` : fallbackKey;
+    const rows = groups.get(key) ?? [];
+    rows.push({ session, local });
+    groups.set(key, rows);
+  }
+
+  const options: LivePlanningSeriesOption[] = [];
+  for (const rows of groups.values()) {
+    rows.sort((left, right) => {
+      const byDate = left.local.date.localeCompare(right.local.date);
+      if (byDate !== 0) {
+        return byDate;
+      }
+      return left.local.start_time.localeCompare(right.local.start_time);
+    });
+    const first = rows[0];
+    const last = rows[rows.length - 1];
+    if (!first || !last) {
+      continue;
+    }
+    const session = first.session;
+    const activity = activityById.get(session.course_type_id);
+    const activityLabel = activity?.name || session.type_label || null;
+    const weekdayText = uiText(language, QUOTE_PLANNING_WEEKDAY_KEYS[first.local.weekday] || "admin.quote_planning.weekday_unset");
+    const period = `${formatDateForLivePlanningLabel(first.local.date)} -> ${formatDateForLivePlanningLabel(last.local.date)}`;
+    const sessionsText = uiText(language, "admin.quote_planning.live_slot_sessions", { count: rows.length });
+    const seriesKey = String(session.recurrence_group_id || "").trim();
+    const optionKey = seriesKey || [
+      session.course_type_id,
+      session.location_id,
+      first.local.weekday,
+      first.local.start_time,
+      first.local.end_time,
+      first.local.date,
+    ].join("|");
+    options.push({
+      key: optionKey,
+      activity_id: session.course_type_id,
+      activity_label: activityLabel,
+      location_id: session.location_id,
+      location_label: session.location_label || null,
+      series_key: seriesKey,
+      weekday: first.local.weekday,
+      start_date: first.local.date,
+      end_date: last.local.date,
+      start_time: first.local.start_time,
+      end_time: first.local.end_time,
+      sessions_count: rows.length,
+      modality: normalizePlanningBlockModality(activity?.mode),
+      label: `${weekdayText} ${first.local.start_time}-${first.local.end_time} · ${period} · ${sessionsText}`,
+    });
+  }
+
+  return options.sort((left, right) => {
+    const byActivity = String(left.activity_label || "").localeCompare(String(right.activity_label || ""));
+    if (byActivity !== 0) {
+      return byActivity;
+    }
+    const byLocation = String(left.location_label || "").localeCompare(String(right.location_label || ""));
+    if (byLocation !== 0) {
+      return byLocation;
+    }
+    if (left.weekday !== right.weekday) {
+      return left.weekday - right.weekday;
+    }
+    return left.start_time.localeCompare(right.start_time);
+  });
 }
 
 async function hydratePlanningSnapshotForEditor({
@@ -1772,6 +1984,12 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     token,
     schoolYearLabel: planningEditorSchoolYearLabel,
     activities,
+  });
+  const livePlanningSeries = await loadLivePlanningSeriesOptions({
+    token,
+    schoolYearLabel: planningEditorSchoolYearLabel,
+    activities,
+    language,
   });
 
   const activityIds = Array.from(new Set(
@@ -3652,6 +3870,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               location_id: row.location_id,
               modality: row.modality,
             }))}
+            livePlanningSeries={livePlanningSeries}
             initialSnapshot={planningSnapshotForEditor}
             initialMeta={detail.quote.meta || {}}
             language={language}
