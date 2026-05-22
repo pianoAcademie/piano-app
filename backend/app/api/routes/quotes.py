@@ -6763,6 +6763,15 @@ def _quote_requested_pass_recup(normalized: dict[str, object]) -> bool | None:
     return None
 
 
+def _quote_intake_is_reenrollment(normalized: dict[str, object]) -> bool | None:
+    if "is_reenrollment" in normalized:
+        return _bool_or_default(normalized.get("is_reenrollment"), False)
+    for key in ("reenrollment", "re_enrollment", "is_reinscription", "reinscription"):
+        if key in normalized:
+            return _bool_or_default(normalized.get(key), False)
+    return None
+
+
 def _quote_line_contains_pass_recup(lines: list[QuoteLine]) -> bool:
     for line in lines:
         meta = _json_object(line.meta)
@@ -6812,6 +6821,7 @@ def _quote_intake_summary_out(quote: Quote, lines: list[QuoteLine]) -> QuoteInta
         parent_name=parent_name,
         student_name=student_name,
         birth_date=_quote_birth_date_from_normalized(normalized),
+        is_reenrollment=_quote_intake_is_reenrollment(normalized),
         requested_pass_recup=requested_pass_recup,
         quote_pass_recup=quote_pass_recup,
         pass_recup_status="mismatch" if warnings else "ok",

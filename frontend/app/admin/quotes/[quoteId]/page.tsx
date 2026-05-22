@@ -173,6 +173,7 @@ type QuoteIntakeSummaryOut = {
   parent_name: string | null;
   student_name: string | null;
   birth_date: string | null;
+  is_reenrollment: boolean | null;
   requested_pass_recup: boolean | null;
   quote_pass_recup: boolean | null;
   pass_recup_status: string | null;
@@ -3276,6 +3277,11 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	                      <span className="muted">{t("admin.quote_detail.intake_birth_date")}</span>
 	                      <br />
 	                      <strong>{formatDateOnly(intakeSummary.birth_date || null, language)}</strong>
+	                    </p>
+	                    <p>
+	                      <span className="muted">{t("admin.quote_detail.intake_reenrollment")}</span>
+	                      <br />
+	                      <strong>{formatNullableBoolean(intakeSummary.is_reenrollment)}</strong>
 	                    </p>
 	                    <p>
 	                      <span className="muted">{t("admin.quote_detail.intake_pass_recup_requested")}</span>

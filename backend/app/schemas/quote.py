@@ -165,6 +165,7 @@ class QuoteIntakeSummaryOut(BaseModel):
     parent_name: str | None = None
     student_name: str | None = None
     birth_date: date | None = None
+    is_reenrollment: bool | None = None
     requested_pass_recup: bool | None = None
     quote_pass_recup: bool | None = None
     pass_recup_status: str | None = None
