@@ -7489,6 +7489,23 @@ def _missing_expected_live_session_dates(
     return sorted({expected_date for expected_date in expected_dates if expected_date not in live_dates})
 
 
+def _missing_dates_are_after_live_series_tail(
+    *,
+    missing_dates: list[date],
+    live_sessions: list[CourseSession],
+) -> bool:
+    if not missing_dates or not live_sessions:
+        return False
+    live_dates: list[date] = []
+    for session_obj in live_sessions:
+        zone = _safe_zoneinfo(session_obj.timezone)
+        live_dates.append(session_obj.start_at_utc.astimezone(zone).date())
+    if not live_dates:
+        return False
+    last_live_date = max(live_dates)
+    return all(missing_date > last_live_date for missing_date in missing_dates)
+
+
 def _serialize_uuid_list(values: list[UUID]) -> list[str]:
     return [str(value) for value in values]
 
@@ -8654,6 +8671,8 @@ def _execute_quote_followup_transformation(
             if expected_dates
             else []
         )
+        if _missing_dates_are_after_live_series_tail(missing_dates=missing_dates, live_sessions=live_sessions):
+            missing_dates = []
         if missing_dates:
             displayed_dates = ", ".join(missing_date.strftime("%d/%m/%Y") for missing_date in missing_dates[:8])
             hidden_count = len(missing_dates) - 8

@@ -12,6 +12,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.api.routes.quotes import (
     _expected_activity_dates_from_snapshot,
     _load_live_series_sessions,
+    _missing_dates_are_after_live_series_tail,
     _missing_expected_live_session_dates,
     _planning_session_limit_from_quote_line,
     _quote_line_schedule_key,
@@ -442,6 +443,40 @@ class QuoteLiveSeriesMatchingTests(unittest.TestCase):
                 live_sessions=rows,
             ),
             [date(2027, 4, 28)],
+        )
+
+    def test_tail_only_missing_dates_are_treated_as_legacy_theoretical_overrun(self) -> None:
+        course_type_id = uuid4()
+        location_id = uuid4()
+        recurrence_group_id = uuid4()
+        live_1 = _session(
+            session_id="live-1",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2027, 4, 6, 7, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2027, 4, 6, 8, 0, tzinfo=timezone.utc),
+            recurrence_group_id=recurrence_group_id,
+        )
+        live_2 = _session(
+            session_id="live-2",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2027, 4, 13, 7, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2027, 4, 13, 8, 0, tzinfo=timezone.utc),
+            recurrence_group_id=recurrence_group_id,
+        )
+
+        self.assertTrue(
+            _missing_dates_are_after_live_series_tail(
+                missing_dates=[date(2027, 5, 4), date(2027, 5, 11)],
+                live_sessions=[live_1, live_2],
+            )
+        )
+        self.assertFalse(
+            _missing_dates_are_after_live_series_tail(
+                missing_dates=[date(2027, 4, 7), date(2027, 5, 4)],
+                live_sessions=[live_1, live_2],
+            )
         )
 
     def test_deduplicates_live_sessions_with_same_local_slot(self) -> None:
