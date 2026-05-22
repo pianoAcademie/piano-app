@@ -205,6 +205,11 @@ function addMinutesToTime(startTime: string, deltaMinutes: number): string {
   return `${outHours}:${outMinutes}`;
 }
 
+function planningDurationMinutes(activity: ActivityOption | undefined | null): number {
+  const duration = Number(activity?.duration_minutes ?? 0);
+  return Number.isFinite(duration) && duration > 0 ? duration : 60;
+}
+
 function parseDateOnly(value: string): Date | null {
   const trimmed = value.trim();
   if (!trimmed || !/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
@@ -693,7 +698,7 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
 function newPlanningBlock(activities: ActivityOption[], locations: LocationOption[]): PlanningBlock {
   const defaultActivity = activities[0];
   const defaultActivityId = activities[0]?.id ?? "";
-  const defaultDuration = activities[0]?.duration_minutes ?? 60;
+  const defaultDuration = planningDurationMinutes(defaultActivity);
   const startTime = "17:00";
   return {
     uid: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -738,7 +743,7 @@ function normalizePlanningBlockWithActivity(
     : [];
   return {
     ...block,
-    end_time: block.start_time ? addMinutesToTime(block.start_time, activity?.duration_minutes ?? 60) : block.end_time,
+    end_time: block.start_time ? addMinutesToTime(block.start_time, planningDurationMinutes(activity)) : block.end_time,
     modality: resolvedModality,
     calendar_name: hasLocation ? (preset?.calendar_name || block.calendar_name) : "",
     holiday_dates: nextHolidayDates,
@@ -1284,7 +1289,7 @@ export default function QuotePlanningEditor({
                             });
                             return;
                           }
-                          const duration = activity?.duration_minutes ?? 60;
+                          const duration = planningDurationMinutes(activity);
                           const nextStart = editorBlock.start_time || "17:00";
                           updateEditor({
                             weekday: parsed,
@@ -1358,7 +1363,7 @@ export default function QuotePlanningEditor({
                         onChange={(event) => {
                           const nextStart = event.target.value;
                           const currentActivity = activities.find((item) => item.id === editorBlock.activity_id);
-                          const duration = currentActivity?.duration_minutes ?? 60;
+                          const duration = planningDurationMinutes(currentActivity);
                           updateEditor({
                             start_time: nextStart,
                             end_time: addMinutesToTime(nextStart, duration),

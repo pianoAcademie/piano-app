@@ -4635,21 +4635,24 @@ def preview_quote_calendar(
     payload: QuoteCalendarPreviewRequest,
     _: User = Depends(require_admin_or_permissions("can_view_quotes")),
 ) -> dict[str, object]:
-    snapshot = generate_calendar_snapshot(
-        CalendarGenerationInput(
-            start_date=payload.start_date,
-            end_date=payload.end_date,
-            weekdays=payload.weekdays,
-            recurrence_frequency=payload.recurrence_frequency,
-            start_time=_time_from_hhmm(payload.start_time, field="start_time"),
-            end_time=_time_from_hhmm(payload.end_time, field="end_time"),
-            activity_id=payload.activity_id,
-            location_id=payload.location_id,
-            modality=payload.modality,
-            holiday_dates=payload.holiday_dates,
-            closure_dates=payload.closure_dates,
+    try:
+        snapshot = generate_calendar_snapshot(
+            CalendarGenerationInput(
+                start_date=payload.start_date,
+                end_date=payload.end_date,
+                weekdays=payload.weekdays,
+                recurrence_frequency=payload.recurrence_frequency,
+                start_time=_time_from_hhmm(payload.start_time, field="start_time"),
+                end_time=_time_from_hhmm(payload.end_time, field="end_time"),
+                activity_id=payload.activity_id,
+                location_id=payload.location_id,
+                modality=payload.modality,
+                holiday_dates=payload.holiday_dates,
+                closure_dates=payload.closure_dates,
+            )
         )
-    )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     return snapshot
 
 
