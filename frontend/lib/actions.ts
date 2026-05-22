@@ -12539,7 +12539,7 @@ async function buildCalendarSnapshotFromBlocks({
       block: block as LivePlanningBlockInput,
       token,
     });
-    if (liveMatch && (rows.length === 0 || liveMatch.sessions.length >= rows.length)) {
+    if (liveMatch && liveMatch.sessions.length > 0) {
       sessions.push(...liveMatch.sessions);
       Object.assign(block, liveMatch.block, {
         calendar_id: String(resolvedCalendar.calendar?.id ?? ""),
