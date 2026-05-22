@@ -16,8 +16,11 @@ from app.api.deps import get_db, require_admin_or_permissions, require_roles
 from app.api.routes.quotes import (
     _effective_item_price,
     _extract_vat_rate,
+    _normalized_prospect_type,
     _q2,
     _q3,
+    _quote_activity_context,
+    _resolve_document_templates,
     _split_ttc,
     create_quote_from_payload,
 )
@@ -365,6 +368,10 @@ def _terms_template_by_code(db: Session, *, codes: list[str], language: str) -> 
     return None
 
 
+def _preview_lines_include_initiation(preview_lines: list[TypeformQuotePreviewLineOut] | None) -> bool:
+    return any("initiation" in _normalize_token(_preview_line_haystack(line)) for line in preview_lines or [])
+
+
 def _primary_course_modality_for_documents(
     db: Session,
     *,
@@ -403,6 +410,10 @@ def _typeform_default_quote_template(
     language = _normalize_token(config.default_language) or "fr"
     segment = _normalize_token(config.audience_segment)
     primary_modality = _primary_course_modality_for_documents(db, preview_lines=preview_lines)
+    if _preview_lines_include_initiation(preview_lines):
+        template = _quote_template_by_code(db, codes=["INITIATION"], language=language)
+        if template is not None:
+            return template
     configured_codes = _configured_document_codes(config, "default_quote_template_codes")
     location_codes = (
         _bar_le_duc_document_codes(segment=segment, document_kind="quote") if _is_bar_le_duc_config(config) else []
@@ -455,6 +466,10 @@ def _typeform_default_terms_template(
     language = _normalize_token(config.default_language) or "fr"
     segment = _normalize_token(config.audience_segment)
     primary_modality = _primary_course_modality_for_documents(db, preview_lines=preview_lines)
+    if _preview_lines_include_initiation(preview_lines):
+        template = _terms_template_by_code(db, codes=["CGV_INITIATION_2025"], language=language)
+        if template is not None:
+            return template
     configured_codes = _configured_document_codes(config, "default_terms_template_codes")
     location_codes = (
         _bar_le_duc_document_codes(segment=segment, document_kind="terms") if _is_bar_le_duc_config(config) else []
@@ -496,6 +511,49 @@ def _typeform_default_terms_template(
         (item for item in language_candidates if _template_matches_segment_target(item, segment=config.audience_segment)),
         None,
     )
+
+
+def _typeform_document_templates_from_binding(
+    db: Session,
+    *,
+    prospect_id: UUID | None,
+    client_id: UUID | None,
+    context_type: str,
+    quote_type_id: UUID | None,
+    language: str | None,
+    currency: str,
+    preview_lines: list[TypeformQuotePreviewLineOut] | None,
+) -> tuple[QuoteTemplate | None, TermsTemplate | None]:
+    activity_ids = [line.activity_id for line in preview_lines or [] if line.activity_id is not None]
+    activity_id, activity_family = _quote_activity_context(db, activity_ids=activity_ids)
+    if activity_id is None and activity_family is None:
+        return None, None
+    prospect_type: str | None = None
+    if prospect_id is not None:
+        prospect = db.scalar(select(Prospect).where(Prospect.id == prospect_id))
+        if prospect is not None:
+            prospect_type = _normalized_prospect_type(prospect.meta or {})
+    if prospect_type is None and client_id is not None:
+        client = db.scalar(select(User).where(User.id == client_id))
+        if client is not None:
+            prospect_type = "child" if (client.client_kind or "").strip().upper() == "CHILD" else "adult"
+    quote_template, _, terms_template, _, binding = _resolve_document_templates(
+        db,
+        prospect_type=prospect_type,
+        context_type=context_type,
+        activity_family=activity_family,
+        activity_id=activity_id,
+        quote_type_id=quote_type_id,
+        language=language,
+        currency=currency,
+        quote_template=None,
+        quote_template_version=None,
+        terms_template=None,
+        terms_template_version=None,
+    )
+    if binding is None or getattr(binding, "activity_id", None) != activity_id:
+        return None, None
+    return quote_template, terms_template
 
 
 def _digits(value: object | None) -> str:
@@ -6311,13 +6369,32 @@ def create_draft_quote_from_typeform_intake(
     selected_solfege_slot = {} if family_only_quote else _json_object(_json_object(calendar_snapshot.get("solfege")).get("selected_slot"))
     preview_quote = analysis["preview_quote"]
     preview_template_lines = list(preview_quote.lines) if preview_quote is not None else []
-    default_quote_template = _typeform_default_quote_template(db, config=config, preview_lines=preview_template_lines)
-    default_terms_template = _typeform_default_terms_template(db, config=config, preview_lines=preview_template_lines)
+    quote_type_id = _parse_uuid(_json_object(analysis.get("runtime_context")).get("quote_type_id")) or config.default_quote_type_id
+    default_quote_template, default_terms_template = _typeform_document_templates_from_binding(
+        db,
+        prospect_id=prospect_id,
+        client_id=client_id,
+        context_type=context_type,
+        quote_type_id=quote_type_id,
+        language=config.default_language,
+        currency="EUR",
+        preview_lines=preview_template_lines,
+    )
+    default_quote_template = default_quote_template or _typeform_default_quote_template(
+        db,
+        config=config,
+        preview_lines=preview_template_lines,
+    )
+    default_terms_template = default_terms_template or _typeform_default_terms_template(
+        db,
+        config=config,
+        preview_lines=preview_template_lines,
+    )
 
     quote_payload = QuoteCreateRequest(
         context_type=context_type,
         quote_type=_text(_json_object(analysis.get("runtime_context")).get("quote_type")) or _text(config.default_quote_type) or "forfait",
-        quote_type_id=_parse_uuid(_json_object(analysis.get("runtime_context")).get("quote_type_id")) or config.default_quote_type_id,
+        quote_type_id=quote_type_id,
         pricing_catalog_id=_parse_uuid(_json_object(analysis.get("runtime_context")).get("pricing_catalog_id")) or config.default_pricing_catalog_id,
         prospect_id=prospect_id,
         client_id=client_id,
