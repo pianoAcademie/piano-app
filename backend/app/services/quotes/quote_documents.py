@@ -97,6 +97,7 @@ QUOTE_DOC_TEXT = {
         "payment_sentence_generic": "{method_subject} de {amount} à regler {due_label}",
         "payment_deposit_then": "Après paiement de l’acompte de {deposit_amount} {currency} par carte bancaire, {remaining_sentence}.",
         "payment_installments_after_deposit": "Après paiement de l’acompte de {deposit_amount} {currency} par carte bancaire, le solde est à régler en {count} échéances selon le détail ci-dessous.",
+        "payment_deposit_invoice_without_schedule": "Une facture d’acompte de {deposit_amount} sera dans un premier temps envoyée pour bloquer votre créneau.",
         "payment_installments": "Le règlement est prévu en {count} échéances selon le détail ci-dessous.",
         "payment_deposit_only": "L’acompte de {deposit_amount} {currency} est à régler par carte bancaire dès validation du devis afin de bloquer le créneau.",
         "payment_not_scheduled": "Paiement non planifié",
@@ -301,6 +302,7 @@ QUOTE_DOC_TEXT = {
         "payment_sentence_generic": "{method_subject} of {amount} due {due_label}",
         "payment_deposit_then": "After the deposit of {deposit_amount} {currency} is paid by card, {remaining_sentence}.",
         "payment_installments_after_deposit": "After the deposit of {deposit_amount} {currency} is paid by card, the balance is due in {count} installments as detailed below.",
+        "payment_deposit_invoice_without_schedule": "A deposit invoice for {deposit_amount} will first be sent to secure your slot.",
         "payment_installments": "Payment is scheduled in {count} installments as detailed below.",
         "payment_deposit_only": "The deposit of {deposit_amount} {currency} must be paid by card when the quote is approved in order to secure the slot.",
         "payment_not_scheduled": "Payment schedule not specified",
@@ -4718,7 +4720,13 @@ def _build_template_values(
         language=language,
     )
     payment_schedule_summary = (
-        ""
+        _quote_doc_text(
+            "payment_deposit_invoice_without_schedule",
+            language=language,
+            deposit_amount=_money(deposit_amount_ttc, currency),
+        )
+        if has_deposit and schedule and not display_flags["showPaymentScheduleDetailed"]
+        else ""
         if special_deposit_lines or str(document_context.get("payment_method") or "").strip().upper() == CARD_4X_FEES_PAYMENT_METHOD
         else _payment_schedule_summary_text(
             schedule=schedule,
