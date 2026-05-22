@@ -176,6 +176,7 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         session_id = uuid4()
         recurrence_id = uuid4()
         fake_db = SimpleNamespace(
+            scalar=lambda _query: None,
             execute=lambda _query: SimpleNamespace(
                 all=lambda: [
                     (
@@ -226,6 +227,7 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         location_id = uuid4()
         recurrence_id = uuid4()
         fake_db = SimpleNamespace(
+            scalar=lambda _query: None,
             execute=lambda _query: SimpleNamespace(
                 all=lambda: [
                     (
@@ -289,6 +291,7 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         location_id = uuid4()
         recurrence_id = uuid4()
         fake_db = SimpleNamespace(
+            scalar=lambda _query: None,
             execute=lambda _query: SimpleNamespace(
                 all=lambda: [
                     (
@@ -358,6 +361,71 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
 
         self.assertEqual([item["date"] for item in hydrated["sessions"]], ["2026-09-08", "2026-09-15"])
         self.assertEqual(hydrated["sessions_count"], 2)
+
+    def test_calendar_snapshot_hydration_respects_block_series_key(self) -> None:
+        activity_id = uuid4()
+        location_id = uuid4()
+        expected_recurrence_id = uuid4()
+        other_recurrence_id = uuid4()
+        fake_db = SimpleNamespace(
+            scalar=lambda _query: None,
+            execute=lambda _query: SimpleNamespace(
+                all=lambda: [
+                    (
+                        SimpleNamespace(
+                            id=uuid4(),
+                            course_type_id=activity_id,
+                            location_id=location_id,
+                            status="SCHEDULED",
+                            start_at_utc=datetime(2026, 9, 10, 15, 0, tzinfo=timezone.utc),
+                            end_at_utc=datetime(2026, 9, 10, 16, 0, tzinfo=timezone.utc),
+                            timezone="Europe/Paris",
+                            recurrence_group_id=expected_recurrence_id,
+                        ),
+                        SimpleNamespace(id=activity_id, name="Cours collectif - enfants - Bar-le-Duc", mode="ONSITE"),
+                        SimpleNamespace(id=location_id, name="Bar-le-Duc", timezone="Europe/Paris", is_online=False),
+                    ),
+                    (
+                        SimpleNamespace(
+                            id=uuid4(),
+                            course_type_id=activity_id,
+                            location_id=location_id,
+                            status="SCHEDULED",
+                            start_at_utc=datetime(2026, 9, 17, 15, 0, tzinfo=timezone.utc),
+                            end_at_utc=datetime(2026, 9, 17, 16, 0, tzinfo=timezone.utc),
+                            timezone="Europe/Paris",
+                            recurrence_group_id=other_recurrence_id,
+                        ),
+                        SimpleNamespace(id=activity_id, name="Cours collectif - enfants - Bar-le-Duc", mode="ONSITE"),
+                        SimpleNamespace(id=location_id, name="Bar-le-Duc", timezone="Europe/Paris", is_online=False),
+                    ),
+                ]
+            )
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(activity_id),
+                    "activity_label": "Cours collectif - enfants - Bar-le-Duc",
+                    "location_id": str(location_id),
+                    "location_label": "Bar-le-Duc",
+                    "weekday": 3,
+                    "weekday_label": "Jeudi",
+                    "start_date": "2026-09-10",
+                    "end_date": "2026-09-17",
+                    "start_time": "17:00",
+                    "end_time": "18:00",
+                    "series_key": str(expected_recurrence_id),
+                    "selection_pending": False,
+                }
+            ],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_planning_sessions(fake_db, snapshot)
+
+        self.assertEqual(hydrated["sessions_count"], 1)
+        self.assertEqual(hydrated["sessions"][0]["series_key"], str(expected_recurrence_id))
 
     def test_pass_recup_compact_pdf_markup_is_reportlab_compatible(self) -> None:
         markup = _pass_recup_compact_notice_markup(language="fr", pdf_compatible=True)

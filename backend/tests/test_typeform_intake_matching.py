@@ -398,6 +398,57 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
         self.assertEqual(normalized["parent_postal_code"], "55000")
         self.assertTrue(normalized["is_reenrollment"])
 
+    def test_bar_le_duc_child_mapped_slot_keeps_row_time_from_field_title(self) -> None:
+        config = SimpleNamespace(
+            configuration_json={
+                "field_mapping": {
+                    "requested_location": ["29b0a590-74e2-486c-af59-493e6f83ff67", "IwHJg6AeDOQh"],
+                    "requested_course_mode": ["73c6edff-7d0f-4baa-84fc-56ddd8b5c4b3", "H1LopXWsHma8"],
+                    "requested_days": ["3cabba30-1103-440a-b4b9-3dac258fdef3", "bJJJmkeJGVoM"],
+                    "requested_times": ["3cabba30-1103-440a-b4b9-3dac258fdef3", "bJJJmkeJGVoM"],
+                    "requested_slot_preferences": ["3cabba30-1103-440a-b4b9-3dac258fdef3", "bJJJmkeJGVoM"],
+                },
+                "field_labels": {
+                    "3cabba30-1103-440a-b4b9-3dac258fdef3": "Cours en presentiel a l'ecole",
+                },
+                "default_course_mode": "onsite",
+            },
+            audience_segment="child",
+            location_code="BAR_LE_DUC",
+        )
+        payload = {
+            "form_response": {
+                "form_id": "G9u3xvbq",
+                "answers": [
+                    {
+                        "choice": {"label": "Bar-le-Duc"},
+                        "field": {"id": "IwHJg6AeDOQh", "ref": "29b0a590-74e2-486c-af59-493e6f83ff67"},
+                    },
+                    {
+                        "choice": {"label": "Cours collectif de 1h  (22€/h)"},
+                        "field": {"id": "H1LopXWsHma8", "ref": "73c6edff-7d0f-4baa-84fc-56ddd8b5c4b3"},
+                    },
+                    {
+                        "choice": {"label": "Jeudi"},
+                        "field": {
+                            "id": "bJJJmkeJGVoM",
+                            "ref": "3cabba30-1103-440a-b4b9-3dac258fdef3",
+                            "title": "17h-18h",
+                        },
+                    },
+                ],
+            }
+        }
+
+        normalized, _ = _normalize_payload(payload=payload, config=config)
+
+        self.assertEqual(normalized["requested_days"], ["jeudi"])
+        self.assertEqual(normalized["requested_times"], ["17:00"])
+        self.assertEqual(
+            normalized["requested_slot_preferences"],
+            [{"day": "jeudi", "time": "17:00", "location": "Bar-le-Duc", "segment": "child"}],
+        )
+
     def test_bar_le_duc_intakes_keep_strict_slot_location_matching(self) -> None:
         location_id = uuid4()
         config = SimpleNamespace(

@@ -1649,6 +1649,7 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
     ]
     if enforce_location:
         conditions.append(CourseSession.location_id == location_id)
+    series_key = str(block.get("series_key") or "").strip()
 
     rows = db.execute(
         select(CourseSession, CourseType, Location)
@@ -1659,6 +1660,9 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
     ).all()
     sessions: list[dict[str, Any]] = []
     for session_obj, activity, location in rows:
+        row_series_key = str(session_obj.recurrence_group_id or session_obj.id)
+        if series_key and row_series_key != series_key:
+            continue
         zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
         local_start = session_obj.start_at_utc.astimezone(zone)
         local_end = session_obj.end_at_utc.astimezone(zone)

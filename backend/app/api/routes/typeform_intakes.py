@@ -1080,19 +1080,21 @@ def _fallback_requested_slot_preferences_from_simplified_answers(
         if not isinstance(item, dict):
             continue
         label = _text(item.get("label"))
+        field_title = _text(item.get("field_title"))
         value = _text(item.get("value"))
         nested: list[dict[str, object]] = []
-        slot_location = _location_for_slot_preference(requested_location, label, value)
-        if _slot_preference_like_label(label):
+        slot_location = _location_for_slot_preference(requested_location, label, field_title, value)
+        label_for_slots = field_title or label
+        if _slot_preference_like_label(label) or _slot_preference_like_label(field_title):
             nested = _normalize_slot_preferences(
                 [value],
                 requested_location=slot_location,
                 segment=segment,
             )
         else:
-            label_day = _extract_weekday_label(label)
+            label_day = _extract_weekday_label(label_for_slots)
             value_day = _extract_weekday_label(value)
-            label_times = _extract_explicit_time_tokens(label)
+            label_times = _extract_explicit_time_tokens(label_for_slots)
             value_times = _extract_time_tokens(value)
 
             # Keep only cross-signals between label and value so age ranges like
@@ -1123,6 +1125,25 @@ def _fallback_requested_slot_preferences_from_simplified_answers(
             seen.add(key)
             out.append(child)
     return out
+
+
+def _slot_preferences_have_complete_day_time(preferences: list[dict[str, object]]) -> bool:
+    return any(_text(item.get("day")) and _text(item.get("time")) for item in preferences)
+
+
+def _prefer_more_complete_slot_preferences(
+    current: list[dict[str, object]],
+    fallback: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    if not fallback:
+        return current
+    if not current:
+        return fallback
+    if _slot_preferences_have_complete_day_time(current):
+        return current
+    if _slot_preferences_have_complete_day_time(fallback):
+        return fallback
+    return current
 
 
 def _is_second_course_label(value: object | None) -> bool:
@@ -1279,26 +1300,58 @@ def _fallback_solfege_slot_preferences_from_simplified_answers(
         if not isinstance(item, dict):
             continue
         label = _text(item.get("label"))
+        field_title = _text(item.get("field_title"))
         value = _text(item.get("value"))
         label_token = _normalize_token(label)
+        field_title_token = _normalize_token(field_title)
+        label_for_slots = field_title or label
         value_times = _extract_time_tokens(value)
         value_day = _extract_weekday_label(value)
-        if not value_times or not value_day:
+        label_times = _extract_explicit_time_tokens(label_for_slots)
+        label_day = _extract_weekday_label(label_for_slots)
+        if not ((value_times and value_day) or (value_day and label_times) or (label_day and value_times)):
             continue
         is_solfege_slot_label = (
             "solfege" in label_token
+            or "solfege" in field_title_token
             or re.search(r"\bniveau\s*[1-5]\b", label_token) is not None
+            or re.search(r"\bniveau\s*[1-5]\b", field_title_token) is not None
             or "debutant" in label_token
+            or "debutant" in field_title_token
             or "notion" in label_token
+            or "notion" in field_title_token
             or "dechiffrage" in label_token
+            or "dechiffrage" in field_title_token
         )
         if not is_solfege_slot_label:
             continue
-        for child in _normalize_slot_preferences(
+        children = _normalize_slot_preferences(
             [value],
             requested_location=requested_location,
             segment=segment,
-        ):
+        )
+        if not _slot_preferences_have_complete_day_time(children):
+            children = []
+            if value_day and label_times:
+                children.append(
+                    {
+                        "day": value_day,
+                        "time": label_times[0],
+                        "location": requested_location,
+                        "segment": segment,
+                    }
+                )
+            elif label_day and value_times:
+                children.extend(
+                    {
+                        "day": label_day,
+                        "time": time_value,
+                        "location": requested_location,
+                        "segment": segment,
+                    }
+                    for time_value in value_times
+                )
+        for child in children:
             key = (_text(child.get("day")) or None, _text(child.get("time")) or None)
             if key in seen:
                 continue
@@ -1780,6 +1833,7 @@ def _normalize_payload(
     simplified_answers: list[dict[str, object]] = []
     for index, answer in enumerate(answers):
         key = _answer_key(answer, index=index)
+        field = _json_object(answer.get("field"))
         simplified_answers.append(
             {
                 "key": key,
@@ -1789,6 +1843,7 @@ def _normalize_payload(
                     configured_labels=field_labels,
                     payload_labels=payload_field_labels,
                 ),
+                "field_title": _text(field.get("title")) or _text(payload_field_labels.get(key)),
                 "value": _answer_display_value(_answer_value(answer)),
             }
         )
@@ -1835,6 +1890,11 @@ def _normalize_payload(
         requested_location=requested_location,
         segment=config_segment or None,
     )
+    fallback_main_slot_preferences = _fallback_requested_slot_preferences_from_simplified_answers(
+        simplified_answers,
+        requested_location=requested_location,
+        segment=config_segment or None,
+    )
     explicit_main_slot_preferences = _main_course_slot_preferences_from_simplified_answers(
         simplified_answers,
         requested_location=requested_location,
@@ -1842,11 +1902,10 @@ def _normalize_payload(
     )
     if explicit_main_slot_preferences:
         requested_slot_preferences = explicit_main_slot_preferences
-    elif not requested_slot_preferences:
-        requested_slot_preferences = _fallback_requested_slot_preferences_from_simplified_answers(
-            simplified_answers,
-            requested_location=requested_location,
-            segment=config_segment or None,
+    else:
+        requested_slot_preferences = _prefer_more_complete_slot_preferences(
+            requested_slot_preferences,
+            fallback_main_slot_preferences,
         )
     requested_location, requested_slot_preferences = _resolve_requested_location_from_slot_preferences(
         requested_location,
@@ -1862,12 +1921,14 @@ def _normalize_payload(
         requested_location=requested_location,
         segment=config_segment or None,
     )
-    if not requested_solfege_slot_preferences:
-        requested_solfege_slot_preferences = _fallback_solfege_slot_preferences_from_simplified_answers(
+    requested_solfege_slot_preferences = _prefer_more_complete_slot_preferences(
+        requested_solfege_slot_preferences,
+        _fallback_solfege_slot_preferences_from_simplified_answers(
             simplified_answers,
             requested_location=requested_location,
             segment=config_segment or None,
-        )
+        ),
+    )
     if requested_slot_preferences:
         requested_days = list(
             dict.fromkeys(
