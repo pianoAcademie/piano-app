@@ -39,6 +39,13 @@ AUDIENCE_PUBLIC_PAGE = "public_page"
 AUDIENCE_CLIENT_PDF = "client_pdf"
 DEFAULT_AUDIENCE = AUDIENCE_CLIENT_PDF
 ACCOUNT_LOGO_SETTING_KEY = "config_account_logo_data_url"
+CARD_4X_FEES_PAYMENT_METHOD = "CARD_4X_FEES"
+CARD_4X_FEES_PAYMENT_INSTRUCTION = (
+    "Le paiement par carte bancaire en 4 fois est géré par notre partenaire Oney.\n"
+    "Votre dossier sera donc soumis à Oney, qui pourra l’accepter ou le refuser.\n"
+    "Une partie des frais liés au paiement échelonné est prise en charge par Piano Académie. "
+    "L’autre partie sera directement intégrée à votre échéancier par Oney."
+)
 logger = logging.getLogger(__name__)
 DAY_LABELS_FR = {
     0: "Lundi",
@@ -3505,10 +3512,11 @@ def _extract_document_context(
         or any(_line_matches_end_year_concert(line) for line in lines)
     )
 
+    payment_method_code = str(payment_snapshot.get("payment_method") or "").strip().upper()
     schedule_allowed_for_audience = bool(schedule_visibility.get(audience, False))
     show_schedule_detailed = has_installment_schedule and schedule_allowed_for_audience
     payment_schedule_compact_notice = ""
-    if schedule and not show_schedule_detailed:
+    if schedule and not show_schedule_detailed and payment_method_code != CARD_4X_FEES_PAYMENT_METHOD:
         if len(schedule) == 1:
             payment_schedule_compact_notice = _quote_doc_text(
                 "compact_notice_one",
@@ -3521,7 +3529,9 @@ def _extract_document_context(
                 language=language,
                 count=len(schedule),
             )
-    payment_instruction = str(_json_object(quote.payment_terms_snapshot).get("payment_instruction") or "").strip()
+    payment_instruction = str(payment_snapshot.get("payment_instruction") or "").strip()
+    if payment_method_code == CARD_4X_FEES_PAYMENT_METHOD and not payment_instruction:
+        payment_instruction = CARD_4X_FEES_PAYMENT_INSTRUCTION
 
     prospect_type = str(prospect_data.get("prospect_type") or "adult").strip().lower()
     show_child_block = prospect_type == "child"
@@ -3548,6 +3558,7 @@ def _extract_document_context(
         "prospect_type": prospect_type,
         "schedule": schedule,
         "schedule_visibility": schedule_visibility,
+        "payment_method": payment_method_code,
         "payment_method_label": _resolve_payment_method_label(quote=quote),
         "calendar_snapshot": calendar_snapshot,
         "payment_schedule_compact_notice": payment_schedule_compact_notice,
@@ -3665,6 +3676,13 @@ def _as_html_fragment(content: str) -> str:
     if "<" in normalized and ">" in normalized:
         return normalized
     return "<p>" + "<br/>".join(line for line in normalized.split("\n")) + "</p>"
+
+
+def _plain_text_paragraph_html(content: str) -> str:
+    normalized = str(content or "").replace("\r\n", "\n").strip()
+    if not normalized:
+        return ""
+    return "<p>" + "<br/>".join(escape(line.strip()) for line in normalized.split("\n") if line.strip()) + "</p>"
 
 
 def _cleanup_rendered_block_markup(content: str) -> str:
@@ -4582,7 +4600,7 @@ def _build_template_values(
     )
     payment_schedule_summary = (
         ""
-        if special_deposit_lines
+        if special_deposit_lines or str(document_context.get("payment_method") or "").strip().upper() == CARD_4X_FEES_PAYMENT_METHOD
         else _payment_schedule_summary_text(
             schedule=schedule,
             has_deposit=has_deposit,
@@ -4820,9 +4838,12 @@ def _build_template_values(
     if check_payment_instruction_lines:
         payment_method_block_html += "".join(f"<p>{escape(line)}</p>" for line in check_payment_instruction_lines)
     if payment_instruction:
-        payment_method_block_html = (
-            f"{payment_method_block_html}<p><strong>{escape(_quote_doc_text('payment_instructions', language=language))} :</strong> {escape(payment_instruction)}</p>"
-        )
+        if str(document_context.get("payment_method") or "").strip().upper() == CARD_4X_FEES_PAYMENT_METHOD:
+            payment_method_block_html += _plain_text_paragraph_html(payment_instruction)
+        else:
+            payment_method_block_html = (
+                f"{payment_method_block_html}<p><strong>{escape(_quote_doc_text('payment_instructions', language=language))} :</strong> {escape(payment_instruction)}</p>"
+            )
     quote_status_date_label, quote_status_date_value, quote_status_cover_line = _quote_status_date_display(quote)
 
     brand_logo_html = _brand_logo_html(db=db, variant="header")
@@ -4918,6 +4939,7 @@ def _build_template_values(
         "deposit_block_html": deposit_block_html,
         "deposit_section_html": deposit_section_html,
         "deposit_none_html": deposit_none_html,
+        "payment_method": str(document_context.get("payment_method") or "").strip(),
         "payment_method_label": payment_method_label,
         "payment_instruction": payment_instruction,
         "payment_schedule_compact_notice": document_context["payment_schedule_compact_notice"] or "",
@@ -6258,15 +6280,32 @@ def _render_quote_pdf_blocks(
         if special_bank_transfer_deposit_lines
         else str(values.get("payment_method_label", "-"))
     )
+    payment_method_code = str(values.get("payment_method") or context.get("payment_method") or "").strip().upper()
+    payment_instruction = str(values.get("payment_instruction") or context.get("payment_instruction") or "").strip()
+    if payment_method_code == CARD_4X_FEES_PAYMENT_METHOD and not payment_instruction:
+        payment_instruction = CARD_4X_FEES_PAYMENT_INSTRUCTION
+    schedule_visibility = _json_object(context.get("schedule_visibility"))
+    show_schedule_pdf = _is_true(schedule_visibility.get(AUDIENCE_CLIENT_PDF, len(schedule) > 1))
     story.append(Paragraph(f"{_quote_doc_text('payment_method', language=language)} : {escape(payment_method_display_label)}", styles["text"]))
     if special_deposit_lines:
         for line in special_deposit_lines:
             story.append(Paragraph(escape(line), styles["text"]))
     for line in check_payment_instruction_lines:
         story.append(Paragraph(escape(line), styles["text"]))
-    if not special_deposit_lines:
+    if payment_instruction:
+        if payment_method_code == CARD_4X_FEES_PAYMENT_METHOD:
+            for line in [item.strip() for item in payment_instruction.splitlines() if item.strip()]:
+                story.append(Paragraph(escape(line), styles["text"]))
+        else:
+            story.append(
+                Paragraph(
+                    f"{_quote_doc_text('payment_instructions', language=language)} : {escape(payment_instruction)}",
+                    styles["text"],
+                )
+            )
+    if not special_deposit_lines and payment_method_code != CARD_4X_FEES_PAYMENT_METHOD:
         story.append(Paragraph(escape(values.get("payment_schedule_summary", _quote_doc_text("payment_not_scheduled", language=language))), styles["text"]))
-    if not special_deposit_lines and len(schedule) > 1:
+    if not special_deposit_lines and show_schedule_pdf and len(schedule) > 1:
         schedule_rows = [
             [
                 str(item.get("label") or "-"),

@@ -196,6 +196,12 @@ QUOTE_CHANGE_REQUEST_REVISION_ID_META_KEY = "change_request_revision_quote_id"
 QUOTE_CHANGE_REQUEST_REVISION_NUMBER_META_KEY = "change_request_revision_quote_number"
 QUOTE_TRANSFORMATION_PAYLOAD_KEY = "quote_to_enrollment"
 QUOTE_TRANSFORMATION_EXECUTION_KEY = "quote_to_enrollment_execution"
+CARD_4X_FEES_PAYMENT_INSTRUCTION = (
+    "Le paiement par carte bancaire en 4 fois est géré par notre partenaire Oney.\n"
+    "Votre dossier sera donc soumis à Oney, qui pourra l’accepter ou le refuser.\n"
+    "Une partie des frais liés au paiement échelonné est prise en charge par Piano Académie. "
+    "L’autre partie sera directement intégrée à votre échéancier par Oney."
+)
 
 
 def _utcnow() -> datetime:
@@ -618,6 +624,8 @@ def _build_payment_terms_snapshot_from_plan(
     installment_count = len(schedule)
     visibility_raw = rules.get("schedule_visibility") if isinstance(rules.get("schedule_visibility"), dict) else {}
     show_schedule_to_client_default = installment_count > 0
+    if normalized_payment_method == "CARD_4X_FEES":
+        show_schedule_to_client_default = False
     schedule_visibility = {
         AUDIENCE_ADMIN_PREVIEW: _bool_or_default((visibility_raw or {}).get(AUDIENCE_ADMIN_PREVIEW), True),
         AUDIENCE_PUBLIC_PAGE: _bool_or_default(
@@ -631,6 +639,9 @@ def _build_payment_terms_snapshot_from_plan(
     }
     check_submission_address = str(rules.get("check_submission_address") or "").strip()
     check_submission_instruction = str(rules.get("check_submission_instruction") or "").strip()
+    payment_instruction = str(rules.get("payment_instruction") or "").strip()
+    if normalized_payment_method == "CARD_4X_FEES" and not payment_instruction:
+        payment_instruction = CARD_4X_FEES_PAYMENT_INSTRUCTION
     is_check_family = normalized_payment_method in {
         "CHECK",
         "CHECK_2",
@@ -670,7 +681,7 @@ def _build_payment_terms_snapshot_from_plan(
         "payment_schedule_summary": payment_schedule_summary,
         "schedule_visibility": schedule_visibility,
         "check_submission_address": check_submission_address,
-        "payment_instruction": check_submission_instruction,
+        "payment_instruction": payment_instruction or check_submission_instruction,
         "lines_total_ttc": str(lines_total_ttc),
         "adjustment": normalized_adjustment,
         "adjustment_signed_amount_ttc": str(_q2(adjustment_signed)),

@@ -630,6 +630,10 @@ function paymentScheduleVisibilityFlag(rules: Record<string, unknown>, key: "pub
   return Boolean((raw as Record<string, unknown>)[key]);
 }
 
+function paymentInstructionValue(rules: Record<string, unknown>): string {
+  return String((rules.payment_instruction ?? "") || "").trim();
+}
+
 function monthLabel(month: number, language: UiLanguage): string {
   const locale = language === "en" ? "en-US" : "fr-FR";
   const label = new Intl.DateTimeFormat(locale, { month: "long", timeZone: "UTC" }).format(
@@ -1914,6 +1918,14 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                 placeholder={t("admin.quote_config.check_submission_instruction_placeholder")}
               />
             </label>
+            <label className="span-4">
+              {t("admin.quote_config.payment_instruction_optional")}
+              <textarea
+                name="payment_instruction"
+                rows={4}
+                placeholder={t("admin.quote_config.payment_instruction_placeholder")}
+              />
+            </label>
             <label className="checkline">
               <input type="checkbox" name="is_active" defaultChecked />
               {t("common.active")}
@@ -1952,7 +1964,9 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                       <td>{paymentInstallmentCount(row.schedule_rules || {})}</td>
                       <td>{paymentFeePercent(row.schedule_rules || {}, language)}</td>
                       <td>
-                        {String((row.schedule_rules?.check_submission_instruction ?? "") || "").trim() || "-"}
+                        {paymentInstructionValue(row.schedule_rules || {})
+                          || String((row.schedule_rules?.check_submission_instruction ?? "") || "").trim()
+                          || "-"}
                       </td>
                       <td><span className={`status-pill ${row.is_active ? "status-ok" : "status-off"}`}>{row.is_active ? t("common.active") : t("common.inactive")}</span></td>
                       <td>
@@ -2073,6 +2087,15 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                                 name="check_submission_instruction"
                                 rows={2}
                                 defaultValue={String((row.schedule_rules?.check_submission_instruction ?? "") || "")}
+                              />
+                            </label>
+                            <label className="span-4">
+                              {t("admin.quote_config.payment_instruction_optional")}
+                              <textarea
+                                name="payment_instruction"
+                                rows={4}
+                                defaultValue={paymentInstructionValue(row.schedule_rules || {})}
+                                placeholder={t("admin.quote_config.payment_instruction_placeholder")}
                               />
                             </label>
                             <label className="checkline">

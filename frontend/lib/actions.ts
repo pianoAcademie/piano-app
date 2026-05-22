@@ -13011,6 +13011,7 @@ function buildPaymentPlanRules(
     collectAllChecksUpfront: boolean;
     checkSubmissionAddress: string | null;
     checkSubmissionInstruction: string | null;
+    paymentInstruction: string | null;
     showSchedulePublic: boolean;
     showSchedulePdf: boolean;
   },
@@ -13035,6 +13036,7 @@ function buildPaymentPlanRules(
     collect_all_checks_upfront: options.collectAllChecksUpfront,
     check_submission_address: options.checkSubmissionAddress ?? "",
     check_submission_instruction: options.checkSubmissionInstruction ?? "",
+    payment_instruction: options.paymentInstruction ?? "",
     schedule_visibility: {
       admin_preview: true,
       public_page: options.showSchedulePublic,
@@ -13691,8 +13693,11 @@ export async function createAdminPaymentPlanConfigAction(formData: FormData): Pr
   const collectAllChecksUpfront = parseCheckboxFlag(formData, "collect_all_checks_upfront", paymentMethod === "CHECK");
   const checkSubmissionAddress = optionalField(formData, "check_submission_address");
   const checkSubmissionInstruction = optionalField(formData, "check_submission_instruction");
+  const paymentInstruction = optionalField(formData, "payment_instruction");
   const showSchedulePublic = parseCheckboxFlag(formData, "show_schedule_public", scheduleType !== "single");
-  const showSchedulePdf = parseCheckboxFlag(formData, "show_schedule_pdf", scheduleType !== "single");
+  const showSchedulePdf = paymentMethod === "CARD_4X_FEES"
+    ? false
+    : parseCheckboxFlag(formData, "show_schedule_pdf", scheduleType !== "single");
   const isActive = parseCheckboxFlag(formData, "is_active", true);
   const code = paymentPlanCodeFromName(name);
   const scheduleRules = scheduleType
@@ -13701,6 +13706,7 @@ export async function createAdminPaymentPlanConfigAction(formData: FormData): Pr
       collectAllChecksUpfront,
       checkSubmissionAddress,
       checkSubmissionInstruction,
+      paymentInstruction,
       showSchedulePublic,
       showSchedulePdf,
     })
@@ -13767,8 +13773,11 @@ export async function updateAdminPaymentPlanConfigAction(formData: FormData): Pr
   const collectAllChecksUpfront = parseCheckboxFlag(formData, "collect_all_checks_upfront", paymentMethod === "CHECK");
   const checkSubmissionAddress = optionalField(formData, "check_submission_address");
   const checkSubmissionInstruction = optionalField(formData, "check_submission_instruction");
+  const paymentInstruction = optionalField(formData, "payment_instruction");
   const showSchedulePublic = parseCheckboxFlag(formData, "show_schedule_public", scheduleType !== "single");
-  const showSchedulePdf = parseCheckboxFlag(formData, "show_schedule_pdf", scheduleType !== "single");
+  const showSchedulePdf = paymentMethod === "CARD_4X_FEES"
+    ? false
+    : parseCheckboxFlag(formData, "show_schedule_pdf", scheduleType !== "single");
   const isActive = parseCheckboxFlag(formData, "is_active", true);
   const code = paymentPlanCodeFromName(name);
   const scheduleRules = scheduleType
@@ -13777,6 +13786,7 @@ export async function updateAdminPaymentPlanConfigAction(formData: FormData): Pr
       collectAllChecksUpfront,
       checkSubmissionAddress,
       checkSubmissionInstruction,
+      paymentInstruction,
       showSchedulePublic,
       showSchedulePdf,
     })
