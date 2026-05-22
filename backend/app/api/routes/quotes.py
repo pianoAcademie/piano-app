@@ -557,6 +557,23 @@ def _quote_monthly_service_amounts_ttc_for_schedule(db: Session, quote: Quote) -
     return {month: amount for month, amount in sorted(monthly_amounts.items())}
 
 
+def _quote_first_course_month_for_schedule(db: Session, quote: Quote) -> str | None:
+    calendar_snapshot = _calendar_snapshot_with_planning_sessions(db, quote.calendar_snapshot or {})
+    months = [
+        month_key
+        for item in _json_list(calendar_snapshot.get("sessions"))
+        if isinstance(item, dict)
+        if (month_key := _month_key_from_session_date(item.get("date"))) is not None
+    ]
+    for block in _json_list(calendar_snapshot.get("blocks")):
+        if not isinstance(block, dict):
+            continue
+        month_key = _month_key_from_session_date(block.get("start_date"))
+        if month_key is not None:
+            months.append(month_key)
+    return min(months) if months else None
+
+
 def _split_quote_amount_by_count(amount: Decimal, count: int) -> list[Decimal]:
     if count <= 0:
         return [_q2(amount)]
@@ -611,6 +628,11 @@ def _build_payment_terms_snapshot_from_plan(
                 ),
                 monthly_service_amounts_ttc=(
                     _quote_monthly_service_amounts_ttc_for_schedule(db, quote)
+                    if db is not None
+                    else None
+                ),
+                monthly_start_month=(
+                    _quote_first_course_month_for_schedule(db, quote)
                     if db is not None
                     else None
                 ),

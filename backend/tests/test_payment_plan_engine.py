@@ -26,6 +26,30 @@ def test_monthly_card_schedule_fallback_places_fixed_fees_on_first_installment()
     assert sum(amounts) == Decimal("797.00")
 
 
+def test_monthly_card_schedule_fallback_starts_on_first_course_month() -> None:
+    schedule = build_payment_schedule(
+        PaymentPlanScheduleInput(
+            payment_method_code="CARD_MONTHLY",
+            payment_method_label="Carte bancaire mensuelle",
+            schedule_type="monthly",
+            schedule_rules={"installment_count": 10},
+            total_ttc=Decimal("797.00"),
+            fixed_fees_ttc=Decimal("120.00"),
+            monthly_start_month="2027-09",
+            registration_date=date(2026, 5, 22),
+        )
+    )
+
+    assert len(schedule) == 10
+    assert schedule[0]["due_date"] == "2027-09-01"
+    assert schedule[0]["due_label"] == "1er septembre 2027"
+    assert schedule[1]["due_date"] == "2027-10-01"
+    assert schedule[1]["due_label"] == "1er octobre 2027"
+    assert schedule[-1]["due_date"] == "2028-06-01"
+    assert schedule[-1]["due_label"] == "1er juin 2028"
+    assert sum(_amounts(schedule)) == Decimal("797.00")
+
+
 def test_monthly_card_schedule_uses_real_course_months_and_first_fixed_fees() -> None:
     schedule = build_payment_schedule(
         PaymentPlanScheduleInput(

@@ -21,6 +21,7 @@ class PaymentPlanScheduleInput:
     payment_method_label: str | None = None
     fixed_fees_ttc: Decimal = Decimal("0.00")
     monthly_service_amounts_ttc: dict[str, Decimal] | None = None
+    monthly_start_month: str | None = None
 
 
 def _split_amount(total: Decimal, parts: int) -> list[Decimal]:
@@ -106,6 +107,16 @@ def _month_label(month: int) -> str:
 
 def _month_due_label(year: int, month: int) -> str:
     return f"1er {_month_label(month)} {year}"
+
+
+def _month_keys_from(start_year: int, start_month: int, count: int) -> list[str]:
+    out: list[str] = []
+    for offset in range(max(0, count)):
+        absolute_month = (start_year * 12) + (start_month - 1) + offset
+        year = absolute_month // 12
+        month = (absolute_month % 12) + 1
+        out.append(f"{year:04d}-{month:02d}")
+    return out
 
 
 def _to_int(value: object, default: int) -> int:
@@ -244,6 +255,11 @@ def build_payment_schedule(payload: PaymentPlanScheduleInput) -> list[dict[str, 
             payload.monthly_service_amounts_ttc,
             _quantize(payload.fixed_fees_ttc),
         )
+    monthly_fallback_keys: list[str] = []
+    if is_monthly_schedule and not monthly_parts:
+        monthly_start_parts = _month_key_parts(str(payload.monthly_start_month or ""))
+        if monthly_start_parts is not None:
+            monthly_fallback_keys = _month_keys_from(monthly_start_parts[0], monthly_start_parts[1], installments)
     parts = (
         [amount for _, amount in monthly_parts]
         if monthly_parts
@@ -275,11 +291,27 @@ def build_payment_schedule(payload: PaymentPlanScheduleInput) -> list[dict[str, 
                     item["due_month"] = month
                     item["due_year"] = year
                     item["due_label"] = _month_due_label(year, month)
+            elif monthly_fallback_keys and not is_check:
+                parts_tuple = _month_key_parts(monthly_fallback_keys[index])
+                if parts_tuple is not None:
+                    year, month = parts_tuple
+                    item["due_type"] = "fixed_date"
+                    item["due_date"] = f"{year:04d}-{month:02d}-01"
+                    item["due_month"] = month
+                    item["due_year"] = year
+                    item["due_label"] = _month_due_label(year, month)
         else:
             month = None
             year = None
             if monthly_parts:
                 parts_tuple = _month_key_parts(monthly_parts[index][0])
+                if parts_tuple is not None:
+                    year, month = parts_tuple
+                    item["due_type"] = "fixed_date"
+                    item["due_date"] = f"{year:04d}-{month:02d}-01"
+                    item["due_year"] = year
+            elif monthly_fallback_keys:
+                parts_tuple = _month_key_parts(monthly_fallback_keys[index])
                 if parts_tuple is not None:
                     year, month = parts_tuple
                     item["due_type"] = "fixed_date"
