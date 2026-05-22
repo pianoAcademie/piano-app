@@ -430,6 +430,11 @@ function appendQuickScenario(path: string, quickScenario: "live" | "A" | "B" | "
   return `${path}${separator}quick_scenario=${encodeURIComponent(quickScenario)}`;
 }
 
+function appendQueryParam(path: string, key: string, value: string): string {
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+}
+
 function buildQuoteTransformationFailureUi(
   technicalMessage: string,
   transformBasePath: string,
@@ -2189,6 +2194,13 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const passRecupModeRaw = String((detail.quote.meta || {}).pass_recup_mode || "").trim().toLowerCase();
   const passRecupMode = passRecupModeRaw === "enabled" || passRecupModeRaw === "disabled" ? passRecupModeRaw : "auto";
   const intakeSummary = detail.intake_summary || null;
+  const typeformMeta = readObject((detail.quote.meta || {}).typeform_intake) || {};
+  const typeformIntakeId = String(typeformMeta.intake_id || (detail.quote.meta || {}).typeform_intake_id || "").trim();
+  const typeformSource = String(typeformMeta.source_code || typeformMeta.source_form_id || "").trim();
+  const typeformResponse = String(typeformMeta.source_response_id || "").trim();
+  const typeformSegment = String(typeformMeta.audience_segment || "").trim();
+  const typeformLocation = String(typeformMeta.location_code || typeformMeta.form_location_code || "").trim();
+  const typeformSchoolYear = String(typeformMeta.school_year_label || detail.quote.school_year_label || "").trim();
   const formatNullableBoolean = (value: boolean | null | undefined) => {
     if (value === true) return t("common.yes");
     if (value === false) return t("common.no");
@@ -2252,6 +2264,9 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const sectionHref = (section: QuoteWorkspaceSection): string =>
     withUiLanguage(`${quoteBasePath}?back=${encodeURIComponent(backPath)}&section=${section}`, language);
   const selfPath = appendQuickScenario(sectionHref(activeSection), quickScenario);
+  const intakePanelOpen = readParam(searchParams, "intake") === "1";
+  const intakePanelHref = appendQueryParam(selfPath, "intake", "1");
+  const intakeDetailHref = typeformIntakeId ? withUiLanguage(`/admin/intakes/${encodeURIComponent(typeformIntakeId)}`, language) : "";
   const transformBasePath = `${quoteBasePath}/transform?back=${encodeURIComponent(selfPath)}${quickScenario === "live" ? "" : `&scenario=${quickScenario}`}`;
   const followupTransformationFailureUi =
     followupTransformationExecutionStatus === "failed" && followupTransformationFailedMessage
@@ -2534,6 +2549,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             })}
             backLink={(
               <>
+                <Link className="ghost" href={intakePanelHref}>{t("admin.quote_detail.intake_info_button")}</Link>
                 <Link className="ghost" href={backPath}>{t("admin.quote_detail.back_to_quotes")}</Link>
                 <Link className="ghost" href="/admin/quotes/new">{t("admin.quotes.new_quote")}</Link>
               </>
@@ -2568,6 +2584,68 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
           />
         )}
       >
+        {intakePanelOpen ? (
+          <section className="modal-overlay quote-intake-drawer-overlay" role="dialog" aria-modal="true" aria-label={t("admin.quote_detail.intake_panel_title")}>
+            <article className="modal-panel quote-intake-drawer">
+              <header className="quote-intake-drawer-header">
+                <div>
+                  <h3 className="modal-title">{t("admin.quote_detail.intake_panel_title")}</h3>
+                  <p className="muted">{t("admin.quote_detail.intake_summary_subtitle")}</p>
+                </div>
+                <Link className="modal-close-x" href={selfPath} aria-label={t("common.close")}>
+                  ×
+                </Link>
+              </header>
+              {intakeSummary ? (
+                <div className="quote-intake-drawer-body">
+                  <section className="quote-intake-info-grid">
+                    <p>
+                      <span className="muted">{t("admin.quote_detail.intake_student")}</span>
+                      <strong>{intakeSummary.student_name || "-"}</strong>
+                    </p>
+                    <p>
+                      <span className="muted">{t("admin.quote_detail.intake_parent")}</span>
+                      <strong>{intakeSummary.parent_name || "-"}</strong>
+                    </p>
+                    <p>
+                      <span className="muted">{t("admin.quote_detail.intake_birth_date")}</span>
+                      <strong>{formatDateOnly(intakeSummary.birth_date || null, language)}</strong>
+                    </p>
+                    <p>
+                      <span className="muted">{t("admin.quote_detail.intake_reenrollment")}</span>
+                      <strong>{formatNullableBoolean(intakeSummary.is_reenrollment)}</strong>
+                    </p>
+                    <p>
+                      <span className="muted">{t("admin.quote_detail.intake_pass_recup_requested")}</span>
+                      <strong>{formatNullableBoolean(intakeSummary.requested_pass_recup)}</strong>
+                    </p>
+                    <p>
+                      <span className="muted">{t("admin.quote_detail.intake_pass_recup_quote")}</span>
+                      <strong>{formatNullableBoolean(intakeSummary.quote_pass_recup)}</strong>
+                    </p>
+                  </section>
+                  <section className="quote-intake-meta-list">
+                    <p><span className="muted">{t("admin.quote_detail.intake_source")}</span><strong>{typeformSource || "-"}</strong></p>
+                    <p><span className="muted">{t("admin.quote_detail.intake_response")}</span><strong>{typeformResponse || "-"}</strong></p>
+                    <p><span className="muted">{t("admin.quote_detail.intake_segment")}</span><strong>{typeformSegment || "-"}</strong></p>
+                    <p><span className="muted">{t("admin.quote_detail.intake_location")}</span><strong>{typeformLocation || "-"}</strong></p>
+                    <p><span className="muted">{t("admin.quote_detail.intake_school_year")}</span><strong>{typeformSchoolYear || "-"}</strong></p>
+                  </section>
+                  {intakeSummary.warnings?.includes("requested_pass_recup_missing") ? (
+                    <p className="form-error top-gap-sm">{t("admin.quote_detail.intake_summary_pass_recup_warning")}</p>
+                  ) : null}
+                  {intakeDetailHref ? (
+                    <div className="row modal-actions-end">
+                      <Link className="ghost" href={intakeDetailHref}>{t("admin.quote_detail.open_full_intake")}</Link>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="muted">{t("admin.quote_detail.intake_summary_empty")}</p>
+              )}
+            </article>
+          </section>
+        ) : null}
         {ok ? <section className="flash-ok">{ok}</section> : null}
         {error ? <section className="flash-err">{error}</section> : null}
 

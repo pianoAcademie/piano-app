@@ -14518,6 +14518,66 @@ button.danger:focus-visible {
   border-color: #bfd3f4;
 }
 
+.quote-intake-drawer-overlay {
+  place-items: stretch end;
+  padding: 0;
+}
+
+.quote-intake-drawer {
+  width: min(480px, 94vw);
+  max-height: 100vh;
+  height: 100vh;
+  border-radius: 18px 0 0 18px;
+  padding: 16px;
+  gap: 16px;
+}
+
+.quote-intake-drawer-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.quote-intake-drawer-header .modal-close-x {
+  position: static;
+  flex-shrink: 0;
+}
+
+.quote-intake-drawer-body {
+  display: grid;
+  gap: 14px;
+}
+
+.quote-intake-info-grid,
+.quote-intake-meta-list {
+  display: grid;
+  gap: 10px;
+}
+
+.quote-intake-info-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.quote-intake-info-grid p,
+.quote-intake-meta-list p {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fffdf9;
+  padding: 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.quote-intake-info-grid strong,
+.quote-intake-meta-list strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .quote-workspace-left {
   position: sticky;
   top: 84px;
