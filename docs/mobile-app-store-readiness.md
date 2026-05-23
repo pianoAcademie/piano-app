@@ -92,8 +92,31 @@ Pendant la phase de validation devis/production active, le workflow VPS doit res
 ## Points App Store a traiter avant soumission publique
 
 - Compte Apple Developer et identifiants bundle separes.
-- Politique de confidentialite accessible publiquement.
-- Mentions de support et contact.
+- Politique de confidentialite accessible publiquement: premiere URL technique disponible sur `/privacy`.
+- Mentions de support et contact: premiere URL technique disponible sur `/support`.
 - Captures iPhone requises pour chaque app.
 - Clarifier les paiements: si les paiements concernent des cours physiques, ils peuvent rester web/Stripe hors achat in-app.
 - Eviter toute promesse marketing non stabilisee dans la fiche App Store.
+
+## Plan de livraison conseille
+
+### Phase 1 - maintenant
+
+- Garder la production web comme source de verite.
+- Tester les apps iOS via TestFlight interne avec comptes reels de test.
+- Valider les parcours client: connexion, planning, paiement, documents, messages.
+- Valider les parcours professeur: planning, presence, feuilles, messages.
+- Ne pas publier sur l'App Store public tant que les releases devis/planning restent frequentes.
+
+### Phase 2 - stabilisation septembre
+
+- Ouvrir TestFlight externe a quelques familles et professeurs.
+- Finaliser les textes App Store, captures et politique de confidentialite complete.
+- Creer deux fiches App Store separees: client et professeur.
+- Soumettre l'app client en premier, puis l'app professeur apres validation terrain.
+
+### Phase 3 - publication publique
+
+- Passer chaque app en review App Store.
+- Garder l'administration sur navigateur uniquement.
+- Maintenir les updates mobiles comme des shells legers pointant vers la production web.
