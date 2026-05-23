@@ -24,10 +24,70 @@ Demarrer par TestFlight jusqu'a la stabilisation fonctionnelle de septembre. Cel
 ## Suite technique conseillee
 
 1. Auditer les parcours mobiles critiques: connexion, planning, paiement, messages, feuilles professeurs, presence.
-2. Ajouter un wrapper iOS leger, probablement Capacitor, avec deux schemes ou deux targets: `PA Client` et `PA Prof`.
-3. Forcer chaque target a ouvrir son entree dediee et a bloquer l'acces direct admin.
+2. Utiliser Capacitor comme wrapper iOS leger, avec deux configurations: `PA Client` et `PA Prof`.
+3. Forcer chaque configuration a ouvrir son entree dediee et a bloquer l'acces direct admin.
 4. Tester les cookies de session dans WKWebView, les liens PDF, paiements Stripe/Oney et retours depuis navigateur externe.
 5. Publier une premiere version TestFlight interne, puis externe.
+
+## Base Capacitor
+
+La configuration Capacitor est disponible cote frontend:
+
+- `frontend/capacitor.config.ts`
+
+Elle est pilotee par `MOBILE_APP_TARGET=client` ou `MOBILE_APP_TARGET=prof`.
+
+Commandes prevues:
+
+```bash
+cd frontend
+npx cap add ios
+npm run mobile:sync:client
+npm run mobile:open:client
+npm run mobile:sync:prof
+npm run mobile:open:prof
+```
+
+Les deux apps chargent volontairement l'URL de production dediee:
+
+- Client: `https://app.piano-academie.com/client`
+- Professeur: `https://app.piano-academie.com/prof`
+
+Cette approche evite de transformer l'app Next.js SSR en export statique. Elle est adaptee pour TestFlight et une premiere validation terrain.
+
+Etat actuel: la configuration Capacitor, les dependances et le dossier natif `frontend/ios` sont prets avec une premiere configuration client. L'orientation iOS est limitee au portrait et l'icone d'app reprend l'icone Piano Academie.
+
+Un manifeste de confidentialite natif est present dans `frontend/ios/App/App/PrivacyInfo.xcprivacy`. Il declare uniquement la couche native iOS: pas de tracking natif, pas de domaine de tracking natif, pas de collecte native. Les donnees collectees par le portail web doivent toujours etre renseignees dans les labels App Store Connect et rester coherentes avec la politique de confidentialite publique.
+
+## Separation des deux apps iOS
+
+Capacitor genere un projet iOS de base. Pour TestFlight, il faut ensuite creer deux apps distinctes dans Xcode:
+
+- Target `Piano Academie Client`
+  - Bundle ID: `com.pianoacademie.client`
+  - URL de depart: `https://app.piano-academie.com/client`
+- Target `Piano Academie Professeur`
+  - Bundle ID: `com.pianoacademie.professeur`
+  - URL de depart: `https://app.piano-academie.com/prof`
+
+Approche conseillee:
+
+1. Ouvrir `frontend/ios/App/App.xcworkspace`.
+2. Dupliquer le target `App`.
+3. Renommer les targets/schemes en `PA Client` et `PA Prof`.
+4. Ajuster `PRODUCT_BUNDLE_IDENTIFIER`, `CFBundleDisplayName` et le fichier `capacitor.config.json` embarque par target.
+5. Garder un seul code web: les deux targets affichent les routes existantes du portail.
+
+Fichiers de configuration natifs prets pour la duplication:
+
+- `frontend/ios/App/App/capacitor.client.config.json`
+- `frontend/ios/App/App/capacitor.prof.config.json`
+
+Dans Xcode, le target client doit embarquer le contenu client sous le nom `capacitor.config.json`; le target professeur doit embarquer le contenu professeur sous le meme nom.
+
+## Deploiement
+
+Pendant la phase de validation devis/production active, le workflow VPS doit rester declenche manuellement uniquement. Cela evite qu'un simple push sur `main` relance une prod pendant que des clients valident des devis.
 
 ## Points App Store a traiter avant soumission publique
 

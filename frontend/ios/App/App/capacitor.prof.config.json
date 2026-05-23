@@ -1,0 +1,17 @@
+{
+	"appId": "com.pianoacademie.professeur",
+	"appName": "Piano Academie Professeur",
+	"server": {
+		"url": "https://app.piano-academie.com/prof",
+		"cleartext": false,
+		"allowNavigation": [
+			"app.piano-academie.com"
+		]
+	},
+	"webDir": "public",
+	"ios": {
+		"contentInset": "automatic",
+		"scrollEnabled": true
+	},
+	"packageClassList": []
+}

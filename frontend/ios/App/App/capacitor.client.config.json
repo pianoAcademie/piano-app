@@ -1,0 +1,17 @@
+{
+	"appId": "com.pianoacademie.client",
+	"appName": "Piano Academie Client",
+	"server": {
+		"url": "https://app.piano-academie.com/client",
+		"cleartext": false,
+		"allowNavigation": [
+			"app.piano-academie.com"
+		]
+	},
+	"webDir": "public",
+	"ios": {
+		"contentInset": "automatic",
+		"scrollEnabled": true
+	},
+	"packageClassList": []
+}
