@@ -767,6 +767,7 @@ export type ClientMessageOut = {
   error_message: string | null;
   subject_preview: string;
   content_preview: string | null;
+  content_text: string | null;
   content_html: string | null;
 };
 

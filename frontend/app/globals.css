@@ -1987,11 +1987,13 @@ button.danger:focus-visible {
 
 .message-html-preview {
   margin: 8px 0 0;
-  padding: 10px;
+  padding: 0;
+  width: 100%;
+  min-height: 520px;
   border: 1px solid #dce3eb;
   border-radius: 8px;
   background: #fffdf9;
-  overflow-wrap: anywhere;
+  display: block;
 }
 
 .invoice-note-details {
@@ -10686,13 +10688,14 @@ button.danger:focus-visible {
 }
 
 .client-message-html {
-  padding: 10px 12px;
+  padding: 0;
+  width: 100%;
+  min-height: 520px;
   border: 1px solid #e6e8ee;
   border-radius: 12px;
   background: #ffffff;
-  max-height: 52vh;
-  overflow: auto;
   color: #1d2a3a;
+  display: block;
 }
 
 .client-message-html img,

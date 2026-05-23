@@ -4955,13 +4955,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
                       <section className="modal-card client-message-detail">
                         {selectedMessage.content_html ? (
-                          <div
+                          <iframe
+                            title={selectedMessage.subject_preview || t("client.messages")}
                             className="client-message-html"
-                            dangerouslySetInnerHTML={{ __html: selectedMessage.content_html }}
+                            sandbox=""
+                            srcDoc={selectedMessage.content_html}
                           />
                         ) : (
                           <pre className="client-message-detail-content">
-                            {selectedMessage.content_preview || t("client.content_unavailable")}
+                            {selectedMessage.content_text || selectedMessage.content_preview || t("client.content_unavailable")}
                           </pre>
                         )}
                       </section>

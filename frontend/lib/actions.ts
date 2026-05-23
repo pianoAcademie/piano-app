@@ -5476,6 +5476,59 @@ export async function updateAdminClientRangeInvoiceStatusAction(formData: FormDa
   redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "ok", t("admin.client_action.invoice_status_updated")));
 }
 
+export async function reissueAdminClientRangeInvoiceAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const noteId = String(formData.get("note_id") ?? "").trim();
+  if (!clientId || !noteId) {
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_invoice")));
+  }
+
+  const result = await backendRequest<AdminRangeInvoiceOut>(
+    `/api/v1/admin/clients/${clientId}/invoices/range/${noteId}/status`,
+    {
+      method: "POST",
+      body: JSON.stringify({ status: "CANCELLED" }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=factures`, "error", result.message));
+  }
+
+  const params = new URLSearchParams({
+    tab: "factures",
+    payment_modal: "invoice_range",
+    payment_return_tab: "factures",
+    invoice_step: "1",
+    generation_mode: "MANUAL",
+    issued_date: String(formData.get("issued_date") ?? "").trim() || new Date().toISOString().slice(0, 10),
+    start_date: String(formData.get("start_date") ?? "").trim(),
+    end_date: String(formData.get("end_date") ?? "").trim(),
+    due_date: String(formData.get("due_date") ?? "").trim(),
+    no_due_date: String(formData.get("no_due_date") ?? "").trim() === "true" ? "true" : "false",
+    include_pending: String(formData.get("include_pending") ?? "").trim() === "true" ? "true" : "false",
+    include_cancelled: String(formData.get("include_cancelled") ?? "").trim() === "true" ? "true" : "false",
+    layout: String(formData.get("layout") ?? "DETAILED").trim() || "DETAILED",
+    group_adjustments_by_type: String(formData.get("group_adjustments_by_type") ?? "").trim() === "true" ? "true" : "false",
+    include_discount_adjustments: String(formData.get("include_discount_adjustments") ?? "true").trim() === "true" ? "true" : "false",
+    include_supplement_adjustments: String(formData.get("include_supplement_adjustments") ?? "true").trim() === "true" ? "true" : "false",
+    public_note: String(formData.get("public_note") ?? "").trim(),
+    private_note: String(formData.get("private_note") ?? "").trim(),
+    ok: t("admin.client_action.invoice_cancelled"),
+  });
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(`/admin/clients/${clientId}?${params.toString()}`);
+}
+
 export async function sendAdminClientRangeInvoiceEmailAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

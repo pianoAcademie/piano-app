@@ -239,6 +239,7 @@ class ClientMessageOut(BaseModel):
     error_message: str | None
     subject_preview: str
     content_preview: str | None = None
+    content_text: str | None = None
     content_html: str | None = None
 
 

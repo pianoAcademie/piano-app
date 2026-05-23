@@ -2386,6 +2386,7 @@ def list_client_messages(
                 error_message=row.error_message,
                 subject_preview=(row.subject or "").strip() or _client_message_context_label(row.source),
                 content_preview=content_preview,
+                content_text=None if is_html_message else row.content,
                 content_html=row.content if is_html_message else None,
             )
         )
@@ -2423,6 +2424,7 @@ def list_client_messages(
                 error_message=reminder.error_message,
                 subject_preview=subject_preview,
                 content_preview=content_preview,
+                content_text=content_preview,
                 content_html=None,
             )
         )

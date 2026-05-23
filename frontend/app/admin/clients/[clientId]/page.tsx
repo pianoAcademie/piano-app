@@ -17,6 +17,7 @@ import {
   adminPurchasePlanForClientAction,
   adminViewClientPortalAction,
   createAdminClientRangeInvoiceAction,
+  reissueAdminClientRangeInvoiceAction,
   createAdminClientManualTransactionAction,
   updateAdminClientManualTransactionAction,
   updateAdminClientManualTransactionStatusAction,
@@ -2840,25 +2841,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     }
     return invoicesHref(client.id, params);
   };
-  const reissueRangeInvoiceHref = (row: RangeInvoiceListRow): string => invoicesHref(client.id, {
-    payment_modal: "invoice_range",
-    payment_return_tab: "factures",
-    invoice_step: "1",
-    generation_mode: "MANUAL",
-    issued_date: todayInputValue,
-    start_date: row.startDate,
-    end_date: row.endDate,
-    due_date: row.noDueDate ? todayInputValue : dueDateInputValue,
-    no_due_date: row.noDueDate ? "true" : "false",
-    include_pending: row.includePending ? "true" : "false",
-    include_cancelled: row.includeCancelled ? "true" : "false",
-    layout: row.layout,
-    group_adjustments_by_type: row.groupAdjustmentsByType ? "true" : "false",
-    include_discount_adjustments: row.includeDiscountAdjustments ? "true" : "false",
-    include_supplement_adjustments: row.includeSupplementAdjustments ? "true" : "false",
-    public_note: row.publicNote ?? "",
-    private_note: row.privateNote ?? "",
-  });
   const invoiceWizardBackToStepOneHref = (() => {
     const params: Record<string, string> = {
       payment_modal: "invoice_range",
@@ -5039,9 +5021,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <div className="item">
                 <strong>{t("admin.client_detail.content")}</strong>
                 {(selectedMessageForModal.body_format || "TEXT").toUpperCase() === "HTML" ? (
-                  <div
+                  <iframe
+                    title={selectedMessageForModal.subject_preview || t("admin.client_detail.message_detail_title")}
                     className="message-html-preview top-gap-sm"
-                    dangerouslySetInnerHTML={{ __html: selectedMessageForModal.body_full || "<p>-</p>" }}
+                    sandbox=""
+                    srcDoc={selectedMessageForModal.body_full || "<p>-</p>"}
                   />
                 ) : (
                   <pre className="message-full-text">{selectedMessageForModal.body_full || "-"}</pre>
@@ -5472,13 +5456,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                               >
                                 R
                               </Link>
-                              <Link
-                                className="client-action-icon"
-                                href={reissueRangeInvoiceHref(row)}
-                                title="Refaire cette facture avec une nouvelle date"
-                              >
-                                ⧉
-                              </Link>
                               {row.status !== "PAID" ? (
                                 <form action={updateAdminClientRangeInvoiceStatusAction}>
                                   <input type="hidden" name="client_id" value={client.id} />
@@ -5521,6 +5498,28 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   </button>
                                 </form>
                               )}
+                              {row.status !== "CANCELLED" ? (
+                                <form action={reissueAdminClientRangeInvoiceAction}>
+                                  <input type="hidden" name="client_id" value={client.id} />
+                                  <input type="hidden" name="note_id" value={row.noteId} />
+                                  <input type="hidden" name="issued_date" value={todayInputValue} />
+                                  <input type="hidden" name="start_date" value={row.startDate} />
+                                  <input type="hidden" name="end_date" value={row.endDate} />
+                                  <input type="hidden" name="due_date" value={row.noDueDate ? todayInputValue : dueDateInputValue} />
+                                  <input type="hidden" name="no_due_date" value={row.noDueDate ? "true" : "false"} />
+                                  <input type="hidden" name="include_pending" value={row.includePending ? "true" : "false"} />
+                                  <input type="hidden" name="include_cancelled" value={row.includeCancelled ? "true" : "false"} />
+                                  <input type="hidden" name="layout" value={row.layout} />
+                                  <input type="hidden" name="group_adjustments_by_type" value={row.groupAdjustmentsByType ? "true" : "false"} />
+                                  <input type="hidden" name="include_discount_adjustments" value={row.includeDiscountAdjustments ? "true" : "false"} />
+                                  <input type="hidden" name="include_supplement_adjustments" value={row.includeSupplementAdjustments ? "true" : "false"} />
+                                  <input type="hidden" name="public_note" value={row.publicNote ?? ""} />
+                                  <input type="hidden" name="private_note" value={row.privateNote ?? ""} />
+                                  <button type="submit" className="client-action-icon" title="Annuler et refaire cette facture avec une nouvelle date">
+                                    ⧉
+                                  </button>
+                                </form>
+                              ) : null}
                             </div>
                           ) : (
                             <div className="row payment-row-actions">
