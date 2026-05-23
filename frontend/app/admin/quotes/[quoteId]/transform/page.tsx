@@ -10,6 +10,7 @@ import {
 import { backendRequest } from "../../../../../lib/backend";
 import {
   coerceQuoteToEnrollmentDraft,
+  deriveCalendarSnapshotActivityIds,
   quoteTransformFinancialAdjustmentFromMeta,
   readObject,
   type QuoteTransformActivityCatalog,
@@ -314,9 +315,12 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
   const paymentPlans = paymentPlansResult.ok ? paymentPlansResult.data : [];
 
   const activityIds = Array.from(new Set(
-    detail.lines
-      .map((line) => line.activity_id)
-      .filter((activityId): activityId is string => Boolean(activityId)),
+    [
+      ...detail.lines
+        .map((line) => line.activity_id)
+        .filter((activityId): activityId is string => Boolean(activityId)),
+      ...deriveCalendarSnapshotActivityIds(detail.quote.calendar_snapshot || {}),
+    ],
   ));
   const sessionsPerActivity = await Promise.all(
     activityIds.map(async (activityId) => {

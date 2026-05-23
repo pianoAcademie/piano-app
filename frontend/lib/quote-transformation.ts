@@ -163,6 +163,7 @@ export type ActivityPricingRow = {
   lineId: string;
   scheduleKey: string;
   activityId: string;
+  matchingActivityIds: string[];
   activityName: string;
   locationName: string;
   pricingUnit: string;
@@ -683,6 +684,82 @@ function planningKeyFromSnapshotRow(row: Record<string, unknown>, activityId: st
   return planningKeyFromActivityAndSource(activityId, readString(row.typeform_automatic_line));
 }
 
+function calendarSnapshotRows(calendarSnapshot: Record<string, unknown>): Record<string, unknown>[] {
+  return [
+    ...(Array.isArray(calendarSnapshot.blocks) ? calendarSnapshot.blocks : []),
+    ...(Array.isArray(calendarSnapshot.sessions) ? calendarSnapshot.sessions : []),
+  ]
+    .map((item) => readObject(item))
+    .filter((item): item is Record<string, unknown> => item !== null);
+}
+
+export function deriveCalendarSnapshotActivityIds(calendarSnapshot: Record<string, unknown>): string[] {
+  const seen = new Set<string>();
+  for (const row of calendarSnapshotRows(calendarSnapshot)) {
+    const activityId = readString(row.activity_id);
+    if (activityId) {
+      seen.add(activityId);
+    }
+  }
+  return [...seen];
+}
+
+function lineLooksLikeSolfege(lineText: string): boolean {
+  return lineText.includes("solfege") || lineText.includes("solfège");
+}
+
+function lineLooksLikeCollectivePiano(lineText: string): boolean {
+  return (
+    (lineText.includes("collectif") || lineText.includes("collective"))
+    && (lineText.includes("piano") || lineText.includes("cours"))
+  );
+}
+
+function snapshotActivityMatchesLine(lineText: string, snapshotText: string): boolean {
+  if (!snapshotText || snapshotText.includes("vacation") || snapshotText.includes("ferie")) {
+    return false;
+  }
+  if (lineLooksLikeSolfege(lineText)) {
+    return lineLooksLikeSolfege(snapshotText);
+  }
+  if (lineLooksLikeCollectivePiano(lineText)) {
+    return !lineLooksLikeSolfege(snapshotText) && snapshotText.includes("collectif");
+  }
+  return false;
+}
+
+function deriveMatchingActivityIdsForLine(
+  line: QuoteTransformLine,
+  activity: QuoteTransformActivityCatalog | undefined,
+  locationName: string,
+  calendarSnapshot: Record<string, unknown>,
+): string[] {
+  const activityId = line.activityId || "";
+  const lineText = normalizeText(`${activity?.name || ""} ${line.title || ""}`);
+  const expectedLocationGroup = locationGroup(locationName);
+  const seen = new Set<string>(activityId ? [activityId] : []);
+
+  for (const row of calendarSnapshotRows(calendarSnapshot)) {
+    const snapshotActivityId = readString(row.activity_id);
+    if (!snapshotActivityId || snapshotActivityId === activityId) {
+      continue;
+    }
+    const snapshotLocation = readString(row.location_label) || readString(row.location_name) || "";
+    const snapshotLocationGroup = locationGroup(snapshotLocation);
+    if (expectedLocationGroup !== "unknown" && snapshotLocationGroup !== expectedLocationGroup) {
+      continue;
+    }
+    const snapshotText = normalizeText(
+      `${readString(row.activity_label) || ""} ${readString(row.activity_name) || ""} ${readString(row.title) || ""}`,
+    );
+    if (snapshotActivityMatchesLine(lineText, snapshotText)) {
+      seen.add(snapshotActivityId);
+    }
+  }
+
+  return [...seen];
+}
+
 function amountReason(deltaTtc: number): string {
   const absolute = Math.abs(deltaTtc);
   if (absolute <= 0.5) {
@@ -700,6 +777,7 @@ export function buildActivityPricingRows(
   activityLocationNameById: Map<string, string>,
   fallbackLocationName: string,
   scenario: QuoteTransformScenario,
+  calendarSnapshot: Record<string, unknown> = {},
 ): ActivityPricingRow[] {
   const rows = lines
     .filter((line) => line.activityId)
@@ -724,11 +802,13 @@ export function buildActivityPricingRows(
 
       const deltaTtc = Number((currentSystemTtc - expectedTtc).toFixed(2));
       const locationName = activityLocationNameById.get(scheduleKey) || activityLocationNameById.get(activityId) || fallbackLocationName;
+      const matchingActivityIds = deriveMatchingActivityIdsForLine(line, activity, locationName, calendarSnapshot);
       return {
         rowId: `${line.id}-${activityId}`,
         lineId: line.id,
         scheduleKey,
         activityId,
+        matchingActivityIds,
         activityName: activity?.name || line.title,
         locationName,
         pricingUnit: line.pricingUnit || "forfait",
@@ -752,6 +832,7 @@ export function buildActivityPricingRows(
         lineId: "demo-line-1",
         scheduleKey: "demo-activity",
         activityId: "demo-activity",
+        matchingActivityIds: ["demo-activity"],
         activityName: "Cours individuel piano",
         locationName: fallbackLocationName,
         pricingUnit: "session",
@@ -1624,6 +1705,7 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
     activityLocationNameById,
     input.quote.locationName,
     scenario,
+    input.calendarSnapshot,
   );
 
   if (activityRows.length === 0) {
@@ -1658,7 +1740,7 @@ export function analyzeQuoteQuickTransformStatus(input: QuoteQuickTransformAnaly
   let autoAssignableCount = 0;
 
   for (const row of activityRows) {
-    const sessions = input.sessionsByActivityId[row.activityId] || [];
+    const sessions = row.matchingActivityIds.flatMap((activityId) => input.sessionsByActivityId[activityId] || []);
     const expectedLocationId = activityLocationIdById.get(row.scheduleKey) || activityLocationIdById.get(row.activityId) || input.quote.locationId;
     const options = buildSessionMatches(row, sessions, expectedLocationId, scheduleHints, scenario);
     if (options.length > 0) {

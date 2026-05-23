@@ -407,8 +407,8 @@ export default function QuoteToEnrollmentWizard({
   );
 
   const baseActivityRows = useMemo(
-    () => buildActivityPricingRows(lines, activitiesById, activityLocationNameById, quote.locationName, scenario),
-    [lines, activitiesById, activityLocationNameById, quote.locationName, scenario],
+    () => buildActivityPricingRows(lines, activitiesById, activityLocationNameById, quote.locationName, scenario, calendarSnapshot),
+    [lines, activitiesById, activityLocationNameById, quote.locationName, scenario, calendarSnapshot],
   );
 
   const activityRows = useMemo(
@@ -432,7 +432,7 @@ export default function QuoteToEnrollmentWizard({
   const sessionOptionsByActivityId = useMemo(() => {
     const output = new Map<string, SessionMatchOption[]>();
     for (const row of activityRows) {
-      const sessions = sessionsByActivityId[row.activityId] || [];
+      const sessions = row.matchingActivityIds.flatMap((activityId) => sessionsByActivityId[activityId] || []);
       const expectedLocationId = activityLocationIdById.get(row.scheduleKey) || activityLocationIdById.get(row.activityId) || quote.locationId;
       const options = buildSessionMatches(
         row,

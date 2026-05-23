@@ -46,6 +46,7 @@ import { hasAdminPermission } from "../../../../lib/admin-access";
 import { loadLivePlanningMatchForBlock, type LivePlanningBlockInput } from "../../../../lib/quote-planning-live";
 import {
   analyzeQuoteQuickTransformStatus,
+  deriveCalendarSnapshotActivityIds,
   type QuoteQuickTransformAnalysis,
   type QuoteTransformActivityCatalog,
   type QuoteTransformClient,
@@ -1993,9 +1994,12 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   });
 
   const activityIds = Array.from(new Set(
-    detail.lines
-      .map((line) => line.activity_id)
-      .filter((activityId): activityId is string => Boolean(activityId)),
+    [
+      ...detail.lines
+        .map((line) => line.activity_id)
+        .filter((activityId): activityId is string => Boolean(activityId)),
+      ...deriveCalendarSnapshotActivityIds(detail.quote.calendar_snapshot || {}),
+    ],
   ));
 
   const sessionsPerActivity = await Promise.all(

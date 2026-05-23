@@ -26,6 +26,7 @@ import { hasAnyAdminAccess } from "./admin-access";
 import { loadLivePlanningMatchForBlock, type LivePlanningBlockInput } from "./quote-planning-live";
 import {
   analyzeQuoteQuickTransformStatus,
+  deriveCalendarSnapshotActivityIds,
   quoteTransformFinancialAdjustmentFromMeta,
   type QuoteQuickTransformAnalysis,
   type QuoteTransformActivityCatalog,
@@ -15562,9 +15563,12 @@ async function loadQuoteQuickTransformAnalysis(
   const activeFollowup = followups[0] || null;
 
   const activityIds = Array.from(new Set(
-    detail.lines
-      .map((line) => line.activity_id)
-      .filter((activityId): activityId is string => Boolean(activityId)),
+    [
+      ...detail.lines
+        .map((line) => line.activity_id)
+        .filter((activityId): activityId is string => Boolean(activityId)),
+      ...deriveCalendarSnapshotActivityIds(detail.quote.calendar_snapshot || {}),
+    ],
   ));
   const sessionsPerActivity = await Promise.all(
     activityIds.map(async (activityId) => {
