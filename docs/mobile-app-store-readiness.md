@@ -75,7 +75,17 @@ cd ios/App
 pod install
 ```
 
-Sur cette machine, CocoaPods est disponible via l'installation Ruby utilisateur (`~/.gem/ruby/2.6.0/bin`). La compilation Xcode en ligne de commande reste bloquee tant que le composant plateforme iOS n'est pas installe/active dans Xcode (`Xcode > Settings > Components`).
+Sur cette machine, CocoaPods est disponible via l'installation Ruby utilisateur (`~/.gem/ruby/2.6.0/bin`). Apres installation du composant iOS dans Xcode, les deux configurations compilent en simulateur iPhone:
+
+```bash
+node frontend/scripts/prepare-ios-target.mjs client
+xcodebuild -workspace frontend/ios/App/App.xcworkspace -scheme App -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.3.1' build
+
+node frontend/scripts/prepare-ios-target.mjs prof
+xcodebuild -workspace frontend/ios/App/App.xcworkspace -scheme App -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.3.1' build
+```
+
+Apres un build professeur, relancer `node frontend/scripts/prepare-ios-target.mjs client` pour remettre le projet dans l'etat client par defaut.
 
 ## Separation des deux apps iOS
 
