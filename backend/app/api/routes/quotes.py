@@ -7055,30 +7055,33 @@ def _expected_activity_dates_from_snapshot(
     calendar_snapshot: dict[str, object] | None = None,
 ) -> list[date]:
     snapshot = _json_object(calendar_snapshot if calendar_snapshot is not None else quote.calendar_snapshot)
-    out: set[date] = set()
+
+    def _row_matches(row: dict[str, object]) -> bool:
+        if _parse_uuid_value(row.get("activity_id")) != activity_id:
+            return False
+        if not schedule_key:
+            return True
+        recommendation_key = str(row.get("recommendation_key") or "").strip()
+        automatic_line = str(row.get("typeform_automatic_line") or "").strip()
+        row_key = recommendation_key or (f"{activity_id}:{automatic_line}" if automatic_line else str(activity_id))
+        return row_key == schedule_key
+
+    session_dates: set[date] = set()
     for raw in _json_list(snapshot.get("sessions")):
         row = _json_object(raw)
-        if _parse_uuid_value(row.get("activity_id")) != activity_id:
+        if not _row_matches(row):
             continue
-        if schedule_key:
-            recommendation_key = str(row.get("recommendation_key") or "").strip()
-            automatic_line = str(row.get("typeform_automatic_line") or "").strip()
-            row_key = recommendation_key or (f"{activity_id}:{automatic_line}" if automatic_line else str(activity_id))
-            if row_key != schedule_key:
-                continue
         parsed = _parse_iso_date(str(row.get("date") or ""))
         if parsed is not None:
-            out.add(parsed)
+            session_dates.add(parsed)
+    if session_dates:
+        return sorted(session_dates)
+
+    out: set[date] = set()
     for raw in _json_list(snapshot.get("blocks")):
         row = _json_object(raw)
-        if _parse_uuid_value(row.get("activity_id")) != activity_id:
+        if not _row_matches(row):
             continue
-        if schedule_key:
-            recommendation_key = str(row.get("recommendation_key") or "").strip()
-            automatic_line = str(row.get("typeform_automatic_line") or "").strip()
-            row_key = recommendation_key or (f"{activity_id}:{automatic_line}" if automatic_line else str(activity_id))
-            if row_key != schedule_key:
-                continue
         parsed_start = _parse_iso_date(str(row.get("start_date") or ""))
         parsed_end = _parse_iso_date(str(row.get("end_date") or ""))
         if parsed_start is None:

@@ -111,6 +111,50 @@ class QuoteLiveSeriesMatchingTests(unittest.TestCase):
             [date(2026, 9, 8), date(2026, 9, 15), date(2026, 9, 29)],
         )
 
+    def test_expected_dates_prefer_filtered_sessions_over_theoretical_block(self) -> None:
+        activity_id = uuid4()
+        quote = SimpleNamespace(
+            calendar_snapshot={
+                "sessions": [
+                    {
+                        "activity_id": str(activity_id),
+                        "recommendation_key": f"{activity_id}:main",
+                        "date": "2026-10-07",
+                    },
+                    {
+                        "activity_id": str(activity_id),
+                        "recommendation_key": f"{activity_id}:main",
+                        "date": "2026-10-14",
+                    },
+                    {
+                        "activity_id": str(activity_id),
+                        "recommendation_key": f"{activity_id}:main",
+                        "date": "2026-11-04",
+                    },
+                ],
+                "blocks": [
+                    {
+                        "activity_id": str(activity_id),
+                        "recommendation_key": f"{activity_id}:main",
+                        "start_date": "2026-10-07",
+                        "end_date": "2026-11-04",
+                        "weekday": 2,
+                        "start_time": "17:00",
+                        "end_time": "18:00",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(
+            _expected_activity_dates_from_snapshot(
+                quote,
+                activity_id=activity_id,
+                schedule_key=f"{activity_id}:main",
+            ),
+            [date(2026, 10, 7), date(2026, 10, 14), date(2026, 11, 4)],
+        )
+
     def test_student_time_resolves_to_teacher_envelope_session(self) -> None:
         course_type_id = uuid4()
         location_id = uuid4()
