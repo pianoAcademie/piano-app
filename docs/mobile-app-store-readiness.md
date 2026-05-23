@@ -87,6 +87,14 @@ xcodebuild -workspace frontend/ios/App/App.xcworkspace -scheme App -destination 
 
 Apres un build professeur, relancer `node frontend/scripts/prepare-ios-target.mjs client` pour remettre le projet dans l'etat client par defaut.
 
+Validation locale du 23/05/2026:
+
+- `docker compose run --rm frontend npm run build`: OK.
+- Build iOS simulateur client: OK sur iPhone 17 Pro iOS 26.3.1.
+- Build iOS simulateur professeur: OK sur iPhone 17 Pro iOS 26.3.1.
+- `/prof` redirige maintenant vers `/login?portal=prof&return_to=%2Fprof` quand la session est absente.
+- La page de connexion professeur affiche "Espace professeur" et masque la creation de compte client.
+
 ## Separation des deux apps iOS
 
 Capacitor genere un projet iOS de base. Pour TestFlight, il faut ensuite creer deux apps distinctes dans Xcode:

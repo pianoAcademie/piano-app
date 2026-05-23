@@ -512,13 +512,14 @@ function payoutStatusBadgeClass(status: string | null): string {
 
 export default async function ProfessorPage({ searchParams }: { searchParams: SearchParams }): Promise<JSX.Element> {
   const token = getPortalToken();
+  const professorLoginPath = "/login?portal=prof&return_to=%2Fprof&error_code=session_expired";
   if (!token) {
-    redirect("/login?error_code=session_expired");
+    redirect(professorLoginPath);
   }
 
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
   if (!meResult.ok) {
-    redirect("/login?error_code=session_expired");
+    redirect(professorLoginPath);
   }
 
   if (meResult.data.role === "admin") {
@@ -572,7 +573,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   ]);
 
   if (!profileResult.ok) {
-    redirect(`/login?error=${encodeURIComponent(profileResult.message)}`);
+    redirect(`/login?portal=prof&return_to=%2Fprof&error=${encodeURIComponent(profileResult.message)}`);
   }
 
   const profile = profileResult.data;

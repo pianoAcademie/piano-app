@@ -34,7 +34,8 @@ const activeConfigPath = join(appDir, "capacitor.config.json");
 function replaceOrFail(filePath, pattern, replacement, label) {
   const before = readFileSync(filePath, "utf8");
   const after = before.replace(pattern, replacement);
-  if (after === before) {
+  const matched = pattern.global ? before.match(pattern) : pattern.test(before);
+  if (!matched) {
     console.error(`Unable to update ${label} in ${filePath}`);
     process.exit(1);
   }

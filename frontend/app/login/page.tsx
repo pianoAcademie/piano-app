@@ -9,6 +9,7 @@ import { resolveAuthErrorMessage, resolveAuthOkMessage, type UiLanguage, uiText 
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type AuthMode = "login" | "signup" | "forgot";
+type AuthPortal = "client" | "prof";
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -29,6 +30,18 @@ function resolveMode(rawMode: string, resetToken: string): AuthMode {
     return "forgot";
   }
   return "login";
+}
+
+function resolvePortal(rawPortal: string, returnTo: string): AuthPortal {
+  const normalizedPortal = rawPortal.trim().toLowerCase();
+  if (normalizedPortal === "prof" || normalizedPortal === "teacher") {
+    return "prof";
+  }
+  const normalizedReturnTo = returnTo.trim().toLowerCase();
+  if (normalizedReturnTo === "/prof" || normalizedReturnTo.startsWith("/prof?")) {
+    return "prof";
+  }
+  return "client";
 }
 
 function resolveUiLanguage(rawLanguage: string, acceptLanguage: string): UiLanguage {
@@ -55,17 +68,23 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
   const emailHint = readParam(searchParams, "email");
   const purchaseContext = readParam(searchParams, "purchase_context");
   const returnTo = readParam(searchParams, "return_to");
+  const portal = resolvePortal(readParam(searchParams, "portal"), returnTo);
   const registrationSubjectType = readParam(searchParams, "registration_subject_type").trim().toLowerCase() === "child" ? "child" : "self";
   const mode = resolveMode(readParam(searchParams, "mode").trim().toLowerCase(), resetToken);
+  const preservedPortal = portal === "prof" ? "&portal=prof" : "";
   const preservedPurchaseContext = purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : "";
   const preservedReturnTo = returnTo ? `&return_to=${encodeURIComponent(returnTo)}` : "";
   const preservedEmail = emailHint ? `&email=${encodeURIComponent(emailHint)}` : "";
   const preservedRegistrationSubjectType =
     registrationSubjectType === "child" ? `&registration_subject_type=${encodeURIComponent(registrationSubjectType)}` : "";
   const preservedLanguage = language === "en" ? "&lang=en" : "";
-  const loginHref = `/login?mode=login${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}${preservedRegistrationSubjectType}${preservedLanguage}`;
-  const signupHref = `/login?mode=signup${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}${preservedRegistrationSubjectType}${preservedLanguage}`;
-  const forgotHref = `/login?mode=forgot${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}${preservedRegistrationSubjectType}${preservedLanguage}`;
+  const loginHref = `/login?mode=login${preservedPortal}${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}${preservedRegistrationSubjectType}${preservedLanguage}`;
+  const signupHref = `/login?mode=signup${preservedPortal}${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}${preservedRegistrationSubjectType}${preservedLanguage}`;
+  const forgotHref = `/login?mode=forgot${preservedPortal}${preservedEmail}${preservedPurchaseContext}${preservedReturnTo}${preservedRegistrationSubjectType}${preservedLanguage}`;
+  const displayedMode = portal === "prof" && mode === "signup" ? "login" : mode;
+  const portalTitleKey = portal === "prof" ? "auth.prof_space_title" : "auth.client_space_title";
+  const portalSubtitleKey = portal === "prof" ? "auth.prof_space_subtitle" : "auth.client_space_subtitle";
+  const loginSubtitleKey = portal === "prof" ? "auth.prof_login_subtitle" : "auth.login_subtitle";
 
   return (
     <main className="page auth-page">
@@ -79,8 +98,8 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
             className="auth-brand-lockup"
           />
           <div className="auth-header-copy">
-            <h1>{uiText(language, "auth.client_space_title")}</h1>
-            <p>{uiText(language, "auth.client_space_subtitle")}</p>
+            <h1>{uiText(language, portalTitleKey)}</h1>
+            <p>{uiText(language, portalSubtitleKey)}</p>
           </div>
         </header>
 
@@ -89,20 +108,23 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
 
         <article className="card auth-card">
           <nav className="auth-tabs" aria-label={uiText(language, "auth.nav_label")}>
-            <Link className={`auth-tab ${mode === "login" ? "active" : ""}`} href={loginHref}>
+            <Link className={`auth-tab ${displayedMode === "login" ? "active" : ""}`} href={loginHref}>
               {uiText(language, "auth.login_tab")}
             </Link>
-            <Link className={`auth-tab ${mode === "signup" ? "active" : ""}`} href={signupHref}>
-              {uiText(language, "auth.signup_tab")}
-            </Link>
+            {portal === "client" ? (
+              <Link className={`auth-tab ${displayedMode === "signup" ? "active" : ""}`} href={signupHref}>
+                {uiText(language, "auth.signup_tab")}
+              </Link>
+            ) : null}
           </nav>
 
-          {mode === "login" ? (
+          {displayedMode === "login" ? (
             <section className="auth-section">
               <h2>{uiText(language, "auth.login_title")}</h2>
-              <p className="muted">{uiText(language, "auth.login_subtitle")}</p>
+              <p className="muted">{uiText(language, loginSubtitleKey)}</p>
               <form action={loginAction} className="grid auth-form">
                 <input type="hidden" name="auth_mode" value="login" />
+                <input type="hidden" name="portal" value={portal} />
                 <input type="hidden" name="purchase_context" value={purchaseContext} />
                 <input type="hidden" name="return_to" value={returnTo} />
                 <input type="hidden" name="registration_subject_type" value={registrationSubjectType} />
@@ -119,12 +141,12 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
               </form>
               <div className="auth-links">
                 <Link href={forgotHref}>{uiText(language, "auth.forgot_link")}</Link>
-                <Link href={signupHref}>{uiText(language, "auth.create_account_link")}</Link>
+                {portal === "client" ? <Link href={signupHref}>{uiText(language, "auth.create_account_link")}</Link> : null}
               </div>
             </section>
           ) : null}
 
-          {mode === "forgot" ? (
+          {displayedMode === "forgot" ? (
             <section className="auth-section">
               {resetToken ? (
                 <>
@@ -149,6 +171,7 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
                   <p className="muted">{uiText(language, "auth.reset_request_subtitle")}</p>
                   <form action={forgotPasswordAction} className="grid auth-form">
                     <input type="hidden" name="auth_mode" value="forgot" />
+                    <input type="hidden" name="portal" value={portal} />
                     <input type="hidden" name="purchase_context" value={purchaseContext} />
                     <input type="hidden" name="return_to" value={returnTo} />
                     <input type="hidden" name="lang" value={language} />
@@ -166,7 +189,7 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
             </section>
           ) : null}
 
-          {mode === "signup" ? (
+          {displayedMode === "signup" ? (
             <section className="auth-section">
               <h2>{uiText(language, "auth.signup_title")}</h2>
               <p className="muted">{uiText(language, "auth.signup_subtitle")}</p>
@@ -179,6 +202,7 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
 
               <form action={registerAction} className="grid auth-form" encType="multipart/form-data">
                 <input type="hidden" name="auth_mode" value="signup" />
+                <input type="hidden" name="portal" value={portal} />
                 <input type="hidden" name="purchase_context" value={purchaseContext} />
                 <input type="hidden" name="return_to" value={returnTo} />
                 <input type="hidden" name="lang" value={language} />

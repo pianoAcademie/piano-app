@@ -1360,12 +1360,14 @@ export async function loginAction(formData: FormData): Promise<void> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const password = String(formData.get("password") ?? "");
   const mode = String(formData.get("auth_mode") ?? "login").trim().toLowerCase() || "login";
+  const portal = String(formData.get("portal") ?? "").trim().toLowerCase();
+  const portalQuery = portal === "prof" || portal === "teacher" ? "&portal=prof" : "";
   const purchaseContext = String(formData.get("purchase_context") ?? "").trim();
   const publicReturnTo = safePublicReturnPath(String(formData.get("return_to") ?? "").trim(), "");
   const language = normalizeUiLanguage(String(formData.get("lang") ?? ""));
   const registrationSubjectTypeRaw = String(formData.get("registration_subject_type") ?? "self").trim().toLowerCase();
   const registrationSubjectType = registrationSubjectTypeRaw === "child" ? "child" : "self";
-  const loginPathBase = `/login?mode=${encodeURIComponent(mode)}${email ? `&email=${encodeURIComponent(email)}` : ""}${
+  const loginPathBase = `/login?mode=${encodeURIComponent(mode)}${portalQuery}${email ? `&email=${encodeURIComponent(email)}` : ""}${
     purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
   }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}&registration_subject_type=${encodeURIComponent(
     registrationSubjectType,
@@ -1571,10 +1573,12 @@ export async function registerAction(formData: FormData): Promise<void> {
 
 export async function forgotPasswordAction(formData: FormData): Promise<void> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const portal = String(formData.get("portal") ?? "").trim().toLowerCase();
+  const portalQuery = portal === "prof" || portal === "teacher" ? "&portal=prof" : "";
   const purchaseContext = String(formData.get("purchase_context") ?? "").trim();
   const publicReturnTo = safePublicReturnPath(String(formData.get("return_to") ?? "").trim(), "");
   const language = normalizeUiLanguage(String(formData.get("lang") ?? ""));
-  const forgotPathBase = `/login?mode=forgot${email ? `&email=${encodeURIComponent(email)}` : ""}${
+  const forgotPathBase = `/login?mode=forgot${portalQuery}${email ? `&email=${encodeURIComponent(email)}` : ""}${
     purchaseContext ? `&purchase_context=${encodeURIComponent(purchaseContext)}` : ""
   }${publicReturnTo ? `&return_to=${encodeURIComponent(publicReturnTo)}` : ""}${language === "en" ? "&lang=en" : ""}`;
   if (!email) {
