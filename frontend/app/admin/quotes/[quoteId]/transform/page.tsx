@@ -10,7 +10,6 @@ import {
 import { backendRequest } from "../../../../../lib/backend";
 import {
   coerceQuoteToEnrollmentDraft,
-  deriveActivityLocationIdById,
   quoteTransformFinancialAdjustmentFromMeta,
   readObject,
   type QuoteTransformActivityCatalog,
@@ -319,16 +318,10 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
       .map((line) => line.activity_id)
       .filter((activityId): activityId is string => Boolean(activityId)),
   ));
-  const activityLocationIdById = deriveActivityLocationIdById(detail.quote.calendar_snapshot || {});
-
   const sessionsPerActivity = await Promise.all(
     activityIds.map(async (activityId) => {
       const query = new URLSearchParams();
       query.set("course_type_id", activityId);
-      const activityLocationId = activityLocationIdById.get(activityId) || detail.quote.location_id;
-      if (activityLocationId) {
-        query.set("location_id", activityLocationId);
-      }
       const path = `/api/v1/admin/sessions?${query.toString()}`;
       const result = await backendRequest<AdminSessionOut[]>(path, {}, token);
       return {
@@ -431,6 +424,7 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
         id: session.id,
         courseTypeId: session.course_type_id,
         locationId: session.location_id,
+        locationName: session.location_label,
         title: session.title,
         startAtUtc: session.start_at_utc,
         endAtUtc: session.end_at_utc,

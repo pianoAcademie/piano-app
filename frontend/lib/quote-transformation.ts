@@ -134,6 +134,7 @@ export type QuoteTransformSession = {
   id: string;
   courseTypeId: string;
   locationId: string;
+  locationName: string | null;
   title: string;
   startAtUtc: string;
   endAtUtc: string;
@@ -867,6 +868,81 @@ function sessionContainsHintTime(session: QuoteTransformSession, hint: QuoteSche
   return sessionStart <= hintStart && hintEnd <= sessionEnd;
 }
 
+type LocationGroup = "bar_le_duc" | "online" | "paris" | "paris_pompe" | "paris_scheffer" | "unknown";
+
+function locationGroup(value: string | null | undefined): LocationGroup {
+  const normalized = normalizeText(value).replace(/['’]/g, " ");
+  if (!normalized) {
+    return "unknown";
+  }
+  if (
+    normalized.includes("bar-le-duc")
+    || normalized.includes("bar le duc")
+    || normalized.includes("barleduc")
+  ) {
+    return "bar_le_duc";
+  }
+  if (
+    normalized.includes("en ligne")
+    || normalized.includes("online")
+    || normalized.includes("zoom")
+    || normalized.includes("service administration")
+  ) {
+    return "online";
+  }
+  if (normalized.includes("pompe")) {
+    return "paris_pompe";
+  }
+  if (normalized.includes("scheffer")) {
+    return "paris_scheffer";
+  }
+  if (
+    normalized.includes("paris")
+    || normalized.includes("richelieu")
+    || normalized.includes("opera")
+  ) {
+    return "paris";
+  }
+  return "unknown";
+}
+
+function isParisLocationGroup(group: LocationGroup): boolean {
+  return group === "paris" || group === "paris_pompe" || group === "paris_scheffer";
+}
+
+function isLocationCompatible(
+  session: QuoteTransformSession,
+  expectedLocationId: string | null,
+  expectedLocationName: string,
+): boolean {
+  if (expectedLocationId && session.locationId === expectedLocationId) {
+    return true;
+  }
+
+  const expectedGroup = locationGroup(expectedLocationName);
+  if (expectedGroup === "unknown") {
+    return !expectedLocationId;
+  }
+
+  const sessionGroup = locationGroup(session.locationName);
+  if (expectedGroup === "bar_le_duc") {
+    return sessionGroup === "bar_le_duc";
+  }
+  if (expectedGroup === "online") {
+    return sessionGroup === "online";
+  }
+  if (expectedGroup === "paris_pompe") {
+    return sessionGroup === "paris_pompe" || sessionGroup === "paris_scheffer";
+  }
+  if (expectedGroup === "paris_scheffer") {
+    return sessionGroup === "paris_scheffer" || sessionGroup === "paris_pompe";
+  }
+  if (expectedGroup === "paris") {
+    return isParisLocationGroup(sessionGroup);
+  }
+  return false;
+}
+
 function matchScore(
   session: QuoteTransformSession,
   hint: QuoteScheduleHint | null,
@@ -982,12 +1058,13 @@ export function buildSessionMatches(
 ): SessionMatchOption[] {
   const hint = hintsByActivityId.get(activityRow.scheduleKey) ?? hintsByActivityId.get(activityRow.activityId) ?? null;
   const selectionModeRef: { value: "exact_date_time" | "exact_date" | "nearest_date_time" | "nearest_date" | "all" } = { value: "all" };
+  const locationScopedSessions = sessions.filter((session) => isLocationCompatible(session, expectedLocationId, activityRow.locationName));
   const scopedSessions = (() => {
     if (!hint || !hint.startDate) {
-      return sessions;
+      return locationScopedSessions;
     }
 
-    const sessionsWithParts = sessions.map((session) => ({
+    const sessionsWithParts = locationScopedSessions.map((session) => ({
       session,
       local: isoPartsInTimezone(session.startAtUtc, session.timezone),
     }));
@@ -1060,7 +1137,7 @@ export function buildSessionMatches(
       return nearestAnyTime.map((item) => item.session);
     }
 
-    return sessions;
+    return locationScopedSessions;
   })();
 
   const options = scopedSessions

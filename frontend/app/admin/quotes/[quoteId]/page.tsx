@@ -2692,6 +2692,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
         id: session.id,
         courseTypeId: session.course_type_id,
         locationId: session.location_id,
+        locationName: session.location_label,
         title: session.title,
         startAtUtc: session.start_at_utc,
         endAtUtc: session.end_at_utc,
