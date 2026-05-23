@@ -1,5 +1,7 @@
 welcome-to-docker/
 .venv/
+frontend/node_modules/
+frontend/.next/
 
 .DS_Store
 **/.DS_Store

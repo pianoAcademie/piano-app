@@ -61,6 +61,22 @@ Etat actuel: la configuration Capacitor, les dependances et le dossier natif `fr
 
 Un manifeste de confidentialite natif est present dans `frontend/ios/App/App/PrivacyInfo.xcprivacy`. Il declare uniquement la couche native iOS: pas de tracking natif, pas de domaine de tracking natif, pas de collecte native. Les donnees collectees par le portail web doivent toujours etre renseignees dans les labels App Store Connect et rester coherentes avec la politique de confidentialite publique.
 
+Le workspace CocoaPods est initialise:
+
+- `frontend/ios/App/App.xcworkspace`
+- `frontend/ios/App/Podfile.lock`
+
+Pour regenerer les Pods localement:
+
+```bash
+cd frontend
+npm ci
+cd ios/App
+pod install
+```
+
+Sur cette machine, CocoaPods est disponible via l'installation Ruby utilisateur (`~/.gem/ruby/2.6.0/bin`). La compilation Xcode en ligne de commande reste bloquee tant que le composant plateforme iOS n'est pas installe/active dans Xcode (`Xcode > Settings > Components`).
+
 ## Separation des deux apps iOS
 
 Capacitor genere un projet iOS de base. Pour TestFlight, il faut ensuite creer deux apps distinctes dans Xcode:
