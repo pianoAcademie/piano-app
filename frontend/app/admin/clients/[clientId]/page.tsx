@@ -901,6 +901,19 @@ type InvoiceListRow =
       modeLabel: string;
       label: string;
       status: string;
+      issuedDate: string;
+      startDate: string;
+      endDate: string;
+      dueDate: string;
+      noDueDate: boolean;
+      layout: "DETAILED" | "COMPILED";
+      groupAdjustmentsByType: boolean;
+      includeDiscountAdjustments: boolean;
+      includeSupplementAdjustments: boolean;
+      includePending: boolean;
+      includeCancelled: boolean;
+      publicNote: string | null;
+      privateNote: string | null;
       emailedAt: string | null;
       remindedAt: string | null;
       totalLabel: string;
@@ -2406,6 +2419,19 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           : ""
       }`,
       status: row.invoice_status,
+      issuedDate: row.issued_date,
+      startDate: row.start_date,
+      endDate: row.end_date,
+      dueDate: row.due_date,
+      noDueDate: row.no_due_date,
+      layout: row.layout,
+      groupAdjustmentsByType: row.group_adjustments_by_type,
+      includeDiscountAdjustments: row.include_discount_adjustments,
+      includeSupplementAdjustments: row.include_supplement_adjustments,
+      includePending: row.include_pending,
+      includeCancelled: row.include_cancelled,
+      publicNote: row.public_note,
+      privateNote: row.private_note,
       emailedAt: row.emailed_at ?? null,
       remindedAt: row.reminded_at ?? null,
       totalLabel: rangeInvoiceTotalLabel(
@@ -2781,6 +2807,25 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     }
     return invoicesHref(client.id, params);
   };
+  const reissueRangeInvoiceHref = (row: RangeInvoiceListRow): string => invoicesHref(client.id, {
+    payment_modal: "invoice_range",
+    payment_return_tab: "factures",
+    invoice_step: "1",
+    generation_mode: "MANUAL",
+    issued_date: todayInputValue,
+    start_date: row.startDate,
+    end_date: row.endDate,
+    due_date: row.noDueDate ? todayInputValue : dueDateInputValue,
+    no_due_date: row.noDueDate ? "true" : "false",
+    include_pending: row.includePending ? "true" : "false",
+    include_cancelled: row.includeCancelled ? "true" : "false",
+    layout: row.layout,
+    group_adjustments_by_type: row.groupAdjustmentsByType ? "true" : "false",
+    include_discount_adjustments: row.includeDiscountAdjustments ? "true" : "false",
+    include_supplement_adjustments: row.includeSupplementAdjustments ? "true" : "false",
+    public_note: row.publicNote ?? "",
+    private_note: row.privateNote ?? "",
+  });
   const invoiceWizardBackToStepOneHref = (() => {
     const params: Record<string, string> = {
       payment_modal: "invoice_range",
@@ -5376,6 +5421,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                 title={t("admin.client_detail.send_invoice_reminder")}
                               >
                                 R
+                              </Link>
+                              <Link
+                                className="client-action-icon"
+                                href={reissueRangeInvoiceHref(row)}
+                                title="Refaire cette facture avec une nouvelle date"
+                              >
+                                ⧉
                               </Link>
                               {row.status !== "PAID" ? (
                                 <form action={updateAdminClientRangeInvoiceStatusAction}>
