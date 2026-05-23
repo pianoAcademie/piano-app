@@ -10065,8 +10065,14 @@ def send_admin_client_range_invoice_email(
     attachment_file_name = f"{str(metadata.get('invoice_number') or 'facture')}.pdf".replace('"', "")
 
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
+    actor_label = _display_name(actor.first_name, actor.last_name, actor.email)
+    client_recipient_emails = {
+        email.casefold()
+        for email in _normalize_email_recipients([client.email, billing_profile.email])
+    }
     message_ids: list[str] = []
     for recipient in recipients:
+        recipient_user_id = client.id if recipient.casefold() in client_recipient_emails else None
         message_ids.append(
             send_email(
                 to_email=recipient,
@@ -10079,6 +10085,11 @@ def send_admin_client_range_invoice_email(
                 reply_to=sender.reply_to,
                 subject_prefix=sender.subject_prefix,
                 attachments=[(attachment_file_name, pdf_content, "application/pdf")],
+                sender_user_id=actor.id,
+                sender_label=actor_label,
+                sender_category=CommunicationSenderCategory.OTHER_USER,
+                recipient_user_id=recipient_user_id,
+                communication_type=COMMUNICATION_TYPE_OPERATIONAL,
             )
         )
     message_id = message_ids[0] if message_ids else None

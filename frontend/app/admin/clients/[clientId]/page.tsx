@@ -1050,6 +1050,38 @@ function rangeInvoiceTotalLabel(totalsByCurrency: Record<string, string>, langua
     .join(" | ");
 }
 
+function rangeInvoiceNoteSummary(note: AdminClientNoteOut, language: UiLanguage = "fr"): string | null {
+  const payload = parseRangeInvoiceNote(note);
+  if (!payload) {
+    return null;
+  }
+  return [
+    payload.invoice_number ? `Facture ${payload.invoice_number}` : "Facture",
+    `${formatDateInputLabel(payload.start_date, language)} - ${formatDateInputLabel(payload.end_date, language)}`,
+    `emise le ${formatDateInputLabel(payload.issued_date, language)}`,
+    payload.no_due_date ? "sans echeance" : `echeance ${formatDateInputLabel(payload.due_date, language)}`,
+    rangeInvoiceStatusLabel(payload.invoice_status, language),
+  ].join(" | ");
+}
+
+function rangeInvoiceNoteDetails(note: AdminClientNoteOut, language: UiLanguage = "fr"): Array<{ label: string; value: string }> | null {
+  const payload = parseRangeInvoiceNote(note);
+  if (!payload) {
+    return null;
+  }
+  const totalMap = Object.keys(payload.total_to_pay_by_currency || {}).length > 0
+    ? payload.total_to_pay_by_currency || {}
+    : payload.totals_by_currency;
+  return [
+    { label: "Numero", value: payload.invoice_number || "-" },
+    { label: "Periode", value: `${formatDateInputLabel(payload.start_date, language)} - ${formatDateInputLabel(payload.end_date, language)}` },
+    { label: "Date d'emission", value: formatDateInputLabel(payload.issued_date, language) },
+    { label: "Echeance", value: payload.no_due_date ? "Sans echeance" : formatDateInputLabel(payload.due_date, language) },
+    { label: "Statut", value: rangeInvoiceStatusLabel(payload.invoice_status, language) },
+    { label: "Montant", value: rangeInvoiceTotalLabel(totalMap, language) },
+  ];
+}
+
 function rangeInvoicePdfHref(clientId: string, noteId: string, inline = false): string {
   const params = new URLSearchParams({
     inline: inline ? "true" : "false",
@@ -2089,6 +2121,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
   const openNoteViewModal = currentTab === "fiche" && noteModalAction === "view" && noteModalId.length > 0;
   const selectedNoteForView = openNoteViewModal ? notes.find((row) => row.id === noteModalId) ?? null : null;
+  const selectedNoteInvoiceDetails = selectedNoteForView ? rangeInvoiceNoteDetails(selectedNoteForView, language) : null;
 
   const normalizedPurchaseType = purchaseType === "PRODUCT" ? "PRODUCT" : "FORMULA";
   const selectedFormulaForPurchase = purchasePlanId ? formulas.find((formula) => formula.id === purchasePlanId) ?? null : null;
@@ -3286,7 +3319,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         <td>{formatDateUi(row.created_at)}</td>
                         <td>{row.entry_type}</td>
                         <td>{row.author_display_name}</td>
-                        <td title={row.message}>{truncatePreview(row.message, 100)}</td>
+                        <td title={rangeInvoiceNoteSummary(row, language) || row.message}>
+                          {rangeInvoiceNoteSummary(row, language) || truncatePreview(row.message, 100)}
+                        </td>
                         <td>
                           <Link
                             className="client-action-icon"
@@ -3327,7 +3362,22 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <p className="muted">
               {formatDateUi(selectedNoteForView.created_at)} | {selectedNoteForView.entry_type} | {selectedNoteForView.author_display_name}
             </p>
-            <textarea readOnly rows={12} value={selectedNoteForView.message} />
+            {selectedNoteInvoiceDetails ? (
+              <div className="item top-gap-sm">
+                <strong>Facture generee</strong>
+                <dl className="invoice-note-details">
+                  {selectedNoteInvoiceDetails.map((item) => (
+                    <div key={item.label}>
+                      <dt>{item.label}</dt>
+                      <dd>{item.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+                <p className="muted">Le contenu exact des emails envoyes est disponible dans l'onglet Messages.</p>
+              </div>
+            ) : (
+              <textarea readOnly rows={12} value={selectedNoteForView.message} />
+            )}
             <div className="row modal-actions-end top-gap-sm">
               <Link className="reset-link" href={tabHref(client.id, "fiche")}>
                 {t("admin.client_detail.close")}

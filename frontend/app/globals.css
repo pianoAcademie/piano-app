@@ -1994,6 +1994,28 @@ button.danger:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.invoice-note-details {
+  margin: 8px 0 0;
+  display: grid;
+  gap: 8px;
+}
+
+.invoice-note-details div {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.35fr) 1fr;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.invoice-note-details dt {
+  color: #5e6875;
+  font-weight: 700;
+}
+
+.invoice-note-details dd {
+  margin: 0;
+}
+
 .message-detail-modal {
   width: min(780px, 95vw);
   padding: 0;
