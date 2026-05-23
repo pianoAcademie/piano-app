@@ -3,9 +3,11 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import {
+  approveAdminClientBillingAdjustmentAction,
   cancelAdminClientInvoiceAction,
   createAdultForChildAction,
   createAdminClientNoteAction,
+  createAdminClientQuoteChangeAction,
   createChildForAdultAction,
   adminFinalizeClientPurchaseAction,
   adminClientActionPlaceholder,
@@ -19,6 +21,7 @@ import {
   updateAdminClientManualTransactionAction,
   updateAdminClientManualTransactionStatusAction,
   deleteAdminClientManualTransactionAction,
+  dismissAdminClientBillingAdjustmentAction,
   generateAdminClientBookingFinalInvoiceAction,
   refundAdminClientPaymentAction,
   refundAdminClientPaymentReceiptAction,
@@ -62,6 +65,7 @@ import type {
   AdminClientNoteOut,
   AdminClientOut,
   AdminClientPaymentOut,
+  AdminStudentQuoteChangeOut,
   AdminConfigAccountOut,
   AdminFormulaOut,
   AdminLegalEntityOut,
@@ -83,7 +87,15 @@ type PageProps = {
   searchParams: SearchParams;
 };
 
-type ClientTab = "fiche" | "infos" | "famille" | "messages" | "paiements" | "factures" | "reservations";
+type ClientTab = "fiche" | "infos" | "famille" | "messages" | "paiements" | "factures" | "reservations" | "changements";
+type ApprovedQuoteOption = {
+  id: string;
+  quote_number: string;
+  total_ttc: string;
+  currency: string;
+  approved_at: string | null;
+  school_year_label: string | null;
+};
 type BookingWorkflowTone = "status-ok" | "status-warn" | "status-off" | "status-info" | "status-cancelled";
 type BookingWorkflowStep = {
   label: string;
@@ -156,7 +168,7 @@ function cloneSearchParams(params: SearchParams): URLSearchParams {
 }
 
 function parseTab(value: string): ClientTab {
-  if (value === "infos" || value === "famille" || value === "messages" || value === "paiements" || value === "factures" || value === "reservations") {
+  if (value === "infos" || value === "famille" || value === "messages" || value === "paiements" || value === "factures" || value === "reservations" || value === "changements") {
     return value;
   }
   return "fiche";
@@ -1066,6 +1078,69 @@ function rangeInvoiceStatusClass(status: string): string {
   return "status-warn";
 }
 
+function quoteChangeTypeLabel(type: string): string {
+  const normalized = (type || "").trim().toUpperCase();
+  if (normalized === "SLOT_CHANGE") return "Changement de creneau";
+  if (normalized === "COURSE_CANCELLED") return "Cours annule";
+  if (normalized === "COURSE_ADDED") return "Cours ajoute";
+  if (normalized === "COURSE_REMOVED") return "Cours supprime";
+  if (normalized === "FORMULA_CHANGE") return "Changement de formule";
+  if (normalized === "EXCEPTIONAL_ADJUSTMENT") return "Ajustement exceptionnel";
+  return "Autre changement";
+}
+
+function billingActionLabel(action: string): string {
+  const normalized = (action || "").trim().toUpperCase();
+  if (normalized === "TO_INVOICE") return "A facturer";
+  if (normalized === "TO_CREDIT") return "Avoir a preparer";
+  if (normalized === "MANUAL_REVIEW") return "A verifier";
+  return "Sans impact";
+}
+
+function adjustmentStatusClass(status: string): string {
+  const normalized = (status || "").trim().toUpperCase();
+  if (normalized === "CONVERTED") return "status-ok";
+  if (normalized === "DISMISSED") return "status-off";
+  return "status-warn";
+}
+
+function snapshotText(value: Record<string, unknown>): string {
+  const rawText = value.text;
+  if (typeof rawText === "string" && rawText.trim()) {
+    return rawText.trim();
+  }
+  return "-";
+}
+
+function buildQuoteChangesRecap(
+  changes: AdminStudentQuoteChangeOut[],
+  clientName: string,
+  language: UiLanguage,
+): string {
+  if (changes.length === 0) {
+    return "";
+  }
+  const lines = [
+    `Recapitulatif des changements - ${clientName}`,
+    "",
+    "Reference: les factures emises restent figees. Les lignes ci-dessous retracent les changements intervenus depuis le dernier document de facturation.",
+    "",
+  ];
+  for (const change of changes) {
+    lines.push(`- ${formatDate(change.created_at, language)} | ${change.student_display_name ?? clientName}`);
+    lines.push(`  Origine: ${change.quote_number ? `devis ${change.quote_number}` : "changement manuel"}`);
+    lines.push(`  Changement: ${quoteChangeTypeLabel(change.change_type)} - ${change.title}`);
+    lines.push(`  Avant: ${snapshotText(change.before_snapshot)}`);
+    lines.push(`  Apres: ${snapshotText(change.after_snapshot)}`);
+    lines.push(`  Impact: ${formatMoney(change.financial_impact_ttc ?? "0", change.currency, language)} (${billingActionLabel(change.billing_action)})`);
+    if (change.client_visible_note) {
+      lines.push(`  Note: ${change.client_visible_note}`);
+    }
+    lines.push("");
+  }
+  return lines.join("\n").trim();
+}
+
 function shortContractRef(value: string): string {
   const head = value.split("-")[0] ?? value;
   return `#${head}`;
@@ -1411,6 +1486,7 @@ function clientDetailTabLabel(tab: ClientTab, language: UiLanguage): string {
   if (tab === "paiements") return uiText(language, "admin.client_detail.tab_account");
   if (tab === "factures") return uiText(language, "admin.client_detail.tab_invoices");
   if (tab === "reservations") return uiText(language, "admin.client_detail.tab_bookings");
+  if (tab === "changements") return "Changements";
   return uiText(language, "admin.client_detail.tab_sheet");
 }
 
@@ -1544,6 +1620,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const invoiceNoteId = readParam(searchParams, "invoice_note_id");
   const invoiceEmailKindRaw = readParam(searchParams, "invoice_email_kind").toUpperCase();
   const invoiceEmailKind = invoiceEmailKindRaw === "REMINDER" ? "REMINDER" : "INVOICE";
+  const includeInvoiceChangeSummary = readParam(searchParams, "include_change_summary") === "1";
+  const referenceInvoiceNoteId = readParam(searchParams, "reference_invoice_note_id");
   const paymentReturnTabRaw = readParam(searchParams, "payment_return_tab");
   const cancelConflictAlert = readParam(searchParams, "cancel_conflict") === "1";
   const purchaseModalAction = readParam(searchParams, "purchase_modal");
@@ -1592,6 +1670,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     groupsResult,
     manualCreditsResult,
     notesResult,
+    quoteChangesResult,
+    approvedQuotesResult,
   ] = await Promise.all([
     backendRequest<UserOut>("/api/v1/auth/me", {}, token),
     backendRequest<AdminConfigAccountOut>("/api/v1/admin/config/account", {}, token),
@@ -1612,6 +1692,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     backendRequest<AdminClientGroupOut[]>("/api/v1/admin/clients/groups?include_inactive=false", {}, token),
     backendRequest<AdminClientManualCreditOut[]>(`/api/v1/admin/clients/${params.clientId}/manual-credits`, {}, token),
     backendRequest<AdminClientNoteOut[]>(`/api/v1/admin/clients/${params.clientId}/notes`, {}, token),
+    backendRequest<AdminStudentQuoteChangeOut[]>(`/api/v1/admin/clients/${params.clientId}/quote-changes`, {}, token),
+    backendRequest<ApprovedQuoteOption[]>(`/api/v1/admin/clients/${params.clientId}/approved-quotes`, {}, token),
   ]);
 
   const language = meResult.ok ? normalizeUiLanguage(meResult.data.preferred_language) : "fr";
@@ -1839,6 +1921,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         return [] as AdminClientNoteOut[];
       })();
 
+  const quoteChanges = quoteChangesResult.ok
+    ? quoteChangesResult.data
+    : (() => {
+        errors.push(`quote_changes: ${quoteChangesResult.message}`);
+        return [] as AdminStudentQuoteChangeOut[];
+      })();
+
+  const approvedQuotes = approvedQuotesResult.ok
+    ? approvedQuotesResult.data
+    : (() => {
+        errors.push(`approved_quotes: ${approvedQuotesResult.message}`);
+        return [] as ApprovedQuoteOption[];
+      })();
+
   const messageRecipientOptions = (() => {
     const byEmail = new Map<string, { email: string; label: string }>();
     const addOption = (emailRaw: string | null | undefined, firstName?: string | null, lastName?: string | null) => {
@@ -1885,6 +1981,33 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     }
     return null;
   })();
+
+  const quoteChangeStudentOptions = (() => {
+    const byId = new Map<string, { id: string; label: string }>();
+    const addUser = (user: { id: string; first_name: string | null; last_name: string | null; email: string | null }) => {
+      if (!user.id || byId.has(user.id)) {
+        return;
+      }
+      byId.set(user.id, {
+        id: user.id,
+        label: contactDisplayLabel(user.first_name, user.last_name, user.email || user.id),
+      });
+    };
+    addUser(client);
+    for (const link of family.links_as_adult) {
+      addUser(link.child);
+    }
+    for (const link of family.links_as_child) {
+      addUser(link.child);
+    }
+    return Array.from(byId.values()).sort((a, b) => a.label.localeCompare(b.label, sortLocale));
+  })();
+
+  const readyBillingAdjustmentsCount = quoteChanges.reduce(
+    (count, change) => count + change.billing_adjustments.filter((adjustment) => adjustment.status === "READY").length,
+    0,
+  );
+  const quoteChangesRecap = buildQuoteChangesRecap(quoteChanges, fullName || client.email, language);
 
   const messageRows = messages
     .map((msg) => ({
@@ -2321,12 +2444,26 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     paymentModalAction === "invoice_email" && invoiceNoteId
       ? generatedRangeInvoices.find((row) => row.noteId === invoiceNoteId) ?? null
       : null;
+  const invoiceChangeSummaryReferenceOptions = selectedRangeInvoiceForModal
+    ? generatedRangeInvoices
+        .filter((row) => row.noteId !== selectedRangeInvoiceForModal.noteId && row.status !== "CANCELLED")
+        .filter((row) => Date.parse(row.occurredAt) <= Date.parse(selectedRangeInvoiceForModal.occurredAt))
+    : [];
+  const selectedReferenceInvoiceNoteId =
+    referenceInvoiceNoteId && invoiceChangeSummaryReferenceOptions.some((row) => row.noteId === referenceInvoiceNoteId)
+      ? referenceInvoiceNoteId
+      : invoiceChangeSummaryReferenceOptions[0]?.noteId ?? "";
   let invoiceEmailPreviewResult: unknown = null;
   if (paymentModalAction === "invoice_email" && selectedRangeInvoiceForModal) {
+    const invoiceEmailPreviewSearch = new URLSearchParams({
+        kind: invoiceEmailKind,
+        include_change_summary: includeInvoiceChangeSummary ? "true" : "false",
+    });
+    if (includeInvoiceChangeSummary && selectedReferenceInvoiceNoteId) {
+      invoiceEmailPreviewSearch.set("reference_invoice_note_id", selectedReferenceInvoiceNoteId);
+    }
     invoiceEmailPreviewResult = await backendRequest(
-      `/api/v1/admin/clients/${params.clientId}/invoices/range/${selectedRangeInvoiceForModal.noteId}/email/preview?kind=${encodeURIComponent(
-        invoiceEmailKind,
-      )}`,
+      `/api/v1/admin/clients/${params.clientId}/invoices/range/${selectedRangeInvoiceForModal.noteId}/email/preview?${invoiceEmailPreviewSearch.toString()}`,
       {},
       token,
     );
@@ -2476,6 +2613,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     { id: "paiements", label: clientDetailTabLabel("paiements", language) },
     { id: "factures", label: clientDetailTabLabel("factures", language) },
     { id: "reservations", label: clientDetailTabLabel("reservations", language) },
+    { id: "changements", label: clientDetailTabLabel("changements", language) },
   ];
 
   const manualTransactionTypeCodeByModal: Record<ManualTransactionModalType, "PAYMENT" | "REFUND" | "CHARGE" | "DISCOUNT"> = {
@@ -4923,6 +5061,210 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
         </section>
       ) : null}
 
+      {currentTab === "changements" ? (
+        <section className="admin-page-grid">
+          <article className="card">
+            <div className="row spread">
+              <div>
+                <h3>Changements de parcours</h3>
+                <p className="muted">Les devis et factures emis restent figes. Chaque changement est historise puis, si besoin, transforme en regularisation a valider.</p>
+              </div>
+              {readyBillingAdjustmentsCount > 0 ? (
+                <span className="badge">{readyBillingAdjustmentsCount} ajustement(s) a valider</span>
+              ) : null}
+            </div>
+
+            <form action={createAdminClientQuoteChangeAction} className="grid top-gap-sm">
+              <input type="hidden" name="client_id" value={client.id} />
+              <input type="hidden" name="currency" value={client.preferred_currency || "EUR"} />
+              <label>
+                Eleve
+                <select name="student_id" defaultValue={client.id}>
+                  {quoteChangeStudentOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Origine commerciale
+                <select name="quote_id" defaultValue="">
+                  <option value="">Non rattache</option>
+                  {approvedQuotes.map((quote) => (
+                    <option key={quote.id} value={quote.id}>
+                      {quote.quote_number} - {formatMoney(quote.total_ttc, quote.currency, language)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Type de changement
+                <select name="change_type" defaultValue="SLOT_CHANGE">
+                  <option value="SLOT_CHANGE">Changement de creneau</option>
+                  <option value="COURSE_CANCELLED">Cours annule</option>
+                  <option value="COURSE_ADDED">Cours ajoute</option>
+                  <option value="COURSE_REMOVED">Cours supprime</option>
+                  <option value="FORMULA_CHANGE">Changement de formule</option>
+                  <option value="EXCEPTIONAL_ADJUSTMENT">Ajustement exceptionnel</option>
+                  <option value="OTHER">Autre</option>
+                </select>
+              </label>
+              <label>
+                Date d'effet
+                <input type="date" name="effective_date" defaultValue={todayInputValue} />
+              </label>
+              <label>
+                Demandeur
+                <input type="text" name="requested_by" maxLength={120} placeholder="Parent, professeur, admin..." />
+              </label>
+              <label>
+                Impact TTC
+                <input type="number" name="financial_impact_ttc" step="0.01" placeholder="0.00" />
+              </label>
+              <label>
+                Action facturation
+                <select name="billing_action" defaultValue="NONE">
+                  <option value="NONE">Sans impact financier</option>
+                  <option value="TO_INVOICE">A facturer</option>
+                  <option value="TO_CREDIT">Avoir / deduction</option>
+                  <option value="MANUAL_REVIEW">A verifier</option>
+                </select>
+              </label>
+              <label>
+                TVA
+                <input type="number" name="vat_rate" step="0.001" min="0" max="100" defaultValue="20" />
+              </label>
+              <label>
+                Entite juridique
+                <select name="legal_entity_id" defaultValue={legalEntities[0]?.id ?? ""}>
+                  <option value="">A determiner</option>
+                  {legalEntities.map((entity) => (
+                    <option key={entity.id} value={entity.id}>
+                      {entity.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="span-2">
+                Titre
+                <input type="text" name="title" maxLength={255} required placeholder="Ex. Deplacement du cours de piano du mercredi au samedi" />
+              </label>
+              <label className="span-2">
+                Situation precedente
+                <textarea name="before_text" rows={2} maxLength={2000} placeholder="Ce qui etait prevu avant le changement ou dans la derniere facture" />
+              </label>
+              <label className="span-2">
+                Situation nouvelle
+                <textarea name="after_text" rows={2} maxLength={2000} placeholder="Ce qui est applique apres accord" />
+              </label>
+              <label className="span-2">
+                Note client
+                <textarea name="client_visible_note" rows={2} maxLength={4000} placeholder="Justification reutilisable sur un recapitulatif client" />
+              </label>
+              <label className="span-2">
+                Note interne
+                <textarea name="internal_note" rows={2} maxLength={4000} />
+              </label>
+              <div className="row modal-actions-end span-2">
+                <button type="submit">Tracer le changement</button>
+              </div>
+            </form>
+          </article>
+
+          {quoteChangesRecap ? (
+            <article className="card">
+              <h3>Recapitulatif client</h3>
+              <textarea className="code-textarea" rows={10} readOnly value={quoteChangesRecap} />
+            </article>
+          ) : null}
+
+          <article className="card">
+            <h3>Historique et facturation a valider</h3>
+            {quoteChanges.length === 0 ? (
+              <p className="muted">Aucun changement trace pour le moment.</p>
+            ) : (
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Eleve / devis</th>
+                      <th>Changement</th>
+                      <th>Avant / apres</th>
+                      <th>Impact</th>
+                      <th>Validation</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {quoteChanges.map((change) => (
+                      <tr key={change.id}>
+                        <td>{formatDate(change.created_at, language)}</td>
+                        <td>
+                          <strong>{change.student_display_name ?? fullName}</strong>
+                          <div className="muted">{change.quote_number ?? "Sans devis rattache"}</div>
+                        </td>
+                        <td>
+                          <span className="status-pill status-info">{quoteChangeTypeLabel(change.change_type)}</span>
+                          <div className="top-gap-xs">{change.title}</div>
+                          {change.client_visible_note ? <div className="muted">{change.client_visible_note}</div> : null}
+                        </td>
+                        <td>
+                          <div className="muted">Avant: {snapshotText(change.before_snapshot)}</div>
+                          <div>Apres: {snapshotText(change.after_snapshot)}</div>
+                        </td>
+                        <td>
+                          <strong>{formatMoney(change.financial_impact_ttc ?? "0", change.currency, language)}</strong>
+                          <div className="muted">{billingActionLabel(change.billing_action)}</div>
+                        </td>
+                        <td>
+                          {change.billing_adjustments.length === 0 ? (
+                            <span className="status-pill status-off">Aucun ajustement</span>
+                          ) : (
+                            <div className="stack-xs">
+                              {change.billing_adjustments.map((adjustment) => (
+                                <div key={adjustment.id} className="stack-xs">
+                                  <span className={`status-pill ${adjustmentStatusClass(adjustment.status)}`}>
+                                    {adjustment.status === "READY"
+                                      ? "A valider"
+                                      : adjustment.status === "CONVERTED"
+                                        ? "Ajoute aux lignes a facturer"
+                                        : "Ignore"}
+                                  </span>
+                                  <span>{formatMoney(adjustment.total_incl_vat, adjustment.currency, language)}</span>
+                                  {adjustment.status === "READY" ? (
+                                    <div className="row payment-row-actions">
+                                      <form action={approveAdminClientBillingAdjustmentAction}>
+                                        <input type="hidden" name="client_id" value={client.id} />
+                                        <input type="hidden" name="adjustment_id" value={adjustment.id} />
+                                        <button type="submit" className="client-action-icon" title="Ajouter aux lignes a facturer">
+                                          ✓
+                                        </button>
+                                      </form>
+                                      <form action={dismissAdminClientBillingAdjustmentAction}>
+                                        <input type="hidden" name="client_id" value={client.id} />
+                                        <input type="hidden" name="adjustment_id" value={adjustment.id} />
+                                        <button type="submit" className="client-action-icon danger" title="Ignorer cet ajustement">
+                                          ×
+                                        </button>
+                                      </form>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </article>
+        </section>
+      ) : null}
+
       {currentTab === "factures" ? (
         <section className="admin-page-grid">
           <article className="card">
@@ -6263,10 +6605,40 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <p className="muted">
               {t("admin.client_detail.invoice_email_help", { invoice: selectedRangeInvoiceForModal.invoiceNumber })}
             </p>
+            {includeInvoiceChangeSummary ? (
+              <form method="get" action={`/admin/clients/${client.id}`} className="grid top-gap-sm">
+                <input type="hidden" name="tab" value={paymentReturnTab} />
+                <input type="hidden" name="payment_modal" value="invoice_email" />
+                <input type="hidden" name="payment_return_tab" value={paymentReturnTab} />
+                <input type="hidden" name="invoice_note_id" value={selectedRangeInvoiceForModal.noteId} />
+                <input type="hidden" name="invoice_email_kind" value={invoiceEmailKind} />
+                <input type="hidden" name="include_change_summary" value="1" />
+                <label className="span-2">
+                  Facture de comparaison
+                  <select name="reference_invoice_note_id" defaultValue={selectedReferenceInvoiceNoteId}>
+                    {invoiceChangeSummaryReferenceOptions.length === 0 ? (
+                      <option value="">Aucune facture anterieure disponible</option>
+                    ) : null}
+                    {invoiceChangeSummaryReferenceOptions.map((row) => (
+                      <option key={row.noteId} value={row.noteId}>
+                        {row.invoiceNumber} | {formatDateOnlyNumeric(row.occurredAt)} | {invoiceStatusLabel(row.status, language)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="row modal-actions-end span-2">
+                  <button type="submit" className="secondary">
+                    Actualiser l'aperçu
+                  </button>
+                </div>
+              </form>
+            ) : null}
             <form action={sendAdminClientRangeInvoiceEmailAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
               <input type="hidden" name="note_id" value={selectedRangeInvoiceForModal.noteId} />
               <input type="hidden" name="return_tab" value={paymentReturnTab} />
+              <input type="hidden" name="include_change_summary" value={includeInvoiceChangeSummary ? "1" : "0"} />
+              <input type="hidden" name="reference_invoice_note_id" value={selectedReferenceInvoiceNoteId} />
               <label>
                 {t("admin.client_detail.invoice_send_type")}
                 <select name="kind" defaultValue={invoiceEmailKind}>
@@ -6274,6 +6646,33 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <option value="REMINDER">{t("admin.client_detail.invoice_send_type_reminder")}</option>
                 </select>
               </label>
+              <div className="span-2 row">
+                <Link
+                  className={`mode-link ${includeInvoiceChangeSummary ? "" : "active"}`}
+                  href={invoicesHref(client.id, {
+                    payment_modal: "invoice_email",
+                    payment_return_tab: paymentReturnTab,
+                    invoice_note_id: selectedRangeInvoiceForModal.noteId,
+                    invoice_email_kind: invoiceEmailKind,
+                    include_change_summary: "0",
+                  })}
+                >
+                  Mail standard
+                </Link>
+                <Link
+                  className={`mode-link ${includeInvoiceChangeSummary ? "active" : ""}`}
+                  href={invoicesHref(client.id, {
+                    payment_modal: "invoice_email",
+                    payment_return_tab: paymentReturnTab,
+                    invoice_note_id: selectedRangeInvoiceForModal.noteId,
+                    invoice_email_kind: invoiceEmailKind,
+                    include_change_summary: "1",
+                    reference_invoice_note_id: selectedReferenceInvoiceNoteId,
+                  })}
+                >
+                  Avec recapitulatif des changements
+                </Link>
+              </div>
               <label className="span-2">
                 {t("admin.client_detail.invoice_recipients_help")}
                 <textarea

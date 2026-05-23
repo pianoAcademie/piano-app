@@ -1238,6 +1238,115 @@ class AdminClientNoteCreateRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
 
 
+class AdminClientBillingAdjustmentOut(BaseModel):
+    id: UUID
+    client_id: UUID
+    student_id: UUID | None = None
+    change_id: UUID | None = None
+    quote_id: UUID | None = None
+    quote_number: str | None = None
+    status: Literal["READY", "DISMISSED", "CONVERTED"]
+    adjustment_type: Literal["INVOICE", "CREDIT_NOTE"]
+    label: str
+    description: str | None = None
+    amount_excl_vat: Decimal
+    vat_rate: Decimal
+    vat_amount: Decimal
+    total_incl_vat: Decimal
+    currency: str
+    legal_entity_id: UUID | None = None
+    converted_manual_transaction_id: UUID | None = None
+    dismissed_reason: str | None = None
+    decided_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminClientBillingAdjustmentQueueOut(AdminClientBillingAdjustmentOut):
+    client_display_name: str
+    student_display_name: str | None = None
+    change_title: str | None = None
+    change_type: str | None = None
+
+
+class AdminStudentQuoteChangeOut(BaseModel):
+    id: UUID
+    client_id: UUID
+    student_id: UUID | None = None
+    student_display_name: str | None = None
+    quote_id: UUID | None = None
+    quote_number: str | None = None
+    quote_line_id: UUID | None = None
+    change_type: Literal[
+        "SLOT_CHANGE",
+        "COURSE_CANCELLED",
+        "COURSE_ADDED",
+        "COURSE_REMOVED",
+        "FORMULA_CHANGE",
+        "EXCEPTIONAL_ADJUSTMENT",
+        "OTHER",
+    ]
+    status: Literal["DRAFT", "VALIDATED", "CANCELLED"]
+    requested_by: str | None = None
+    requested_at: datetime
+    effective_date: date | None = None
+    title: str
+    description: str | None = None
+    before_snapshot: dict[str, object] = Field(default_factory=dict)
+    after_snapshot: dict[str, object] = Field(default_factory=dict)
+    financial_impact_ttc: Decimal | None = None
+    currency: str
+    billing_action: Literal["NONE", "TO_INVOICE", "TO_CREDIT", "MANUAL_REVIEW"]
+    client_visible_note: str | None = None
+    internal_note: str | None = None
+    billing_adjustments: list[AdminClientBillingAdjustmentOut] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminStudentQuoteChangeCreateRequest(BaseModel):
+    student_id: UUID | None = None
+    quote_id: UUID | None = None
+    quote_line_id: UUID | None = None
+    change_type: Literal[
+        "SLOT_CHANGE",
+        "COURSE_CANCELLED",
+        "COURSE_ADDED",
+        "COURSE_REMOVED",
+        "FORMULA_CHANGE",
+        "EXCEPTIONAL_ADJUSTMENT",
+        "OTHER",
+    ] = "OTHER"
+    status: Literal["DRAFT", "VALIDATED"] = "VALIDATED"
+    requested_by: str | None = Field(default=None, max_length=120)
+    requested_at: datetime | None = None
+    effective_date: date | None = None
+    title: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=4000)
+    before_snapshot: dict[str, object] = Field(default_factory=dict)
+    after_snapshot: dict[str, object] = Field(default_factory=dict)
+    financial_impact_ttc: Decimal | None = None
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    billing_action: Literal["NONE", "TO_INVOICE", "TO_CREDIT", "MANUAL_REVIEW"] = "NONE"
+    vat_rate: Decimal = Field(default=Decimal("20.000"), ge=Decimal("0"), le=Decimal("100"))
+    legal_entity_id: UUID | None = None
+    client_visible_note: str | None = Field(default=None, max_length=4000)
+    internal_note: str | None = Field(default=None, max_length=4000)
+
+
+class AdminClientBillingAdjustmentDecisionRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class AdminClientQuoteReferenceOut(BaseModel):
+    id: UUID
+    quote_number: str
+    total_ttc: Decimal
+    currency: str
+    approved_at: datetime | None = None
+    school_year_label: str | None = None
+
+
 class AdminRangeInvoiceCreateRequest(BaseModel):
     issued_date: date
     start_date: date
@@ -1353,6 +1462,8 @@ class AdminRangeInvoiceEmailRequest(BaseModel):
     subject: str | None = Field(default=None, max_length=255)
     body: str | None = Field(default=None, max_length=20000)
     body_format: Literal["TEXT", "HTML"] = "TEXT"
+    include_change_summary: bool = False
+    reference_invoice_note_id: UUID | None = None
 
 
 class AdminRangeInvoiceEmailOut(BaseModel):

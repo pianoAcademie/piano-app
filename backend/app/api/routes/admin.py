@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from calendar import monthrange
 from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal
 import json
 import logging
 import re
@@ -41,6 +42,7 @@ from app.models.catalog import (
     SessionStatus,
 )
 from app.models.family import ClientFamilyLink
+from app.models.client_record import ClientBillingAdjustment, StudentQuoteChange
 from app.models.ops import (
     AppSetting,
     CommunicationChannel,
@@ -106,6 +108,7 @@ from app.schemas.admin import (
     AdminPlanningReorganizationOut,
     AdminPlanningReorganizationSessionOut,
     AdminPlanningSettingsUpdateRequest,
+    AdminClientBillingAdjustmentQueueOut,
     AdminProfessorOut,
     AdminSessionBookingCreateRequest,
     AdminSessionBookingAttendanceUpdateRequest,
@@ -182,6 +185,85 @@ PHONE_CLEAN_RE = re.compile(r"[^\d+]+")
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _billing_adjustment_display_name(first_name: str | None, last_name: str | None, email: str | None) -> str:
+    full_name = f"{(first_name or '').strip()} {(last_name or '').strip()}".strip()
+    return full_name or (email or "")
+
+
+def _billing_adjustment_money(value: Decimal | float | int | str) -> Decimal:
+    return Decimal(value).quantize(Decimal("0.01"))
+
+
+def _billing_adjustment_currency(value: str | None, fallback: str = "EUR") -> str:
+    normalized = (value or fallback or "EUR").strip().upper()
+    return normalized[:3] if len(normalized) >= 3 else fallback
+
+
+@router.get("/billing-adjustments", response_model=list[AdminClientBillingAdjustmentQueueOut])
+def list_admin_billing_adjustments(
+    status_filter: str | None = Query(default="READY", alias="status"),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_view_clients")),
+) -> list[AdminClientBillingAdjustmentQueueOut]:
+    normalized_status = (status_filter or "").strip().upper()
+    stmt = select(ClientBillingAdjustment)
+    if normalized_status:
+        stmt = stmt.where(ClientBillingAdjustment.status == normalized_status)
+    rows = db.scalars(stmt.order_by(ClientBillingAdjustment.created_at.desc()).limit(500)).all()
+    if not rows:
+        return []
+
+    user_ids = {row.user_id for row in rows}
+    user_ids.update(row.student_user_id for row in rows if row.student_user_id is not None)
+    users_by_id = {user.id: user for user in db.scalars(select(User).where(User.id.in_(user_ids))).all()}
+
+    quote_ids = {row.quote_id for row in rows if row.quote_id is not None}
+    quotes_by_id = {quote.id: quote for quote in db.scalars(select(Quote).where(Quote.id.in_(quote_ids))).all()} if quote_ids else {}
+
+    change_ids = {row.change_id for row in rows if row.change_id is not None}
+    changes_by_id = {
+        change.id: change
+        for change in db.scalars(select(StudentQuoteChange).where(StudentQuoteChange.id.in_(change_ids))).all()
+    } if change_ids else {}
+
+    out: list[AdminClientBillingAdjustmentQueueOut] = []
+    for row in rows:
+        client = users_by_id.get(row.user_id)
+        student = users_by_id.get(row.student_user_id) if row.student_user_id is not None else None
+        quote = quotes_by_id.get(row.quote_id) if row.quote_id is not None else None
+        change = changes_by_id.get(row.change_id) if row.change_id is not None else None
+        out.append(
+            AdminClientBillingAdjustmentQueueOut(
+                id=row.id,
+                client_id=row.user_id,
+                client_display_name=_billing_adjustment_display_name(client.first_name, client.last_name, client.email) if client is not None else str(row.user_id),
+                student_id=row.student_user_id,
+                student_display_name=_billing_adjustment_display_name(student.first_name, student.last_name, student.email) if student is not None else None,
+                change_id=row.change_id,
+                change_title=change.title if change is not None else None,
+                change_type=change.change_type if change is not None else None,
+                quote_id=row.quote_id,
+                quote_number=quote.quote_number if quote is not None else None,
+                status=(row.status or "READY").strip().upper(),
+                adjustment_type=(row.adjustment_type or "INVOICE").strip().upper(),
+                label=row.label,
+                description=row.description,
+                amount_excl_vat=_billing_adjustment_money(row.amount_excl_vat),
+                vat_rate=Decimal(row.vat_rate),
+                vat_amount=_billing_adjustment_money(row.vat_amount),
+                total_incl_vat=_billing_adjustment_money(row.total_incl_vat),
+                currency=_billing_adjustment_currency(row.currency),
+                legal_entity_id=row.legal_entity_id,
+                converted_manual_transaction_id=row.converted_manual_transaction_id,
+                dismissed_reason=row.dismissed_reason,
+                decided_at=row.decided_at,
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+            )
+        )
+    return out
 
 
 def _session_status_label(status: SessionStatus) -> str:

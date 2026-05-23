@@ -53,6 +53,7 @@ import type {
   AdminRangeInvoiceOut,
   AdminCheckDepositBulkUpdateOut,
   AdminClientPaymentOut,
+  AdminStudentQuoteChangeOut,
   AdminCreditTypeOut,
   AdminFormulaOut,
   AdminMessagingSettingsOut,
@@ -4902,6 +4903,141 @@ export async function createAdminClientNoteAction(formData: FormData): Promise<v
   redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "ok", t("admin.client_action.note_added")));
 }
 
+export async function createAdminClientQuoteChangeAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  if (!clientId) {
+    redirect("/admin/clients?error=Client%20invalide");
+  }
+
+  const impactRaw = String(formData.get("financial_impact_ttc") ?? "").trim().replace(",", ".");
+  const financialImpact = impactRaw ? parseSignedDecimal(impactRaw) : null;
+  const vatRateRaw = String(formData.get("vat_rate") ?? "20").trim().replace(",", ".");
+  const vatRate = parseNonNegativeDecimal(vatRateRaw);
+  const legalEntityIdRaw = String(formData.get("legal_entity_id") ?? "").trim();
+  const legalEntityId = legalEntityIdRaw ? parseUuid(legalEntityIdRaw) : null;
+  const effectiveDateRaw = String(formData.get("effective_date") ?? "").trim();
+
+  if (financialImpact === null && impactRaw) {
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=changements`, "error", "Montant d'ajustement invalide"));
+  }
+  if (vatRate === null || vatRate > 100) {
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=changements`, "error", "TVA invalide"));
+  }
+  if (legalEntityIdRaw && !legalEntityId) {
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=changements`, "error", "Entite juridique invalide"));
+  }
+  if (effectiveDateRaw && !/^\d{4}-\d{2}-\d{2}$/.test(effectiveDateRaw)) {
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=changements`, "error", "Date d'effet invalide"));
+  }
+
+  const result = await backendRequest<AdminStudentQuoteChangeOut>(
+    `/api/v1/admin/clients/${clientId}/quote-changes`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        student_id: optionalField(formData, "student_id"),
+        quote_id: optionalField(formData, "quote_id"),
+        change_type: String(formData.get("change_type") ?? "OTHER").trim().toUpperCase(),
+        status: "VALIDATED",
+        requested_by: optionalField(formData, "requested_by"),
+        effective_date: effectiveDateRaw || null,
+        title: String(formData.get("title") ?? "").trim(),
+        description: optionalField(formData, "description"),
+        before_snapshot: { text: optionalField(formData, "before_text") },
+        after_snapshot: { text: optionalField(formData, "after_text") },
+        financial_impact_ttc: financialImpact,
+        currency: optionalField(formData, "currency"),
+        billing_action: String(formData.get("billing_action") ?? "NONE").trim().toUpperCase(),
+        vat_rate: vatRate,
+        legal_entity_id: legalEntityId,
+        client_visible_note: optionalField(formData, "client_visible_note"),
+        internal_note: optionalField(formData, "internal_note"),
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=changements`, "error", result.message));
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=changements`, "ok", "Changement trace"));
+}
+
+export async function approveAdminClientBillingAdjustmentAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const adjustmentId = String(formData.get("adjustment_id") ?? "").trim();
+  const requestedReturnTo = String(formData.get("return_to") ?? "").trim();
+  const returnTo = requestedReturnTo.startsWith("/admin/billing-adjustments")
+    ? requestedReturnTo
+    : `/admin/clients/${clientId}?tab=changements`;
+  if (!clientId || !adjustmentId) {
+    redirect("/admin/clients?error=Ajustement%20invalide");
+  }
+
+  const result = await backendRequest<AdminClientPaymentOut>(
+    `/api/v1/admin/clients/${clientId}/billing-adjustments/${adjustmentId}/approve`,
+    {
+      method: "POST",
+      body: JSON.stringify({ reason: optionalField(formData, "reason") }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  revalidatePath("/admin/billing-adjustments");
+  redirect(appendQueryMessage(returnTo, "ok", "Ajustement ajoute aux lignes a facturer"));
+}
+
+export async function dismissAdminClientBillingAdjustmentAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const adjustmentId = String(formData.get("adjustment_id") ?? "").trim();
+  const requestedReturnTo = String(formData.get("return_to") ?? "").trim();
+  const returnTo = requestedReturnTo.startsWith("/admin/billing-adjustments")
+    ? requestedReturnTo
+    : `/admin/clients/${clientId}?tab=changements`;
+  if (!clientId || !adjustmentId) {
+    redirect("/admin/clients?error=Ajustement%20invalide");
+  }
+
+  const result = await backendRequest(
+    `/api/v1/admin/clients/${clientId}/billing-adjustments/${adjustmentId}/dismiss`,
+    {
+      method: "POST",
+      body: JSON.stringify({ reason: optionalField(formData, "reason") }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  revalidatePath("/admin/billing-adjustments");
+  redirect(appendQueryMessage(returnTo, "ok", "Ajustement ignore"));
+}
+
 export async function refundAdminClientPaymentAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -5363,6 +5499,8 @@ export async function sendAdminClientRangeInvoiceEmailAction(formData: FormData)
   const subject = optionalField(formData, "subject");
   const body = optionalField(formData, "body");
   const bodyFormat = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
+  const includeChangeSummary = String(formData.get("include_change_summary") ?? "").trim() === "1";
+  const referenceInvoiceNoteId = optionalField(formData, "reference_invoice_note_id");
   const result = await backendRequest<AdminRangeInvoiceEmailOut>(
     `/api/v1/admin/clients/${clientId}/invoices/range/${noteId}/email`,
     {
@@ -5373,6 +5511,8 @@ export async function sendAdminClientRangeInvoiceEmailAction(formData: FormData)
         subject,
         body,
         body_format: bodyFormat,
+        include_change_summary: includeChangeSummary,
+        reference_invoice_note_id: includeChangeSummary ? referenceInvoiceNoteId : null,
       }),
     },
     token,
@@ -5385,6 +5525,8 @@ export async function sendAdminClientRangeInvoiceEmailAction(formData: FormData)
       payment_return_tab: returnTab,
       invoice_note_id: noteId,
       invoice_email_kind: kind,
+      include_change_summary: includeChangeSummary ? "1" : "0",
+      reference_invoice_note_id: referenceInvoiceNoteId ?? "",
       error: result.message,
     });
     redirect(`/admin/clients/${clientId}?${modalUrl.toString()}`);

@@ -13,6 +13,7 @@ if str(ROOT_DIR) not in sys.path:
 from app.db.session import SessionLocal
 from app.services.jobs.application.session_jobs import run_session_auto_completion_job
 from app.services.jobs.application.notification_jobs import run_scheduled_notification_dispatch_job
+from app.services.invoice_reminders import run_invoice_due_reminder_job
 from app.services.quotes.lifecycle_jobs import run_quote_daily_lifecycle_job
 from app.services.session_automation import run_auto_cancel_empty_sessions_job, run_expire_pending_payment_bookings_job
 
@@ -29,6 +30,7 @@ def main() -> None:
         try:
             jobs = (
                 ("scheduled_notification_dispatch", run_scheduled_notification_dispatch_job),
+                ("invoice_due_reminders", run_invoice_due_reminder_job),
                 ("quote_daily_lifecycle", run_quote_daily_lifecycle_job),
                 ("expire_pending_payment_bookings", run_expire_pending_payment_bookings_job),
                 ("auto_cancel_empty_sessions", run_auto_cancel_empty_sessions_job),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import html
 import io
 import json
 import logging
@@ -25,12 +26,14 @@ from app.core.config import settings
 from app.models.client_group import ClientGroup, ClientGroupMembership
 from app.models.client_record import (
     ClientAutoInvoiceRule,
+    ClientBillingAdjustment,
     ClientInvoiceLine,
     ClientManualCreditBalance,
     ClientManualTransaction,
     ClientNoteEntry,
     ClientPaymentRefund,
     PaymentReceipt,
+    StudentQuoteChange,
 )
 from app.models.family import ClientFamilyLink
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, CreditType, DeliveryMode, Location, Professor, SessionStatus
@@ -109,8 +112,13 @@ from app.schemas.admin import (
     AdminClientManualCreditUpdateRequest,
     AdminMyMusicStaffImportOut,
     AdminMyMusicStaffImportStatusOut,
+    AdminClientBillingAdjustmentDecisionRequest,
+    AdminClientBillingAdjustmentOut,
     AdminClientNoteOut,
     AdminClientNoteCreateRequest,
+    AdminClientQuoteReferenceOut,
+    AdminStudentQuoteChangeCreateRequest,
+    AdminStudentQuoteChangeOut,
     AdminClientAutoInvoiceRuleOut,
     AdminClientAutoInvoiceRuleUpsertRequest,
     AdminRangeInvoiceCreateRequest,
@@ -1824,6 +1832,8 @@ def _build_range_invoice_email_defaults(
     note_id: UUID,
     metadata: dict[str, object],
     kind: str,
+    include_change_summary: bool = False,
+    reference_invoice_note_id: UUID | None = None,
 ) -> tuple[list[str], str, str, str]:
     billing_profile = resolve_billing_profile(db, client)
     default_recipients = _normalize_email_recipients([billing_profile.email, client.email])
@@ -1874,6 +1884,17 @@ def _build_range_invoice_email_defaults(
         email=billing_profile.email or client.email,
         fallback=fallback_first_name,
     )
+    change_summary = (
+        _invoice_change_summary_since_previous_invoice(
+            db,
+            client=client,
+            current_note=note,
+            language=language,
+            reference_invoice_note_id=reference_invoice_note_id,
+        )
+        if include_change_summary
+        else ""
+    )
     context = {
         "first_name": (billing_profile.first_name or client.first_name or "").strip() or client.email or fallback_first_name,
         "last_name": (billing_profile.last_name or client.last_name or "").strip(),
@@ -1888,6 +1909,7 @@ def _build_range_invoice_email_defaults(
         "currency": first_currency,
         "due_date": str(metadata.get("due_date") or ""),
         "issued_date": str(metadata.get("issued_date") or ""),
+        "invoice_change_summary": change_summary,
     }
 
     subject = _render_message_template(subject_template, context)
@@ -1895,7 +1917,132 @@ def _build_range_invoice_email_defaults(
     if not subject or not body:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Template incomplet")
     body_format = "HTML" if str(template.get("body_format") or "").strip().upper() == "HTML" else "TEXT"
+    if change_summary:
+        body = _append_invoice_change_summary_to_email_body(body, change_summary=change_summary, body_format=body_format)
     return default_recipients, subject, body, body_format
+
+
+def _quote_change_billing_action_label(value: str | None, *, language: str) -> str:
+    normalized = (value or "").strip().upper()
+    if language == "en":
+        if normalized == "TO_INVOICE":
+            return "to invoice"
+        if normalized == "TO_CREDIT":
+            return "credit / deduction"
+        if normalized == "MANUAL_REVIEW":
+            return "to review"
+        return "no billing impact"
+    if normalized == "TO_INVOICE":
+        return "a facturer"
+    if normalized == "TO_CREDIT":
+        return "avoir / deduction"
+    if normalized == "MANUAL_REVIEW":
+        return "a verifier"
+    return "sans impact financier"
+
+
+def _invoice_change_summary_since_previous_invoice(
+    db: Session,
+    *,
+    client: User,
+    current_note: ClientNoteEntry | None,
+    language: str,
+    reference_invoice_note_id: UUID | None = None,
+) -> str:
+    if current_note is None:
+        return ""
+    scoped_user_ids = list(_payment_scope_users(db, client=client).keys())
+    previous_invoice_note: ClientNoteEntry | None = None
+    if reference_invoice_note_id is not None:
+        previous_invoice_note = db.scalar(
+            select(ClientNoteEntry).where(
+                ClientNoteEntry.id == reference_invoice_note_id,
+                ClientNoteEntry.user_id.in_(scoped_user_ids),
+            )
+        )
+        if previous_invoice_note is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Facture de comparaison introuvable")
+        metadata = _parse_invoice_range_note_entry(previous_invoice_note)
+        if metadata is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Facture de comparaison introuvable")
+        if str(metadata.get("invoice_status") or "ISSUED").strip().upper() == "CANCELLED":
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Facture de comparaison annulee")
+        if previous_invoice_note.created_at >= current_note.created_at:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="La facture de comparaison doit etre anterieure a la facture envoyee",
+            )
+    else:
+        for note in db.scalars(
+            select(ClientNoteEntry)
+            .where(ClientNoteEntry.user_id.in_(scoped_user_ids), ClientNoteEntry.created_at < current_note.created_at)
+            .order_by(ClientNoteEntry.created_at.desc())
+            .limit(50)
+        ).all():
+            metadata = _parse_invoice_range_note_entry(note)
+            if metadata is None:
+                continue
+            if str(metadata.get("invoice_status") or "ISSUED").strip().upper() == "CANCELLED":
+                continue
+            previous_invoice_note = note
+            break
+    if previous_invoice_note is None:
+        return ""
+
+    changes = db.scalars(
+        select(StudentQuoteChange)
+        .where(
+            StudentQuoteChange.user_id.in_(scoped_user_ids),
+            StudentQuoteChange.created_at > previous_invoice_note.created_at,
+            StudentQuoteChange.created_at <= current_note.created_at,
+            StudentQuoteChange.status == "VALIDATED",
+        )
+        .order_by(StudentQuoteChange.created_at.asc())
+        .limit(20)
+    ).all()
+    if not changes:
+        return ""
+
+    student_ids = {row.student_user_id for row in changes if row.student_user_id is not None}
+    students_by_id = {
+        user.id: user
+        for user in db.scalars(select(User).where(User.id.in_(student_ids))).all()
+    } if student_ids else {}
+    if language == "en":
+        heading = "Changes since the selected reference invoice:"
+        no_student = "Client"
+    else:
+        heading = "Changements depuis la facture de reference selectionnee :"
+        no_student = "Client"
+    lines = [heading]
+    for row in changes:
+        student = students_by_id.get(row.student_user_id) if row.student_user_id is not None else None
+        student_name = _student_quote_change_student_display(student) or no_student
+        amount = _quantize_money(Decimal(row.financial_impact_ttc)) if row.financial_impact_ttc is not None else Decimal("0.00")
+        amount_part = f"{amount:.2f} {_normalize_currency(row.currency, fallback='EUR')}"
+        action = _quote_change_billing_action_label(row.billing_action, language=language)
+        line = f"- {row.effective_date.isoformat() if row.effective_date else row.created_at.date().isoformat()} - {student_name}: {row.title} ({amount_part}, {action})"
+        if row.client_visible_note:
+            line = f"{line} - {row.client_visible_note.strip()}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _append_invoice_change_summary_to_email_body(body: str, *, change_summary: str, body_format: str) -> str:
+    if not change_summary.strip():
+        return body
+    if body_format == "HTML":
+        items = [
+            f"<li>{html.escape(line[2:])}</li>"
+            for line in change_summary.splitlines()[1:]
+            if line.startswith("- ")
+        ]
+        if not items:
+            return body
+        title = html.escape(change_summary.splitlines()[0])
+        block = f"<p><strong>{title}</strong></p><ul>{''.join(items)}</ul>"
+        return f"{body}\n{block}"
+    return f"{body.rstrip()}\n\n{change_summary}"
 
 
 def _parse_iso_datetime(value: object) -> datetime | None:
@@ -7688,6 +7835,458 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
     return items
 
 
+def _student_quote_change_allowed_users(db: Session, *, client: User) -> dict[UUID, User]:
+    return _payment_scope_users(db, client=client)
+
+
+def _student_quote_change_student_display(user: User | None) -> str | None:
+    if user is None:
+        return None
+    return _display_name(user.first_name, user.last_name, user.email)
+
+
+def _normalize_quote_change_financial_impact(
+    financial_impact: Decimal | None,
+    billing_action: str,
+) -> Decimal | None:
+    if financial_impact is None:
+        return None
+    quantized = _quantize_money(financial_impact)
+    if quantized == Decimal("0.00"):
+        return Decimal("0.00")
+    normalized_action = (billing_action or "NONE").strip().upper()
+    if normalized_action == "TO_INVOICE":
+        return abs(quantized)
+    if normalized_action == "TO_CREDIT":
+        return -abs(quantized)
+    return quantized
+
+
+def _billing_adjustment_out(
+    row: ClientBillingAdjustment,
+    *,
+    quote_by_id: dict[UUID, Quote],
+) -> AdminClientBillingAdjustmentOut:
+    quote = quote_by_id.get(row.quote_id) if row.quote_id is not None else None
+    return AdminClientBillingAdjustmentOut(
+        id=row.id,
+        client_id=row.user_id,
+        student_id=row.student_user_id,
+        change_id=row.change_id,
+        quote_id=row.quote_id,
+        quote_number=quote.quote_number if quote is not None else None,
+        status=(row.status or "READY").strip().upper(),
+        adjustment_type=(row.adjustment_type or "INVOICE").strip().upper(),
+        label=row.label,
+        description=row.description,
+        amount_excl_vat=_quantize_money(Decimal(row.amount_excl_vat)),
+        vat_rate=Decimal(row.vat_rate),
+        vat_amount=_quantize_money(Decimal(row.vat_amount)),
+        total_incl_vat=_quantize_money(Decimal(row.total_incl_vat)),
+        currency=_normalize_currency(row.currency, fallback="EUR"),
+        legal_entity_id=row.legal_entity_id,
+        converted_manual_transaction_id=row.converted_manual_transaction_id,
+        dismissed_reason=row.dismissed_reason,
+        decided_at=row.decided_at,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _student_quote_change_out(
+    row: StudentQuoteChange,
+    *,
+    students_by_id: dict[UUID, User],
+    quote_by_id: dict[UUID, Quote],
+    adjustments_by_change_id: dict[UUID, list[ClientBillingAdjustment]],
+) -> AdminStudentQuoteChangeOut:
+    quote = quote_by_id.get(row.quote_id) if row.quote_id is not None else None
+    student = students_by_id.get(row.student_user_id) if row.student_user_id is not None else None
+    return AdminStudentQuoteChangeOut(
+        id=row.id,
+        client_id=row.user_id,
+        student_id=row.student_user_id,
+        student_display_name=_student_quote_change_student_display(student),
+        quote_id=row.quote_id,
+        quote_number=quote.quote_number if quote is not None else None,
+        quote_line_id=row.quote_line_id,
+        change_type=(row.change_type or "OTHER").strip().upper(),
+        status=(row.status or "VALIDATED").strip().upper(),
+        requested_by=row.requested_by,
+        requested_at=row.requested_at,
+        effective_date=row.effective_date,
+        title=row.title,
+        description=row.description,
+        before_snapshot=row.before_snapshot or {},
+        after_snapshot=row.after_snapshot or {},
+        financial_impact_ttc=(_quantize_money(Decimal(row.financial_impact_ttc)) if row.financial_impact_ttc is not None else None),
+        currency=_normalize_currency(row.currency, fallback="EUR"),
+        billing_action=(row.billing_action or "NONE").strip().upper(),
+        client_visible_note=row.client_visible_note,
+        internal_note=row.internal_note,
+        billing_adjustments=[
+            _billing_adjustment_out(adjustment, quote_by_id=quote_by_id)
+            for adjustment in adjustments_by_change_id.get(row.id, [])
+        ],
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _list_student_quote_changes_for_client(db: Session, *, client: User) -> list[AdminStudentQuoteChangeOut]:
+    scoped_users = _student_quote_change_allowed_users(db, client=client)
+    rows = db.scalars(
+        select(StudentQuoteChange)
+        .where(StudentQuoteChange.user_id.in_(list(scoped_users.keys())))
+        .order_by(StudentQuoteChange.created_at.desc())
+    ).all()
+    change_ids = [row.id for row in rows]
+    quote_ids = {row.quote_id for row in rows if row.quote_id is not None}
+    student_ids = {row.student_user_id for row in rows if row.student_user_id is not None}
+
+    adjustment_rows = (
+        db.scalars(
+            select(ClientBillingAdjustment)
+            .where(ClientBillingAdjustment.change_id.in_(change_ids))
+            .order_by(ClientBillingAdjustment.created_at.desc())
+        ).all()
+        if change_ids
+        else []
+    )
+    quote_ids.update(row.quote_id for row in adjustment_rows if row.quote_id is not None)
+    quote_by_id = {
+        quote.id: quote
+        for quote in db.scalars(select(Quote).where(Quote.id.in_(quote_ids))).all()
+    } if quote_ids else {}
+    students_by_id = {
+        user.id: user
+        for user in db.scalars(select(User).where(User.id.in_(student_ids))).all()
+    } if student_ids else {}
+    adjustments_by_change_id: dict[UUID, list[ClientBillingAdjustment]] = {}
+    for adjustment in adjustment_rows:
+        if adjustment.change_id is None:
+            continue
+        adjustments_by_change_id.setdefault(adjustment.change_id, []).append(adjustment)
+
+    return [
+        _student_quote_change_out(
+            row,
+            students_by_id=students_by_id,
+            quote_by_id=quote_by_id,
+            adjustments_by_change_id=adjustments_by_change_id,
+        )
+        for row in rows
+    ]
+
+
+def _require_scoped_student_quote_change(
+    db: Session,
+    *,
+    client: User,
+    change_id: UUID,
+) -> StudentQuoteChange:
+    scoped_users = _student_quote_change_allowed_users(db, client=client)
+    row = db.scalar(
+        select(StudentQuoteChange).where(
+            StudentQuoteChange.id == change_id,
+            StudentQuoteChange.user_id.in_(list(scoped_users.keys())),
+        )
+    )
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Changement introuvable")
+    return row
+
+
+def _require_scoped_billing_adjustment(
+    db: Session,
+    *,
+    client: User,
+    adjustment_id: UUID,
+    for_update: bool = False,
+) -> ClientBillingAdjustment:
+    scoped_users = _student_quote_change_allowed_users(db, client=client)
+    stmt = select(ClientBillingAdjustment).where(
+        ClientBillingAdjustment.id == adjustment_id,
+        ClientBillingAdjustment.user_id.in_(list(scoped_users.keys())),
+    )
+    if for_update:
+        stmt = stmt.with_for_update()
+    row = db.scalar(stmt)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ajustement introuvable")
+    return row
+
+
+@router.get("/{client_id}/quote-changes", response_model=list[AdminStudentQuoteChangeOut])
+def list_admin_client_quote_changes(
+    client_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_view_clients")),
+) -> list[AdminStudentQuoteChangeOut]:
+    client = _require_client(db, client_id)
+    return _list_student_quote_changes_for_client(db, client=client)
+
+
+@router.get("/{client_id}/approved-quotes", response_model=list[AdminClientQuoteReferenceOut])
+def list_admin_client_approved_quotes(
+    client_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_view_clients")),
+) -> list[AdminClientQuoteReferenceOut]:
+    client = _require_client(db, client_id)
+    scoped_users = _student_quote_change_allowed_users(db, client=client)
+    rows = db.scalars(
+        select(Quote)
+        .where(Quote.client_id.in_(list(scoped_users.keys())), Quote.status == "approved")
+        .order_by(Quote.approved_at.desc().nullslast(), Quote.created_at.desc())
+        .limit(100)
+    ).all()
+    return [
+        AdminClientQuoteReferenceOut(
+            id=row.id,
+            quote_number=row.quote_number,
+            total_ttc=_quantize_money(Decimal(row.total_ttc)),
+            currency=_normalize_currency(row.currency, fallback="EUR"),
+            approved_at=row.approved_at,
+            school_year_label=row.school_year_label,
+        )
+        for row in rows
+    ]
+
+
+@router.post("/{client_id}/quote-changes", response_model=AdminStudentQuoteChangeOut, status_code=status.HTTP_201_CREATED)
+def create_admin_client_quote_change(
+    client_id: UUID,
+    payload: AdminStudentQuoteChangeCreateRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminStudentQuoteChangeOut:
+    client = _require_client(db, client_id)
+    scoped_users = _student_quote_change_allowed_users(db, client=client)
+    scoped_user_ids = set(scoped_users.keys())
+
+    student_id = payload.student_id or client.id
+    if student_id not in scoped_user_ids:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Eleve non rattache a ce compte")
+
+    quote: Quote | None = None
+    if payload.quote_id is not None:
+        quote = db.scalar(select(Quote).where(Quote.id == payload.quote_id))
+        if quote is None or quote.client_id not in scoped_user_ids:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Devis non rattache a ce compte")
+        if payload.quote_line_id is not None:
+            quote_line = db.scalar(
+                select(QuoteLine).where(QuoteLine.id == payload.quote_line_id, QuoteLine.quote_id == quote.id)
+            )
+            if quote_line is None:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Ligne de devis invalide")
+    elif payload.quote_line_id is not None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Le devis est obligatoire pour une ligne de devis")
+
+    currency = _normalize_currency(payload.currency, fallback=client.preferred_currency or "EUR")
+    billing_action = payload.billing_action
+    financial_impact = _normalize_quote_change_financial_impact(
+        Decimal(payload.financial_impact_ttc) if payload.financial_impact_ttc is not None else None,
+        billing_action,
+    )
+    if financial_impact is None or financial_impact == Decimal("0.00"):
+        billing_action = "NONE"
+
+    legal_entity_id = payload.legal_entity_id or (quote.legal_entity_id if quote is not None else None)
+    if billing_action in {"TO_INVOICE", "TO_CREDIT", "MANUAL_REVIEW"} and financial_impact not in {None, Decimal("0.00")}:
+        if legal_entity_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="L'entite juridique est obligatoire pour un ajustement financier",
+            )
+        _require_active_legal_entity(db, legal_entity_id=legal_entity_id)
+
+    row = StudentQuoteChange(
+        user_id=student_id,
+        student_user_id=student_id,
+        quote_id=payload.quote_id,
+        quote_line_id=payload.quote_line_id,
+        actor_user_id=actor.id,
+        change_type=payload.change_type,
+        status=payload.status,
+        requested_by=_normalize_optional(payload.requested_by),
+        requested_at=payload.requested_at or _utcnow(),
+        effective_date=payload.effective_date,
+        title=payload.title.strip(),
+        description=_normalize_optional(payload.description),
+        before_snapshot=payload.before_snapshot,
+        after_snapshot=payload.after_snapshot,
+        financial_impact_ttc=financial_impact,
+        currency=currency,
+        billing_action=billing_action,
+        client_visible_note=_normalize_optional(payload.client_visible_note),
+        internal_note=_normalize_optional(payload.internal_note),
+    )
+    db.add(row)
+    db.flush()
+
+    if financial_impact is not None and financial_impact != Decimal("0.00") and billing_action != "NONE":
+        vat_rate = Decimal(payload.vat_rate).quantize(Decimal("0.001"))
+        ratio = Decimal("1.000") + (vat_rate / Decimal("100"))
+        total_abs = abs(financial_impact)
+        amount_excl_abs = _quantize_money(total_abs / ratio)
+        vat_amount_abs = _quantize_money(total_abs - amount_excl_abs)
+        sign = Decimal("1") if financial_impact > 0 else Decimal("-1")
+        adjustment = ClientBillingAdjustment(
+            user_id=row.user_id,
+            student_user_id=student_id,
+            change_id=row.id,
+            quote_id=payload.quote_id,
+            actor_user_id=actor.id,
+            status="READY",
+            adjustment_type="INVOICE" if financial_impact > 0 else "CREDIT_NOTE",
+            label=row.title,
+            description=row.client_visible_note or row.description,
+            amount_excl_vat=_quantize_money(amount_excl_abs * sign),
+            vat_rate=vat_rate,
+            vat_amount=_quantize_money(vat_amount_abs * sign),
+            total_incl_vat=financial_impact,
+            currency=currency,
+            legal_entity_id=legal_entity_id,
+        )
+        db.add(adjustment)
+
+    _create_client_note(
+        db,
+        client_id=client.id,
+        author_user_id=actor.id,
+        entry_type="AUTO",
+        message=f"Changement de parcours trace: {row.title}. Impact financier: {financial_impact or Decimal('0.00'):.2f} {currency}.",
+    )
+    db.commit()
+    return _require_scoped_student_quote_change_out(db, client=client, change_id=row.id)
+
+
+def _require_scoped_student_quote_change_out(
+    db: Session,
+    *,
+    client: User,
+    change_id: UUID,
+) -> AdminStudentQuoteChangeOut:
+    row = _require_scoped_student_quote_change(db, client=client, change_id=change_id)
+    quote_ids = {row.quote_id} if row.quote_id is not None else set()
+    student_ids = {row.student_user_id} if row.student_user_id is not None else set()
+    adjustment_rows = db.scalars(
+        select(ClientBillingAdjustment)
+        .where(ClientBillingAdjustment.change_id == row.id)
+        .order_by(ClientBillingAdjustment.created_at.desc())
+    ).all()
+    quote_ids.update(adjustment.quote_id for adjustment in adjustment_rows if adjustment.quote_id is not None)
+    quote_by_id = {
+        quote.id: quote
+        for quote in db.scalars(select(Quote).where(Quote.id.in_(quote_ids))).all()
+    } if quote_ids else {}
+    students_by_id = {
+        user.id: user
+        for user in db.scalars(select(User).where(User.id.in_(student_ids))).all()
+    } if student_ids else {}
+    adjustments_by_change_id = {row.id: adjustment_rows}
+    return _student_quote_change_out(
+        row,
+        students_by_id=students_by_id,
+        quote_by_id=quote_by_id,
+        adjustments_by_change_id=adjustments_by_change_id,
+    )
+
+
+@router.post("/{client_id}/billing-adjustments/{adjustment_id}/approve", response_model=AdminClientPaymentOut)
+def approve_admin_client_billing_adjustment(
+    client_id: UUID,
+    adjustment_id: UUID,
+    _: AdminClientBillingAdjustmentDecisionRequest | None = None,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminClientPaymentOut:
+    client = _require_client(db, client_id)
+    adjustment = _require_scoped_billing_adjustment(db, client=client, adjustment_id=adjustment_id, for_update=True)
+    if (adjustment.status or "").strip().upper() != "READY":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ajustement deja traite")
+    if adjustment.legal_entity_id is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Entite juridique manquante")
+    _require_active_legal_entity(db, legal_entity_id=adjustment.legal_entity_id)
+
+    total = _quantize_money(Decimal(adjustment.total_incl_vat))
+    transaction_type = "CHARGE" if total > 0 else "DISCOUNT"
+    row = ClientManualTransaction(
+        user_id=adjustment.user_id,
+        student_user_id=adjustment.student_user_id,
+        actor_user_id=actor.id,
+        transaction_type=transaction_type,
+        status=MANUAL_TRANSACTION_STATUS_BY_TYPE.get(transaction_type, "COMPLETED"),
+        label=adjustment.label,
+        description=adjustment.description,
+        category="Regularisation changement",
+        occurred_at=_utcnow(),
+        amount_excl_vat=adjustment.amount_excl_vat,
+        vat_rate=adjustment.vat_rate,
+        vat_amount=adjustment.vat_amount,
+        total_incl_vat=adjustment.total_incl_vat,
+        currency=adjustment.currency,
+        reference=f"CHANGE:{adjustment.change_id}" if adjustment.change_id is not None else f"ADJUSTMENT:{adjustment.id}",
+        legal_entity_id=adjustment.legal_entity_id,
+    )
+    db.add(row)
+    db.flush()
+
+    adjustment.status = "CONVERTED"
+    adjustment.converted_manual_transaction_id = row.id
+    adjustment.actor_user_id = actor.id
+    adjustment.decided_at = _utcnow()
+    adjustment.updated_at = _utcnow()
+    db.add(adjustment)
+    _create_client_note(
+        db,
+        client_id=client.id,
+        author_user_id=actor.id,
+        entry_type="AUTO",
+        message=f"Ajustement valide pour facturation: {adjustment.label} ({total:.2f} {adjustment.currency}).",
+    )
+    db.commit()
+
+    created = next(
+        (
+            item
+            for item in _build_admin_client_payments(db, client_id=client.id)
+            if item.id == row.id and item.source.strip().upper() == "MANUAL"
+        ),
+        None,
+    )
+    if created is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Unable to load created transaction")
+    return created
+
+
+@router.post("/{client_id}/billing-adjustments/{adjustment_id}/dismiss", response_model=AdminClientBillingAdjustmentOut)
+def dismiss_admin_client_billing_adjustment(
+    client_id: UUID,
+    adjustment_id: UUID,
+    payload: AdminClientBillingAdjustmentDecisionRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminClientBillingAdjustmentOut:
+    client = _require_client(db, client_id)
+    adjustment = _require_scoped_billing_adjustment(db, client=client, adjustment_id=adjustment_id, for_update=True)
+    if (adjustment.status or "").strip().upper() != "READY":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ajustement deja traite")
+    adjustment.status = "DISMISSED"
+    adjustment.dismissed_reason = _normalize_optional(payload.reason)
+    adjustment.actor_user_id = actor.id
+    adjustment.decided_at = _utcnow()
+    adjustment.updated_at = _utcnow()
+    db.add(adjustment)
+    db.commit()
+    quote_by_id = {}
+    if adjustment.quote_id is not None:
+        quote = db.scalar(select(Quote).where(Quote.id == adjustment.quote_id))
+        quote_by_id = {quote.id: quote} if quote is not None else {}
+    return _billing_adjustment_out(adjustment, quote_by_id=quote_by_id)
+
+
 @router.get("/{client_id}/payments", response_model=list[AdminClientPaymentOut])
 def list_admin_client_payments(
     client_id: UUID,
@@ -9380,6 +9979,8 @@ def send_admin_client_range_invoice_email(
         note_id=note.id,
         metadata=metadata,
         kind=normalized_kind,
+        include_change_summary=bool(getattr(payload, "include_change_summary", False)),
+        reference_invoice_note_id=getattr(payload, "reference_invoice_note_id", None),
     )
     recipients = default_recipients if payload.to_emails is None else _normalize_email_recipients(payload.to_emails)
     if not recipients:
@@ -9727,6 +10328,8 @@ def preview_admin_client_range_invoice_email(
     client_id: UUID,
     note_id: UUID,
     kind: str = Query(default="INVOICE"),
+      include_change_summary: bool = Query(default=False),
+    reference_invoice_note_id: UUID | None = Query(default=None),
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminRangeInvoiceEmailPreviewOut:
@@ -9739,6 +10342,8 @@ def preview_admin_client_range_invoice_email(
         note_id=note_id,
         metadata=metadata,
         kind=normalized_kind,
+        include_change_summary=include_change_summary,
+        reference_invoice_note_id=reference_invoice_note_id,
     )
     return AdminRangeInvoiceEmailPreviewOut(
         note_id=note_id,

@@ -77,6 +77,13 @@ class AutoInvoiceBillingJobResponse(BaseModel):
     failed: int
 
 
+class InvoiceReminderJobResponse(BaseModel):
+    checked: int
+    sent: int
+    skipped: int
+    failed: int
+
+
 class NotificationEngineJobResponse(BaseModel):
     checked: int
     processed: int

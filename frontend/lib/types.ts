@@ -498,6 +498,71 @@ export type AdminClientNoteOut = {
   created_at: string;
 };
 
+export type AdminClientBillingAdjustmentOut = {
+  id: string;
+  client_id: string;
+  student_id: string | null;
+  change_id: string | null;
+  quote_id: string | null;
+  quote_number: string | null;
+  status: "READY" | "DISMISSED" | "CONVERTED";
+  adjustment_type: "INVOICE" | "CREDIT_NOTE";
+  label: string;
+  description: string | null;
+  amount_excl_vat: string;
+  vat_rate: string;
+  vat_amount: string;
+  total_incl_vat: string;
+  currency: string;
+  legal_entity_id: string | null;
+  converted_manual_transaction_id: string | null;
+  dismissed_reason: string | null;
+  decided_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AdminClientBillingAdjustmentQueueOut = AdminClientBillingAdjustmentOut & {
+  client_display_name: string;
+  student_display_name: string | null;
+  change_title: string | null;
+  change_type: string | null;
+};
+
+export type AdminStudentQuoteChangeOut = {
+  id: string;
+  client_id: string;
+  student_id: string | null;
+  student_display_name: string | null;
+  quote_id: string | null;
+  quote_number: string | null;
+  quote_line_id: string | null;
+  change_type:
+    | "SLOT_CHANGE"
+    | "COURSE_CANCELLED"
+    | "COURSE_ADDED"
+    | "COURSE_REMOVED"
+    | "FORMULA_CHANGE"
+    | "EXCEPTIONAL_ADJUSTMENT"
+    | "OTHER";
+  status: "DRAFT" | "VALIDATED" | "CANCELLED";
+  requested_by: string | null;
+  requested_at: string;
+  effective_date: string | null;
+  title: string;
+  description: string | null;
+  before_snapshot: Record<string, unknown>;
+  after_snapshot: Record<string, unknown>;
+  financial_impact_ttc: string | null;
+  currency: string;
+  billing_action: "NONE" | "TO_INVOICE" | "TO_CREDIT" | "MANUAL_REVIEW";
+  client_visible_note: string | null;
+  internal_note: string | null;
+  billing_adjustments: AdminClientBillingAdjustmentOut[];
+  created_at: string;
+  updated_at: string;
+};
+
 export type AdminRangeInvoiceOut = {
   note_id: string;
   invoice_number: string;

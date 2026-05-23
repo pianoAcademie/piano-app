@@ -10,6 +10,7 @@ from app.models.user import User, UserRole
 from app.schemas.jobs import (
     AutoInvoiceBillingJobResponse,
     AutoCancelJobResponse,
+    InvoiceReminderJobResponse,
     NotificationEngineJobResponse,
     PayoutJobResponse,
     ProfessorDailyDigestJobResponse,
@@ -20,6 +21,7 @@ from app.schemas.jobs import (
     SubscriptionRetryJobResponse,
 )
 from app.services.auto_invoice_billing import run_auto_invoice_billing_job
+from app.services.invoice_reminders import run_invoice_due_reminder_job
 from app.services.jobs.application.notification_jobs import (
     run_delivery_feedback_job,
     run_immediate_notification_dispatch_job,
@@ -206,6 +208,23 @@ def run_auto_invoice_billing(
         generated=result.generated,
         skipped_empty=result.skipped_empty,
         skipped_duplicate=result.skipped_duplicate,
+        failed=result.failed,
+    )
+
+
+@router.post("/run-invoice-reminders", response_model=InvoiceReminderJobResponse)
+def run_invoice_reminders(
+    limit: int = Query(default=500, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> InvoiceReminderJobResponse:
+    now = datetime.now(timezone.utc)
+    result = run_invoice_due_reminder_job(db, now=now, limit=limit)
+    db.commit()
+    return InvoiceReminderJobResponse(
+        checked=result.checked,
+        sent=result.sent,
+        skipped=result.skipped,
         failed=result.failed,
     )
 

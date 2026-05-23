@@ -169,6 +169,117 @@ class ClientManualTransaction(Base):
     )
 
 
+class StudentQuoteChange(Base):
+    __tablename__ = "student_quote_changes"
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    student_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    quote_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("quotes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    quote_line_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("quote_lines.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    actor_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    change_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'VALIDATED'"))
+    requested_by: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    effective_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    before_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    after_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    financial_impact_ttc: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'EUR'"))
+    billing_action: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'NONE'"))
+    client_visible_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    internal_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
+
+class ClientBillingAdjustment(Base):
+    __tablename__ = "client_billing_adjustments"
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    student_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    change_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("student_quote_changes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    quote_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("quotes.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    actor_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'READY'"))
+    adjustment_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    amount_excl_vat: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    vat_rate: Mapped[float] = mapped_column(Numeric(6, 3), nullable=False, server_default=text("0"))
+    vat_amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    total_incl_vat: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'EUR'"))
+    legal_entity_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("legal_entities.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    converted_manual_transaction_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("client_manual_transactions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    dismissed_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
+
 class PaymentReceipt(Base):
     __tablename__ = "payment_receipts"
     __table_args__ = (

@@ -3,12 +3,14 @@ from app.models.client_group import ClientGroup, ClientGroupMembership
 from app.models.client_record import (
     ClientAutoInvoiceOccurrence,
     ClientAutoInvoiceRule,
+    ClientBillingAdjustment,
     ClientInvoiceLine,
     ClientManualCreditBalance,
     ClientManualTransaction,
     ClientNoteEntry,
     ClientPaymentRefund,
     PaymentReceipt,
+    StudentQuoteChange,
 )
 from app.models.external_content import (
     ContentAccessRule,
@@ -153,6 +155,7 @@ __all__ = [
     "ClientFamilyLink",
     "ClientAutoInvoiceOccurrence",
     "ClientAutoInvoiceRule",
+    "ClientBillingAdjustment",
     "ClientGroup",
     "ClientGroupMembership",
     "ClientKind",
@@ -162,6 +165,7 @@ __all__ = [
     "ClientNoteEntry",
     "ClientForfaitActivityPricing",
     "ClientPaymentRefund",
+    "StudentQuoteChange",
     "PaymentReceipt",
     "ContentAccessRule",
     "CourseTypeContentMapping",
