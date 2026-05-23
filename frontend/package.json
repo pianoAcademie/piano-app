@@ -8,6 +8,8 @@
     "start": "next start -p 3000",
     "mobile:sync:client": "MOBILE_APP_TARGET=client cap sync ios",
     "mobile:sync:prof": "MOBILE_APP_TARGET=prof cap sync ios",
+    "mobile:prepare:client": "node scripts/prepare-ios-target.mjs client",
+    "mobile:prepare:prof": "node scripts/prepare-ios-target.mjs prof",
     "mobile:open:client": "MOBILE_APP_TARGET=client cap open ios",
     "mobile:open:prof": "MOBILE_APP_TARGET=prof cap open ios"
   },

@@ -43,8 +43,10 @@ Commandes prevues:
 cd frontend
 npx cap add ios
 npm run mobile:sync:client
+npm run mobile:prepare:client
 npm run mobile:open:client
 npm run mobile:sync:prof
+npm run mobile:prepare:prof
 npm run mobile:open:prof
 ```
 
@@ -72,18 +74,18 @@ Capacitor genere un projet iOS de base. Pour TestFlight, il faut ensuite creer d
 
 Approche conseillee:
 
-1. Ouvrir `frontend/ios/App/App.xcworkspace`.
-2. Dupliquer le target `App`.
-3. Renommer les targets/schemes en `PA Client` et `PA Prof`.
-4. Ajuster `PRODUCT_BUNDLE_IDENTIFIER`, `CFBundleDisplayName` et le fichier `capacitor.config.json` embarque par target.
-5. Garder un seul code web: les deux targets affichent les routes existantes du portail.
+1. Lancer `npm run mobile:sync:client` puis `npm run mobile:prepare:client` pour archiver l'app client.
+2. Ouvrir `frontend/ios/App/App.xcworkspace` et creer l'archive Xcode.
+3. Lancer `npm run mobile:sync:prof` puis `npm run mobile:prepare:prof` pour archiver l'app professeur.
+4. Ouvrir le meme workspace et creer l'archive Xcode professeur.
+5. Garder un seul code web: les deux archives affichent les routes existantes du portail.
 
 Fichiers de configuration natifs prets pour la duplication:
 
 - `frontend/ios/App/App/capacitor.client.config.json`
 - `frontend/ios/App/App/capacitor.prof.config.json`
 
-Dans Xcode, le target client doit embarquer le contenu client sous le nom `capacitor.config.json`; le target professeur doit embarquer le contenu professeur sous le meme nom.
+Le script `frontend/scripts/prepare-ios-target.mjs` met a jour le nom affiche, le bundle ID Xcode et le fichier `capacitor.config.json` actif avant chaque archive.
 
 ## Deploiement
 
