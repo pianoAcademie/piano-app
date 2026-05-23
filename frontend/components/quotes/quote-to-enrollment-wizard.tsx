@@ -192,7 +192,7 @@ function selectedSessionLabel(options: SessionMatchOption[], selectedSessionId: 
   if (!selected) {
     return uiText(language, "admin.quote_transform.none");
   }
-  return `${selected.label} (${selected.dateLabel})`;
+  return `${selected.label} (${selected.dateLabel} · ${selected.locationName})`;
 }
 
 function defaultSessionAssignment(
@@ -1517,7 +1517,7 @@ export default function QuoteToEnrollmentWizard({
                                 />
                                 <div>
                                   <strong>{option.label}</strong>
-                                  <p className="muted">{option.dateLabel} · {option.teacher}</p>
+                                  <p className="muted">{option.dateLabel} · {option.locationName} · {option.teacher}</p>
                                   <p className="muted">{t("admin.quote_transform.seats_remaining", { count: option.seatsRemaining })} · {t("admin.quote_transform.score", { score: option.score })}</p>
                                   <p className="muted">{option.reasons.map((reason) => translateQuoteTransformMessage(reason, language)).join(" · ")}</p>
                                 </div>

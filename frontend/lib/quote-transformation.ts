@@ -183,6 +183,7 @@ export type SessionMatchOption = {
   sessionId: string;
   label: string;
   dateLabel: string;
+  locationName: string;
   teacher: string;
   seatsRemaining: number;
   status: string;
@@ -1088,6 +1089,7 @@ function mockSessionOption(
     sessionId: `mock-${activityId}-1`,
     label: `${activityName} · Studio Opera`,
     dateLabel: language === "en" ? "Mon 18:00" : "lun. 18:00",
+    locationName: "Studio Opera",
     teacher: language === "en" ? "Demo teacher" : "Prof. Demo",
     status: "SCHEDULED",
     reasons: ["proposition de demonstration"],
@@ -1229,6 +1231,7 @@ export function buildSessionMatches(
         sessionId: session.id,
         label: session.title,
         dateLabel,
+        locationName: session.locationName || uiText(language, "admin.quote_transform.location_not_defined"),
         teacher: session.teacherDisplayName || uiText(language, "admin.quote_transform.to_define"),
         seatsRemaining: session.seatsRemaining,
         status: session.statusLabel,

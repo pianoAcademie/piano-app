@@ -22,3 +22,25 @@ end
 post_install do |installer|
   assertDeploymentTarget(installer)
 end
+
+post_integrate do |installer|
+  script_path = File.join(
+    installer.sandbox.target_support_files_dir('Pods-App'),
+    'Pods-App-frameworks.sh'
+  )
+  next unless File.exist?(script_path)
+
+  script = File.read(script_path)
+  patched = script.gsub(
+    'source="$(readlink "${source}")"',
+    <<~'SH'.strip
+      local symlink_dir
+      symlink_dir="$(dirname "${source}")"
+      source="$(readlink "${source}")"
+      if [[ "${source}" != /* ]]; then
+        source="${symlink_dir}/${source}"
+      fi
+    SH
+  )
+  File.write(script_path, patched) if patched != script
+end
