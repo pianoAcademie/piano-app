@@ -7371,6 +7371,103 @@ def _load_live_series_sessions(
     return _dedupe_same_local_slot(filtered)
 
 
+def _create_missing_live_sessions_from_quote_schedule(
+    db: Session,
+    *,
+    template_session: CourseSession,
+    missing_dates: list[date],
+    start_time_local: str | None,
+    end_time_local: str | None,
+) -> list[CourseSession]:
+    requested_start_time = _parse_followup_student_time_local(start_time_local)
+    requested_end_time = _parse_followup_student_time_local(end_time_local)
+    if (
+        requested_start_time is None
+        or requested_end_time is None
+        or requested_end_time <= requested_start_time
+    ):
+        return []
+    if not missing_dates:
+        return []
+
+    template_zone = _safe_zoneinfo(template_session.timezone)
+    template_start_local = template_session.start_at_utc.astimezone(template_zone)
+    template_end_local = template_session.end_at_utc.astimezone(template_zone)
+    start_time = template_start_local.timetz().replace(tzinfo=None)
+    end_time = template_end_local.timetz().replace(tzinfo=None)
+    if end_time <= start_time:
+        return []
+    recurrence_group_id = template_session.recurrence_group_id or template_session.id
+    created: list[CourseSession] = []
+    deadline_delta = template_session.start_at_utc - template_session.auto_cancel_deadline_utc
+    if deadline_delta.total_seconds() <= 0:
+        deadline_delta = timedelta(seconds=1)
+
+    for expected_date in sorted(set(missing_dates)):
+        start_local = datetime.combine(expected_date, start_time, tzinfo=template_zone)
+        end_local = datetime.combine(expected_date, end_time, tzinfo=template_zone)
+        start_utc = start_local.astimezone(timezone.utc)
+        end_utc = end_local.astimezone(timezone.utc)
+        day_start_utc = datetime.combine(expected_date, time.min, tzinfo=template_zone).astimezone(timezone.utc)
+        day_end_utc = datetime.combine(expected_date, time.max, tzinfo=template_zone).astimezone(timezone.utc)
+        existing = db.scalar(
+            select(CourseSession.id)
+            .where(
+                CourseSession.course_type_id == template_session.course_type_id,
+                CourseSession.location_id == template_session.location_id,
+                CourseSession.status == SessionStatus.SCHEDULED,
+                CourseSession.start_at_utc >= day_start_utc,
+                CourseSession.start_at_utc <= day_end_utc,
+                CourseSession.start_at_utc == start_utc,
+                CourseSession.end_at_utc == end_utc,
+            )
+            .limit(1)
+        )
+        if existing is not None:
+            continue
+        session_obj = CourseSession(
+            course_type_id=template_session.course_type_id,
+            location_id=template_session.location_id,
+            professor_id=template_session.professor_id,
+            substitute_teacher_id=template_session.substitute_teacher_id,
+            substitute_set_at=template_session.substitute_set_at,
+            substitute_set_by=template_session.substitute_set_by,
+            substitute_note=template_session.substitute_note,
+            title=template_session.title,
+            description=template_session.description,
+            private_description=template_session.private_description,
+            group_note=template_session.group_note,
+            professor_reminder_note=template_session.professor_reminder_note,
+            start_at_utc=start_utc,
+            end_at_utc=end_utc,
+            is_all_day=False,
+            capacity_max=template_session.capacity_max,
+            status=SessionStatus.SCHEDULED,
+            auto_cancel_deadline_utc=start_utc - deadline_delta,
+            cancel_reason=None,
+            zoom_link=template_session.zoom_link,
+            is_private=template_session.is_private,
+            allow_online_booking=template_session.allow_online_booking,
+            visibility_scope=template_session.visibility_scope,
+            booking_scope=template_session.booking_scope,
+            external_booking_price_ttc=template_session.external_booking_price_ttc,
+            show_external_remaining_seats=template_session.show_external_remaining_seats,
+            timezone=template_session.timezone,
+            recurrence_group_id=recurrence_group_id,
+            recurrence_rule=template_session.recurrence_rule,
+            recurrence_until_date=max(template_session.recurrence_until_date or expected_date, expected_date),
+            billing_entity_snapshot=template_session.billing_entity_snapshot,
+            snapshot_seller_legal_entity_id=template_session.snapshot_seller_legal_entity_id,
+            snapshot_payor_legal_entity_id=template_session.snapshot_payor_legal_entity_id,
+        )
+        db.add(session_obj)
+        created.append(session_obj)
+
+    if created:
+        db.flush()
+    return created
+
+
 def _parse_followup_student_time_local(value: str | None) -> time | None:
     raw = (value or "").strip()
     if not raw:
@@ -8674,6 +8771,26 @@ def _execute_quote_followup_transformation(
             if expected_dates
             else []
         )
+        if missing_dates:
+            created_sessions = _create_missing_live_sessions_from_quote_schedule(
+                db,
+                template_session=selected_session,
+                missing_dates=missing_dates,
+                start_time_local=student_start_time_local,
+                end_time_local=student_end_time_local,
+            )
+            if created_sessions:
+                live_sessions = _load_live_series_sessions(
+                    db,
+                    selected_session=selected_session,
+                    expected_dates=expected_dates,
+                )
+                if session_limit is not None:
+                    live_sessions = live_sessions[:session_limit]
+                missing_dates = _missing_expected_live_session_dates(
+                    expected_dates=expected_dates,
+                    live_sessions=live_sessions,
+                )
         if _missing_dates_are_after_live_series_tail(missing_dates=missing_dates, live_sessions=live_sessions):
             missing_dates = []
         if missing_dates:
