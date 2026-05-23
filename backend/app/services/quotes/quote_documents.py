@@ -1820,6 +1820,33 @@ def _dedupe_calendar_sessions(items: list[dict[str, Any]]) -> tuple[list[dict[st
     return deduped, changed
 
 
+def _calendar_session_matches_planning_block(
+    session: dict[str, Any],
+    block: dict[str, Any],
+    *,
+    refreshed_dates: set[str],
+) -> bool:
+    session_date = str(session.get("date") or "").strip()
+    if session_date not in refreshed_dates:
+        return False
+    if str(session.get("activity_id") or "").strip() != str(block.get("activity_id") or "").strip():
+        return False
+
+    block_location_id = str(block.get("location_id") or "").strip()
+    if block_location_id and str(session.get("location_id") or "").strip() != block_location_id:
+        return False
+
+    block_series_key = str(block.get("series_key") or "").strip()
+    if block_series_key:
+        return str(session.get("series_key") or "").strip() == block_series_key
+
+    block_recommendation_key = str(block.get("recommendation_key") or "").strip()
+    if block_recommendation_key:
+        return str(session.get("recommendation_key") or "").strip() == block_recommendation_key
+
+    return True
+
+
 def _quote_school_calendar_rows(db: Session) -> list[dict[str, Any]]:
     setting = db.scalar(select(AppSetting).where(AppSetting.key == QUOTE_SCHOOL_CALENDARS_SETTING_KEY))
     if setting is None:
@@ -2040,7 +2067,19 @@ def _calendar_snapshot_with_planning_sessions(db: Session | None, calendar_snaps
     changed = deduped_existing
     seen: set[tuple[str, str, str, str]] = {_calendar_session_dedupe_key(item) for item in sessions}
     for block in blocks:
-        for item in _sessions_from_planning_block(db, block):
+        refreshed_block_sessions = _sessions_from_planning_block(db, block)
+        if refreshed_block_sessions:
+            refreshed_dates = {str(item.get("date") or "").strip() for item in refreshed_block_sessions}
+            kept_sessions = [
+                item
+                for item in sessions
+                if not _calendar_session_matches_planning_block(item, block, refreshed_dates=refreshed_dates)
+            ]
+            if len(kept_sessions) != len(sessions):
+                sessions = kept_sessions
+                seen = {_calendar_session_dedupe_key(item) for item in sessions}
+                changed = True
+        for item in refreshed_block_sessions:
             key = _calendar_session_dedupe_key(item)
             if key in seen:
                 continue
