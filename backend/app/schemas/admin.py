@@ -1488,6 +1488,7 @@ class AdminRangeInvoiceEmailPreviewOut(BaseModel):
     subject: str
     body: str
     body_format: Literal["TEXT", "HTML"] = "TEXT"
+    sms_body: str | None = None
 
 
 class AdminClientBookingOut(BaseModel):

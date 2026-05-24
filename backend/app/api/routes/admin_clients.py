@@ -10596,13 +10596,14 @@ def preview_admin_client_range_invoice_email(
     client_id: UUID,
     note_id: UUID,
     kind: str = Query(default="INVOICE"),
-      include_change_summary: bool = Query(default=False),
+    include_change_summary: bool = Query(default=False),
     reference_invoice_note_id: UUID | None = Query(default=None),
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminRangeInvoiceEmailPreviewOut:
     client = _require_client(db, client_id)
-    _, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=False)
+    billing_profile = resolve_billing_profile(db, client)
+    note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=False)
     normalized_kind = "REMINDER" if kind.strip().upper() == "REMINDER" else "INVOICE"
     recipients, subject, body, body_format = _build_range_invoice_email_defaults(
         db,
@@ -10613,6 +10614,22 @@ def preview_admin_client_range_invoice_email(
         include_change_summary=include_change_summary,
         reference_invoice_note_id=reference_invoice_note_id,
     )
+    sms_metadata = _invoice_range_metadata_with_display_totals(
+        db,
+        client_id=client.id,
+        note_id=note_id,
+        note_created_at=note.created_at,
+        metadata=metadata,
+    )
+    sms_body = _build_range_invoice_sms_body(
+        db,
+        client=client,
+        billing_profile=billing_profile,
+        metadata=sms_metadata,
+        invoice_url=_invoice_range_download_url(client_id=client.id, note_id=note_id, metadata=sms_metadata, inline=True),
+        payment_url=_invoice_range_payment_url(client_id=client.id, note_id=note_id, metadata=sms_metadata),
+        kind=normalized_kind,
+    )
     return AdminRangeInvoiceEmailPreviewOut(
         note_id=note_id,
         kind=normalized_kind,
@@ -10620,6 +10637,7 @@ def preview_admin_client_range_invoice_email(
         subject=subject,
         body=body,
         body_format=body_format,
+        sms_body=sms_body,
     )
 
 

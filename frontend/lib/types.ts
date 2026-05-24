@@ -647,6 +647,7 @@ export type AdminRangeInvoiceEmailPreviewOut = {
   subject: string;
   body: string;
   body_format: "TEXT" | "HTML";
+  sms_body: string | null;
 };
 
 export type FamilyMemberOut = {

@@ -6952,7 +6952,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                     name="sms_body"
                     rows={3}
                     maxLength={1000}
-                    placeholder="Laissez vide pour utiliser le message facture par defaut avec le lien de paiement."
+                    defaultValue={invoiceEmailPreview?.sms_body ?? ""}
+                    placeholder="Message SMS facture"
                   />
                 </label>
               </fieldset>
