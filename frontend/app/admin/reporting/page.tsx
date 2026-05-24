@@ -18,6 +18,7 @@ type ReportType =
   | "intake-families"
   | "quote-families"
   | "expired-quotes"
+  | "overdue-invoices"
   | "reservations"
   | "attendance"
   | "professor-statements"
@@ -55,6 +56,12 @@ const REPORT_DEFINITIONS: ReportDefinition[] = [
     label: "Devis expires/refuses/annules",
     description: "Liste des devis sortis du cycle commercial sur une plage de dates.",
     filterHint: "Periode de sortie, annee scolaire, famille, enfant, statut de sortie.",
+  },
+  {
+    type: "overdue-invoices",
+    label: "Factures echues non payees",
+    description: "Factures emises dont l echeance est atteinte et qui ne sont pas marquees payees.",
+    filterHint: "Periode d echeance, client, email ou numero de facture.",
   },
   {
     type: "reservations",

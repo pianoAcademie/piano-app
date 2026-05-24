@@ -54,6 +54,7 @@ REPORT_TYPE_LABELS: dict[str, str] = {
     "intake-families": "Synthese intakes par famille",
     "quote-families": "Synthese devis par famille",
     "expired-quotes": "Devis expires/refuses/annules",
+    "overdue-invoices": "Factures echues non payees",
     "reservations": "Reservations",
     "attendance": "Presence eleves",
     "professor-statements": "Releves professeurs",
@@ -107,6 +108,27 @@ def _invoice_fields_from_note_message(message: str | None) -> tuple[str | None, 
     match = re.search(r"\bFacture\s+([A-Za-z0-9._/-]+)", raw)
     invoice_number = match.group(1).strip() if match is not None else None
     return invoice_number, None
+
+
+def _invoice_range_metadata_from_note_message(message: str | None) -> dict[str, object] | None:
+    raw = (message or "").strip()
+    if not raw:
+        return None
+    prefix_index = raw.find(INVOICE_RANGE_NOTE_PREFIX)
+    if prefix_index < 0:
+        return None
+    payload = raw[prefix_index + len(INVOICE_RANGE_NOTE_PREFIX) :].strip()
+    if not payload:
+        return None
+    try:
+        parsed = json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    if str(parsed.get("kind") or "").strip().upper() != "INVOICE_RANGE":
+        return None
+    return parsed
 
 
 def _ensure_date_range(from_: datetime | None, to: datetime | None) -> None:
@@ -266,6 +288,41 @@ def _report_period_label(start: date | None, end: date | None) -> str:
     if end:
         return f"Jusqu au {end.isoformat()}"
     return "-"
+
+
+def _decimal_from_mapping(value: object | None) -> dict[str, Decimal]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, Decimal] = {}
+    for currency, amount in value.items():
+        currency_code = _text(currency).upper() or "EUR"
+        try:
+            out[currency_code] = Decimal(str(amount or "0")).quantize(Decimal("0.01"))
+        except Exception:
+            continue
+    return out
+
+
+def _money_label_from_mapping(value: object | None, fallback_currency: str = "EUR") -> str:
+    amounts = _decimal_from_mapping(value)
+    if not amounts:
+        return f"0.00 {fallback_currency.upper()}"
+    return " | ".join(f"{amount:.2f} {currency}" for currency, amount in sorted(amounts.items()))
+
+
+def _sum_decimal_mapping(value: object | None) -> Decimal:
+    total = Decimal("0.00")
+    for amount in _decimal_from_mapping(value).values():
+        total += amount
+    return total.quantize(Decimal("0.01"))
+
+
+def _money_label_from_scalar(value: object | None, currency: str = "EUR") -> str:
+    try:
+        amount = Decimal(str(value or "0")).quantize(Decimal("0.01"))
+    except Exception:
+        amount = Decimal("0.00")
+    return f"{amount:.2f} {currency.upper()}"
 
 
 def _form_label(config: TypeformFormConfig | None) -> str | None:
@@ -1135,6 +1192,99 @@ def _build_expired_quote_rows(
     return out
 
 
+def _build_overdue_invoice_rows(
+    db: Session,
+    *,
+    q: str | None = None,
+    due_from: date | None = None,
+    due_to: date | None = None,
+    limit: int = 5000,
+) -> list[dict[str, object]]:
+    if due_from is not None and due_to is not None and due_from > due_to:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="'due_from' must be before 'due_to'",
+        )
+
+    today = datetime.now(ADMIN_COMMUNICATION_TIMEZONE).date()
+    effective_due_to = due_to or today
+    search_token = q.strip().casefold() if q else ""
+    rows = db.execute(
+        select(ClientNoteEntry, User)
+        .join(User, User.id == ClientNoteEntry.user_id)
+        .where(ClientNoteEntry.message.contains(INVOICE_RANGE_NOTE_PREFIX))
+        .order_by(ClientNoteEntry.created_at.desc())
+        .limit(limit)
+    ).all()
+
+    out: list[dict[str, object]] = []
+    for note, client in rows:
+        metadata = _invoice_range_metadata_from_note_message(note.message)
+        if metadata is None:
+            continue
+        invoice_status = _text(metadata.get("invoice_status")).upper() or "ISSUED"
+        if invoice_status != "ISSUED":
+            continue
+        if _bool_or_default(metadata.get("no_due_date"), False):
+            continue
+        due_date = _parse_report_date(metadata.get("due_date"))
+        if due_date is None:
+            continue
+        if due_from is not None and due_date < due_from:
+            continue
+        if due_date > effective_due_to:
+            continue
+
+        invoice_number = _text(metadata.get("invoice_number")) or "-"
+        client_name = _text(metadata.get("client_name")) or _client_name(client)
+        client_email = _text(client.email)
+        client_phone = _text(client.mobile_phone_1) or _text(client.mobile_phone_2) or _text(client.phone) or _text(client.home_phone)
+        billing_entity = _text(metadata.get("billing_entity")) or "-"
+        amounts = metadata.get("total_to_pay_by_currency") or metadata.get("totals_by_currency")
+        amount_currency = next(iter(_decimal_from_mapping(amounts).keys()), _text(metadata.get("currency")) or "EUR")
+        paid_value = metadata.get("payment_amount_paid")
+        paid_label = _money_label_from_scalar(paid_value, amount_currency) if paid_value not in (None, "") else "-"
+        emailed_at = _text(metadata.get("emailed_at"))[:10]
+        reminded_at = _text(metadata.get("reminded_at"))[:10]
+
+        searchable = " ".join(
+            [
+                invoice_number,
+                client_name,
+                client_email,
+                client_phone,
+                billing_entity,
+                _text(metadata.get("private_note")),
+                str(note.id),
+            ]
+        ).casefold()
+        if search_token and search_token not in searchable:
+            continue
+
+        out.append(
+            {
+                "note_id": str(note.id),
+                "client_id": str(client.id),
+                "invoice_number": invoice_number,
+                "client_name": client_name,
+                "client_email": client_email,
+                "client_phone": client_phone,
+                "billing_entity": billing_entity,
+                "issued_date": _text(metadata.get("issued_date"))[:10] or note.created_at.date().isoformat(),
+                "due_date": due_date.isoformat(),
+                "days_overdue": max(0, (today - due_date).days),
+                "total_due": _money_label_from_mapping(amounts, amount_currency),
+                "amount_paid": paid_label,
+                "status": "Emise non payee",
+                "emailed_at": emailed_at,
+                "reminded_at": reminded_at,
+                "last_contact_at": reminded_at or emailed_at or "-",
+            }
+        )
+    out.sort(key=lambda item: (_text(item.get("due_date")), _text(item.get("client_name")).casefold(), _text(item.get("invoice_number"))))
+    return out
+
+
 @router.post("/communications/{communication_id}/resend", response_model=CommunicationReportRow)
 def resend_communication(
     communication_id: str = Path(...),
@@ -1642,6 +1792,63 @@ def _generated_report_html(row: GeneratedReport) -> str:
             "</body></html>"
         )
 
+    if row.report_type == "overdue-invoices":
+        item_rows = []
+        for raw_item in items:
+            item = _json_object(raw_item)
+            contact_bits = [
+                _text(item.get("client_email")),
+                _text(item.get("client_phone")),
+            ]
+            contact = "<br>".join(html.escape(bit) for bit in contact_bits if bit) or "-"
+            delay = _text(item.get("days_overdue"))
+            delay_label = f"{delay} j" if delay and delay != "0" else "Echeance atteinte"
+            item_rows.append(
+                "<tr>"
+                f"<td class='code'>{html.escape(_text(item.get('invoice_number')) or '-')}</td>"
+                f"<td>{html.escape(_text(item.get('client_name')) or '-')}<br><span class='small'>{contact}</span></td>"
+                f"<td>{html.escape(_text(item.get('billing_entity')) or '-')}</td>"
+                f"<td>{html.escape(_text(item.get('issued_date')) or '-')}</td>"
+                f"<td>{html.escape(_text(item.get('due_date')) or '-')}</td>"
+                f"<td>{html.escape(delay_label)}</td>"
+                f"<td>{html.escape(_text(item.get('total_due')) or '-')}</td>"
+                f"<td>{html.escape(_text(item.get('amount_paid')) or '-')}</td>"
+                f"<td>{html.escape(_text(item.get('last_contact_at')) or '-')}</td>"
+                "</tr>"
+            )
+        table_html = (
+            "<table><colgroup>"
+            "<col style='width:13%'><col style='width:19%'><col style='width:12%'><col style='width:9%'>"
+            "<col style='width:9%'><col style='width:10%'><col style='width:10%'><col style='width:9%'><col style='width:9%'>"
+            "</colgroup><thead><tr>"
+            "<th>Facture</th><th>Client</th><th>Entite</th><th>Emission</th><th>Echeance</th>"
+            "<th>Retard</th><th>Montant du</th><th>Deja paye</th><th>Dernier contact</th>"
+            "</tr></thead><tbody>"
+            f"{''.join(item_rows)}"
+            "</tbody></table>"
+        ) if item_rows else "<p>Aucune facture echue non payee pour cette periode.</p>"
+        blocks.append(table_html)
+        return (
+            "<!doctype html><html><head><meta charset='utf-8'>"
+            "<style>"
+            "@page { size: A4 landscape; margin: 14mm; }"
+            "body { font-family: Arial, sans-serif; color: #222; font-size: 9pt; }"
+            "h1 { font-size: 20pt; margin: 0 0 8px; }"
+            ".meta { color: #555; margin-bottom: 14px; }"
+            "table { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 8px; }"
+            "th, td { border: 1px solid #ccd3dd; padding: 5px; vertical-align: top; }"
+            "th { background: #eef2f6; text-align: left; }"
+            "td { word-wrap: break-word; overflow-wrap: break-word; }"
+            ".small { color: #596579; font-size: 8pt; font-weight: normal; }"
+            ".code { font-size: 7.6pt; line-height: 1.25; }"
+            "</style></head><body>"
+            f"<h1>{title}</h1>"
+            f"<p class='meta'>Genere le {generated_at} | Echeances: {period_label} | Format: PDF | Note: {note}</p>"
+            f"<p class='meta'>Criteres: {criteria_html}</p>"
+            f"{''.join(blocks)}"
+            "</body></html>"
+        )
+
     report_rows = [
         ("course_1", "Cours 1"),
         ("course_2", "Cours 2"),
@@ -1791,6 +1998,18 @@ def create_generated_report(
             status_filter=_text(criteria.get("status")) or None,
             limit=5000,
         )
+        content = {"items": rows}
+        row_count = len(rows)
+    elif report_type == "overdue-invoices":
+        effective_period_end = period_end or datetime.now(ADMIN_COMMUNICATION_TIMEZONE).date()
+        rows = _build_overdue_invoice_rows(
+            db,
+            q=_text(criteria.get("q")) or None,
+            due_from=period_start,
+            due_to=effective_period_end,
+            limit=5000,
+        )
+        period_end = effective_period_end
         content = {"items": rows}
         row_count = len(rows)
 
