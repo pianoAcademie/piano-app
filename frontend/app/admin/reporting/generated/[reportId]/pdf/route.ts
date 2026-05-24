@@ -9,12 +9,18 @@ type RouteParams = {
   };
 };
 
-export async function GET(_request: Request, { params }: RouteParams): Promise<Response> {
+export async function GET(request: Request, { params }: RouteParams): Promise<Response> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
     return NextResponse.json({ detail: "Session expiree" }, { status: 401 });
   }
-  const response = await fetch(`${backendUrl()}/api/v1/admin/reports/generated/${encodeURIComponent(params.reportId)}/pdf`, {
+  const requestUrl = new URL(request.url);
+  const inline = requestUrl.searchParams.get("inline") === "1";
+  const upstreamUrl = new URL(`${backendUrl()}/api/v1/admin/reports/generated/${encodeURIComponent(params.reportId)}/pdf`);
+  if (inline) {
+    upstreamUrl.searchParams.set("inline", "1");
+  }
+  const response = await fetch(upstreamUrl, {
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -25,7 +31,7 @@ export async function GET(_request: Request, { params }: RouteParams): Promise<R
     status: response.status,
     headers: {
       "Content-Type": response.headers.get("content-type") || "application/pdf",
-      "Content-Disposition": response.headers.get("content-disposition") || 'attachment; filename="rapport.pdf"',
+      "Content-Disposition": inline ? 'inline; filename="rapport.pdf"' : response.headers.get("content-disposition") || 'attachment; filename="rapport.pdf"',
     },
   });
 }

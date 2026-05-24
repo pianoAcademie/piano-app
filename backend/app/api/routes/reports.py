@@ -53,7 +53,7 @@ ADMIN_COMMUNICATION_TIMEZONE = ZoneInfo("Europe/Paris")
 REPORT_TYPE_LABELS: dict[str, str] = {
     "intake-families": "Synthese intakes par famille",
     "quote-families": "Synthese devis par famille",
-    "expired-quotes": "Devis expires",
+    "expired-quotes": "Devis expires/refuses/annules",
     "reservations": "Reservations",
     "attendance": "Presence eleves",
     "professor-statements": "Releves professeurs",
@@ -999,27 +999,66 @@ def _build_expired_quote_rows(
             detail="'expired_from' must be before 'expired_to'",
         )
 
+    now_utc = datetime.now(timezone.utc)
+    terminal_expired = or_(
+        Quote.status == "expired",
+        (
+            Quote.status.in_(["sent", "change_requested"])
+            & Quote.expires_at.is_not(None)
+            & (Quote.expires_at < now_utc)
+        ),
+    )
+    effective_status_expr = case(
+        (Quote.status == "rejected", "rejected"),
+        (Quote.status == "cancelled", "cancelled"),
+        (terminal_expired, "expired"),
+        else_=None,
+    )
+    effective_date_expr = case(
+        (Quote.status == "rejected", func.coalesce(Quote.rejected_at, Quote.updated_at)),
+        (Quote.status == "cancelled", func.coalesce(Quote.cancelled_at, Quote.updated_at)),
+        (terminal_expired, func.coalesce(Quote.expired_at, Quote.expires_at)),
+        else_=None,
+    )
+
     stmt = (
-        select(Quote, Prospect, User, Location)
+        select(
+            Quote,
+            Prospect,
+            User,
+            Location,
+            effective_status_expr.label("effective_status"),
+            effective_date_expr.label("effective_date"),
+        )
         .outerjoin(Prospect, Prospect.id == Quote.prospect_id)
         .outerjoin(User, User.id == Quote.client_id)
         .outerjoin(Location, Location.id == Quote.location_id)
-        .where(Quote.expires_at.is_not(None))
-        .order_by(Quote.expires_at.desc(), Quote.quote_number.asc())
+        .where(effective_status_expr.is_not(None), effective_date_expr.is_not(None))
+        .order_by(effective_date_expr.desc(), Quote.quote_number.asc())
         .limit(limit)
     )
     if school_year_label:
         stmt = stmt.where(Quote.school_year_label == school_year_label)
     if expired_from is not None:
         start_local, _ = _day_bounds(expired_from)
-        stmt = stmt.where(Quote.expires_at >= start_local)
+        stmt = stmt.where(effective_date_expr >= start_local)
     if expired_to is not None:
         _, end_local = _day_bounds(expired_to)
-        stmt = stmt.where(Quote.expires_at < end_local)
+        stmt = stmt.where(effective_date_expr < end_local)
     if status_filter:
-        stmt = stmt.where(Quote.status.ilike(status_filter.strip()))
-    else:
-        stmt = stmt.where(Quote.status.in_(["sent", "change_requested", "expired", "cancelled"]))
+        normalized_status = status_filter.strip().casefold()
+        status_aliases = {
+            "expire": "expired",
+            "expired": "expired",
+            "expires": "expired",
+            "refuse": "rejected",
+            "refused": "rejected",
+            "rejected": "rejected",
+            "annule": "cancelled",
+            "cancelled": "cancelled",
+            "canceled": "cancelled",
+        }
+        stmt = stmt.where(effective_status_expr == status_aliases.get(normalized_status, normalized_status))
     if q:
         like = f"%{q.strip()}%"
         stmt = stmt.where(
@@ -1038,7 +1077,7 @@ def _build_expired_quote_rows(
         )
 
     rows = db.execute(stmt).all()
-    quote_ids = [quote.id for quote, _, _, _ in rows]
+    quote_ids = [quote.id for quote, _, _, _, _, _ in rows]
     lines_by_quote_id: dict[UUID, list[QuoteLine]] = {quote_id: [] for quote_id in quote_ids}
     if quote_ids:
         for line in db.scalars(
@@ -1048,8 +1087,13 @@ def _build_expired_quote_rows(
         ).all():
             lines_by_quote_id.setdefault(line.quote_id, []).append(line)
 
+    status_labels = {
+        "expired": "Expire",
+        "rejected": "Refuse par le client",
+        "cancelled": "Annule par l admin",
+    }
     out: list[dict[str, object]] = []
-    for quote, prospect, client, location in rows:
+    for quote, prospect, client, location, effective_status, effective_date in rows:
         contact = _quote_parent_contact_from_meta(_json_object(quote.meta))
         contact_name = contact["name"] or (
             _display_name(client.first_name, client.last_name, fallback="") if client is not None else ""
@@ -1070,11 +1114,15 @@ def _build_expired_quote_rows(
                 "contact_email": contact_email,
                 "contact_phone": contact_phone,
                 "status": quote.status,
+                "effective_status": effective_status,
+                "effective_status_label": status_labels.get(str(effective_status), str(effective_status or quote.status)),
+                "effective_date": effective_date.isoformat() if effective_date else None,
                 "created_at": quote.created_at.isoformat(),
                 "sent_at": quote.sent_at.isoformat() if quote.sent_at else None,
                 "expires_at": quote.expires_at.isoformat() if quote.expires_at else None,
                 "expired_at": quote.expired_at.isoformat() if quote.expired_at else None,
                 "cancelled_at": quote.cancelled_at.isoformat() if quote.cancelled_at else None,
+                "rejected_at": quote.rejected_at.isoformat() if quote.rejected_at else None,
                 "school_year_label": quote.school_year_label,
                 "location": location.name if location is not None else None,
                 "total_ttc": _format_money(quote.total_ttc, quote.currency),
@@ -1550,21 +1598,24 @@ def _generated_report_html(row: GeneratedReport) -> str:
             item = _json_object(raw_item)
             item_rows.append(
                 "<tr>"
-                f"<td>{html.escape(_text(item.get('quote_number')) or '-')}</td>"
+                f"<td class='code'>{html.escape(_text(item.get('quote_number')) or '-')}</td>"
                 f"<td>{html.escape(_text(item.get('student_name')) or '-')}</td>"
                 f"<td>{html.escape(_text(item.get('contact_name')) or '-')}<br><span class='small'>{html.escape(_text(item.get('contact_email')) or '-')}</span></td>"
-                f"<td>{html.escape(_text(item.get('status')) or '-')}</td>"
+                f"<td>{html.escape(_text(item.get('effective_status_label')) or _text(item.get('status')) or '-')}</td>"
+                f"<td>{html.escape(_text(item.get('effective_date'))[:10] or '-')}</td>"
                 f"<td>{html.escape(_text(item.get('expires_at'))[:10] or '-')}</td>"
-                f"<td>{html.escape(_text(item.get('expired_at'))[:10] or '-')}</td>"
                 f"<td>{html.escape(_text(item.get('total_ttc')) or '-')}</td>"
                 f"<td>{html.escape(_text(item.get('location')) or '-')}</td>"
                 f"<td>{html.escape(_text(item.get('planning')) or '-')}</td>"
                 "</tr>"
             )
         table_html = (
-            "<table><thead><tr>"
-            "<th>Devis</th><th>Eleve</th><th>Contact</th><th>Statut</th><th>Expiration</th>"
-            "<th>Marque expire</th><th>Total</th><th>Lieu</th><th>Planning</th>"
+            "<table><colgroup>"
+            "<col style='width:14%'><col style='width:13%'><col style='width:16%'><col style='width:12%'>"
+            "<col style='width:9%'><col style='width:9%'><col style='width:9%'><col style='width:9%'><col style='width:9%'>"
+            "</colgroup><thead><tr>"
+            "<th>Devis</th><th>Eleve</th><th>Contact</th><th>Statut sortie</th><th>Date statut</th>"
+            "<th>Expiration prevue</th><th>Total</th><th>Lieu</th><th>Planning</th>"
             "</tr></thead><tbody>"
             f"{''.join(item_rows)}"
             "</tbody></table>"
@@ -1577,10 +1628,12 @@ def _generated_report_html(row: GeneratedReport) -> str:
             "body { font-family: Arial, sans-serif; color: #222; font-size: 9pt; }"
             "h1 { font-size: 20pt; margin: 0 0 8px; }"
             ".meta { color: #555; margin-bottom: 14px; }"
-            "table { width: 100%; border-collapse: collapse; margin-top: 8px; }"
+            "table { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 8px; }"
             "th, td { border: 1px solid #ccd3dd; padding: 5px; vertical-align: top; }"
             "th { background: #eef2f6; text-align: left; }"
+            "td { word-wrap: break-word; overflow-wrap: break-word; }"
             ".small { color: #596579; font-size: 8pt; font-weight: normal; }"
+            ".code { font-size: 7.6pt; line-height: 1.25; }"
             "</style></head><body>"
             f"<h1>{title}</h1>"
             f"<p class='meta'>Genere le {generated_at} | Periode: {period_label} | Format: PDF | Note: {note}</p>"
@@ -1762,6 +1815,7 @@ def create_generated_report(
 @router.get("/generated/{report_id}/pdf")
 def download_generated_report_pdf(
     report_id: UUID,
+    inline: bool = Query(default=False),
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> Response:
@@ -1769,11 +1823,31 @@ def download_generated_report_pdf(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rapport introuvable")
     filename = f"rapport-{row.report_type}-{row.created_at.strftime('%Y%m%d')}.pdf".replace('"', "")
+    disposition = "inline" if inline else "attachment"
     return Response(
         content=_render_generated_report_pdf(row),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'{disposition}; filename="{filename}"'},
     )
+
+
+@router.delete("/generated", status_code=status.HTTP_204_NO_CONTENT)
+def delete_generated_reports(
+    report_ids: list[UUID] = Query(default=[]),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> Response:
+    if not report_ids:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun rapport selectionne")
+    rows = db.scalars(select(GeneratedReport).where(GeneratedReport.id.in_(report_ids))).all()
+    found_ids = {row.id for row in rows}
+    missing_ids = [str(report_id) for report_id in report_ids if report_id not in found_ids]
+    if missing_ids:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rapport introuvable")
+    for row in rows:
+        db.delete(row)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete("/generated/{report_id}", status_code=status.HTTP_204_NO_CONTENT)

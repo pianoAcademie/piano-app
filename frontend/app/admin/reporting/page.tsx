@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { createGeneratedReportAction, deleteGeneratedReportAction } from "../../../lib/actions";
+import { createGeneratedReportAction, deleteGeneratedReportAction, deleteGeneratedReportsAction } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
 import type { GeneratedReportOut, UserOut } from "../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
@@ -51,9 +51,9 @@ const REPORT_DEFINITIONS: ReportDefinition[] = [
   },
   {
     type: "expired-quotes",
-    label: "Devis expires",
-    description: "Liste des devis arrives a expiration sur une plage de dates.",
-    filterHint: "Periode d expiration, annee scolaire, famille, enfant, statut commercial.",
+    label: "Devis expires/refuses/annules",
+    description: "Liste des devis sortis du cycle commercial sur une plage de dates.",
+    filterHint: "Periode de sortie, annee scolaire, famille, enfant, statut de sortie.",
   },
   {
     type: "reservations",
@@ -249,45 +249,61 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
         </div>
         {generatedReportsResult.ok ? (
           generatedReports.length > 0 ? (
-            <div className="table-wrap top-gap-sm">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>{t("admin.reporting.report_type")}</th>
-                    <th>{t("admin.reporting.created_at")}</th>
-                    <th>{t("admin.reporting.format")}</th>
-                    <th>{t("admin.reporting.report_period")}</th>
-                    <th>Note</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {generatedReports.map((row) => (
-                    <tr key={row.id}>
-                      <td>{row.report_label}</td>
-                      <td>{formatDate(row.created_at, language)}</td>
-                      <td>{row.file_format}</td>
-                      <td>{reportPeriod(row, language)}</td>
-                      <td>{row.note || "-"}</td>
-                      <td>
-                        <div className="form-actions">
-                          <Link className="button-link" href={`/admin/reporting/generated/${encodeURIComponent(row.id)}/pdf`}>
-                            {t("admin.reporting.download_pdf")}
-                          </Link>
-                          <form action={deleteGeneratedReportAction}>
-                            <input type="hidden" name="report_id" value={row.id} />
-                            <input type="hidden" name="return_to" value="/admin/reporting" />
-                            <button className="danger-button" type="submit">
+            <form action={deleteGeneratedReportsAction}>
+              <input type="hidden" name="return_to" value="/admin/reporting" />
+              <div className="form-actions top-gap-sm">
+                <button className="danger-button" type="submit">
+                  Supprimer la selection
+                </button>
+              </div>
+              <div className="table-wrap top-gap-sm">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Selection</th>
+                      <th>{t("admin.reporting.report_type")}</th>
+                      <th>{t("admin.reporting.created_at")}</th>
+                      <th>{t("admin.reporting.format")}</th>
+                      <th>{t("admin.reporting.report_period")}</th>
+                      <th>Note</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {generatedReports.map((row) => (
+                      <tr key={row.id}>
+                        <td>
+                          <input type="checkbox" name="report_ids" value={row.id} aria-label={`Selectionner ${row.report_label}`} />
+                        </td>
+                        <td>{row.report_label}</td>
+                        <td>{formatDate(row.created_at, language)}</td>
+                        <td>{row.file_format}</td>
+                        <td>{reportPeriod(row, language)}</td>
+                        <td>{row.note || "-"}</td>
+                        <td>
+                          <div className="form-actions">
+                            <Link
+                              className="button-link"
+                              href={`/admin/reporting/generated/${encodeURIComponent(row.id)}/pdf?inline=1`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Visualiser
+                            </Link>
+                            <Link className="button-link" href={`/admin/reporting/generated/${encodeURIComponent(row.id)}/pdf`}>
+                              {t("admin.reporting.download_pdf")}
+                            </Link>
+                            <button className="danger-button" type="submit" name="report_id" value={row.id} formAction={deleteGeneratedReportAction}>
                               Supprimer
                             </button>
-                          </form>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </form>
           ) : (
             <p className="muted">{t("admin.reporting.no_generated_report")}</p>
           )
@@ -373,7 +389,17 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
                       </select>
                     </label>
                   ) : null}
-                  {requiresStatus(reportDefinition.type) ? (
+                  {reportDefinition.type === "expired-quotes" ? (
+                    <label>
+                      {t("admin.reporting.status")}
+                      <select name="status" defaultValue={reportFilterValue(searchParams, "status")}>
+                        <option value="">{t("admin.reporting.all")}</option>
+                        <option value="expired">Expire</option>
+                        <option value="rejected">Refuse par le client</option>
+                        <option value="cancelled">Annule par l admin</option>
+                      </select>
+                    </label>
+                  ) : requiresStatus(reportDefinition.type) ? (
                     <label>
                       {t("admin.reporting.status")}
                       <input name="status" placeholder="Statut" defaultValue={reportFilterValue(searchParams, "status")} />

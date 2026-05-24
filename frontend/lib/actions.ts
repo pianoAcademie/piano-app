@@ -16220,3 +16220,29 @@ export async function deleteGeneratedReportAction(formData: FormData): Promise<v
   revalidatePath("/admin/reporting");
   redirect(appendQueryMessage(returnTo, "ok", "Rapport supprime"));
 }
+
+export async function deleteGeneratedReportsAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const returnTo = safeAdminReportingPath(formData);
+  const reportIds = formData
+    .getAll("report_ids")
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+  if (!token || reportIds.length === 0) {
+    redirect(appendQueryMessage(returnTo, "error", "Selectionnez au moins un rapport"));
+  }
+  const query = new URLSearchParams();
+  for (const reportId of reportIds) {
+    query.append("report_ids", reportId);
+  }
+  const result = await backendRequest<Record<string, never>>(
+    `/api/v1/admin/reports/generated?${query.toString()}`,
+    { method: "DELETE" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/reporting");
+  redirect(appendQueryMessage(returnTo, "ok", `${reportIds.length} rapport(s) supprime(s)`));
+}
