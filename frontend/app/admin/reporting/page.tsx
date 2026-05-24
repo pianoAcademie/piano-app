@@ -4,8 +4,9 @@ import { redirect } from "next/navigation";
 
 import { createGeneratedReportAction, deleteGeneratedReportAction, deleteGeneratedReportsAction } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
+import { GeneratedReportsTable } from "../../../components/generated-reports-table";
 import type { GeneratedReportOut, UserOut } from "../../../lib/types";
-import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
+import { normalizeUiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -148,33 +149,6 @@ function withParams(values: Record<string, string | number | null | undefined>):
   return query ? `/admin/reporting?${query}` : "/admin/reporting";
 }
 
-function formatDate(value: string, language: UiLanguage): string {
-  return new Date(value).toLocaleString(localeForUiLanguage(language), {
-    dateStyle: "short",
-    timeStyle: "short",
-  });
-}
-
-function formatDateOnly(value: string | null, language: UiLanguage): string {
-  if (!value) {
-    return "-";
-  }
-  return new Date(`${value}T00:00:00`).toLocaleDateString(localeForUiLanguage(language));
-}
-
-function reportPeriod(row: GeneratedReportOut, language: UiLanguage): string {
-  if (row.period_start && row.period_end) {
-    return `${formatDateOnly(row.period_start, language)} - ${formatDateOnly(row.period_end, language)}`;
-  }
-  if (row.period_start) {
-    return `Depuis ${formatDateOnly(row.period_start, language)}`;
-  }
-  if (row.period_end) {
-    return `Jusqu au ${formatDateOnly(row.period_end, language)}`;
-  }
-  return "-";
-}
-
 function reportFilterValue(searchParams: SearchParams, key: string, fallback = ""): string {
   return firstParam(searchParams, key) || fallback;
 }
@@ -249,61 +223,19 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
         </div>
         {generatedReportsResult.ok ? (
           generatedReports.length > 0 ? (
-            <form action={deleteGeneratedReportsAction}>
-              <input type="hidden" name="return_to" value="/admin/reporting" />
-              <div className="form-actions top-gap-sm">
-                <button className="danger-button" type="submit">
-                  Supprimer la selection
-                </button>
-              </div>
-              <div className="table-wrap top-gap-sm">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Selection</th>
-                      <th>{t("admin.reporting.report_type")}</th>
-                      <th>{t("admin.reporting.created_at")}</th>
-                      <th>{t("admin.reporting.format")}</th>
-                      <th>{t("admin.reporting.report_period")}</th>
-                      <th>Note</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {generatedReports.map((row) => (
-                      <tr key={row.id}>
-                        <td>
-                          <input type="checkbox" name="report_ids" value={row.id} aria-label={`Selectionner ${row.report_label}`} />
-                        </td>
-                        <td>{row.report_label}</td>
-                        <td>{formatDate(row.created_at, language)}</td>
-                        <td>{row.file_format}</td>
-                        <td>{reportPeriod(row, language)}</td>
-                        <td>{row.note || "-"}</td>
-                        <td>
-                          <div className="form-actions">
-                            <Link
-                              className="button-link"
-                              href={`/admin/reporting/generated/${encodeURIComponent(row.id)}/pdf?inline=1`}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              Visualiser
-                            </Link>
-                            <Link className="button-link" href={`/admin/reporting/generated/${encodeURIComponent(row.id)}/pdf`}>
-                              {t("admin.reporting.download_pdf")}
-                            </Link>
-                            <button className="danger-button" type="submit" name="report_id" value={row.id} formAction={deleteGeneratedReportAction}>
-                              Supprimer
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </form>
+            <GeneratedReportsTable
+              reports={generatedReports}
+              language={language}
+              deleteOneAction={deleteGeneratedReportAction}
+              deleteManyAction={deleteGeneratedReportsAction}
+              labels={{
+                reportType: t("admin.reporting.report_type"),
+                createdAt: t("admin.reporting.created_at"),
+                format: t("admin.reporting.format"),
+                reportPeriod: t("admin.reporting.report_period"),
+                downloadPdf: t("admin.reporting.download_pdf"),
+              }}
+            />
           ) : (
             <p className="muted">{t("admin.reporting.no_generated_report")}</p>
           )
