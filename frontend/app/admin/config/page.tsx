@@ -208,6 +208,8 @@ const QUOTE_TEMPLATE_USAGE_CONTEXTS = [
   { value: "QUOTE_APPROVED", labelKey: "admin.messaging_templates.usage_approved" },
   { value: "QUOTE_REJECTED", labelKey: "admin.messaging_templates.usage_rejected" },
   { value: "QUOTE_CHANGE_REQUESTED", labelKey: "admin.messaging_templates.usage_change_requested" },
+  { value: "INVOICE_SEND", labelKey: "admin.messaging_templates.usage_invoice_send" },
+  { value: "INVOICE_REMINDER", labelKey: "admin.messaging_templates.usage_invoice_reminder" },
 ] as const;
 
 type ActivityModalSectionProps = {

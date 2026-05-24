@@ -33,6 +33,8 @@ MessagingTemplateUsageContext = Literal[
     "QUOTE_APPROVED",
     "QUOTE_REJECTED",
     "QUOTE_CHANGE_REQUESTED",
+    "INVOICE_SEND",
+    "INVOICE_REMINDER",
 ]
 
 MESSAGING_SETTINGS_STUDIO_EMAIL_KEY = "config_messaging_studio_email"
@@ -1364,21 +1366,23 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
     ),
     MessagingTemplateDefinition(
         code="SMS_INVOICE",
-        name="Invoice",
+        name="Facture - Envoi (SMS)",
         channel="SMS",
         subject=None,
-        body="Votre facture Piano Academie est disponible.",
-        description="SMS facture.",
-        variables_hint="",
+        body="Piano Academie : votre facture {invoice_number} de {amount_due} {currency} est disponible. Paiement en ligne : {payment_url}",
+        description="SMS envoye avec une facture.",
+        variables_hint="{invoice_number} {amount_due} {currency} {payment_url} {invoice_url} {due_date} {issued_date} {client_name} {recipient_name}",
+        usage_contexts=("INVOICE_SEND",),
     ),
     MessagingTemplateDefinition(
         code="SMS_INVOICE_REMINDER",
-        name="Invoice Reminder",
+        name="Facture - Relance (SMS)",
         channel="SMS",
         subject=None,
-        body="Rappel facture Piano Academie.",
-        description="SMS relance facture.",
-        variables_hint="",
+        body="Rappel Piano Academie : la facture {invoice_number} de {amount_due} {currency} est en attente. Paiement en ligne : {payment_url}",
+        description="SMS de relance facture.",
+        variables_hint="{invoice_number} {amount_due} {currency} {payment_url} {invoice_url} {due_date} {issued_date} {client_name} {recipient_name}",
+        usage_contexts=("INVOICE_REMINDER",),
     ),
     MessagingTemplateDefinition(
         code="SMS_PAYMENT",
@@ -1680,8 +1684,16 @@ PREDEFINED_TEMPLATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
     },
     "SMS_CANCELLED_EVENT": {"body": {"en": "Your lesson {session_title} has been cancelled."}},
     "SMS_EVENT_REMINDER": {"body": {"en": "Reminder: lesson {session_title} on {session_start_human}."}},
-    "SMS_INVOICE": {"body": {"en": "Your Piano Academie invoice is available."}},
-    "SMS_INVOICE_REMINDER": {"body": {"en": "Invoice reminder from Piano Academie."}},
+    "SMS_INVOICE": {
+        "body": {
+            "en": "Piano Academie: your invoice {invoice_number} for {amount_due} {currency} is available. Pay online: {payment_url}"
+        }
+    },
+    "SMS_INVOICE_REMINDER": {
+        "body": {
+            "en": "Piano Academie reminder: invoice {invoice_number} for {amount_due} {currency} is pending. Pay online: {payment_url}"
+        }
+    },
     "SMS_PAYMENT": {"body": {"en": "Payment pending for {plan_name}: {amount_due} {currency}. {payment_url}"}},
     "SMS_REFUND_ISSUED": {"body": {"en": "Your refund has been issued."}},
 }

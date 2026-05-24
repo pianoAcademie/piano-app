@@ -184,6 +184,7 @@ from app.services.messaging_templates import (
     recipient_display_name,
     render_template_content,
     resolve_messaging_delivery_config,
+    resolve_messaging_template_ref,
     resolve_frontend_base_url,
     resolve_predefined_template,
     resolve_sender_profile,
@@ -1937,21 +1938,53 @@ def _build_range_invoice_email_defaults(
 
 
 def _build_range_invoice_sms_body(
+    db: Session,
     *,
     client: User,
+    billing_profile: User,
     metadata: dict[str, object],
+    invoice_url: str,
     payment_url: str,
     kind: str,
 ) -> str:
     language = normalize_language(client.preferred_language)
     invoice_number = str(metadata.get("invoice_number") or "").strip() or "facture"
     amount, currency = _invoice_range_primary_total(metadata)
-    amount_label = f"{amount:.2f} {currency}"
-    if language == "en":
-        prefix = "Reminder: your Piano Academie invoice" if kind == "REMINDER" else "Your Piano Academie invoice"
-        return f"{prefix} {invoice_number} for {amount_label} is available: {payment_url}"
-    prefix = "Rappel: votre facture Piano Academie" if kind == "REMINDER" else "Votre facture Piano Academie"
-    return f"{prefix} {invoice_number} de {amount_label} est disponible: {payment_url}"
+    fallback_first_name = "Customer" if language == "en" else "Client"
+    recipient_name = recipient_display_name(
+        civility=getattr(billing_profile, "civility", None) or getattr(billing_profile, "civilite", None),
+        first_name=billing_profile.first_name or client.first_name,
+        last_name=billing_profile.last_name or client.last_name,
+        email=billing_profile.email or client.email,
+        fallback=fallback_first_name,
+    )
+    template = resolve_messaging_template_ref(
+        db,
+        template_ref=None,
+        default_ref="predefined:SMS_INVOICE_REMINDER" if kind == "REMINDER" else "predefined:SMS_INVOICE",
+        channel="SMS",
+        usage_context="INVOICE_REMINDER" if kind == "REMINDER" else "INVOICE_SEND",
+        language=language,
+    )
+    body_template = str(template.get("body") or "").strip()
+    if not body_template:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Template SMS facture incomplet")
+    context = {
+        "first_name": (billing_profile.first_name or client.first_name or "").strip() or client.email or fallback_first_name,
+        "last_name": (billing_profile.last_name or client.last_name or "").strip(),
+        "full_name": _display_name(billing_profile.first_name, billing_profile.last_name, client.email),
+        "client_name": _display_name(billing_profile.first_name, billing_profile.last_name, client.email),
+        "recipient_name": recipient_name,
+        "invoice_number": invoice_number,
+        "invoice_url": invoice_url,
+        "payment_url": payment_url,
+        "amount_due": f"{amount:.2f}",
+        "total_incl_vat": f"{amount:.2f}",
+        "currency": currency,
+        "due_date": str(metadata.get("due_date") or ""),
+        "issued_date": str(metadata.get("issued_date") or ""),
+    }
+    return render_template_content(body_template, context)
 
 
 def _quote_change_billing_action_label(value: str | None, *, language: str) -> str:
@@ -10179,8 +10212,11 @@ def send_admin_client_range_invoice_email(
             metadata=metadata,
         )
         default_sms_body = _build_range_invoice_sms_body(
+            db,
             client=client,
+            billing_profile=billing_profile,
             metadata=sms_metadata,
+            invoice_url=_invoice_range_download_url(client_id=client.id, note_id=note.id, metadata=sms_metadata, inline=True),
             payment_url=_invoice_range_payment_url(client_id=client.id, note_id=note.id, metadata=sms_metadata),
             kind=normalized_kind,
         )
