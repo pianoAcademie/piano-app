@@ -2625,13 +2625,13 @@ def _invoice_number_numeric_suffix(value: str | None) -> int | None:
         return None
 
 
-def _range_invoice_has_later_number(
+def _range_invoice_later_number(
     db: Session,
     *,
     current_note_id: UUID,
     seller_legal_entity_id: UUID | None,
     current_sequence: int,
-) -> bool:
+) -> str | None:
     for candidate_note in db.scalars(select(ClientNoteEntry).where(ClientNoteEntry.id != current_note_id)).all():
         candidate_metadata = _parse_invoice_range_note_entry(candidate_note)
         if candidate_metadata is None:
@@ -2639,10 +2639,11 @@ def _range_invoice_has_later_number(
         candidate_seller_id = _parse_optional_uuid(candidate_metadata.get("seller_legal_entity_id"))
         if candidate_seller_id != seller_legal_entity_id:
             continue
-        candidate_sequence = _invoice_number_numeric_suffix(str(candidate_metadata.get("invoice_number") or ""))
+        candidate_invoice_number = str(candidate_metadata.get("invoice_number") or "")
+        candidate_sequence = _invoice_number_numeric_suffix(candidate_invoice_number)
         if candidate_sequence is not None and candidate_sequence > current_sequence:
-            return True
-    return False
+            return candidate_invoice_number or None
+    return None
 
 
 def _force_invoice_next_number(
@@ -10043,6 +10044,7 @@ def delete_admin_client_range_invoice(
     issued_at = datetime.combine(issued_date_value, datetime.min.time(), tzinfo=timezone.utc)
     seller_legal_entity_id = _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
     number_released = False
+    number_preserved_reason: str | None = None
     if invoice_number:
         if seller_legal_entity_id is not None:
             number_released = InvoiceNumberService.release_last_invoice_number_if_matches(
@@ -10059,22 +10061,29 @@ def delete_admin_client_range_invoice(
             )
         if not number_released:
             invoice_sequence = _invoice_number_numeric_suffix(invoice_number)
-            if invoice_sequence is None or _range_invoice_has_later_number(
-                db,
-                current_note_id=note.id,
-                seller_legal_entity_id=seller_legal_entity_id,
-                current_sequence=invoice_sequence,
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Seule la derniere facture non envoyee peut etre supprimee sans trou de numerotation",
+            later_invoice_number = (
+                _range_invoice_later_number(
+                    db,
+                    current_note_id=note.id,
+                    seller_legal_entity_id=seller_legal_entity_id,
+                    current_sequence=invoice_sequence,
                 )
-            _force_invoice_next_number(
-                db,
-                seller_legal_entity_id=seller_legal_entity_id,
-                next_number=invoice_sequence,
+                if invoice_sequence is not None
+                else None
             )
-            number_released = True
+            if invoice_sequence is not None and later_invoice_number is None:
+                _force_invoice_next_number(
+                    db,
+                    seller_legal_entity_id=seller_legal_entity_id,
+                    next_number=invoice_sequence,
+                )
+                number_released = True
+            else:
+                number_preserved_reason = (
+                    f"Numero non remis a disposition car la facture posterieure {later_invoice_number} existe deja."
+                    if later_invoice_number
+                    else "Numero non remis a disposition car il ne peut pas etre relie au compteur courant."
+                )
 
     db.execute(delete(ClientInvoiceLine).where(ClientInvoiceLine.note_id == note.id))
     db.delete(note)
@@ -10086,6 +10095,7 @@ def delete_admin_client_range_invoice(
         message=(
             f"Facture {invoice_number or note_id} supprimee avant envoi."
             + (" Numero remis a disposition." if number_released else "")
+            + (f" {number_preserved_reason}" if number_preserved_reason else "")
         ),
     )
     db.commit()
