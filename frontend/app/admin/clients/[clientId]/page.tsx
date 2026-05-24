@@ -6566,7 +6566,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <input type="hidden" name="auto_due_date_rule_type" value={invoiceAutoDueDateRuleType} />
                   <input type="hidden" name="auto_due_date_days_offset" value={String(invoiceAutoDueDateDaysOffset)} />
                   <input type="hidden" name="auto_legal_entity_id" value={invoiceAutoLegalEntityIdInputValue} />
-                  <input type="hidden" name="line_selection_enabled" value="1" />
                   <input type="hidden" name="public_note" value={invoicePublicNote} />
                   <input type="hidden" name="private_note" value={invoicePrivateNote} />
 
@@ -6683,6 +6682,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <input type="hidden" name="auto_due_date_rule_type" value={invoiceAutoDueDateRuleType} />
                   <input type="hidden" name="auto_due_date_days_offset" value={String(invoiceAutoDueDateDaysOffset)} />
                   <input type="hidden" name="auto_legal_entity_id" value={invoiceAutoLegalEntityIdInputValue} />
+                  <input type="hidden" name="line_selection_enabled" value="1" />
 
                   <article className="card modal-card invoice-wizard-card span-2">
                     <div className="row spread">

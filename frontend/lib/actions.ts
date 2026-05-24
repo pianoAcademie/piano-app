@@ -5397,44 +5397,8 @@ export async function createAdminClientRangeInvoiceAction(formData: FormData): P
     throw new Error("Invoice creation returned no payload.");
   }
 
-  const pdfUrl = new URL(`${backendUrl()}/api/v1/admin/clients/${clientId}/payments/invoice-range`);
-  pdfUrl.searchParams.set("start_date", invoiceData.start_date);
-  pdfUrl.searchParams.set("end_date", invoiceData.end_date);
-  pdfUrl.searchParams.set("issued_date", invoiceData.issued_date);
-  pdfUrl.searchParams.set("due_date", invoiceData.due_date);
-  pdfUrl.searchParams.set("no_due_date", invoiceData.no_due_date ? "true" : "false");
-  pdfUrl.searchParams.set("include_pending", invoiceData.include_pending ? "true" : "false");
-  pdfUrl.searchParams.set("include_cancelled", invoiceData.include_cancelled ? "true" : "false");
-  pdfUrl.searchParams.set("layout", invoiceData.layout);
-  pdfUrl.searchParams.set("generation_mode", invoiceData.generation_mode);
-  pdfUrl.searchParams.set("group_adjustments_by_type", invoiceData.group_adjustments_by_type ? "true" : "false");
-  pdfUrl.searchParams.set("include_discount_adjustments", invoiceData.include_discount_adjustments ? "true" : "false");
-  pdfUrl.searchParams.set("include_supplement_adjustments", invoiceData.include_supplement_adjustments ? "true" : "false");
-  if (invoiceData.auto_cycle_start_date) {
-    pdfUrl.searchParams.set("auto_cycle_start_date", invoiceData.auto_cycle_start_date);
-  }
-  pdfUrl.searchParams.set("auto_period_scope", invoiceData.auto_period_scope);
-  pdfUrl.searchParams.set("auto_frequency", invoiceData.auto_frequency);
-  pdfUrl.searchParams.set("auto_repeat_every", String(invoiceData.auto_repeat_every));
-  pdfUrl.searchParams.set("auto_layout_style", invoiceData.auto_layout_style);
-  pdfUrl.searchParams.set("auto_include_previous_balance", invoiceData.auto_include_previous_balance ? "true" : "false");
-  pdfUrl.searchParams.set("auto_send_email", invoiceData.auto_send_email ? "true" : "false");
-  pdfUrl.searchParams.set(
-    "auto_exclude_pack_subscription_lines",
-    invoiceData.auto_exclude_pack_subscription_lines ? "true" : "false",
-  );
-  if (invoiceData.auto_footer_note) {
-    pdfUrl.searchParams.set("auto_footer_note", invoiceData.auto_footer_note);
-  }
-  pdfUrl.searchParams.set("invoice_number", invoiceData.invoice_number);
-  pdfUrl.searchParams.set("invoice_status", invoiceData.invoice_status);
-  pdfUrl.searchParams.set("persist_note", "false");
-  if (invoiceData.public_note) {
-    pdfUrl.searchParams.set("public_note", invoiceData.public_note);
-  }
-  if (invoiceData.private_note) {
-    pdfUrl.searchParams.set("private_note", invoiceData.private_note);
-  }
+  const pdfUrl = new URL(`${backendUrl()}/api/v1/admin/clients/${clientId}/invoices/range/${invoiceData.note_id}/pdf`);
+  pdfUrl.searchParams.set("inline", "false");
 
   await fetch(pdfUrl.toString(), {
     method: "GET",
