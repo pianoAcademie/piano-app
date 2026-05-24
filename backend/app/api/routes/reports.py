@@ -53,6 +53,7 @@ ADMIN_COMMUNICATION_TIMEZONE = ZoneInfo("Europe/Paris")
 REPORT_TYPE_LABELS: dict[str, str] = {
     "intake-families": "Synthese intakes par famille",
     "quote-families": "Synthese devis par famille",
+    "expired-quotes": "Devis expires",
     "reservations": "Reservations",
     "attendance": "Presence eleves",
     "professor-statements": "Releves professeurs",
@@ -982,6 +983,110 @@ def _build_quote_family_summary_rows(
     return families
 
 
+def _build_expired_quote_rows(
+    db: Session,
+    *,
+    q: str | None = None,
+    school_year_label: str | None = None,
+    expired_from: date | None = None,
+    expired_to: date | None = None,
+    status_filter: str | None = None,
+    limit: int = 5000,
+) -> list[dict[str, object]]:
+    if expired_from is not None and expired_to is not None and expired_from > expired_to:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="'expired_from' must be before 'expired_to'",
+        )
+
+    stmt = (
+        select(Quote, Prospect, User, Location)
+        .outerjoin(Prospect, Prospect.id == Quote.prospect_id)
+        .outerjoin(User, User.id == Quote.client_id)
+        .outerjoin(Location, Location.id == Quote.location_id)
+        .where(Quote.expires_at.is_not(None))
+        .order_by(Quote.expires_at.desc(), Quote.quote_number.asc())
+        .limit(limit)
+    )
+    if school_year_label:
+        stmt = stmt.where(Quote.school_year_label == school_year_label)
+    if expired_from is not None:
+        start_local, _ = _day_bounds(expired_from)
+        stmt = stmt.where(Quote.expires_at >= start_local)
+    if expired_to is not None:
+        _, end_local = _day_bounds(expired_to)
+        stmt = stmt.where(Quote.expires_at < end_local)
+    if status_filter:
+        stmt = stmt.where(Quote.status.ilike(status_filter.strip()))
+    else:
+        stmt = stmt.where(Quote.status.in_(["sent", "change_requested", "expired", "cancelled"]))
+    if q:
+        like = f"%{q.strip()}%"
+        stmt = stmt.where(
+            or_(
+                Quote.quote_number.ilike(like),
+                Quote.status.ilike(like),
+                Quote.school_year_label.ilike(like),
+                cast(Quote.meta, Text).ilike(like),
+                Prospect.first_name.ilike(like),
+                Prospect.last_name.ilike(like),
+                Prospect.email.ilike(like),
+                User.first_name.ilike(like),
+                User.last_name.ilike(like),
+                User.email.ilike(like),
+            )
+        )
+
+    rows = db.execute(stmt).all()
+    quote_ids = [quote.id for quote, _, _, _ in rows]
+    lines_by_quote_id: dict[UUID, list[QuoteLine]] = {quote_id: [] for quote_id in quote_ids}
+    if quote_ids:
+        for line in db.scalars(
+            select(QuoteLine)
+            .where(QuoteLine.quote_id.in_(quote_ids))
+            .order_by(QuoteLine.quote_id.asc(), QuoteLine.sort_order.asc(), QuoteLine.created_at.asc())
+        ).all():
+            lines_by_quote_id.setdefault(line.quote_id, []).append(line)
+
+    out: list[dict[str, object]] = []
+    for quote, prospect, client, location in rows:
+        contact = _quote_parent_contact_from_meta(_json_object(quote.meta))
+        contact_name = contact["name"] or (
+            _display_name(client.first_name, client.last_name, fallback="") if client is not None else ""
+        ) or (
+            _display_name(prospect.first_name, prospect.last_name, fallback="") if prospect is not None else ""
+        )
+        contact_email = contact["email"] or (client.email if client is not None else "") or (prospect.email if prospect is not None else "")
+        contact_phone = contact["phone"] or (client.mobile_phone_1 if client is not None else "") or (client.phone if client is not None else "") or (
+            prospect.phone if prospect is not None else ""
+        )
+        lines = lines_by_quote_id.get(quote.id, [])
+        out.append(
+            {
+                "quote_id": str(quote.id),
+                "quote_number": quote.quote_number,
+                "student_name": _quote_student_name(quote, prospect, client),
+                "contact_name": contact_name,
+                "contact_email": contact_email,
+                "contact_phone": contact_phone,
+                "status": quote.status,
+                "created_at": quote.created_at.isoformat(),
+                "sent_at": quote.sent_at.isoformat() if quote.sent_at else None,
+                "expires_at": quote.expires_at.isoformat() if quote.expires_at else None,
+                "expired_at": quote.expired_at.isoformat() if quote.expired_at else None,
+                "cancelled_at": quote.cancelled_at.isoformat() if quote.cancelled_at else None,
+                "school_year_label": quote.school_year_label,
+                "location": location.name if location is not None else None,
+                "total_ttc": _format_money(quote.total_ttc, quote.currency),
+                "planning": _quote_planning_summary(quote),
+                "services": _quote_line_summary(lines, categories={"service"}),
+                "products": _quote_line_summary(lines, categories={"product", "kit"}),
+                "payment": _quote_payment_summary(quote),
+            }
+        )
+    return out
+
+
 @router.post("/communications/{communication_id}/resend", response_model=CommunicationReportRow)
 def resend_communication(
     communication_id: str = Path(...),
@@ -1426,6 +1531,7 @@ def report_intake_families(
 def _generated_report_html(row: GeneratedReport) -> str:
     content = _json_object(row.content_json)
     families = _json_list(content.get("families"))
+    items = _json_list(content.get("items"))
     criteria = _json_object(row.criteria_json)
     title = html.escape(row.report_label)
     generated_at = row.created_at.astimezone(ADMIN_COMMUNICATION_TIMEZONE).strftime("%d/%m/%Y %H:%M")
@@ -1438,6 +1544,51 @@ def _generated_report_html(row: GeneratedReport) -> str:
     ]
     criteria_html = " | ".join(criteria_parts) or "-"
     blocks: list[str] = []
+    if row.report_type == "expired-quotes":
+        item_rows: list[str] = []
+        for raw_item in items:
+            item = _json_object(raw_item)
+            item_rows.append(
+                "<tr>"
+                f"<td>{html.escape(_text(item.get('quote_number')) or '-')}</td>"
+                f"<td>{html.escape(_text(item.get('student_name')) or '-')}</td>"
+                f"<td>{html.escape(_text(item.get('contact_name')) or '-')}<br><span class='small'>{html.escape(_text(item.get('contact_email')) or '-')}</span></td>"
+                f"<td>{html.escape(_text(item.get('status')) or '-')}</td>"
+                f"<td>{html.escape(_text(item.get('expires_at'))[:10] or '-')}</td>"
+                f"<td>{html.escape(_text(item.get('expired_at'))[:10] or '-')}</td>"
+                f"<td>{html.escape(_text(item.get('total_ttc')) or '-')}</td>"
+                f"<td>{html.escape(_text(item.get('location')) or '-')}</td>"
+                f"<td>{html.escape(_text(item.get('planning')) or '-')}</td>"
+                "</tr>"
+            )
+        table_html = (
+            "<table><thead><tr>"
+            "<th>Devis</th><th>Eleve</th><th>Contact</th><th>Statut</th><th>Expiration</th>"
+            "<th>Marque expire</th><th>Total</th><th>Lieu</th><th>Planning</th>"
+            "</tr></thead><tbody>"
+            f"{''.join(item_rows)}"
+            "</tbody></table>"
+        ) if item_rows else "<p>Aucun devis expire pour cette periode.</p>"
+        blocks.append(table_html)
+        return (
+            "<!doctype html><html><head><meta charset='utf-8'>"
+            "<style>"
+            "@page { size: A4 landscape; margin: 14mm; }"
+            "body { font-family: Arial, sans-serif; color: #222; font-size: 9pt; }"
+            "h1 { font-size: 20pt; margin: 0 0 8px; }"
+            ".meta { color: #555; margin-bottom: 14px; }"
+            "table { width: 100%; border-collapse: collapse; margin-top: 8px; }"
+            "th, td { border: 1px solid #ccd3dd; padding: 5px; vertical-align: top; }"
+            "th { background: #eef2f6; text-align: left; }"
+            ".small { color: #596579; font-size: 8pt; font-weight: normal; }"
+            "</style></head><body>"
+            f"<h1>{title}</h1>"
+            f"<p class='meta'>Genere le {generated_at} | Periode: {period_label} | Format: PDF | Note: {note}</p>"
+            f"<p class='meta'>Criteres: {criteria_html}</p>"
+            f"{''.join(blocks)}"
+            "</body></html>"
+        )
+
     report_rows = [
         ("course_1", "Cours 1"),
         ("course_2", "Cours 2"),
@@ -1577,6 +1728,18 @@ def create_generated_report(
         )
         content = {"families": families}
         row_count = len(families)
+    elif report_type == "expired-quotes":
+        rows = _build_expired_quote_rows(
+            db,
+            q=_text(criteria.get("q")) or None,
+            school_year_label=_text(criteria.get("school_year_label")) or None,
+            expired_from=period_start,
+            expired_to=period_end,
+            status_filter=_text(criteria.get("status")) or None,
+            limit=5000,
+        )
+        content = {"items": rows}
+        row_count = len(rows)
 
     row = GeneratedReport(
         report_type=report_type,

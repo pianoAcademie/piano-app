@@ -244,54 +244,89 @@ def _format_utc_day_label(day: date) -> str:
     return day.strftime("%d/%m/%Y")
 
 
-def _quote_expiry_digest_rows(db: Session, *, digest_date: date, limit: int) -> list[tuple[Quote, Prospect | None, User | None]]:
+def _quote_expiry_digest_rows(
+    db: Session,
+    *,
+    digest_date: date,
+    limit: int,
+    statuses: set[str] | None = None,
+) -> list[tuple[Quote, Prospect | None, User | None]]:
     day_start = datetime.combine(digest_date, time.min, tzinfo=UTC)
     day_end = day_start + timedelta(days=1)
-    return db.execute(
+    stmt = (
         select(Quote, Prospect, User)
         .join(Prospect, Prospect.id == Quote.prospect_id, isouter=True)
         .join(User, User.id == Quote.client_id, isouter=True)
         .where(
-            Quote.status.in_(sorted(EXPIRABLE_STATUSES)),
             Quote.expires_at.is_not(None),
             Quote.expires_at >= day_start,
             Quote.expires_at < day_end,
         )
         .order_by(Quote.expires_at.asc(), Quote.quote_number.asc())
         .limit(limit)
-    ).all()
+    )
+    if statuses is not None:
+        stmt = stmt.where(Quote.status.in_(sorted(statuses)))
+    return db.execute(stmt).all()
 
 
 def _build_quote_expiry_digest_body(
     rows: list[tuple[Quote, Prospect | None, User | None]],
     *,
     digest_date: date,
+    expired_yesterday_rows: list[tuple[Quote, Prospect | None, User | None]] | None = None,
 ) -> str:
     day_label = escape(_format_utc_day_label(digest_date))
-    rendered_rows = []
-    for quote, prospect, client in rows:
-        student_name = escape(_quote_student_name(quote, prospect, client))
-        quote_number = escape(str(quote.quote_number or "-"))
-        expires_at = quote.expires_at.astimezone(UTC).strftime("%H:%M UTC") if quote.expires_at else "-"
-        rendered_rows.append(
-            "<tr>"
-            f"<td style='padding:8px 10px;border-bottom:1px solid #e5e7eb;'>{student_name}</td>"
-            f"<td style='padding:8px 10px;border-bottom:1px solid #e5e7eb;'>{quote_number}</td>"
-            f"<td style='padding:8px 10px;border-bottom:1px solid #e5e7eb;'>{escape(expires_at)}</td>"
-            "</tr>"
+    expired_yesterday_rows = expired_yesterday_rows or []
+
+    def render_rows(section_rows: list[tuple[Quote, Prospect | None, User | None]]) -> str:
+        rendered_rows: list[str] = []
+        for quote, prospect, client in section_rows:
+            student_name = escape(_quote_student_name(quote, prospect, client))
+            quote_number = escape(str(quote.quote_number or "-"))
+            expires_at = quote.expires_at.astimezone(UTC).strftime("%H:%M UTC") if quote.expires_at else "-"
+            status = escape(str(quote.status or "-"))
+            rendered_rows.append(
+                "<tr>"
+                f"<td style='padding:8px 10px;border-bottom:1px solid #e5e7eb;'>{student_name}</td>"
+                f"<td style='padding:8px 10px;border-bottom:1px solid #e5e7eb;'>{quote_number}</td>"
+                f"<td style='padding:8px 10px;border-bottom:1px solid #e5e7eb;'>{escape(expires_at)}</td>"
+                f"<td style='padding:8px 10px;border-bottom:1px solid #e5e7eb;'>{status}</td>"
+                "</tr>"
+            )
+        return "".join(rendered_rows)
+
+    today_rows_html = render_rows(rows)
+    yesterday_rows_html = render_rows(expired_yesterday_rows)
+    yesterday_section = ""
+    if expired_yesterday_rows:
+        yesterday_label = escape(_format_utc_day_label(digest_date - timedelta(days=1)))
+        yesterday_section = (
+            f"<h2 style='font-size:16px;margin:22px 0 8px;'>Devis expires hier ({yesterday_label})</h2>"
+            "<table style='border-collapse:collapse;width:100%;max-width:760px;'>"
+            "<thead><tr>"
+            "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Eleve</th>"
+            "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Devis</th>"
+            "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Expiration</th>"
+            "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Statut</th>"
+            "</tr></thead>"
+            f"<tbody>{yesterday_rows_html}</tbody>"
+            "</table>"
         )
     return (
         "<div style='font-family:Arial,sans-serif;color:#1f2937;line-height:1.45;'>"
         f"<h1 style='font-size:18px;margin:0 0 12px;'>Devis expirant le {day_label}</h1>"
-        "<p style='margin:0 0 14px;'>Voici la liste des devis qui expirent aujourd'hui.</p>"
+        "<p style='margin:0 0 14px;'>Voici la liste des devis qui expirent aujourd'hui, puis les devis qui ont expire hier.</p>"
         "<table style='border-collapse:collapse;width:100%;max-width:760px;'>"
         "<thead><tr>"
         "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Eleve</th>"
         "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Devis</th>"
         "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Expiration</th>"
+        "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Statut</th>"
         "</tr></thead>"
-        f"<tbody>{''.join(rendered_rows)}</tbody>"
+        f"<tbody>{today_rows_html}</tbody>"
         "</table>"
+        f"{yesterday_section}"
         "</div>"
     )
 
@@ -308,20 +343,26 @@ def _send_quote_expiry_admin_digest(
     if _quote_expiry_digest_already_processed(db, digest_date=digest_date):
         return 0
 
-    rows = _quote_expiry_digest_rows(db, digest_date=digest_date, limit=limit)
-    if not rows:
+    rows = _quote_expiry_digest_rows(db, digest_date=digest_date, limit=limit, statuses=EXPIRABLE_STATUSES)
+    expired_yesterday_rows = _quote_expiry_digest_rows(
+        db,
+        digest_date=digest_date - timedelta(days=1),
+        limit=limit,
+        statuses=EXPIRABLE_STATUSES | {"expired", "cancelled"},
+    )
+    if not rows and not expired_yesterday_rows:
         _mark_quote_expiry_digest_processed(db, digest_date=digest_date, now=now)
         append_job_run_log(
             db,
             job_run_id=job_run_id,
             level="info",
-            message="Quote expiry admin digest skipped: no quotes expiring today",
+            message="Quote expiry admin digest skipped: no quotes expiring today or expired yesterday",
             context_json={"digest_date": digest_date.isoformat()},
         )
         return 0
 
     recipients = resolve_admin_quote_expiry_digest_recipients(db)
-    body = _build_quote_expiry_digest_body(rows, digest_date=digest_date)
+    body = _build_quote_expiry_digest_body(rows, digest_date=digest_date, expired_yesterday_rows=expired_yesterday_rows)
     subject = f"Devis qui expirent aujourd'hui - {_format_utc_day_label(digest_date)}"
     sent = 0
     for recipient in recipients:
@@ -348,6 +389,7 @@ def _send_quote_expiry_admin_digest(
         context_json={
             "digest_date": digest_date.isoformat(),
             "quote_count": len(rows),
+            "expired_yesterday_count": len(expired_yesterday_rows),
             "recipient_count": len([recipient for recipient in recipients if recipient.email]),
             "sent": sent,
         },

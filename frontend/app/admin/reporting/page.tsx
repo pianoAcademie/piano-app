@@ -16,6 +16,7 @@ type ReportingPageProps = {
 type ReportType =
   | "intake-families"
   | "quote-families"
+  | "expired-quotes"
   | "reservations"
   | "attendance"
   | "professor-statements"
@@ -47,6 +48,12 @@ const REPORT_DEFINITIONS: ReportDefinition[] = [
     label: "Synthese devis par famille",
     description: "Devis regroupes par famille, avec une colonne par enfant pour comparer avant envoi.",
     filterHint: "Periode de creation, annee scolaire, famille, enfant, statut commercial.",
+  },
+  {
+    type: "expired-quotes",
+    label: "Devis expires",
+    description: "Liste des devis arrives a expiration sur une plage de dates.",
+    filterHint: "Periode d expiration, annee scolaire, famille, enfant, statut commercial.",
   },
   {
     type: "reservations",
@@ -191,11 +198,11 @@ function schoolYearOptions(selectedValue: string): string[] {
 }
 
 function requiresSchoolYear(reportType: ReportType): boolean {
-  return ["intake-families", "quote-families", "quotes", "subscriptions", "planning-fill"].includes(reportType);
+  return ["intake-families", "quote-families", "expired-quotes", "quotes", "subscriptions", "planning-fill"].includes(reportType);
 }
 
 function requiresStatus(reportType: ReportType): boolean {
-  return ["intake-families", "quote-families", "payments", "quotes", "subscriptions", "check-deposits", "communications"].includes(reportType);
+  return ["intake-families", "quote-families", "expired-quotes", "payments", "quotes", "subscriptions", "check-deposits", "communications"].includes(reportType);
 }
 
 export default async function AdminReportingPage({ searchParams }: ReportingPageProps): Promise<JSX.Element> {
