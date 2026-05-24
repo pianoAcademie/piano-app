@@ -5566,6 +5566,9 @@ export async function sendAdminClientRangeInvoiceEmailAction(formData: FormData)
   const bodyFormat = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
   const includeChangeSummary = String(formData.get("include_change_summary") ?? "").trim() === "1";
   const referenceInvoiceNoteId = optionalField(formData, "reference_invoice_note_id");
+  const sendSms = String(formData.get("send_sms") ?? "").trim() === "1";
+  const smsPhone = optionalField(formData, "sms_phone");
+  const smsBody = optionalField(formData, "sms_body");
   const result = await backendRequest<AdminRangeInvoiceEmailOut>(
     `/api/v1/admin/clients/${clientId}/invoices/range/${noteId}/email`,
     {
@@ -5578,6 +5581,9 @@ export async function sendAdminClientRangeInvoiceEmailAction(formData: FormData)
         body_format: bodyFormat,
         include_change_summary: includeChangeSummary,
         reference_invoice_note_id: includeChangeSummary ? referenceInvoiceNoteId : null,
+        send_sms: sendSms,
+        sms_phone: sendSms ? smsPhone : null,
+        sms_body: sendSms ? smsBody : null,
       }),
     },
     token,

@@ -7420,6 +7420,26 @@ button.danger:focus-visible {
   padding: 0 6px;
 }
 
+.invoice-option-box {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fffdf9;
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.invoice-option-box .checkbox-line {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.invoice-option-box .checkbox-line input {
+  width: auto;
+}
+
 .config-restrictions-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

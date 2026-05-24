@@ -2569,6 +2569,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     paymentModalAction === "invoice_email" && invoiceNoteId
       ? generatedRangeInvoices.find((row) => row.noteId === invoiceNoteId) ?? null
       : null;
+  const invoiceSmsDefaultPhone = client.mobile_phone_1 || client.mobile_phone_2 || client.phone || client.home_phone || "";
   const invoiceChangeSummaryReferenceOptions = selectedRangeInvoiceForModal
     ? generatedRangeInvoices
         .filter((row) => row.noteId !== selectedRangeInvoiceForModal.noteId && row.status !== "CANCELLED")
@@ -6936,6 +6937,25 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   language={language}
                 />
               </label>
+              <fieldset className="span-2 invoice-option-box">
+                <label className="checkbox-line">
+                  <input type="checkbox" name="send_sms" value="1" />
+                  Envoyer aussi un SMS
+                </label>
+                <label>
+                  Numero SMS
+                  <input type="text" name="sms_phone" defaultValue={invoiceSmsDefaultPhone} maxLength={40} placeholder="+33600000000" />
+                </label>
+                <label>
+                  Message SMS
+                  <textarea
+                    name="sms_body"
+                    rows={3}
+                    maxLength={1000}
+                    placeholder="Laissez vide pour utiliser le message facture par defaut avec le lien de paiement."
+                  />
+                </label>
+              </fieldset>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, paymentReturnTab)}>
                   {t("common.cancel")}

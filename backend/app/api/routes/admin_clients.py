@@ -211,6 +211,7 @@ from app.services.session_teachers import effective_teacher_id_for_session, prof
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
 from app.services.payment_provider import detect_provider_from_reference, parse_provider, resolve_provider, resolve_webhook_secret
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
+from app.services.providers.sms import send_provider_sms
 from app.services.referrals import (
     cancel_referral_reward,
     evaluate_referrals_for_invoice,
@@ -900,6 +901,17 @@ def _fallback_login_url(raw_website: str) -> str:
 
 def _main_phone(client: User) -> str | None:
     return client.mobile_phone_1 or client.phone
+
+
+def _preferred_sms_phone(client: User, billing_profile: User | None = None) -> str | None:
+    for user in (billing_profile, client):
+        if user is None:
+            continue
+        for value in (user.mobile_phone_1, user.mobile_phone_2, user.phone, user.home_phone):
+            normalized = _normalize_phone_recipient(value)
+            if normalized:
+                return normalized
+    return None
 
 
 def _status_implies_active(client_status: ClientStatus) -> bool:
@@ -1922,6 +1934,24 @@ def _build_range_invoice_email_defaults(
     if change_summary:
         body = _append_invoice_change_summary_to_email_body(body, change_summary=change_summary, body_format=body_format)
     return default_recipients, subject, body, body_format
+
+
+def _build_range_invoice_sms_body(
+    *,
+    client: User,
+    metadata: dict[str, object],
+    payment_url: str,
+    kind: str,
+) -> str:
+    language = normalize_language(client.preferred_language)
+    invoice_number = str(metadata.get("invoice_number") or "").strip() or "facture"
+    amount, currency = _invoice_range_primary_total(metadata)
+    amount_label = f"{amount:.2f} {currency}"
+    if language == "en":
+        prefix = "Reminder: your Piano Academie invoice" if kind == "REMINDER" else "Your Piano Academie invoice"
+        return f"{prefix} {invoice_number} for {amount_label} is available: {payment_url}"
+    prefix = "Rappel: votre facture Piano Academie" if kind == "REMINDER" else "Votre facture Piano Academie"
+    return f"{prefix} {invoice_number} de {amount_label} est disponible: {payment_url}"
 
 
 def _quote_change_billing_action_label(value: str | None, *, language: str) -> str:
@@ -10111,6 +10141,7 @@ def send_admin_client_range_invoice_email(
     actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminRangeInvoiceEmailOut:
     client = _require_client(db, client_id)
+    billing_profile = resolve_billing_profile(db, client)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
     frozen_payment_keys, resolved_billing_entity, resolved_seller_legal_entity_id = _frozen_invoice_selection_for_note(
         db,
@@ -10134,6 +10165,29 @@ def send_admin_client_range_invoice_email(
     subject = _normalize_optional(payload.subject) or default_subject
     body = _normalize_optional(payload.body) or default_body
     body_format = payload.body_format if payload.body is not None else default_body_format
+    sms_recipient: str | None = None
+    sms_body: str | None = None
+    if payload.send_sms:
+        sms_recipient = _normalize_phone_recipient(payload.sms_phone) or _preferred_sms_phone(client, billing_profile)
+        if not sms_recipient:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun numero SMS destinataire")
+        sms_metadata = _invoice_range_metadata_with_display_totals(
+            db,
+            client_id=client.id,
+            note_id=note.id,
+            note_created_at=note.created_at,
+            metadata=metadata,
+        )
+        default_sms_body = _build_range_invoice_sms_body(
+            client=client,
+            metadata=sms_metadata,
+            payment_url=_invoice_range_payment_url(client_id=client.id, note_id=note.id, metadata=sms_metadata),
+            kind=normalized_kind,
+        )
+        sms_body = _normalize_optional(payload.sms_body) or default_sms_body
+        sms_body = re.sub(r"\s{2,}", " ", re.sub(r"<[^>]+>", " ", sms_body)).strip()
+        if not sms_body:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Message SMS vide")
 
     pdf_response = download_admin_client_range_invoice(
         client_id=client_id,
@@ -10216,6 +10270,7 @@ def send_admin_client_range_invoice_email(
         for email in _normalize_email_recipients([client.email, billing_profile.email])
     }
     message_ids: list[str] = []
+    sms_message_id: str | None = None
     for recipient in recipients:
         recipient_user_id = client.id if recipient.casefold() in client_recipient_emails else None
         message_ids.append(
@@ -10238,6 +10293,25 @@ def send_admin_client_range_invoice_email(
             )
         )
     message_id = message_ids[0] if message_ids else None
+    if sms_recipient is not None and sms_body is not None:
+        sms_result = send_provider_sms(
+            to_phone=sms_recipient,
+            message=sms_body,
+            context=f"RANGE_INVOICE_{normalized_kind}",
+            subject=f"Facture {str(metadata.get('invoice_number') or '').strip()}".strip(),
+            db=db,
+        )
+        sms_message_id = sms_result.provider_message_id
+        _create_client_note(
+            db,
+            client_id=client.id,
+            author_user_id=actor.id,
+            entry_type="SMS",
+            message=(
+                f"SMS facture {str(metadata.get('invoice_number') or '').strip() or note.id} vers {sms_recipient}: {sms_body}"
+                + ("" if sms_result.ok else f" Echec: {sms_result.error_message or 'erreur inconnue'}")
+            ),
+        )
 
     now = _utcnow()
     if normalized_kind == "INVOICE":
@@ -10254,6 +10328,8 @@ def send_admin_client_range_invoice_email(
         sent_at=now,
         message_id=message_id,
         recipients=recipients,
+        sms_message_id=sms_message_id,
+        sms_recipient=sms_recipient,
     )
 
 

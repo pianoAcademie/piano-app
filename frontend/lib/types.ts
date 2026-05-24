@@ -636,6 +636,8 @@ export type AdminRangeInvoiceEmailOut = {
   sent_at: string;
   message_id: string | null;
   recipients: string[];
+  sms_message_id: string | null;
+  sms_recipient: string | null;
 };
 
 export type AdminRangeInvoiceEmailPreviewOut = {

@@ -1466,6 +1466,9 @@ class AdminRangeInvoiceEmailRequest(BaseModel):
     body_format: Literal["TEXT", "HTML"] = "TEXT"
     include_change_summary: bool = False
     reference_invoice_note_id: UUID | None = None
+    send_sms: bool = False
+    sms_phone: str | None = Field(default=None, max_length=40)
+    sms_body: str | None = Field(default=None, max_length=1000)
 
 
 class AdminRangeInvoiceEmailOut(BaseModel):
@@ -1474,6 +1477,8 @@ class AdminRangeInvoiceEmailOut(BaseModel):
     sent_at: datetime
     message_id: str | None = None
     recipients: list[str] = Field(default_factory=list)
+    sms_message_id: str | None = None
+    sms_recipient: str | None = None
 
 
 class AdminRangeInvoiceEmailPreviewOut(BaseModel):
