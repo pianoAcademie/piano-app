@@ -171,6 +171,7 @@ from app.services.i18n import normalize_language
 from app.services.invoice_documents import (
     InvoiceAppliedPaymentLine,
     InvoicePeriodLine,
+    INVOICE_NUMBER_NEXT_SETTING_KEY,
     build_company_identity_snapshot,
     company_identity_from_snapshot,
     render_invoice_period_pdf,
@@ -2612,6 +2613,60 @@ def _build_invoice_range_note_message(metadata: dict[str, object]) -> str:
     )
     payload_json = json.dumps(metadata, ensure_ascii=True, separators=(",", ":"))
     return f"{summary}\n{INVOICE_RANGE_NOTE_PREFIX}{payload_json}"
+
+
+def _invoice_number_numeric_suffix(value: str | None) -> int | None:
+    match = re.search(r"(\d+)\D*$", (value or "").strip())
+    if match is None:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def _range_invoice_has_later_number(
+    db: Session,
+    *,
+    current_note_id: UUID,
+    seller_legal_entity_id: UUID | None,
+    current_sequence: int,
+) -> bool:
+    for candidate_note in db.scalars(select(ClientNoteEntry).where(ClientNoteEntry.id != current_note_id)).all():
+        candidate_metadata = _parse_invoice_range_note_entry(candidate_note)
+        if candidate_metadata is None:
+            continue
+        candidate_seller_id = _parse_optional_uuid(candidate_metadata.get("seller_legal_entity_id"))
+        if candidate_seller_id != seller_legal_entity_id:
+            continue
+        candidate_sequence = _invoice_number_numeric_suffix(str(candidate_metadata.get("invoice_number") or ""))
+        if candidate_sequence is not None and candidate_sequence > current_sequence:
+            return True
+    return False
+
+
+def _force_invoice_next_number(
+    db: Session,
+    *,
+    seller_legal_entity_id: UUID | None,
+    next_number: int,
+) -> None:
+    normalized_next = max(1, int(next_number))
+    now = _utcnow()
+    if seller_legal_entity_id is not None:
+        entity = db.scalar(select(LegalEntity).where(LegalEntity.id == seller_legal_entity_id).with_for_update())
+        if entity is not None:
+            entity.invoice_next_number = normalized_next
+            entity.updated_at = now
+            db.add(entity)
+        return
+
+    next_row = db.scalar(select(AppSetting).where(AppSetting.key == INVOICE_NUMBER_NEXT_SETTING_KEY).with_for_update())
+    if next_row is None:
+        db.add(AppSetting(key=INVOICE_NUMBER_NEXT_SETTING_KEY, value=str(normalized_next), updated_at=now))
+    else:
+        next_row.value = str(normalized_next)
+        next_row.updated_at = now
 
 
 def _invoice_range_reference_out(*, note_id: UUID, metadata: dict[str, object]) -> AdminRangeInvoiceReferenceOut:
@@ -10003,10 +10058,23 @@ def delete_admin_client_range_invoice(
                 issued_at=issued_at,
             )
         if not number_released:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Seule la derniere facture non envoyee peut etre supprimee sans trou de numerotation",
+            invoice_sequence = _invoice_number_numeric_suffix(invoice_number)
+            if invoice_sequence is None or _range_invoice_has_later_number(
+                db,
+                current_note_id=note.id,
+                seller_legal_entity_id=seller_legal_entity_id,
+                current_sequence=invoice_sequence,
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Seule la derniere facture non envoyee peut etre supprimee sans trou de numerotation",
+                )
+            _force_invoice_next_number(
+                db,
+                seller_legal_entity_id=seller_legal_entity_id,
+                next_number=invoice_sequence,
             )
+            number_released = True
 
     db.execute(delete(ClientInvoiceLine).where(ClientInvoiceLine.note_id == note.id))
     db.delete(note)
