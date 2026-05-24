@@ -5177,6 +5177,11 @@ export async function createAdminClientRangeInvoiceAction(formData: FormData): P
   const includeSupplementAdjustments = parseCheckboxFlag(formData, "include_supplement_adjustments", true);
   const publicNote = optionalField(formData, "public_note");
   const privateNote = optionalField(formData, "private_note");
+  const selectedPaymentKeys = formData
+    .getAll("selected_payment_keys")
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+  const lineSelectionEnabled = String(formData.get("line_selection_enabled") ?? "").trim() === "1";
 
   const autoCycleStartDate = optionalField(formData, "auto_cycle_start_date");
   const autoFrequencyRaw = String(formData.get("auto_frequency") ?? "MONTHLY").trim().toUpperCase();
@@ -5231,6 +5236,9 @@ export async function createAdminClientRangeInvoiceAction(formData: FormData): P
     params.set("group_adjustments_by_type", groupAdjustmentsByType ? "true" : "false");
     params.set("include_discount_adjustments", includeDiscountAdjustments ? "true" : "false");
     params.set("include_supplement_adjustments", includeSupplementAdjustments ? "true" : "false");
+    for (const key of selectedPaymentKeys) {
+      params.append("selected_payment_keys", key);
+    }
     if (autoCycleStartDate) {
       params.set("auto_cycle_start_date", autoCycleStartDate);
     }
@@ -5334,6 +5342,9 @@ export async function createAdminClientRangeInvoiceAction(formData: FormData): P
   if (Object.keys(manualFieldErrors).length > 0) {
     redirectInvoiceWizardError(t("admin.client_detail.invoice_fix_errors"), manualFieldErrors, invoiceStep);
   }
+  if (lineSelectionEnabled && selectedPaymentKeys.length === 0) {
+    redirectInvoiceWizardError("Selectionnez au moins une ligne a facturer.", { selected_payment_keys: "Selectionnez au moins une ligne." }, "2");
+  }
 
   const result = await backendRequest<AdminRangeInvoiceOut>(
     `/api/v1/admin/clients/${clientId}/payments/invoice-range`,
@@ -5362,6 +5373,7 @@ export async function createAdminClientRangeInvoiceAction(formData: FormData): P
         auto_footer_note: null,
         auto_exclude_pack_subscription_lines: true,
         invoice_number: optionalField(formData, "invoice_number"),
+        selected_payment_keys: lineSelectionEnabled ? selectedPaymentKeys : null,
         public_note: publicNote,
         private_note: privateNote,
       }),
@@ -5476,6 +5488,36 @@ export async function updateAdminClientRangeInvoiceStatusAction(formData: FormDa
   redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "ok", t("admin.client_action.invoice_status_updated")));
 }
 
+export async function deleteAdminClientRangeInvoiceAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const noteId = String(formData.get("note_id") ?? "").trim();
+  const returnTabRaw = String(formData.get("return_tab") ?? "").trim().toLowerCase();
+  const returnTab = returnTabRaw === "paiements" ? "paiements" : "factures";
+  if (!clientId || !noteId) {
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_invoice")));
+  }
+
+  const result = await backendRequest<Record<string, never>>(
+    `/api/v1/admin/clients/${clientId}/invoices/range/${noteId}`,
+    { method: "DELETE" },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "error", result.message));
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "ok", "Facture supprimee"));
+}
+
 export async function reissueAdminClientRangeInvoiceAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -5524,6 +5566,12 @@ export async function reissueAdminClientRangeInvoiceAction(formData: FormData): 
     private_note: String(formData.get("private_note") ?? "").trim(),
     ok: t("admin.client_action.invoice_cancelled"),
   });
+  for (const key of formData.getAll("selected_payment_keys")) {
+    const normalizedKey = String(key ?? "").trim();
+    if (normalizedKey) {
+      params.append("selected_payment_keys", normalizedKey);
+    }
+  }
 
   revalidatePath(`/admin/clients/${clientId}`);
   redirect(`/admin/clients/${clientId}?${params.toString()}`);

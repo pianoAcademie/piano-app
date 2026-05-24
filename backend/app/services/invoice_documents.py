@@ -216,6 +216,36 @@ def reserve_next_invoice_number(db: Session, *, issued_at: datetime | None = Non
     return invoice_number
 
 
+def release_last_legacy_invoice_number_if_matches(
+    db: Session,
+    *,
+    invoice_number: str,
+    issued_at: datetime | None = None,
+) -> bool:
+    effective_issued_at = issued_at or _utcnow()
+    now = _utcnow()
+    format_row = db.scalar(
+        select(AppSetting).where(AppSetting.key == INVOICE_NUMBER_FORMAT_SETTING_KEY).with_for_update()
+    )
+    next_row = db.scalar(
+        select(AppSetting).where(AppSetting.key == INVOICE_NUMBER_NEXT_SETTING_KEY).with_for_update()
+    )
+    pattern = _normalize_invoice_number_format(format_row.value if format_row else None)
+    next_number = _normalize_invoice_number_next(next_row.value if next_row else None)
+    if next_number <= 1:
+        return False
+    previous_number = next_number - 1
+    previous_invoice_number = _format_invoice_number(pattern, issued_at=effective_issued_at, next_number=previous_number)
+    if previous_invoice_number != invoice_number:
+        return False
+    if next_row is None:
+        db.add(AppSetting(key=INVOICE_NUMBER_NEXT_SETTING_KEY, value=str(previous_number), updated_at=now))
+    else:
+        next_row.value = str(previous_number)
+        next_row.updated_at = now
+    return True
+
+
 def render_invoice_text(
     db: Session,
     *,

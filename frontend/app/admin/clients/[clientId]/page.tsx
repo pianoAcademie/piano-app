@@ -17,6 +17,7 @@ import {
   adminPurchasePlanForClientAction,
   adminViewClientPortalAction,
   createAdminClientRangeInvoiceAction,
+  deleteAdminClientRangeInvoiceAction,
   reissueAdminClientRangeInvoiceAction,
   createAdminClientManualTransactionAction,
   updateAdminClientManualTransactionAction,
@@ -111,6 +112,15 @@ function readParam(params: SearchParams, key: string): string {
     return value[0] ?? "";
   }
   return value ?? "";
+}
+
+function readParams(params: SearchParams, key: string): string[] {
+  const value = params[key];
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || "").trim()).filter(Boolean);
+  }
+  const normalized = String(value || "").trim();
+  return normalized ? [normalized] : [];
 }
 
 function parseToggleParam(value: string, fallback: boolean): boolean {
@@ -391,6 +401,10 @@ function paymentSourceLabel(source: string, language: UiLanguage = "fr"): string
     return uiText(language, "admin.client_detail.payment_source.manual");
   }
   return normalized || uiText(language, "admin.client_detail.payment_source.payment");
+}
+
+function invoicePaymentKey(row: AdminClientPaymentOut): string {
+  return `${String(row.source || "").trim().toUpperCase()}:${row.id}`;
 }
 
 function paymentStatusLabel(status: string, language: UiLanguage = "fr"): string {
@@ -866,6 +880,7 @@ type RangeInvoiceNotePayload = {
   auto_exclude_pack_subscription_lines: boolean;
   include_pending: boolean;
   include_cancelled: boolean;
+  included_payment_keys: string[];
   totals_by_currency: Record<string, string>;
   total_to_pay_by_currency?: Record<string, string>;
   seller_legal_entity_id?: string;
@@ -917,6 +932,7 @@ type InvoiceListRow =
       privateNote: string | null;
       emailedAt: string | null;
       remindedAt: string | null;
+      includedPaymentKeys: string[];
       totalLabel: string;
       downloadHref: string;
       viewHref: string;
@@ -1033,6 +1049,9 @@ function parseRangeInvoiceNote(note: AdminClientNoteOut): RangeInvoiceNotePayloa
           : "ISSUED",
       emailed_at: typeof payload.emailed_at === "string" ? payload.emailed_at : undefined,
       reminded_at: typeof payload.reminded_at === "string" ? payload.reminded_at : undefined,
+      included_payment_keys: Array.isArray(payload.included_payment_keys)
+        ? payload.included_payment_keys.map((value) => String(value || "").trim()).filter(Boolean)
+        : [],
       public_note: typeof payload.public_note === "string" ? payload.public_note : undefined,
       private_note: typeof payload.private_note === "string" ? payload.private_note : undefined,
     };
@@ -1643,6 +1662,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const invoiceGroupAdjustmentsRaw = readParam(searchParams, "group_adjustments_by_type");
   const invoiceIncludeDiscountRaw = readParam(searchParams, "include_discount_adjustments");
   const invoiceIncludeSupplementRaw = readParam(searchParams, "include_supplement_adjustments");
+  const invoiceSelectedPaymentKeysRaw = readParams(searchParams, "selected_payment_keys");
   const invoiceAutoCycleStartRaw = readParam(searchParams, "auto_cycle_start_date").trim();
   const invoiceAutoFrequencyRaw = readParam(searchParams, "auto_frequency").trim().toUpperCase();
   const invoiceAutoBillingTimingRaw = readParam(searchParams, "auto_billing_timing").trim().toUpperCase();
@@ -2407,6 +2427,50 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     }
     return true;
   });
+  const invoicePeriodStartMs = isDateInput(invoiceStartDateInputValue)
+    ? Date.parse(`${invoiceStartDateInputValue}T00:00:00.000Z`)
+    : Number.NaN;
+  const invoicePeriodEndMs = isDateInput(invoiceEndDateInputValue)
+    ? Date.parse(`${invoiceEndDateInputValue}T23:59:59.999Z`)
+    : Number.NaN;
+  const invoiceCandidatePayments = payments.filter((row) => {
+    const occurredAtMs = Date.parse(row.occurred_at);
+    if (!Number.isFinite(invoicePeriodStartMs) || !Number.isFinite(invoicePeriodEndMs) || !Number.isFinite(occurredAtMs)) {
+      return false;
+    }
+    if (occurredAtMs < invoicePeriodStartMs || occurredAtMs > invoicePeriodEndMs) {
+      return false;
+    }
+    const invoiceStatus = String(row.invoice_status || "").trim().toUpperCase();
+    if (invoiceStatus === "ISSUED" || invoiceStatus === "PAID") {
+      return false;
+    }
+    const statusForInvoice = invoiceStatus || String(row.status || "").trim().toUpperCase();
+    if (!invoiceIncludePending && statusForInvoice === "PENDING") {
+      return false;
+    }
+    if (!invoiceIncludeCancelled && (statusForInvoice === "CANCELLED" || statusForInvoice === "REFUNDED" || statusForInvoice === "NOT_BILLABLE")) {
+      return false;
+    }
+    return true;
+  });
+  const invoiceSelectedPaymentKeys = new Set(
+    invoiceSelectedPaymentKeysRaw.length > 0
+      ? invoiceSelectedPaymentKeysRaw
+      : invoiceCandidatePayments.map((row) => invoicePaymentKey(row)),
+  );
+  const invoiceSelectedCandidatePayments = invoiceCandidatePayments.filter((row) => invoiceSelectedPaymentKeys.has(invoicePaymentKey(row)));
+  const invoiceSelectedTotalsByCurrency = new Map<string, number>();
+  for (const row of invoiceSelectedCandidatePayments) {
+    const currency = row.currency || "EUR";
+    const amount = Number(row.total_incl_vat || "0");
+    if (Number.isFinite(amount)) {
+      invoiceSelectedTotalsByCurrency.set(currency, (invoiceSelectedTotalsByCurrency.get(currency) ?? 0) + amount);
+    }
+  }
+  const invoiceSelectedTotalLabel = [...invoiceSelectedTotalsByCurrency.entries()]
+    .map(([currency, amount]) => formatMoney(String(amount), currency, language))
+    .join(" | ");
 
   const paymentInvoices: InvoiceListRow[] = payments
     .filter((row) => {
@@ -2468,6 +2532,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       privateNote: row.private_note,
       emailedAt: row.emailed_at ?? null,
       remindedAt: row.reminded_at ?? null,
+      includedPaymentKeys: row.included_payment_keys ?? [],
       totalLabel: rangeInvoiceTotalLabel(
         Object.keys(row.total_to_pay_by_currency || {}).length > 0
           ? row.total_to_pay_by_currency
@@ -5515,8 +5580,21 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   <input type="hidden" name="include_supplement_adjustments" value={row.includeSupplementAdjustments ? "true" : "false"} />
                                   <input type="hidden" name="public_note" value={row.publicNote ?? ""} />
                                   <input type="hidden" name="private_note" value={row.privateNote ?? ""} />
+                                  {row.includedPaymentKeys.map((key) => (
+                                    <input key={`reissue-${row.noteId}-${key}`} type="hidden" name="selected_payment_keys" value={key} />
+                                  ))}
                                   <button type="submit" className="client-action-icon" title="Annuler et refaire cette facture avec une nouvelle date">
                                     ⧉
+                                  </button>
+                                </form>
+                              ) : null}
+                              {!row.emailedAt && !row.remindedAt && row.status !== "PAID" ? (
+                                <form action={deleteAdminClientRangeInvoiceAction}>
+                                  <input type="hidden" name="client_id" value={client.id} />
+                                  <input type="hidden" name="note_id" value={row.noteId} />
+                                  <input type="hidden" name="return_tab" value="factures" />
+                                  <button type="submit" className="client-action-icon danger" title="Supprimer la facture non envoyee">
+                                    S
                                   </button>
                                 </form>
                               ) : null}
@@ -6488,6 +6566,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <input type="hidden" name="auto_due_date_rule_type" value={invoiceAutoDueDateRuleType} />
                   <input type="hidden" name="auto_due_date_days_offset" value={String(invoiceAutoDueDateDaysOffset)} />
                   <input type="hidden" name="auto_legal_entity_id" value={invoiceAutoLegalEntityIdInputValue} />
+                  <input type="hidden" name="line_selection_enabled" value="1" />
                   <input type="hidden" name="public_note" value={invoicePublicNote} />
                   <input type="hidden" name="private_note" value={invoicePrivateNote} />
 
@@ -6604,6 +6683,63 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <input type="hidden" name="auto_due_date_rule_type" value={invoiceAutoDueDateRuleType} />
                   <input type="hidden" name="auto_due_date_days_offset" value={String(invoiceAutoDueDateDaysOffset)} />
                   <input type="hidden" name="auto_legal_entity_id" value={invoiceAutoLegalEntityIdInputValue} />
+
+                  <article className="card modal-card invoice-wizard-card span-2">
+                    <div className="row spread">
+                      <h4>Lignes a facturer</h4>
+                      <span className="muted">
+                        {invoiceSelectedCandidatePayments.length}/{invoiceCandidatePayments.length} selectionnee(s)
+                        {invoiceSelectedTotalLabel ? ` | ${invoiceSelectedTotalLabel}` : ""}
+                      </span>
+                    </div>
+                    {invoiceCandidatePayments.length === 0 ? (
+                      <p className="muted">Aucune ligne disponible pour cette periode et ces filtres.</p>
+                    ) : (
+                      <div className="table-wrap invoice-line-selection">
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              <th>Inclure</th>
+                              <th>{t("common.date")}</th>
+                              <th>{t("common.type")}</th>
+                              <th>{t("admin.client_detail.invoices_column_label")}</th>
+                              <th>{t("common.status")}</th>
+                              <th>{t("common.total")}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {invoiceCandidatePayments.map((row) => {
+                              const key = invoicePaymentKey(row);
+                              return (
+                                <tr key={`invoice-candidate-${key}`}>
+                                  <td>
+                                    <input
+                                      type="checkbox"
+                                      name="selected_payment_keys"
+                                      value={key}
+                                      defaultChecked={invoiceSelectedPaymentKeys.has(key)}
+                                      aria-label={`Inclure ${row.label}`}
+                                    />
+                                  </td>
+                                  <td>{formatDate(row.occurred_at, language)}</td>
+                                  <td>{paymentSourceLabel(row.source, language)}</td>
+                                  <td>
+                                    <div className="stack-xs">
+                                      <span>{row.label}</span>
+                                      <small className="muted">{row.reference ?? "-"}</small>
+                                    </div>
+                                  </td>
+                                  <td>{paymentStatusDisplayLabel(row, language)}</td>
+                                  <td>{formatMoney(row.total_incl_vat, row.currency, language)}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    <p className="muted">Decochez les lignes a exclure, par exemple les partitions ou kits, pour ne facturer que l'acompte.</p>
+                  </article>
 
                   <article className="card modal-card invoice-wizard-card span-2">
                     <h4>{t("admin.client_detail.invoice_display_style_section")}</h4>

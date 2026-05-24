@@ -589,6 +589,7 @@ export type AdminRangeInvoiceOut = {
   auto_exclude_pack_subscription_lines: boolean;
   include_pending: boolean;
   include_cancelled: boolean;
+  included_payment_keys: string[];
   totals_by_currency: Record<string, string>;
   total_to_pay_by_currency: Record<string, string>;
   invoice_status: "ISSUED" | "PAID" | "CANCELLED";

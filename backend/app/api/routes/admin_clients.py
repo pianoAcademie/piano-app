@@ -174,6 +174,7 @@ from app.services.invoice_documents import (
     build_company_identity_snapshot,
     company_identity_from_snapshot,
     render_invoice_period_pdf,
+    release_last_legacy_invoice_number_if_matches,
     reserve_next_invoice_number,
 )
 from app.services.invoice_number_service import InvoiceNumberService
@@ -2696,6 +2697,7 @@ def _invoice_range_out(
         ),
         include_pending=bool(metadata.get("include_pending")),
         include_cancelled=bool(metadata.get("include_cancelled")),
+        included_payment_keys=_normalize_invoice_range_payment_keys(metadata.get("included_payment_keys")),
         totals_by_currency=totals_by_currency if totals_by_currency is not None else dict(metadata.get("totals_by_currency") or {}),
         total_to_pay_by_currency=(
             total_to_pay_by_currency
@@ -9707,6 +9709,14 @@ def create_admin_client_range_invoice(
         for row in payments
         if ((row.invoice_status or "").strip().upper() not in {"ISSUED", "PAID"})
     ]
+    selected_payment_keys = _normalize_invoice_range_payment_keys(payload.selected_payment_keys)
+    if selected_payment_keys:
+        selected_payment_key_set = set(selected_payment_keys)
+        payments = [
+            row
+            for row in payments
+            if _payment_key(source=row.source, payment_id=row.id) in selected_payment_key_set
+        ]
     if not payments:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No transactions for this period")
 
@@ -9955,6 +9965,63 @@ def update_admin_client_range_invoice_status(
         metadata=metadata,
         related_invoices=related_invoices,
     )
+
+
+@router.delete("/{client_id}/invoices/range/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_admin_client_range_invoice(
+    client_id: UUID,
+    note_id: UUID,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> Response:
+    client = _require_client(db, client_id)
+    note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    if _parse_iso_datetime(metadata.get("emailed_at")) is not None or _parse_iso_datetime(metadata.get("reminded_at")) is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Facture deja envoyee ou relancee")
+    if str(metadata.get("invoice_status") or "ISSUED").strip().upper() == "PAID":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Facture deja marquee payee")
+    if _invoice_range_reconciled_manual_payment_ids(metadata):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Facture rapprochee avec un paiement")
+
+    invoice_number = _normalize_optional(str(metadata.get("invoice_number") or ""))
+    issued_date_value = _parse_invoice_range_metadata_date(metadata, "issued_date")
+    issued_at = datetime.combine(issued_date_value, datetime.min.time(), tzinfo=timezone.utc)
+    seller_legal_entity_id = _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
+    number_released = False
+    if invoice_number:
+        if seller_legal_entity_id is not None:
+            number_released = InvoiceNumberService.release_last_invoice_number_if_matches(
+                db,
+                legal_entity_id=seller_legal_entity_id,
+                invoice_number=invoice_number,
+                issued_at=issued_at,
+            )
+        else:
+            number_released = release_last_legacy_invoice_number_if_matches(
+                db,
+                invoice_number=invoice_number,
+                issued_at=issued_at,
+            )
+        if not number_released:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Seule la derniere facture non envoyee peut etre supprimee sans trou de numerotation",
+            )
+
+    db.execute(delete(ClientInvoiceLine).where(ClientInvoiceLine.note_id == note.id))
+    db.delete(note)
+    _create_client_note(
+        db,
+        client_id=client.id,
+        author_user_id=actor.id,
+        entry_type="AUTO",
+        message=(
+            f"Facture {invoice_number or note_id} supprimee avant envoi."
+            + (" Numero remis a disposition." if number_released else "")
+        ),
+    )
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{client_id}/invoices/range/{note_id}/email", response_model=AdminRangeInvoiceEmailOut)

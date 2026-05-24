@@ -1370,6 +1370,7 @@ class AdminRangeInvoiceCreateRequest(BaseModel):
     auto_footer_note: str | None = Field(default=None, max_length=2000)
     auto_exclude_pack_subscription_lines: bool = True
     invoice_number: str | None = Field(default=None, max_length=120)
+    selected_payment_keys: list[str] | None = None
     public_note: str | None = Field(default=None, max_length=2000)
     private_note: str | None = Field(default=None, max_length=2000)
 
@@ -1442,6 +1443,7 @@ class AdminRangeInvoiceOut(BaseModel):
     auto_exclude_pack_subscription_lines: bool = True
     include_pending: bool
     include_cancelled: bool
+    included_payment_keys: list[str] = Field(default_factory=list)
     totals_by_currency: dict[str, str]
     total_to_pay_by_currency: dict[str, str] = Field(default_factory=dict)
     invoice_status: Literal["ISSUED", "PAID", "CANCELLED"]

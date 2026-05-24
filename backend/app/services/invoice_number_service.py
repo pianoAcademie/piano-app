@@ -112,3 +112,42 @@ class InvoiceNumberService:
         legal_entity.updated_at = _utcnow()
         db.add(legal_entity)
         return invoice_number
+
+    @staticmethod
+    def release_last_invoice_number_if_matches(
+        db: Session,
+        *,
+        legal_entity_id: UUID,
+        invoice_number: str,
+        issued_at: datetime | None = None,
+    ) -> bool:
+        effective_issued_at = issued_at or _utcnow()
+        legal_entity = db.scalar(
+            select(LegalEntity).where(LegalEntity.id == legal_entity_id).with_for_update()
+        )
+        if legal_entity is None:
+            return False
+
+        sequence_value = max(1, int(legal_entity.invoice_next_number or 1))
+        if sequence_value <= 1:
+            return False
+
+        pattern_row = db.scalar(
+            select(AppSetting).where(AppSetting.key == INVOICE_NUMBER_FORMAT_SETTING_KEY)
+        )
+        global_pattern = _normalize_pattern(pattern_row.value if pattern_row is not None else None)
+        invoice_prefix = _sanitize_prefix(legal_entity.invoice_prefix)
+        pattern = _pattern_for_entity(global_pattern=global_pattern, invoice_prefix=invoice_prefix)
+        previous_sequence = sequence_value - 1
+        previous_invoice_number = _render_invoice_number(
+            pattern=pattern,
+            issued_at=effective_issued_at,
+            next_number=previous_sequence,
+        )
+        if previous_invoice_number != invoice_number:
+            return False
+
+        legal_entity.invoice_next_number = previous_sequence
+        legal_entity.updated_at = _utcnow()
+        db.add(legal_entity)
+        return True
