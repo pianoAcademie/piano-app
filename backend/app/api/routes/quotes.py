@@ -192,6 +192,7 @@ QUOTE_PUBLIC_RESPONSE_LAST_ACTION_META_KEY = "public_response_last_action"
 QUOTE_PUBLIC_RESPONSE_LAST_AT_META_KEY = "public_response_last_at"
 QUOTE_PUBLIC_RESPONSE_LAST_MESSAGE_META_KEY = "public_response_last_message"
 QUOTE_PUBLIC_RESPONSE_LAST_RESTORED_FROM_META_KEY = "public_response_last_restored_from"
+BAR_LE_DUC_MANAGER_EMAIL = "estela.oliviero@piano-academie.com"
 QUOTE_CHANGE_REQUEST_REVISION_ID_META_KEY = "change_request_revision_quote_id"
 QUOTE_CHANGE_REQUEST_REVISION_NUMBER_META_KEY = "change_request_revision_quote_number"
 QUOTE_TRANSFORMATION_PAYLOAD_KEY = "quote_to_enrollment"
@@ -3549,6 +3550,33 @@ def _public_response_admin_label(action: str) -> str:
     return normalized or "mis a jour"
 
 
+def _quote_is_bar_le_duc(db: Session, quote: Quote) -> bool:
+    quote_location_id = getattr(quote, "location_id", None)
+    if quote_location_id is not None:
+        location = db.scalar(select(Location).where(Location.id == quote_location_id).limit(1))
+        if location is not None:
+            code = str(location.code or "").strip().upper()
+            name = re.sub(r"[^a-z0-9]+", "", _ascii_search_text(location.name))
+            if code == "BAR_LE_DUC" or "barleduc" in name:
+                return True
+    meta = _quote_meta_dict(quote)
+    meta_values = [
+        meta.get("location_code"),
+        meta.get("location_name"),
+        meta.get("requested_location"),
+        meta.get("detected_location"),
+    ]
+    typeform_meta = meta.get("typeform_intake") if isinstance(meta.get("typeform_intake"), dict) else {}
+    if isinstance(typeform_meta, dict):
+        normalized = typeform_meta.get("normalized_payload") if isinstance(typeform_meta.get("normalized_payload"), dict) else {}
+        runtime_context = typeform_meta.get("runtime_context") if isinstance(typeform_meta.get("runtime_context"), dict) else {}
+        if isinstance(normalized, dict):
+            meta_values.extend([normalized.get("requested_location"), normalized.get("parent_city")])
+        if isinstance(runtime_context, dict):
+            meta_values.extend([runtime_context.get("location_code"), runtime_context.get("location_name")])
+    return any("barleduc" in re.sub(r"[^a-z0-9]+", "", _ascii_search_text(value)) for value in meta_values)
+
+
 def _try_send_public_quote_admin_notification_email(
     db: Session,
     *,
@@ -3584,6 +3612,9 @@ def _try_send_public_quote_admin_notification_email(
         for recipient in resolve_admin_booking_notification_recipients(db, is_cancellation=False)
         if str(recipient.email or "").strip()
     ]
+    notify_bar_le_duc_manager = normalized_action == "approved" and _quote_is_bar_le_duc(db, quote)
+    if notify_bar_le_duc_manager:
+        recipients.append(BAR_LE_DUC_MANAGER_EMAIL)
     unique_recipients = list(dict.fromkeys(recipients))
     if not unique_recipients:
         db.add(
@@ -3666,6 +3697,7 @@ def _try_send_public_quote_admin_notification_email(
                 "failed_recipients": failed,
                 "client_recipient_email": client_recipient_email,
                 "client_message_status": client_message_status,
+                "bar_le_duc_manager_notified": notify_bar_le_duc_manager,
             },
             created_at=now,
         )

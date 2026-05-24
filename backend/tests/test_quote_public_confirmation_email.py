@@ -192,6 +192,49 @@ class QuotePublicConfirmationEmailTests(unittest.TestCase):
         self.assertNotIn("Message client:", body)
         self.assertNotIn("vendredi a 19h", body)
 
+    def test_admin_approval_notification_includes_bar_le_duc_manager(self) -> None:
+        db = _FakeSession()
+        quote = SimpleNamespace(
+            id=uuid4(),
+            quote_number="DV-BLD",
+            total_ttc=Decimal("879.00"),
+            currency="EUR",
+            approved_at=datetime(2026, 5, 24, 12, 51, tzinfo=timezone.utc),
+            rejected_at=None,
+            location_id=None,
+            meta={"location_code": "BAR_LE_DUC"},
+        )
+
+        with patch(
+            "app.api.routes.quotes.email_delivery_disabled_reason",
+            return_value=None,
+        ), patch(
+            "app.api.routes.quotes.resolve_admin_booking_notification_recipients",
+            return_value=[SimpleNamespace(email="admin@piano-academie.com")],
+        ), patch(
+            "app.api.routes.quotes.build_quote_email_context",
+            return_value={"recipient_name": "Olympia Delcour"},
+        ), patch(
+            "app.api.routes.quotes.resolve_frontend_base_url",
+            return_value="https://app.piano-academie.com",
+        ), patch(
+            "app.api.routes.quotes.send_email",
+            return_value="mail-admin",
+        ) as send_email_mock:
+            result = _try_send_public_quote_admin_notification_email(
+                db,
+                quote=quote,
+                lines=[],
+                action="approved",
+                client_recipient_email="olympia@example.com",
+                client_message_status="sent",
+            )
+
+        recipients = [call.kwargs.get("to_email") for call in send_email_mock.call_args_list]
+        self.assertEqual(result.get("status"), "sent")
+        self.assertIn("admin@piano-academie.com", recipients)
+        self.assertIn("estela.oliviero@piano-academie.com", recipients)
+
     def test_admin_change_request_notification_includes_current_message(self) -> None:
         db = _FakeSession()
         quote = SimpleNamespace(
