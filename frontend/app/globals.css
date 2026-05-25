@@ -15050,6 +15050,46 @@ button.danger:focus-visible {
   background: #fbfdff;
 }
 
+.quote-transform-quote-context {
+  border: 1px solid #e7edf4;
+  border-radius: 8px;
+  background: #fff;
+  padding: 9px 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.quote-transform-quote-context strong {
+  color: #24384f;
+  font-size: 13px;
+}
+
+.quote-transform-quote-context dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quote-transform-quote-context div {
+  min-width: 0;
+}
+
+.quote-transform-quote-context dt {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.quote-transform-quote-context dd {
+  margin: 0;
+  color: #1f2d3d;
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
 .quote-transform-session-grid {
   display: grid;
   gap: 8px;
@@ -15189,6 +15229,10 @@ button.danger:focus-visible {
   }
 
   .quote-transform-stepper {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .quote-transform-quote-context dl {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

@@ -4068,6 +4068,78 @@ def _quote_line_recommendation_key(line: QuoteLineIn) -> str | None:
     return str(line.activity_id)
 
 
+def _planned_quantities_from_calendar_snapshot(calendar_snapshot: dict[str, object]) -> dict[str, Decimal]:
+    quantities: dict[str, Decimal] = {}
+    for raw_session in _json_list(_json_object(calendar_snapshot).get("sessions")):
+        if not isinstance(raw_session, dict):
+            continue
+        activity_id = _text(raw_session.get("activity_id"))
+        recommendation_key = _text(raw_session.get("recommendation_key"))
+        keys = [key for key in (recommendation_key, activity_id) if key]
+        for key in keys:
+            quantities[key] = quantities.get(key, Decimal("0.00")) + Decimal("1.00")
+    return quantities
+
+
+def _preview_line_with_quantity(line: TypeformQuotePreviewLineOut, quantity: Decimal, meta: dict[str, object]) -> TypeformQuotePreviewLineOut:
+    amount_ht = _q2(line.unit_price_ht * quantity)
+    amount_vat = _q2(line.unit_vat_amount * quantity)
+    return line.model_copy(
+        update={
+            "quantity": _q2(quantity),
+            "amount_ht": amount_ht,
+            "amount_vat": amount_vat,
+            "amount_ttc": _q2(amount_ht + amount_vat),
+            "meta": meta,
+        }
+    )
+
+
+def _quote_line_with_quantity(line: QuoteLineIn, quantity: Decimal, meta: dict[str, object]) -> QuoteLineIn:
+    return line.model_copy(update={"quantity": _q2(quantity), "meta": meta})
+
+
+def _apply_planned_quantities_to_activity_lines(
+    *,
+    preview_lines: list[TypeformQuotePreviewLineOut],
+    quote_lines: list[QuoteLineIn],
+    calendar_snapshot: dict[str, object],
+) -> tuple[list[TypeformQuotePreviewLineOut], list[QuoteLineIn]]:
+    planned_quantities = _planned_quantities_from_calendar_snapshot(calendar_snapshot)
+    if not planned_quantities:
+        return preview_lines, quote_lines
+
+    adjusted_preview_lines: list[TypeformQuotePreviewLineOut] = []
+    adjusted_quote_lines: list[QuoteLineIn] = []
+    for index, quote_line in enumerate(quote_lines):
+        preview_line = preview_lines[index] if index < len(preview_lines) else None
+        planned_quantity: Decimal | None = None
+        recommendation_key = _quote_line_recommendation_key(quote_line)
+        if recommendation_key:
+            planned_quantity = planned_quantities.get(recommendation_key)
+        if planned_quantity is None and quote_line.activity_id is not None:
+            planned_quantity = planned_quantities.get(str(quote_line.activity_id))
+
+        if quote_line.activity_id is None or planned_quantity is None or planned_quantity <= Decimal("0.00"):
+            adjusted_quote_lines.append(quote_line)
+            if preview_line is not None:
+                adjusted_preview_lines.append(preview_line)
+            continue
+
+        meta = dict(quote_line.meta or {})
+        if _q2(quote_line.quantity) != _q2(planned_quantity):
+            meta.setdefault("typeform_original_billing_quantity", str(_q2(quote_line.quantity)))
+            meta["typeform_planned_quantity_applied"] = True
+            meta["typeform_planned_quantity"] = str(_q2(planned_quantity))
+        adjusted_quote_lines.append(_quote_line_with_quantity(quote_line, planned_quantity, meta))
+        if preview_line is not None:
+            adjusted_preview_lines.append(_preview_line_with_quantity(preview_line, planned_quantity, meta))
+
+    if len(preview_lines) > len(adjusted_preview_lines):
+        adjusted_preview_lines.extend(preview_lines[len(adjusted_preview_lines):])
+    return adjusted_preview_lines, adjusted_quote_lines
+
+
 def _planning_session_limit_from_meta(meta: object | None) -> int | None:
     meta_obj = _json_object(meta)
     template = _json_object(meta_obj.get("typeform_template"))
@@ -6502,6 +6574,8 @@ def create_draft_quote_from_typeform_intake(
             "family_only_quote": True,
         }
     else:
+        preview_quote = analysis["preview_quote"]
+        preview_template_lines = list(preview_quote.lines) if preview_quote is not None else []
         calendar_snapshot = _calendar_snapshot_from_analysis(
             db,
             normalized=normalized,
@@ -6510,13 +6584,19 @@ def create_draft_quote_from_typeform_intake(
             runtime_context=_json_object(analysis.get("runtime_context")),
             quote_lines=preview_lines_in,
         )
+        preview_template_lines, preview_lines_in = _apply_planned_quantities_to_activity_lines(
+            preview_lines=preview_template_lines,
+            quote_lines=preview_lines_in,
+            calendar_snapshot=calendar_snapshot,
+        )
     estimated_solfege_level = _extract_estimated_solfege_level(
         normalized=normalized,
         session_recommendations=[] if family_only_quote else analysis["session_recommendations"],
     )
     selected_solfege_slot = {} if family_only_quote else _json_object(_json_object(calendar_snapshot.get("solfege")).get("selected_slot"))
-    preview_quote = analysis["preview_quote"]
-    preview_template_lines = list(preview_quote.lines) if preview_quote is not None else []
+    if family_only_quote:
+        preview_quote = analysis["preview_quote"]
+        preview_template_lines = list(preview_quote.lines) if preview_quote is not None else []
     quote_type_id = _parse_uuid(_json_object(analysis.get("runtime_context")).get("quote_type_id")) or config.default_quote_type_id
     default_quote_template, default_terms_template = _typeform_document_templates_from_binding(
         db,

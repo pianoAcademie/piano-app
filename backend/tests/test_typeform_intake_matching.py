@@ -21,6 +21,7 @@ from app.api.routes.typeform_intakes import (
     _find_pass_recup_product,
     _future_school_year_candidate_configs,
     _activity_matches_line_for_slot_fallback,
+    _apply_planned_quantities_to_activity_lines,
     _intake_list_out_fast,
     _line_allows_session_modality,
     _normalize_payload,
@@ -39,6 +40,8 @@ from app.api.routes.typeform_intakes import (
     _typeform_session_option_from_row,
 )
 from app.services.referrals import referral_category_for_location
+from app.schemas.quote import QuoteLineIn
+from app.schemas.typeform_intake import TypeformQuotePreviewLineOut
 
 
 class TypeformIntakeMatchingTests(unittest.TestCase):
@@ -1525,6 +1528,82 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
         )
 
         self.assertTrue(_activity_matches_line_for_slot_fallback(activity, line))  # type: ignore[arg-type]
+
+    def test_planned_quantities_are_applied_to_activity_quote_lines(self) -> None:
+        activity_id = uuid4()
+        line = QuoteLineIn(
+            line_category="service",
+            line_type="item",
+            master_item_type="activity",
+            master_item_id=activity_id,
+            activity_id=activity_id,
+            title="Cours collectif",
+            quantity=Decimal("1.00"),
+            vat_rate=Decimal("20.00"),
+            unit_price_ttc=Decimal("38.00"),
+            pricing_unit="session",
+            meta={},
+        )
+        preview_line = TypeformQuotePreviewLineOut(
+            line_category="service",
+            line_type="item",
+            master_item_type="activity",
+            master_item_id=activity_id,
+            activity_id=activity_id,
+            title="Cours collectif",
+            pricing_unit="session",
+            quantity=Decimal("1.00"),
+            vat_rate=Decimal("20.00"),
+            unit_price_ht=Decimal("31.67"),
+            unit_vat_amount=Decimal("6.33"),
+            unit_price_ttc=Decimal("38.00"),
+            amount_ht=Decimal("31.67"),
+            amount_vat=Decimal("6.33"),
+            amount_ttc=Decimal("38.00"),
+            meta={},
+        )
+
+        adjusted_preview, adjusted_lines = _apply_planned_quantities_to_activity_lines(
+            preview_lines=[preview_line],
+            quote_lines=[line],
+            calendar_snapshot={
+                "sessions": [
+                    {"activity_id": str(activity_id), "date": "2026-09-01"},
+                    {"activity_id": str(activity_id), "date": "2026-09-08"},
+                    {"activity_id": str(activity_id), "date": "2026-09-15"},
+                ]
+            },
+        )
+
+        self.assertEqual(adjusted_lines[0].quantity, Decimal("3.00"))
+        self.assertEqual(adjusted_preview[0].quantity, Decimal("3.00"))
+        self.assertEqual(adjusted_preview[0].amount_ttc, Decimal("114.00"))
+        self.assertTrue(adjusted_lines[0].meta["typeform_planned_quantity_applied"])
+        self.assertEqual(adjusted_lines[0].meta["typeform_original_billing_quantity"], "1.00")
+
+    def test_planned_quantities_do_not_change_products(self) -> None:
+        product_id = uuid4()
+        product_line = QuoteLineIn(
+            line_category="product",
+            line_type="item",
+            master_item_type="product",
+            master_item_id=product_id,
+            product_id=product_id,
+            title="Cahier",
+            quantity=Decimal("1.00"),
+            vat_rate=Decimal("20.00"),
+            unit_price_ttc=Decimal("10.00"),
+            pricing_unit="item",
+            meta={},
+        )
+
+        _adjusted_preview, adjusted_lines = _apply_planned_quantities_to_activity_lines(
+            preview_lines=[],
+            quote_lines=[product_line],
+            calendar_snapshot={"sessions": [{"activity_id": str(uuid4())}, {"activity_id": str(uuid4())}]},
+        )
+
+        self.assertEqual(adjusted_lines[0].quantity, Decimal("1.00"))
 
     def test_should_try_future_school_year_config_when_slots_are_requested_but_no_option_matches(self) -> None:
         should_try = _should_try_future_school_year_config(

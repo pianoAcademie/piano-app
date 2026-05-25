@@ -69,6 +69,13 @@ type QuoteToEnrollmentWizardProps = {
   language?: UiLanguage;
 };
 
+type QuotePlanningContext = {
+  activity: string;
+  quantity: string;
+  slot: string;
+  location: string;
+};
+
 function statusLabel(status: QuoteTransformStatus, language: UiLanguage): string {
   return quoteTransformStatusLabel(status, language);
 }
@@ -203,6 +210,39 @@ function defaultSessionAssignment(
   const firstUsable = options.find((option) => option.seatsRemaining > 0) || options[0];
   const shouldAutoAssign = scenario === "A" || options.length === 1;
   return shouldAutoAssign && firstUsable ? firstUsable.sessionId : null;
+}
+
+function formatQuantity(value: number, unit: string, language: UiLanguage): string {
+  const safeValue = Number.isFinite(value) ? value : 0;
+  const formatted = new Intl.NumberFormat(localeForUiLanguage(language), { maximumFractionDigits: 2 }).format(safeValue);
+  return unit ? `${formatted} ${unit}` : formatted;
+}
+
+function formatScheduleHint(
+  hint: { startDate: string | null; weekday: number | null; startTime: string | null; endTime: string | null } | null,
+  language: UiLanguage,
+): string {
+  if (!hint) {
+    return uiText(language, "admin.quote_transform.none");
+  }
+  const weekdayLabels = language === "en"
+    ? ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    : ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"];
+  const dateLabel = hint.startDate
+    ? new Intl.DateTimeFormat(localeForUiLanguage(language), { day: "2-digit", month: "2-digit" }).format(new Date(`${hint.startDate}T00:00:00Z`))
+    : "";
+  const weekdayLabel = hint.weekday !== null && hint.weekday >= 0 && hint.weekday <= 6 ? weekdayLabels[hint.weekday] : "";
+  const timeLabel = [hint.startTime, hint.endTime].filter(Boolean).join("-");
+  const parts = [weekdayLabel || dateLabel, timeLabel].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : uiText(language, "admin.quote_transform.none");
+}
+
+function normalizeComparable(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
 }
 
 export default function QuoteToEnrollmentWizard({
@@ -428,6 +468,20 @@ export default function QuoteToEnrollmentWizard({
   );
 
   const scheduleHints = useMemo(() => deriveScheduleHints(calendarSnapshot), [calendarSnapshot]);
+
+  const quotePlanningContextByScheduleKey = useMemo(() => {
+    const output = new Map<string, QuotePlanningContext>();
+    for (const row of activityRows) {
+      const hint = scheduleHints.get(row.scheduleKey) ?? scheduleHints.get(row.activityId) ?? null;
+      output.set(row.scheduleKey, {
+        activity: row.activityName,
+        quantity: formatQuantity(row.quantity, row.pricingUnit, language),
+        slot: formatScheduleHint(hint, language),
+        location: row.locationName || uiText(language, "admin.quote_transform.location_not_defined"),
+      });
+    }
+    return output;
+  }, [activityRows, scheduleHints, language]);
 
   const sessionOptionsByActivityId = useMemo(() => {
     const output = new Map<string, SessionMatchOption[]>();
@@ -1472,6 +1526,7 @@ export default function QuoteToEnrollmentWizard({
                 {activityRows.map((row) => {
                   const options = sessionOptionsByActivityId.get(row.scheduleKey) || [];
                   const selectedSessionId = assignedSessionByActivityId[row.scheduleKey] || "";
+                  const quoteContext = quotePlanningContextByScheduleKey.get(row.scheduleKey) || null;
                   return (
                     <article key={`schedule-${row.rowId}`} className="quote-transform-schedule-card">
                       <div className="row spread wrap gap-sm">
@@ -1497,6 +1552,30 @@ export default function QuoteToEnrollmentWizard({
                         </div>
                       </div>
 
+                      {quoteContext ? (
+                        <div className="quote-transform-quote-context">
+                          <strong>{t("admin.quote_transform.quote_context_title")}</strong>
+                          <dl>
+                            <div>
+                              <dt>{t("admin.quote_transform.quote_context_activity")}</dt>
+                              <dd>{quoteContext.activity}</dd>
+                            </div>
+                            <div>
+                              <dt>{t("admin.quote_transform.quote_context_quantity")}</dt>
+                              <dd>{quoteContext.quantity}</dd>
+                            </div>
+                            <div>
+                              <dt>{t("admin.quote_transform.quote_context_slot")}</dt>
+                              <dd>{quoteContext.slot}</dd>
+                            </div>
+                            <div>
+                              <dt>{t("admin.quote_transform.quote_context_location")}</dt>
+                              <dd>{quoteContext.location}</dd>
+                            </div>
+                          </dl>
+                        </div>
+                      ) : null}
+
                       {offPlanningActivityIds.has(row.scheduleKey) ? (
                         <p className="flash-warn top-gap-sm">{t("admin.quote_transform.off_planning_message")}</p>
                       ) : null}
@@ -1516,7 +1595,14 @@ export default function QuoteToEnrollmentWizard({
                                   onChange={() => assignSession(row.scheduleKey, option.sessionId)}
                                 />
                                 <div>
-                                  <strong>{option.label}</strong>
+                                  <div className="row wrap gap-sm">
+                                    <strong>{option.label}</strong>
+                                    {quoteContext && option.score >= 100 ? (
+                                      <span className="status-pill status-ok">{t("admin.quote_transform.quote_option_matches")}</span>
+                                    ) : quoteContext && normalizeComparable(option.locationName) !== normalizeComparable(quoteContext.location) ? (
+                                      <span className="status-pill status-warn">{t("admin.quote_transform.quote_option_location_differs")}</span>
+                                    ) : null}
+                                  </div>
                                   <p className="muted">{option.dateLabel} · {option.locationName} · {option.teacher}</p>
                                   <p className="muted">{t("admin.quote_transform.seats_remaining", { count: option.seatsRemaining })} · {t("admin.quote_transform.score", { score: option.score })}</p>
                                   <p className="muted">{option.reasons.map((reason) => translateQuoteTransformMessage(reason, language)).join(" · ")}</p>
