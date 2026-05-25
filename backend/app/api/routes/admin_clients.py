@@ -3013,6 +3013,28 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
         if reconciled_payment_ids:
             normalized["reconciled_manual_payment_ids"] = reconciled_payment_ids
 
+    applied_payment_lines_raw = payload.get("applied_payment_lines")
+    if isinstance(applied_payment_lines_raw, list):
+        applied_payment_lines: list[dict[str, str]] = []
+        for raw_line in applied_payment_lines_raw:
+            if not isinstance(raw_line, dict):
+                continue
+            amount = _normalize_optional(str(raw_line.get("amount") or ""))
+            currency = _normalize_currency(raw_line.get("currency"), fallback="EUR")
+            if not amount:
+                continue
+            applied_payment_lines.append(
+                {
+                    "date": _normalize_optional(str(raw_line.get("date") or "")) or "-",
+                    "method": _normalize_optional(str(raw_line.get("method") or "")) or "Paiement",
+                    "reference": _normalize_optional(str(raw_line.get("reference") or "")) or "-",
+                    "amount": amount,
+                    "currency": currency,
+                }
+            )
+        if applied_payment_lines:
+            normalized["applied_payment_lines"] = applied_payment_lines
+
     return normalized
 
 

@@ -460,6 +460,15 @@ class AdminClientPaymentDocumentTests(unittest.TestCase):
             "layout": "NORMAL",
             "totals_by_currency": {"EUR": "2770.00"},
             "applied_payment_totals_by_currency": {"EUR": "-400.00"},
+            "applied_payment_lines": [
+                {
+                    "date": "09/05/2026",
+                    "method": "CB en ligne",
+                    "reference": "REF:pay_test",
+                    "amount": "400.00",
+                    "currency": "EUR",
+                }
+            ],
             "total_to_pay_by_currency": {"EUR": "2370.00"},
             "payment_amount_paid": "2370.00",
             "payment_currency": "EUR",
@@ -472,6 +481,18 @@ class AdminClientPaymentDocumentTests(unittest.TestCase):
         self.assertIsNotNone(normalized)
         assert normalized is not None
         self.assertEqual(normalized["applied_payment_totals_by_currency"], {"EUR": "-400.00"})
+        self.assertEqual(
+            normalized["applied_payment_lines"],
+            [
+                {
+                    "date": "09/05/2026",
+                    "method": "CB en ligne",
+                    "reference": "REF:pay_test",
+                    "amount": "400.00",
+                    "currency": "EUR",
+                }
+            ],
+        )
         self.assertEqual(normalized["total_to_pay_by_currency"], {"EUR": "2370.00"})
         self.assertEqual(normalized["payment_amount_paid"], "2370.00")
         self.assertEqual(normalized["payment_currency"], "EUR")
