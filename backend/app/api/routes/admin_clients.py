@@ -1479,6 +1479,17 @@ def _manual_transaction_id_from_payment_key(raw_key: object) -> UUID | None:
         return None
 
 
+def _is_pre_registration_deposit_category(raw: object) -> bool:
+    value = str(raw or "").strip()
+    if not value:
+        return False
+    normalized = re.sub(r"[^A-Z0-9]+", "_", value.upper()).strip("_")
+    if normalized == "PRE_REGISTRATION_DEPOSIT":
+        return True
+    compact = normalized.replace("_", "")
+    return "ACOMPTE" in compact and "PREINSCRIPTION" in compact
+
+
 def _is_pre_registration_deposit_invoice_metadata(
     metadata: dict[str, object],
     *,
@@ -1495,7 +1506,7 @@ def _is_pre_registration_deposit_invoice_metadata(
         transaction = manual_transactions_by_id.get(manual_transaction_id)
         if transaction is None:
             return False
-        if (transaction.category or "").strip().upper() != "PRE_REGISTRATION_DEPOSIT":
+        if not _is_pre_registration_deposit_category(transaction.category):
             return False
         matched = True
     return matched
@@ -2831,6 +2842,23 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
     if not totals:
         return None
     normalized["totals_by_currency"] = totals
+    for amount_field in (
+        "opening_balance_by_currency",
+        "applied_payment_totals_by_currency",
+        "total_to_pay_by_currency",
+    ):
+        raw_amounts = payload.get(amount_field)
+        if not isinstance(raw_amounts, dict):
+            continue
+        normalized_amounts: dict[str, str] = {}
+        for key, value in raw_amounts.items():
+            currency = str(key or "").strip().upper()
+            amount = str(value or "").strip()
+            if len(currency) != 3 or not currency.isalpha() or not amount:
+                continue
+            normalized_amounts[currency] = amount
+        if normalized_amounts:
+            normalized[amount_field] = normalized_amounts
 
     normalized["include_pending"] = bool(payload.get("include_pending"))
     normalized["include_cancelled"] = bool(payload.get("include_cancelled"))

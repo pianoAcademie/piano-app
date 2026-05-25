@@ -8463,6 +8463,7 @@ def _apply_followup_forfait_discount_rows(
     subscription.forfait_loyalty_discount_per_hour_ttc = Decimal("0.00")
     subscription.forfait_family_discount_per_hour_ttc = Decimal("0.00")
     db.add(subscription)
+    db.flush()
     return consumed_row_ids
 
 
