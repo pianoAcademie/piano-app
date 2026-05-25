@@ -68,6 +68,7 @@ from app.models.quote import (
 )
 from app.models.typeform_intake import TypeformIntake
 from app.models.user import ClientKind, ClientStatus, User, UserRole
+from app.services.i18n import normalize_language
 from app.schemas.quote import (
     PaymentPlanOut,
     PaymentPlanUpsertRequest,
@@ -4799,7 +4800,15 @@ def create_quote_from_payload(
     resolved_language = (
         payload.language.strip().lower()
         if payload.language is not None and payload.language.strip()
-        else None
+        else (
+            normalize_language(client.preferred_language)
+            if client is not None and str(client.preferred_language or "").strip()
+            else (
+                normalize_language(prospect.meta.get("language"))
+                if prospect is not None and isinstance(prospect.meta, dict) and str(prospect.meta.get("language") or "").strip()
+                else None
+            )
+        )
     )
     activity_ids = [line.activity_id for line in payload.lines if line.activity_id is not None]
     activity_id_for_document, activity_family_for_document = _quote_activity_context(db, activity_ids=activity_ids)

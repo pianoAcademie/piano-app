@@ -130,6 +130,7 @@ type SubNavItem = {
 
 type MessagingTab =
   | "settings"
+  | "scheduled"
   | "predefined-email"
   | "predefined-sms"
   | "custom-email"
@@ -184,6 +185,7 @@ const PARAMS_SUBNAV_ITEMS: SubNavItem[] = [
 
 const MESSAGING_TAB_ITEMS: MessagingTabItem[] = [
   { key: "settings", label: "", labelKey: "admin.messaging_settings.tab.settings" },
+  { key: "scheduled", label: "", labelKey: "admin.messaging_settings.tab.scheduled" },
   { key: "predefined-email", label: "", labelKey: "admin.messaging_settings.tab.predefined_email" },
   { key: "predefined-sms", label: "", labelKey: "admin.messaging_settings.tab.predefined_sms" },
   { key: "custom-email", label: "", labelKey: "admin.messaging_settings.tab.custom_email" },
@@ -326,6 +328,19 @@ function messagingTemplateOptionLabel(language: UiLanguage, template: AdminMessa
   return `${template.name} · ${suffix}`;
 }
 
+function messagingTemplateLabelByRef(
+  language: UiLanguage,
+  templates: AdminMessagingTemplateOut[],
+  templateRef: string | null | undefined,
+): string {
+  const normalizedRef = String(templateRef || "").trim();
+  if (!normalizedRef) {
+    return uiText(language, "admin.messaging_schedule.no_template");
+  }
+  const match = templates.find((template) => messagingTemplateRef(template) === normalizedRef);
+  return match ? messagingTemplateOptionLabel(language, match) : normalizedRef;
+}
+
 function messagingChannelLabel(language: UiLanguage, channel: string): string {
   if (channel === "SMS") {
     return uiText(language, "admin.messaging_templates.channel_sms");
@@ -436,6 +451,7 @@ function parseMessagingTab(raw: string): MessagingTab {
   const value = raw.trim().toLowerCase();
   if (
     value === "settings" ||
+    value === "scheduled" ||
     value === "predefined-email" ||
     value === "predefined-sms" ||
     value === "custom-email" ||
@@ -981,6 +997,98 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const quoteReminderSmsTemplates = activeSmsTemplates.filter((template) => template.usage_contexts.includes("QUOTE_REMINDER"));
   const quoteCancelSmsTemplates = activeSmsTemplates.filter((template) => template.usage_contexts.includes("QUOTE_CANCEL"));
   const quoteExpiredSmsTemplates = activeSmsTemplates.filter((template) => template.usage_contexts.includes("QUOTE_EXPIRED"));
+  const allMessagingTemplates = [...emailPredefinedTemplates, ...smsPredefinedTemplates, ...customTemplates];
+  const scheduledMessagingGroups = messagingSettings
+    ? [
+        {
+          theme: t("admin.messaging_schedule.theme_quotes"),
+          rows: [
+            {
+              name: t("admin.messaging_schedule.quote_reminder"),
+              trigger: t("admin.messaging_schedule.quote_reminder_trigger", {
+                delay: formatQuoteReminderDelayList(
+                  messagingSettings.quote_reminder_lead_hours_values,
+                  messagingSettings.quote_reminder_lead_hours,
+                ),
+                time: messagingSettings.quote_daily_job_local_time || "07:00",
+              }),
+              channel: "EMAIL",
+              active: messagingSettings.quote_reminder_enabled,
+              template: messagingTemplateLabelByRef(language, allMessagingTemplates, messagingSettings.quote_reminder_template_ref),
+            },
+            {
+              name: t("admin.messaging_schedule.quote_reminder"),
+              trigger: t("admin.messaging_schedule.quote_reminder_trigger", {
+                delay: formatQuoteReminderDelayList(
+                  messagingSettings.quote_reminder_lead_hours_values,
+                  messagingSettings.quote_reminder_lead_hours,
+                ),
+                time: messagingSettings.quote_daily_job_local_time || "07:00",
+              }),
+              channel: "SMS",
+              active: messagingSettings.quote_reminder_sms_enabled,
+              template: messagingTemplateLabelByRef(language, allMessagingTemplates, messagingSettings.quote_reminder_sms_template_ref),
+            },
+            {
+              name: t("admin.messaging_schedule.quote_expired"),
+              trigger: t("admin.messaging_schedule.quote_expired_trigger", {
+                time: messagingSettings.quote_daily_job_local_time || "07:00",
+              }),
+              channel: "EMAIL",
+              active: messagingSettings.quote_expired_notification_enabled,
+              template: messagingTemplateLabelByRef(language, allMessagingTemplates, messagingSettings.quote_expired_template_ref),
+            },
+            {
+              name: t("admin.messaging_schedule.quote_expired"),
+              trigger: t("admin.messaging_schedule.quote_expired_trigger", {
+                time: messagingSettings.quote_daily_job_local_time || "07:00",
+              }),
+              channel: "SMS",
+              active: messagingSettings.quote_expired_sms_notification_enabled,
+              template: messagingTemplateLabelByRef(language, allMessagingTemplates, messagingSettings.quote_expired_sms_template_ref),
+            },
+            {
+              name: t("admin.messaging_schedule.quote_auto_cancel"),
+              trigger: t("admin.messaging_schedule.quote_auto_cancel_trigger", {
+                delay: messagingSettings.quote_auto_cancel_delay_hours,
+              }),
+              channel: "EMAIL",
+              active: messagingSettings.quote_auto_cancel_enabled && messagingSettings.quote_cancel_notification_enabled,
+              template: messagingTemplateLabelByRef(language, allMessagingTemplates, messagingSettings.quote_cancel_template_ref),
+            },
+            {
+              name: t("admin.messaging_schedule.quote_auto_cancel"),
+              trigger: t("admin.messaging_schedule.quote_auto_cancel_trigger", {
+                delay: messagingSettings.quote_auto_cancel_delay_hours,
+              }),
+              channel: "SMS",
+              active: messagingSettings.quote_auto_cancel_enabled && messagingSettings.quote_cancel_sms_notification_enabled,
+              template: messagingTemplateLabelByRef(language, allMessagingTemplates, messagingSettings.quote_cancel_sms_template_ref),
+            },
+          ],
+        },
+        {
+          theme: t("admin.messaging_schedule.theme_invoices"),
+          rows: [
+            {
+              name: t("admin.messaging_schedule.invoice_due_reminder"),
+              trigger: t("admin.messaging_schedule.invoice_due_reminder_trigger"),
+              channel: "EMAIL",
+              active: true,
+              template: messagingTemplateLabelByRef(language, allMessagingTemplates, "predefined:INVOICE_REMINDER"),
+            },
+            {
+              name: t("admin.messaging_schedule.invoice_sms"),
+              trigger: t("admin.messaging_schedule.invoice_sms_trigger"),
+              channel: "SMS",
+              active: false,
+              statusLabel: t("admin.messaging_schedule.status_manual"),
+              template: messagingTemplateLabelByRef(language, allMessagingTemplates, "predefined:SMS_INVOICE_REMINDER"),
+            },
+          ],
+        },
+      ]
+    : [];
   const quoteTemplateVariablesByCategory = quoteTemplateVariables.reduce<Record<string, QuoteTemplateVariableOut[]>>((acc, item) => {
     const key = item.category || t("admin.messaging_settings.variables_other");
     if (!acc[key]) {
@@ -2868,6 +2976,56 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                       <button type="submit">{t("admin.messaging_settings.save_changes")}</button>
                     </div>
                   </form>
+                )}
+              </section>
+              ) : null}
+
+              {messagingTab === "scheduled" ? (
+              <section className="card">
+                <h3>{t("admin.messaging_schedule.title")}</h3>
+                <p className="muted">{t("admin.messaging_schedule.description")}</p>
+                {!messagingSettings ? (
+                  <p className="muted">{t("admin.messaging_settings.settings_load_error")}</p>
+                ) : (
+                  <div className="stack-lg">
+                    {scheduledMessagingGroups.map((group) => (
+                      <section key={group.theme} className="config-subsection">
+                        <h4>{group.theme}</h4>
+                        <div className="table-wrap">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>{t("admin.messaging_schedule.column_event")}</th>
+                                <th>{t("admin.messaging_schedule.column_channel")}</th>
+                                <th>{t("admin.messaging_schedule.column_trigger")}</th>
+                                <th>{t("admin.messaging_schedule.column_template")}</th>
+                                <th>{t("common.status")}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {group.rows.map((row) => (
+                                <tr key={`${group.theme}-${row.name}-${row.channel}`}>
+                                  <td>{row.name}</td>
+                                  <td>{messagingChannelLabel(language, row.channel)}</td>
+                                  <td>{row.trigger}</td>
+                                  <td>{row.template}</td>
+                                  <td>
+                                    <span className={`status-pill ${row.active ? "status-ok" : "status-off"}`}>
+                                      {"statusLabel" in row && row.statusLabel
+                                        ? row.statusLabel
+                                        : row.active
+                                        ? t("admin.messaging_schedule.status_active")
+                                        : t("admin.messaging_schedule.status_inactive")}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </section>
+                    ))}
+                  </div>
                 )}
               </section>
               ) : null}

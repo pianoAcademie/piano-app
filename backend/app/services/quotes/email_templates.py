@@ -128,6 +128,14 @@ def _quote_timezone_name(db: Session, quote: Quote) -> str:
     return "Europe/Paris"
 
 
+def _quote_language(db: Session, quote: Quote) -> str:
+    if quote.client_id is not None:
+        client = db.scalar(select(User).where(User.id == quote.client_id))
+        if client is not None and str(client.preferred_language or "").strip():
+            return normalize_language(client.preferred_language)
+    return normalize_language(quote.language)
+
+
 def _format_local_datetime(raw_value: datetime | None, timezone_name: str) -> str:
     if raw_value is None:
         return "-"
@@ -204,7 +212,7 @@ def build_quote_email_context(
 ) -> dict[str, str]:
     values, _, _ = build_quote_template_values(db=db, quote=quote, lines=lines, audience=AUDIENCE_PUBLIC_PAGE)
     timezone_name = _quote_timezone_name(db, quote)
-    normalized_language = normalize_language(quote.language)
+    normalized_language = _quote_language(db, quote)
     public_url = str(values.get("quote_public_url") or "").strip()
     pdf_url = str(values.get("quote_pdf_url") or "").strip()
     if not public_url and quote.public_token:
@@ -254,7 +262,7 @@ def render_quote_email_template(
         channel="EMAIL",
         usage_context=usage_context,
         active_only=True,
-        language=quote.language,
+        language=_quote_language(db, quote),
     )
     context = build_quote_email_context(db, quote=quote, lines=lines, recipient_email=recipient_email)
     subject = _render_template(str(template.get("subject") or ""), context)
@@ -327,7 +335,7 @@ def render_quote_sms_template(
         channel="SMS",
         usage_context=usage_context,
         active_only=True,
-        language=quote.language,
+        language=_quote_language(db, quote),
     )
     context = build_quote_email_context(db, quote=quote, lines=lines, recipient_phone=recipient_phone)
     body = _render_template(str(template.get("body") or ""), context)
@@ -361,7 +369,7 @@ def send_quote_templated_sms(
         to_phone=rendered.recipient_phone,
         message=rendered.body,
         context=sms_context,
-        subject=(f"Quote {quote.quote_number}" if normalize_language(quote.language) == "en" else f"Devis {quote.quote_number}"),
+        subject=(f"Quote {quote.quote_number}" if _quote_language(db, quote) == "en" else f"Devis {quote.quote_number}"),
         db=db,
     )
     return rendered, result

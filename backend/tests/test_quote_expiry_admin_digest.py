@@ -15,6 +15,7 @@ from app.services.quotes.lifecycle_jobs import (
     _quote_student_name,
     _trigger_due,
 )
+from app.services.quotes.email_templates import _quote_language
 
 
 class QuoteExpiryAdminDigestTests(unittest.TestCase):
@@ -144,6 +145,20 @@ class QuoteExpiryAdminDigestTests(unittest.TestCase):
                 )
             )
         )
+
+    def test_quote_notification_language_prefers_client_language(self) -> None:
+        class FakeDb:
+            def scalar(self, _stmt: object) -> object:
+                return SimpleNamespace(preferred_language="en")
+
+        quote = SimpleNamespace(client_id=uuid4(), language="fr")
+
+        self.assertEqual(_quote_language(FakeDb(), quote), "en")
+
+    def test_quote_notification_language_falls_back_to_quote_language(self) -> None:
+        quote = SimpleNamespace(client_id=None, language="en")
+
+        self.assertEqual(_quote_language(SimpleNamespace(), quote), "en")
 
 
 if __name__ == "__main__":
