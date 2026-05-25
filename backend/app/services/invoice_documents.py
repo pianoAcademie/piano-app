@@ -1313,6 +1313,9 @@ def render_invoice_period_pdf(
         if not isinstance(raw, tuple) or len(raw) != 3:
             continue
         label, currency, amount = raw
+        normalized_label_key = re.sub(r"[^a-z0-9]+", "", str(label).strip().casefold())
+        if normalized_label_key == "remisefidelite":
+            continue
         normalized_adjustments.append(
             (
                 _ascii_safe(str(label).strip()) or _invoice_text(normalized_language, "adjustment_fallback"),
