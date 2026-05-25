@@ -8186,6 +8186,7 @@ def _create_followup_booking(
     created_booking_ids: list[UUID],
     student_start_time_local: str | None = None,
     student_end_time_local: str | None = None,
+    pricing_snapshot_override: tuple[Decimal, Decimal, Decimal, Decimal, str] | None = None,
 ) -> Booking | None:
     existing = db.scalar(
         select(Booking)
@@ -8220,14 +8221,17 @@ def _create_followup_booking(
                 detail="La formule cible n'a plus de credits disponibles",
             )
 
-    amount_ht, vat_rate, vat_amount, total_ttc, currency = _resolve_booking_snapshot(
-        db,
-        session_obj=session_obj,
-        user=student,
-        now=now,
-        subscription=subscription,
-        plan=plan,
-    )
+    if pricing_snapshot_override is not None:
+        amount_ht, vat_rate, vat_amount, total_ttc, currency = pricing_snapshot_override
+    else:
+        amount_ht, vat_rate, vat_amount, total_ttc, currency = _resolve_booking_snapshot(
+            db,
+            session_obj=session_obj,
+            user=student,
+            now=now,
+            subscription=subscription,
+            plan=plan,
+        )
     course_type = db.scalar(select(CourseType).where(CourseType.id == session_obj.course_type_id))
     student_start_at_utc: datetime | None = None
     student_end_at_utc: datetime | None = None
@@ -8753,7 +8757,18 @@ def _execute_quote_followup_transformation(
     }
     quote_lines = db.scalars(select(QuoteLine).where(QuoteLine.quote_id == quote.id)).all()
     session_limit_by_key: dict[str, int] = {}
+    service_lines_by_schedule_key: dict[str, list[QuoteLine]] = {}
+    service_lines_by_activity_id: dict[str, list[QuoteLine]] = {}
     for line in quote_lines:
+        if (
+            line.activity_id is not None
+            and (line.line_category or "").strip().lower() == "service"
+            and (line.line_type or "").strip().lower() == "item"
+        ):
+            line_schedule_key = _quote_line_schedule_key(line)
+            if line_schedule_key:
+                service_lines_by_schedule_key.setdefault(line_schedule_key, []).append(line)
+            service_lines_by_activity_id.setdefault(str(line.activity_id), []).append(line)
         limit = _planning_session_limit_from_quote_line(line)
         if limit is None:
             continue
@@ -8862,7 +8877,33 @@ def _execute_quote_followup_transformation(
                     f"({displayed_dates}{hidden_suffix}). Regenerer ou corriger le planning avant integration."
                 ),
             )
-        for session_obj in live_sessions:
+        quote_service_lines = (
+            service_lines_by_schedule_key.get(schedule_key)
+            or service_lines_by_activity_id.get(str(activity_id))
+            or []
+        )
+        pricing_overrides: list[tuple[Decimal, Decimal, Decimal, Decimal, str] | None] = [None for _ in live_sessions]
+        if quote_service_lines and live_sessions:
+            amount_ht_parts = _split_quote_amount_by_count(
+                _q2(sum((Decimal(line.amount_ht or 0) for line in quote_service_lines), Decimal("0.00"))),
+                len(live_sessions),
+            )
+            amount_vat_parts = _split_quote_amount_by_count(
+                _q2(sum((Decimal(line.amount_vat or 0) for line in quote_service_lines), Decimal("0.00"))),
+                len(live_sessions),
+            )
+            total_ttc_parts = _split_quote_amount_by_count(
+                _q2(sum((Decimal(line.amount_ttc or 0) for line in quote_service_lines), Decimal("0.00"))),
+                len(live_sessions),
+            )
+            first_line = quote_service_lines[0]
+            vat_rate = _q3(Decimal(first_line.vat_rate or 0))
+            currency = (quote.currency or "EUR").upper()
+            pricing_overrides = [
+                (amount_ht, vat_rate, amount_vat, total_ttc, currency)
+                for amount_ht, amount_vat, total_ttc in zip(amount_ht_parts, amount_vat_parts, total_ttc_parts)
+            ]
+        for session_obj, pricing_override in zip(live_sessions, pricing_overrides):
             _create_followup_booking(
                 db,
                 session_obj=session_obj,
@@ -8873,6 +8914,7 @@ def _execute_quote_followup_transformation(
                 created_booking_ids=created_booking_ids,
                 student_start_time_local=student_start_time_local,
                 student_end_time_local=student_end_time_local,
+                pricing_snapshot_override=pricing_override,
             )
 
     _create_followup_manual_transactions(
