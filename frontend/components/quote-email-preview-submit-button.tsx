@@ -23,6 +23,7 @@ type QuoteEmailPreviewSubmitButtonProps = {
   className?: string;
   disabled?: boolean;
   language?: UiLanguage | string;
+  missingKitWarning?: boolean;
 };
 
 export default function QuoteEmailPreviewSubmitButton({
@@ -36,6 +37,7 @@ export default function QuoteEmailPreviewSubmitButton({
   className,
   disabled = false,
   language: languageProp = "fr",
+  missingKitWarning = false,
 }: QuoteEmailPreviewSubmitButtonProps): JSX.Element {
   const language = normalizeUiLanguage(languageProp);
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
@@ -113,6 +115,18 @@ export default function QuoteEmailPreviewSubmitButton({
       setErrorMessage(t("common.form_not_found"));
       return;
     }
+    if (missingKitWarning) {
+      const field = form.elements.namedItem("confirm_missing_kit");
+      if (field instanceof HTMLInputElement) {
+        field.value = "true";
+      } else {
+        const hidden = document.createElement("input");
+        hidden.type = "hidden";
+        hidden.name = "confirm_missing_kit";
+        hidden.value = "true";
+        form.appendChild(hidden);
+      }
+    }
     close();
     form.requestSubmit();
   };
@@ -145,6 +159,12 @@ export default function QuoteEmailPreviewSubmitButton({
               </p>
             ) : null}
             <div className="quote-email-preview-grid">
+              {missingKitWarning ? (
+                <div className="flash-warn quote-email-preview-warning">
+                  <strong>{t("admin.quote_email_preview.missing_kit_warning_title")}</strong>
+                  <p>{t("admin.quote_email_preview.missing_kit_warning_body")}</p>
+                </div>
+              ) : null}
               <div className="quote-email-preview-field">
                 <strong>{t("admin.quote_email_preview.recipient")}</strong>
                 <div className="quote-email-preview-value">{preview.recipient_email}</div>

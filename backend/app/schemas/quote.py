@@ -249,6 +249,7 @@ class QuoteSendRequest(BaseModel):
     send_sms: bool = False
     recipient_phone: str | None = Field(default=None, max_length=40)
     sms_template_ref: str | None = Field(default=None, max_length=120)
+    confirm_missing_kit: bool = False
 
 
 class QuoteManualEmailRequest(BaseModel):

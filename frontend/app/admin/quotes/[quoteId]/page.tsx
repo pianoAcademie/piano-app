@@ -2165,6 +2165,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const canEditQuote = ["created", "change_requested"].includes(quoteStatus) && !hasChangeRequestRevision;
   const canSendQuote = quoteStatus === "created";
   const canResendQuote = ["sent", "approved", "rejected", "expired", "change_requested"].includes(quoteStatus) && !hasChangeRequestRevision;
+  const quoteHasKitLine = detail.lines.some((line) => Boolean(line.kit_id));
+  const showMissingKitWarning = !quoteHasKitLine;
   const canCancelQuote = !["cancelled", "approved"].includes(quoteStatus);
   const canReopenCancelledQuote = quoteStatus === "cancelled";
   const canRestorePublicResponse = ["approved", "rejected", "change_requested"].includes(quoteStatus);
@@ -3165,6 +3167,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                       >
                         <input type="hidden" name="quote_id" value={detail.quote.id} />
                         <input type="hidden" name="return_to" value={selfPath} />
+                        <input type="hidden" name="confirm_missing_kit" value="false" />
 	                        <input type="hidden" name="recipient_email" value={primaryRecipientEmail} />
 	                        <label>
 	                          {t("admin.quote_detail.email_template")}
@@ -3218,6 +3221,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                             confirmLabel={canSendQuote ? t("admin.quote_detail.send_quote") : t("admin.quote_detail.resend_quote")}
                             language={language}
                             disabled={!primaryRecipientEmail}
+                            missingKitWarning={showMissingKitWarning}
                           />
                         </div>
                       </form>
@@ -3238,6 +3242,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                       >
                         <input type="hidden" name="quote_id" value={detail.quote.id} />
                         <input type="hidden" name="return_to" value={selfPath} />
+                        <input type="hidden" name="confirm_missing_kit" value="false" />
                         <label>
                           {t("admin.quote_detail.third_party_recipient")}
                           <input
@@ -3267,6 +3272,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                             description={t("admin.quote_detail.third_party_preview_description")}
                             confirmLabel={canSendQuote ? t("admin.quote_detail.send_quote") : t("admin.quote_detail.resend_quote")}
                             language={language}
+                            missingKitWarning={showMissingKitWarning}
                           />
                         </div>
                       </form>

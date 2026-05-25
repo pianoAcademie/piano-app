@@ -2640,6 +2640,19 @@ def _load_quote_lines(db: Session, quote_id: UUID) -> list[QuoteLine]:
     ).all()
 
 
+def _quote_lines_have_kit(lines: list[QuoteLine]) -> bool:
+    return any(line.kit_id is not None for line in lines)
+
+
+def _ensure_missing_kit_warning_confirmed(lines: list[QuoteLine], *, confirmed: bool) -> None:
+    if _quote_lines_have_kit(lines) or confirmed:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Quote has no kit line. Confirm before sending.",
+    )
+
+
 def _display_name(first_name: str | None, last_name: str | None, fallback: str) -> str:
     full_name = f"{(first_name or '').strip()} {(last_name or '').strip()}".strip()
     return full_name or fallback
@@ -5788,6 +5801,8 @@ def send_quote(
     _ensure_quote_editable(quote)
     _ensure_public_token(quote)
     _sync_draft_quote_expiry_days_from_type(db, quote)
+    lines = _load_quote_lines(db, quote.id)
+    _ensure_missing_kit_warning_confirmed(lines, confirmed=payload.confirm_missing_kit)
 
     now = _utcnow()
     _mark_quote_sent_for_first_delivery(quote, sent_at=now)
@@ -5812,7 +5827,6 @@ def send_quote(
         "recipient_email": recipient,
         **({"recipient_phone": recipient_phone} if recipient_phone else {}),
     }
-    lines = _load_quote_lines(db, quote.id)
     snapshot = _freeze_quote_document_snapshot(db, quote=quote, lines=lines, state="frozen")
     db.add(quote)
     db.add(
@@ -5928,12 +5942,13 @@ def resend_quote(
         if sms_error:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=sms_error)
 
+    lines = _load_quote_lines(db, quote.id)
+    _ensure_missing_kit_warning_confirmed(lines, confirmed=payload.confirm_missing_kit)
     quote.meta = {
         **(quote.meta or {}),
         "recipient_email": recipient,
         **({"recipient_phone": recipient_phone} if recipient_phone else {}),
     }
-    lines = _load_quote_lines(db, quote.id)
     snapshot = _freeze_quote_document_snapshot(db, quote=quote, lines=lines, state="frozen")
     quote.updated_at = _utcnow()
     db.add(quote)
