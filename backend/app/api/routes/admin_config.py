@@ -2599,6 +2599,8 @@ def update_admin_messaging_settings(
         quote_reminder_sms_template_ref=payload.quote_reminder_sms_template_ref,
         quote_cancel_template_ref=payload.quote_cancel_template_ref,
         quote_cancel_sms_template_ref=payload.quote_cancel_sms_template_ref,
+        quote_expired_template_ref=payload.quote_expired_template_ref,
+        quote_expired_sms_template_ref=payload.quote_expired_sms_template_ref,
         quote_approved_template_ref=payload.quote_approved_template_ref,
         quote_rejected_template_ref=payload.quote_rejected_template_ref,
         quote_change_requested_template_ref=payload.quote_change_requested_template_ref,
@@ -2611,6 +2613,8 @@ def update_admin_messaging_settings(
         quote_auto_cancel_delay_hours=payload.quote_auto_cancel_delay_hours,
         quote_cancel_notification_enabled=payload.quote_cancel_notification_enabled,
         quote_cancel_sms_notification_enabled=payload.quote_cancel_sms_notification_enabled,
+        quote_expired_notification_enabled=payload.quote_expired_notification_enabled,
+        quote_expired_sms_notification_enabled=payload.quote_expired_sms_notification_enabled,
     )
     db.commit()
     return AdminMessagingSettingsOut(**updated_payload)

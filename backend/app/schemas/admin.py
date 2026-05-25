@@ -233,6 +233,8 @@ class AdminMessagingSettingsOut(BaseModel):
     quote_reminder_sms_template_ref: str
     quote_cancel_template_ref: str
     quote_cancel_sms_template_ref: str
+    quote_expired_template_ref: str
+    quote_expired_sms_template_ref: str
     quote_approved_template_ref: str
     quote_rejected_template_ref: str
     quote_change_requested_template_ref: str
@@ -246,6 +248,8 @@ class AdminMessagingSettingsOut(BaseModel):
     quote_auto_cancel_delay_hours: int
     quote_cancel_notification_enabled: bool
     quote_cancel_sms_notification_enabled: bool
+    quote_expired_notification_enabled: bool
+    quote_expired_sms_notification_enabled: bool
     delivery_enabled: bool
     delivery_error_message: str | None = None
     sms_delivery_enabled: bool
@@ -281,6 +285,8 @@ class AdminMessagingSettingsUpdateRequest(BaseModel):
     quote_reminder_sms_template_ref: str = Field(default="predefined:QUOTE_REMINDER_SMS_DEFAULT", max_length=120)
     quote_cancel_template_ref: str = Field(default="predefined:QUOTE_CANCEL_DEFAULT", max_length=120)
     quote_cancel_sms_template_ref: str = Field(default="predefined:QUOTE_CANCEL_SMS_DEFAULT", max_length=120)
+    quote_expired_template_ref: str = Field(default="predefined:QUOTE_EXPIRED_DEFAULT", max_length=120)
+    quote_expired_sms_template_ref: str = Field(default="predefined:QUOTE_EXPIRED_SMS_DEFAULT", max_length=120)
     quote_approved_template_ref: str = Field(default="predefined:QUOTE_APPROVED_DEFAULT", max_length=120)
     quote_rejected_template_ref: str = Field(default="predefined:QUOTE_REJECTED_DEFAULT", max_length=120)
     quote_change_requested_template_ref: str = Field(default="predefined:QUOTE_CHANGE_REQUESTED_DEFAULT", max_length=120)
@@ -293,6 +299,8 @@ class AdminMessagingSettingsUpdateRequest(BaseModel):
     quote_auto_cancel_delay_hours: int = Field(default=24, ge=0, le=720)
     quote_cancel_notification_enabled: bool = True
     quote_cancel_sms_notification_enabled: bool = False
+    quote_expired_notification_enabled: bool = True
+    quote_expired_sms_notification_enabled: bool = False
 
 
 class AdminMessagingChannel(str, enum.Enum):

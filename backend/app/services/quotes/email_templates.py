@@ -11,12 +11,15 @@ from sqlalchemy.orm import Session
 
 from app.models.catalog import Location
 from app.models.quote import Quote, QuoteLine
+from app.models.user import User
 from app.services.email_delivery import send_email
 from app.services.i18n import normalize_language
 from app.services.messaging_templates import (
     QUOTE_APPROVED_TEMPLATE_REF_DEFAULT,
     QUOTE_CANCEL_SMS_TEMPLATE_REF_DEFAULT,
     QUOTE_CANCEL_TEMPLATE_REF_DEFAULT,
+    QUOTE_EXPIRED_SMS_TEMPLATE_REF_DEFAULT,
+    QUOTE_EXPIRED_TEMPLATE_REF_DEFAULT,
     QUOTE_CHANGE_REQUESTED_TEMPLATE_REF_DEFAULT,
     QUOTE_REJECTED_TEMPLATE_REF_DEFAULT,
     QUOTE_REMINDER_SMS_TEMPLATE_REF_DEFAULT,
@@ -26,6 +29,7 @@ from app.services.messaging_templates import (
     USAGE_CONTEXT_QUOTE_APPROVED,
     USAGE_CONTEXT_QUOTE_CANCEL,
     USAGE_CONTEXT_QUOTE_CHANGE_REQUESTED,
+    USAGE_CONTEXT_QUOTE_EXPIRED,
     USAGE_CONTEXT_QUOTE_REJECTED,
     USAGE_CONTEXT_QUOTE_REMINDER,
     USAGE_CONTEXT_QUOTE_SEND,
@@ -113,6 +117,10 @@ def _quote_status_label(status: str | None, *, language: str | None = None) -> s
 
 
 def _quote_timezone_name(db: Session, quote: Quote) -> str:
+    if quote.client_id is not None:
+        client = db.scalar(select(User).where(User.id == quote.client_id))
+        if client is not None and (client.timezone or "").strip():
+            return str(client.timezone).strip()
     if quote.location_id is not None:
         location = db.scalar(select(Location).where(Location.id == quote.location_id))
         if location is not None and (location.timezone or "").strip():
@@ -136,6 +144,8 @@ def _default_template_ref_for_usage_context(usage_context: str, *, channel: str 
             return QUOTE_REMINDER_SMS_TEMPLATE_REF_DEFAULT
         if usage_context == USAGE_CONTEXT_QUOTE_CANCEL:
             return QUOTE_CANCEL_SMS_TEMPLATE_REF_DEFAULT
+        if usage_context == USAGE_CONTEXT_QUOTE_EXPIRED:
+            return QUOTE_EXPIRED_SMS_TEMPLATE_REF_DEFAULT
         return QUOTE_SEND_SMS_TEMPLATE_REF_DEFAULT
     if usage_context == USAGE_CONTEXT_QUOTE_APPROVED:
         return QUOTE_APPROVED_TEMPLATE_REF_DEFAULT
@@ -147,6 +157,8 @@ def _default_template_ref_for_usage_context(usage_context: str, *, channel: str 
         return QUOTE_REMINDER_TEMPLATE_REF_DEFAULT
     if usage_context == USAGE_CONTEXT_QUOTE_CANCEL:
         return QUOTE_CANCEL_TEMPLATE_REF_DEFAULT
+    if usage_context == USAGE_CONTEXT_QUOTE_EXPIRED:
+        return QUOTE_EXPIRED_TEMPLATE_REF_DEFAULT
     return QUOTE_SEND_TEMPLATE_REF_DEFAULT
 
 
@@ -161,6 +173,8 @@ def _settings_template_ref_for_usage_context(
             return str(settings_payload.get("quote_reminder_sms_template_ref") or QUOTE_REMINDER_SMS_TEMPLATE_REF_DEFAULT)
         if usage_context == USAGE_CONTEXT_QUOTE_CANCEL:
             return str(settings_payload.get("quote_cancel_sms_template_ref") or QUOTE_CANCEL_SMS_TEMPLATE_REF_DEFAULT)
+        if usage_context == USAGE_CONTEXT_QUOTE_EXPIRED:
+            return str(settings_payload.get("quote_expired_sms_template_ref") or QUOTE_EXPIRED_SMS_TEMPLATE_REF_DEFAULT)
         return str(settings_payload.get("quote_send_sms_template_ref") or QUOTE_SEND_SMS_TEMPLATE_REF_DEFAULT)
     if usage_context == USAGE_CONTEXT_QUOTE_APPROVED:
         return str(settings_payload.get("quote_approved_template_ref") or QUOTE_APPROVED_TEMPLATE_REF_DEFAULT)
@@ -175,6 +189,8 @@ def _settings_template_ref_for_usage_context(
         return str(settings_payload.get("quote_reminder_template_ref") or QUOTE_REMINDER_TEMPLATE_REF_DEFAULT)
     if usage_context == USAGE_CONTEXT_QUOTE_CANCEL:
         return str(settings_payload.get("quote_cancel_template_ref") or QUOTE_CANCEL_TEMPLATE_REF_DEFAULT)
+    if usage_context == USAGE_CONTEXT_QUOTE_EXPIRED:
+        return str(settings_payload.get("quote_expired_template_ref") or QUOTE_EXPIRED_TEMPLATE_REF_DEFAULT)
     return str(settings_payload.get("quote_send_template_ref") or QUOTE_SEND_TEMPLATE_REF_DEFAULT)
 
 
@@ -214,6 +230,7 @@ def build_quote_email_context(
             "expires_at_local": _format_local_datetime(display_expires_at, timezone_name),
             "sent_at_local": _format_local_datetime(quote.sent_at, timezone_name),
             "cancelled_at_local": _format_local_datetime(quote.cancelled_at, timezone_name),
+            "expired_at_local": _format_local_datetime(quote.expired_at, timezone_name),
         }
     )
     return {key: str(value or "") for key, value in context.items()}
@@ -356,6 +373,7 @@ __all__ = [
     "USAGE_CONTEXT_QUOTE_APPROVED",
     "USAGE_CONTEXT_QUOTE_CANCEL",
     "USAGE_CONTEXT_QUOTE_CHANGE_REQUESTED",
+    "USAGE_CONTEXT_QUOTE_EXPIRED",
     "USAGE_CONTEXT_QUOTE_REJECTED",
     "USAGE_CONTEXT_QUOTE_REMINDER",
     "USAGE_CONTEXT_QUOTE_SEND",

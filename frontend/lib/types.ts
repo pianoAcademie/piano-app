@@ -1751,6 +1751,8 @@ export type AdminMessagingSettingsOut = {
   quote_reminder_sms_template_ref: string;
   quote_cancel_template_ref: string;
   quote_cancel_sms_template_ref: string;
+  quote_expired_template_ref: string;
+  quote_expired_sms_template_ref: string;
   quote_approved_template_ref: string;
   quote_rejected_template_ref: string;
   quote_change_requested_template_ref: string;
@@ -1764,6 +1766,8 @@ export type AdminMessagingSettingsOut = {
   quote_auto_cancel_delay_hours: number;
   quote_cancel_notification_enabled: boolean;
   quote_cancel_sms_notification_enabled: boolean;
+  quote_expired_notification_enabled: boolean;
+  quote_expired_sms_notification_enabled: boolean;
   delivery_enabled: boolean;
   delivery_error_message: string | null;
   sms_delivery_enabled: boolean;

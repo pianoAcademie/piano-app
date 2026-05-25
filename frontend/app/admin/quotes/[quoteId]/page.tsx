@@ -1526,6 +1526,7 @@ const QUOTE_INTERACTION_EVENT_TYPES = new Set([
   "quote_public_response_restored",
   "quote_cancelled",
   "quote_reminder_sent",
+  "quote_expired_notification_sent",
   "quote_expired",
   "quote_transformation_executed",
   "quote_transformation_rolled_back",
@@ -1585,6 +1586,7 @@ function quoteEventTitle(event: QuoteEventOut, language: UiLanguage = "fr"): str
     quote_public_response_restored: "admin.quote_events.title.public_response_restored",
     quote_cancelled: "admin.quote_events.title.cancelled",
     quote_reminder_sent: "admin.quote_events.title.reminder_sent",
+    quote_expired_notification_sent: "admin.quote_events.title.expired_notification_sent",
     quote_expired: "admin.quote_events.title.expired",
     quote_transformation_executed: "admin.quote_events.title.transformation_executed",
     quote_transformation_rolled_back: "admin.quote_events.title.transformation_rolled_back",
@@ -1745,6 +1747,9 @@ function quoteEventDescription(event: QuoteEventOut, language: UiLanguage = "fr"
   }
   if (type === "quote_reminder_sent") {
     return uiText(language, "admin.quote_events.description.reminder_sent");
+  }
+  if (type === "quote_expired_notification_sent") {
+    return uiText(language, "admin.quote_events.description.expired_notification_sent");
   }
   if (type === "quote_expired") {
     return uiText(language, "admin.quote_events.description.expired");

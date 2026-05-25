@@ -10402,6 +10402,8 @@ export async function updateAdminConfigMessagingSettingsAction(formData: FormDat
     quote_reminder_sms_template_ref: String(formData.get("quote_reminder_sms_template_ref") ?? "").trim(),
     quote_cancel_template_ref: String(formData.get("quote_cancel_template_ref") ?? "").trim(),
     quote_cancel_sms_template_ref: String(formData.get("quote_cancel_sms_template_ref") ?? "").trim(),
+    quote_expired_template_ref: String(formData.get("quote_expired_template_ref") ?? "").trim(),
+    quote_expired_sms_template_ref: String(formData.get("quote_expired_sms_template_ref") ?? "").trim(),
     quote_approved_template_ref: String(formData.get("quote_approved_template_ref") ?? "").trim(),
     quote_rejected_template_ref: String(formData.get("quote_rejected_template_ref") ?? "").trim(),
     quote_change_requested_template_ref: String(formData.get("quote_change_requested_template_ref") ?? "").trim(),
@@ -10414,6 +10416,8 @@ export async function updateAdminConfigMessagingSettingsAction(formData: FormDat
     quote_auto_cancel_delay_hours: Number.parseInt(String(formData.get("quote_auto_cancel_delay_hours") ?? "").trim() || "24", 10),
     quote_cancel_notification_enabled: checkboxField(formData, "quote_cancel_notification_enabled"),
     quote_cancel_sms_notification_enabled: checkboxField(formData, "quote_cancel_sms_notification_enabled"),
+    quote_expired_notification_enabled: checkboxField(formData, "quote_expired_notification_enabled"),
+    quote_expired_sms_notification_enabled: checkboxField(formData, "quote_expired_sms_notification_enabled"),
   };
 
   const result = await backendRequest<AdminMessagingSettingsOut>(

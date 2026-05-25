@@ -30,6 +30,7 @@ MessagingTemplateUsageContext = Literal[
     "QUOTE_SEND",
     "QUOTE_REMINDER",
     "QUOTE_CANCEL",
+    "QUOTE_EXPIRED",
     "QUOTE_APPROVED",
     "QUOTE_REJECTED",
     "QUOTE_CHANGE_REQUESTED",
@@ -64,6 +65,8 @@ MESSAGING_SETTINGS_QUOTE_REMINDER_TEMPLATE_REF_KEY = "config_messaging_quote_rem
 MESSAGING_SETTINGS_QUOTE_REMINDER_SMS_TEMPLATE_REF_KEY = "config_messaging_quote_reminder_sms_template_ref"
 MESSAGING_SETTINGS_QUOTE_CANCEL_TEMPLATE_REF_KEY = "config_messaging_quote_cancel_template_ref"
 MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_TEMPLATE_REF_KEY = "config_messaging_quote_cancel_sms_template_ref"
+MESSAGING_SETTINGS_QUOTE_EXPIRED_TEMPLATE_REF_KEY = "config_messaging_quote_expired_template_ref"
+MESSAGING_SETTINGS_QUOTE_EXPIRED_SMS_TEMPLATE_REF_KEY = "config_messaging_quote_expired_sms_template_ref"
 MESSAGING_SETTINGS_QUOTE_APPROVED_TEMPLATE_REF_KEY = "config_messaging_quote_approved_template_ref"
 MESSAGING_SETTINGS_QUOTE_REJECTED_TEMPLATE_REF_KEY = "config_messaging_quote_rejected_template_ref"
 MESSAGING_SETTINGS_QUOTE_CHANGE_REQUESTED_TEMPLATE_REF_KEY = "config_messaging_quote_change_requested_template_ref"
@@ -76,6 +79,8 @@ MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_ENABLED_KEY = "config_messaging_quote_auto_
 MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_DELAY_HOURS_KEY = "config_messaging_quote_auto_cancel_delay_hours"
 MESSAGING_SETTINGS_QUOTE_CANCEL_NOTIFICATION_ENABLED_KEY = "config_messaging_quote_cancel_notification_enabled"
 MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_NOTIFICATION_ENABLED_KEY = "config_messaging_quote_cancel_sms_notification_enabled"
+MESSAGING_SETTINGS_QUOTE_EXPIRED_NOTIFICATION_ENABLED_KEY = "config_messaging_quote_expired_notification_enabled"
+MESSAGING_SETTINGS_QUOTE_EXPIRED_SMS_NOTIFICATION_ENABLED_KEY = "config_messaging_quote_expired_sms_notification_enabled"
 
 MESSAGING_PREDEFINED_TEMPLATES_KEY = "config_messaging_predefined_templates_v1"
 MESSAGING_CUSTOM_TEMPLATES_KEY = "config_messaging_custom_templates_v1"
@@ -89,6 +94,7 @@ PREDEFINED_EMAIL_TEMPLATE_TEACHER_PASSWORD = "TEACHER_PORTAL_LOGIN_SETUP"
 PREDEFINED_EMAIL_TEMPLATE_QUOTE_SEND_DEFAULT = "QUOTE_SEND_DEFAULT"
 PREDEFINED_EMAIL_TEMPLATE_QUOTE_REMINDER_DEFAULT = "QUOTE_REMINDER_DEFAULT"
 PREDEFINED_EMAIL_TEMPLATE_QUOTE_CANCEL_DEFAULT = "QUOTE_CANCEL_DEFAULT"
+PREDEFINED_EMAIL_TEMPLATE_QUOTE_EXPIRED_DEFAULT = "QUOTE_EXPIRED_DEFAULT"
 PREDEFINED_EMAIL_TEMPLATE_QUOTE_APPROVED_DEFAULT = "QUOTE_APPROVED_DEFAULT"
 PREDEFINED_EMAIL_TEMPLATE_QUOTE_REJECTED_DEFAULT = "QUOTE_REJECTED_DEFAULT"
 PREDEFINED_EMAIL_TEMPLATE_QUOTE_CHANGE_REQUESTED_DEFAULT = "QUOTE_CHANGE_REQUESTED_DEFAULT"
@@ -97,10 +103,12 @@ PREDEFINED_EMAIL_TEMPLATE_ADMIN_BOOKING_CONFIRMATION = "ADMIN_BOOKING_CONFIRMATI
 PREDEFINED_SMS_TEMPLATE_QUOTE_SEND_DEFAULT = "QUOTE_SEND_SMS_DEFAULT"
 PREDEFINED_SMS_TEMPLATE_QUOTE_REMINDER_DEFAULT = "QUOTE_REMINDER_SMS_DEFAULT"
 PREDEFINED_SMS_TEMPLATE_QUOTE_CANCEL_DEFAULT = "QUOTE_CANCEL_SMS_DEFAULT"
+PREDEFINED_SMS_TEMPLATE_QUOTE_EXPIRED_DEFAULT = "QUOTE_EXPIRED_SMS_DEFAULT"
 
 USAGE_CONTEXT_QUOTE_SEND = "QUOTE_SEND"
 USAGE_CONTEXT_QUOTE_REMINDER = "QUOTE_REMINDER"
 USAGE_CONTEXT_QUOTE_CANCEL = "QUOTE_CANCEL"
+USAGE_CONTEXT_QUOTE_EXPIRED = "QUOTE_EXPIRED"
 USAGE_CONTEXT_QUOTE_APPROVED = "QUOTE_APPROVED"
 USAGE_CONTEXT_QUOTE_REJECTED = "QUOTE_REJECTED"
 USAGE_CONTEXT_QUOTE_CHANGE_REQUESTED = "QUOTE_CHANGE_REQUESTED"
@@ -111,6 +119,8 @@ QUOTE_REMINDER_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QU
 QUOTE_REMINDER_SMS_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_SMS_TEMPLATE_QUOTE_REMINDER_DEFAULT}"
 QUOTE_CANCEL_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QUOTE_CANCEL_DEFAULT}"
 QUOTE_CANCEL_SMS_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_SMS_TEMPLATE_QUOTE_CANCEL_DEFAULT}"
+QUOTE_EXPIRED_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QUOTE_EXPIRED_DEFAULT}"
+QUOTE_EXPIRED_SMS_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_SMS_TEMPLATE_QUOTE_EXPIRED_DEFAULT}"
 QUOTE_APPROVED_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QUOTE_APPROVED_DEFAULT}"
 QUOTE_REJECTED_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QUOTE_REJECTED_DEFAULT}"
 QUOTE_CHANGE_REQUESTED_TEMPLATE_REF_DEFAULT = f"predefined:{PREDEFINED_EMAIL_TEMPLATE_QUOTE_CHANGE_REQUESTED_DEFAULT}"
@@ -330,6 +340,7 @@ def _normalize_usage_context(raw: object) -> str | None:
         USAGE_CONTEXT_QUOTE_SEND,
         USAGE_CONTEXT_QUOTE_REMINDER,
         USAGE_CONTEXT_QUOTE_CANCEL,
+        USAGE_CONTEXT_QUOTE_EXPIRED,
         USAGE_CONTEXT_QUOTE_APPROVED,
         USAGE_CONTEXT_QUOTE_REJECTED,
         USAGE_CONTEXT_QUOTE_CHANGE_REQUESTED,
@@ -815,6 +826,38 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         usage_contexts=(USAGE_CONTEXT_QUOTE_CANCEL,),
     ),
     MessagingTemplateDefinition(
+        code=PREDEFINED_EMAIL_TEMPLATE_QUOTE_EXPIRED_DEFAULT,
+        name="Devis - Expiration client",
+        channel="EMAIL",
+        subject="Votre devis {quote_number} est expire",
+        body=_email_layout(
+            _email_title(
+                "Votre devis est arrive a expiration",
+                (
+                    "Bonjour {recipient_name}, votre devis Piano Academie est desormais expire "
+                    "car il n a pas ete valide dans les delais."
+                ),
+            ),
+            _email_summary(
+                [
+                    ("Devis", "{quote_number}"),
+                    ("Expiration", "{expires_at_local}"),
+                    ("Statut", "{quote_status_label}"),
+                ]
+            ),
+            _email_secondary(
+                "Le creneau qui avait ete reserve pour ce devis est donc maintenant libere."
+            ),
+            _email_secondary(
+                "Si vous souhaitez poursuivre votre inscription, notre equipe peut vous preparer une nouvelle proposition."
+            ),
+        ),
+        description="Notification envoyee au client a J+1 apres expiration faute de validation du devis.",
+        variables_hint="{quote_number} {recipient_name} {quote_status_label} {expires_at_local} {expired_at_local}",
+        body_format="HTML",
+        usage_contexts=(USAGE_CONTEXT_QUOTE_EXPIRED,),
+    ),
+    MessagingTemplateDefinition(
         code=PREDEFINED_EMAIL_TEMPLATE_QUOTE_APPROVED_DEFAULT,
         name="Devis - Confirmation d approbation",
         channel="EMAIL",
@@ -903,6 +946,19 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         description="Notification SMS d annulation manuelle ou automatique d un devis.",
         variables_hint="{quote_number} {quote_status_label} {cancelled_at_local} {recipient_name}",
         usage_contexts=(USAGE_CONTEXT_QUOTE_CANCEL,),
+    ),
+    MessagingTemplateDefinition(
+        code=PREDEFINED_SMS_TEMPLATE_QUOTE_EXPIRED_DEFAULT,
+        name="Devis - Expiration client (SMS)",
+        channel="SMS",
+        subject=None,
+        body=(
+            "Piano Academie : votre devis {quote_number} est expire. "
+            "Le creneau reserve est libere. Contactez-nous si vous souhaitez un nouveau devis."
+        ),
+        description="Notification SMS envoyee au client a J+1 apres expiration faute de validation du devis.",
+        variables_hint="{quote_number} {expires_at_local} {recipient_name}",
+        usage_contexts=(USAGE_CONTEXT_QUOTE_EXPIRED,),
     ),
     MessagingTemplateDefinition(
         code=PREDEFINED_EMAIL_TEMPLATE_CLIENT_BOOKING_CONFIRMATION,
@@ -1507,6 +1563,29 @@ PREDEFINED_TEMPLATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
             )
         },
     },
+    PREDEFINED_EMAIL_TEMPLATE_QUOTE_EXPIRED_DEFAULT: {
+        "subject": {"en": "Your quote {quote_number} has expired"},
+        "body": {
+            "en": _email_layout(
+                _email_title(
+                    "Your quote has expired",
+                    (
+                        "Hello {recipient_name}, your Piano Academie quote has now expired "
+                        "because it was not approved before the deadline."
+                    ),
+                ),
+                _email_summary(
+                    [
+                        ("Quote", "{quote_number}"),
+                        ("Expiry", "{expires_at_local}"),
+                        ("Status", "{quote_status_label}"),
+                    ]
+                ),
+                _email_secondary("The time slot that was held for this quote has now been released."),
+                _email_secondary("If you would still like to continue, our team can prepare a new proposal for you."),
+            )
+        },
+    },
     PREDEFINED_EMAIL_TEMPLATE_QUOTE_APPROVED_DEFAULT: {
         "subject": {"en": "Your approval of quote {quote_number} has been recorded"},
         "body": {
@@ -1565,6 +1644,14 @@ PREDEFINED_TEMPLATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
             "en": (
                 "Piano Academie: your quote {quote_number} is no longer valid. "
                 "We can prepare a new quote for you if needed."
+            )
+        }
+    },
+    PREDEFINED_SMS_TEMPLATE_QUOTE_EXPIRED_DEFAULT: {
+        "body": {
+            "en": (
+                "Piano Academie: your quote {quote_number} has expired. "
+                "The held time slot has been released. Contact us if you would like a new quote."
             )
         }
     },
@@ -1739,6 +1826,8 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
         MESSAGING_SETTINGS_QUOTE_REMINDER_SMS_TEMPLATE_REF_KEY,
         MESSAGING_SETTINGS_QUOTE_CANCEL_TEMPLATE_REF_KEY,
         MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_TEMPLATE_REF_KEY,
+        MESSAGING_SETTINGS_QUOTE_EXPIRED_TEMPLATE_REF_KEY,
+        MESSAGING_SETTINGS_QUOTE_EXPIRED_SMS_TEMPLATE_REF_KEY,
         MESSAGING_SETTINGS_QUOTE_APPROVED_TEMPLATE_REF_KEY,
         MESSAGING_SETTINGS_QUOTE_REJECTED_TEMPLATE_REF_KEY,
         MESSAGING_SETTINGS_QUOTE_CHANGE_REQUESTED_TEMPLATE_REF_KEY,
@@ -1751,6 +1840,8 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
         MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_DELAY_HOURS_KEY,
         MESSAGING_SETTINGS_QUOTE_CANCEL_NOTIFICATION_ENABLED_KEY,
         MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_NOTIFICATION_ENABLED_KEY,
+        MESSAGING_SETTINGS_QUOTE_EXPIRED_NOTIFICATION_ENABLED_KEY,
+        MESSAGING_SETTINGS_QUOTE_EXPIRED_SMS_NOTIFICATION_ENABLED_KEY,
     ]
 
     updated_at: datetime | None = None
@@ -1848,6 +1939,18 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
             ),
             default=QUOTE_CANCEL_SMS_TEMPLATE_REF_DEFAULT,
         ),
+        "quote_expired_template_ref": _sanitize_template_ref(
+            _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_EXPIRED_TEMPLATE_REF_KEY, QUOTE_EXPIRED_TEMPLATE_REF_DEFAULT),
+            default=QUOTE_EXPIRED_TEMPLATE_REF_DEFAULT,
+        ),
+        "quote_expired_sms_template_ref": _sanitize_template_ref(
+            _get_setting_value(
+                db,
+                MESSAGING_SETTINGS_QUOTE_EXPIRED_SMS_TEMPLATE_REF_KEY,
+                QUOTE_EXPIRED_SMS_TEMPLATE_REF_DEFAULT,
+            ),
+            default=QUOTE_EXPIRED_SMS_TEMPLATE_REF_DEFAULT,
+        ),
         "quote_approved_template_ref": _sanitize_template_ref(
             _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_APPROVED_TEMPLATE_REF_KEY, QUOTE_APPROVED_TEMPLATE_REF_DEFAULT),
             default=QUOTE_APPROVED_TEMPLATE_REF_DEFAULT,
@@ -1922,6 +2025,14 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
             _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_NOTIFICATION_ENABLED_KEY, "false"),
             False,
         ),
+        "quote_expired_notification_enabled": _as_bool(
+            _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_EXPIRED_NOTIFICATION_ENABLED_KEY, "true"),
+            True,
+        ),
+        "quote_expired_sms_notification_enabled": _as_bool(
+            _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_EXPIRED_SMS_NOTIFICATION_ENABLED_KEY, "false"),
+            False,
+        ),
         "delivery_enabled": delivery_error is None,
         "delivery_error_message": delivery_error,
         "sms_delivery_enabled": sms_delivery_error is None,
@@ -1961,6 +2072,8 @@ def save_messaging_settings(
     quote_reminder_sms_template_ref: str,
     quote_cancel_template_ref: str,
     quote_cancel_sms_template_ref: str,
+    quote_expired_template_ref: str,
+    quote_expired_sms_template_ref: str,
     quote_approved_template_ref: str,
     quote_rejected_template_ref: str,
     quote_change_requested_template_ref: str,
@@ -1973,6 +2086,8 @@ def save_messaging_settings(
     quote_auto_cancel_delay_hours: int,
     quote_cancel_notification_enabled: bool,
     quote_cancel_sms_notification_enabled: bool,
+    quote_expired_notification_enabled: bool,
+    quote_expired_sms_notification_enabled: bool,
 ) -> dict[str, object]:
     _set_setting_value(db, MESSAGING_SETTINGS_STUDIO_EMAIL_KEY, _sanitize_text(studio_email, max_length=255))
     _set_setting_value(
@@ -2111,6 +2226,16 @@ def save_messaging_settings(
     )
     _set_setting_value(
         db,
+        MESSAGING_SETTINGS_QUOTE_EXPIRED_TEMPLATE_REF_KEY,
+        _sanitize_template_ref(quote_expired_template_ref, default=QUOTE_EXPIRED_TEMPLATE_REF_DEFAULT),
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_EXPIRED_SMS_TEMPLATE_REF_KEY,
+        _sanitize_template_ref(quote_expired_sms_template_ref, default=QUOTE_EXPIRED_SMS_TEMPLATE_REF_DEFAULT),
+    )
+    _set_setting_value(
+        db,
         MESSAGING_SETTINGS_QUOTE_APPROVED_TEMPLATE_REF_KEY,
         _sanitize_template_ref(quote_approved_template_ref, default=QUOTE_APPROVED_TEMPLATE_REF_DEFAULT),
     )
@@ -2177,6 +2302,16 @@ def save_messaging_settings(
         db,
         MESSAGING_SETTINGS_QUOTE_CANCEL_SMS_NOTIFICATION_ENABLED_KEY,
         "true" if quote_cancel_sms_notification_enabled else "false",
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_EXPIRED_NOTIFICATION_ENABLED_KEY,
+        "true" if quote_expired_notification_enabled else "false",
+    )
+    _set_setting_value(
+        db,
+        MESSAGING_SETTINGS_QUOTE_EXPIRED_SMS_NOTIFICATION_ENABLED_KEY,
+        "true" if quote_expired_sms_notification_enabled else "false",
     )
     payload, _ = load_messaging_settings(db)
     return payload

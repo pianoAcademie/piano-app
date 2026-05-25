@@ -205,6 +205,7 @@ const QUOTE_TEMPLATE_USAGE_CONTEXTS = [
   { value: "QUOTE_SEND", labelKey: "admin.messaging_templates.usage_send" },
   { value: "QUOTE_REMINDER", labelKey: "admin.messaging_templates.usage_reminder" },
   { value: "QUOTE_CANCEL", labelKey: "admin.messaging_templates.usage_cancel" },
+  { value: "QUOTE_EXPIRED", labelKey: "admin.messaging_templates.usage_expired" },
   { value: "QUOTE_APPROVED", labelKey: "admin.messaging_templates.usage_approved" },
   { value: "QUOTE_REJECTED", labelKey: "admin.messaging_templates.usage_rejected" },
   { value: "QUOTE_CHANGE_REQUESTED", labelKey: "admin.messaging_templates.usage_change_requested" },
@@ -970,6 +971,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const quoteSendTemplates = activeEmailTemplates.filter((template) => template.usage_contexts.includes("QUOTE_SEND"));
   const quoteReminderTemplates = activeEmailTemplates.filter((template) => template.usage_contexts.includes("QUOTE_REMINDER"));
   const quoteCancelTemplates = activeEmailTemplates.filter((template) => template.usage_contexts.includes("QUOTE_CANCEL"));
+  const quoteExpiredTemplates = activeEmailTemplates.filter((template) => template.usage_contexts.includes("QUOTE_EXPIRED"));
   const quoteApprovedTemplates = activeEmailTemplates.filter((template) => template.usage_contexts.includes("QUOTE_APPROVED"));
   const quoteRejectedTemplates = activeEmailTemplates.filter((template) => template.usage_contexts.includes("QUOTE_REJECTED"));
   const quoteChangeRequestedTemplates = activeEmailTemplates.filter((template) =>
@@ -978,6 +980,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const quoteSendSmsTemplates = activeSmsTemplates.filter((template) => template.usage_contexts.includes("QUOTE_SEND"));
   const quoteReminderSmsTemplates = activeSmsTemplates.filter((template) => template.usage_contexts.includes("QUOTE_REMINDER"));
   const quoteCancelSmsTemplates = activeSmsTemplates.filter((template) => template.usage_contexts.includes("QUOTE_CANCEL"));
+  const quoteExpiredSmsTemplates = activeSmsTemplates.filter((template) => template.usage_contexts.includes("QUOTE_EXPIRED"));
   const quoteTemplateVariablesByCategory = quoteTemplateVariables.reduce<Record<string, QuoteTemplateVariableOut[]>>((acc, item) => {
     const key = item.category || t("admin.messaging_settings.variables_other");
     if (!acc[key]) {
@@ -2574,6 +2577,16 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         </select>
                       </label>
                       <label>
+                        {t("admin.messaging_settings.quote_expired_template")}
+                        <select name="quote_expired_template_ref" defaultValue={messagingSettings.quote_expired_template_ref}>
+                          {quoteExpiredTemplates.map((template) => (
+                            <option key={`expired-${template.id}`} value={messagingTemplateRef(template)}>
+                              {messagingTemplateOptionLabel(language, template)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
                         {t("admin.messaging_settings.quote_approved_template")}
                         <select name="quote_approved_template_ref" defaultValue={messagingSettings.quote_approved_template_ref}>
                           {quoteApprovedTemplates.map((template) => (
@@ -2611,6 +2624,16 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                         <select name="quote_cancel_sms_template_ref" defaultValue={messagingSettings.quote_cancel_sms_template_ref}>
                           {quoteCancelSmsTemplates.map((template) => (
                             <option key={`cancel-sms-${template.id}`} value={messagingTemplateRef(template)}>
+                              {messagingTemplateOptionLabel(language, template)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        {t("admin.messaging_settings.quote_expired_sms_template")}
+                        <select name="quote_expired_sms_template_ref" defaultValue={messagingSettings.quote_expired_sms_template_ref}>
+                          {quoteExpiredSmsTemplates.map((template) => (
+                            <option key={`expired-sms-${template.id}`} value={messagingTemplateRef(template)}>
                               {messagingTemplateOptionLabel(language, template)}
                             </option>
                           ))}
@@ -2686,6 +2709,22 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           defaultChecked={messagingSettings.quote_cancel_sms_notification_enabled}
                         />
                         {t("admin.messaging_settings.quote_cancel_sms_notification_enabled")}
+                      </label>
+                      <label className="checkline span-2">
+                        <input
+                          type="checkbox"
+                          name="quote_expired_notification_enabled"
+                          defaultChecked={messagingSettings.quote_expired_notification_enabled}
+                        />
+                        {t("admin.messaging_settings.quote_expired_notification_enabled")}
+                      </label>
+                      <label className="checkline span-2">
+                        <input
+                          type="checkbox"
+                          name="quote_expired_sms_notification_enabled"
+                          defaultChecked={messagingSettings.quote_expired_sms_notification_enabled}
+                        />
+                        {t("admin.messaging_settings.quote_expired_sms_notification_enabled")}
                       </label>
                     </fieldset>
 

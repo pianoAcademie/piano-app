@@ -1,13 +1,19 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 import unittest
+from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from app.services.quotes.lifecycle_jobs import (
+    _build_bar_le_duc_daily_alert_body,
     _build_quote_expiry_digest_body,
+    _quote_is_expired_notification_candidate,
+    _quote_uuid_from_reference,
     _quote_expiry_digest_date,
     _quote_student_name,
+    _trigger_due,
 )
 
 
@@ -39,6 +45,7 @@ class QuoteExpiryAdminDigestTests(unittest.TestCase):
         quote = SimpleNamespace(
             quote_number="DV-123",
             expires_at=datetime(2026, 5, 21, 12, 30, tzinfo=timezone.utc),
+            status="sent",
             meta={},
         )
         prospect = SimpleNamespace(first_name="Ada", last_name="Lovelace")
@@ -48,6 +55,95 @@ class QuoteExpiryAdminDigestTests(unittest.TestCase):
         self.assertIn("Ada Lovelace", body)
         self.assertIn("DV-123", body)
         self.assertIn("12:30 UTC", body)
+
+    def test_bar_le_duc_alert_body_contains_expired_quotes_and_overdue_invoices(self) -> None:
+        quote = SimpleNamespace(
+            quote_number="DV-BLD",
+            expires_at=datetime(2026, 5, 23, 12, 30, tzinfo=timezone.utc),
+            status="expired",
+            meta={
+                "typeform_intake": {
+                    "normalized_payload": {
+                        "child_first_name": "Olympia",
+                        "child_last_name": "Delcour",
+                    }
+                }
+            },
+        )
+        client = SimpleNamespace(first_name="Hang", last_name="Nguyen", email="hang@example.com")
+        metadata = {
+            "invoice_number": "PA26-0117",
+            "total_to_pay_by_currency": {"EUR": "200.00"},
+        }
+
+        body = _build_bar_le_duc_daily_alert_body(
+            digest_date=date(2026, 5, 24),
+            expired_quote_rows=[(quote, None, None)],
+            overdue_invoice_rows=[(SimpleNamespace(), client, metadata, date(2026, 5, 22))],
+        )
+
+        self.assertIn("Olympia Delcour", body)
+        self.assertIn("DV-BLD", body)
+        self.assertIn("PA26-0117", body)
+        self.assertIn("200.00 EUR", body)
+        self.assertIn("Hang Nguyen", body)
+
+    def test_quote_uuid_from_invoice_reference(self) -> None:
+        quote_id = uuid4()
+
+        self.assertEqual(_quote_uuid_from_reference(f"QUOTE:{quote_id}:DEPOSIT"), quote_id)
+
+    def test_expired_notification_is_due_at_7am_local_time_next_day(self) -> None:
+        zone = ZoneInfo("Europe/Paris")
+        reference_at = datetime(2026, 5, 24, 18, 0, tzinfo=timezone.utc)
+        notification_reference = datetime(2026, 5, 25, 18, 0, tzinfo=timezone.utc)
+
+        self.assertFalse(
+            _trigger_due(
+                now=datetime(2026, 5, 25, 4, 59, tzinfo=timezone.utc),
+                zone=zone,
+                reference_at=notification_reference,
+                local_time=datetime.strptime("07:00", "%H:%M").time(),
+            )
+        )
+        self.assertTrue(
+            _trigger_due(
+                now=datetime(2026, 5, 25, 5, 0, tzinfo=timezone.utc),
+                zone=zone,
+                reference_at=notification_reference,
+                local_time=datetime.strptime("07:00", "%H:%M").time(),
+            )
+        )
+        self.assertEqual(reference_at.date().isoformat(), "2026-05-24")
+
+    def test_expired_notification_candidate_excludes_rejected_and_cancelled_quotes(self) -> None:
+        expires_at = datetime(2026, 5, 24, 18, 0, tzinfo=timezone.utc)
+
+        self.assertTrue(
+            _quote_is_expired_notification_candidate(
+                SimpleNamespace(status="expired", cancelled_at=None, expires_at=expires_at, meta={})
+            )
+        )
+        self.assertFalse(
+            _quote_is_expired_notification_candidate(
+                SimpleNamespace(status="rejected", cancelled_at=None, expires_at=expires_at, meta={})
+            )
+        )
+        self.assertFalse(
+            _quote_is_expired_notification_candidate(
+                SimpleNamespace(status="cancelled", cancelled_at=expires_at, expires_at=expires_at, meta={})
+            )
+        )
+        self.assertFalse(
+            _quote_is_expired_notification_candidate(
+                SimpleNamespace(
+                    status="expired",
+                    cancelled_at=None,
+                    expires_at=expires_at,
+                    meta={"expired_notification_sent_at": "2026-05-25T05:00:00+00:00"},
+                )
+            )
+        )
 
 
 if __name__ == "__main__":

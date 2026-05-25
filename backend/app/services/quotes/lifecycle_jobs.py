@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
+import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal, InvalidOperation
 from html import escape
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -9,7 +13,8 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.catalog import Location
+from app.models.catalog import Booking, CourseSession, Location
+from app.models.client_record import ClientManualTransaction, ClientNoteEntry
 from app.models.quote import Prospect, Quote, QuoteEmailOutbox, QuoteEvent, QuoteLine
 from app.models.user import User
 from app.services.email_delivery import email_delivery_disabled_reason
@@ -19,6 +24,7 @@ from app.services.notifications.application.recipients import resolve_admin_quot
 from app.services.notifications.infrastructure.repository import append_job_run_log, finish_job_run, get_job_cursor, start_job_run, upsert_job_cursor
 from app.services.quotes.email_templates import (
     USAGE_CONTEXT_QUOTE_CANCEL,
+    USAGE_CONTEXT_QUOTE_EXPIRED,
     USAGE_CONTEXT_QUOTE_REMINDER,
     send_quote_templated_email,
     send_quote_templated_sms,
@@ -28,8 +34,11 @@ from app.services.providers.sms import sms_delivery_disabled_reason
 
 JOB_NAME = "quote_daily_lifecycle_job"
 QUOTE_EXPIRY_DIGEST_CURSOR = "quote_expiring_today_admin_digest"
+BAR_LE_DUC_DAILY_ALERT_CURSOR = "bar_le_duc_daily_quote_invoice_alert"
 QUOTE_EXPIRY_DIGEST_UTC_TIME = time(hour=5, minute=0)
 DEFAULT_QUOTE_TIMEZONE = "Europe/Paris"
+BAR_LE_DUC_MANAGER_EMAIL = "estela.oliviero@piano-academie.com"
+INVOICE_RANGE_NOTE_PREFIX = "INVOICE_RANGE::"
 REMINDER_ELIGIBLE_STATUSES = {"sent", "change_requested"}
 EXPIRABLE_STATUSES = {"sent", "change_requested"}
 ARCHIVABLE_QUOTE_STATUSES = {"created", "sent", "approved", "expired", "change_requested"}
@@ -47,10 +56,14 @@ class QuoteDailyLifecycleSettings:
     sms_delivery_enabled: bool
     quote_reminder_template_ref: str | None
     quote_cancel_template_ref: str | None
+    quote_expired_template_ref: str | None
     quote_reminder_sms_template_ref: str | None
     quote_cancel_sms_template_ref: str | None
+    quote_expired_sms_template_ref: str | None
     quote_reminder_sms_enabled: bool
     quote_cancel_sms_notification_enabled: bool
+    quote_expired_notification_enabled: bool
+    quote_expired_sms_notification_enabled: bool
 
 
 @dataclass(frozen=True)
@@ -101,14 +114,22 @@ def _load_quote_lifecycle_settings(db: Session) -> QuoteDailyLifecycleSettings:
         sms_delivery_enabled=sms_delivery_disabled_reason(db) is None,
         quote_reminder_template_ref=str(payload.get("quote_reminder_template_ref") or "").strip() or None,
         quote_cancel_template_ref=str(payload.get("quote_cancel_template_ref") or "").strip() or None,
+        quote_expired_template_ref=str(payload.get("quote_expired_template_ref") or "").strip() or None,
         quote_reminder_sms_template_ref=str(payload.get("quote_reminder_sms_template_ref") or "").strip() or None,
         quote_cancel_sms_template_ref=str(payload.get("quote_cancel_sms_template_ref") or "").strip() or None,
+        quote_expired_sms_template_ref=str(payload.get("quote_expired_sms_template_ref") or "").strip() or None,
         quote_reminder_sms_enabled=bool(payload.get("quote_reminder_sms_enabled", False)),
         quote_cancel_sms_notification_enabled=bool(payload.get("quote_cancel_sms_notification_enabled", False)),
+        quote_expired_notification_enabled=bool(payload.get("quote_expired_notification_enabled", True)),
+        quote_expired_sms_notification_enabled=bool(payload.get("quote_expired_sms_notification_enabled", False)),
     )
 
 
 def _quote_timezone_name(db: Session, quote: Quote) -> str:
+    if quote.client_id is not None:
+        client = db.scalar(select(User).where(User.id == quote.client_id))
+        if client is not None and str(client.timezone or "").strip():
+            return str(client.timezone).strip()
     if quote.location_id is not None:
         location = db.scalar(select(Location).where(Location.id == quote.location_id))
         if location is not None and str(location.timezone or "").strip():
@@ -175,6 +196,27 @@ def _mark_quote_reminder_offset_sent(quote: Quote, *, offset_hours: int, now: da
     quote.updated_at = now
 
 
+def _quote_expired_notification_sent(quote: Quote) -> bool:
+    meta = quote.meta if isinstance(quote.meta, dict) else {}
+    return bool(meta.get("expired_notification_sent_at"))
+
+
+def _quote_is_expired_notification_candidate(quote: Quote) -> bool:
+    return (
+        str(quote.status or "").strip().lower() == "expired"
+        and quote.cancelled_at is None
+        and quote.expires_at is not None
+        and not _quote_expired_notification_sent(quote)
+    )
+
+
+def _mark_quote_expired_notification_sent(quote: Quote, *, now: datetime) -> None:
+    meta = dict(quote.meta or {})
+    meta["expired_notification_sent_at"] = now.isoformat()
+    quote.meta = meta
+    quote.updated_at = now
+
+
 def _load_lines_for_quotes(db: Session, quote_ids: list[UUID]) -> dict[UUID, list[QuoteLine]]:
     if not quote_ids:
         return {}
@@ -238,6 +280,41 @@ def _quote_student_name(quote: Quote, prospect: Prospect | None, client: User | 
         if prospect_name:
             return prospect_name
     return "Eleve non renseigne"
+
+
+def _ascii_token(value: object | None) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or ""))
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii").lower()
+    return re.sub(r"[^a-z0-9]+", "", ascii_text)
+
+
+def _quote_is_bar_le_duc(db: Session, quote: Quote) -> bool:
+    if quote.location_id is not None:
+        location = db.scalar(select(Location).where(Location.id == quote.location_id).limit(1))
+        if location is not None:
+            if str(location.code or "").strip().upper() == "BAR_LE_DUC":
+                return True
+            if "barleduc" in _ascii_token(location.name):
+                return True
+    meta = _json_object(quote.meta)
+    values = [
+        meta.get("location_code"),
+        meta.get("location_name"),
+        meta.get("requested_location"),
+        meta.get("detected_location"),
+    ]
+    typeform_meta = _json_object(meta.get("typeform_intake"))
+    normalized = _json_object(typeform_meta.get("normalized_payload"))
+    runtime_context = _json_object(typeform_meta.get("runtime_context"))
+    values.extend(
+        [
+            normalized.get("requested_location"),
+            normalized.get("parent_city"),
+            runtime_context.get("location_code"),
+            runtime_context.get("location_name"),
+        ]
+    )
+    return any("barleduc" in _ascii_token(value) or str(value or "").strip().upper() == "BAR_LE_DUC" for value in values)
 
 
 def _format_utc_day_label(day: date) -> str:
@@ -391,6 +468,297 @@ def _send_quote_expiry_admin_digest(
             "quote_count": len(rows),
             "expired_yesterday_count": len(expired_yesterday_rows),
             "recipient_count": len([recipient for recipient in recipients if recipient.email]),
+            "sent": sent,
+        },
+    )
+    return sent
+
+
+def _bar_le_duc_daily_alert_already_processed(db: Session, *, digest_date: date) -> bool:
+    cursor = get_job_cursor(db, job_name=BAR_LE_DUC_DAILY_ALERT_CURSOR)
+    if cursor is None or cursor.last_processed_at is None:
+        return False
+    return cursor.last_processed_at.astimezone(UTC).date() >= digest_date
+
+
+def _mark_bar_le_duc_daily_alert_processed(db: Session, *, digest_date: date, now: datetime) -> None:
+    processed_at = datetime.combine(digest_date, QUOTE_EXPIRY_DIGEST_UTC_TIME, tzinfo=UTC)
+    upsert_job_cursor(db, job_name=BAR_LE_DUC_DAILY_ALERT_CURSOR, last_processed_at=processed_at, updated_at=now)
+
+
+def _parse_invoice_range_note_message(message: str | None) -> dict[str, object] | None:
+    raw = str(message or "")
+    if INVOICE_RANGE_NOTE_PREFIX not in raw:
+        return None
+    payload = raw.split(INVOICE_RANGE_NOTE_PREFIX, 1)[1].strip()
+    if not payload:
+        return None
+    try:
+        parsed = json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    if str(parsed.get("kind") or "").strip().upper() != "INVOICE_RANGE":
+        return None
+    return parsed
+
+
+def _invoice_amount_due_positive(metadata: dict[str, object]) -> bool:
+    raw_totals = metadata.get("total_to_pay_by_currency") or metadata.get("totals_by_currency") or {}
+    if not isinstance(raw_totals, dict):
+        return False
+    for raw_amount in raw_totals.values():
+        try:
+            if Decimal(str(raw_amount or "0")) > Decimal("0.00"):
+                return True
+        except (InvalidOperation, ValueError):
+            continue
+    return False
+
+
+def _invoice_amount_due_label(metadata: dict[str, object]) -> str:
+    raw_totals = metadata.get("total_to_pay_by_currency") or metadata.get("totals_by_currency") or {}
+    if not isinstance(raw_totals, dict) or not raw_totals:
+        return "-"
+    labels: list[str] = []
+    for currency, raw_amount in sorted(raw_totals.items()):
+        try:
+            amount = Decimal(str(raw_amount or "0")).quantize(Decimal("0.01"))
+        except (InvalidOperation, ValueError):
+            continue
+        labels.append(f"{amount:.2f} {str(currency or 'EUR').upper()}")
+    return " | ".join(labels) or "-"
+
+
+def _invoice_due_date(metadata: dict[str, object]) -> date | None:
+    if bool(metadata.get("no_due_date")):
+        return None
+    try:
+        return date.fromisoformat(str(metadata.get("due_date") or ""))
+    except ValueError:
+        return None
+
+
+def _quote_uuid_from_reference(reference: str | None) -> UUID | None:
+    match = re.search(r"QUOTE:(?P<quote_id>[0-9a-fA-F-]{36})", str(reference or ""))
+    if match is None:
+        return None
+    try:
+        return UUID(match.group("quote_id"))
+    except ValueError:
+        return None
+
+
+def _invoice_note_is_bar_le_duc(db: Session, metadata: dict[str, object]) -> bool:
+    payment_keys = [str(item or "").strip() for item in metadata.get("included_payment_keys") or []]
+    manual_ids: list[UUID] = []
+    booking_ids: list[UUID] = []
+    for key in payment_keys:
+        parts = key.split(":", 1)
+        if len(parts) != 2:
+            continue
+        source, raw_id = parts[0].strip().upper(), parts[1].strip()
+        try:
+            payment_id = UUID(raw_id)
+        except ValueError:
+            continue
+        if source == "MANUAL":
+            manual_ids.append(payment_id)
+        elif source == "BOOKING":
+            booking_ids.append(payment_id)
+
+    quote_ids: set[UUID] = set()
+    if manual_ids:
+        for transaction in db.scalars(select(ClientManualTransaction).where(ClientManualTransaction.id.in_(manual_ids))).all():
+            quote_id = _quote_uuid_from_reference(transaction.reference)
+            if quote_id is not None:
+                quote_ids.add(quote_id)
+    if quote_ids:
+        for quote in db.scalars(select(Quote).where(Quote.id.in_(quote_ids))).all():
+            if _quote_is_bar_le_duc(db, quote):
+                return True
+
+    if booking_ids:
+        bookings = db.execute(
+            select(Booking, CourseSession, Location)
+            .join(CourseSession, CourseSession.id == Booking.session_id)
+            .join(Location, Location.id == CourseSession.location_id)
+            .where(Booking.id.in_(booking_ids))
+        ).all()
+        for _, _, location in bookings:
+            if str(location.code or "").strip().upper() == "BAR_LE_DUC" or "barleduc" in _ascii_token(location.name):
+                return True
+
+    for value in (
+        metadata.get("private_note"),
+        metadata.get("public_note"),
+        metadata.get("auto_footer_note"),
+        metadata.get("client_billing_address"),
+    ):
+        if "barleduc" in _ascii_token(value):
+            return True
+    return False
+
+
+def _bar_le_duc_overdue_invoice_rows(
+    db: Session,
+    *,
+    due_on_or_before: date,
+    limit: int,
+) -> list[tuple[ClientNoteEntry, User, dict[str, object], date]]:
+    rows = db.execute(
+        select(ClientNoteEntry, User)
+        .join(User, User.id == ClientNoteEntry.user_id)
+        .where(ClientNoteEntry.message.contains(INVOICE_RANGE_NOTE_PREFIX))
+        .order_by(ClientNoteEntry.created_at.desc())
+        .limit(limit)
+    ).all()
+    out: list[tuple[ClientNoteEntry, User, dict[str, object], date]] = []
+    for note, client in rows:
+        metadata = _parse_invoice_range_note_message(note.message)
+        if metadata is None:
+            continue
+        if str(metadata.get("invoice_status") or "ISSUED").strip().upper() != "ISSUED":
+            continue
+        due_date = _invoice_due_date(metadata)
+        if due_date is None or due_date > due_on_or_before:
+            continue
+        if not _invoice_amount_due_positive(metadata):
+            continue
+        if not _invoice_note_is_bar_le_duc(db, metadata):
+            continue
+        out.append((note, client, metadata, due_date))
+    out.sort(key=lambda item: (item[3], str(item[2].get("invoice_number") or "")))
+    return out
+
+
+def _build_bar_le_duc_daily_alert_body(
+    *,
+    digest_date: date,
+    expired_quote_rows: list[tuple[Quote, Prospect | None, User | None]],
+    overdue_invoice_rows: list[tuple[ClientNoteEntry, User, dict[str, object], date]],
+) -> str:
+    day_label = escape(_format_utc_day_label(digest_date))
+
+    quote_rows_html: list[str] = []
+    for quote, prospect, client in expired_quote_rows:
+        quote_rows_html.append(
+            "<tr>"
+            f"<td style='padding:8px 10px;border-bottom:1px solid #e5e7eb;'>{escape(_quote_student_name(quote, prospect, client))}</td>"
+            f"<td style='padding:8px 10px;border-bottom:1px solid #e5e7eb;'>{escape(str(quote.quote_number or '-'))}</td>"
+            f"<td style='padding:8px 10px;border-bottom:1px solid #e5e7eb;'>{escape(str(quote.status or '-'))}</td>"
+            f"<td style='padding:8px 10px;border-bottom:1px solid #e5e7eb;'>{escape(str(quote.expires_at.astimezone(UTC).strftime('%d/%m/%Y %H:%M UTC') if quote.expires_at else '-'))}</td>"
+            "</tr>"
+        )
+
+    invoice_rows_html: list[str] = []
+    for _, client, metadata, due_date in overdue_invoice_rows:
+        client_name = _join_name(client.first_name, client.last_name) or str(client.email or "-")
+        invoice_rows_html.append(
+            "<tr>"
+            f"<td style='padding:8px 10px;border-bottom:1px solid #e5e7eb;'>{escape(client_name)}</td>"
+            f"<td style='padding:8px 10px;border-bottom:1px solid #e5e7eb;'>{escape(str(metadata.get('invoice_number') or '-'))}</td>"
+            f"<td style='padding:8px 10px;border-bottom:1px solid #e5e7eb;'>{escape(due_date.strftime('%d/%m/%Y'))}</td>"
+            f"<td style='padding:8px 10px;border-bottom:1px solid #e5e7eb;'>{escape(_invoice_amount_due_label(metadata))}</td>"
+            f"<td style='padding:8px 10px;border-bottom:1px solid #e5e7eb;'>{escape(str(client.email or '-'))}</td>"
+            "</tr>"
+        )
+
+    quotes_section = "".join(quote_rows_html) or (
+        "<tr><td colspan='4' style='padding:8px 10px;color:#6b7280;'>Aucun devis Bar-le-Duc expire hier.</td></tr>"
+    )
+    invoices_section = "".join(invoice_rows_html) or (
+        "<tr><td colspan='5' style='padding:8px 10px;color:#6b7280;'>Aucune facture Bar-le-Duc echue non payee.</td></tr>"
+    )
+    return (
+        "<div style='font-family:Arial,sans-serif;color:#1f2937;line-height:1.45;'>"
+        f"<h1 style='font-size:18px;margin:0 0 12px;'>Alerte quotidienne Bar-le-Duc - {day_label}</h1>"
+        "<p style='margin:0 0 14px;'>Voici les points Bar-le-Duc a suivre aujourd'hui.</p>"
+        "<h2 style='font-size:16px;margin:20px 0 8px;'>Devis Bar-le-Duc expires hier</h2>"
+        "<table style='border-collapse:collapse;width:100%;max-width:860px;'>"
+        "<thead><tr>"
+        "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Eleve</th>"
+        "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Devis</th>"
+        "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Statut</th>"
+        "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Expiration</th>"
+        "</tr></thead>"
+        f"<tbody>{quotes_section}</tbody>"
+        "</table>"
+        "<h2 style='font-size:16px;margin:22px 0 8px;'>Factures Bar-le-Duc echues non payees</h2>"
+        "<table style='border-collapse:collapse;width:100%;max-width:860px;'>"
+        "<thead><tr>"
+        "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Client</th>"
+        "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Facture</th>"
+        "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Echeance</th>"
+        "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Montant du</th>"
+        "<th align='left' style='padding:8px 10px;border-bottom:2px solid #d1d5db;'>Email</th>"
+        "</tr></thead>"
+        f"<tbody>{invoices_section}</tbody>"
+        "</table>"
+        "</div>"
+    )
+
+
+def _send_bar_le_duc_daily_alert(
+    db: Session,
+    *,
+    digest_date: date,
+    now: datetime,
+    limit: int,
+    delivery_enabled: bool,
+    job_run_id: UUID,
+) -> int:
+    if _bar_le_duc_daily_alert_already_processed(db, digest_date=digest_date):
+        return 0
+
+    expired_quote_rows = [
+        row
+        for row in _quote_expiry_digest_rows(
+            db,
+            digest_date=digest_date - timedelta(days=1),
+            limit=limit,
+            statuses=EXPIRABLE_STATUSES | {"expired"},
+        )
+        if _quote_is_bar_le_duc(db, row[0])
+    ]
+    overdue_invoice_rows = _bar_le_duc_overdue_invoice_rows(db, due_on_or_before=digest_date, limit=limit)
+    if not expired_quote_rows and not overdue_invoice_rows:
+        _mark_bar_le_duc_daily_alert_processed(db, digest_date=digest_date, now=now)
+        append_job_run_log(
+            db,
+            job_run_id=job_run_id,
+            level="info",
+            message="Bar-le-Duc daily alert skipped: no expired quotes or overdue invoices",
+            context_json={"digest_date": digest_date.isoformat()},
+        )
+        return 0
+
+    sent = 0
+    if delivery_enabled:
+        message_id = send_email(
+            to_email=BAR_LE_DUC_MANAGER_EMAIL,
+            subject=f"Alerte Bar-le-Duc - {_format_utc_day_label(digest_date)}",
+            body=_build_bar_le_duc_daily_alert_body(
+                digest_date=digest_date,
+                expired_quote_rows=expired_quote_rows,
+                overdue_invoice_rows=overdue_invoice_rows,
+            ),
+            body_format="HTML",
+            context="BAR_LE_DUC_DAILY_ALERT",
+        )
+        sent = 1 if message_id else 0
+
+    _mark_bar_le_duc_daily_alert_processed(db, digest_date=digest_date, now=now)
+    append_job_run_log(
+        db,
+        job_run_id=job_run_id,
+        level="info",
+        message="Bar-le-Duc daily alert processed",
+        context_json={
+            "digest_date": digest_date.isoformat(),
+            "expired_quote_count": len(expired_quote_rows),
+            "overdue_invoice_count": len(overdue_invoice_rows),
             "sent": sent,
         },
     )
@@ -648,6 +1016,24 @@ def run_quote_daily_lifecycle_job(
                     message="Quote expiry admin digest failed",
                     context_json={"digest_date": digest_date.isoformat(), "error": str(exc)},
                 )
+            try:
+                _send_bar_le_duc_daily_alert(
+                    db,
+                    digest_date=digest_date,
+                    now=ts,
+                    limit=limit,
+                    delivery_enabled=settings.delivery_enabled,
+                    job_run_id=job_run.id,
+                )
+            except Exception as exc:
+                failed += 1
+                append_job_run_log(
+                    db,
+                    job_run_id=job_run.id,
+                    level="error",
+                    message="Bar-le-Duc daily alert failed",
+                    context_json={"digest_date": digest_date.isoformat(), "error": str(exc)},
+                )
 
         expiring_quotes = db.scalars(
             select(Quote)
@@ -676,6 +1062,93 @@ def run_quote_daily_lifecycle_job(
                 )
             )
             expired += 1
+
+        if settings.quote_expired_notification_enabled or settings.quote_expired_sms_notification_enabled:
+            expired_notification_candidates = db.scalars(
+                select(Quote)
+                .where(
+                    Quote.status == "expired",
+                    Quote.cancelled_at.is_(None),
+                    Quote.expires_at.is_not(None),
+                )
+                .order_by(Quote.expires_at.asc())
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            ).all()
+            quote_lines_by_id = _load_lines_for_quotes(db, [quote.id for quote in expired_notification_candidates])
+            for quote in expired_notification_candidates:
+                checked += 1
+                if not _quote_is_expired_notification_candidate(quote):
+                    continue
+                zone = _quote_timezone(db, quote)
+                notification_reference = quote.expires_at + timedelta(days=1)
+                if not _trigger_due(
+                    now=ts,
+                    zone=zone,
+                    reference_at=notification_reference,
+                    local_time=settings.daily_job_local_time,
+                ):
+                    continue
+
+                recipient = (
+                    str((quote.meta or {}).get("recipient_email") or "").strip().lower()
+                    or str((quote.meta or {}).get("prospect_email") or "").strip().lower()
+                )
+                recipient_phone = resolve_quote_recipient_phone(db, quote)
+                if (
+                    (not recipient or not settings.quote_expired_notification_enabled)
+                    and (not recipient_phone or not settings.quote_expired_sms_notification_enabled)
+                ):
+                    continue
+
+                try:
+                    email_sent = False
+                    sms_sent = False
+                    if recipient and settings.quote_expired_notification_enabled:
+                        email_sent = _queue_email_if_new(
+                            db,
+                            quote=quote,
+                            lines=quote_lines_by_id.get(quote.id, []),
+                            kind="expired",
+                            usage_context=USAGE_CONTEXT_QUOTE_EXPIRED,
+                            recipient_email=recipient,
+                            template_ref=settings.quote_expired_template_ref,
+                            now=ts,
+                            delivery_enabled=settings.delivery_enabled,
+                        )
+                    if recipient_phone and settings.quote_expired_sms_notification_enabled:
+                        sms_sent = _send_sms_if_enabled(
+                            db,
+                            quote=quote,
+                            lines=quote_lines_by_id.get(quote.id, []),
+                            kind="expired",
+                            usage_context=USAGE_CONTEXT_QUOTE_EXPIRED,
+                            recipient_phone=recipient_phone,
+                            template_ref=settings.quote_expired_sms_template_ref,
+                            now=ts,
+                            delivery_enabled=settings.sms_delivery_enabled,
+                        )
+                    if email_sent or sms_sent:
+                        _mark_quote_expired_notification_sent(quote, now=ts)
+                        db.add(quote)
+                        db.add(
+                            QuoteEvent(
+                                quote_id=quote.id,
+                                event_type="quote_expired_notification_sent",
+                                actor_type="system",
+                                payload={"kind": "expired", "released_slot": True},
+                                created_at=ts,
+                            )
+                        )
+                except Exception as exc:
+                    failed += 1
+                    append_job_run_log(
+                        db,
+                        job_run_id=job_run.id,
+                        level="error",
+                        message="Expired quote notification failed",
+                        context_json={"quote_id": str(quote.id), "error": str(exc)},
+                    )
 
         if settings.auto_cancel_enabled:
             cancellable_quotes = db.scalars(
@@ -718,7 +1191,8 @@ def run_quote_daily_lifecycle_job(
                 )
                 cancelled += 1
 
-                if not settings.cancel_notification_enabled:
+                expired_notification_sent = _quote_expired_notification_sent(quote)
+                if not settings.cancel_notification_enabled or expired_notification_sent:
                     recipient = ""
                 else:
                     recipient = (
@@ -729,7 +1203,7 @@ def run_quote_daily_lifecycle_job(
                 if not recipient and not recipient_phone:
                     continue
                 try:
-                    if recipient and settings.cancel_notification_enabled:
+                    if recipient and settings.cancel_notification_enabled and not expired_notification_sent:
                         _queue_email_if_new(
                             db,
                             quote=quote,
@@ -741,7 +1215,7 @@ def run_quote_daily_lifecycle_job(
                             now=ts,
                             delivery_enabled=settings.delivery_enabled,
                         )
-                    if recipient_phone and settings.quote_cancel_sms_notification_enabled:
+                    if recipient_phone and settings.quote_cancel_sms_notification_enabled and not expired_notification_sent:
                         _send_sms_if_enabled(
                             db,
                             quote=quote,
