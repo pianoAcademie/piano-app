@@ -595,6 +595,11 @@ export type AdminRangeInvoiceOut = {
   invoice_status: "ISSUED" | "PAID" | "CANCELLED";
   emailed_at: string | null;
   reminded_at: string | null;
+  bank_transfer_order_id: string | null;
+  bank_transfer_order_reference: string | null;
+  bank_transfer_order_status: string | null;
+  bank_transfer_order_expires_at: string | null;
+  bank_transfer_order_paid_at: string | null;
   public_note: string | null;
   private_note: string | null;
   related_invoices: AdminRangeInvoiceReferenceOut[];
@@ -1418,6 +1423,9 @@ export type AdminConfigAccountOut = {
   allowed_currencies: string[];
   default_currency: string;
   client_balance_default_date_mode: "TODAY" | "PACKAGE_END";
+  bank_transfer_account_holder: string;
+  bank_transfer_iban: string;
+  bank_transfer_bic: string;
   legal_terms: string;
   logo_data_url: string;
 };

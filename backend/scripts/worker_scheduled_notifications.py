@@ -14,6 +14,7 @@ from app.db.session import SessionLocal
 from app.services.jobs.application.session_jobs import run_session_auto_completion_job
 from app.services.jobs.application.notification_jobs import run_scheduled_notification_dispatch_job
 from app.services.invoice_reminders import run_invoice_due_reminder_job
+from app.services.bank_transfer_orders import run_bank_transfer_order_expiration_job, run_bank_transfer_review_digest_job
 from app.services.quotes.lifecycle_jobs import run_quote_daily_lifecycle_job
 from app.services.session_automation import run_auto_cancel_empty_sessions_job, run_expire_pending_payment_bookings_job
 
@@ -32,6 +33,8 @@ def main() -> None:
                 ("scheduled_notification_dispatch", run_scheduled_notification_dispatch_job),
                 ("invoice_due_reminders", run_invoice_due_reminder_job),
                 ("quote_daily_lifecycle", run_quote_daily_lifecycle_job),
+                ("expire_bank_transfer_orders", run_bank_transfer_order_expiration_job),
+                ("bank_transfer_review_digest", run_bank_transfer_review_digest_job),
                 ("expire_pending_payment_bookings", run_expire_pending_payment_bookings_job),
                 ("auto_cancel_empty_sessions", run_auto_cancel_empty_sessions_job),
                 ("session_auto_completion", run_session_auto_completion_job),

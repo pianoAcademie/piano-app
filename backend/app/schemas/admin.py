@@ -44,6 +44,9 @@ class AdminConfigAccountOut(BaseModel):
     allowed_currencies: list[str] = Field(default_factory=list)
     default_currency: str
     client_balance_default_date_mode: Literal["TODAY", "PACKAGE_END"] = "TODAY"
+    bank_transfer_account_holder: str = ""
+    bank_transfer_iban: str = ""
+    bank_transfer_bic: str = ""
     legal_terms: str
     logo_data_url: str = ""
 
@@ -66,6 +69,9 @@ class AdminConfigAccountUpdateRequest(BaseModel):
     allowed_currencies: list[str] = Field(default_factory=list)
     default_currency: str = Field(default="EUR", min_length=3, max_length=3)
     client_balance_default_date_mode: Literal["TODAY", "PACKAGE_END"] = "TODAY"
+    bank_transfer_account_holder: str = Field(default="", max_length=255)
+    bank_transfer_iban: str = Field(default="", max_length=80)
+    bank_transfer_bic: str = Field(default="", max_length=40)
     legal_terms: str = Field(default="")
     logo_data_url: str = Field(default="", max_length=2000000)
 
@@ -1457,6 +1463,11 @@ class AdminRangeInvoiceOut(BaseModel):
     invoice_status: Literal["ISSUED", "PAID", "CANCELLED"]
     emailed_at: datetime | None = None
     reminded_at: datetime | None = None
+    bank_transfer_order_id: UUID | None = None
+    bank_transfer_order_reference: str | None = None
+    bank_transfer_order_status: str | None = None
+    bank_transfer_order_expires_at: datetime | None = None
+    bank_transfer_order_paid_at: datetime | None = None
     public_note: str | None = None
     private_note: str | None = None
     related_invoices: list[AdminRangeInvoiceReferenceOut] = Field(default_factory=list)

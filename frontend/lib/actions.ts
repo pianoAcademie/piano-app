@@ -5452,6 +5452,35 @@ export async function updateAdminClientRangeInvoiceStatusAction(formData: FormDa
   redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "ok", t("admin.client_action.invoice_status_updated")));
 }
 
+export async function markAdminClientRangeInvoiceBankTransferPaidAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const noteId = String(formData.get("note_id") ?? "").trim();
+  const returnTabRaw = String(formData.get("return_tab") ?? "").trim().toLowerCase();
+  const returnTab = returnTabRaw === "paiements" ? "paiements" : "factures";
+  if (!clientId || !noteId) {
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_invoice")));
+  }
+
+  const result = await backendRequest<AdminRangeInvoiceOut>(
+    `/api/v1/admin/clients/${clientId}/invoices/range/${noteId}/bank-transfer/mark-paid`,
+    { method: "POST" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "error", result.message));
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "ok", t("admin.client_action.invoice_status_updated")));
+}
+
 export async function deleteAdminClientRangeInvoiceAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
@@ -8535,6 +8564,9 @@ export async function updateAdminConfigAccountAction(formData: FormData): Promis
     allowed_currencies: parseStringList(formData.getAll("allowed_currencies")).map((code) => code.toUpperCase()),
     default_currency: String(formData.get("default_currency") ?? "EUR").trim().toUpperCase(),
     client_balance_default_date_mode: String(formData.get("client_balance_default_date_mode") ?? "TODAY").trim().toUpperCase(),
+    bank_transfer_account_holder: String(formData.get("bank_transfer_account_holder") ?? "").trim(),
+    bank_transfer_iban: String(formData.get("bank_transfer_iban") ?? "").trim(),
+    bank_transfer_bic: String(formData.get("bank_transfer_bic") ?? "").trim(),
     legal_terms: String(formData.get("legal_terms") ?? "").trim(),
     logo_data_url: logoDataUrl,
   };

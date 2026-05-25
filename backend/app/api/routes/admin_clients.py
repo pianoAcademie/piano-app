@@ -25,6 +25,7 @@ from app.api.deps import get_db, require_admin_or_permissions, require_roles
 from app.core.config import settings
 from app.models.client_group import ClientGroup, ClientGroupMembership
 from app.models.client_record import (
+    BankTransferOrder,
     ClientAutoInvoiceRule,
     ClientBillingAdjustment,
     ClientInvoiceLine,
@@ -282,6 +283,15 @@ MANUAL_TRANSACTION_LABEL_BY_TYPE = {
     "REFUND": "Remboursement",
 }
 INVOICE_RANGE_NOTE_PREFIX = "INVOICE_RANGE::"
+BANK_TRANSFER_ORDER_STATUS_PENDING = "pending_bank_transfer"
+BANK_TRANSFER_ORDER_STATUS_PAID = "paid"
+BANK_TRANSFER_ORDER_STATUS_EXPIRED = "expired"
+BANK_TRANSFER_ACCOUNT_HOLDER_SETTING_KEY = "bank_transfer_account_holder"
+BANK_TRANSFER_IBAN_SETTING_KEY = "bank_transfer_iban"
+BANK_TRANSFER_BIC_SETTING_KEY = "bank_transfer_bic"
+DEFAULT_BANK_TRANSFER_ACCOUNT_HOLDER = "SAS PIANO ACADEMIE"
+DEFAULT_BANK_TRANSFER_IBAN = "FR76 1020 7000 9822 2117 9625 586"
+DEFAULT_BANK_TRANSFER_BIC = "CCBPFRPPMTG"
 INVOICE_RANGE_STATUSES = {"ISSUED", "PAID", "CANCELLED"}
 INVOICE_RANGE_LAYOUT_ALIASES = {
     "DETAILED": "DETAILED",
@@ -1250,6 +1260,92 @@ def _invoice_range_primary_total(metadata: dict[str, object]) -> tuple[Decimal, 
     return Decimal("0.00"), "EUR"
 
 
+def _bank_transfer_setting(db: Session, key: str, default: str = "") -> str:
+    row = db.get(AppSetting, key)
+    if row is None:
+        return default
+    return str(row.value or "").strip() or default
+
+
+def _bank_transfer_details(db: Session) -> dict[str, str]:
+    return {
+        "account_holder": _bank_transfer_setting(
+            db,
+            BANK_TRANSFER_ACCOUNT_HOLDER_SETTING_KEY,
+            DEFAULT_BANK_TRANSFER_ACCOUNT_HOLDER,
+        ),
+        "iban": _bank_transfer_setting(db, BANK_TRANSFER_IBAN_SETTING_KEY, DEFAULT_BANK_TRANSFER_IBAN),
+        "bic": _bank_transfer_setting(db, BANK_TRANSFER_BIC_SETTING_KEY, DEFAULT_BANK_TRANSFER_BIC),
+    }
+
+
+def _expire_stale_bank_transfer_orders(db: Session, *, now: datetime | None = None, limit: int = 500) -> int:
+    current = now or _utcnow()
+    rows = db.scalars(
+        select(BankTransferOrder)
+        .where(
+            BankTransferOrder.status == BANK_TRANSFER_ORDER_STATUS_PENDING,
+            BankTransferOrder.expires_at <= current,
+        )
+        .order_by(BankTransferOrder.expires_at.asc())
+        .limit(limit)
+    ).all()
+    for row in rows:
+        row.status = BANK_TRANSFER_ORDER_STATUS_EXPIRED
+        row.expired_at = current
+        row.updated_at = current
+        db.add(row)
+    return len(rows)
+
+
+def _bank_transfer_order_snapshot(order: BankTransferOrder | None) -> dict[str, object]:
+    if order is None:
+        return {}
+    return {
+        "bank_transfer_order_id": str(order.id),
+        "bank_transfer_order_reference": order.order_reference,
+        "bank_transfer_order_status": order.status,
+        "bank_transfer_order_expires_at": order.expires_at.isoformat(),
+        "bank_transfer_order_paid_at": order.paid_at.isoformat() if order.paid_at else "",
+    }
+
+
+def _latest_bank_transfer_order_for_invoice(
+    db: Session,
+    *,
+    client_id: UUID,
+    note_id: UUID,
+) -> BankTransferOrder | None:
+    _expire_stale_bank_transfer_orders(db)
+    return db.scalar(
+        select(BankTransferOrder)
+        .where(
+            BankTransferOrder.customer_id == client_id,
+            BankTransferOrder.invoice_note_id == note_id,
+        )
+        .order_by(BankTransferOrder.created_at.desc())
+        .limit(1)
+    )
+
+
+def _generate_bank_transfer_order_reference(db: Session, *, now: datetime | None = None) -> str:
+    current = now or _utcnow()
+    for _ in range(20):
+        candidate = f"VIR-{current.strftime('%Y%m%d')}-{uuid4().hex[:8].upper()}"
+        exists = db.scalar(select(BankTransferOrder.id).where(BankTransferOrder.order_reference == candidate))
+        if exists is None:
+            return candidate
+    return f"VIR-{uuid4().hex[:16].upper()}"
+
+
+def _update_invoice_metadata_with_bank_transfer_order(metadata: dict[str, object], order: BankTransferOrder | None) -> dict[str, object]:
+    updated = dict(metadata)
+    if order is None:
+        return updated
+    updated.update(_bank_transfer_order_snapshot(order))
+    return updated
+
+
 def _invoice_range_payment_url(
     *,
     client_id: UUID | None,
@@ -1611,6 +1707,16 @@ def _append_public_payment_reference_to_note(public_note: str | None, provider_r
     return f"{base}\n{marker}"
 
 
+def _append_payment_reference_to_note(public_note: str | None, *, label: str, reference: str) -> str:
+    base = _normalize_optional(public_note) or ""
+    marker = f"{label}: {reference}"
+    if marker in base:
+        return base
+    if not base:
+        return marker
+    return f"{base}\n{marker}"
+
+
 def _invoice_range_paid_amount(metadata: dict[str, object]) -> tuple[Decimal, str]:
     raw_amount = _normalize_optional(str(metadata.get("payment_amount_paid") or ""))
     raw_currency = _normalize_optional(str(metadata.get("payment_currency") or ""))
@@ -1631,6 +1737,10 @@ def _record_invoice_range_public_payment(
     metadata: dict[str, object],
     provider_reference: str,
     seller_legal_entity_id: UUID | None,
+    payment_method_code: str = "CARD_ONLINE",
+    payment_label: str = "Paiement en ligne",
+    transaction_category: str = "INVOICE_RANGE_PUBLIC_PAYMENT",
+    public_note_reference_label: str = "Transaction paiement en ligne",
 ) -> tuple[UUID, datetime]:
     now = _utcnow()
     invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or str(note.id)
@@ -1657,6 +1767,9 @@ def _record_invoice_range_public_payment(
         if (candidate.category or "").strip().upper() == "INVOICE_RANGE_PUBLIC_PAYMENT":
             existing_transaction = candidate
             break
+        if transaction_category and (candidate.category or "").strip().upper() == transaction_category:
+            existing_transaction = candidate
+            break
 
     if existing_transaction is None:
         signed_total = _quantize_money(Decimal("0.00") - amount_due)
@@ -1666,9 +1779,9 @@ def _record_invoice_range_public_payment(
             actor_user_id=None,
             transaction_type="PAYMENT",
             status="COMPLETED",
-            label=f"Paiement en ligne facture {invoice_number}",
-            description=f"Transaction PSP {provider_reference}",
-            category="INVOICE_RANGE_PUBLIC_PAYMENT",
+            label=f"{payment_label} facture {invoice_number}",
+            description=f"{payment_label}: {provider_reference}",
+            category=transaction_category,
             occurred_at=now,
             amount_excl_vat=signed_total,
             vat_rate=Decimal("0.00"),
@@ -1676,8 +1789,8 @@ def _record_invoice_range_public_payment(
             total_incl_vat=signed_total,
             currency=currency_code,
             reference=_build_manual_reference(
-                payment_method_code="CARD_ONLINE",
-                custom_reference=f"PSP:{provider_reference}",
+                payment_method_code=payment_method_code,
+                custom_reference=f"REF:{provider_reference}",
             ),
             legal_entity_id=seller_legal_entity_id,
         )
@@ -1701,9 +1814,10 @@ def _record_invoice_range_public_payment(
         metadata["payment_currency"] = currency_code
     metadata["payment_transaction_id"] = transaction_id_str
     metadata["reconciled_manual_payment_ids"] = updated_reconciled_ids
-    metadata["public_note"] = _append_public_payment_reference_to_note(
+    metadata["public_note"] = _append_payment_reference_to_note(
         _normalize_optional(str(metadata.get("public_note") or "")),
-        provider_reference=provider_reference,
+        label=public_note_reference_label,
+        reference=provider_reference,
     )
     if not _normalize_optional(str(metadata.get("booking_confirmation_emails_sent_at") or "")):
         try:
@@ -1756,6 +1870,71 @@ def _record_invoice_range_public_payment(
     return transaction_id, now
 
 
+def reconcile_admin_client_range_invoice_public_payment_by_provider_reference(
+    db: Session,
+    *,
+    client_id: UUID,
+    note_id: UUID,
+    provider_reference: str,
+) -> dict[str, object]:
+    _require_client(db, client_id)
+    note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    metadata = _invoice_range_metadata_with_display_totals(
+        db,
+        client_id=client_id,
+        note_id=note_id,
+        note_created_at=note.created_at,
+        metadata=metadata,
+    )
+    provider = detect_provider_from_reference(provider_reference)
+    if provider is None:
+        provider = parse_provider(str(metadata.get("payment_provider") or ""))
+    if provider is None:
+        provider = resolve_provider(db)
+
+    lookup = lookup_payment(db, provider=provider, payment_reference=provider_reference)
+    metadata["payment_provider"] = provider.value
+    metadata["payment_provider_reference"] = lookup.provider_reference or provider_reference
+    metadata["payment_lookup_status"] = (lookup.status or "").strip().upper() or "UNKNOWN"
+    metadata["payment_last_lookup_at"] = _utcnow().isoformat()
+
+    if not lookup.paid:
+        note.message = _build_invoice_range_note_message(metadata)
+        db.add(note)
+        db.commit()
+        return {
+            "ok": True,
+            "processed": True,
+            "paid": False,
+            "status": lookup.status,
+            "invoice_number": str(metadata.get("invoice_number") or ""),
+        }
+
+    _, _, seller_legal_entity_id = _frozen_invoice_selection_for_note(
+        db,
+        note_id=note_id,
+        metadata=metadata,
+    )
+    if seller_legal_entity_id is None:
+        seller_legal_entity_id = _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
+    transaction_id, paid_at = _record_invoice_range_public_payment(
+        db,
+        client_id=client_id,
+        note=note,
+        metadata=metadata,
+        provider_reference=lookup.provider_reference or provider_reference,
+        seller_legal_entity_id=seller_legal_entity_id,
+    )
+    return {
+        "ok": True,
+        "processed": True,
+        "paid": True,
+        "invoice_number": str(metadata.get("invoice_number") or ""),
+        "transaction_id": str(transaction_id),
+        "paid_at": paid_at.isoformat(),
+    }
+
+
 def _public_payment_result_html(
     *,
     title: str,
@@ -1800,6 +1979,167 @@ def _public_payment_result_html(
   </body>
 </html>"""
     return HTMLResponse(content=html, status_code=status.HTTP_200_OK)
+
+
+def _bank_transfer_confirmation_html(
+    *,
+    invoice_number: str,
+    order_reference: str,
+    amount: Decimal,
+    currency: str,
+    account_holder: str,
+    iban: str,
+    bic: str,
+    expires_at: datetime,
+) -> HTMLResponse:
+    bic_label = bic or "Non renseigne"
+    html_content = f"""<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Virement bancaire - {html.escape(invoice_number)}</title>
+    <style>
+      body {{ font-family: Arial, sans-serif; background: #f6f7f9; color: #111827; margin: 0; padding: 24px; }}
+      .card {{ max-width: 760px; margin: 0 auto; background: #fff; border: 1px solid #e6e8ee; border-radius: 14px; padding: 22px; }}
+      h1 {{ margin: 0 0 10px; font-size: 24px; }}
+      p {{ margin: 8px 0; line-height: 1.45; }}
+      dl {{ display: grid; grid-template-columns: 190px 1fr; gap: 10px 18px; margin: 18px 0; }}
+      dt {{ color: #4b5563; }}
+      dd {{ margin: 0; font-weight: 700; overflow-wrap: anywhere; }}
+      .reference {{ font-size: 20px; color: #92400e; }}
+      .muted {{ color: #4b5563; }}
+    </style>
+  </head>
+  <body>
+    <section class="card">
+      <h1>Commande en attente de virement</h1>
+      <p class="muted">Merci d'indiquer exactement la reference ci-dessous dans le libelle du virement.</p>
+      <dl>
+        <dt>Facture</dt><dd>{html.escape(invoice_number)}</dd>
+        <dt>Montant a regler</dt><dd>{amount:.2f} {html.escape(currency)}</dd>
+        <dt>Titulaire du compte</dt><dd>{html.escape(account_holder)}</dd>
+        <dt>IBAN</dt><dd>{html.escape(iban)}</dd>
+        <dt>BIC</dt><dd>{html.escape(bic_label)}</dd>
+        <dt>Reference virement</dt><dd class="reference">{html.escape(order_reference)}</dd>
+        <dt>Expiration</dt><dd>{expires_at.strftime('%d/%m/%Y %H:%M')}</dd>
+      </dl>
+      <p class="muted">La facture sera marquee comme payee apres validation du virement par l'administration.</p>
+    </section>
+  </body>
+</html>"""
+    return HTMLResponse(content=html_content, status_code=status.HTTP_200_OK)
+
+
+def _invoice_payment_choice_html(
+    *,
+    client_id: UUID,
+    note_id: UUID,
+    token: str,
+    invoice_number: str,
+    amount: Decimal,
+    currency: str,
+    pending_order: BankTransferOrder | None,
+) -> HTMLResponse:
+    encoded_token = urlencode({"token": token})
+    base = f"{_frontend_base_url()}/api/v1/public/payments/invoices/range/{client_id}/{note_id}"
+    pending_html = ""
+    if pending_order is not None and pending_order.status == BANK_TRANSFER_ORDER_STATUS_PENDING:
+        pending_html = (
+            '<div class="notice">'
+            f"Un virement est deja en attente avec la reference <strong>{html.escape(pending_order.order_reference)}</strong>."
+            "</div>"
+        )
+    html_content = f"""<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reglement facture {html.escape(invoice_number)}</title>
+    <style>
+      body {{ font-family: Arial, sans-serif; background: #f6f7f9; color: #111827; margin: 0; padding: 24px; }}
+      .card {{ max-width: 760px; margin: 0 auto; background: #fff; border: 1px solid #e6e8ee; border-radius: 14px; padding: 22px; }}
+      h1 {{ margin: 0 0 10px; font-size: 24px; }}
+      .muted {{ color: #4b5563; }}
+      .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-top: 20px; }}
+      form {{ margin: 0; }}
+      button {{ width: 100%; border: 1px solid #d9b36f; background: #f2d9a6; color: #1f2937; border-radius: 12px; padding: 18px; font-size: 18px; font-weight: 700; cursor: pointer; }}
+      .card-button {{ background: #234f9d; border-color: #234f9d; color: #fff; }}
+      .notice {{ margin-top: 14px; padding: 12px; border-radius: 10px; background: #fff7ed; color: #7c2d12; }}
+    </style>
+  </head>
+  <body>
+    <section class="card">
+      <h1>Regler la facture {html.escape(invoice_number)}</h1>
+      <p class="muted">Montant a regler : <strong>{amount:.2f} {html.escape(currency)}</strong></p>
+      {pending_html}
+      <div class="grid">
+        <form method="post" action="{base}/card?{encoded_token}">
+          <button class="card-button" type="submit">Payer par carte</button>
+        </form>
+        <form method="post" action="{base}/bank-transfer?{encoded_token}">
+          <button type="submit">Virement bancaire</button>
+        </form>
+      </div>
+    </section>
+  </body>
+</html>"""
+    return HTMLResponse(content=html_content, status_code=status.HTTP_200_OK)
+
+
+def _send_bank_transfer_order_email(
+    db: Session,
+    *,
+    client: User,
+    order: BankTransferOrder,
+    invoice_number: str,
+    account_holder: str,
+    iban: str,
+    bic: str,
+) -> str | None:
+    billing_profile = resolve_billing_profile(db, client)
+    recipients = _normalize_email_recipients([billing_profile.email, client.email])
+    if not recipients:
+        return None
+    recipient_name = recipient_display_name(
+        civility=getattr(billing_profile, "civility", None) or getattr(billing_profile, "civilite", None),
+        first_name=billing_profile.first_name or client.first_name,
+        last_name=billing_profile.last_name or client.last_name,
+        email=billing_profile.email or client.email,
+        fallback="Client",
+    )
+    bic_line = bic or "Non renseigne"
+    body = (
+        f"Bonjour {recipient_name},\n\n"
+        f"Votre demande de paiement par virement pour la facture {invoice_number} a ete enregistree.\n\n"
+        f"Montant a regler: {Decimal(order.amount_incl_vat):.2f} {order.currency}\n"
+        f"Titulaire du compte: {account_holder}\n"
+        f"IBAN: {iban}\n"
+        f"BIC: {bic_line}\n"
+        f"Reference a indiquer dans le libelle du virement: {order.order_reference}\n"
+        f"Expiration de la commande: {order.expires_at.strftime('%d/%m/%Y %H:%M')}\n\n"
+        "La facture sera marquee comme payee apres validation du virement par l'administration.\n\n"
+        "Bien cordialement,\n"
+        "Piano Academie"
+    )
+    sender = resolve_sender_profile(db, sender_kind="STUDIO")
+    message_ids = [
+        send_email(
+            to_email=recipient,
+            subject=f"Instructions de virement - facture {invoice_number}",
+            body=body,
+            body_format="TEXT",
+            context="INVOICE_BANK_TRANSFER_ORDER",
+            from_email=sender.from_email,
+            from_name=sender.from_name,
+            reply_to=sender.reply_to,
+            subject_prefix=sender.subject_prefix,
+            recipient_user_id=client.id,
+            communication_type=COMMUNICATION_TYPE_OPERATIONAL,
+        )
+        for recipient in recipients
+    ]
+    return message_ids[0] if message_ids else None
 
 
 def _normalize_email_recipients(raw_values: list[str] | None) -> list[str]:
@@ -2826,6 +3166,11 @@ def _invoice_range_out(
         invoice_status=str(metadata.get("invoice_status") or "ISSUED"),
         emailed_at=_parse_iso_datetime(metadata.get("emailed_at")),
         reminded_at=_parse_iso_datetime(metadata.get("reminded_at")),
+        bank_transfer_order_id=_parse_optional_uuid(metadata.get("bank_transfer_order_id")),
+        bank_transfer_order_reference=_normalize_optional(str(metadata.get("bank_transfer_order_reference") or "")),
+        bank_transfer_order_status=_normalize_optional(str(metadata.get("bank_transfer_order_status") or "")),
+        bank_transfer_order_expires_at=_parse_iso_datetime(metadata.get("bank_transfer_order_expires_at")),
+        bank_transfer_order_paid_at=_parse_iso_datetime(metadata.get("bank_transfer_order_paid_at")),
         public_note=_normalize_optional(str(metadata.get("public_note") or "")),
         private_note=_normalize_optional(str(metadata.get("private_note") or "")),
         related_invoices=related_invoices or [],
@@ -3219,6 +3564,8 @@ def list_admin_client_range_invoices(
     _: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> list[AdminRangeInvoiceOut]:
     client = _require_client(db, client_id)
+    if _expire_stale_bank_transfer_orders(db):
+        db.commit()
     scoped_user_ids = list(_payment_scope_users(db, client=client).keys())
     notes = db.scalars(
         select(ClientNoteEntry)
@@ -3231,6 +3578,10 @@ def list_admin_client_range_invoices(
         metadata = _parse_invoice_range_note_entry(note)
         if metadata is None:
             continue
+        metadata = _update_invoice_metadata_with_bank_transfer_order(
+            metadata,
+            _latest_bank_transfer_order_for_invoice(db, client_id=client_id, note_id=note.id),
+        )
         totals_by_currency, total_to_pay_by_currency = _computed_invoice_range_display_totals(
             db,
             client_id=client_id,
@@ -10086,6 +10437,68 @@ def update_admin_client_range_invoice_status(
     )
 
 
+@router.post("/{client_id}/invoices/range/{note_id}/bank-transfer/mark-paid", response_model=AdminRangeInvoiceOut)
+def mark_admin_client_range_invoice_bank_transfer_paid(
+    client_id: UUID,
+    note_id: UUID,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminRangeInvoiceOut:
+    client = _require_client(db, client_id)
+    note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    order = _latest_bank_transfer_order_for_invoice(db, client_id=client_id, note_id=note_id)
+    if order is None or order.status != BANK_TRANSFER_ORDER_STATUS_PENDING:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Aucune commande virement en attente")
+    metadata = _invoice_range_metadata_with_display_totals(
+        db,
+        client_id=client_id,
+        note_id=note_id,
+        note_created_at=note.created_at,
+        metadata=metadata,
+    )
+    _, _, seller_legal_entity_id = _frozen_invoice_selection_for_note(
+        db,
+        note_id=note_id,
+        metadata=metadata,
+    )
+    if seller_legal_entity_id is None:
+        seller_legal_entity_id = _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
+    transaction_id, paid_at = _record_invoice_range_public_payment(
+        db,
+        client_id=client_id,
+        note=note,
+        metadata=metadata,
+        provider_reference=order.order_reference,
+        seller_legal_entity_id=seller_legal_entity_id,
+        payment_method_code="BANK_TRANSFER",
+        payment_label="Virement bancaire",
+        transaction_category="INVOICE_RANGE_BANK_TRANSFER",
+        public_note_reference_label="Virement bancaire",
+    )
+    order.status = BANK_TRANSFER_ORDER_STATUS_PAID
+    order.paid_at = paid_at
+    order.manual_transaction_id = transaction_id
+    order.updated_at = paid_at
+    db.add(order)
+    metadata = _update_invoice_metadata_with_bank_transfer_order(metadata, order)
+    note.message = _build_invoice_range_note_message(metadata)
+    db.add(note)
+    _create_client_note(
+        db,
+        client_id=client.id,
+        author_user_id=actor.id,
+        entry_type="AUTO",
+        message=f"Commande virement {order.order_reference} marquee comme payee pour la facture {metadata.get('invoice_number') or note_id}.",
+    )
+    db.commit()
+    related_invoices = _related_invoice_references_for_split_group(
+        db,
+        client_id=client_id,
+        split_group_id=_normalize_optional(str(metadata.get("split_group_id") or "")),
+    )
+    return _invoice_range_out(note_id=note.id, metadata=metadata, related_invoices=related_invoices)
+
+
 @router.delete("/{client_id}/invoices/range/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_admin_client_range_invoice(
     client_id: UUID,
@@ -11466,6 +11879,59 @@ def start_admin_client_range_invoice_public_payment(
     note_id: UUID,
     token: str = Query(min_length=24, max_length=4096),
     db: Session = Depends(get_db),
+) -> HTMLResponse:
+    client = _require_client(db, client_id)
+    note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    _assert_invoice_range_public_payment_token(
+        token=token,
+        client_id=client_id,
+        note_id=note_id,
+        metadata=metadata,
+    )
+    invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
+    if invoice_status == "CANCELLED":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Facture annulee")
+    if invoice_status == "PAID":
+        invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or str(note_id)
+        return _public_payment_result_html(
+            title="Facture deja payee",
+            subtitle="Aucun reglement supplementaire n'est attendu pour cette facture.",
+            invoice_number=invoice_number,
+        )
+    metadata = _invoice_range_metadata_with_display_totals(
+        db,
+        client_id=client_id,
+        note_id=note_id,
+        note_created_at=note.created_at,
+        metadata=metadata,
+    )
+    amount_due, currency_code = _invoice_range_primary_total(metadata)
+    if amount_due <= Decimal("0.00"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun montant a regler")
+    pending_order = _latest_bank_transfer_order_for_invoice(db, client_id=client_id, note_id=note_id)
+    if pending_order and pending_order.status == BANK_TRANSFER_ORDER_STATUS_EXPIRED:
+        metadata = _update_invoice_metadata_with_bank_transfer_order(metadata, pending_order)
+        note.message = _build_invoice_range_note_message(metadata)
+        db.add(note)
+        db.commit()
+    invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or str(note_id)
+    return _invoice_payment_choice_html(
+        client_id=client_id,
+        note_id=note_id,
+        token=token,
+        invoice_number=invoice_number,
+        amount=amount_due,
+        currency=currency_code,
+        pending_order=pending_order if pending_order and pending_order.status == BANK_TRANSFER_ORDER_STATUS_PENDING else None,
+    )
+
+
+@router.post("/{client_id}/invoices/range/{note_id}/public-pay/card")
+def start_admin_client_range_invoice_public_card_payment(
+    client_id: UUID,
+    note_id: UUID,
+    token: str = Query(min_length=24, max_length=4096),
+    db: Session = Depends(get_db),
 ) -> RedirectResponse:
     client = _require_client(db, client_id)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
@@ -11551,6 +12017,106 @@ def start_admin_client_range_invoice_public_payment(
     db.commit()
 
     return RedirectResponse(url=checkout.checkout_url, status_code=status.HTTP_302_FOUND)
+
+
+@router.post("/{client_id}/invoices/range/{note_id}/public-pay/bank-transfer")
+def start_admin_client_range_invoice_public_bank_transfer(
+    client_id: UUID,
+    note_id: UUID,
+    token: str = Query(min_length=24, max_length=4096),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    client = _require_client(db, client_id)
+    note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    _assert_invoice_range_public_payment_token(
+        token=token,
+        client_id=client_id,
+        note_id=note_id,
+        metadata=metadata,
+    )
+    invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
+    if invoice_status == "CANCELLED":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Facture annulee")
+    if invoice_status == "PAID":
+        invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or str(note_id)
+        return _public_payment_result_html(
+            title="Facture deja payee",
+            subtitle="Aucun reglement supplementaire n'est attendu pour cette facture.",
+            invoice_number=invoice_number,
+        )
+
+    metadata = _invoice_range_metadata_with_display_totals(
+        db,
+        client_id=client_id,
+        note_id=note_id,
+        note_created_at=note.created_at,
+        metadata=metadata,
+    )
+    amount_due, currency_code = _invoice_range_primary_total(metadata)
+    if amount_due <= Decimal("0.00"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucun montant a regler")
+
+    now = _utcnow()
+    _expire_stale_bank_transfer_orders(db, now=now)
+    existing_order = _latest_bank_transfer_order_for_invoice(db, client_id=client_id, note_id=note_id)
+    if existing_order is not None and existing_order.status == BANK_TRANSFER_ORDER_STATUS_PENDING:
+        order = existing_order
+        created = False
+    else:
+        invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or str(note_id)
+        order = BankTransferOrder(
+            order_reference=_generate_bank_transfer_order_reference(db, now=now),
+            status=BANK_TRANSFER_ORDER_STATUS_PENDING,
+            customer_id=client_id,
+            invoice_note_id=note_id,
+            amount_incl_vat=amount_due,
+            currency=currency_code,
+            expires_at=now + timedelta(days=7),
+            order_metadata={
+                "invoice_number": invoice_number,
+                "source": "invoice_range_public_checkout",
+            },
+        )
+        db.add(order)
+        db.flush()
+        created = True
+
+    bank_details = _bank_transfer_details(db)
+    metadata = _update_invoice_metadata_with_bank_transfer_order(metadata, order)
+    metadata["bank_transfer_last_checkout_at"] = now.isoformat()
+    note.message = _build_invoice_range_note_message(metadata)
+    db.add(note)
+
+    if created:
+        try:
+            message_id = _send_bank_transfer_order_email(
+                db,
+                client=client,
+                order=order,
+                invoice_number=_normalize_optional(str(metadata.get("invoice_number") or "")) or str(note_id),
+                account_holder=bank_details["account_holder"],
+                iban=bank_details["iban"],
+                bic=bank_details["bic"],
+            )
+            metadata["bank_transfer_order_email_sent_at"] = now.isoformat()
+            if message_id:
+                metadata["bank_transfer_order_email_message_id"] = message_id
+            note.message = _build_invoice_range_note_message(metadata)
+            db.add(note)
+        except Exception:
+            logger.exception("Unable to send bank transfer order email client=%s note=%s", client_id, note_id)
+
+    db.commit()
+    return _bank_transfer_confirmation_html(
+        invoice_number=_normalize_optional(str(metadata.get("invoice_number") or "")) or str(note_id),
+        order_reference=order.order_reference,
+        amount=amount_due,
+        currency=currency_code,
+        account_holder=bank_details["account_holder"],
+        iban=bank_details["iban"],
+        bic=bank_details["bic"],
+        expires_at=order.expires_at,
+    )
 
 
 @router.post("/{client_id}/invoices/range/{note_id}/public-pay/webhook")

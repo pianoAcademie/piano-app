@@ -1265,7 +1265,7 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         channel="EMAIL",
         subject="Paiement facture recu - {invoice_number}",
         body=(
-            "Un paiement en ligne de facture a ete recu.\n\n"
+            "Un paiement de facture a ete recu.\n\n"
             "Client: {client_name}\n"
             "Email client: {client_email}\n"
             "Facture: {invoice_number}\n"
@@ -1276,7 +1276,7 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
             "Compte client: {transactions_url}\n\n"
             "Piano Academie"
         ),
-        description="Notification interne pour un paiement en ligne recu sur une facture.",
+        description="Notification interne pour un paiement recu sur une facture.",
         variables_hint=(
             "{client_name} {client_email} {invoice_number} {amount_paid} {currency} "
             "{paid_at} {payment_reference} {invoice_url} {transactions_url}"
@@ -1425,7 +1425,7 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         name="Facture - Envoi (SMS)",
         channel="SMS",
         subject=None,
-        body="Piano Academie : votre facture {invoice_number} de {amount_due} {currency} est disponible. Paiement en ligne : {payment_url}",
+        body="Piano Academie : votre facture {invoice_number} de {amount_due} {currency} est disponible. Reglement : {payment_url}",
         description="SMS envoye avec une facture.",
         variables_hint="{invoice_number} {amount_due} {currency} {payment_url} {invoice_url} {due_date} {issued_date} {client_name} {recipient_name}",
         usage_contexts=("INVOICE_SEND",),
@@ -1435,7 +1435,7 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         name="Facture - Relance (SMS)",
         channel="SMS",
         subject=None,
-        body="Rappel Piano Academie : la facture {invoice_number} de {amount_due} {currency} est en attente. Paiement en ligne : {payment_url}",
+        body="Rappel Piano Academie : la facture {invoice_number} de {amount_due} {currency} est en attente. Reglement : {payment_url}",
         description="SMS de relance facture.",
         variables_hint="{invoice_number} {amount_due} {currency} {payment_url} {invoice_url} {due_date} {issued_date} {client_name} {recipient_name}",
         usage_contexts=("INVOICE_REMINDER",),
@@ -1773,12 +1773,12 @@ PREDEFINED_TEMPLATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
     "SMS_EVENT_REMINDER": {"body": {"en": "Reminder: lesson {session_title} on {session_start_human}."}},
     "SMS_INVOICE": {
         "body": {
-            "en": "Piano Academie: your invoice {invoice_number} for {amount_due} {currency} is available. Pay online: {payment_url}"
+            "en": "Piano Academie: your invoice {invoice_number} for {amount_due} {currency} is available. Payment: {payment_url}"
         }
     },
     "SMS_INVOICE_REMINDER": {
         "body": {
-            "en": "Piano Academie reminder: invoice {invoice_number} for {amount_due} {currency} is pending. Pay online: {payment_url}"
+            "en": "Piano Academie reminder: invoice {invoice_number} for {amount_due} {currency} is pending. Payment: {payment_url}"
         }
     },
     "SMS_PAYMENT": {"body": {"en": "Payment pending for {plan_name}: {amount_due} {currency}. {payment_url}"}},

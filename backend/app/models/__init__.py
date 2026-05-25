@@ -3,6 +3,7 @@ from app.models.client_group import ClientGroup, ClientGroupMembership
 from app.models.client_record import (
     ClientAutoInvoiceOccurrence,
     ClientAutoInvoiceRule,
+    BankTransferOrder,
     ClientBillingAdjustment,
     ClientInvoiceLine,
     ClientManualCreditBalance,
@@ -155,6 +156,7 @@ __all__ = [
     "ClientFamilyLink",
     "ClientAutoInvoiceOccurrence",
     "ClientAutoInvoiceRule",
+    "BankTransferOrder",
     "ClientBillingAdjustment",
     "ClientGroup",
     "ClientGroupMembership",

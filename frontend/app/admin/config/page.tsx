@@ -1307,6 +1307,19 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     <small className="muted">{t("admin.config.account.client_balance_default_date_help")}</small>
                   </label>
 
+                  <label className="span-2">
+                    Titulaire du compte virement
+                    <input type="text" name="bank_transfer_account_holder" defaultValue={account.bank_transfer_account_holder} maxLength={255} />
+                  </label>
+                  <label className="span-2">
+                    IBAN virement
+                    <input type="text" name="bank_transfer_iban" defaultValue={account.bank_transfer_iban} maxLength={80} />
+                  </label>
+                  <label>
+                    BIC virement
+                    <input type="text" name="bank_transfer_bic" defaultValue={account.bank_transfer_bic} maxLength={40} />
+                  </label>
+
                   <fieldset className="span-2 config-currency-fieldset">
                     <legend>{t("admin.config.account.allowed_currencies")}</legend>
                     <div className="row config-currency-checks">

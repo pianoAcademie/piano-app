@@ -18,6 +18,7 @@ import {
   adminViewClientPortalAction,
   createAdminClientRangeInvoiceAction,
   deleteAdminClientRangeInvoiceAction,
+  markAdminClientRangeInvoiceBankTransferPaidAction,
   reissueAdminClientRangeInvoiceAction,
   createAdminClientManualTransactionAction,
   updateAdminClientManualTransactionAction,
@@ -932,6 +933,11 @@ type InvoiceListRow =
       privateNote: string | null;
       emailedAt: string | null;
       remindedAt: string | null;
+      bankTransferOrderId: string | null;
+      bankTransferOrderReference: string | null;
+      bankTransferOrderStatus: string | null;
+      bankTransferOrderExpiresAt: string | null;
+      bankTransferOrderPaidAt: string | null;
       includedPaymentKeys: string[];
       totalLabel: string;
       downloadHref: string;
@@ -2532,6 +2538,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       privateNote: row.private_note,
       emailedAt: row.emailed_at ?? null,
       remindedAt: row.reminded_at ?? null,
+      bankTransferOrderId: row.bank_transfer_order_id ?? null,
+      bankTransferOrderReference: row.bank_transfer_order_reference ?? null,
+      bankTransferOrderStatus: row.bank_transfer_order_status ?? null,
+      bankTransferOrderExpiresAt: row.bank_transfer_order_expires_at ?? null,
+      bankTransferOrderPaidAt: row.bank_transfer_order_paid_at ?? null,
       includedPaymentKeys: row.included_payment_keys ?? [],
       totalLabel: rangeInvoiceTotalLabel(
         Object.keys(row.total_to_pay_by_currency || {}).length > 0
@@ -5477,6 +5488,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   {t("admin.client_detail.invoice_reminder")}
                                 </span>
                               ) : null}
+                              {row.bankTransferOrderReference ? (
+                                <span
+                                  className={`status-pill ${
+                                    row.bankTransferOrderStatus === "paid"
+                                      ? "status-ok"
+                                      : row.bankTransferOrderStatus === "expired"
+                                        ? "status-cancelled"
+                                        : "status-warn"
+                                  }`}
+                                  title={row.bankTransferOrderExpiresAt ? formatDate(row.bankTransferOrderExpiresAt, language) : undefined}
+                                >
+                                  Virement {row.bankTransferOrderReference}
+                                </span>
+                              ) : null}
                             </div>
                           ) : (
                             invoiceStatusLabel(row.status, language)
@@ -5522,6 +5547,16 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                               >
                                 R
                               </Link>
+                              {row.bankTransferOrderStatus === "pending_bank_transfer" ? (
+                                <form action={markAdminClientRangeInvoiceBankTransferPaidAction}>
+                                  <input type="hidden" name="client_id" value={client.id} />
+                                  <input type="hidden" name="note_id" value={row.noteId} />
+                                  <input type="hidden" name="return_tab" value="factures" />
+                                  <button type="submit" className="client-action-icon" title="Valider le virement recu">
+                                    V€
+                                  </button>
+                                </form>
+                              ) : null}
                               {row.status !== "PAID" ? (
                                 <form action={updateAdminClientRangeInvoiceStatusAction}>
                                   <input type="hidden" name="client_id" value={client.id} />

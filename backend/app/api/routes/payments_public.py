@@ -15,9 +15,12 @@ from app.api.deps import SessionLocal, get_db
 from app.api.routes.admin_clients import (
     handle_admin_client_payment_receipt_public_payment_webhook,
     handle_admin_client_range_invoice_public_payment_webhook,
+    reconcile_admin_client_range_invoice_public_payment_by_provider_reference,
     return_admin_client_payment_receipt_public_payment,
     return_admin_client_range_invoice_public_payment,
     start_admin_client_payment_receipt_public_payment,
+    start_admin_client_range_invoice_public_bank_transfer,
+    start_admin_client_range_invoice_public_card_payment,
     start_admin_client_range_invoice_public_payment,
 )
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind, SubscriptionStatus
@@ -58,6 +61,16 @@ def _extract_reference(request: Request, payload: object) -> str | None:
     return None
 
 
+def _metadata_uuid(metadata: dict[str, str], key: str) -> UUID | None:
+    raw = (metadata.get(key) or "").strip()
+    if not raw:
+        return None
+    try:
+        return UUID(raw)
+    except ValueError:
+        return None
+
+
 @router.post("/webhook")
 async def payment_webhook(
     request: Request,
@@ -82,6 +95,19 @@ async def payment_webhook(
 
         payment_reference = _extract_reference(request, payload)
         if subscription_id is None:
+            if not payment_reference:
+                return {"ok": True, "processed": False, "reason": "missing_payment_reference"}
+            provider = detect_provider_from_reference(payment_reference) or resolve_provider(db)
+            lookup = lookup_payment(db, provider=provider, payment_reference=payment_reference)
+            invoice_client_id = _metadata_uuid(lookup.metadata, "client_id")
+            invoice_note_id = _metadata_uuid(lookup.metadata, "note_id")
+            if invoice_client_id is not None and invoice_note_id is not None:
+                return reconcile_admin_client_range_invoice_public_payment_by_provider_reference(
+                    db,
+                    client_id=invoice_client_id,
+                    note_id=invoice_note_id,
+                    provider_reference=lookup.provider_reference or payment_reference,
+                )
             return {"ok": True, "processed": False, "reason": "missing_subscription_id"}
 
         sub = db.scalar(select(ClientPlanSubscription).where(ClientPlanSubscription.id == subscription_id).with_for_update())
@@ -186,7 +212,7 @@ def start_invoice_range_public_payment(
     note_id: UUID,
     token: str = Query(min_length=24, max_length=4096),
     db: Session = Depends(get_db),
-) -> RedirectResponse:
+) -> HTMLResponse:
     return start_admin_client_range_invoice_public_payment(
         client_id=client_id,
         note_id=note_id,
@@ -210,6 +236,36 @@ def handle_invoice_range_public_payment_webhook(
         request=request,
         token=token,
         secret=secret,
+        db=db,
+    )
+
+
+@router.post("/invoices/range/{client_id}/{note_id}/card")
+def start_invoice_range_public_card_payment(
+    client_id: UUID,
+    note_id: UUID,
+    token: str = Query(min_length=24, max_length=4096),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    return start_admin_client_range_invoice_public_card_payment(
+        client_id=client_id,
+        note_id=note_id,
+        token=token,
+        db=db,
+    )
+
+
+@router.post("/invoices/range/{client_id}/{note_id}/bank-transfer")
+def start_invoice_range_public_bank_transfer(
+    client_id: UUID,
+    note_id: UUID,
+    token: str = Query(min_length=24, max_length=4096),
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    return start_admin_client_range_invoice_public_bank_transfer(
+        client_id=client_id,
+        note_id=note_id,
+        token=token,
         db=db,
     )
 
