@@ -2265,6 +2265,7 @@ def _build_range_invoice_email_defaults(
         "due_date": str(metadata.get("due_date") or ""),
         "issued_date": str(metadata.get("issued_date") or ""),
         "invoice_change_summary": change_summary,
+        "account_url": f"{_frontend_base_url()}/client?tab=finance",
     }
 
     subject = _render_message_template(subject_template, context)

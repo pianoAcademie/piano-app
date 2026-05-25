@@ -1056,7 +1056,12 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
             ),
             _email_button("{payment_url}", "Consulter et regler la facture"),
             _email_secondary(
-                "Vous pouvez aussi retrouver cette facture a tout moment dans votre espace client : "
+                "Pour payer par virement bancaire, cliquez sur le bouton puis choisissez Virement bancaire. "
+                "Une reference unique vous sera communiquee afin de suivre votre paiement."
+            ),
+            _email_secondary(
+                "Lien direct vers la facture : <a href=\"{invoice_url}\">telecharger la facture</a>. "
+                "Vous pouvez aussi la retrouver dans votre espace client : "
                 "<a href=\"{account_url}\">acceder a mon compte</a>."
             ),
         ),
@@ -1122,7 +1127,12 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
             ),
             _email_button("{payment_url}", "Regler ma facture"),
             _email_secondary(
-                "Vous pouvez egalement retrouver cette facture dans votre espace client : "
+                "Pour payer par virement bancaire, cliquez sur le bouton puis choisissez Virement bancaire. "
+                "Une reference unique vous sera communiquee afin de suivre votre paiement."
+            ),
+            _email_secondary(
+                "Lien direct vers la facture : <a href=\"{invoice_url}\">telecharger la facture</a>. "
+                "Vous pouvez egalement la retrouver dans votre espace client : "
                 "<a href=\"{account_url}\">acceder a mon compte</a>."
             ),
         ),
