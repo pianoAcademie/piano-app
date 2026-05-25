@@ -586,6 +586,52 @@ def _split_quote_amount_by_count(amount: Decimal, count: int) -> list[Decimal]:
     return parts
 
 
+def _quote_line_decimal(value: object) -> Decimal:
+    try:
+        return Decimal(value or 0)
+    except Exception:
+        return Decimal("0")
+
+
+def _quote_line_is_service_item(line: QuoteLine) -> bool:
+    return (
+        line.activity_id is not None
+        and (line.line_category or "").strip().lower() == "service"
+        and (line.line_type or "").strip().lower() == "item"
+    )
+
+
+def _quote_line_is_per_course_discount(line: QuoteLine) -> bool:
+    if (line.line_type or "").strip().lower() == "discount":
+        return True
+    if _quote_line_decimal(line.amount_ttc) < Decimal("0.00"):
+        meta = _json_object(line.meta)
+        discount_kind = str(meta.get("discount_kind") or meta.get("discount_rule_code") or "").strip().lower()
+        return discount_kind in {"family", "loyalty", "remise_fidelite", "remise_famille", "second_course"}
+    return False
+
+
+def _quote_per_course_discounts_by_activity(lines: list[QuoteLine]) -> dict[str, list[QuoteLine]]:
+    service_lines = [line for line in lines if _quote_line_is_service_item(line)]
+    discount_lines = [line for line in lines if _quote_line_is_per_course_discount(line)]
+    service_lines_by_quantity: dict[Decimal, list[QuoteLine]] = {}
+    for line in service_lines:
+        if _quote_line_decimal(line.amount_ttc) <= Decimal("0.00"):
+            continue
+        service_lines_by_quantity.setdefault(_quote_line_decimal(line.quantity), []).append(line)
+
+    discounts_by_activity: dict[str, list[QuoteLine]] = {}
+    for discount in discount_lines:
+        matching_services = service_lines_by_quantity.get(_quote_line_decimal(discount.quantity), [])
+        if len(matching_services) != 1:
+            continue
+        service_line = matching_services[0]
+        if service_line.activity_id is None:
+            continue
+        discounts_by_activity.setdefault(str(service_line.activity_id), []).append(discount)
+    return discounts_by_activity
+
+
 def _build_payment_terms_snapshot_from_plan(
     *,
     db: Session | None = None,
@@ -8759,12 +8805,9 @@ def _execute_quote_followup_transformation(
     session_limit_by_key: dict[str, int] = {}
     service_lines_by_schedule_key: dict[str, list[QuoteLine]] = {}
     service_lines_by_activity_id: dict[str, list[QuoteLine]] = {}
+    discount_lines_by_activity_id = _quote_per_course_discounts_by_activity(quote_lines)
     for line in quote_lines:
-        if (
-            line.activity_id is not None
-            and (line.line_category or "").strip().lower() == "service"
-            and (line.line_type or "").strip().lower() == "item"
-        ):
+        if _quote_line_is_service_item(line):
             line_schedule_key = _quote_line_schedule_key(line)
             if line_schedule_key:
                 service_lines_by_schedule_key.setdefault(line_schedule_key, []).append(line)
@@ -8882,18 +8925,20 @@ def _execute_quote_followup_transformation(
             or service_lines_by_activity_id.get(str(activity_id))
             or []
         )
+        quote_discount_lines = discount_lines_by_activity_id.get(str(activity_id), [])
+        quote_pricing_lines = [*quote_service_lines, *quote_discount_lines]
         pricing_overrides: list[tuple[Decimal, Decimal, Decimal, Decimal, str] | None] = [None for _ in live_sessions]
-        if quote_service_lines and live_sessions:
+        if quote_pricing_lines and live_sessions:
             amount_ht_parts = _split_quote_amount_by_count(
-                _q2(sum((Decimal(line.amount_ht or 0) for line in quote_service_lines), Decimal("0.00"))),
+                _q2(sum((Decimal(line.amount_ht or 0) for line in quote_pricing_lines), Decimal("0.00"))),
                 len(live_sessions),
             )
             amount_vat_parts = _split_quote_amount_by_count(
-                _q2(sum((Decimal(line.amount_vat or 0) for line in quote_service_lines), Decimal("0.00"))),
+                _q2(sum((Decimal(line.amount_vat or 0) for line in quote_pricing_lines), Decimal("0.00"))),
                 len(live_sessions),
             )
             total_ttc_parts = _split_quote_amount_by_count(
-                _q2(sum((Decimal(line.amount_ttc or 0) for line in quote_service_lines), Decimal("0.00"))),
+                _q2(sum((Decimal(line.amount_ttc or 0) for line in quote_pricing_lines), Decimal("0.00"))),
                 len(live_sessions),
             )
             first_line = quote_service_lines[0]
