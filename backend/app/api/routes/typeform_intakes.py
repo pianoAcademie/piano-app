@@ -4075,7 +4075,7 @@ def _planned_quantities_from_calendar_snapshot(calendar_snapshot: dict[str, obje
             continue
         activity_id = _text(raw_session.get("activity_id"))
         recommendation_key = _text(raw_session.get("recommendation_key"))
-        keys = [key for key in (recommendation_key, activity_id) if key]
+        keys = list(dict.fromkeys(key for key in (recommendation_key, activity_id) if key))
         for key in keys:
             quantities[key] = quantities.get(key, Decimal("0.00")) + Decimal("1.00")
     return quantities

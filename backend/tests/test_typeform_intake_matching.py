@@ -1581,6 +1581,42 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
         self.assertTrue(adjusted_lines[0].meta["typeform_planned_quantity_applied"])
         self.assertEqual(adjusted_lines[0].meta["typeform_original_billing_quantity"], "1.00")
 
+    def test_planned_quantities_do_not_double_count_identical_recommendation_key(self) -> None:
+        activity_id = uuid4()
+        line = QuoteLineIn(
+            line_category="service",
+            line_type="item",
+            master_item_type="activity",
+            master_item_id=activity_id,
+            activity_id=activity_id,
+            title="Cours collectif",
+            quantity=Decimal("1.00"),
+            vat_rate=Decimal("20.00"),
+            unit_price_ttc=Decimal("38.00"),
+            pricing_unit="session",
+            meta={},
+        )
+        _adjusted_preview, adjusted_lines = _apply_planned_quantities_to_activity_lines(
+            preview_lines=[],
+            quote_lines=[line],
+            calendar_snapshot={
+                "sessions": [
+                    {
+                        "activity_id": str(activity_id),
+                        "recommendation_key": str(activity_id),
+                        "date": "2026-09-01",
+                    },
+                    {
+                        "activity_id": str(activity_id),
+                        "recommendation_key": str(activity_id),
+                        "date": "2026-09-08",
+                    },
+                ]
+            },
+        )
+
+        self.assertEqual(adjusted_lines[0].quantity, Decimal("2.00"))
+
     def test_planned_quantities_do_not_change_products(self) -> None:
         product_id = uuid4()
         product_line = QuoteLineIn(
