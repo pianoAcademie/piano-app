@@ -2679,7 +2679,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     amountHt: toNumber(line.amount_ht),
     amountTtc: toNumber(line.amount_ttc),
     vatRate: toNumber(line.vat_rate),
-    meta: {},
+    meta: readObject(line.meta) || {},
   }));
 
   const quickClients: QuoteTransformClient[] = clients.map((client) => ({

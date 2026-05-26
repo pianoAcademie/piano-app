@@ -678,8 +678,28 @@ function planningKeyFromActivityAndSource(activityId: string, source: string): s
   return source ? `${activityId}:${source}` : activityId;
 }
 
-function planningKeyFromLine(line: QuoteTransformLine, activityId: string): string {
-  return planningKeyFromActivityAndSource(activityId, readString(line.meta?.typeform_automatic_line));
+function duplicateActivityIds(lines: QuoteTransformLine[]): Set<string> {
+  const counts = new Map<string, number>();
+  for (const line of lines) {
+    const activityId = line.activityId || "";
+    if (!activityId) {
+      continue;
+    }
+    counts.set(activityId, (counts.get(activityId) || 0) + 1);
+  }
+  return new Set([...counts.entries()].filter(([, count]) => count > 1).map(([activityId]) => activityId));
+}
+
+function planningKeyFromLine(line: QuoteTransformLine, activityId: string, duplicatedActivityIds: Set<string>): string {
+  const explicitKey = readString(line.meta?.recommendation_key) || readString(line.meta?.line_recommendation_key);
+  if (explicitKey) {
+    return explicitKey;
+  }
+  const source = readString(line.meta?.typeform_automatic_line);
+  if (source) {
+    return planningKeyFromActivityAndSource(activityId, source);
+  }
+  return duplicatedActivityIds.has(activityId) ? `${activityId}:line:${line.id}` : activityId;
 }
 
 function planningKeyFromSnapshotRow(row: Record<string, unknown>, activityId: string): string {
@@ -785,11 +805,12 @@ export function buildActivityPricingRows(
   scenario: QuoteTransformScenario,
   calendarSnapshot: Record<string, unknown> = {},
 ): ActivityPricingRow[] {
+  const duplicatedActivityIds = duplicateActivityIds(lines.filter((line) => line.activityId));
   const rows = lines
     .filter((line) => line.activityId)
     .map((line, index) => {
       const activityId = line.activityId || "";
-      const scheduleKey = planningKeyFromLine(line, activityId);
+      const scheduleKey = planningKeyFromLine(line, activityId, duplicatedActivityIds);
       const activity = activitiesById.get(activityId);
       const quantity = line.quantity > 0 ? line.quantity : 1;
       const expectedTtc = Number(line.amountTtc.toFixed(2));

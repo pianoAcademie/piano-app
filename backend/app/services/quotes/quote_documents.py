@@ -1962,13 +1962,19 @@ def _filter_sessions_blocked_by_quote_school_calendar(
     return filtered, len(filtered) != len(sessions)
 
 
-def _quote_line_recommendation_key(line: QuoteLine) -> str:
+def _quote_line_recommendation_key(line: QuoteLine, *, force_line_key: bool = False) -> str:
     activity_id = str(getattr(line, "activity_id", None) or "").strip()
     if not activity_id:
         return ""
     line_meta = _json_object(getattr(line, "meta", None))
     source = str(line_meta.get("typeform_automatic_line") or "").strip()
-    return f"{activity_id}:{source}" if source else activity_id
+    if source:
+        return f"{activity_id}:{source}"
+    if force_line_key:
+        line_id = str(getattr(line, "id", None) or "").strip()
+        if line_id:
+            return f"{activity_id}:line:{line_id}"
+    return activity_id
 
 
 def _calendar_snapshot_with_line_recommendation_keys(
@@ -2016,7 +2022,11 @@ def _calendar_snapshot_with_line_recommendation_keys(
         cursor = cursors.get(activity_id, 0)
         line = activity_lines[min(cursor, len(activity_lines) - 1)] if activity_lines else None
         cursors[activity_id] = cursor + 1
-        recommendation_key = _quote_line_recommendation_key(line) if line is not None else activity_id
+        recommendation_key = (
+            _quote_line_recommendation_key(line, force_line_key=len(activity_lines) > 1)
+            if line is not None
+            else activity_id
+        )
         if recommendation_key and recommendation_key != existing_key:
             block = {**block, "recommendation_key": recommendation_key}
             changed_blocks = True

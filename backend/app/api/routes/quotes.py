@@ -7126,13 +7126,28 @@ def _apply_quote_client_contact_defaults(
     user.updated_at = _utcnow()
 
 
-def _quote_line_schedule_key(line: QuoteLine) -> str | None:
+def _duplicate_service_activity_ids(lines: list[QuoteLine]) -> set[str]:
+    counts: dict[str, int] = {}
+    for line in lines:
+        if not _quote_line_is_service_item(line) or line.activity_id is None:
+            continue
+        activity_id = str(line.activity_id)
+        counts[activity_id] = counts.get(activity_id, 0) + 1
+    return {activity_id for activity_id, count in counts.items() if count > 1}
+
+
+def _quote_line_schedule_key(line: QuoteLine, duplicate_activity_ids: set[str] | None = None) -> str | None:
     if line.activity_id is None:
         return None
     meta = _json_object(line.meta)
+    explicit_key = str(meta.get("recommendation_key") or meta.get("line_recommendation_key") or "").strip()
+    if explicit_key:
+        return explicit_key
     source = str(meta.get("typeform_automatic_line") or "").strip()
     if source:
         return f"{line.activity_id}:{source}"
+    if duplicate_activity_ids and str(line.activity_id) in duplicate_activity_ids:
+        return f"{line.activity_id}:line:{line.id}"
     return str(line.activity_id)
 
 
@@ -8802,20 +8817,21 @@ def _execute_quote_followup_transformation(
         if str(item).strip()
     }
     quote_lines = db.scalars(select(QuoteLine).where(QuoteLine.quote_id == quote.id)).all()
+    duplicate_service_activity_ids = _duplicate_service_activity_ids(quote_lines)
     session_limit_by_key: dict[str, int] = {}
     service_lines_by_schedule_key: dict[str, list[QuoteLine]] = {}
     service_lines_by_activity_id: dict[str, list[QuoteLine]] = {}
     discount_lines_by_activity_id = _quote_per_course_discounts_by_activity(quote_lines)
     for line in quote_lines:
         if _quote_line_is_service_item(line):
-            line_schedule_key = _quote_line_schedule_key(line)
+            line_schedule_key = _quote_line_schedule_key(line, duplicate_service_activity_ids)
             if line_schedule_key:
                 service_lines_by_schedule_key.setdefault(line_schedule_key, []).append(line)
             service_lines_by_activity_id.setdefault(str(line.activity_id), []).append(line)
         limit = _planning_session_limit_from_quote_line(line)
         if limit is None:
             continue
-        schedule_key = _quote_line_schedule_key(line)
+        schedule_key = _quote_line_schedule_key(line, duplicate_service_activity_ids)
         if schedule_key:
             session_limit_by_key[schedule_key] = limit
         if line.activity_id is not None:
