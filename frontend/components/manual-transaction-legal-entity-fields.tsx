@@ -219,12 +219,14 @@ export default function ManualTransactionLegalEntityFields({
                           name="reconciled_invoice_note_ids"
                           value={row.noteId}
                           onChange={(event) => {
+                            const noteId = row.noteId;
+                            const checked = event.currentTarget.checked;
                             setSelectedNoteIds((previous) => {
                               const next = new Set(previous);
-                              if (event.currentTarget.checked) {
-                                next.add(row.noteId);
+                              if (checked) {
+                                next.add(noteId);
                               } else {
-                                next.delete(row.noteId);
+                                next.delete(noteId);
                               }
                               return next;
                             });
