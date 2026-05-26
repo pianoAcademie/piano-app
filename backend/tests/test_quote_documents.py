@@ -16,6 +16,7 @@ from reportlab.platypus import Paragraph
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.services.quotes.quote_documents import (
+    _calendar_snapshot_with_line_recommendation_keys,
     _calendar_snapshot_with_planning_sessions,
     _calendar_snapshot_with_current_solfege_block,
     _check_payment_instruction_lines,
@@ -324,6 +325,7 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
                 (datetime(2026, 9, 23, 8, 0, tzinfo=timezone.utc), datetime(2026, 9, 23, 9, 0, tzinfo=timezone.utc)),
                 (datetime(2026, 9, 30, 8, 0, tzinfo=timezone.utc), datetime(2026, 9, 30, 9, 0, tzinfo=timezone.utc)),
                 (datetime(2026, 10, 7, 8, 0, tzinfo=timezone.utc), datetime(2026, 10, 7, 9, 0, tzinfo=timezone.utc)),
+                (datetime(2026, 10, 14, 8, 0, tzinfo=timezone.utc), datetime(2026, 10, 14, 9, 0, tzinfo=timezone.utc)),
             ]
         ]
         fake_db = SimpleNamespace(
@@ -349,7 +351,7 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
                     "weekday": 2,
                     "weekday_label": "Mercredi",
                     "start_date": "2026-09-09",
-                    "end_date": "2026-10-07",
+                    "end_date": "2026-09-23",
                     "start_time": "10:00",
                     "end_time": "11:00",
                     "series_key": str(recurrence_id),
@@ -364,6 +366,36 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
 
         self.assertEqual([item["date"] for item in hydrated["sessions"]], ["2026-09-09", "2026-09-23", "2026-09-30"])
         self.assertEqual(hydrated["sessions_count"], 3)
+        self.assertEqual(hydrated["blocks"][0]["end_date"], "2026-09-30")
+
+    def test_line_recommendation_keys_copy_planning_session_limit_from_quote_line(self) -> None:
+        activity_id = uuid4()
+        line = SimpleNamespace(
+            id=uuid4(),
+            activity_id=activity_id,
+            sort_order=0,
+            created_at=datetime(2026, 5, 26, tzinfo=timezone.utc),
+            meta={
+                "typeform_automatic_line": "collective_course",
+                "planning_session_limit": 32,
+            },
+        )
+        recommendation_key = f"{activity_id}:collective_course"
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(activity_id),
+                    "recommendation_key": recommendation_key,
+                    "start_date": "2026-09-09",
+                    "end_date": "2027-04-14",
+                }
+            ],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_line_recommendation_keys(None, snapshot, lines=[line])
+
+        self.assertEqual(hydrated["blocks"][0]["planning_session_limit"], 32)
 
     def test_calendar_snapshot_hydrates_partial_block_sessions_from_planning(self) -> None:
         activity_id = uuid4()

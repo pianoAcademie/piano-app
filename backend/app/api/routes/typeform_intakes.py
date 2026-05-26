@@ -6039,6 +6039,7 @@ def _calendar_snapshot_from_analysis(
                     "modality": modality,
                     "series_key": series_key,
                     "planning_session_limit": session_limit,
+                    "school_year_label": runtime_context.get("school_year_label"),
                     "selection_pending": False,
                 }
             )

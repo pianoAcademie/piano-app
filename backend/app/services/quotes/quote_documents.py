@@ -1628,6 +1628,18 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
     end_date = _parse_iso_date(block.get("end_date"))
     if start_date is None or end_date is None:
         return []
+    try:
+        session_limit = int(str(block.get("planning_session_limit") or "").strip())
+    except (TypeError, ValueError):
+        session_limit = 0
+    effective_end_date = end_date
+    if session_limit > 0:
+        school_year_bounds = _school_year_bounds_from_label(str(block.get("school_year_label") or ""))
+        if school_year_bounds is not None:
+            effective_end_date = max(effective_end_date, school_year_bounds[1])
+        else:
+            fallback_end_year = start_date.year + 1 if start_date.month >= 9 else start_date.year
+            effective_end_date = max(effective_end_date, date(fallback_end_year, 8, 31))
     start_time = str(block.get("start_time") or "").strip()
     if not start_time:
         return []
@@ -1640,7 +1652,7 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
     excluded_dates = _parse_iso_date_set(block.get("holiday_dates")) | _parse_iso_date_set(block.get("closure_dates"))
 
     lower_bound = datetime.combine(start_date - timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
-    upper_bound = datetime.combine(end_date + timedelta(days=2), datetime.min.time(), tzinfo=timezone.utc)
+    upper_bound = datetime.combine(effective_end_date + timedelta(days=2), datetime.min.time(), tzinfo=timezone.utc)
     conditions = [
         CourseSession.course_type_id == activity_id,
         CourseSession.status == SessionStatus.SCHEDULED,
@@ -1666,7 +1678,7 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
         zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
         local_start = session_obj.start_at_utc.astimezone(zone)
         local_end = session_obj.end_at_utc.astimezone(zone)
-        if local_start.date() < start_date or local_start.date() > end_date:
+        if local_start.date() < start_date or local_start.date() > effective_end_date:
             continue
         if local_start.date() in excluded_dates:
             continue
@@ -1693,10 +1705,6 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
             }
         )
     sessions, _ = _filter_sessions_blocked_by_quote_school_calendar(db, sessions)
-    try:
-        session_limit = int(str(block.get("planning_session_limit") or "").strip())
-    except (TypeError, ValueError):
-        session_limit = 0
     if session_limit > 0:
         sessions = sessions[:session_limit]
     return sessions
@@ -1984,6 +1992,29 @@ def _quote_line_recommendation_key(line: QuoteLine, *, force_line_key: bool = Fa
     return activity_id
 
 
+def _planning_session_limit_from_quote_line_meta(line: QuoteLine | None) -> int | None:
+    if line is None:
+        return None
+    line_meta = _json_object(getattr(line, "meta", None))
+    template = _json_object(line_meta.get("typeform_template"))
+    raw_limit = line_meta.get("planning_session_limit")
+    if raw_limit is None:
+        raw_limit = template.get("planning_session_limit")
+    try:
+        limit = int(str(raw_limit).strip())
+    except (TypeError, ValueError):
+        return None
+    return limit if limit > 0 else None
+
+
+def _planning_session_limit_from_block(block: dict[str, Any]) -> int | None:
+    try:
+        limit = int(str(block.get("planning_session_limit") or "").strip())
+    except (TypeError, ValueError):
+        return None
+    return limit if limit > 0 else None
+
+
 def _calendar_snapshot_with_line_recommendation_keys(
     db: Session | None,
     calendar_snapshot: dict[str, Any],
@@ -2009,6 +2040,12 @@ def _calendar_snapshot_with_line_recommendation_keys(
         if not activity_id or _line_matches_solfege_activity(line):
             continue
         lines_by_activity_id.setdefault(activity_id, []).append(line)
+    lines_by_recommendation_key = {
+        key: line
+        for activity_lines in lines_by_activity_id.values()
+        for line in activity_lines
+        if (key := _quote_line_recommendation_key(line, force_line_key=len(activity_lines) > 1))
+    }
 
     target_activity_ids = {
         activity_id
@@ -2030,6 +2067,11 @@ def _calendar_snapshot_with_line_recommendation_keys(
 
         existing_key = str(block.get("recommendation_key") or "").strip()
         if existing_key and existing_key != activity_id:
+            matching_line = lines_by_recommendation_key.get(existing_key)
+            limit = _planning_session_limit_from_quote_line_meta(matching_line)
+            if limit is not None and _planning_session_limit_from_block(block) != limit:
+                block = {**block, "planning_session_limit": limit}
+                changed_blocks = True
             normalized_blocks.append(block)
             continue
 
@@ -2044,6 +2086,10 @@ def _calendar_snapshot_with_line_recommendation_keys(
         )
         if recommendation_key and recommendation_key != existing_key:
             block = {**block, "recommendation_key": recommendation_key}
+            changed_blocks = True
+        limit = _planning_session_limit_from_quote_line_meta(line)
+        if limit is not None and _planning_session_limit_from_block(block) != limit:
+            block = {**block, "planning_session_limit": limit}
             changed_blocks = True
         normalized_blocks.append(block)
 
@@ -2104,6 +2150,10 @@ def _calendar_snapshot_with_planning_sessions(db: Session | None, calendar_snaps
                 sessions = kept_sessions
                 seen = {_calendar_session_dedupe_key(item) for item in sessions}
                 changed = True
+            last_refreshed_date = str(refreshed_block_sessions[-1].get("date") or "").strip()
+            if last_refreshed_date and str(block.get("end_date") or "").strip() != last_refreshed_date:
+                block["end_date"] = last_refreshed_date
+                changed = True
         for item in refreshed_block_sessions:
             key = _calendar_session_dedupe_key(item)
             if key in seen:
@@ -2123,6 +2173,7 @@ def _calendar_snapshot_with_planning_sessions(db: Session | None, calendar_snaps
         )
         snapshot["sessions"] = sessions
         snapshot["sessions_count"] = len(sessions)
+        snapshot["blocks"] = blocks
     return snapshot
 
 
