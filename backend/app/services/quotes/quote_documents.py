@@ -2052,6 +2052,7 @@ def _calendar_snapshot_with_line_recommendation_keys(
         for activity_id, activity_lines in lines_by_activity_id.items()
         if len(activity_lines) > 1
         or any(str(_json_object(getattr(line, "meta", None)).get("typeform_automatic_line") or "").strip() for line in activity_lines)
+        or any(_planning_session_limit_from_quote_line_meta(line) is not None for line in activity_lines)
     }
     if not target_activity_ids:
         return snapshot

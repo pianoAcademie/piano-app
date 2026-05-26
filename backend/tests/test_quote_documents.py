@@ -397,6 +397,30 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
 
         self.assertEqual(hydrated["blocks"][0]["planning_session_limit"], 32)
 
+    def test_line_recommendation_keys_copy_single_activity_session_limit(self) -> None:
+        activity_id = uuid4()
+        line = SimpleNamespace(
+            id=uuid4(),
+            activity_id=activity_id,
+            sort_order=0,
+            created_at=datetime(2026, 5, 26, tzinfo=timezone.utc),
+            meta={"planning_session_limit": 32},
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(activity_id),
+                    "start_date": "2026-09-09",
+                    "end_date": "2027-04-14",
+                }
+            ],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_line_recommendation_keys(None, snapshot, lines=[line])
+
+        self.assertEqual(hydrated["blocks"][0]["planning_session_limit"], 32)
+
     def test_calendar_snapshot_hydrates_partial_block_sessions_from_planning(self) -> None:
         activity_id = uuid4()
         location_id = uuid4()

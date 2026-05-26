@@ -511,8 +511,8 @@ def _quote_monthly_service_amounts_ttc_for_schedule(db: Session, quote: Quote) -
     if not service_lines:
         return {}
 
-    calendar_snapshot = _calendar_snapshot_with_planning_sessions(db, quote.calendar_snapshot or {})
-    calendar_snapshot = _calendar_snapshot_with_line_recommendation_keys(db, calendar_snapshot, lines=lines)
+    calendar_snapshot = _calendar_snapshot_with_line_recommendation_keys(db, quote.calendar_snapshot or {}, lines=lines)
+    calendar_snapshot = _calendar_snapshot_with_planning_sessions(db, calendar_snapshot)
     sessions_by_key: dict[str, list[dict[str, object]]] = {}
     sessions_by_activity: dict[str, list[dict[str, object]]] = {}
     for item in _json_list(calendar_snapshot.get("sessions")):
@@ -4957,6 +4957,13 @@ def create_quote_from_payload(
     db.flush()
 
     total = _materialize_quote_lines(db, quote=row, lines_in=payload.lines)
+    lines = _load_quote_lines(db, row.id)
+    row.calendar_snapshot = _calendar_snapshot_with_line_recommendation_keys(
+        db,
+        _json_object(row.calendar_snapshot),
+        lines=lines,
+    )
+    row.calendar_snapshot = _calendar_snapshot_with_planning_sessions(db, row.calendar_snapshot)
     lines_total = _quote_lines_total_ttc(db, quote_id=row.id)
     if not row.payment_terms_snapshot:
         row.payment_terms_snapshot = _build_payment_terms_snapshot_for_quote(db, row, total_ttc=total)
@@ -5136,10 +5143,16 @@ def update_quote(
         row.selected_solfege_slot = payload.selected_solfege_slot or {}
         document_dirty = True
     if payload.calendar_snapshot is not None:
-        row.calendar_snapshot = payload.calendar_snapshot
+        lines = _load_quote_lines(db, row.id)
+        row.calendar_snapshot = _calendar_snapshot_with_line_recommendation_keys(
+            db,
+            _json_object(payload.calendar_snapshot),
+            lines=lines,
+        )
+        row.calendar_snapshot = _calendar_snapshot_with_planning_sessions(db, row.calendar_snapshot)
         if "selected_solfege_slot" not in payload.model_fields_set:
             row.selected_solfege_slot = _public_selected_solfege_slot_from_snapshot(
-                _json_object(payload.calendar_snapshot),
+                _json_object(row.calendar_snapshot),
                 level_code=row.estimated_solfege_level,
                 duration_minutes=row.solfege_duration_minutes,
                 language=_public_solfege_language(row.language),

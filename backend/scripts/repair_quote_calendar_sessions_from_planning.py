@@ -9,8 +9,11 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from sqlalchemy import select
 
 from app.db.session import SessionLocal
-from app.models.quote import Quote
-from app.services.quotes.quote_documents import _calendar_snapshot_with_planning_sessions
+from app.models.quote import Quote, QuoteLine
+from app.services.quotes.quote_documents import (
+    _calendar_snapshot_with_line_recommendation_keys,
+    _calendar_snapshot_with_planning_sessions,
+)
 
 SCRIPT_PREFIX = "QUOTE_CALENDAR_SESSIONS_PLANNING_REPAIR"
 
@@ -32,7 +35,17 @@ def main() -> int:
             inspected += 1
             before = quote.calendar_snapshot or {}
             before_count = len(before.get("sessions") or []) if isinstance(before, dict) else 0
-            after = _calendar_snapshot_with_planning_sessions(db, before if isinstance(before, dict) else {})
+            lines = db.scalars(
+                select(QuoteLine)
+                .where(QuoteLine.quote_id == quote.id)
+                .order_by(QuoteLine.sort_order.asc(), QuoteLine.created_at.asc())
+            ).all()
+            after = _calendar_snapshot_with_line_recommendation_keys(
+                db,
+                before if isinstance(before, dict) else {},
+                lines=lines,
+            )
+            after = _calendar_snapshot_with_planning_sessions(db, after)
             after_count = len(after.get("sessions") or []) if isinstance(after, dict) else 0
             if after_count <= before_count:
                 print(f"{SCRIPT_PREFIX}|ok|quote={quote.quote_number}|sessions={before_count}")
