@@ -12837,11 +12837,13 @@ function normalizePlanningBlockSessionLimit(
   block: QuotePlanningBlockInput,
   quoteLines: QuotePlanningLineInput[],
 ): QuotePlanningBlockInput {
-  if (positiveInt(block.planning_session_limit) > 0) {
+  const inferred = inferPlanningSessionLimitForBlock(block, quoteLines);
+  if (inferred <= 0) {
     return block;
   }
-  const inferred = inferPlanningSessionLimitForBlock(block, quoteLines);
-  return inferred > 0 ? { ...block, planning_session_limit: inferred } : block;
+  return positiveInt(block.planning_session_limit) === inferred
+    ? block
+    : { ...block, planning_session_limit: inferred };
 }
 
 function deriveSchoolYearLabelFromBlocks(

@@ -2484,6 +2484,45 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const quoteTermsTemplateId = detail.quote.terms_template_id || readStringMeta(detail.quote.meta || {}, "terms_template_id");
   const calendarSessions = getCalendarSessions(planningSnapshotForEditor);
   const planningBlocks = getPlanningBlocks(planningSnapshotForEditor);
+  const quotePlanningLimitSetsByKey = new Map<string, Set<number>>();
+  const quotePlanningLimitSetsByActivity = new Map<string, Set<number>>();
+  const addPlanningLimit = (map: Map<string, Set<number>>, key: string, limit: number): void => {
+    if (!key || limit <= 0) {
+      return;
+    }
+    const values = map.get(key) ?? new Set<number>();
+    values.add(limit);
+    map.set(key, values);
+  };
+  for (const line of detail.lines) {
+    const activityId = String(line.activity_id ?? "").trim();
+    if (!activityId) {
+      continue;
+    }
+    if (String(line.line_category || "").toLowerCase() !== "service" || String(line.line_type || "").toLowerCase() !== "item") {
+      continue;
+    }
+    const limit = quoteLinePlanningLimit(line);
+    if (limit <= 0) {
+      continue;
+    }
+    addPlanningLimit(quotePlanningLimitSetsByKey, planningKeyFromQuoteLine(line), limit);
+    addPlanningLimit(quotePlanningLimitSetsByActivity, activityId, limit);
+  }
+  const uniquePlanningLimit = (values: Set<number> | undefined): number => {
+    if (!values || values.size !== 1) {
+      return 0;
+    }
+    return Array.from(values)[0] || 0;
+  };
+  const withQuoteLinePlanningLimit = (block: Record<string, unknown>): Record<string, unknown> => {
+    const activityId = String(block.activity_id ?? "").trim();
+    const planningKey = planningKeyFromSnapshotItem(block);
+    const lineLimit =
+      uniquePlanningLimit(quotePlanningLimitSetsByKey.get(planningKey))
+      || uniquePlanningLimit(quotePlanningLimitSetsByActivity.get(activityId));
+    return lineLimit > 0 ? { ...block, planning_session_limit: lineLimit } : block;
+  };
   const planningByActivityId: Record<string, { plannedQuantity: number; pendingSelection: boolean }> = {};
   const ensurePlanningSummary = (planningKey: string): { plannedQuantity: number; pendingSelection: boolean } => {
     if (!(planningKey in planningByActivityId)) {
@@ -2505,8 +2544,9 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     if (!planningKey) {
       continue;
     }
+    const normalizedBlock = withQuoteLinePlanningLimit(block);
     const summary = ensurePlanningSummary(planningKey);
-    const estimatedCount = planningBlockEstimatedDates(block).length;
+    const estimatedCount = planningBlockEstimatedDates(normalizedBlock).length;
     estimatedPlanningSessionTotal += estimatedCount;
     estimatedPlanningQuantityByKey[planningKey] = (estimatedPlanningQuantityByKey[planningKey] || 0) + estimatedCount;
     const rawPending = block.selection_pending;
@@ -2517,7 +2557,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   }
   for (const [planningKey, estimatedCount] of Object.entries(estimatedPlanningQuantityByKey)) {
     const summary = ensurePlanningSummary(planningKey);
-    if (estimatedCount > summary.plannedQuantity) {
+    if (estimatedCount > 0) {
       summary.plannedQuantity = estimatedCount;
     }
   }
