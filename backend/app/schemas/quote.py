@@ -295,6 +295,7 @@ class QuoteCalendarPreviewRequest(BaseModel):
     modality: str | None = Field(default=None, max_length=20)
     holiday_dates: list[date] = Field(default_factory=list)
     closure_dates: list[date] = Field(default_factory=list)
+    session_limit: int | None = Field(default=None, ge=1, le=260)
 
 
 class QuotePaymentSchedulePreviewRequest(BaseModel):

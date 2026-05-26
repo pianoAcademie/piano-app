@@ -19,6 +19,7 @@ class CalendarGenerationInput:
     modality: str | None = None
     holiday_dates: list[date] | None = None
     closure_dates: list[date] | None = None
+    session_limit: int | None = None
 
 
 def _normalize_weekdays(weekdays: Iterable[int]) -> set[int]:
@@ -87,6 +88,9 @@ def generate_calendar_snapshot(payload: CalendarGenerationInput) -> dict[str, ob
                 continue
             seen_month_by_weekday.add(key)
             selected_days.append(day)
+
+    if payload.session_limit is not None and payload.session_limit > 0:
+        selected_days = selected_days[: payload.session_limit]
 
     sessions: list[dict[str, object]] = []
     for day in selected_days:

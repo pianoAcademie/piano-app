@@ -12443,6 +12443,7 @@ type QuotePlanningBlockInput = {
   source?: string | null;
   duration_minutes?: number | null;
   sessions_count?: number | null;
+  planning_session_limit?: number | null;
   calendar_name?: string | null;
   weekday: number;
   weekday_label: string | null;
@@ -12502,6 +12503,7 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
       const source = String(item.source ?? "").trim();
       const durationMinutesRaw = Number.parseInt(String(item.duration_minutes ?? ""), 10);
       const sessionsCountRaw = Number.parseInt(String(item.sessions_count ?? ""), 10);
+      const planningSessionLimitRaw = Number.parseInt(String(item.planning_session_limit ?? ""), 10);
       const calendarName = String(item.calendar_name ?? "").trim();
       const modalityRaw = String(item.modality ?? "").trim().toUpperCase();
       const recurrenceRaw = String(item.recurrence_frequency ?? "").trim().toLowerCase();
@@ -12567,6 +12569,8 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
         source: source || null,
         duration_minutes: Number.isFinite(durationMinutesRaw) && durationMinutesRaw > 0 ? durationMinutesRaw : null,
         sessions_count: Number.isFinite(sessionsCountRaw) && sessionsCountRaw >= 0 ? sessionsCountRaw : null,
+        planning_session_limit:
+          Number.isFinite(planningSessionLimitRaw) && planningSessionLimitRaw > 0 ? planningSessionLimitRaw : null,
         calendar_name: calendarName || null,
         weekday: selectionPending ? -1 : weekday,
         weekday_label: selectionPending ? (weekdayLabel || "Selection a faire") : (weekdayLabel || null),
@@ -12642,6 +12646,23 @@ function deriveSchoolYearLabelFromDate(dateRaw: string): string | null {
   const startYear = month >= 9 ? year : year - 1;
   const endYear = startYear + 1;
   return `${startYear}-${endYear}`;
+}
+
+function schoolYearEndDateFromLabel(label: string | null): string | null {
+  const match = String(label || "").trim().match(/^(\d{4})-(\d{4})$/);
+  if (!match) {
+    return null;
+  }
+  const endYear = Number.parseInt(match[2], 10);
+  if (!Number.isFinite(endYear)) {
+    return null;
+  }
+  return `${endYear}-08-31`;
+}
+
+function positiveInt(value: unknown): number {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function deriveSchoolYearLabelFromBlocks(
@@ -12751,6 +12772,13 @@ async function buildCalendarSnapshotFromBlocks({
     const resolvedCalendar = await resolveLocationCalendar(block.location_id, inferredSchoolYearLabel);
     const holidayDates = block.exclude_holidays_in_recurrence === false ? [] : resolvedCalendar.holiday_dates;
     const closureDates = block.exclude_school_vacations_in_recurrence === false ? [] : resolvedCalendar.closure_dates;
+    const sessionLimit = positiveInt(block.planning_session_limit);
+    const calendarSchoolYearLabel = String(resolvedCalendar.calendar?.school_year_label ?? inferredSchoolYearLabel ?? "").trim();
+    const schoolYearEndDate = schoolYearEndDateFromLabel(calendarSchoolYearLabel);
+    const previewEndDate =
+      sessionLimit > 0 && schoolYearEndDate && schoolYearEndDate > block.end_date
+        ? schoolYearEndDate
+        : block.end_date;
     if (block.selection_pending) {
       Object.assign(block, {
         calendar_id: String(resolvedCalendar.calendar?.id ?? ""),
@@ -12772,7 +12800,7 @@ async function buildCalendarSnapshotFromBlocks({
         method: "POST",
         body: JSON.stringify({
           start_date: block.start_date,
-          end_date: block.end_date,
+          end_date: previewEndDate,
           weekdays: [block.weekday],
           recurrence_frequency: block.recurrence_frequency || "weekly",
           start_time: block.start_time,
@@ -12782,6 +12810,7 @@ async function buildCalendarSnapshotFromBlocks({
           modality: block.modality,
           holiday_dates: holidayDates,
           closure_dates: closureDates,
+          session_limit: sessionLimit > 0 ? sessionLimit : undefined,
         }),
       },
       token,
@@ -12789,7 +12818,8 @@ async function buildCalendarSnapshotFromBlocks({
     if (!preview.ok) {
       redirect(appendQueryMessage(returnTo, "error", preview.message));
     }
-    const rows = Array.isArray(preview.data.sessions) ? (preview.data.sessions as Array<Record<string, unknown>>) : [];
+    const previewRows = Array.isArray(preview.data.sessions) ? (preview.data.sessions as Array<Record<string, unknown>>) : [];
+    const rows = sessionLimit > 0 ? previewRows.slice(0, sessionLimit) : previewRows;
 
     const liveMatch = await loadLivePlanningMatchForBlock({
       block: block as LivePlanningBlockInput,
@@ -12822,6 +12852,8 @@ async function buildCalendarSnapshotFromBlocks({
       calendar_id: String(resolvedCalendar.calendar?.id ?? ""),
       calendar_name: String(resolvedCalendar.calendar?.name ?? ""),
       calendar_school_year: String(resolvedCalendar.calendar?.school_year_label ?? ""),
+      end_date: String(rows[rows.length - 1]?.date ?? block.end_date),
+      sessions_count: rows.length,
       holiday_dates: holidayDates,
       closure_dates: closureDates,
     });

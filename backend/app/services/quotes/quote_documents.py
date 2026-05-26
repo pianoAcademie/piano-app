@@ -1670,40 +1670,48 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
         .where(*conditions)
         .order_by(CourseSession.start_at_utc.asc())
     ).all()
-    sessions: list[dict[str, Any]] = []
-    for session_obj, activity, location in rows:
-        row_series_key = str(session_obj.recurrence_group_id or session_obj.id)
-        if series_key and row_series_key != series_key:
-            continue
-        zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
-        local_start = session_obj.start_at_utc.astimezone(zone)
-        local_end = session_obj.end_at_utc.astimezone(zone)
-        if local_start.date() < start_date or local_start.date() > effective_end_date:
-            continue
-        if local_start.date() in excluded_dates:
-            continue
-        if weekday >= 0 and local_start.weekday() != weekday:
-            continue
-        if local_start.strftime("%H:%M") != start_time:
-            continue
-        modality = _course_type_modality(activity, location)
-        sessions.append(
-            {
-                "date": local_start.date().isoformat(),
-                "start_time": local_start.strftime("%H:%M"),
-                "end_time": local_end.strftime("%H:%M"),
-                "duration_minutes": int((local_end - local_start).total_seconds() // 60),
-                "activity_id": str(activity.id),
-                "activity_label": activity.name,
-                "location_id": str(location.id),
-                "location_label": location.name,
-                "recommendation_key": block.get("recommendation_key") or None,
-                "series_key": str(session_obj.recurrence_group_id or session_obj.id),
-                "weekday": local_start.weekday(),
-                "weekday_label": DAY_LABELS_FR.get(local_start.weekday(), local_start.strftime("%A")),
-                "modality": modality,
-            }
-        )
+    def collect_sessions(*, enforce_series_key: bool) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for session_obj, activity, location in rows:
+            row_series_key = str(session_obj.recurrence_group_id or session_obj.id)
+            if enforce_series_key and series_key and row_series_key != series_key:
+                continue
+            zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
+            local_start = session_obj.start_at_utc.astimezone(zone)
+            local_end = session_obj.end_at_utc.astimezone(zone)
+            if local_start.date() < start_date or local_start.date() > effective_end_date:
+                continue
+            if local_start.date() in excluded_dates:
+                continue
+            if weekday >= 0 and local_start.weekday() != weekday:
+                continue
+            if local_start.strftime("%H:%M") != start_time:
+                continue
+            modality = _course_type_modality(activity, location)
+            out.append(
+                {
+                    "date": local_start.date().isoformat(),
+                    "start_time": local_start.strftime("%H:%M"),
+                    "end_time": local_end.strftime("%H:%M"),
+                    "duration_minutes": int((local_end - local_start).total_seconds() // 60),
+                    "activity_id": str(activity.id),
+                    "activity_label": activity.name,
+                    "location_id": str(location.id),
+                    "location_label": location.name,
+                    "recommendation_key": block.get("recommendation_key") or None,
+                    "series_key": str(session_obj.recurrence_group_id or session_obj.id),
+                    "weekday": local_start.weekday(),
+                    "weekday_label": DAY_LABELS_FR.get(local_start.weekday(), local_start.strftime("%A")),
+                    "modality": modality,
+                }
+            )
+        return out
+
+    sessions = collect_sessions(enforce_series_key=True)
+    if session_limit > 0 and series_key and len(sessions) < session_limit:
+        widened_sessions = collect_sessions(enforce_series_key=False)
+        if len(widened_sessions) > len(sessions):
+            sessions = widened_sessions
     sessions, _ = _filter_sessions_blocked_by_quote_school_calendar(db, sessions)
     if session_limit > 0:
         sessions = sessions[:session_limit]
@@ -2000,6 +2008,16 @@ def _planning_session_limit_from_quote_line_meta(line: QuoteLine | None) -> int 
     raw_limit = line_meta.get("planning_session_limit")
     if raw_limit is None:
         raw_limit = template.get("planning_session_limit")
+    if raw_limit is None:
+        line_category = str(getattr(line, "line_category", "") or "").strip().lower()
+        pricing_unit = str(getattr(line, "pricing_unit", "") or "").strip().lower()
+        if (
+            getattr(line, "activity_id", None) is not None
+            and (line_category == "service" or pricing_unit in {"session", "per_session"})
+        ):
+            quantity = _decimal_from_any(getattr(line, "quantity", None), Decimal("0"))
+            if quantity > Decimal("1") and quantity == quantity.to_integral_value():
+                raw_limit = int(quantity)
     try:
         limit = int(str(raw_limit).strip())
     except (TypeError, ValueError):

@@ -29,6 +29,7 @@ type PlanningBlock = {
   source: string;
   duration_minutes: number | null;
   sessions_count: number | null;
+  planning_session_limit: number | null;
   weekday: number;
   recurrence_frequency: "weekly" | "biweekly" | "monthly";
   start_date: string;
@@ -277,16 +278,28 @@ function timeToMinutes(value: string): number | null {
   return hours * 60 + minutes;
 }
 
+function schoolYearEndDateFromStart(start: Date): Date {
+  const startYear = start.getUTCMonth() + 1 >= 9 ? start.getUTCFullYear() : start.getUTCFullYear() - 1;
+  return new Date(Date.UTC(startYear + 1, 7, 31));
+}
+
+function planningSessionLimit(block: PlanningBlock): number {
+  const parsed = Number.parseInt(String(block.planning_session_limit ?? ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
 function estimateSessionDates(block: PlanningBlock): string[] {
   const start = parseDateOnly(block.start_date);
   const end = parseDateOnly(block.end_date);
   if (!start || !end || end < start) {
     return [];
   }
+  const limit = planningSessionLimit(block);
+  const effectiveEnd = limit > 0 && schoolYearEndDateFromStart(start) > end ? schoolYearEndDateFromStart(start) : end;
   const excluded = new Set(uniqueSortedDateList([...block.holiday_dates, ...block.closure_dates]));
   const matchedDates: string[] = [];
   const cursor = new Date(start);
-  while (cursor <= end) {
+  while (cursor <= effectiveEnd) {
     const normalizedWeekday = (cursor.getUTCDay() + 6) % 7;
     const dayIso = cursor.toISOString().slice(0, 10);
     if (normalizedWeekday === block.weekday && !excluded.has(dayIso)) {
@@ -295,7 +308,7 @@ function estimateSessionDates(block: PlanningBlock): string[] {
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
   if (block.recurrence_frequency === "weekly") {
-    return matchedDates;
+    return limit > 0 ? matchedDates.slice(0, limit) : matchedDates;
   }
   if (block.recurrence_frequency === "biweekly") {
     if (matchedDates.length <= 1) {
@@ -305,7 +318,7 @@ function estimateSessionDates(block: PlanningBlock): string[] {
     if (!firstDate) {
       return matchedDates;
     }
-    return matchedDates.filter((item) => {
+    const biweekly = matchedDates.filter((item) => {
       const parsed = parseDateOnly(item);
       if (!parsed) {
         return false;
@@ -313,6 +326,7 @@ function estimateSessionDates(block: PlanningBlock): string[] {
       const deltaDays = Math.floor((parsed.getTime() - firstDate.getTime()) / 86_400_000);
       return deltaDays % 14 === 0;
     });
+    return limit > 0 ? biweekly.slice(0, limit) : biweekly;
   }
   const monthSet = new Set<string>();
   const monthly: string[] = [];
@@ -328,7 +342,7 @@ function estimateSessionDates(block: PlanningBlock): string[] {
     monthSet.add(key);
     monthly.push(row);
   }
-  return monthly;
+  return limit > 0 ? monthly.slice(0, limit) : monthly;
 }
 
 type SnapshotSession = {
@@ -632,6 +646,7 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
         const source = typeof row.source === "string" ? row.source : "";
         const durationMinutesRaw = Number.parseInt(String(row.duration_minutes ?? ""), 10);
         const sessionsCountRaw = Number.parseInt(String(row.sessions_count ?? ""), 10);
+        const planningSessionLimitRaw = Number.parseInt(String(row.planning_session_limit ?? ""), 10);
         const modality = typeof row.modality === "string" ? row.modality : "";
         const holidayDates = Array.isArray(row.holiday_dates)
           ? row.holiday_dates.map((item) => String(item)).filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item))
@@ -650,6 +665,8 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
           source,
           duration_minutes: Number.isFinite(durationMinutesRaw) && durationMinutesRaw > 0 ? durationMinutesRaw : null,
           sessions_count: Number.isFinite(sessionsCountRaw) && sessionsCountRaw >= 0 ? sessionsCountRaw : null,
+          planning_session_limit:
+            Number.isFinite(planningSessionLimitRaw) && planningSessionLimitRaw > 0 ? planningSessionLimitRaw : null,
           weekday: selectionPending
             ? WEEKDAY_UNSET
             : Number.isFinite(weekday) && weekday >= 0 && weekday <= 6
@@ -695,6 +712,7 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
         source: "",
         duration_minutes: null,
         sessions_count: null,
+        planning_session_limit: null,
         weekday: weekday >= 0 && weekday <= 6 ? weekday : WEEKDAY_UNSET,
         recurrence_frequency: "weekly",
         start_date: startDate,
@@ -727,6 +745,7 @@ function newPlanningBlock(activities: ActivityOption[], locations: LocationOptio
     source: "",
     duration_minutes: null,
     sessions_count: null,
+    planning_session_limit: null,
     weekday: 0,
     recurrence_frequency: "weekly",
     start_date: "",
@@ -901,6 +920,7 @@ export default function QuotePlanningEditor({
             source: row.source || null,
             duration_minutes: row.duration_minutes,
             sessions_count: row.sessions_count,
+            planning_session_limit: row.planning_session_limit,
             calendar_name: row.calendar_name || null,
             weekday: row.weekday,
             weekday_label: row.weekday === WEEKDAY_UNSET ? null : weekdayLabel(row.weekday, language),

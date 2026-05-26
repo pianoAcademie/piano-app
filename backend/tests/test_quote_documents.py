@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 import json
 from pathlib import Path
 import sys
@@ -33,6 +33,7 @@ from app.services.quotes.quote_documents import (
     _session_blocked_by_quote_school_calendar,
     _solfege_pending_block_info,
 )
+from app.services.quotes.calendar_engine import CalendarGenerationInput, generate_calendar_snapshot
 from app.api.routes.quotes import _resolve_quote_pdf_bytes
 
 
@@ -420,6 +421,50 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         hydrated = _calendar_snapshot_with_line_recommendation_keys(None, snapshot, lines=[line])
 
         self.assertEqual(hydrated["blocks"][0]["planning_session_limit"], 32)
+
+    def test_line_recommendation_keys_infer_session_limit_from_service_quantity(self) -> None:
+        activity_id = uuid4()
+        line = SimpleNamespace(
+            id=uuid4(),
+            activity_id=activity_id,
+            line_category="service",
+            pricing_unit="session",
+            quantity=Decimal("31.00"),
+            sort_order=0,
+            created_at=datetime(2026, 5, 26, tzinfo=timezone.utc),
+            meta={},
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(activity_id),
+                    "start_date": "2026-09-12",
+                    "end_date": "2027-04-10",
+                }
+            ],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_line_recommendation_keys(None, snapshot, lines=[line])
+
+        self.assertEqual(hydrated["blocks"][0]["planning_session_limit"], 31)
+
+    def test_calendar_generation_truncates_to_session_limit_after_exclusions(self) -> None:
+        snapshot = generate_calendar_snapshot(
+            CalendarGenerationInput(
+                start_date=date(2026, 9, 9),
+                end_date=date(2027, 8, 31),
+                weekdays=[2],
+                start_time=time(10, 0),
+                end_time=time(11, 0),
+                holiday_dates=[date(2026, 11, 11)],
+                closure_dates=[date(2026, 10, 21), date(2026, 10, 28)],
+                session_limit=3,
+            )
+        )
+
+        self.assertEqual([row["date"] for row in snapshot["sessions"]], ["2026-09-09", "2026-09-16", "2026-09-23"])
+        self.assertEqual(snapshot["sessions_count"], 3)
 
     def test_calendar_snapshot_hydrates_partial_block_sessions_from_planning(self) -> None:
         activity_id = uuid4()

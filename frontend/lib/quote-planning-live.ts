@@ -16,6 +16,7 @@ export type LivePlanningBlockInput = {
   modality?: string | null;
   selection_pending?: boolean;
   series_key?: string | null;
+  planning_session_limit?: number | null;
   [key: string]: unknown;
 };
 
@@ -135,12 +136,18 @@ export async function loadLivePlanningMatchForBlock({
     return null;
   }
 
-  const matched = result.data
+  const rawLimit = Number.parseInt(String(block.planning_session_limit ?? ""), 10);
+  const sessionLimit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 0;
+  const blockSeriesKey = String(block.series_key || "").trim();
+  const buildMatches = (enforceSeriesKey: boolean) => result.data
     .map((session) => ({ session, local: sessionLocalParts(session) }))
     .filter((item): item is { session: AdminSessionOut; local: LocalSessionParts } => item.local !== null)
     .filter(({ session, local }) => {
-      const blockSeriesKey = String(block.series_key || "").trim();
-      if (blockSeriesKey && String(session.recurrence_group_id || session.id || "").trim() !== blockSeriesKey) {
+      if (
+        enforceSeriesKey
+        && blockSeriesKey
+        && String(session.recurrence_group_id || session.id || "").trim() !== blockSeriesKey
+      ) {
         return false;
       }
       if (session.course_type_id !== block.activity_id) {
@@ -149,7 +156,10 @@ export async function loadLivePlanningMatchForBlock({
       if (block.location_id && !isOnlineBlock && session.location_id !== block.location_id) {
         return false;
       }
-      if (local.date < block.start_date || local.date > block.end_date) {
+      if (local.date < block.start_date) {
+        return false;
+      }
+      if (sessionLimit <= 0 && local.date > block.end_date) {
         return false;
       }
       return (
@@ -166,14 +176,24 @@ export async function loadLivePlanningMatchForBlock({
       return left.local.start_time.localeCompare(right.local.start_time);
     });
 
-  if (matched.length === 0) {
+  let matched = buildMatches(true);
+  if (sessionLimit > 0 && blockSeriesKey && matched.length < sessionLimit) {
+    const widenedMatches = buildMatches(false);
+    if (widenedMatches.length > matched.length) {
+      matched = widenedMatches;
+    }
+  }
+
+  const limited = sessionLimit > 0 ? matched.slice(0, sessionLimit) : matched;
+
+  if (limited.length === 0) {
     return null;
   }
 
-  const first = matched[0];
-  const last = matched[matched.length - 1];
+  const first = limited[0];
+  const last = limited[limited.length - 1];
   const recurrenceGroups = Array.from(
-    new Set(matched.map(({ session }) => String(session.recurrence_group_id || "")).filter(Boolean)),
+    new Set(limited.map(({ session }) => String(session.recurrence_group_id || "")).filter(Boolean)),
   );
   const seriesKey = recurrenceGroups.length === 1 ? recurrenceGroups[0] : String(block.series_key || "");
   const locationId = String(block.location_id || first.session.location_id || "");
@@ -191,7 +211,7 @@ export async function loadLivePlanningMatchForBlock({
 
   return {
     block: nextBlock,
-    sessions: matched.map(({ session, local }) => ({
+    sessions: limited.map(({ session, local }) => ({
       session_id: session.id,
       date: local.date,
       start_time: local.start_time,
