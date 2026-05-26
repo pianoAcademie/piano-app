@@ -88,6 +88,7 @@ type LivePlanningSeriesOption = {
   start_time: string;
   end_time: string;
   sessions_count: number;
+  planning_session_limit: number | null;
   modality: string | null;
   label: string;
 };
@@ -449,6 +450,7 @@ function datesFromSnapshotSessions(block: PlanningBlock, sessions: SnapshotSessi
   const startIso = start.toISOString().slice(0, 10);
   const endIso = end.toISOString().slice(0, 10);
   const isOnlineBlock = normalizePlanningModality(block.modality) === "ONLINE";
+  const excludedDates = new Set(uniqueSortedDateList([...block.holiday_dates, ...block.closure_dates]));
   const relaxedMatches = sessions
     .filter((row) => {
       if (row.activity_id !== block.activity_id) {
@@ -458,6 +460,9 @@ function datesFromSnapshotSessions(block: PlanningBlock, sessions: SnapshotSessi
         return false;
       }
       if (row.date < startIso || row.date > endIso) {
+        return false;
+      }
+      if (excludedDates.has(row.date)) {
         return false;
       }
       if (row.weekday !== null && row.weekday !== block.weekday) {
@@ -1002,6 +1007,7 @@ export default function QuotePlanningEditor({
       series_key: option.series_key,
       source: "live_planning",
       sessions_count: option.sessions_count,
+      planning_session_limit: option.planning_session_limit ?? block.planning_session_limit,
       weekday: option.weekday,
       recurrence_frequency: "weekly",
       start_date: option.start_date,
@@ -1043,6 +1049,7 @@ export default function QuotePlanningEditor({
               recommendation_key: "",
               source: "",
               sessions_count: null,
+              planning_session_limit: null,
             }
           : {}),
       };
@@ -1173,7 +1180,12 @@ export default function QuotePlanningEditor({
               const locationLabel = locations.find((item) => item.id === block.location_id)?.name || t("admin.quote_detail.location_not_defined");
               const selectionPending = block.weekday === WEEKDAY_UNSET;
               const calculatedDates = datesFromSnapshotSessions(block, snapshotSessions);
-              const estimatedDates = calculatedDates.length > 0 ? calculatedDates : estimateSessionDates(block);
+              const targetSessionLimit = planningSessionLimit(block);
+              const theoreticalDates = estimateSessionDates(block);
+              const estimatedDates =
+                calculatedDates.length > 0 && (targetSessionLimit <= 0 || calculatedDates.length >= targetSessionLimit)
+                  ? calculatedDates
+                  : theoreticalDates;
               const semester1 = summarizeBySemester(estimatedDates, 1, language);
               const semester2 = summarizeBySemester(estimatedDates, 2, language);
               const isExpanded = expandedUid === block.uid;

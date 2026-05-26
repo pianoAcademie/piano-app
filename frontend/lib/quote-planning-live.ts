@@ -17,6 +17,8 @@ export type LivePlanningBlockInput = {
   selection_pending?: boolean;
   series_key?: string | null;
   planning_session_limit?: number | null;
+  holiday_dates?: string[] | null;
+  closure_dates?: string[] | null;
   [key: string]: unknown;
 };
 
@@ -138,6 +140,11 @@ export async function loadLivePlanningMatchForBlock({
 
   const rawLimit = Number.parseInt(String(block.planning_session_limit ?? ""), 10);
   const sessionLimit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 0;
+  const excludedDates = new Set(
+    [...(Array.isArray(block.holiday_dates) ? block.holiday_dates : []), ...(Array.isArray(block.closure_dates) ? block.closure_dates : [])]
+      .map((item) => String(item).trim())
+      .filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item)),
+  );
   const blockSeriesKey = String(block.series_key || "").trim();
   const buildMatches = (enforceSeriesKey: boolean) => result.data
     .map((session) => ({ session, local: sessionLocalParts(session) }))
@@ -160,6 +167,9 @@ export async function loadLivePlanningMatchForBlock({
         return false;
       }
       if (sessionLimit <= 0 && local.date > block.end_date) {
+        return false;
+      }
+      if (excludedDates.has(local.date)) {
         return false;
       }
       return (

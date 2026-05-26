@@ -11744,6 +11744,7 @@ export async function createQuoteDraftAction(formData: FormData): Promise<void> 
   if (planningBlocks.length > 0) {
     calendarSnapshot = await buildCalendarSnapshotFromBlocks({
       blocks: planningBlocks,
+      quoteLines: lines,
       token,
       returnTo,
       schoolYearLabel: effectivePlanningSchoolYearLabel,
@@ -12460,6 +12461,14 @@ type QuotePlanningBlockInput = {
   exclude_school_vacations_in_recurrence?: boolean;
 };
 
+type QuotePlanningLineInput = {
+  line_category?: string | null;
+  line_type?: string | null;
+  activity_id?: string | null;
+  quantity?: string | number | null;
+  meta?: Record<string, unknown> | null;
+};
+
 type QuoteSolfegeSlotInput = {
   weekday: number;
   weekday_label: string | null;
@@ -12665,6 +12674,74 @@ function positiveInt(value: unknown): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
+function quoteLinePlanningSource(line: QuotePlanningLineInput): string {
+  const meta = line.meta && typeof line.meta === "object" && !Array.isArray(line.meta) ? line.meta : {};
+  return String(meta.typeform_automatic_line ?? "").trim();
+}
+
+function quoteLinePlanningLimit(line: QuotePlanningLineInput): number {
+  const meta = line.meta && typeof line.meta === "object" && !Array.isArray(line.meta) ? line.meta : {};
+  const template = meta.typeform_template && typeof meta.typeform_template === "object" && !Array.isArray(meta.typeform_template)
+    ? (meta.typeform_template as Record<string, unknown>)
+    : {};
+  const explicit = positiveInt(meta.planning_session_limit);
+  if (explicit > 0) {
+    return explicit;
+  }
+  const templateLimit = positiveInt(template.planning_session_limit);
+  if (templateLimit > 0) {
+    return templateLimit;
+  }
+  return positiveInt(line.quantity);
+}
+
+function inferPlanningSessionLimitForBlock(
+  block: QuotePlanningBlockInput,
+  quoteLines: QuotePlanningLineInput[],
+): number {
+  const activityId = String(block.activity_id ?? "").trim();
+  if (!activityId) {
+    return 0;
+  }
+  const candidates = quoteLines
+    .filter((line) => String(line.line_category ?? "").trim().toLowerCase() === "service")
+    .filter((line) => String(line.line_type ?? "").trim().toLowerCase() === "item")
+    .filter((line) => String(line.activity_id ?? "").trim() === activityId)
+    .map((line) => ({
+      source: quoteLinePlanningSource(line),
+      limit: quoteLinePlanningLimit(line),
+    }))
+    .filter((line) => line.limit > 0);
+  if (candidates.length === 0) {
+    return 0;
+  }
+
+  const blockSource = String(block.source ?? "").trim();
+  const recommendationKey = String(block.recommendation_key ?? "").trim();
+  const explicitSource = blockSource || (recommendationKey.includes(":") ? recommendationKey.split(":").slice(1).join(":") : "");
+  if (explicitSource) {
+    const sourceMatches = candidates.filter((line) => line.source === explicitSource);
+    const uniqueSourceLimits = Array.from(new Set(sourceMatches.map((line) => line.limit)));
+    if (uniqueSourceLimits.length === 1) {
+      return uniqueSourceLimits[0];
+    }
+  }
+
+  const uniqueLimits = Array.from(new Set(candidates.map((line) => line.limit)));
+  return uniqueLimits.length === 1 ? uniqueLimits[0] : 0;
+}
+
+function normalizePlanningBlockSessionLimit(
+  block: QuotePlanningBlockInput,
+  quoteLines: QuotePlanningLineInput[],
+): QuotePlanningBlockInput {
+  if (positiveInt(block.planning_session_limit) > 0) {
+    return block;
+  }
+  const inferred = inferPlanningSessionLimitForBlock(block, quoteLines);
+  return inferred > 0 ? { ...block, planning_session_limit: inferred } : block;
+}
+
 function deriveSchoolYearLabelFromBlocks(
   blocks: QuotePlanningBlockInput[],
   fallback: string | null,
@@ -12684,11 +12761,13 @@ function deriveSchoolYearLabelFromBlocks(
 
 async function buildCalendarSnapshotFromBlocks({
   blocks,
+  quoteLines = [],
   token,
   returnTo,
   schoolYearLabel,
 }: {
   blocks: QuotePlanningBlockInput[];
+  quoteLines?: QuotePlanningLineInput[];
   token: string;
   returnTo: string;
   schoolYearLabel: string | null;
@@ -12761,11 +12840,14 @@ async function buildCalendarSnapshotFromBlocks({
     return value;
   }
 
-  const normalizedBlocks = blocks.map((block) => ({
-    ...block,
-    location_id: block.location_id || null,
-    location_label: block.location_label || null,
-  }));
+  const normalizedBlocks = blocks.map((block) => {
+    const withSessionLimit = normalizePlanningBlockSessionLimit(block, quoteLines);
+    return {
+      ...withSessionLimit,
+      location_id: withSessionLimit.location_id || null,
+      location_label: withSessionLimit.location_label || null,
+    };
+  });
 
   for (const block of normalizedBlocks) {
     const inferredSchoolYearLabel = deriveSchoolYearLabelFromDate(block.start_date) || schoolYearLabel || null;
@@ -12825,7 +12907,7 @@ async function buildCalendarSnapshotFromBlocks({
       block: block as LivePlanningBlockInput,
       token,
     });
-    if (liveMatch && liveMatch.sessions.length > 0) {
+    if (liveMatch && liveMatch.sessions.length > 0 && liveMatch.sessions.length >= rows.length) {
       sessions.push(...liveMatch.sessions);
       Object.assign(block, liveMatch.block, {
         calendar_id: String(resolvedCalendar.calendar?.id ?? ""),
@@ -12936,8 +13018,17 @@ export async function updateQuotePlanningAction(formData: FormData): Promise<voi
 
   const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim() || null;
   const effectivePlanningSchoolYearLabel = deriveSchoolYearLabelFromBlocks(blocks, schoolYearLabel);
+  const quoteDetailResult = await backendRequest<{ lines: QuotePlanningLineInput[] }>(
+    `/api/v1/quotes/${encodeURIComponent(quoteId)}`,
+    {},
+    token,
+  );
+  if (!quoteDetailResult.ok) {
+    redirect(appendQueryMessage(successReturnTo, "error", quoteDetailResult.message));
+  }
   let snapshot = await buildCalendarSnapshotFromBlocks({
     blocks,
+    quoteLines: quoteDetailResult.data.lines || [],
     token,
     returnTo,
     schoolYearLabel: effectivePlanningSchoolYearLabel,

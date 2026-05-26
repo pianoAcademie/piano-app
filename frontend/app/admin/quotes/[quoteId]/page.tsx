@@ -698,6 +698,7 @@ type LivePlanningSeriesOption = {
   start_time: string;
   end_time: string;
   sessions_count: number;
+  planning_session_limit: number | null;
   modality: string | null;
   label: string;
 };
@@ -1002,15 +1003,99 @@ function formatDateForLivePlanningLabel(value: string): string {
   return `${match[3]}/${match[2]}/${match[1]}`;
 }
 
+function positiveInt(value: unknown): number {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function quoteLinePlanningLimit(line: QuoteLineOut): number {
+  const meta = readObject(line.meta || {}) || {};
+  const template = readObject(meta.typeform_template) || {};
+  return positiveInt(meta.planning_session_limit)
+    || positiveInt(template.planning_session_limit)
+    || positiveInt(line.quantity);
+}
+
+function inferUniqueActivityPlanningLimit(activityId: string, lines: QuoteLineOut[]): number {
+  const candidates = lines
+    .filter((line) => String(line.line_category || "").toLowerCase() === "service")
+    .filter((line) => String(line.line_type || "").toLowerCase() === "item")
+    .filter((line) => String(line.activity_id || "") === activityId)
+    .map(quoteLinePlanningLimit)
+    .filter((limit) => limit > 0);
+  const unique = Array.from(new Set(candidates));
+  return unique.length === 1 ? unique[0] : 0;
+}
+
+function dateOnly(value: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return null;
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function isoDateOnly(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+function expectedWeeklyDates({
+  startDate,
+  endDate,
+  weekday,
+  excludedDates,
+  limit,
+}: {
+  startDate: string;
+  endDate: string;
+  weekday: number;
+  excludedDates: Set<string>;
+  limit: number;
+}): string[] {
+  const start = dateOnly(startDate);
+  const end = dateOnly(endDate);
+  if (!start || !end || end < start || weekday < 0 || weekday > 6) {
+    return [];
+  }
+  const out: string[] = [];
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    const iso = isoDateOnly(cursor);
+    if (cursor.getUTCDay() === (weekday + 1) % 7 && !excludedDates.has(iso)) {
+      out.push(iso);
+      if (limit > 0 && out.length >= limit) {
+        break;
+      }
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return out;
+}
+
+function calendarPresetForLiveSeries(
+  presets: PlanningCalendarPreset[],
+  locationId: string,
+  modality: string | null,
+): PlanningCalendarPreset | null {
+  const normalizedModality = normalizePlanningBlockModality(modality) || "";
+  return presets.find((preset) => preset.location_id === locationId && normalizePlanningBlockModality(preset.modality) === normalizedModality)
+    ?? presets.find((preset) => preset.location_id === locationId && !normalizePlanningBlockModality(preset.modality))
+    ?? null;
+}
+
 async function loadLivePlanningSeriesOptions({
   token,
   schoolYearLabel,
   activities,
+  lines,
+  calendarPresets,
   language,
 }: {
   token: string;
   schoolYearLabel: string | null;
   activities: AdminActivityOut[];
+  lines: QuoteLineOut[];
+  calendarPresets: PlanningCalendarPreset[];
   language: UiLanguage;
 }): Promise<LivePlanningSeriesOption[]> {
   const range = schoolYearDateRangeFromLabel(schoolYearLabel);
@@ -1063,18 +1148,43 @@ async function loadLivePlanningSeriesOptions({
     }
     const session = first.session;
     const activity = activityById.get(session.course_type_id);
+    const modality = normalizePlanningBlockModality(activity?.mode);
+    const preset = calendarPresetForLiveSeries(calendarPresets, session.location_id, modality);
+    const excludedDates = new Set([
+      ...(activity?.exclude_holidays_in_recurrence === false ? [] : (preset?.holiday_dates ?? [])),
+      ...(activity?.exclude_school_vacations_in_recurrence === false ? [] : (preset?.closure_dates ?? [])),
+    ]);
+    const filteredRows = rows.filter((row) => !excludedDates.has(row.local.date));
+    const firstFiltered = filteredRows[0];
+    const lastFiltered = filteredRows[filteredRows.length - 1];
+    if (!firstFiltered || !lastFiltered) {
+      continue;
+    }
     const activityLabel = activity?.name || session.type_label || null;
-    const weekdayText = uiText(language, QUOTE_PLANNING_WEEKDAY_KEYS[first.local.weekday] || "admin.quote_planning.weekday_unset");
-    const period = `${formatDateForLivePlanningLabel(first.local.date)} -> ${formatDateForLivePlanningLabel(last.local.date)}`;
-    const sessionsText = uiText(language, "admin.quote_planning.live_slot_sessions", { count: rows.length });
+    const planningSessionLimit = inferUniqueActivityPlanningLimit(session.course_type_id, lines);
+    const expectedDates = planningSessionLimit > 0
+      ? expectedWeeklyDates({
+        startDate: firstFiltered.local.date,
+        endDate: range.to.slice(0, 10),
+        weekday: firstFiltered.local.weekday,
+        excludedDates,
+        limit: planningSessionLimit,
+      })
+      : filteredRows.map((row) => row.local.date);
+    const startDate = expectedDates[0] ?? firstFiltered.local.date;
+    const endDate = expectedDates[expectedDates.length - 1] ?? lastFiltered.local.date;
+    const sessionsCount = expectedDates.length || filteredRows.length;
+    const weekdayText = uiText(language, QUOTE_PLANNING_WEEKDAY_KEYS[firstFiltered.local.weekday] || "admin.quote_planning.weekday_unset");
+    const period = `${formatDateForLivePlanningLabel(startDate)} -> ${formatDateForLivePlanningLabel(endDate)}`;
+    const sessionsText = uiText(language, "admin.quote_planning.live_slot_sessions", { count: sessionsCount });
     const seriesKey = String(session.recurrence_group_id || "").trim();
     const optionKey = seriesKey || [
       session.course_type_id,
       session.location_id,
-      first.local.weekday,
-      first.local.start_time,
-      first.local.end_time,
-      first.local.date,
+      firstFiltered.local.weekday,
+      firstFiltered.local.start_time,
+      firstFiltered.local.end_time,
+      firstFiltered.local.date,
     ].join("|");
     options.push({
       key: optionKey,
@@ -1083,14 +1193,15 @@ async function loadLivePlanningSeriesOptions({
       location_id: session.location_id,
       location_label: session.location_label || null,
       series_key: seriesKey,
-      weekday: first.local.weekday,
-      start_date: first.local.date,
-      end_date: last.local.date,
-      start_time: first.local.start_time,
-      end_time: first.local.end_time,
-      sessions_count: rows.length,
-      modality: normalizePlanningBlockModality(activity?.mode),
-      label: `${weekdayText} ${first.local.start_time}-${first.local.end_time} · ${period} · ${sessionsText}`,
+      weekday: firstFiltered.local.weekday,
+      start_date: startDate,
+      end_date: endDate,
+      start_time: firstFiltered.local.start_time,
+      end_time: firstFiltered.local.end_time,
+      sessions_count: sessionsCount,
+      planning_session_limit: planningSessionLimit > 0 ? planningSessionLimit : null,
+      modality,
+      label: `${weekdayText} ${firstFiltered.local.start_time}-${firstFiltered.local.end_time} · ${period} · ${sessionsText}`,
     });
   }
 
@@ -2010,6 +2121,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       token,
       schoolYearLabel: planningEditorSchoolYearLabel,
       activities,
+      lines: detail.lines,
+      calendarPresets: planningCalendarPresets,
       language,
     })
     : [];
