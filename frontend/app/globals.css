@@ -3650,9 +3650,10 @@ button.danger:focus-visible {
 
 .transaction-wizard-modal {
   width: min(760px, 95vw);
-  max-height: 80vh;
+  max-height: 88vh;
   padding: 0;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 0;
   overflow: hidden;
   background: #ffffff;
@@ -3661,6 +3662,8 @@ button.danger:focus-visible {
 }
 
 .transaction-wizard-modal form {
+  min-height: 0;
+  max-height: calc(88vh - 112px);
   padding: 14px;
   overflow: auto;
 }
@@ -3932,6 +3935,7 @@ button.danger:focus-visible {
   }
 
   .transaction-wizard-modal form {
+    max-height: none;
     padding: 14px 16px 96px;
   }
 
