@@ -8351,7 +8351,11 @@ def _apply_followup_forfait_discount_rows(
         for item in _json_list(activity_resolution.get("offPlanningActivityIds"))
         if str(item).strip()
     }
-    quote_lines = db.scalars(select(QuoteLine).where(QuoteLine.quote_id == quote.id)).all()
+    quote_lines = db.scalars(
+        select(QuoteLine)
+        .where(QuoteLine.quote_id == quote.id)
+        .order_by(QuoteLine.sort_order.asc(), QuoteLine.created_at.asc(), QuoteLine.id.asc())
+    ).all()
     line_by_id = {line.id: line for line in quote_lines}
     service_lines = [
         line
@@ -8545,7 +8549,11 @@ def _create_followup_manual_transactions(
 ) -> None:
     billing_resolution = _json_object(transformation_payload.get("billingResolution"))
     rows = _json_list(billing_resolution.get("rows"))
-    quote_lines = db.scalars(select(QuoteLine).where(QuoteLine.quote_id == quote.id)).all()
+    quote_lines = db.scalars(
+        select(QuoteLine)
+        .where(QuoteLine.quote_id == quote.id)
+        .order_by(QuoteLine.sort_order.asc(), QuoteLine.created_at.asc(), QuoteLine.id.asc())
+    ).all()
     line_by_id = {line.id: line for line in quote_lines}
     now = _utcnow()
     for raw in rows:
@@ -8816,7 +8824,11 @@ def _execute_quote_followup_transformation(
         for item in _json_list(activity_resolution.get("offPlanningActivityIds"))
         if str(item).strip()
     }
-    quote_lines = db.scalars(select(QuoteLine).where(QuoteLine.quote_id == quote.id)).all()
+    quote_lines = db.scalars(
+        select(QuoteLine)
+        .where(QuoteLine.quote_id == quote.id)
+        .order_by(QuoteLine.sort_order.asc(), QuoteLine.created_at.asc(), QuoteLine.id.asc())
+    ).all()
     duplicate_service_activity_ids = _duplicate_service_activity_ids(quote_lines)
     session_limit_by_key: dict[str, int] = {}
     service_lines_by_schedule_key: dict[str, list[QuoteLine]] = {}

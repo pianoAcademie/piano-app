@@ -1989,7 +1989,15 @@ def _calendar_snapshot_with_line_recommendation_keys(
         return snapshot
 
     lines_by_activity_id: dict[str, list[QuoteLine]] = {}
-    for line in lines:
+    ordered_lines = sorted(
+        lines,
+        key=lambda line: (
+            int(getattr(line, "sort_order", None) or 0),
+            getattr(line, "created_at", None) or datetime.min.replace(tzinfo=timezone.utc),
+            str(getattr(line, "id", "") or ""),
+        ),
+    )
+    for line in ordered_lines:
         activity_id = str(getattr(line, "activity_id", None) or "").strip()
         if not activity_id or _line_matches_solfege_activity(line):
             continue
