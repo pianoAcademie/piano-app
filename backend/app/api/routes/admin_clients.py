@@ -9046,6 +9046,16 @@ def create_admin_client_manual_transaction(
         ]
         if invoice_numbers:
             receipt_lines.append(f"Facture(s) rapprochee(s): {', '.join(invoice_numbers)}.")
+            receipt_lines.append("")
+            receipt_lines.append("Acces facture(s):")
+            for note, metadata, _, invoice_number in reconciled_invoices:
+                invoice_url = _invoice_range_download_url(
+                    client_id=client.id,
+                    note_id=note.id,
+                    metadata=metadata,
+                    inline=True,
+                )
+                receipt_lines.append(f"- {invoice_number}: {invoice_url}")
         receipt_lines.extend(
             [
                 "",
