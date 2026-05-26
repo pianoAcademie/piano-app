@@ -12674,6 +12674,108 @@ function positiveInt(value: unknown): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
+function parsePlanningDateOnly(value: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return null;
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function isoPlanningDateOnly(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+function planningTimeToMinutes(value: string): number | null {
+  const match = value.trim().match(/^(\d{2}):(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+  const hours = Number.parseInt(match[1], 10);
+  const minutes = Number.parseInt(match[2], 10);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return null;
+  }
+  return hours * 60 + minutes;
+}
+
+function buildLocalPlanningRowsForBlock({
+  block,
+  endDate,
+  holidayDates,
+  closureDates,
+  sessionLimit,
+}: {
+  block: QuotePlanningBlockInput;
+  endDate: string;
+  holidayDates: string[];
+  closureDates: string[];
+  sessionLimit: number;
+}): Array<Record<string, unknown>> {
+  const start = parsePlanningDateOnly(block.start_date);
+  const end = parsePlanningDateOnly(endDate);
+  if (!start || !end || end < start || block.selection_pending) {
+    return [];
+  }
+  const excludedDates = new Set(
+    [...holidayDates, ...closureDates]
+      .map((item) => String(item).trim())
+      .filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item)),
+  );
+  const matchedDates: string[] = [];
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    const normalizedWeekday = (cursor.getUTCDay() + 6) % 7;
+    const iso = isoPlanningDateOnly(cursor);
+    if (normalizedWeekday === block.weekday && !excludedDates.has(iso)) {
+      matchedDates.push(iso);
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  let selectedDates = matchedDates;
+  if (block.recurrence_frequency === "biweekly") {
+    const first = parsePlanningDateOnly(matchedDates[0] || "");
+    selectedDates = first
+      ? matchedDates.filter((item) => {
+        const parsed = parsePlanningDateOnly(item);
+        return parsed ? Math.floor((parsed.getTime() - first.getTime()) / 86_400_000) % 14 === 0 : false;
+      })
+      : matchedDates;
+  } else if (block.recurrence_frequency === "monthly") {
+    const seen = new Set<string>();
+    selectedDates = [];
+    for (const item of matchedDates) {
+      const parsed = parsePlanningDateOnly(item);
+      if (!parsed) {
+        continue;
+      }
+      const key = `${parsed.getUTCFullYear()}-${parsed.getUTCMonth() + 1}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      selectedDates.push(item);
+    }
+  }
+  if (sessionLimit > 0) {
+    selectedDates = selectedDates.slice(0, sessionLimit);
+  }
+
+  const startMinutes = planningTimeToMinutes(block.start_time);
+  const endMinutes = planningTimeToMinutes(block.end_time);
+  const durationMinutes = startMinutes !== null && endMinutes !== null ? Math.max(0, endMinutes - startMinutes) : block.duration_minutes;
+  return selectedDates.map((date) => ({
+    date,
+    start_time: block.start_time,
+    end_time: block.end_time,
+    duration_minutes: durationMinutes,
+    activity_id: block.activity_id,
+    location_id: block.location_id,
+    modality: block.modality,
+  }));
+}
+
 function quoteLinePlanningSource(line: QuotePlanningLineInput): string {
   const meta = line.meta && typeof line.meta === "object" && !Array.isArray(line.meta) ? line.meta : {};
   return String(meta.typeform_automatic_line ?? "").trim();
@@ -12901,7 +13003,18 @@ async function buildCalendarSnapshotFromBlocks({
       redirect(appendQueryMessage(returnTo, "error", preview.message));
     }
     const previewRows = Array.isArray(preview.data.sessions) ? (preview.data.sessions as Array<Record<string, unknown>>) : [];
-    const rows = sessionLimit > 0 ? previewRows.slice(0, sessionLimit) : previewRows;
+    const localRows = buildLocalPlanningRowsForBlock({
+      block,
+      endDate: previewEndDate,
+      holidayDates,
+      closureDates,
+      sessionLimit,
+    });
+    const previewLimitedRows = sessionLimit > 0 ? previewRows.slice(0, sessionLimit) : previewRows;
+    const rows =
+      sessionLimit > 0 && localRows.length > previewLimitedRows.length
+        ? localRows
+        : previewLimitedRows;
 
     const liveMatch = await loadLivePlanningMatchForBlock({
       block: block as LivePlanningBlockInput,

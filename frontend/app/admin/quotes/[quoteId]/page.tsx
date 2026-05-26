@@ -1072,6 +1072,66 @@ function expectedWeeklyDates({
   return out;
 }
 
+function schoolYearEndDateFromPlanningStart(start: Date): Date {
+  const startYear = start.getUTCMonth() + 1 >= 9 ? start.getUTCFullYear() : start.getUTCFullYear() - 1;
+  return new Date(Date.UTC(startYear + 1, 7, 31));
+}
+
+function planningBlockEstimatedDates(block: Record<string, unknown>): string[] {
+  const startDate = String(block.start_date ?? "").trim();
+  const endDate = String(block.end_date ?? "").trim();
+  const start = dateOnly(startDate);
+  const end = dateOnly(endDate);
+  const weekday = Number.parseInt(String(block.weekday ?? ""), 10);
+  if (!start || !end || end < start || !Number.isFinite(weekday) || weekday < 0 || weekday > 6) {
+    return [];
+  }
+
+  const limit = positiveInt(block.planning_session_limit);
+  const schoolYearEnd = schoolYearEndDateFromPlanningStart(start);
+  const effectiveEnd = limit > 0 && schoolYearEnd > end ? schoolYearEnd : end;
+  const excludedDates = new Set([
+    ...normalizeCalendarDateList(block.holiday_dates),
+    ...normalizeCalendarDateList(block.closure_dates),
+  ]);
+  const matchedDates = expectedWeeklyDates({
+    startDate,
+    endDate: isoDateOnly(effectiveEnd),
+    weekday,
+    excludedDates,
+    limit: 0,
+  });
+  const recurrence = String(block.recurrence_frequency ?? "weekly").trim().toLowerCase();
+  if (recurrence === "biweekly") {
+    const first = dateOnly(matchedDates[0] || "");
+    const biweekly = first
+      ? matchedDates.filter((item) => {
+        const parsed = dateOnly(item);
+        return parsed ? Math.floor((parsed.getTime() - first.getTime()) / 86_400_000) % 14 === 0 : false;
+      })
+      : matchedDates;
+    return limit > 0 ? biweekly.slice(0, limit) : biweekly;
+  }
+  if (recurrence === "monthly") {
+    const seen = new Set<string>();
+    const monthly: string[] = [];
+    for (const item of matchedDates) {
+      const parsed = dateOnly(item);
+      if (!parsed) {
+        continue;
+      }
+      const key = `${parsed.getUTCFullYear()}-${parsed.getUTCMonth() + 1}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      monthly.push(item);
+    }
+    return limit > 0 ? monthly.slice(0, limit) : monthly;
+  }
+  return limit > 0 ? matchedDates.slice(0, limit) : matchedDates;
+}
+
 function calendarPresetForLiveSeries(
   presets: PlanningCalendarPreset[],
   locationId: string,
@@ -1381,6 +1441,11 @@ async function hydratePlanningSnapshotWithLiveSessions({
       token,
     });
     if (!liveMatch) {
+      nextBlocks.push(block);
+      continue;
+    }
+    const targetSessionLimit = positiveInt(block.planning_session_limit);
+    if (targetSessionLimit > 0 && liveMatch.sessions.length < targetSessionLimit) {
       nextBlocks.push(block);
       continue;
     }
@@ -2420,30 +2485,43 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const calendarSessions = getCalendarSessions(planningSnapshotForEditor);
   const planningBlocks = getPlanningBlocks(planningSnapshotForEditor);
   const planningByActivityId: Record<string, { plannedQuantity: number; pendingSelection: boolean }> = {};
+  const ensurePlanningSummary = (planningKey: string): { plannedQuantity: number; pendingSelection: boolean } => {
+    if (!(planningKey in planningByActivityId)) {
+      planningByActivityId[planningKey] = { plannedQuantity: 0, pendingSelection: false };
+    }
+    return planningByActivityId[planningKey];
+  };
   for (const session of calendarSessions) {
     const planningKey = planningKeyFromSnapshotItem(session);
     if (!planningKey) {
       continue;
     }
-    if (!(planningKey in planningByActivityId)) {
-      planningByActivityId[planningKey] = { plannedQuantity: 0, pendingSelection: false };
-    }
-    planningByActivityId[planningKey].plannedQuantity += 1;
+    ensurePlanningSummary(planningKey).plannedQuantity += 1;
   }
+  let estimatedPlanningSessionTotal = 0;
+  const estimatedPlanningQuantityByKey: Record<string, number> = {};
   for (const block of planningBlocks) {
     const planningKey = planningKeyFromSnapshotItem(block);
     if (!planningKey) {
       continue;
     }
-    if (!(planningKey in planningByActivityId)) {
-      planningByActivityId[planningKey] = { plannedQuantity: 0, pendingSelection: false };
-    }
+    const summary = ensurePlanningSummary(planningKey);
+    const estimatedCount = planningBlockEstimatedDates(block).length;
+    estimatedPlanningSessionTotal += estimatedCount;
+    estimatedPlanningQuantityByKey[planningKey] = (estimatedPlanningQuantityByKey[planningKey] || 0) + estimatedCount;
     const rawPending = block.selection_pending;
     const isPending = rawPending === true || String(rawPending ?? "").trim().toLowerCase() === "true";
     if (isPending) {
-      planningByActivityId[planningKey].pendingSelection = true;
+      summary.pendingSelection = true;
     }
   }
+  for (const [planningKey, estimatedCount] of Object.entries(estimatedPlanningQuantityByKey)) {
+    const summary = ensurePlanningSummary(planningKey);
+    if (estimatedCount > summary.plannedQuantity) {
+      summary.plannedQuantity = estimatedCount;
+    }
+  }
+  const planningSessionDisplayCount = estimatedPlanningSessionTotal > 0 ? estimatedPlanningSessionTotal : calendarSessions.length;
   const activityById = new Map(activities.map((activity) => [activity.id, activity]));
   const sendQuantityMismatchWarnings = detail.lines
     .filter((line) => Boolean(line.activity_id))
@@ -2703,7 +2781,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     { label: t("admin.quote_detail.billing_contact"), value: ownerName },
     { label: t("admin.quote_detail.students"), value: readStringMeta(detail.quote.meta || {}, "integration_students_label", ownerName) },
     { label: t("admin.quote_detail.accepted_activities"), value: String(getPlanningBlocks(planningSnapshotForEditor).length || 0) },
-    { label: t("admin.quote_detail.slots_to_create"), value: String(calendarSessions.length) },
+    { label: t("admin.quote_detail.slots_to_create"), value: String(planningSessionDisplayCount) },
     { label: t("admin.quotes.school_year"), value: detail.quote.school_year_label || "-" },
     {
       label: t("admin.quote_detail.payment_plan"),
@@ -2870,7 +2948,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       id: "planning",
       label: t("admin.quote_detail.sidebar_planning"),
       href: sectionHref("planning"),
-      badge: `${calendarSessions.length}`,
+      badge: `${planningSessionDisplayCount}`,
       active: activeSection === "planning",
     },
     {
@@ -2938,7 +3016,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               { label: t("admin.quotes.client_validation"), value: validationClientStatusDetail },
               { label: t("admin.quotes.central_integration"), value: integrationStateLabel(integrationState, language) },
               { label: t("admin.quote_detail.target_mode"), value: integrationTargetMode },
-              { label: t("admin.quote_detail.planned_slots"), value: String(calendarSessions.length) },
+              { label: t("admin.quote_detail.planned_slots"), value: String(planningSessionDisplayCount) },
             ]}
             alerts={integrationAlerts}
             language={language}
@@ -3985,7 +4063,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	        <div className="quote-workstream-head">
 	          <span className="quote-workstream-badge quote-workstream-badge-planning">{t("admin.quote_detail.planning_badge")}</span>
 	          <h3>{t("admin.quote_detail.course_planning_title")}</h3>
-	          <p className="muted">{t("admin.quote_detail.course_planning_subtitle", { activities: planningBlocks.length, sessions: calendarSessions.length })}</p>
+	          <p className="muted">{t("admin.quote_detail.course_planning_subtitle", { activities: planningBlocks.length, sessions: planningSessionDisplayCount })}</p>
 	        </div>
         <div className="top-gap-sm">
           <QuotePlanningEditor

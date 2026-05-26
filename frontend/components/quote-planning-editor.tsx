@@ -1186,6 +1186,8 @@ export default function QuotePlanningEditor({
                 calculatedDates.length > 0 && (targetSessionLimit <= 0 || calculatedDates.length >= targetSessionLimit)
                   ? calculatedDates
                   : theoreticalDates;
+              const displayStartDate = estimatedDates[0] || block.start_date || "-";
+              const displayEndDate = estimatedDates[estimatedDates.length - 1] || block.end_date || "-";
               const semester1 = summarizeBySemester(estimatedDates, 1, language);
               const semester2 = summarizeBySemester(estimatedDates, 2, language);
               const isExpanded = expandedUid === block.uid;
@@ -1251,7 +1253,7 @@ export default function QuotePlanningEditor({
                     </div>
                     <div>
                       <span>{t("common.period")}</span>
-                      <strong>{block.start_date || "-"} → {block.end_date || "-"}</strong>
+                      <strong>{displayStartDate} → {displayEndDate}</strong>
                     </div>
                     <div>
                       <span>{t("admin.quote_planning.frequency")}</span>
