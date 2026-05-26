@@ -399,6 +399,10 @@ function readParam(params: SearchParams, key: string): string {
   return raw ?? "";
 }
 
+function immediateBackendResult<T>(data: T): Promise<{ ok: true; status: number; data: T }> {
+  return Promise.resolve({ ok: true, status: 200, data });
+}
+
 function parseWorkspaceSection(value: string): QuoteWorkspaceSection {
   const normalized = String(value || "").trim().toLowerCase();
   if (
@@ -1833,6 +1837,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const quickScenario = parseQuickScenario(readParam(searchParams, "quick_scenario"));
   const ok = resolveUiFlashMessage(searchParams, language, "ok") || readParam(searchParams, "ok");
   const error = resolveUiFlashMessage(searchParams, language, "error") || readParam(searchParams, "error");
+  const needsDocumentPreview = activeSection === "document";
+  const needsPlanningEditorData = activeSection === "planning";
+  const needsIntegrationAnalysis = activeSection === "integration";
+  const needsPricingCatalogPrices = activeSection === "pricing";
 
   const [
     detailResult,
@@ -1876,11 +1884,13 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     backendRequest<SolfegeLevelRuleOut[]>("/api/v1/solfege-level-rules", {}, token),
     backendRequest<ProspectOut[]>("/api/v1/prospects?limit=1000", {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=800&include_archived=false", {}, token),
-    backendRequest<QuoteDocumentPreviewOut>(
-      `/api/v1/quotes/${encodeURIComponent(quoteId)}/document-preview?audience=admin_preview`,
-      {},
-      token,
-    ),
+    needsDocumentPreview
+      ? backendRequest<QuoteDocumentPreviewOut>(
+        `/api/v1/quotes/${encodeURIComponent(quoteId)}/document-preview?audience=admin_preview`,
+        {},
+        token,
+      )
+      : immediateBackendResult<QuoteDocumentPreviewOut | null>(null),
     backendRequest<AdminMessagingSettingsOut>("/api/v1/admin/config/messaging-settings", {}, token),
     backendRequest<AdminMessagingTemplateOut[]>(
       "/api/v1/admin/config/messaging-templates?channel=EMAIL&usage_context=QUOTE_SEND&active_only=true",
@@ -1920,7 +1930,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 
   const detail = detailResult.data;
   const pricingCatalogId = detail.quote.pricing_catalog_id || "";
-  const [activityPricesResult, productPricesResult, kitPricesResult] = pricingCatalogId
+  const [activityPricesResult, productPricesResult, kitPricesResult] = pricingCatalogId && needsPricingCatalogPrices
     ? await Promise.all([
       backendRequest<PricingActivityPriceOut[]>(
         `/api/v1/pricing-activity-prices?catalog_id=${encodeURIComponent(pricingCatalogId)}`,
@@ -1959,11 +1969,13 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     detail.quote.calendar_snapshot || {},
     detail.quote.school_year_label,
   );
-  const planningCalendarPresets = await loadPlanningCalendarPresets({
-    token,
-    schoolYearLabel: planningEditorSchoolYearLabel,
-    locations,
-  });
+  const planningCalendarPresets = needsPlanningEditorData
+    ? await loadPlanningCalendarPresets({
+      token,
+      schoolYearLabel: planningEditorSchoolYearLabel,
+      locations,
+    })
+    : [];
   const prospects = prospectsResult.ok ? prospectsResult.data : [];
   let clients = clientsResult.ok ? clientsResult.data : [];
   if (detail.quote.client_id && !clients.some((client) => client.id === detail.quote.client_id)) {
@@ -1985,18 +1997,22 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const activityPrices = activityPricesResult?.ok ? activityPricesResult.data : [];
   const productPrices = productPricesResult?.ok ? productPricesResult.data : [];
   const kitPrices = kitPricesResult?.ok ? kitPricesResult.data : [];
-  const planningSnapshotForEditor = await hydratePlanningSnapshotForEditor({
-    snapshot: detail.quote.calendar_snapshot || {},
-    token,
-    schoolYearLabel: planningEditorSchoolYearLabel,
-    activities,
-  });
-  const livePlanningSeries = await loadLivePlanningSeriesOptions({
-    token,
-    schoolYearLabel: planningEditorSchoolYearLabel,
-    activities,
-    language,
-  });
+  const planningSnapshotForEditor = needsPlanningEditorData || needsIntegrationAnalysis
+    ? await hydratePlanningSnapshotForEditor({
+      snapshot: detail.quote.calendar_snapshot || {},
+      token,
+      schoolYearLabel: planningEditorSchoolYearLabel,
+      activities,
+    })
+    : detail.quote.calendar_snapshot || {};
+  const livePlanningSeries = needsPlanningEditorData
+    ? await loadLivePlanningSeriesOptions({
+      token,
+      schoolYearLabel: planningEditorSchoolYearLabel,
+      activities,
+      language,
+    })
+    : [];
 
   const activityIds = Array.from(new Set(
     [
@@ -2007,18 +2023,20 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     ],
   ));
 
-  const sessionsPerActivity = await Promise.all(
-    activityIds.map(async (activityId) => {
-      const query = new URLSearchParams();
-      query.set("course_type_id", activityId);
-      const result = await backendRequest<AdminSessionOut[]>(
-        `/api/v1/admin/sessions?${query.toString()}`,
-        {},
-        token,
-      );
-      return { activityId, sessions: result.ok ? result.data : [] };
-    }),
-  );
+  const sessionsPerActivity = needsIntegrationAnalysis
+    ? await Promise.all(
+      activityIds.map(async (activityId) => {
+        const query = new URLSearchParams();
+        query.set("course_type_id", activityId);
+        const result = await backendRequest<AdminSessionOut[]>(
+          `/api/v1/admin/sessions?${query.toString()}`,
+          {},
+          token,
+        );
+        return { activityId, sessions: result.ok ? result.data : [] };
+      }),
+    )
+    : [];
 
   const activityCatalogPriceByActivityId: Record<string, string> = {};
   const activityCatalogPriceSpecificity: Record<string, number> = {};
