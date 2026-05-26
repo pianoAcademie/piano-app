@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from app.services.quotes.lifecycle_jobs import (
     _build_bar_le_duc_daily_alert_body,
     _build_quote_expiry_digest_body,
+    _send_quote_expiry_admin_digest,
     _quote_is_expired_notification_candidate,
     _quote_uuid_from_reference,
     _quote_expiry_digest_date,
@@ -56,6 +57,33 @@ class QuoteExpiryAdminDigestTests(unittest.TestCase):
         self.assertIn("Ada Lovelace", body)
         self.assertIn("DV-123", body)
         self.assertIn("12:30 UTC", body)
+
+    def test_yesterday_digest_only_requests_really_expired_quotes(self) -> None:
+        calls: list[set[str] | None] = []
+
+        def fake_rows(_db: object, *, digest_date: date, limit: int, statuses: set[str] | None = None) -> list[object]:
+            calls.append(statuses)
+            return []
+
+        from unittest.mock import patch
+
+        with (
+            patch("app.services.quotes.lifecycle_jobs._quote_expiry_digest_already_processed", return_value=False),
+            patch("app.services.quotes.lifecycle_jobs._quote_expiry_digest_rows", side_effect=fake_rows),
+            patch("app.services.quotes.lifecycle_jobs._mark_quote_expiry_digest_processed"),
+            patch("app.services.quotes.lifecycle_jobs.append_job_run_log"),
+        ):
+            _send_quote_expiry_admin_digest(
+                SimpleNamespace(),
+                digest_date=date(2026, 5, 26),
+                now=datetime(2026, 5, 26, 5, 0, tzinfo=timezone.utc),
+                limit=2000,
+                delivery_enabled=False,
+                job_run_id=uuid4(),
+            )
+
+        self.assertEqual(calls[0], {"sent", "change_requested"})
+        self.assertEqual(calls[1], {"expired"})
 
     def test_bar_le_duc_alert_body_contains_expired_quotes_and_overdue_invoices(self) -> None:
         quote = SimpleNamespace(

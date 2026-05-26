@@ -10,7 +10,7 @@ from html import escape
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.models.catalog import Booking, CourseSession, Location
@@ -42,6 +42,7 @@ INVOICE_RANGE_NOTE_PREFIX = "INVOICE_RANGE::"
 REMINDER_ELIGIBLE_STATUSES = {"sent", "change_requested"}
 EXPIRABLE_STATUSES = {"sent", "change_requested"}
 ARCHIVABLE_QUOTE_STATUSES = {"created", "sent", "approved", "expired", "change_requested"}
+REPLACEMENT_QUOTE_STATUSES = {"created", "sent", "change_requested", "approved"}
 
 
 @dataclass(frozen=True)
@@ -288,6 +289,56 @@ def _ascii_token(value: object | None) -> str:
     return re.sub(r"[^a-z0-9]+", "", ascii_text)
 
 
+def _quote_student_dedupe_key(quote: Quote, prospect: Prospect | None, client: User | None) -> str:
+    student_token = _ascii_token(_quote_student_name(quote, prospect, client))
+    if quote.prospect_id is not None:
+        return f"prospect:{quote.prospect_id}:{student_token}"
+    if quote.client_id is not None:
+        return f"client:{quote.client_id}:{student_token}"
+    prospect_email = _ascii_token(getattr(prospect, "email", None))
+    client_email = _ascii_token(getattr(client, "email", None))
+    return f"contact:{prospect_email or client_email}:{student_token}"
+
+
+def _quote_has_newer_replacement(
+    db: Session,
+    quote: Quote,
+    prospect: Prospect | None,
+    client: User | None,
+) -> bool:
+    same_person_filters = []
+    if quote.prospect_id is not None:
+        same_person_filters.append(Quote.prospect_id == quote.prospect_id)
+    if quote.client_id is not None:
+        same_person_filters.append(Quote.client_id == quote.client_id)
+
+    stmt = select(Quote, Prospect, User).join(Prospect, Prospect.id == Quote.prospect_id, isouter=True).join(
+        User, User.id == Quote.client_id, isouter=True
+    )
+    if same_person_filters:
+        stmt = stmt.where(or_(Quote.parent_quote_id == quote.id, *same_person_filters))
+    else:
+        stmt = stmt.where(Quote.parent_quote_id == quote.id)
+
+    candidates = db.execute(
+        stmt.where(
+            Quote.id != quote.id,
+            Quote.status.in_(sorted(REPLACEMENT_QUOTE_STATUSES)),
+            Quote.created_at >= quote.created_at,
+        ).limit(50)
+    ).all()
+    if not candidates:
+        return False
+
+    source_key = _quote_student_dedupe_key(quote, prospect, client)
+    for candidate, candidate_prospect, candidate_client in candidates:
+        if candidate.parent_quote_id == quote.id:
+            return True
+        if _quote_student_dedupe_key(candidate, candidate_prospect, candidate_client) == source_key:
+            return True
+    return False
+
+
 def _quote_is_bar_le_duc(db: Session, quote: Quote) -> bool:
     if quote.location_id is not None:
         location = db.scalar(select(Location).where(Location.id == quote.location_id).limit(1))
@@ -344,7 +395,12 @@ def _quote_expiry_digest_rows(
     )
     if statuses is not None:
         stmt = stmt.where(Quote.status.in_(sorted(statuses)))
-    return db.execute(stmt).all()
+    rows = list(db.execute(stmt).all())
+    return [
+        row
+        for row in rows
+        if not _quote_has_newer_replacement(db, row[0], row[1], row[2])
+    ]
 
 
 def _build_quote_expiry_digest_body(
@@ -425,7 +481,7 @@ def _send_quote_expiry_admin_digest(
         db,
         digest_date=digest_date - timedelta(days=1),
         limit=limit,
-        statuses=EXPIRABLE_STATUSES | {"expired", "cancelled"},
+        statuses={"expired"},
     )
     if not rows and not expired_yesterday_rows:
         _mark_quote_expiry_digest_processed(db, digest_date=digest_date, now=now)
