@@ -191,6 +191,11 @@ export type SessionMatchOption = {
   reasons: string[];
 };
 
+type SessionMatchDraft = SessionMatchOption & {
+  session: QuoteTransformSession;
+  localParts: ReturnType<typeof isoPartsInTimezone>;
+};
+
 export type BillingExtraRow = {
   rowId: string;
   sourceLineId: string | null;
@@ -1130,6 +1135,98 @@ function mockSessionOption(
   ];
 }
 
+function recurringSlotLabel(
+  session: QuoteTransformSession,
+  localParts: ReturnType<typeof isoPartsInTimezone>,
+  locale: string,
+): string {
+  const parsed = new Date(session.startAtUtc);
+  const safeTimezone = (session.timezone || "").trim() || "UTC";
+  const timeLabel = localParts.timeKey || toLocalDateLabel(session.startAtUtc, session.timezone, locale);
+  if (Number.isNaN(parsed.getTime())) {
+    return timeLabel;
+  }
+  try {
+    const weekday = parsed.toLocaleDateString(locale, {
+      timeZone: safeTimezone,
+      weekday: "short",
+    });
+    return `${weekday} ${timeLabel}`;
+  } catch {
+    return timeLabel;
+  }
+}
+
+function recurringSlotKey(option: SessionMatchDraft): string {
+  const locationKey = locationGroup(option.locationName || option.session.locationName || "") || normalizeText(option.locationName);
+  const titleKey = normalizeText(option.label || option.session.title);
+  const teacherKey = normalizeText(option.teacher || option.session.teacherDisplayName);
+  const weekdayKey = option.localParts.weekday === null ? "day:unknown" : `day:${option.localParts.weekday}`;
+  const timeKey = option.localParts.timeKey || "time:unknown";
+  return [
+    option.session.courseTypeId || "course:unknown",
+    locationKey || option.session.locationId || "location:unknown",
+    titleKey || "title:unknown",
+    teacherKey || "teacher:unknown",
+    weekdayKey,
+    timeKey,
+  ].join("|");
+}
+
+function compareSessionMatchDrafts(a: SessionMatchDraft, b: SessionMatchDraft): number {
+  if (b.score !== a.score) {
+    return b.score - a.score;
+  }
+  const aStart = new Date(a.session.startAtUtc).getTime();
+  const bStart = new Date(b.session.startAtUtc).getTime();
+  if (Number.isFinite(aStart) && Number.isFinite(bStart) && aStart !== bStart) {
+    return aStart - bStart;
+  }
+  return a.sessionId.localeCompare(b.sessionId);
+}
+
+function groupRecurringSessionOptions(
+  options: SessionMatchDraft[],
+  locale: string,
+  language: UiLanguage,
+): SessionMatchDraft[] {
+  if (options.length <= 1) {
+    return options;
+  }
+
+  const groups = new Map<string, SessionMatchDraft[]>();
+  for (const option of options) {
+    const key = recurringSlotKey(option);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.push(option);
+    } else {
+      groups.set(key, [option]);
+    }
+  }
+
+  if (groups.size === options.length) {
+    return options;
+  }
+
+  return Array.from(groups.values()).map((group) => {
+    const sortedGroup = [...group].sort(compareSessionMatchDrafts);
+    const representative = sortedGroup[0];
+    const minSeatsRemaining = group.reduce((acc, option) => Math.min(acc, option.seatsRemaining), Number.POSITIVE_INFINITY);
+    const groupSize = group.length;
+    const sessionWord = language === "en" ? "session" : "seance";
+    const recurrentReason = language === "en"
+      ? `recurring slot grouped (${groupSize} ${sessionWord}${groupSize > 1 ? "s" : ""})`
+      : `creneau recurrent regroupe (${groupSize} ${sessionWord}${groupSize > 1 ? "s" : ""})`;
+    return {
+      ...representative,
+      dateLabel: `${recurringSlotLabel(representative.session, representative.localParts, locale)} · ${groupSize} ${sessionWord}${groupSize > 1 ? "s" : ""}`,
+      seatsRemaining: Number.isFinite(minSeatsRemaining) ? minSeatsRemaining : representative.seatsRemaining,
+      reasons: [...representative.reasons, recurrentReason],
+    };
+  });
+}
+
 export function buildSessionMatches(
   activityRow: ActivityPricingRow,
   sessions: QuoteTransformSession[],
@@ -1223,9 +1320,10 @@ export function buildSessionMatches(
     return locationScopedSessions;
   })();
 
-  const options = scopedSessions
+  const optionDrafts = scopedSessions
     .map((session) => {
       const scoreData = matchScore(session, hint, expectedLocationId);
+      const localParts = isoPartsInTimezone(session.startAtUtc, session.timezone);
       const dateLabel = toLocalDateLabel(session.startAtUtc, session.timezone, locale);
       return {
         sessionId: session.id,
@@ -1241,9 +1339,19 @@ export function buildSessionMatches(
           ...(selectionModeRef.value === "nearest_date_time" ? ["date la plus proche"] : []),
           ...(selectionModeRef.value === "nearest_date" ? ["date la plus proche (horaire approche)"] : []),
         ],
-      } satisfies SessionMatchOption;
+        session,
+        localParts,
+      } satisfies SessionMatchDraft;
     })
-    .sort((a, b) => b.score - a.score);
+    .sort(compareSessionMatchDrafts);
+
+  const groupedOptions = selectionModeRef.value === "all" && activityRow.quantity > 1
+    ? groupRecurringSessionOptions(optionDrafts, locale, language)
+    : optionDrafts;
+
+  const options = groupedOptions
+    .sort(compareSessionMatchDrafts)
+    .map(({ session: _session, localParts: _localParts, ...option }) => option);
 
   if (scenario === "live") {
     return options;
