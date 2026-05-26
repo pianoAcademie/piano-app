@@ -1692,6 +1692,13 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
                 "modality": modality,
             }
         )
+    sessions, _ = _filter_sessions_blocked_by_quote_school_calendar(db, sessions)
+    try:
+        session_limit = int(str(block.get("planning_session_limit") or "").strip())
+    except (TypeError, ValueError):
+        session_limit = 0
+    if session_limit > 0:
+        sessions = sessions[:session_limit]
     return sessions
 
 

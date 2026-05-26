@@ -6015,8 +6015,6 @@ def _calendar_snapshot_from_analysis(
             session_limit = session_limit_by_key.get(_session_recommendation_key(recommendation)) or session_limit_by_key.get(
                 str(recommendation.activity_id)
             )
-            if session_limit is not None:
-                series_sessions = list(series_sessions)[:session_limit]
 
             zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
             first_local_start = series_sessions[0].start_at_utc.astimezone(zone)
@@ -6040,6 +6038,7 @@ def _calendar_snapshot_from_analysis(
                     "end_time": first_local_end.strftime("%H:%M"),
                     "modality": modality,
                     "series_key": series_key,
+                    "planning_session_limit": session_limit,
                     "selection_pending": False,
                 }
             )

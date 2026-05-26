@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -285,6 +286,84 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
 
         self.assertEqual(hydrated["sessions_count"], 1)
         self.assertEqual([item["date"] for item in hydrated["sessions"]], ["2026-11-04"])
+
+    def test_calendar_snapshot_applies_session_limit_after_school_calendar_filtering(self) -> None:
+        activity_id = uuid4()
+        location_id = uuid4()
+        recurrence_id = uuid4()
+        calendar_value = json.dumps(
+            [
+                {
+                    "is_active": True,
+                    "location_id": str(location_id),
+                    "school_year_label": "2026-2027",
+                    "holiday_dates": [],
+                    "closure_dates": [],
+                    "vacation_periods": [{"start_date": "2026-09-16", "end_date": "2026-09-16"}],
+                }
+            ]
+        )
+        rows = [
+            (
+                SimpleNamespace(
+                    id=uuid4(),
+                    course_type_id=activity_id,
+                    location_id=location_id,
+                    status="SCHEDULED",
+                    start_at_utc=start_at,
+                    end_at_utc=end_at,
+                    timezone="Europe/Paris",
+                    recurrence_group_id=recurrence_id,
+                ),
+                SimpleNamespace(id=activity_id, name="Cours collectif", mode="ONSITE"),
+                SimpleNamespace(id=location_id, name="Rue de la Pompe", timezone="Europe/Paris", is_online=False),
+            )
+            for start_at, end_at in [
+                (datetime(2026, 9, 9, 8, 0, tzinfo=timezone.utc), datetime(2026, 9, 9, 9, 0, tzinfo=timezone.utc)),
+                (datetime(2026, 9, 16, 8, 0, tzinfo=timezone.utc), datetime(2026, 9, 16, 9, 0, tzinfo=timezone.utc)),
+                (datetime(2026, 9, 23, 8, 0, tzinfo=timezone.utc), datetime(2026, 9, 23, 9, 0, tzinfo=timezone.utc)),
+                (datetime(2026, 9, 30, 8, 0, tzinfo=timezone.utc), datetime(2026, 9, 30, 9, 0, tzinfo=timezone.utc)),
+                (datetime(2026, 10, 7, 8, 0, tzinfo=timezone.utc), datetime(2026, 10, 7, 9, 0, tzinfo=timezone.utc)),
+            ]
+        ]
+        fake_db = SimpleNamespace(
+            scalar=lambda _query: SimpleNamespace(value=calendar_value),
+            scalars=lambda _query: SimpleNamespace(
+                all=lambda: [
+                    SimpleNamespace(
+                        id=activity_id,
+                        exclude_holidays_in_recurrence=True,
+                        exclude_school_vacations_in_recurrence=True,
+                    )
+                ]
+            ),
+            execute=lambda _query: SimpleNamespace(all=lambda: rows),
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(activity_id),
+                    "activity_label": "Cours collectif",
+                    "location_id": str(location_id),
+                    "location_label": "Rue de la Pompe",
+                    "weekday": 2,
+                    "weekday_label": "Mercredi",
+                    "start_date": "2026-09-09",
+                    "end_date": "2026-10-07",
+                    "start_time": "10:00",
+                    "end_time": "11:00",
+                    "series_key": str(recurrence_id),
+                    "planning_session_limit": 3,
+                    "selection_pending": False,
+                }
+            ],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_planning_sessions(fake_db, snapshot)
+
+        self.assertEqual([item["date"] for item in hydrated["sessions"]], ["2026-09-09", "2026-09-23", "2026-09-30"])
+        self.assertEqual(hydrated["sessions_count"], 3)
 
     def test_calendar_snapshot_hydrates_partial_block_sessions_from_planning(self) -> None:
         activity_id = uuid4()
