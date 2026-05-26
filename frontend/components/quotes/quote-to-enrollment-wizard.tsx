@@ -1602,6 +1602,9 @@ export default function QuoteToEnrollmentWizard({
                                     ) : quoteContext && normalizeComparable(option.locationName) !== normalizeComparable(quoteContext.location) ? (
                                       <span className="status-pill status-warn">{t("admin.quote_transform.quote_option_location_differs")}</span>
                                     ) : null}
+                                    {option.recommended && options.length > 1 ? (
+                                      <span className="status-pill status-ok">{t("admin.quote_transform.recommended_slot")}</span>
+                                    ) : null}
                                   </div>
                                   <p className="muted">{option.dateLabel} · {option.locationName} · {option.teacher}</p>
                                   <p className="muted">{t("admin.quote_transform.seats_remaining", { count: option.seatsRemaining })} · {t("admin.quote_transform.score", { score: option.score })}</p>

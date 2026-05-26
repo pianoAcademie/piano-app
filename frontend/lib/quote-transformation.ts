@@ -189,6 +189,7 @@ export type SessionMatchOption = {
   status: string;
   score: number;
   reasons: string[];
+  recommended?: boolean;
 };
 
 type SessionMatchDraft = SessionMatchOption & {
@@ -1210,6 +1211,7 @@ function groupRecurringSessionOptions(
   options: SessionMatchDraft[],
   locale: string,
   language: UiLanguage,
+  expectedQuantity: number,
 ): SessionMatchDraft[] {
   if (options.length <= 1) {
     return options;
@@ -1230,11 +1232,36 @@ function groupRecurringSessionOptions(
     return options;
   }
 
-  return Array.from(groups.values()).map((group) => {
+  const expectedSessionCount = Number.isFinite(expectedQuantity) && expectedQuantity > 1
+    ? Math.round(expectedQuantity)
+    : null;
+
+  const groupedOptions = Array.from(groups.values()).map((group) => {
     const sortedGroup = [...group].sort(compareSessionMatchDrafts);
     const representative = sortedGroup[0];
     const minSeatsRemaining = group.reduce((acc, option) => Math.min(acc, option.seatsRemaining), Number.POSITIVE_INFINITY);
     const groupSize = group.length;
+    const quantityDelta = expectedSessionCount === null ? null : Math.abs(groupSize - expectedSessionCount);
+    const quantityScore = quantityDelta === null
+      ? 0
+      : quantityDelta === 0
+        ? 18
+        : quantityDelta <= 2
+          ? 12
+          : quantityDelta <= 5
+            ? 6
+            : quantityDelta >= 10
+              ? -8
+              : 0;
+    const quantityReason = quantityDelta === null
+      ? null
+      : quantityDelta === 0
+        ? (language === "en" ? "same quantity as quote" : "quantite identique au devis")
+        : quantityDelta <= 5
+          ? (language === "en" ? "quantity close to quote" : "quantite proche du devis")
+          : quantityDelta >= 10
+            ? (language === "en" ? "quantity far from quote" : "quantite eloignee du devis")
+            : null;
     const sessionWord = language === "en" ? "session" : "seance";
     const recurrentReason = language === "en"
       ? `recurring slot grouped (${groupSize} ${sessionWord}${groupSize > 1 ? "s" : ""})`
@@ -1243,9 +1270,18 @@ function groupRecurringSessionOptions(
       ...representative,
       dateLabel: `${recurringSlotLabel(representative.session, representative.localParts, locale)} · ${groupSize} ${sessionWord}${groupSize > 1 ? "s" : ""}`,
       seatsRemaining: Number.isFinite(minSeatsRemaining) ? minSeatsRemaining : representative.seatsRemaining,
-      reasons: [...representative.reasons, recurrentReason],
+      score: representative.score + quantityScore,
+      reasons: [...representative.reasons, recurrentReason, ...(quantityReason ? [quantityReason] : [])],
     };
   });
+
+  const sortedGroupedOptions = groupedOptions.sort(compareSessionMatchDrafts);
+  const firstUsableIndex = sortedGroupedOptions.findIndex((option) => option.seatsRemaining > 0);
+  const recommendedIndex = firstUsableIndex >= 0 ? firstUsableIndex : 0;
+  return sortedGroupedOptions.map((option, index) => ({
+    ...option,
+    recommended: index === recommendedIndex,
+  }));
 }
 
 export function buildSessionMatches(
@@ -1367,7 +1403,7 @@ export function buildSessionMatches(
     .sort(compareSessionMatchDrafts);
 
   const groupedOptions = selectionModeRef.value === "all" && activityRow.quantity > 1
-    ? groupRecurringSessionOptions(optionDrafts, locale, language)
+    ? groupRecurringSessionOptions(optionDrafts, locale, language, activityRow.quantity)
     : optionDrafts;
 
   const options = groupedOptions
