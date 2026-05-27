@@ -60,6 +60,7 @@ import ManualTransactionNonCashFlowFields from "../../../../components/manual-tr
 import ManualTransactionLegalEntityFields from "../../../../components/manual-transaction-legal-entity-fields";
 import RichMessageEditor from "../../../../components/rich-message-editor";
 import ModalFirstErrorFocus from "../../../../components/modal-first-error-focus";
+import SearchMultiSelect from "../../../../components/search-multi-select";
 import type {
   AdminClientBookingOut,
   AdminClientFamilyOut,
@@ -1517,6 +1518,23 @@ function contactDisplayLabel(firstName: string | null | undefined, lastName: str
   return name ? `${name} <${email}>` : email;
 }
 
+function familyCandidateOption(candidate: {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  email: string | null;
+}): { id: string; label: string; sortLabel: string } {
+  const firstName = String(candidate.first_name || "").trim();
+  const lastName = String(candidate.last_name || "").trim();
+  const email = String(candidate.email || "").trim();
+  const fallback = email || candidate.id;
+  return {
+    id: candidate.id,
+    label: [firstName, lastName].filter(Boolean).join(" ") || fallback,
+    sortLabel: [lastName, firstName, email].filter(Boolean).join(" "),
+  };
+}
+
 function formatLocalizedDate(value: string, language: UiLanguage): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
@@ -2742,6 +2760,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const candidateAdults = allClients.filter(
     (candidate) => candidate.id !== client.id && candidate.client_kind === "ADULT" && !linkedAdultIds.has(candidate.id),
   );
+  const candidateChildOptions = candidateChildren.map(familyCandidateOption);
+  const candidateAdultOptions = candidateAdults.map(familyCandidateOption);
+  const familyAttachSearchPlaceholder =
+    language === "en" ? "Type a last name, first name, or email..." : "Tapez un nom, prenom ou email...";
 
   const tabs: Array<{ id: ClientTab; label: string }> = [
     { id: "fiche", label: clientDetailTabLabel("fiche", language) },
@@ -4605,19 +4627,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <form action={linkExistingFamilyMembersAction} className="grid">
                   <input type="hidden" name="adult_client_id" value={client.id} />
                   <input type="hidden" name="return_client_id" value={client.id} />
-                  <label>
-                    {t("admin.client_detail.child_to_attach")}
-                    <select name="child_client_id" required defaultValue="">
-                      <option value="" disabled>
-                        {t("admin.client_detail.select_child")}
-                      </option>
-                      {candidateChildren.map((candidate) => (
-                        <option key={candidate.id} value={candidate.id}>
-                          {[candidate.first_name, candidate.last_name].filter(Boolean).join(" ") || candidate.email}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  <SearchMultiSelect
+                    label={t("admin.client_detail.child_to_attach")}
+                    name="child_client_id"
+                    options={candidateChildOptions}
+                    selectedIds={[]}
+                    placeholder={familyAttachSearchPlaceholder}
+                    language={language}
+                    maxSelections={1}
+                    requiredSelection
+                    emptySelectionLabel={t("admin.client_detail.select_child")}
+                    emptySummaryLabel={t("admin.client_detail.select_child")}
+                    availableOptionsLabel={t("admin.client_detail.child_to_attach")}
+                    noResultsLabel={t("admin.client_detail.no_child_candidate")}
+                  />
                   <label>
                     {uiText(language, "admin.clients.relationship_label")}
                     <input
@@ -4640,19 +4663,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <form action={linkExistingFamilyMembersAction} className="grid">
                 <input type="hidden" name="child_client_id" value={client.id} />
                 <input type="hidden" name="return_client_id" value={client.id} />
-                <label>
-                  {t("admin.client_detail.adult_to_attach")}
-                  <select name="adult_client_id" required defaultValue="">
-                    <option value="" disabled>
-                      {t("admin.client_detail.select_adult")}
-                    </option>
-                    {candidateAdults.map((candidate) => (
-                      <option key={candidate.id} value={candidate.id}>
-                        {[candidate.first_name, candidate.last_name].filter(Boolean).join(" ") || candidate.email}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <SearchMultiSelect
+                  label={t("admin.client_detail.adult_to_attach")}
+                  name="adult_client_id"
+                  options={candidateAdultOptions}
+                  selectedIds={[]}
+                  placeholder={familyAttachSearchPlaceholder}
+                  language={language}
+                  maxSelections={1}
+                  requiredSelection
+                  emptySelectionLabel={t("admin.client_detail.select_adult")}
+                  emptySummaryLabel={t("admin.client_detail.select_adult")}
+                  availableOptionsLabel={t("admin.client_detail.adult_to_attach")}
+                  noResultsLabel={t("admin.client_detail.no_adult_candidate")}
+                />
                 <label>
                   {uiText(language, "admin.clients.relationship_label")}
                   <input

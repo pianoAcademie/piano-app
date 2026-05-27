@@ -7,6 +7,7 @@ import type { UiLanguage } from "../lib/ui-messages";
 type Option = {
   id: string;
   label: string;
+  sortLabel?: string;
 };
 
 type Props = {
@@ -94,7 +95,12 @@ export default function SearchMultiSelect({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const optionById = useMemo(() => new Map(options.map((option) => [option.id, option])), [options]);
   const sortedOptions = useMemo(
-    () => [...options].sort((a, b) => a.label.localeCompare(b.label, resolvedLanguage === "en" ? "en" : "fr")),
+    () =>
+      [...options].sort((a, b) =>
+        (a.sortLabel ?? a.label).localeCompare(b.sortLabel ?? b.label, resolvedLanguage === "en" ? "en" : "fr", {
+          sensitivity: "base",
+        }),
+      ),
     [options, resolvedLanguage],
   );
   const [query, setQuery] = useState("");
@@ -117,7 +123,9 @@ export default function SearchMultiSelect({
     if (!normalizedQuery) {
       return candidates;
     }
-    return candidates.filter((option) => normalize(option.label, resolvedLanguage).includes(normalizedQuery));
+    return candidates.filter((option) =>
+      normalize(`${option.label} ${option.sortLabel ?? ""}`, resolvedLanguage).includes(normalizedQuery),
+    );
   }, [query, resolvedLanguage, selectedSet, sortedOptions]);
   const filteredOptions = matchingOptions.slice(0, 120);
   const hasHiddenOptions = matchingOptions.length > filteredOptions.length;
