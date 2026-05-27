@@ -370,7 +370,7 @@ function QuotePaginationControls({
 }): JSX.Element {
   const previousPageHref = withUiLanguage(buildQuotesListHref({ ...filters, page: currentPage - 1, pageSize }), language);
   const nextPageHref = withUiLanguage(buildQuotesListHref({ ...filters, page: currentPage + 1, pageSize }), language);
-  const hiddenFields: Array<[string, string]> = [
+  const hiddenFieldEntries: Array<[string, string]> = [
     ["status", filters.status],
     ["context_type", filters.contextType],
     ["activity_id", filters.activityId],
@@ -390,7 +390,8 @@ function QuotePaginationControls({
     ["created_to", filters.createdTo],
     ["expires_from", filters.expiresFrom],
     ["expires_to", filters.expiresTo],
-  ].filter(([, value]) => Boolean(value));
+  ];
+  const hiddenFields = hiddenFieldEntries.filter(([, value]) => Boolean(value));
 
   return (
     <div className="row spread wrap clients-pagination top-gap-sm">
