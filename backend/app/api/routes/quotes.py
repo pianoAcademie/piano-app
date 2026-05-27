@@ -3895,6 +3895,20 @@ def _freeze_quote_document_snapshot(
     return existing
 
 
+def _quote_has_limited_planning_blocks(quote: Quote) -> bool:
+    snapshot = _json_object(getattr(quote, "calendar_snapshot", None))
+    for raw_block in _json_list(snapshot.get("blocks")):
+        if not isinstance(raw_block, dict):
+            continue
+        try:
+            limit = int(str(raw_block.get("planning_session_limit") or "").strip())
+        except (TypeError, ValueError):
+            limit = 0
+        if limit > 0:
+            return True
+    return False
+
+
 def _resolve_quote_pdf_bytes(
     db: Session,
     *,
@@ -3926,6 +3940,29 @@ def _resolve_quote_pdf_bytes(
     if quote.document_snapshot_id:
         snapshot = db.scalar(select(QuoteDocumentSnapshot).where(QuoteDocumentSnapshot.id == quote.document_snapshot_id))
         if snapshot is not None and snapshot.combined_html_snapshot:
+            if freeze_state == "frozen" and _quote_has_limited_planning_blocks(quote):
+                _body_html, _terms_html, current_combined_html = render_quote_parts_html(
+                    db=db,
+                    quote=quote,
+                    lines=lines,
+                    audience=audience,
+                )
+                current_hash = hashlib.sha256(current_combined_html.encode("utf-8")).hexdigest()
+                if current_hash != snapshot.document_hash:
+                    refreshed_snapshot = _freeze_quote_document_snapshot(
+                        db,
+                        quote=quote,
+                        lines=lines,
+                        state=freeze_state,
+                        audience=audience,
+                    )
+                    return render_quote_pdf_from_combined_html(
+                        db=db,
+                        quote=quote,
+                        lines=lines,
+                        combined_html=str(refreshed_snapshot.combined_html_snapshot),
+                        audience=audience,
+                    )
             return render_quote_pdf_from_combined_html(
                 db=db,
                 quote=quote,
