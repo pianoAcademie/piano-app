@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, UniqueConstraint, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -124,6 +124,7 @@ class TypeformIntake(Base):
     detected_location: Mapped[str | None] = mapped_column(String(80), nullable=True)
     detected_segment: Mapped[str | None] = mapped_column(String(40), nullable=True)
     detected_school_year: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    admin_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     related_quote_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("quotes.id", ondelete="SET NULL"),

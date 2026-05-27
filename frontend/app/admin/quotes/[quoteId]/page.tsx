@@ -2139,6 +2139,10 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const activities = activitiesResult.ok ? activitiesResult.data : [];
   const products = productsResult.ok ? productsResult.data : [];
   const kits = kitsResult.ok ? kitsResult.data : [];
+  const currentLineKitIds = new Set(detail.lines.map((line) => line.kit_id).filter(Boolean));
+  const manualBillingKits = kits.filter((row) => (
+    row.active && (row.use_in_manual_billing || currentLineKitIds.has(row.id))
+  ));
   const locations = locationsResult.ok ? locationsResult.data : [];
   const solfegeRules = solfegeRulesResult.ok ? solfegeRulesResult.data : [];
   const planningEditorSchoolYearLabel = derivePlanningSnapshotSchoolYearLabel(
@@ -4171,7 +4175,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
             price_incl_vat: row.price_incl_vat,
             vat_rate: row.vat_rate,
           }))}
-          kits={kits.map((row) => ({
+          kits={manualBillingKits.map((row) => ({
             id: row.id,
             title: row.title,
             effective_price_ttc: row.price_effective_incl_vat,

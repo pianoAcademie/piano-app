@@ -144,6 +144,7 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
   const activities = activitiesResult.ok ? activitiesResult.data : [];
   const products = productsResult.ok ? productsResult.data : [];
   const kits = kitsResult.ok ? kitsResult.data : [];
+  const manualBillingKits = kits.filter((row) => row.active && row.use_in_manual_billing);
   const solfegeRules = solfegeRulesResult.ok ? solfegeRulesResult.data : [];
   const legalEntities = legalEntitiesResult.ok ? legalEntitiesResult.data : [];
 
@@ -234,7 +235,7 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
           default_course_rate_ttc: row.default_course_rate_ttc,
         }))}
         products={products.map((row) => ({ id: row.id, title: row.title, price_incl_vat: row.price_incl_vat }))}
-        kits={kits.map((row) => ({ id: row.id, title: row.title, effective_price_ttc: row.price_effective_incl_vat }))}
+        kits={manualBillingKits.map((row) => ({ id: row.id, title: row.title, effective_price_ttc: row.price_effective_incl_vat }))}
         solfegeRules={solfegeRules.map((row) => ({
           id: row.id,
           level_code: row.level_code,

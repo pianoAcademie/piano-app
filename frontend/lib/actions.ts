@@ -11478,6 +11478,38 @@ export async function restoreTypeformIntakeAction(formData: FormData): Promise<v
   redirect(appendQueryMessage(returnTo, "ok", "Intake reactivee"));
 }
 
+export async function saveTypeformIntakeAdminCommentAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  await ensureAdmin(token);
+
+  const intakeId = String(formData.get("intake_id") ?? "").trim();
+  const returnTo = safeAdminIntakesPath(String(formData.get("return_to") ?? "/admin/intakes"));
+  const cleanReturnTo = setQueryParam(setQueryParam(returnTo, "error", null), "ok", null);
+  if (!intakeId) {
+    redirect(appendQueryMessage(cleanReturnTo, "error", "Intake introuvable"));
+  }
+
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/typeform/intakes/${encodeURIComponent(intakeId)}/admin-comment`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ admin_comment: optionalField(formData, "admin_comment") }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(cleanReturnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/intakes");
+  revalidatePath(`/admin/intakes/${intakeId}`);
+  redirect(appendQueryMessage(cleanReturnTo, "ok", "Commentaire admin enregistre"));
+}
+
 export async function deleteTypeformIntakeAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

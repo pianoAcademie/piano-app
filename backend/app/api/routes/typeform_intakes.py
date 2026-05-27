@@ -45,6 +45,7 @@ from app.models.typeform_intake import TypeformFormConfig, TypeformIntake
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.schemas.quote import QuoteCreateRequest, QuoteLineIn
 from app.schemas.typeform_intake import (
+    TypeformIntakeAdminCommentRequest,
     TypeformIntakeAdminStateRequest,
     TypeformAnswerOut,
     TypeformDemoSeedOut,
@@ -5231,6 +5232,7 @@ def _intake_list_out(intake: TypeformIntake, analysis: dict[str, object]) -> Typ
         child_label=child_label,
         warnings=[_text(item) for item in _json_list(analysis.get("warnings")) if _text(item)],
         blockages=[_text(item) for item in _json_list(analysis.get("blockages")) if _text(item)],
+        admin_comment=_text(intake.admin_comment) or None,
         related_quote_id=intake.related_quote_id,
         referral=analysis.get("referral") if isinstance(analysis.get("referral"), dict) else None,
     )
@@ -5285,6 +5287,7 @@ def _intake_list_out_fast(
         child_label=child_label,
         warnings=_stored_messages(intake.warnings_json),
         blockages=_stored_messages(intake.blocking_reasons_json),
+        admin_comment=_text(intake.admin_comment) or None,
         related_quote_id=intake.related_quote_id,
         referral=None,
     )
@@ -5342,6 +5345,7 @@ def _intake_detail_out(intake: TypeformIntake, analysis: dict[str, object]) -> T
         answers=analysis["answers"],
         warnings=[_text(item) for item in _json_list(analysis.get("warnings")) if _text(item)],
         blockages=[_text(item) for item in _json_list(analysis.get("blockages")) if _text(item)],
+        admin_comment=_text(intake.admin_comment) or None,
         resolution=analysis["effective_resolution"],
         client_candidates=candidates,
         session_recommendations=analysis["session_recommendations"],
@@ -6239,6 +6243,7 @@ def list_typeform_intakes(
                 TypeformIntake.detected_location.ilike(like),
                 TypeformIntake.detected_segment.ilike(like),
                 TypeformIntake.detected_school_year.ilike(like),
+                TypeformIntake.admin_comment.ilike(like),
                 cast(TypeformIntake.normalized_payload_json, Text).ilike(like),
                 cast(TypeformIntake.simplified_response_json, Text).ilike(like),
             )
@@ -6349,6 +6354,25 @@ def update_typeform_intake_admin_state(
         resolution.pop("admin_state", None)
         resolution.pop("admin_state_meta", None)
     intake.resolution_json = resolution
+    intake.updated_at = _utcnow()
+    db.add(intake)
+    analysis = _refresh_intake_analysis(db, intake)
+    db.commit()
+    db.refresh(intake)
+    return _intake_detail_out(intake, analysis)
+
+
+@router.patch("/intakes/{intake_id}/admin-comment", response_model=TypeformIntakeDetailOut)
+def update_typeform_intake_admin_comment(
+    intake_id: UUID,
+    payload: TypeformIntakeAdminCommentRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> TypeformIntakeDetailOut:
+    intake = db.scalar(select(TypeformIntake).where(TypeformIntake.id == intake_id).with_for_update())
+    if intake is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Typeform intake not found")
+    intake.admin_comment = _text(payload.admin_comment) or None
     intake.updated_at = _utcnow()
     db.add(intake)
     analysis = _refresh_intake_analysis(db, intake)

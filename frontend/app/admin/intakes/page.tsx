@@ -31,6 +31,7 @@ type TypeformIntakeListOut = {
   child_label: string | null;
   warnings: string[];
   blockages: string[];
+  admin_comment: string | null;
   related_quote_id: string | null;
 };
 
@@ -456,6 +457,7 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
                   <th>{uiText(language, "common.site")}</th>
                   <th>{t("admin.intakes.segment")}</th>
                   <th>{uiText(language, "common.status")}</th>
+                  <th>{language === "fr" ? "Commentaire admin" : "Admin comment"}</th>
                   <th>{uiText(language, "common.warnings")}</th>
                   <th>{uiText(language, "common.blockages")}</th>
                   <th>{uiText(language, "client.action")}</th>
@@ -475,6 +477,13 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
                     <td>{segmentLabel(row.detected_segment, language)}</td>
                     <td>
                       <span className={`status-pill ${statusClass(row.intake_status)}`}>{statusLabel(row.intake_status, language)}</span>
+                    </td>
+                    <td>
+                      {row.admin_comment ? (
+                        <p className={styles.adminCommentPreview}>{row.admin_comment}</p>
+                      ) : (
+                        <span className="muted">-</span>
+                      )}
                     </td>
                     <td>{compactList(row.warnings)}</td>
                     <td>{compactList(row.blockages)}</td>

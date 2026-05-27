@@ -150,6 +150,7 @@ class TypeformIntakeListOut(BaseModel):
     child_label: str | None = None
     warnings: list[str] = Field(default_factory=list)
     blockages: list[str] = Field(default_factory=list)
+    admin_comment: str | None = None
     related_quote_id: UUID | None = None
     referral: dict[str, object] | None = None
 
@@ -176,6 +177,7 @@ class TypeformIntakeDetailOut(BaseModel):
     answers: list[TypeformAnswerOut] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     blockages: list[str] = Field(default_factory=list)
+    admin_comment: str | None = None
     resolution: dict[str, object] = Field(default_factory=dict)
     client_candidates: list[TypeformMatchCandidateOut] = Field(default_factory=list)
     session_recommendations: list[TypeformSessionRecommendationOut] = Field(default_factory=list)
@@ -196,6 +198,10 @@ class TypeformIntakeNormalizedPatchRequest(BaseModel):
 
 class TypeformIntakeAdminStateRequest(BaseModel):
     ignored: bool = False
+
+
+class TypeformIntakeAdminCommentRequest(BaseModel):
+    admin_comment: str | None = Field(default=None, max_length=4000)
 
 
 class TypeformIntakeReferralRequest(BaseModel):

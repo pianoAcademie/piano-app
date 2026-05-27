@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import {
   generateTypeformDraftQuoteAction,
   reanalyzeTypeformIntakeAction,
+  saveTypeformIntakeAdminCommentAction,
   saveTypeformIntakeNormalizedDataAction,
   saveTypeformIntakeReferralAction,
   saveTypeformIntakeResolutionAction,
@@ -173,6 +174,7 @@ type TypeformIntakeDetailOut = {
   answers: TypeformAnswerOut[];
   warnings: string[];
   blockages: string[];
+  admin_comment: string | null;
   resolution: Record<string, unknown>;
   client_candidates: TypeformMatchCandidateOut[];
   session_recommendations: TypeformSessionRecommendationOut[];
@@ -1006,6 +1008,28 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
               </ul>
             )}
           </div>
+        </article>
+
+        <article className="card span-2">
+          <div className="row spread wrap gap-sm">
+            <div>
+              <h3>{language === "fr" ? "Commentaire admin" : "Admin comment"}</h3>
+            </div>
+          </div>
+          <form action={saveTypeformIntakeAdminCommentAction} className={`${styles.adminCommentForm} top-gap-sm`}>
+            <input type="hidden" name="intake_id" value={detail.id} />
+            <input type="hidden" name="return_to" value={intakeHref} />
+            <textarea
+              name="admin_comment"
+              defaultValue={detail.admin_comment ?? ""}
+              rows={3}
+              maxLength={4000}
+              placeholder={language === "fr" ? "Ex: en attente retour parent, tarif a confirmer..." : "Example: waiting for parent reply, pricing to confirm..."}
+            />
+            <div className="row align-end">
+              <button type="submit">{language === "fr" ? "Enregistrer le commentaire" : "Save comment"}</button>
+            </div>
+          </form>
         </article>
 
         {detail.referral ? (

@@ -68,6 +68,24 @@
   gap: 10px;
 }
 
+.adminCommentForm {
+  display: grid;
+  gap: 10px;
+}
+
+.adminCommentForm textarea {
+  min-height: 88px;
+  width: 100%;
+}
+
+.adminCommentPreview {
+  color: #2e3747;
+  line-height: 1.35;
+  margin: 0;
+  max-width: 260px;
+  white-space: pre-wrap;
+}
+
 .collapsibleCard {
   padding: 0;
   overflow: hidden;
