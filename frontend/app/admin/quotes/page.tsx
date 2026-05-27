@@ -48,12 +48,39 @@ type QuoteOut = {
   meta: Record<string, unknown>;
 };
 
+type QuoteListPageOut = {
+  items: QuoteOut[];
+  total: number;
+  page: number;
+  page_size: number;
+  stats: Record<string, number>;
+};
+
+const DEFAULT_QUOTES_PAGE_SIZE = 25;
+const QUOTE_PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
+
 function readParam(params: SearchParams, key: string): string {
   const raw = params[key];
   if (Array.isArray(raw)) {
     return raw[0] ?? "";
   }
   return raw ?? "";
+}
+
+function readPositiveIntParam(params: SearchParams, key: string, fallback: number): number {
+  const raw = readParam(params, key).trim();
+  if (!raw) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function readQuotePageSizeParam(params: SearchParams): number {
+  const parsed = readPositiveIntParam(params, "page_size", DEFAULT_QUOTES_PAGE_SIZE);
+  return QUOTE_PAGE_SIZE_OPTIONS.includes(parsed as (typeof QUOTE_PAGE_SIZE_OPTIONS)[number])
+    ? parsed
+    : DEFAULT_QUOTES_PAGE_SIZE;
 }
 
 function formatDate(value: string | null, language: UiLanguage): string {
@@ -109,98 +136,12 @@ function getCalendarSessionsCount(snapshot: Record<string, unknown>): number {
   return raw.length;
 }
 
-function normalizeLocationSignal(value: unknown): string {
-  return String(value ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-}
-
-function snapshotRows(snapshot: Record<string, unknown>): Array<Record<string, unknown>> {
-  const blocks = Array.isArray(snapshot.blocks) ? snapshot.blocks : [];
-  const sessions = Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
-  return [...blocks, ...sessions].filter(
-    (row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row),
-  );
-}
-
-function quotePotentialLocation(row: QuoteOut): "paris" | "bar_le_duc" {
-  const rows = snapshotRows(row.calendar_snapshot || {});
-  const hasBarLeDucPhysicalBlock = rows.some((item) => {
-    const haystack = normalizeLocationSignal([
-      item.location_label,
-      item.location_name,
-      item.location,
-      item.location_code,
-      item.location_id,
-      item.modality,
-      item.mode,
-      item.activity_label,
-      item.activity_name,
-      item.title,
-    ].join(" "));
-    const isOnline = haystack.includes("online") || haystack.includes("en ligne") || haystack.includes("ligne");
-    const isBarLeDuc = haystack.includes("bar-le-duc") || haystack.includes("bar le duc") || haystack.includes("bar_le_duc");
-    return isBarLeDuc && !isOnline;
-  });
-  return hasBarLeDucPhysicalBlock ? "bar_le_duc" : "paris";
-}
-
-function isPotentialEnrollmentState(state: QuoteValidationUiState): boolean {
-  return (
-    state === "incomplet"
-    || state === "brouillon"
-    || state === "pret_a_envoyer"
-    || state === "envoye"
-    || state === "consulte"
-    || state === "modification_demandee"
-    || state === "valide"
-  );
-}
-
-function parseIsoDateOnly(raw: string): Date | null {
-  const value = raw.trim();
-  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return null;
-  }
-  const parsed = new Date(`${value}T00:00:00Z`);
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-  return parsed;
-}
-
-function parseDecimal(raw: string): number | null {
-  const value = raw.trim();
-  if (!value) {
-    return null;
-  }
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return null;
-  }
-  return parsed;
-}
-
-function languageLabel(meta: Record<string, unknown>): string {
-  const language = typeof meta.language === "string" ? meta.language.trim().toLowerCase() : "";
-  return language || "fr";
-}
-
 function templateLabel(meta: Record<string, unknown>): string {
   const options = [meta.template_name, meta.template_code, meta.template_id];
   for (const candidate of options) {
     if (typeof candidate === "string" && candidate.trim()) {
       return candidate.trim();
     }
-  }
-  return "-";
-}
-
-function cgvLabel(snapshot: Record<string, unknown>): string {
-  const label = snapshot.version_label;
-  if (typeof label === "string" && label.trim()) {
-    return label.trim();
   }
   return "-";
 }
@@ -334,36 +275,6 @@ function quoteNextAction(
   return "aucune_action";
 }
 
-function matchesCommercialStatusFilter(row: QuoteOut, filter: string): boolean {
-  const normalized = filter.trim().toLowerCase();
-  if (!normalized) {
-    return true;
-  }
-  const commercialState = quoteValidationState(row);
-  if (normalized === commercialState) {
-    return true;
-  }
-  if (normalized === "created") {
-    return commercialState === "incomplet" || commercialState === "brouillon" || commercialState === "pret_a_envoyer";
-  }
-  if (normalized === "sent") {
-    return commercialState === "envoye" || commercialState === "consulte";
-  }
-  if (normalized === "change_requested") {
-    return commercialState === "modification_demandee";
-  }
-  if (normalized === "approved") {
-    return commercialState === "valide";
-  }
-  if (normalized === "rejected" || normalized === "cancelled") {
-    return commercialState === "refuse";
-  }
-  if (normalized === "expired") {
-    return commercialState === "expire";
-  }
-  return false;
-}
-
 function quoteChangeRequestSummary(row: QuoteOut): { message: string; at: string } | null {
   const meta = row.meta || {};
   const publicResponseLastAction = readStringMeta(meta, "public_response_last_action", "").toLowerCase();
@@ -389,7 +300,7 @@ function quoteChangeRequestRevision(row: QuoteOut): { id: string; number: string
   };
 }
 
-function buildQuotesListHref(params: {
+type QuoteListHrefParams = {
   status: string;
   contextType: string;
   activityId: string;
@@ -409,7 +320,11 @@ function buildQuotesListHref(params: {
   createdTo: string;
   expiresFrom: string;
   expiresTo: string;
-}): string {
+  page?: number;
+  pageSize?: number;
+};
+
+function buildQuotesListHref(params: QuoteListHrefParams): string {
   const sp = new URLSearchParams();
   if (params.status) sp.set("status", params.status);
   if (params.contextType) sp.set("context_type", params.contextType);
@@ -430,8 +345,101 @@ function buildQuotesListHref(params: {
   if (params.createdTo) sp.set("created_to", params.createdTo);
   if (params.expiresFrom) sp.set("expires_from", params.expiresFrom);
   if (params.expiresTo) sp.set("expires_to", params.expiresTo);
+  if (params.page && params.page > 1) sp.set("page", String(params.page));
+  if (params.pageSize && params.pageSize !== DEFAULT_QUOTES_PAGE_SIZE) sp.set("page_size", String(params.pageSize));
   const value = sp.toString();
   return value ? `/admin/quotes?${value}` : "/admin/quotes";
+}
+
+function QuotePaginationControls({
+  filters,
+  total,
+  currentPage,
+  totalPages,
+  pageSize,
+  pageStart,
+  language,
+}: {
+  filters: QuoteListHrefParams;
+  total: number;
+  currentPage: number;
+  totalPages: number;
+  pageSize: number;
+  pageStart: number;
+  language: UiLanguage;
+}): JSX.Element {
+  const previousPageHref = withUiLanguage(buildQuotesListHref({ ...filters, page: currentPage - 1, pageSize }), language);
+  const nextPageHref = withUiLanguage(buildQuotesListHref({ ...filters, page: currentPage + 1, pageSize }), language);
+  const hiddenFields: Array<[string, string]> = [
+    ["status", filters.status],
+    ["context_type", filters.contextType],
+    ["activity_id", filters.activityId],
+    ["q", filters.q],
+    ["prospect_type", filters.prospectType],
+    ["currency", filters.currency],
+    ["quote_type", filters.quoteType],
+    ["school_year", filters.schoolYear],
+    ["language", filters.language],
+    ["template", filters.template],
+    ["cgv", filters.cgv],
+    ["has_solfege", filters.hasSolfege],
+    ["workflow_filter", filters.workflowFilter],
+    ["min_total", filters.minTotal],
+    ["max_total", filters.maxTotal],
+    ["created_from", filters.createdFrom],
+    ["created_to", filters.createdTo],
+    ["expires_from", filters.expiresFrom],
+    ["expires_to", filters.expiresTo],
+  ].filter(([, value]) => Boolean(value));
+
+  return (
+    <div className="row spread wrap clients-pagination top-gap-sm">
+      <div className="row wrap gap-sm">
+        <small className="muted">
+          {uiText(language, "admin.quotes.pagination_summary", {
+            start: total === 0 ? 0 : pageStart + 1,
+            end: Math.min(pageStart + pageSize, total),
+            total,
+          })}
+        </small>
+        <form method="get" className="row wrap gap-sm">
+          {hiddenFields.map(([name, value]) => (
+            <input key={name} type="hidden" name={name} value={value} />
+          ))}
+          <label className="row gap-sm">
+            <span className="muted">{uiText(language, "common.per_page")}</span>
+            <select name="page_size" defaultValue={String(pageSize)}>
+              {QUOTE_PAGE_SIZE_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="submit" className="ghost">{uiText(language, "common.apply")}</button>
+        </form>
+      </div>
+      <div className="row">
+        {currentPage > 1 ? (
+          <Link className="mode-link" href={previousPageHref}>
+            ← {uiText(language, "common.previous")}
+          </Link>
+        ) : (
+          <span className="mode-link disabled-link">← {uiText(language, "common.previous")}</span>
+        )}
+        <span className="badge">
+          {uiText(language, "common.page")} {currentPage}/{totalPages}
+        </span>
+        {currentPage < totalPages ? (
+          <Link className="mode-link" href={nextPageHref}>
+            {uiText(language, "common.next")} →
+          </Link>
+        ) : (
+          <span className="mode-link disabled-link">{uiText(language, "common.next")} →</span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export default async function AdminQuotesPage({ searchParams }: { searchParams: SearchParams }): Promise<JSX.Element> {
@@ -465,177 +473,69 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
   const createdToFilterRaw = readParam(searchParams, "created_to");
   const expiresFromFilterRaw = readParam(searchParams, "expires_from");
   const expiresToFilterRaw = readParam(searchParams, "expires_to");
+  const requestedPage = readPositiveIntParam(searchParams, "page", 1);
+  const pageSize = readQuotePageSizeParam(searchParams);
   const ok = readParam(searchParams, "ok");
   const error = readParam(searchParams, "error");
   const okMessage = resolveUiFlashMessage(searchParams, language, "ok") || ok;
   const errorMessage = resolveUiFlashMessage(searchParams, language, "error") || error;
 
-  const minTotalFilter = parseDecimal(minTotalFilterRaw);
-  const maxTotalFilter = parseDecimal(maxTotalFilterRaw);
-  const createdFromFilter = parseIsoDateOnly(createdFromFilterRaw);
-  const createdToFilter = parseIsoDateOnly(createdToFilterRaw);
-  const expiresFromFilter = parseIsoDateOnly(expiresFromFilterRaw);
-  const expiresToFilter = parseIsoDateOnly(expiresToFilterRaw);
-
   const listQuery = new URLSearchParams();
+  if (statusFilter) listQuery.set("status", statusFilter);
   if (contextFilter) listQuery.set("context_type", contextFilter);
   if (activityFilter) listQuery.set("activity_id", activityFilter);
-  listQuery.set("limit", "1000");
+  if (query) listQuery.set("q", query);
+  if (prospectTypeFilter) listQuery.set("prospect_type", prospectTypeFilter);
+  if (currencyFilter) listQuery.set("currency", currencyFilter);
+  if (quoteTypeFilter) listQuery.set("quote_type", quoteTypeFilter);
+  if (schoolYearFilter) listQuery.set("school_year", schoolYearFilter);
+  if (languageFilter) listQuery.set("language", languageFilter);
+  if (templateFilter) listQuery.set("template", templateFilter);
+  if (cgvFilter) listQuery.set("cgv", cgvFilter);
+  if (hasSolfegeFilter) listQuery.set("has_solfege", hasSolfegeFilter);
+  if (workflowFilter) listQuery.set("workflow_filter", workflowFilter);
+  if (minTotalFilterRaw) listQuery.set("min_total", minTotalFilterRaw);
+  if (maxTotalFilterRaw) listQuery.set("max_total", maxTotalFilterRaw);
+  if (createdFromFilterRaw) listQuery.set("created_from", createdFromFilterRaw);
+  if (createdToFilterRaw) listQuery.set("created_to", createdToFilterRaw);
+  if (expiresFromFilterRaw) listQuery.set("expires_from", expiresFromFilterRaw);
+  if (expiresToFilterRaw) listQuery.set("expires_to", expiresToFilterRaw);
+  listQuery.set("page", String(requestedPage));
+  listQuery.set("page_size", String(pageSize));
 
-  const [prospectsResult, clientsResult, activitiesResult, quotesResult] = await Promise.all([
-    backendRequest<ProspectOut[]>("/api/v1/prospects?limit=1000", {}, token),
-    backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000&include_archived=false", {}, token),
+  const [activitiesResult, quotesResult] = await Promise.all([
     backendRequest<AdminActivityOut[]>("/api/v1/admin/activities?include_inactive=true", {}, token),
-    backendRequest<QuoteOut[]>(`/api/v1/quotes?${listQuery.toString()}`, {}, token),
+    backendRequest<QuoteListPageOut>(`/api/v1/quotes/page?${listQuery.toString()}`, {}, token),
   ]);
 
-  const prospects = prospectsResult.ok ? prospectsResult.data : [];
-  const baseClients = clientsResult.ok ? clientsResult.data : [];
   const activities = activitiesResult.ok ? activitiesResult.data : [];
-  const quotes = quotesResult.ok ? quotesResult.data : [];
+  const quotesPage = quotesResult.ok
+    ? quotesResult.data
+    : { items: [], total: 0, page: requestedPage, page_size: pageSize, stats: {} };
+  const quotes = quotesPage.items;
 
-  const baseClientById = new Map(baseClients.map((row) => [row.id, row]));
-  const missingQuoteClientIds = Array.from(new Set(
-    quotes
-      .map((row) => row.client_id || "")
-      .filter((clientId) => clientId && !baseClientById.has(clientId)),
+  const quoteProspectIds = Array.from(new Set(
+    quotes.map((row) => row.prospect_id || "").filter(Boolean),
   ));
-  const missingClientResults = missingQuoteClientIds.length > 0
-    ? await Promise.all(missingQuoteClientIds.slice(0, 100).map((clientId) => (
+  const quoteClientIds = Array.from(new Set(
+    quotes.map((row) => row.client_id || "").filter(Boolean),
+  ));
+  const [prospectResults, clientResults] = await Promise.all([
+    Promise.all(quoteProspectIds.map((prospectId) => (
+      backendRequest<ProspectOut>(`/api/v1/prospects/${encodeURIComponent(prospectId)}`, {}, token)
+    ))),
+    Promise.all(quoteClientIds.map((clientId) => (
       backendRequest<AdminClientOut>(`/api/v1/admin/clients/${encodeURIComponent(clientId)}`, {}, token)
-    )))
-    : [];
-  const clients = [
-    ...baseClients,
-    ...missingClientResults.flatMap((result) => (result.ok ? [result.data] : [])),
-  ];
+    ))),
+  ]);
+  const prospects = prospectResults.flatMap((result) => (result.ok ? [result.data] : []));
+  const clients = clientResults.flatMap((result) => (result.ok ? [result.data] : []));
 
   const prospectById = new Map(prospects.map((row) => [row.id, row]));
   const clientById = new Map(clients.map((row) => [row.id, row]));
 
-  const filteredQuotes = quotes.filter((row) => {
-    const owner = row.context_type === "acquisition"
-      ? prospectById.get(row.prospect_id || "")
-      : clientById.get(row.client_id || "");
-
-    const ownerName = owner ? displayName(owner.first_name, owner.last_name, owner.email) : "";
-    const ownerPhone = owner
-      ? [
-          String(owner.phone || ""),
-          "mobile_phone_1" in owner ? String(owner.mobile_phone_1 || "") : "",
-          "mobile_phone_2" in owner ? String(owner.mobile_phone_2 || "") : "",
-        ]
-          .join(" ")
-          .trim()
-      : "";
-
-    const textHaystack = [row.quote_number, ownerName, owner?.email || "", ownerPhone]
-      .join(" ")
-      .toLowerCase();
-    if (query && !textHaystack.includes(query.trim().toLowerCase())) {
-      return false;
-    }
-
-    if (!matchesCommercialStatusFilter(row, statusFilter)) {
-      return false;
-    }
-
-    const rowProspectType = row.context_type === "acquisition"
-      ? prospectTypeLabelFromMeta((owner as ProspectOut | undefined)?.meta || {})
-      : prospectTypeLabelFromClient(owner as AdminClientOut | undefined);
-    if (prospectTypeFilter && rowProspectType !== prospectTypeFilter) {
-      return false;
-    }
-
-    if (currencyFilter && (row.currency || "").toUpperCase() !== currencyFilter) {
-      return false;
-    }
-
-    if (quoteTypeFilter && (row.quote_type || "").trim().toLowerCase() !== quoteTypeFilter) {
-      return false;
-    }
-
-    if (schoolYearFilter && !(row.school_year_label || "").trim().toLowerCase().includes(schoolYearFilter)) {
-      return false;
-    }
-
-    const rowLanguage = languageLabel(row.meta || {});
-    if (languageFilter && rowLanguage !== languageFilter) {
-      return false;
-    }
-
-    const rowTemplate = templateLabel(row.meta || {}).toLowerCase();
-    if (templateFilter && !rowTemplate.includes(templateFilter)) {
-      return false;
-    }
-
-    const rowCgv = cgvLabel(row.cgv_snapshot || {}).toLowerCase();
-    if (cgvFilter && !rowCgv.includes(cgvFilter)) {
-      return false;
-    }
-
-    const rowHasSolfege = Boolean((row.estimated_solfege_level || "").trim());
-    if (hasSolfegeFilter === "yes" && !rowHasSolfege) {
-      return false;
-    }
-    if (hasSolfegeFilter === "no" && rowHasSolfege) {
-      return false;
-    }
-
-    if (workflowFilter) {
-      const commercialState = quoteValidationState(row);
-      const integrationState = quoteIntegrationState(row, commercialState);
-      const nextAction = quoteNextAction(commercialState, integrationState);
-      if (workflowFilter === "preparer_integration" && !(commercialState === "valide" && integrationState === "a_preparer")) {
-        return false;
-      }
-      if (workflowFilter === "integrer_dans_centrale" && nextAction !== "integrer_dans_centrale") {
-        return false;
-      }
-      if (workflowFilter === "erreur_integration" && integrationState !== "erreur_integration") {
-        return false;
-      }
-    }
-
-    const total = Number(row.total_ttc);
-    if (minTotalFilter !== null && Number.isFinite(total) && total < minTotalFilter) {
-      return false;
-    }
-    if (maxTotalFilter !== null && Number.isFinite(total) && total > maxTotalFilter) {
-      return false;
-    }
-
-    const createdAt = new Date(row.created_at);
-    if (createdFromFilter && (!Number.isFinite(createdAt.getTime()) || createdAt < createdFromFilter)) {
-      return false;
-    }
-    if (createdToFilter) {
-      const createdToLimit = new Date(createdToFilter.getTime() + 24 * 60 * 60 * 1000);
-      if (!Number.isFinite(createdAt.getTime()) || createdAt >= createdToLimit) {
-        return false;
-      }
-    }
-
-    if (expiresFromFilter || expiresToFilter) {
-      if (!row.expires_at) {
-        return false;
-      }
-      const expiresAt = new Date(row.expires_at);
-      if (expiresFromFilter && (!Number.isFinite(expiresAt.getTime()) || expiresAt < expiresFromFilter)) {
-        return false;
-      }
-      if (expiresToFilter) {
-        const expiresToLimit = new Date(expiresToFilter.getTime() + 24 * 60 * 60 * 1000);
-        if (!Number.isFinite(expiresAt.getTime()) || expiresAt >= expiresToLimit) {
-          return false;
-        }
-      }
-    }
-
-    return true;
-  });
-
-  const currentListHref = withUiLanguage(buildQuotesListHref({
+  const filteredQuotes = quotes;
+  const listFilters: QuoteListHrefParams = {
     status: statusFilter,
     contextType: contextFilter,
     activityId: activityFilter,
@@ -655,10 +555,25 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
     createdTo: createdToFilterRaw,
     expiresFrom: expiresFromFilterRaw,
     expiresTo: expiresToFilterRaw,
-  }), language);
+  };
+  const totalQuotes = quotesPage.total;
+  const currentPage = quotesPage.page || requestedPage;
+  const effectivePageSize = quotesPage.page_size || pageSize;
+  const totalPages = Math.max(1, Math.ceil(totalQuotes / effectivePageSize));
+  const pageStart = (currentPage - 1) * effectivePageSize;
+  const currentListHref = withUiLanguage(
+    buildQuotesListHref({ ...listFilters, page: currentPage, pageSize: effectivePageSize }),
+    language,
+  );
 
-  const currencyValues = Array.from(new Set(quotes.map((row) => (row.currency || "").toUpperCase()).filter(Boolean))).sort();
-  const quoteTypeValues = Array.from(new Set(quotes.map((row) => (row.quote_type || "").trim()).filter(Boolean))).sort();
+  const currencyValues = Array.from(new Set([
+    currencyFilter,
+    ...quotes.map((row) => (row.currency || "").toUpperCase()).filter(Boolean),
+  ].filter(Boolean))).sort();
+  const quoteTypeValues = Array.from(new Set([
+    quoteTypeFilter,
+    ...quotes.map((row) => (row.quote_type || "").trim()).filter(Boolean),
+  ].filter(Boolean))).sort();
   const quoteStatusOptions = [
     { value: "incomplet", label: t("admin.quotes.validation.incomplet") },
     { value: "brouillon", label: t("admin.quotes.validation.brouillon") },
@@ -670,59 +585,21 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
     { value: "refuse", label: t("admin.quotes.validation.refuse") },
     { value: "expire", label: t("admin.quotes.validation.expire") },
   ];
-  const quoteStats = filteredQuotes.reduce(
-    (acc, row) => {
-      const commercialState = quoteValidationState(row);
-      const integrationState = quoteIntegrationState(row, commercialState);
-      if (isPotentialEnrollmentState(commercialState)) {
-        acc.potentialEnrollments += 1;
-        if (quotePotentialLocation(row) === "bar_le_duc") {
-          acc.potentialBarLeDuc += 1;
-        } else {
-          acc.potentialParis += 1;
-        }
-      }
-      if (commercialState === "incomplet") {
-        acc.incomplete += 1;
-      }
-      if (commercialState === "pret_a_envoyer") {
-        acc.readyToSend += 1;
-      }
-      if (commercialState === "brouillon") {
-        acc.draft += 1;
-      }
-      if (commercialState === "envoye" || commercialState === "consulte") {
-        acc.sent += 1;
-      }
-      if (commercialState === "modification_demandee") {
-        acc.changeRequests += 1;
-      }
-      if (commercialState === "valide") {
-        acc.approved += 1;
-        if (integrationState !== "integre") {
-          acc.integrationTodo += 1;
-        }
-      }
-      if (integrationState === "erreur_integration") {
-        acc.integrationErrors += 1;
-      }
-      return acc;
-    },
-    {
-      total: filteredQuotes.length,
-      potentialEnrollments: 0,
-      potentialParis: 0,
-      potentialBarLeDuc: 0,
-      incomplete: 0,
-      draft: 0,
-      readyToSend: 0,
-      sent: 0,
-      changeRequests: 0,
-      approved: 0,
-      integrationTodo: 0,
-      integrationErrors: 0,
-    },
-  );
+  const stats = quotesPage.stats || {};
+  const quoteStats = {
+    total: stats.total ?? totalQuotes,
+    potentialEnrollments: stats.potentialEnrollments ?? 0,
+    potentialParis: stats.potentialParis ?? 0,
+    potentialBarLeDuc: stats.potentialBarLeDuc ?? 0,
+    incomplete: stats.incomplete ?? 0,
+    draft: stats.draft ?? 0,
+    readyToSend: stats.readyToSend ?? 0,
+    sent: stats.sent ?? 0,
+    changeRequests: stats.changeRequests ?? 0,
+    approved: stats.approved ?? 0,
+    integrationTodo: stats.integrationTodo ?? 0,
+    integrationErrors: stats.integrationErrors ?? 0,
+  };
   return (
     <section className="admin-page-grid">
       <section className="card">
@@ -802,6 +679,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
         )}
       >
         <form method="get" className="quote-list-filters">
+          <input type="hidden" name="page_size" value={effectivePageSize} />
           <div className="grid cols-4 sticky-filters">
             <label className="cols-span-2">
               {t("admin.quotes.search_label")}
@@ -929,6 +807,16 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
             <a className="ghost" href={withUiLanguage("/admin/quotes", language)}>{t("common.reset")}</a>
           </div>
         </form>
+
+        <QuotePaginationControls
+          filters={listFilters}
+          total={totalQuotes}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          pageSize={effectivePageSize}
+          pageStart={pageStart}
+          language={language}
+        />
 
         <div className="table-wrap top-gap-sm">
           <table className="data-table quote-list-table">
@@ -1060,6 +948,15 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
             </tbody>
           </table>
         </div>
+        <QuotePaginationControls
+          filters={listFilters}
+          total={totalQuotes}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          pageSize={effectivePageSize}
+          pageStart={pageStart}
+          language={language}
+        />
       </QuoteListPageRefine>
     </section>
   );

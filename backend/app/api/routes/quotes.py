@@ -98,6 +98,7 @@ from app.schemas.quote import (
     QuoteFollowupSlotRequest,
     QuoteFollowupUpdateRequest,
     QuoteIntakeSummaryOut,
+    QuoteListPageOut,
     QuoteLineIn,
     QuoteLineOut,
     QuoteManualEmailRequest,
@@ -4722,21 +4723,256 @@ def create_prospect_from_client(
     return _prospect_out(row)
 
 
-@router.get("/quotes", response_model=list[QuoteOut])
-def list_quotes(
-    status_filter: str | None = Query(default=None, alias="status"),
+def _quote_admin_meta_string(meta: dict[str, object], key: str, fallback: str = "") -> str:
+    value = meta.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return fallback
+
+
+def _quote_admin_template_label(meta: dict[str, object]) -> str:
+    for key in ("template_name", "template_code", "template_id"):
+        value = meta.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return "-"
+
+
+def _quote_admin_validation_state(row: Quote) -> str:
+    status_value = str(row.status or "").strip().lower()
+    meta = row.meta or {}
+    public_response_last_action = _quote_admin_meta_string(
+        meta,
+        QUOTE_PUBLIC_RESPONSE_LAST_ACTION_META_KEY,
+    ).lower()
+    if status_value == "approved":
+        return "valide"
+    if status_value in {"rejected", "cancelled"}:
+        return "refuse"
+    if status_value == "expired":
+        return "expire"
+    if status_value == "sent":
+        viewed = any(
+            isinstance(meta.get(key), str) and str(meta.get(key)).strip()
+            for key in ("public_viewed_at", "viewed_at", "consulted_at", "last_viewed_at")
+        )
+        return "consulte" if viewed else "envoye"
+    if status_value == "change_requested" or public_response_last_action == "change_requested":
+        return "modification_demandee"
+    if status_value == "created":
+        has_owner = bool(row.prospect_id or row.client_id)
+        has_template = _quote_admin_template_label(meta) != "-"
+        has_amount = bool(row.total_ttc and Decimal(row.total_ttc) != Decimal("0"))
+        if has_owner and has_template and has_amount:
+            return "pret_a_envoyer"
+        if not has_owner or not has_template:
+            return "incomplet"
+        return "brouillon"
+    return "incomplet"
+
+
+def _quote_admin_integration_state(row: Quote, commercial_state: str) -> str:
+    meta = row.meta or {}
+    if _quote_admin_meta_string(meta, QUOTE_CHANGE_REQUEST_REVISION_ID_META_KEY):
+        return "non_concerne"
+    if commercial_state in {"refuse", "expire"}:
+        return "non_concerne"
+    if commercial_state != "valide":
+        return "en_attente_validation_client"
+    raw = str(meta.get("integration_status") or meta.get("central_integration_status") or "").strip().lower()
+    if raw in {"a_preparer", "to_prepare"}:
+        return "a_preparer"
+    if raw in {"a_verifier", "to_check"}:
+        return "a_verifier"
+    if raw in {"pret_a_integrer", "ready_to_integrate"}:
+        return "pret_a_integrer"
+    if raw in {"integre", "integrated"}:
+        return "integre"
+    if raw in {"erreur_integration", "integration_error"}:
+        return "erreur_integration"
+    if bool(meta.get("integration_error")) or str(meta.get("integration_error_message") or "").strip():
+        return "erreur_integration"
+    if str(meta.get("integration_completed_at") or "").strip():
+        return "integre"
+    match_status = str(meta.get("client_match_status") or "").strip().lower()
+    if match_status in {"multiple", "ambiguous"}:
+        return "a_verifier"
+    integration_ready = meta.get("integration_ready")
+    if bool(integration_ready) or str(integration_ready or "").strip().lower() == "true":
+        return "pret_a_integrer"
+    return "a_preparer"
+
+
+def _quote_admin_next_action(commercial_state: str, integration_state: str) -> str:
+    if commercial_state in {"brouillon", "incomplet"}:
+        return "completer_le_devis"
+    if commercial_state == "pret_a_envoyer":
+        return "envoyer"
+    if commercial_state == "modification_demandee":
+        return "traiter_demande_client"
+    if commercial_state in {"envoye", "consulte"}:
+        return "relancer"
+    if commercial_state == "valide":
+        if integration_state == "a_preparer":
+            return "preparer_integration"
+        if integration_state in {"a_verifier", "erreur_integration"}:
+            return "verifier_correspondance_client"
+        if integration_state == "pret_a_integrer":
+            return "integrer_dans_centrale"
+    return "aucune_action"
+
+
+def _quote_matches_commercial_status(row: Quote, status_filter: str | None) -> bool:
+    normalized = (status_filter or "").strip().lower()
+    if not normalized:
+        return True
+    commercial_state = _quote_admin_validation_state(row)
+    if normalized == commercial_state:
+        return True
+    if normalized == "created":
+        return commercial_state in {"incomplet", "brouillon", "pret_a_envoyer"}
+    if normalized == "sent":
+        return commercial_state in {"envoye", "consulte"}
+    if normalized == "change_requested":
+        return commercial_state == "modification_demandee"
+    if normalized == "approved":
+        return commercial_state == "valide"
+    if normalized in {"rejected", "cancelled"}:
+        return commercial_state == "refuse"
+    if normalized == "expired":
+        return commercial_state == "expire"
+    return False
+
+
+def _quote_matches_workflow(row: Quote, workflow_filter: str | None) -> bool:
+    normalized = (workflow_filter or "").strip().lower()
+    if not normalized:
+        return True
+    commercial_state = _quote_admin_validation_state(row)
+    integration_state = _quote_admin_integration_state(row, commercial_state)
+    next_action = _quote_admin_next_action(commercial_state, integration_state)
+    if normalized == "preparer_integration":
+        return commercial_state == "valide" and integration_state == "a_preparer"
+    if normalized == "integrer_dans_centrale":
+        return next_action == "integrer_dans_centrale"
+    if normalized == "erreur_integration":
+        return integration_state == "erreur_integration"
+    return False
+
+
+def _quote_normalize_location_signal(value: object) -> str:
+    return unicodedata.normalize("NFD", str(value or "")).encode("ascii", "ignore").decode("ascii").lower()
+
+
+def _quote_potential_location(row: Quote) -> str:
+    snapshot = row.calendar_snapshot or {}
+    blocks = snapshot.get("blocks")
+    sessions = snapshot.get("sessions")
+    candidates = []
+    if isinstance(blocks, list):
+        candidates.extend(item for item in blocks if isinstance(item, dict))
+    if isinstance(sessions, list):
+        candidates.extend(item for item in sessions if isinstance(item, dict))
+    for item in candidates:
+        haystack = _quote_normalize_location_signal(
+            " ".join(
+                str(item.get(key) or "")
+                for key in (
+                    "location_label",
+                    "location_name",
+                    "location",
+                    "location_code",
+                    "location_id",
+                    "modality",
+                    "mode",
+                    "activity_label",
+                    "activity_name",
+                    "title",
+                )
+            )
+        )
+        is_online = "online" in haystack or "en ligne" in haystack or "ligne" in haystack
+        is_bar_le_duc = "bar-le-duc" in haystack or "bar le duc" in haystack or "bar_le_duc" in haystack
+        if is_bar_le_duc and not is_online:
+            return "bar_le_duc"
+    return "paris"
+
+
+def _quote_admin_stats(rows: list[Quote]) -> dict[str, int]:
+    stats = {
+        "total": len(rows),
+        "potentialEnrollments": 0,
+        "potentialParis": 0,
+        "potentialBarLeDuc": 0,
+        "incomplete": 0,
+        "draft": 0,
+        "readyToSend": 0,
+        "sent": 0,
+        "changeRequests": 0,
+        "approved": 0,
+        "integrationTodo": 0,
+        "integrationErrors": 0,
+    }
+    potential_states = {
+        "incomplet",
+        "brouillon",
+        "pret_a_envoyer",
+        "envoye",
+        "consulte",
+        "modification_demandee",
+        "valide",
+    }
+    for row in rows:
+        commercial_state = _quote_admin_validation_state(row)
+        integration_state = _quote_admin_integration_state(row, commercial_state)
+        if commercial_state in potential_states:
+            stats["potentialEnrollments"] += 1
+            if _quote_potential_location(row) == "bar_le_duc":
+                stats["potentialBarLeDuc"] += 1
+            else:
+                stats["potentialParis"] += 1
+        if commercial_state == "incomplet":
+            stats["incomplete"] += 1
+        if commercial_state == "pret_a_envoyer":
+            stats["readyToSend"] += 1
+        if commercial_state == "brouillon":
+            stats["draft"] += 1
+        if commercial_state in {"envoye", "consulte"}:
+            stats["sent"] += 1
+        if commercial_state == "modification_demandee":
+            stats["changeRequests"] += 1
+        if commercial_state == "valide":
+            stats["approved"] += 1
+            if integration_state != "integre":
+                stats["integrationTodo"] += 1
+        if integration_state == "erreur_integration":
+            stats["integrationErrors"] += 1
+    return stats
+
+
+def _quote_list_stmt(
+    *,
     context_type: str | None = None,
     prospect_id: UUID | None = None,
     client_id: UUID | None = None,
     activity_id: UUID | None = None,
     q: str | None = None,
-    limit: int = Query(default=200, ge=1, le=1000),
-    db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
-) -> list[QuoteOut]:
+    prospect_type: str | None = None,
+    currency: str | None = None,
+    quote_type: str | None = None,
+    school_year: str | None = None,
+    language: str | None = None,
+    template: str | None = None,
+    cgv: str | None = None,
+    has_solfege: str | None = None,
+    min_total: Decimal | None = None,
+    max_total: Decimal | None = None,
+    created_from: date | None = None,
+    created_to: date | None = None,
+    expires_from: date | None = None,
+    expires_to: date | None = None,
+):
     stmt = select(Quote)
-    if status_filter:
-        stmt = stmt.where(Quote.status == status_filter.strip())
     if context_type:
         stmt = stmt.where(Quote.context_type == context_type.strip())
     if prospect_id is not None:
@@ -4753,10 +4989,205 @@ def list_quotes(
         )
     if q:
         pattern = f"%{q.strip()}%"
-        stmt = stmt.where(Quote.quote_number.ilike(pattern))
+        stmt = stmt.where(
+            or_(
+                Quote.quote_number.ilike(pattern),
+                exists(
+                    select(Prospect.id)
+                    .where(
+                        Prospect.id == Quote.prospect_id,
+                        or_(
+                            Prospect.email.ilike(pattern),
+                            Prospect.first_name.ilike(pattern),
+                            Prospect.last_name.ilike(pattern),
+                            Prospect.phone.ilike(pattern),
+                        ),
+                    )
+                    .limit(1)
+                ),
+                exists(
+                    select(User.id)
+                    .where(
+                        User.id == Quote.client_id,
+                        or_(
+                            User.email.ilike(pattern),
+                            User.first_name.ilike(pattern),
+                            User.last_name.ilike(pattern),
+                            User.phone.ilike(pattern),
+                            User.mobile_phone_1.ilike(pattern),
+                            User.mobile_phone_2.ilike(pattern),
+                            User.home_phone.ilike(pattern),
+                        ),
+                    )
+                    .limit(1)
+                ),
+            )
+        )
+    normalized_prospect_type = (prospect_type or "").strip().lower()
+    if normalized_prospect_type == "child":
+        stmt = stmt.where(
+            or_(
+                exists(
+                    select(Prospect.id)
+                    .where(
+                        Prospect.id == Quote.prospect_id,
+                        func.coalesce(Prospect.meta["prospect_type"].astext, "adult") == "child",
+                    )
+                    .limit(1)
+                ),
+                exists(select(User.id).where(User.id == Quote.client_id, User.client_kind == ClientKind.CHILD).limit(1)),
+            )
+        )
+    elif normalized_prospect_type == "adult":
+        stmt = stmt.where(
+            or_(
+                exists(
+                    select(Prospect.id)
+                    .where(
+                        Prospect.id == Quote.prospect_id,
+                        func.coalesce(Prospect.meta["prospect_type"].astext, "adult") != "child",
+                    )
+                    .limit(1)
+                ),
+                exists(select(User.id).where(User.id == Quote.client_id, User.client_kind == ClientKind.ADULT).limit(1)),
+            )
+        )
+    if currency:
+        stmt = stmt.where(func.upper(Quote.currency) == currency.strip().upper())
+    if quote_type:
+        stmt = stmt.where(func.lower(Quote.quote_type) == quote_type.strip().lower())
+    if school_year:
+        stmt = stmt.where(func.lower(func.coalesce(Quote.school_year_label, "")).ilike(f"%{school_year.strip().lower()}%"))
+    if language:
+        normalized_language = language.strip().lower()
+        stmt = stmt.where(func.lower(func.coalesce(Quote.language, Quote.meta["language"].astext, "fr")) == normalized_language)
+    if template:
+        pattern = f"%{template.strip()}%"
+        stmt = stmt.where(
+            or_(
+                Quote.meta["template_name"].astext.ilike(pattern),
+                Quote.meta["template_code"].astext.ilike(pattern),
+                Quote.meta["template_id"].astext.ilike(pattern),
+            )
+        )
+    if cgv:
+        stmt = stmt.where(Quote.cgv_snapshot["version_label"].astext.ilike(f"%{cgv.strip()}%"))
+    normalized_has_solfege = (has_solfege or "").strip().lower()
+    if normalized_has_solfege == "yes":
+        stmt = stmt.where(func.coalesce(Quote.estimated_solfege_level, "") != "")
+    elif normalized_has_solfege == "no":
+        stmt = stmt.where(func.coalesce(Quote.estimated_solfege_level, "") == "")
+    if min_total is not None:
+        stmt = stmt.where(Quote.total_ttc >= min_total)
+    if max_total is not None:
+        stmt = stmt.where(Quote.total_ttc <= max_total)
+    if created_from is not None:
+        stmt = stmt.where(Quote.created_at >= datetime.combine(created_from, time.min, tzinfo=timezone.utc))
+    if created_to is not None:
+        stmt = stmt.where(Quote.created_at < datetime.combine(created_to + timedelta(days=1), time.min, tzinfo=timezone.utc))
+    if expires_from is not None:
+        stmt = stmt.where(Quote.expires_at >= datetime.combine(expires_from, time.min, tzinfo=timezone.utc))
+    if expires_to is not None:
+        stmt = stmt.where(Quote.expires_at < datetime.combine(expires_to + timedelta(days=1), time.min, tzinfo=timezone.utc))
+    return stmt
+
+
+@router.get("/quotes", response_model=list[QuoteOut])
+def list_quotes(
+    status_filter: str | None = Query(default=None, alias="status"),
+    context_type: str | None = None,
+    prospect_id: UUID | None = None,
+    client_id: UUID | None = None,
+    activity_id: UUID | None = None,
+    q: str | None = None,
+    limit: int = Query(default=200, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
+) -> list[QuoteOut]:
+    stmt = _quote_list_stmt(
+        context_type=context_type,
+        prospect_id=prospect_id,
+        client_id=client_id,
+        activity_id=activity_id,
+        q=q,
+    )
+    if status_filter:
+        stmt = stmt.where(Quote.status == status_filter.strip())
 
     rows = db.scalars(stmt.order_by(Quote.created_at.desc()).limit(limit)).all()
     return [_quote_out(row) for row in rows]
+
+
+@router.get("/quotes/page", response_model=QuoteListPageOut)
+def list_quotes_page(
+    status_filter: str | None = Query(default=None, alias="status"),
+    context_type: str | None = None,
+    prospect_id: UUID | None = None,
+    client_id: UUID | None = None,
+    activity_id: UUID | None = None,
+    q: str | None = None,
+    prospect_type: str | None = None,
+    currency: str | None = None,
+    quote_type: str | None = None,
+    school_year: str | None = None,
+    language: str | None = None,
+    template: str | None = None,
+    cgv: str | None = None,
+    has_solfege: str | None = None,
+    workflow_filter: str | None = None,
+    min_total: Decimal | None = Query(default=None, ge=Decimal("0")),
+    max_total: Decimal | None = Query(default=None, ge=Decimal("0")),
+    created_from: date | None = None,
+    created_to: date | None = None,
+    expires_from: date | None = None,
+    expires_to: date | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_view_quotes")),
+) -> QuoteListPageOut:
+    stmt = _quote_list_stmt(
+        context_type=context_type,
+        prospect_id=prospect_id,
+        client_id=client_id,
+        activity_id=activity_id,
+        q=q,
+        prospect_type=prospect_type,
+        currency=currency,
+        quote_type=quote_type,
+        school_year=school_year,
+        language=language,
+        template=template,
+        cgv=cgv,
+        has_solfege=has_solfege,
+        min_total=min_total,
+        max_total=max_total,
+        created_from=created_from,
+        created_to=created_to,
+        expires_from=expires_from,
+        expires_to=expires_to,
+    )
+    offset = (page - 1) * page_size
+    needs_python_filtering = bool((status_filter or "").strip() or (workflow_filter or "").strip())
+    if needs_python_filtering:
+        candidates = db.scalars(stmt.order_by(Quote.created_at.desc())).all()
+        filtered_rows = [
+            row
+            for row in candidates
+            if _quote_matches_commercial_status(row, status_filter) and _quote_matches_workflow(row, workflow_filter)
+        ]
+        total = len(filtered_rows)
+        page_rows = filtered_rows[offset : offset + page_size]
+    else:
+        total = int(db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0)
+        page_rows = db.scalars(stmt.order_by(Quote.created_at.desc()).offset(offset).limit(page_size)).all()
+    return QuoteListPageOut(
+        items=[_quote_out(row) for row in page_rows],
+        total=total,
+        page=page,
+        page_size=page_size,
+        stats=_quote_admin_stats(page_rows),
+    )
 
 
 @router.post("/quotes/calendar/preview")

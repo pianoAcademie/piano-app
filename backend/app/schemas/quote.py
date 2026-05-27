@@ -151,6 +151,14 @@ class QuoteOut(BaseModel):
     updated_at: datetime
 
 
+class QuoteListPageOut(BaseModel):
+    items: list[QuoteOut] = Field(default_factory=list)
+    total: int
+    page: int
+    page_size: int
+    stats: dict[str, int] = Field(default_factory=dict)
+
+
 class QuoteEventOut(BaseModel):
     id: UUID
     event_type: str
