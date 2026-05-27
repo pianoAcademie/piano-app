@@ -1480,7 +1480,7 @@ function rowStatusFromBilling(row: BillingExtraRow): QuoteTransformStatus {
     }
     return "ok";
   }
-  if (row.amountTtc <= 0) {
+  if (row.amountTtc < 0) {
     return "blocked";
   }
   if (row.vatRate < 0) {
