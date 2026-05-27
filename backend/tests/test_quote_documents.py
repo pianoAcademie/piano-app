@@ -9,6 +9,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph
@@ -368,6 +369,109 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertEqual([item["date"] for item in hydrated["sessions"]], ["2026-09-09", "2026-09-23", "2026-09-30"])
         self.assertEqual(hydrated["sessions_count"], 3)
         self.assertEqual(hydrated["blocks"][0]["end_date"], "2026-09-30")
+
+    def test_calendar_snapshot_uses_expected_block_sessions_when_live_series_is_shorter(self) -> None:
+        activity_id = uuid4()
+        location_id = uuid4()
+        recurrence_id = uuid4()
+        expected_dates = [
+            "2026-09-09",
+            "2026-09-16",
+            "2026-09-23",
+            "2026-09-30",
+            "2026-10-07",
+            "2026-10-14",
+            "2026-11-04",
+            "2026-11-18",
+            "2026-11-25",
+            "2026-12-02",
+            "2026-12-09",
+            "2026-12-16",
+            "2027-01-06",
+            "2027-01-13",
+            "2027-01-20",
+            "2027-01-27",
+            "2027-02-03",
+            "2027-02-24",
+            "2027-03-03",
+            "2027-03-10",
+            "2027-03-17",
+            "2027-03-24",
+            "2027-03-31",
+            "2027-04-21",
+            "2027-04-28",
+            "2027-05-05",
+            "2027-05-12",
+            "2027-05-19",
+            "2027-05-26",
+            "2027-06-02",
+            "2027-06-09",
+            "2027-06-16",
+        ]
+        paris = ZoneInfo("Europe/Paris")
+
+        def live_row(iso_date: str) -> tuple[SimpleNamespace, SimpleNamespace, SimpleNamespace]:
+            local_day = date.fromisoformat(iso_date)
+            local_start = datetime.combine(local_day, time(14, 0), tzinfo=paris)
+            local_end = datetime.combine(local_day, time(15, 0), tzinfo=paris)
+            return (
+                SimpleNamespace(
+                    id=uuid4(),
+                    course_type_id=activity_id,
+                    location_id=location_id,
+                    status="SCHEDULED",
+                    start_at_utc=local_start.astimezone(timezone.utc),
+                    end_at_utc=local_end.astimezone(timezone.utc),
+                    timezone="Europe/Paris",
+                    recurrence_group_id=recurrence_id,
+                ),
+                SimpleNamespace(id=activity_id, name="Cours de piano collectif en presentiel (1h)", mode="ONSITE"),
+                SimpleNamespace(id=location_id, name="Rue de la Pompe", timezone="Europe/Paris", is_online=False),
+            )
+
+        rows = [live_row(item) for item in expected_dates[:23]]
+        fake_db = SimpleNamespace(
+            scalar=lambda _query: None,
+            execute=lambda _query: SimpleNamespace(all=lambda: rows),
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(activity_id),
+                    "activity_label": "Cours de piano collectif en presentiel (1h)",
+                    "location_id": str(location_id),
+                    "location_label": "Rue de la Pompe",
+                    "weekday": 2,
+                    "weekday_label": "Mercredi",
+                    "start_date": "2026-09-09",
+                    "end_date": "2027-03-31",
+                    "start_time": "14:00",
+                    "end_time": "15:00",
+                    "series_key": str(recurrence_id),
+                    "calendar_school_year": "2026-2027",
+                    "planning_session_limit": 32,
+                    "holiday_dates": ["2026-11-11"],
+                    "closure_dates": [
+                        "2026-10-21",
+                        "2026-10-28",
+                        "2026-12-23",
+                        "2026-12-30",
+                        "2027-02-10",
+                        "2027-02-17",
+                        "2027-04-07",
+                        "2027-04-14",
+                    ],
+                    "selection_pending": False,
+                }
+            ],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_planning_sessions(fake_db, snapshot)
+
+        self.assertEqual(hydrated["sessions_count"], 32)
+        self.assertEqual([item["date"] for item in hydrated["sessions"]], expected_dates)
+        self.assertEqual(hydrated["blocks"][0]["end_date"], "2027-06-16")
 
     def test_line_recommendation_keys_copy_planning_session_limit_from_quote_line(self) -> None:
         activity_id = uuid4()

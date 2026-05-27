@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from html import escape, unescape as html_unescape
 from html.parser import HTMLParser
@@ -33,6 +33,7 @@ from app.models.quote import Prospect, Quote, QuoteLine, QuoteTemplate, QuoteTem
 from app.models.typeform_intake import TypeformIntake
 from app.models.user import ClientKind, User
 from app.services.i18n import normalize_language
+from app.services.quotes.calendar_engine import CalendarGenerationInput, generate_calendar_snapshot
 
 
 AUDIENCE_ADMIN_PREVIEW = "admin_preview"
@@ -1555,6 +1556,16 @@ def _safe_zoneinfo(value: str | None) -> ZoneInfo:
         return ZoneInfo("Europe/Paris")
 
 
+def _parse_planning_time(value: Any) -> time | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw[:5], "%H:%M").time()
+    except ValueError:
+        return None
+
+
 def _course_type_modality(activity: CourseType, location: Location) -> str:
     mode = getattr(activity.mode, "value", activity.mode)
     normalized = str(mode or "").strip().upper()
@@ -1620,6 +1631,89 @@ def _session_snapshot_matches_block(session: dict[str, Any], block: dict[str, An
     return True
 
 
+def _effective_planning_block_end_date(
+    start_date: date,
+    end_date: date,
+    *,
+    session_limit: int,
+    school_year_label: str | None,
+) -> date:
+    effective_end_date = end_date
+    if session_limit <= 0:
+        return effective_end_date
+    school_year_bounds = _school_year_bounds_from_label(school_year_label)
+    if school_year_bounds is not None:
+        return max(effective_end_date, school_year_bounds[1])
+    fallback_end_year = start_date.year + 1 if start_date.month >= 9 else start_date.year
+    return max(effective_end_date, date(fallback_end_year, 8, 31))
+
+
+def _expected_sessions_from_planning_block(block: dict[str, Any]) -> list[dict[str, Any]]:
+    activity_id = _parse_uuid(block.get("activity_id"))
+    start_date = _parse_iso_date(block.get("start_date"))
+    end_date = _parse_iso_date(block.get("end_date"))
+    start_time = _parse_planning_time(block.get("start_time"))
+    end_time = _parse_planning_time(block.get("end_time"))
+    if activity_id is None or start_date is None or end_date is None or start_time is None or end_time is None:
+        return []
+    if bool(block.get("selection_pending")) or end_time <= start_time:
+        return []
+    try:
+        weekday = int(block.get("weekday"))
+    except (TypeError, ValueError):
+        return []
+    if weekday < 0 or weekday > 6:
+        return []
+    session_limit = _planning_session_limit_from_block(block) or 0
+    effective_end_date = _effective_planning_block_end_date(
+        start_date,
+        end_date,
+        session_limit=session_limit,
+        school_year_label=str(block.get("school_year_label") or block.get("calendar_school_year") or ""),
+    )
+    location_id = _parse_uuid(block.get("location_id"))
+    snapshot = generate_calendar_snapshot(
+        CalendarGenerationInput(
+            start_date=start_date,
+            end_date=effective_end_date,
+            weekdays=[weekday],
+            start_time=start_time,
+            end_time=end_time,
+            recurrence_frequency=str(block.get("recurrence_frequency") or "weekly"),
+            activity_id=activity_id,
+            location_id=location_id,
+            modality=str(block.get("modality") or "") or None,
+            holiday_dates=sorted(_parse_iso_date_set(block.get("holiday_dates"))),
+            closure_dates=sorted(_parse_iso_date_set(block.get("closure_dates"))),
+            session_limit=session_limit if session_limit > 0 else None,
+        )
+    )
+    activity_label = str(block.get("activity_label") or "").strip()
+    location_label = str(block.get("location_label") or "").strip()
+    weekday_label = str(block.get("weekday_label") or "").strip() or DAY_LABELS_FR.get(weekday, "")
+    recommendation_key = str(block.get("recommendation_key") or "").strip()
+    series_key = str(block.get("series_key") or "").strip()
+    rows: list[dict[str, Any]] = []
+    for raw_session in _json_list(snapshot.get("sessions")):
+        if not isinstance(raw_session, dict):
+            continue
+        row = dict(raw_session)
+        row.update(
+            {
+                "activity_label": activity_label,
+                "location_label": location_label,
+                "weekday": weekday,
+                "weekday_label": weekday_label,
+            }
+        )
+        if recommendation_key:
+            row["recommendation_key"] = recommendation_key
+        if series_key:
+            row["series_key"] = series_key
+        rows.append(row)
+    return rows
+
+
 def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[dict[str, Any]]:
     activity_id = _parse_uuid(block.get("activity_id"))
     if activity_id is None:
@@ -1632,14 +1726,12 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
         session_limit = int(str(block.get("planning_session_limit") or "").strip())
     except (TypeError, ValueError):
         session_limit = 0
-    effective_end_date = end_date
-    if session_limit > 0:
-        school_year_bounds = _school_year_bounds_from_label(str(block.get("school_year_label") or ""))
-        if school_year_bounds is not None:
-            effective_end_date = max(effective_end_date, school_year_bounds[1])
-        else:
-            fallback_end_year = start_date.year + 1 if start_date.month >= 9 else start_date.year
-            effective_end_date = max(effective_end_date, date(fallback_end_year, 8, 31))
+    effective_end_date = _effective_planning_block_end_date(
+        start_date,
+        end_date,
+        session_limit=session_limit,
+        school_year_label=str(block.get("school_year_label") or block.get("calendar_school_year") or ""),
+    )
     start_time = str(block.get("start_time") or "").strip()
     if not start_time:
         return []
@@ -1713,6 +1805,11 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
         if len(widened_sessions) > len(sessions):
             sessions = widened_sessions
     sessions, _ = _filter_sessions_blocked_by_quote_school_calendar(db, sessions)
+    if session_limit > 0 and len(sessions) < session_limit:
+        expected_sessions = _expected_sessions_from_planning_block(block)
+        expected_sessions, _ = _filter_sessions_blocked_by_quote_school_calendar(db, expected_sessions)
+        if len(expected_sessions) > len(sessions):
+            sessions = expected_sessions
     if session_limit > 0:
         sessions = sessions[:session_limit]
     return sessions
