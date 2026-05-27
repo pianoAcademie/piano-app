@@ -68,6 +68,90 @@
   gap: 10px;
 }
 
+.collapsibleCard {
+  padding: 0;
+  overflow: hidden;
+}
+
+.detailAccordion,
+.inlineAccordion {
+  display: block;
+}
+
+.accordionSummary,
+.inlineAccordionSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.accordionSummary::-webkit-details-marker,
+.inlineAccordionSummary::-webkit-details-marker {
+  display: none;
+}
+
+.accordionSummary {
+  padding: 16px;
+}
+
+.accordionTitle {
+  display: grid;
+  gap: 4px;
+}
+
+.accordionTitle strong {
+  font-size: 16px;
+}
+
+.accordionSummary::after,
+.inlineAccordionSummary::after {
+  border: 1px solid #dbe3ed;
+  border-radius: 999px;
+  color: #38506b;
+  content: "+";
+  display: grid;
+  flex: 0 0 26px;
+  font-weight: 800;
+  height: 26px;
+  place-items: center;
+  width: 26px;
+}
+
+.detailAccordion[open] > .accordionSummary {
+  border-bottom: 1px solid #e5ebf3;
+}
+
+.detailAccordion[open] > .accordionSummary::after,
+.inlineAccordion[open] > .inlineAccordionSummary::after {
+  content: "-";
+}
+
+.accordionBody {
+  padding: 0 16px 16px;
+}
+
+.accordionActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.inlineAccordion {
+  border: 1px solid #dbe3ed;
+  border-radius: 12px;
+  background: #fbfdff;
+}
+
+.inlineAccordionSummary {
+  padding: 12px;
+}
+
+.inlineAccordionBody {
+  padding: 0 12px 12px;
+}
+
 .resolutionForm {
   display: grid;
   gap: 16px;

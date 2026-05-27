@@ -43,6 +43,37 @@ type TypeformMatchCandidateOut = {
   reasons: string[];
 };
 
+function matchCandidateKey(candidate: TypeformMatchCandidateOut, index: number): string {
+  return `${candidate.kind}-${candidate.client_id || candidate.display_name}-${candidate.adult_client_id || ""}-${candidate.child_client_id || ""}-${index}`;
+}
+
+function MatchCandidateCard({
+  candidate,
+  index,
+  language,
+  reasonsLabel,
+}: {
+  candidate: TypeformMatchCandidateOut;
+  index: number;
+  language: UiLanguage;
+  reasonsLabel: string;
+}): JSX.Element {
+  return (
+    <article className={styles.candidateItem} key={matchCandidateKey(candidate, index)}>
+      <div className="row spread wrap gap-sm">
+        <strong>{candidate.display_name}</strong>
+        <span className={`status-pill ${confidencePillClass(candidate.confidence_label)}`}>
+          {confidenceLabel(candidate.confidence_label, language)} · {candidate.confidence}
+        </span>
+      </div>
+      <p className="muted">{candidate.subtitle || candidate.kind}</p>
+      {candidate.reasons.length > 0 ? (
+        <p className="muted">{reasonsLabel}: {candidate.reasons.join(", ")}</p>
+      ) : null}
+    </article>
+  );
+}
+
 type TypeformSessionMatchOptionOut = {
   session_id: string;
   activity_id: string;
@@ -694,6 +725,8 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
   const resolution = resolutionObject(detail);
   const familyCandidates = detail.client_candidates.filter((item) => item.kind === "family");
   const clientCandidates = detail.client_candidates.filter((item) => item.kind === "client");
+  const primaryClientCandidate = detail.client_candidates[0] ?? null;
+  const otherClientCandidates = detail.client_candidates.slice(1);
   const intakeHref = `/admin/intakes/${encodeURIComponent(detail.id)}`;
   const normalizedEditorHref = setDetailQueryParam(setDetailQueryParam(setDetailQueryParam(intakeHref, "error", null), "ok", null), "editor", "normalized");
   const closeNormalizedEditorHref = setDetailQueryParam(setDetailQueryParam(intakeHref, "editor", null), "editor_error", null);
@@ -706,6 +739,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
   const showErrorModal = Boolean(error) && editor !== "normalized";
   const showResolutionSavedModal = successModal === "resolution_saved" && Boolean(ok);
   const normalizedPayload = detail.normalized_payload_json || {};
+  const normalizedPayloadEntries = normalizedEntries(detail.normalized_payload_json);
   const keyFacts = intakeKeyFacts(detail, language);
   const draftQuoteNeedsArbitrage = detail.intake_status === "MATCHING_REQUIRED";
   const emptyPreviewOnlyBlockage =
@@ -1063,72 +1097,109 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
           </div>
         </article>
 
-        <article className="card span-2">
-          <h3>{t("admin.intakes.response_simplified")}</h3>
-          <div className="table-wrap top-gap-sm">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>{uiText(language, "common.key")}</th>
-                  <th>{uiText(language, "common.value")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {detail.answers.map((answer) => (
-                  <tr key={`${answer.key}-${answer.label}`}>
-                    <td>{answer.label}</td>
-                    <td>{answer.value || "-"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <article className={`card span-2 ${styles.collapsibleCard}`}>
+          <details className={styles.detailAccordion}>
+            <summary className={styles.accordionSummary}>
+              <span className={styles.accordionTitle}>
+                <strong>{t("admin.intakes.response_simplified")}</strong>
+              </span>
+              <span className="status-pill status-off">
+                {detail.answers.length} {language === "fr" ? "champs" : "fields"}
+              </span>
+            </summary>
+            <div className={styles.accordionBody}>
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>{uiText(language, "common.key")}</th>
+                      <th>{uiText(language, "common.value")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detail.answers.map((answer) => (
+                      <tr key={`${answer.key}-${answer.label}`}>
+                        <td>{answer.label}</td>
+                        <td>{answer.value || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </details>
         </article>
 
-        <article className="card">
-          <div className="row spread wrap gap-sm">
-            <div>
-              <h3>{t("admin.intakes.normalized_data_title")}</h3>
-              <p className="muted">{t("admin.intakes.normalized_data_subtitle")}</p>
+        <article className={`card ${styles.collapsibleCard}`}>
+          <details className={styles.detailAccordion}>
+            <summary className={styles.accordionSummary}>
+              <span className={styles.accordionTitle}>
+                <strong>{t("admin.intakes.normalized_data_title")}</strong>
+                <small className="muted">{t("admin.intakes.normalized_data_subtitle")}</small>
+              </span>
+              <span className="status-pill status-off">
+                {normalizedPayloadEntries.length} {language === "fr" ? "valeurs" : "values"}
+              </span>
+            </summary>
+            <div className={styles.accordionBody}>
+              <div className={styles.accordionActions}>
+                <Link className="ghost" href={normalizedEditorHref}>{t("admin.intakes.correct_complete")}</Link>
+              </div>
+              <div className="table-wrap top-gap-sm">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>{uiText(language, "common.key")}</th>
+                      <th>{uiText(language, "common.value")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {normalizedPayloadEntries.map((entry) => (
+                      <tr key={entry.key}>
+                        <td>{entry.key}</td>
+                        <td>{entry.value}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-            <Link className="ghost" href={normalizedEditorHref}>{t("admin.intakes.correct_complete")}</Link>
-          </div>
-          <div className="table-wrap top-gap-sm">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>{uiText(language, "common.key")}</th>
-                  <th>{uiText(language, "common.value")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {normalizedEntries(detail.normalized_payload_json).map((entry) => (
-                  <tr key={entry.key}>
-                    <td>{entry.key}</td>
-                    <td>{entry.value}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          </details>
         </article>
 
         <article className="card">
           <h3>{t("admin.intakes.matching_client_title")}</h3>
           <div className={`${styles.candidateStack} top-gap-sm`}>
             {detail.client_candidates.length === 0 ? <p className="muted">{t("admin.intakes.no_auto_match")}</p> : null}
-            {detail.client_candidates.map((candidate) => (
-              <article className={styles.candidateItem} key={`${candidate.kind}-${candidate.client_id || candidate.display_name}-${candidate.adult_client_id || ""}-${candidate.child_client_id || ""}`}>
-                <div className="row spread wrap gap-sm">
-                  <strong>{candidate.display_name}</strong>
-                  <span className={`status-pill ${confidencePillClass(candidate.confidence_label)}`}>{confidenceLabel(candidate.confidence_label, language)} · {candidate.confidence}</span>
+            {primaryClientCandidate ? (
+              <MatchCandidateCard
+                candidate={primaryClientCandidate}
+                index={0}
+                language={language}
+                reasonsLabel={t("admin.intakes.reasons")}
+              />
+            ) : null}
+            {otherClientCandidates.length > 0 ? (
+              <details className={styles.inlineAccordion}>
+                <summary className={styles.inlineAccordionSummary}>
+                  <strong>{language === "fr" ? "Autres options" : "Other options"}</strong>
+                  <span className="status-pill status-off">
+                    {otherClientCandidates.length} {language === "fr" ? "options" : "options"}
+                  </span>
+                </summary>
+                <div className={`${styles.inlineAccordionBody} ${styles.candidateStack}`}>
+                  {otherClientCandidates.map((candidate, index) => (
+                    <MatchCandidateCard
+                      candidate={candidate}
+                      index={index + 1}
+                      language={language}
+                      reasonsLabel={t("admin.intakes.reasons")}
+                      key={matchCandidateKey(candidate, index + 1)}
+                    />
+                  ))}
                 </div>
-                <p className="muted">{candidate.subtitle || candidate.kind}</p>
-                {candidate.reasons.length > 0 ? (
-                  <p className="muted">{t("admin.intakes.reasons")}: {candidate.reasons.join(", ")}</p>
-                ) : null}
-              </article>
-            ))}
+              </details>
+            ) : null}
           </div>
         </article>
 
