@@ -122,6 +122,7 @@ from app.schemas.admin import (
     AdminStudentQuoteChangeOut,
     AdminClientAutoInvoiceRuleOut,
     AdminClientAutoInvoiceRuleUpsertRequest,
+    AdminRangeInvoiceBankTransferManualPaymentRequest,
     AdminRangeInvoiceCreateRequest,
     AdminRangeInvoiceEmailOut,
     AdminRangeInvoiceEmailPreviewOut,
@@ -1752,6 +1753,7 @@ def _record_invoice_range_public_payment(
     payment_label: str = "Paiement en ligne",
     transaction_category: str = "INVOICE_RANGE_PUBLIC_PAYMENT",
     public_note_reference_label: str = "Transaction paiement en ligne",
+    actor_user_id: UUID | None = None,
 ) -> tuple[UUID, datetime]:
     now = _utcnow()
     invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or str(note.id)
@@ -1787,7 +1789,7 @@ def _record_invoice_range_public_payment(
         transaction = ClientManualTransaction(
             user_id=client_id,
             student_user_id=client_id,
-            actor_user_id=None,
+            actor_user_id=actor_user_id,
             transaction_type="PAYMENT",
             status="COMPLETED",
             label=f"{payment_label} facture {invoice_number}",
@@ -10550,6 +10552,70 @@ def mark_admin_client_range_invoice_bank_transfer_paid(
         author_user_id=actor.id,
         entry_type="AUTO",
         message=f"Commande virement {order.order_reference} marquee comme payee pour la facture {metadata.get('invoice_number') or note_id}.",
+    )
+    db.commit()
+    related_invoices = _related_invoice_references_for_split_group(
+        db,
+        client_id=client_id,
+        split_group_id=_normalize_optional(str(metadata.get("split_group_id") or "")),
+    )
+    return _invoice_range_out(note_id=note.id, metadata=metadata, related_invoices=related_invoices)
+
+
+@router.post("/{client_id}/invoices/range/{note_id}/bank-transfer/manual-payment", response_model=AdminRangeInvoiceOut)
+def mark_admin_client_range_invoice_manual_bank_transfer_paid(
+    client_id: UUID,
+    note_id: UUID,
+    payload: AdminRangeInvoiceBankTransferManualPaymentRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminRangeInvoiceOut:
+    client = _require_client(db, client_id)
+    note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+    invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
+    if invoice_status == "CANCELLED":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Facture annulee")
+    if invoice_status == "PAID":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Facture deja payee")
+    reference = _normalize_optional(payload.reference)
+    if reference is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Reference virement obligatoire")
+    metadata = _invoice_range_metadata_with_display_totals(
+        db,
+        client_id=client_id,
+        note_id=note_id,
+        note_created_at=note.created_at,
+        metadata=metadata,
+    )
+    _, _, seller_legal_entity_id = _frozen_invoice_selection_for_note(
+        db,
+        note_id=note_id,
+        metadata=metadata,
+    )
+    if seller_legal_entity_id is None:
+        seller_legal_entity_id = _parse_optional_uuid(metadata.get("seller_legal_entity_id"))
+    _record_invoice_range_public_payment(
+        db,
+        client_id=client_id,
+        note=note,
+        metadata=metadata,
+        provider_reference=reference,
+        seller_legal_entity_id=seller_legal_entity_id,
+        payment_method_code="BANK_TRANSFER",
+        payment_label="Virement bancaire",
+        transaction_category="INVOICE_RANGE_ADMIN_BANK_TRANSFER",
+        public_note_reference_label="Virement bancaire",
+        actor_user_id=actor.id,
+    )
+    _create_client_note(
+        db,
+        client_id=client.id,
+        author_user_id=actor.id,
+        entry_type="AUTO",
+        message=(
+            f"Virement bancaire {reference} receptionne manuellement pour la facture "
+            f"{metadata.get('invoice_number') or note_id}."
+        ),
     )
     db.commit()
     related_invoices = _related_invoice_references_for_split_group(

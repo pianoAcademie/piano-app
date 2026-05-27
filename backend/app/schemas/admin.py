@@ -1477,6 +1477,10 @@ class AdminRangeInvoiceStatusUpdateRequest(BaseModel):
     status: Literal["ISSUED", "PAID", "CANCELLED"]
 
 
+class AdminRangeInvoiceBankTransferManualPaymentRequest(BaseModel):
+    reference: str = Field(min_length=1, max_length=120)
+
+
 class AdminRangeInvoiceEmailRequest(BaseModel):
     kind: Literal["INVOICE", "REMINDER"] = "INVOICE"
     to_emails: list[str] | None = None

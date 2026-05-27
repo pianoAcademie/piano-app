@@ -5481,6 +5481,42 @@ export async function markAdminClientRangeInvoiceBankTransferPaidAction(formData
   redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "ok", t("admin.client_action.invoice_status_updated")));
 }
 
+export async function markAdminClientRangeInvoiceManualBankTransferPaidAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const noteId = String(formData.get("note_id") ?? "").trim();
+  const reference = String(formData.get("reference") ?? "").trim();
+  const returnTabRaw = String(formData.get("return_tab") ?? "").trim().toLowerCase();
+  const returnTab = returnTabRaw === "paiements" ? "paiements" : "factures";
+  if (!clientId || !noteId) {
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_invoice")));
+  }
+  if (!reference) {
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "error", "Reference virement obligatoire"));
+  }
+
+  const result = await backendRequest<AdminRangeInvoiceOut>(
+    `/api/v1/admin/clients/${clientId}/invoices/range/${noteId}/bank-transfer/manual-payment`,
+    {
+      method: "POST",
+      body: JSON.stringify({ reference }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "error", result.message));
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "ok", t("admin.client_action.invoice_status_updated")));
+}
+
 export async function deleteAdminClientRangeInvoiceAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

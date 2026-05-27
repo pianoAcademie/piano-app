@@ -19,6 +19,7 @@ import {
   createAdminClientRangeInvoiceAction,
   deleteAdminClientRangeInvoiceAction,
   markAdminClientRangeInvoiceBankTransferPaidAction,
+  markAdminClientRangeInvoiceManualBankTransferPaidAction,
   reissueAdminClientRangeInvoiceAction,
   createAdminClientManualTransactionAction,
   updateAdminClientManualTransactionAction,
@@ -2577,7 +2578,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       manualTransactionLegalEntities.find((entity) => entity.id === row.sellerLegalEntityId)?.name ?? row.billingEntity ?? null,
   }));
   const selectedRangeInvoiceForModal =
-    paymentModalAction === "invoice_email" && invoiceNoteId
+    (paymentModalAction === "invoice_email" || paymentModalAction === "invoice_bank_transfer") && invoiceNoteId
       ? generatedRangeInvoices.find((row) => row.noteId === invoiceNoteId) ?? null
       : null;
   const invoiceSmsDefaultPhone = client.mobile_phone_1 || client.mobile_phone_2 || client.phone || client.home_phone || "";
@@ -5557,6 +5558,19 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   </button>
                                 </form>
                               ) : null}
+                              {row.status === "ISSUED" && row.bankTransferOrderStatus !== "pending_bank_transfer" ? (
+                                <Link
+                                  className="client-action-icon"
+                                  href={invoicesHref(client.id, {
+                                    payment_modal: "invoice_bank_transfer",
+                                    payment_return_tab: "factures",
+                                    invoice_note_id: row.noteId,
+                                  })}
+                                  title="Receptionner un virement"
+                                >
+                                  V€
+                                </Link>
+                              ) : null}
                               {row.status !== "PAID" ? (
                                 <form action={updateAdminClientRangeInvoiceStatusAction}>
                                   <input type="hidden" name="client_id" value={client.id} />
@@ -6862,6 +6876,47 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 </div>
               )}
             </footer>
+          </article>
+        </section>
+      ) : null}
+
+      {(currentTab === "paiements" || currentTab === "factures") &&
+      paymentModalAction === "invoice_bank_transfer" &&
+      selectedRangeInvoiceForModal ? (
+        <section className="modal-overlay">
+          <article className="modal-panel modal-compact">
+            <Link className="modal-close-x" href={tabHref(client.id, paymentReturnTab)} aria-label={t("common.close")}>
+              ×
+            </Link>
+            <h3 className="modal-title">Receptionner un virement</h3>
+            <p className="muted">
+              Facture {selectedRangeInvoiceForModal.invoiceNumber} | {selectedRangeInvoiceForModal.totalLabel}
+            </p>
+            <form action={markAdminClientRangeInvoiceManualBankTransferPaidAction} className="grid top-gap-sm">
+              <input type="hidden" name="client_id" value={client.id} />
+              <input type="hidden" name="note_id" value={selectedRangeInvoiceForModal.noteId} />
+              <input type="hidden" name="return_tab" value={paymentReturnTab} />
+              <label className="span-2">
+                Reference du virement
+                <input
+                  type="text"
+                  name="reference"
+                  maxLength={120}
+                  required
+                  autoFocus
+                  placeholder="Ex. nom du client, reference bancaire, libelle recu"
+                />
+              </label>
+              <p className="muted span-2">
+                Cette action cree un paiement manuel par virement, rapproche la facture et la marque comme payee.
+              </p>
+              <div className="row modal-actions-end">
+                <Link className="reset-link" href={tabHref(client.id, paymentReturnTab)}>
+                  {t("common.cancel")}
+                </Link>
+                <button type="submit">Valider le virement</button>
+              </div>
+            </form>
           </article>
         </section>
       ) : null}
