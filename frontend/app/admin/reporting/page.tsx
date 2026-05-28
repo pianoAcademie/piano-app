@@ -215,6 +215,18 @@ function normalizeName(value: string): string {
     .toLowerCase();
 }
 
+function reportSearchToken(definition: ReportDefinition): string {
+  return normalizeName(`${definition.label} ${definition.description} ${definition.filterHint}`);
+}
+
+function sortedReportDefinitions(query: string): ReportDefinition[] {
+  const normalizedQuery = normalizeName(query);
+  return REPORT_DEFINITIONS
+    .filter((definition) => !normalizedQuery || reportSearchToken(definition).includes(normalizedQuery))
+    .slice()
+    .sort((left, right) => left.label.localeCompare(right.label, "fr", { sensitivity: "base" }));
+}
+
 export default async function AdminReportingPage({ searchParams }: ReportingPageProps): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
@@ -230,6 +242,8 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
   const createMode = firstParam(searchParams, "create") === "1";
   const reportType = selectedReportType(searchParams);
   const reportDefinition = reportType ? REPORT_DEFINITIONS.find((item) => item.type === reportType) || null : null;
+  const reportQuery = reportFilterValue(searchParams, "report_q");
+  const reportSelectionOptions = sortedReportDefinitions(reportQuery);
   const selectedSchoolYear = reportFilterValue(searchParams, "school_year_label", currentReportingSchoolYear());
   const availableSchoolYears = schoolYearOptions(selectedSchoolYear);
   const selectedDepositMonth = reportFilterValue(searchParams, "month", String(new Date().getMonth() + 1));
@@ -309,20 +323,32 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
                 <form className="grid cols-2 config-form-grid" method="get" action="/admin/reporting">
                   <input type="hidden" name="create" value="1" />
                   <label className="span-2">
+                    Rechercher un rapport
+                    <input name="report_q" placeholder="Ex: cheques, factures, professeurs..." defaultValue={reportQuery} autoFocus />
+                  </label>
+                  <label className="span-2">
                     Type de rapport
                     <select name="type" defaultValue="">
                       <option value="">Selectionner...</option>
-                      {REPORT_DEFINITIONS.map((definition) => (
+                      {reportSelectionOptions.map((definition) => (
                         <option key={definition.type} value={definition.type}>
                           {definition.label}
                         </option>
                       ))}
                     </select>
                   </label>
+                  {reportSelectionOptions.length === 0 ? (
+                    <p className="muted span-2">Aucun rapport ne correspond a cette recherche.</p>
+                  ) : null}
                   <div className="form-actions span-2">
                     <Link className="button-link" href="/admin/reporting">
                       Annuler
                     </Link>
+                    {reportQuery ? (
+                      <Link className="button-link" href={withParams({ create: "1" })}>
+                        Reinitialiser
+                      </Link>
+                    ) : null}
                     <button type="submit">Continuer</button>
                   </div>
                 </form>
