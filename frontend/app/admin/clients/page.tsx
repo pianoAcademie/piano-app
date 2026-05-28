@@ -63,6 +63,22 @@ function formatDate(value: string, language: UiLanguage): string {
   });
 }
 
+function formatDateOnly(value: string, language: UiLanguage): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "-";
+  }
+  return parsed.toLocaleDateString(localeForUiLanguage(language), { dateStyle: "short" });
+}
+
+function compactNameList(names: string[], max = 2): string {
+  const cleanNames = names.map((name) => name.trim()).filter(Boolean);
+  if (cleanNames.length <= max) {
+    return cleanNames.join(", ");
+  }
+  return `${cleanNames.slice(0, max).join(", ")} +${cleanNames.length - max}`;
+}
+
 function parseSortColumn(value: string): SortColumn {
   if (
     value === "last_name" ||
@@ -686,14 +702,31 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                         <Link className="client-name-link" href={`/admin/clients/${client.id}`}>
                           {client.last_name || "-"}
                         </Link>
+                        <small className="muted row-inline">{client.email}</small>
                       </td>
-                      <td>{client.first_name || "-"}</td>
+                      <td>
+                        <span>{client.first_name || "-"}</span>
+                        {client.phone ? <small className="muted row-inline">{client.phone}</small> : null}
+                      </td>
                       <td>
                         <span>{client.family_name || "-"}</span>
+                        {client.linked_children_count > 0 ? (
+                          <small className="muted row-inline">
+                            {client.linked_children_count} enfant{client.linked_children_count > 1 ? "s" : ""}:{" "}
+                            {compactNameList(client.linked_children_names)}
+                          </small>
+                        ) : null}
+                        {client.linked_adults_count > 0 ? (
+                          <small className="muted row-inline">
+                            Responsable{client.linked_adults_count > 1 ? "s" : ""}: {compactNameList(client.linked_adult_names)}
+                          </small>
+                        ) : null}
                         {client.group_names.length > 0 ? <small className="muted row-inline">{client.group_names.join(" | ")}</small> : null}
                       </td>
                       <td>
                         <span className={`status-pill ${statusPillClass(client.client_status)}`}>{statusLabel(client.client_status, language)}</span>
+                        <small className="muted row-inline">Cree {formatDateOnly(client.created_at, language)}</small>
+                        <small className="muted row-inline">Maj {formatDateOnly(client.updated_at, language)}</small>
                       </td>
                       <td>{clientTypeLabel(client.client_kind, language)}</td>
                       <td>{studentSiteLabel(client.student_site)}</td>

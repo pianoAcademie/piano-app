@@ -213,6 +213,10 @@ export type AdminClientOut = {
   first_name: string | null;
   last_name: string | null;
   family_name: string | null;
+  linked_children_count: number;
+  linked_children_names: string[];
+  linked_adults_count: number;
+  linked_adult_names: string[];
   group_ids: string[];
   group_names: string[];
   address_line: string | null;

@@ -4738,6 +4738,10 @@ def _client_out(
     *,
     next_session_start_at_utc: datetime | None = None,
     family_name: str | None = None,
+    linked_children_count: int = 0,
+    linked_children_names: list[str] | None = None,
+    linked_adults_count: int = 0,
+    linked_adult_names: list[str] | None = None,
     group_ids: list[UUID] | None = None,
     group_names: list[str] | None = None,
     delivery_status: ContactDeliveryStatus | None = None,
@@ -4779,6 +4783,10 @@ def _client_out(
         client_status=client.client_status,
         student_site=client.student_site,
         family_name=family_name,
+        linked_children_count=linked_children_count,
+        linked_children_names=linked_children_names or [],
+        linked_adults_count=linked_adults_count,
+        linked_adult_names=linked_adult_names or [],
         group_ids=group_ids or [],
         group_names=group_names or [],
         is_active=client.is_active,
@@ -5673,6 +5681,24 @@ def list_admin_clients(
 
     groups_by_client = _groups_for_client_ids(db, client_ids)
 
+    linked_children_names_by_adult: dict[UUID, list[str]] = {}
+    linked_adult_names_by_child: dict[UUID, list[str]] = {}
+    family_link_rows = db.execute(
+        select(
+            ClientFamilyLink.adult_user_id,
+            ClientFamilyLink.child_user_id,
+            ClientFamilyLink.is_billing_recipient,
+            User.first_name,
+            User.last_name,
+            User.email,
+        )
+        .join(User, User.id == ClientFamilyLink.child_user_id)
+        .where(ClientFamilyLink.adult_user_id.in_(client_ids))
+        .order_by(ClientFamilyLink.adult_user_id.asc(), User.last_name.asc(), User.first_name.asc(), User.email.asc())
+    ).all()
+    for adult_user_id, _child_user_id, _is_billing_recipient, first_name, last_name, email in family_link_rows:
+        linked_children_names_by_adult.setdefault(adult_user_id, []).append(_display_name(first_name, last_name, email))
+
     child_ids = [client.id for client in clients if client.client_kind == ClientKind.CHILD]
     family_name_by_client: dict[UUID, str] = {}
     if child_ids:
@@ -5691,6 +5717,7 @@ def list_admin_clients(
 
         for child_user_id, is_billing_recipient, first_name, last_name, email in family_rows:
             candidate = _display_name(first_name, last_name, email)
+            linked_adult_names_by_child.setdefault(child_user_id, []).append(candidate)
             existing = family_name_by_client.get(child_user_id)
             if existing is None or is_billing_recipient:
                 family_name_by_client[child_user_id] = candidate
@@ -5707,6 +5734,10 @@ def list_admin_clients(
                 client,
                 next_session_start_at_utc=next_session_by_client.get(client.id),
                 family_name=family_name,
+                linked_children_count=len(linked_children_names_by_adult.get(client.id, [])),
+                linked_children_names=linked_children_names_by_adult.get(client.id, []),
+                linked_adults_count=len(linked_adult_names_by_child.get(client.id, [])),
+                linked_adult_names=linked_adult_names_by_child.get(client.id, []),
                 group_ids=[group_item[0] for group_item in group_pairs],
                 group_names=[group_item[1] for group_item in group_pairs],
             )

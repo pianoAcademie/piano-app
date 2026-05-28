@@ -817,6 +817,10 @@ class AdminClientOut(BaseModel):
     client_status: ClientStatus = ClientStatus.ACTIVE
     student_site: StudentSite | None = None
     family_name: str | None = None
+    linked_children_count: int = 0
+    linked_children_names: list[str] = Field(default_factory=list)
+    linked_adults_count: int = 0
+    linked_adult_names: list[str] = Field(default_factory=list)
     group_ids: list[UUID] = Field(default_factory=list)
     group_names: list[str] = Field(default_factory=list)
     is_active: bool
