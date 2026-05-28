@@ -205,11 +205,15 @@ export default function ManualTransactionLegalEntityFields({
   }, [blockingError]);
 
   const singleLegalEntity = legalEntities.length === 1 ? legalEntities[0] : null;
-  const fallbackSingleLegalEntityId = derivedLegalEntityId === null && !manualLegalEntityId ? singleLegalEntity?.id ?? null : null;
-  const fallbackSingleLegalEntityName = fallbackSingleLegalEntityId ? singleLegalEntity?.name ?? fallbackSingleLegalEntityId : null;
-  const finalLegalEntityId = derivedLegalEntityId ?? fallbackSingleLegalEntityId ?? manualLegalEntityId;
-  const finalLegalEntityName = derivedLegalEntityName ?? fallbackSingleLegalEntityName;
-  const showManualSelector = derivedLegalEntityId === null && fallbackSingleLegalEntityId === null;
+  const defaultLegalEntity =
+    legalEntities.find((entity) => normalizeLegalEntityName(entity.name) === "pianoacademie") ?? null;
+  const fallbackLegalEntity =
+    derivedLegalEntityId === null && !manualLegalEntityId ? singleLegalEntity ?? defaultLegalEntity : null;
+  const fallbackLegalEntityId = fallbackLegalEntity?.id ?? null;
+  const fallbackLegalEntityName = fallbackLegalEntity?.name ?? null;
+  const finalLegalEntityId = derivedLegalEntityId ?? fallbackLegalEntityId ?? manualLegalEntityId;
+  const finalLegalEntityName = derivedLegalEntityName ?? fallbackLegalEntityName;
+  const showManualSelector = derivedLegalEntityId === null && fallbackLegalEntityId === null;
   const isCheckPayment = paymentMethodCode.trim().toUpperCase() === "CHECK";
   const checkDepositLabel =
     checkDepositMonth && checkDepositYear
@@ -521,4 +525,12 @@ function formatAmountLabel(value: string, currency: string, language: "fr" | "en
     style: "currency",
     currency: currency || "EUR",
   }).format(amount);
+}
+
+function normalizeLegalEntityName(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/gi, "")
+    .toLowerCase();
 }
