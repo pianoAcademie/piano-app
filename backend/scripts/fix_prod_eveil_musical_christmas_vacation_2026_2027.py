@@ -10,11 +10,6 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from sqlalchemy import func, select
 
-from app.api.routes.quotes import (
-    _build_payment_terms_snapshot_for_quote,
-    _q2,
-    _quote_total_with_adjustment,
-)
 from app.db.session import SessionLocal
 from app.models.quote import Quote, QuoteLine
 
@@ -30,6 +25,10 @@ def _print(line: str) -> None:
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _q2(value: Decimal) -> Decimal:
+    return Decimal(value or 0).quantize(Decimal("0.01"))
 
 
 def main() -> None:
@@ -85,18 +84,13 @@ def main() -> None:
                 select(func.coalesce(func.sum(QuoteLine.amount_ttc), Decimal("0"))).where(QuoteLine.quote_id == quote.id)
             )
             lines_total_ttc = _q2(Decimal(lines_total or 0))
-            quote.total_ttc = _quote_total_with_adjustment(lines_total_ttc=lines_total_ttc, meta=quote.meta or {})
+            quote.total_ttc = lines_total_ttc
             quote.price_snapshot = {
                 "catalog_id": str(quote.pricing_catalog_id) if quote.pricing_catalog_id else None,
                 "currency": quote.currency,
                 "lines_total_ttc": str(lines_total_ttc),
                 "total_ttc": str(_q2(Decimal(quote.total_ttc or 0))),
             }
-            quote.payment_terms_snapshot = _build_payment_terms_snapshot_for_quote(
-                db,
-                quote,
-                total_ttc=_q2(Decimal(quote.total_ttc or 0)),
-            )
             quote.document_status = "stale"
             quote.document_hash = None
             quote.document_generated_at = None
