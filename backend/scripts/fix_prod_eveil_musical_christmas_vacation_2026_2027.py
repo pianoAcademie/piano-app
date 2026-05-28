@@ -133,6 +133,7 @@ def _upsert_auto_invoice_rule(db, *, billing: User, quote: Quote, actor_user_id:
         .limit(1)
     )
     created = rule is None
+    desired_next_run_date = _next_run_date(now.date())
     if rule is None:
         rule = ClientAutoInvoiceRule(
             user_id=billing.id,
@@ -142,20 +143,36 @@ def _upsert_auto_invoice_rule(db, *, billing: User, quote: Quote, actor_user_id:
             created_at=now,
             updated_at=now,
         )
+        needs_update = True
+    else:
+        needs_update = any(
+            [
+                rule.cycle_start_date != START_DATE,
+                rule.frequency != "MONTHLY",
+                rule.billing_timing != "UPCOMING_LESSONS",
+                rule.due_date_rule_type != "X_DAYS_AFTER_ISSUE",
+                rule.due_date_days_offset != DUE_DAYS_OFFSET,
+                not bool(rule.include_pending_lines),
+                bool(rule.include_cancelled_lines),
+                rule.next_run_date != desired_next_run_date,
+                rule.status != "ACTIVE",
+            ]
+        )
 
-    rule.cycle_start_date = START_DATE
-    rule.frequency = "MONTHLY"
-    rule.billing_timing = "UPCOMING_LESSONS"
-    rule.due_date_rule_type = "X_DAYS_AFTER_ISSUE"
-    rule.due_date_days_offset = DUE_DAYS_OFFSET
-    rule.include_pending_lines = True
-    rule.include_cancelled_lines = False
-    rule.next_run_date = _next_run_date(now.date())
-    rule.status = "ACTIVE"
-    rule.updated_by_user_id = actor_user_id
-    rule.updated_at = now
+    if needs_update:
+        rule.cycle_start_date = START_DATE
+        rule.frequency = "MONTHLY"
+        rule.billing_timing = "UPCOMING_LESSONS"
+        rule.due_date_rule_type = "X_DAYS_AFTER_ISSUE"
+        rule.due_date_days_offset = DUE_DAYS_OFFSET
+        rule.include_pending_lines = True
+        rule.include_cancelled_lines = False
+        rule.next_run_date = desired_next_run_date
+        rule.status = "ACTIVE"
+        rule.updated_by_user_id = actor_user_id
+        rule.updated_at = now
 
-    if apply:
+    if apply and (created or needs_update):
         db.add(rule)
         db.flush()
 
@@ -163,7 +180,8 @@ def _upsert_auto_invoice_rule(db, *, billing: User, quote: Quote, actor_user_id:
         "auto_rule_"
         f"{'create' if created else 'update'} quote={quote.quote_number}|billing={billing.id}|"
         f"legal_entity={quote.legal_entity_id}|cycle_start={START_DATE.isoformat()}|"
-        f"next_run={rule.next_run_date.isoformat()}|due_offset={DUE_DAYS_OFFSET}"
+        f"next_run={desired_next_run_date.isoformat()}|due_offset={DUE_DAYS_OFFSET}|"
+        f"needs_update={needs_update}"
     )
 
     archived_rules = db.scalars(
@@ -206,6 +224,7 @@ def main() -> None:
         transactions_updated = 0
         transactions_skipped_deposit = 0
         transactions_skipped_invoiced = 0
+        transactions_already_on_start_date = 0
         transactions_missing = 0
         rules_touched = 0
 
@@ -249,6 +268,14 @@ def main() -> None:
                     transactions_skipped_invoiced += 1
                     _print(f"skip_already_invoiced quote={quote.quote_number}|transaction={transaction.id}|label={transaction.label}")
                     continue
+                if transaction.occurred_at.date() == START_DATE:
+                    transactions_already_on_start_date += 1
+                    _print(
+                        f"ok_transaction_date quote={quote.quote_number}|transaction={transaction.id}|"
+                        f"label={transaction.label}|date={START_DATE.isoformat()}"
+                    )
+                    touched_transaction_ids.append(str(transaction.id))
+                    continue
 
                 _print(
                     "update_transaction_date "
@@ -283,12 +310,15 @@ def main() -> None:
         else:
             db.rollback()
 
-        _print(
-            f"summary apply={args.apply}|inspected={inspected}|candidates={candidates}|"
-            f"transactions_updated={transactions_updated}|transactions_skipped_deposit={transactions_skipped_deposit}|"
+        summary = (
+            f"apply={args.apply}|inspected={inspected}|candidates={candidates}|"
+            f"transactions_updated={transactions_updated}|transactions_already_on_start_date={transactions_already_on_start_date}|"
+            f"transactions_skipped_deposit={transactions_skipped_deposit}|"
             f"transactions_skipped_invoiced={transactions_skipped_invoiced}|transactions_missing={transactions_missing}|"
             f"rules_touched={rules_touched}|start_date={START_DATE.isoformat()}|due_date=2026-09-02"
         )
+        _print(f"summary {summary}")
+        print(f"::notice title=Monthly card billing repair::{summary}")
 
 
 if __name__ == "__main__":
