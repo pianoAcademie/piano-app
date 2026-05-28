@@ -5634,6 +5634,25 @@ def _filtered_clients_stmt(
     return stmt
 
 
+def _client_ids_with_paid_invoices(db: Session, client_ids: set[UUID]) -> set[UUID]:
+    if not client_ids:
+        return set()
+
+    out: set[UUID] = set()
+    notes = db.scalars(
+        select(ClientNoteEntry)
+        .where(ClientNoteEntry.user_id.in_(client_ids))
+        .order_by(ClientNoteEntry.created_at.desc())
+    ).all()
+    for note in notes:
+        metadata = _parse_invoice_range_note_entry(note)
+        if metadata is None:
+            continue
+        if str(metadata.get("invoice_status") or "ISSUED").strip().upper() == "PAID":
+            out.add(note.user_id)
+    return out
+
+
 @router.get("", response_model=list[AdminClientOut])
 def list_admin_clients(
     search: str | None = Query(default=None, min_length=1, max_length=255),
@@ -6060,10 +6079,31 @@ def bulk_admin_clients(
         return AdminClientBulkOut(processed_count=len(clients), skipped_count=0, message="Clients archives")
 
     if action == AdminClientBulkAction.DELETE:
+        protected_client_ids = _client_ids_with_paid_invoices(db, {client.id for client in clients})
+        protected_count = len(protected_client_ids)
+        deletable_clients = [client for client in clients if client.id not in protected_client_ids]
         for client in clients:
+            if client.id in protected_client_ids:
+                continue
             db.delete(client)
         db.commit()
-        return AdminClientBulkOut(processed_count=len(clients), skipped_count=0, message="Clients supprimes")
+        if protected_count > 0:
+            if deletable_clients:
+                message = (
+                    f"{len(deletable_clients)} client(s) supprime(s). "
+                    f"{protected_count} client(s) conserve(s) car au moins une facture payee existe: archivez-les."
+                )
+            else:
+                message = (
+                    f"Aucun client supprime: {protected_count} client(s) ont au moins une facture payee. "
+                    "Archivez-les pour conserver la trace comptable."
+                )
+            return AdminClientBulkOut(
+                processed_count=len(deletable_clients),
+                skipped_count=protected_count,
+                message=message,
+            )
+        return AdminClientBulkOut(processed_count=len(deletable_clients), skipped_count=0, message="Clients supprimes")
 
     message_actions = {
         AdminClientBulkAction.EMAIL_CLIENTS,
