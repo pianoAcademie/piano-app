@@ -6244,6 +6244,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   reconcilableInvoices={manualReconcilableInvoices}
                   showReconciliation
                   showReceiptEmailOption
+                  clientDisplayName={fullName || visibleEmail || client.email}
                   language={language}
                 />
               ) : (

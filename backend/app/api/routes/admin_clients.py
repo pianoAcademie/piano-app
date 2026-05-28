@@ -2216,17 +2216,20 @@ def _send_check_received_notification_email(
     amount_label = f"{amount:.2f} {currency}"
     if currency.upper() == "EUR":
         amount_label = f"{amount:.2f}".replace(".", ",") + " €"
+    normalized_deposit_label = _normalize_optional(check_deposit_label)
+    deposit_sentence = (
+        f"Ce message confirme uniquement la reception du cheque. L'encaissement interviendra lors du depot en banque prevu durant {normalized_deposit_label}."
+        if normalized_deposit_label
+        else "Ce message confirme uniquement la reception du cheque. L'encaissement interviendra lors du depot en banque."
+    )
     body_lines = [
         f"Bonjour {client_name},",
         "",
         f"Nous confirmons la bonne reception de votre cheque de {amount_label}.",
         f"Date de reception: {received_label}.",
         "",
-        "Ce message confirme uniquement la reception du cheque. L'encaissement interviendra lors du depot en banque.",
+        deposit_sentence,
     ]
-    normalized_deposit_label = _normalize_optional(check_deposit_label)
-    if normalized_deposit_label:
-        body_lines.extend(["", f"Depot en banque prevu: {normalized_deposit_label}."])
     normalized_description = _normalize_optional(description)
     if normalized_description:
         body_lines.extend(["", f"Information de suivi: {normalized_description}"])

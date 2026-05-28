@@ -38,6 +38,7 @@ type ManualTransactionLegalEntityFieldsProps = {
   reconcilableInvoices?: ReconcilableInvoiceOption[];
   showReconciliation?: boolean;
   showReceiptEmailOption?: boolean;
+  clientDisplayName?: string;
   language?: "fr" | "en";
 };
 
@@ -50,6 +51,7 @@ export default function ManualTransactionLegalEntityFields({
   reconcilableInvoices = [],
   showReconciliation = false,
   showReceiptEmailOption = false,
+  clientDisplayName,
   language,
 }: ManualTransactionLegalEntityFieldsProps): JSX.Element {
   const searchParams = useSearchParams();
@@ -79,7 +81,6 @@ export default function ManualTransactionLegalEntityFields({
         emailPreviewTitle: "Email preview",
         emailPreviewSubject: "Subject",
         emailPreviewBody: "Message",
-        unknownClient: "client",
         reconciliationHint:
           "If payment amount < invoice total(s), they remain unpaid. If payment amount >= invoice total(s), you can validate them as paid.",
         legalEntityRequired: "Legal entity *",
@@ -109,7 +110,6 @@ export default function ManualTransactionLegalEntityFields({
         emailPreviewTitle: "Apercu du mail",
         emailPreviewSubject: "Objet",
         emailPreviewBody: "Message",
-        unknownClient: "client",
         reconciliationHint:
           "Si le montant du paiement est inferieur au total des factures, elles restent a payer. S il couvre le total, vous pouvez les valider comme payees.",
         legalEntityRequired: "Entite legale *",
@@ -211,6 +211,7 @@ export default function ManualTransactionLegalEntityFields({
     checkDepositMonth && checkDepositYear
       ? formatMonthYearLabel(checkDepositMonth, checkDepositYear, resolvedLanguage)
       : "";
+  const previewClientName = (clientDisplayName || "").trim() || "client";
   const checkDepositYearOptions = useMemo(() => {
     const currentYear = new Date().getFullYear();
     return Array.from({ length: 5 }, (_, index) => String(currentYear + index));
@@ -268,27 +269,28 @@ export default function ManualTransactionLegalEntityFields({
       const depositLabel = form.querySelector<HTMLInputElement>("input[name='check_deposit_label']")?.value.trim() || "";
       const amountLabel = formatAmountLabel(amount, currency, resolvedLanguage);
       const receivedLabel = formatInputDateLabel(occurredAt, resolvedLanguage);
-      const subject = isEnglish ? `Check received - ${text.unknownClient}` : `Reception de votre cheque - ${text.unknownClient}`;
+      const subject = isEnglish ? `Check received - ${previewClientName}` : `Reception de votre cheque - ${previewClientName}`;
       const bodyLines = isEnglish
         ? [
-            `Hello ${text.unknownClient},`,
+            `Hello ${previewClientName},`,
             "",
             `We confirm that we have received your check for ${amountLabel}.`,
             `Date received: ${receivedLabel}.`,
             "",
-            "This message only confirms receipt of the check. It will be cashed when it is deposited at the bank.",
+            depositLabel
+              ? `This message only confirms receipt of the check. It will be cashed when deposited at the bank as planned during ${depositLabel}.`
+              : "This message only confirms receipt of the check. It will be cashed when it is deposited at the bank.",
           ]
         : [
-            `Bonjour ${text.unknownClient},`,
+            `Bonjour ${previewClientName},`,
             "",
             `Nous confirmons la bonne reception de votre cheque de ${amountLabel}.`,
             `Date de reception: ${receivedLabel}.`,
             "",
-            "Ce message confirme uniquement la reception du cheque. L'encaissement interviendra lors du depot en banque.",
+            depositLabel
+              ? `Ce message confirme uniquement la reception du cheque. L'encaissement interviendra lors du depot en banque prevu durant ${depositLabel}.`
+              : "Ce message confirme uniquement la reception du cheque. L'encaissement interviendra lors du depot en banque.",
           ];
-      if (depositLabel) {
-        bodyLines.push("", isEnglish ? `Expected bank deposit: ${depositLabel}.` : `Depot en banque prevu: ${depositLabel}.`);
-      }
       if (description) {
         bodyLines.push("", isEnglish ? `Tracking note: ${description}` : `Information de suivi: ${description}`);
       }
@@ -303,7 +305,7 @@ export default function ManualTransactionLegalEntityFields({
       form.removeEventListener("input", updatePreview);
       form.removeEventListener("change", updatePreview);
     };
-  }, [isCheckPayment, receiptEmailChecked, resolvedLanguage, isEnglish, text.unknownClient, checkDepositLabel]);
+  }, [isCheckPayment, receiptEmailChecked, resolvedLanguage, isEnglish, previewClientName, checkDepositLabel]);
 
   return (
     <div ref={rootRef} className="span-2 grid">
