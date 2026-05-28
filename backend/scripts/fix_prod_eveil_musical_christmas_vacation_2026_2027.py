@@ -1,309 +1,196 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
-from calendar import monthrange
-from datetime import date, datetime, time, timezone
-from uuid import UUID
+from collections import defaultdict
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from sqlalchemy import select
 
 from app.db.session import SessionLocal
-from app.models.client_record import ClientAutoInvoiceRule, ClientInvoiceLine, ClientManualTransaction
-from app.models.quote import Quote, QuoteAcceptanceFollowup
-from app.models.user import User
+from app.models.catalog import CourseSession, CourseType, Location, SessionStatus
+from app.models.ops import AppSetting
+from app.services.quotes.quote_documents import (
+    QUOTE_SCHOOL_CALENDARS_SETTING_KEY,
+    _calendar_row_applies_to_session,
+    _expand_calendar_vacation_dates,
+    _is_true,
+    _json_list,
+    _json_object,
+    _parse_iso_date_set,
+)
 
-SCRIPT_PREFIX = "PROD_REPAIR_MONTHLY_CARD_QUOTE_BILLING"
-EXECUTION_KEY = "quote_to_enrollment_execution"
-START_DATE = date(2026, 9, 1)
-DUE_DAYS_OFFSET = 1
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _json_object(value: object | None) -> dict[str, object]:
-    return dict(value) if isinstance(value, dict) else {}
-
-
-def _json_list(value: object | None) -> list[object]:
-    return list(value) if isinstance(value, list) else []
-
-
-def _parse_uuid(value: object | None) -> UUID | None:
-    raw = str(value or "").strip()
-    if not raw:
-        return None
-    try:
-        return UUID(raw)
-    except ValueError:
-        return None
+SCRIPT_PREFIX = "PROD_REPAIR_BAR_LE_DUC_MISSING_SESSIONS"
+LOCATION_CODE = "BAR_LE_DUC"
+EXPECTED_END = date(2027, 6, 19)
 
 
 def _print(line: str) -> None:
     print(f"[{SCRIPT_PREFIX}] {line}")
 
 
-def _object_mentions_monthly_card_payment(value: object) -> bool:
-    if isinstance(value, str):
-        return value.strip().upper() == "CARD_MONTHLY"
-    if isinstance(value, dict):
-        return any(_object_mentions_monthly_card_payment(item) for item in value.values())
-    if isinstance(value, list):
-        return any(_object_mentions_monthly_card_payment(item) for item in value)
-    return False
+def _local_parts(session_obj: CourseSession) -> tuple[date, int, time, time]:
+    tz = ZoneInfo(session_obj.timezone or "Europe/Paris")
+    start = session_obj.start_at_utc.astimezone(tz)
+    end = session_obj.end_at_utc.astimezone(tz)
+    return start.date(), start.date().weekday(), start.time().replace(tzinfo=None), end.time().replace(tzinfo=None)
 
 
-def _followup_execution(followup: QuoteAcceptanceFollowup) -> dict[str, object]:
-    return _json_object(_json_object(followup.payload).get(EXECUTION_KEY))
+def _excluded_dates_for_location(db, *, location_id: str) -> set[date]:
+    setting = db.scalar(select(AppSetting).where(AppSetting.key == QUOTE_SCHOOL_CALENDARS_SETTING_KEY))
+    rows = _json_list(json.loads(setting.value or "[]")) if setting else []
+    excluded: set[date] = set()
+    for raw in rows:
+        row = _json_object(raw)
+        if not _is_true(row.get("is_active", True)):
+            continue
+        if not _calendar_row_applies_to_session(row, location_id=location_id, session_date=date(2027, 4, 12)):
+            continue
+        excluded |= _parse_iso_date_set(row.get("holiday_dates"))
+        excluded |= _parse_iso_date_set(row.get("closure_dates"))
+        excluded |= _expand_calendar_vacation_dates(row)
+    return excluded
 
 
-def _set_followup_execution(followup: QuoteAcceptanceFollowup, execution: dict[str, object]) -> None:
-    payload = _json_object(followup.payload)
-    payload[EXECUTION_KEY] = execution
-    followup.payload = payload
-    followup.updated_at = _utcnow()
+def _expected_missing_dates(last_date: date, *, weekday: int, excluded: set[date]) -> list[date]:
+    cursor = last_date + timedelta(days=1)
+    cursor += timedelta(days=(weekday - cursor.weekday()) % 7)
+    rows: list[date] = []
+    while cursor <= EXPECTED_END:
+        if cursor not in excluded:
+            rows.append(cursor)
+        cursor += timedelta(days=7)
+    return rows
 
 
-def _uses_monthly_card_payment(quote: Quote, followup: QuoteAcceptanceFollowup) -> bool:
-    payload = _json_object(followup.payload)
-    terms = _json_object(quote.payment_terms_snapshot)
-    for source in (payload, terms):
-        for key in ("payment_method_code", "paymentMethodCode", "payment_method", "paymentMethod"):
-            if str(source.get(key) or "").strip().upper() == "CARD_MONTHLY":
-                return True
-    return _object_mentions_monthly_card_payment(payload) or _object_mentions_monthly_card_payment(terms)
-
-
-def _add_months(value: date, months: int) -> date:
-    month_index = (value.month - 1) + months
-    year = value.year + (month_index // 12)
-    month = (month_index % 12) + 1
-    day = min(value.day, monthrange(year, month)[1])
-    return date(year, month, day)
-
-
-def _next_run_date(today: date) -> date:
-    next_date = START_DATE
-    while next_date < today:
-        next_date = _add_months(next_date, 1)
-    return next_date
-
-
-def _issued_at_for_start_date() -> datetime:
-    return datetime.combine(START_DATE, time.min, tzinfo=timezone.utc)
-
-
-def _is_deposit_transaction(transaction: ClientManualTransaction) -> bool:
-    reference = str(transaction.reference or "").upper()
-    label = str(transaction.label or "").casefold()
-    return ":DEPOSIT" in reference or "acompte" in label
-
-
-def _transaction_is_invoiced(db, transaction: ClientManualTransaction) -> bool:
-    return db.scalar(
-        select(ClientInvoiceLine.id)
-        .where(
-            ClientInvoiceLine.source == "MANUAL",
-            ClientInvoiceLine.source_payment_id == transaction.id,
-        )
-        .limit(1)
-    ) is not None
-
-
-def _upsert_auto_invoice_rule(db, *, billing: User, quote: Quote, actor_user_id: UUID | None, apply: bool) -> UUID | None:
-    if quote.legal_entity_id is None:
-        _print(f"skip_rule_no_legal_entity quote={quote.quote_number}")
-        return None
-
-    now = _utcnow()
-    rule = db.scalar(
-        select(ClientAutoInvoiceRule)
-        .where(
-            ClientAutoInvoiceRule.user_id == billing.id,
-            ClientAutoInvoiceRule.legal_entity_id == quote.legal_entity_id,
-            ClientAutoInvoiceRule.status.in_(["ACTIVE", "PAUSED"]),
-        )
-        .order_by(ClientAutoInvoiceRule.updated_at.desc(), ClientAutoInvoiceRule.created_at.desc())
-        .with_for_update()
-        .limit(1)
+def _copy_session(template: CourseSession, *, target_date: date) -> CourseSession:
+    local_date, _weekday, start_time, end_time = _local_parts(template)
+    del local_date
+    tz = ZoneInfo(template.timezone or "Europe/Paris")
+    start_utc = datetime.combine(target_date, start_time, tzinfo=tz).astimezone(timezone.utc)
+    end_utc = datetime.combine(target_date, end_time, tzinfo=tz).astimezone(timezone.utc)
+    deadline_delta = template.start_at_utc - template.auto_cancel_deadline_utc
+    if deadline_delta.total_seconds() <= 0:
+        deadline_delta = template.end_at_utc - template.start_at_utc
+    return CourseSession(
+        course_type_id=template.course_type_id,
+        billing_entity_snapshot=template.billing_entity_snapshot,
+        snapshot_seller_legal_entity_id=template.snapshot_seller_legal_entity_id,
+        snapshot_payor_legal_entity_id=template.snapshot_payor_legal_entity_id,
+        location_id=template.location_id,
+        professor_id=template.professor_id,
+        substitute_teacher_id=template.substitute_teacher_id,
+        substitute_set_at=template.substitute_set_at,
+        substitute_set_by=template.substitute_set_by,
+        substitute_note=template.substitute_note,
+        title=template.title,
+        description=template.description,
+        private_description=template.private_description,
+        group_note=template.group_note,
+        professor_reminder_note=template.professor_reminder_note,
+        start_at_utc=start_utc,
+        end_at_utc=end_utc,
+        is_all_day=template.is_all_day,
+        capacity_max=template.capacity_max,
+        status=SessionStatus.SCHEDULED,
+        auto_cancel_deadline_utc=start_utc - deadline_delta,
+        cancel_reason=None,
+        zoom_link=template.zoom_link,
+        is_private=template.is_private,
+        allow_online_booking=template.allow_online_booking,
+        visibility_scope=template.visibility_scope,
+        booking_scope=template.booking_scope,
+        external_booking_price_ttc=template.external_booking_price_ttc,
+        show_external_remaining_seats=template.show_external_remaining_seats,
+        timezone=template.timezone,
+        recurrence_group_id=template.recurrence_group_id,
+        recurrence_rule=template.recurrence_rule,
+        recurrence_until_date=template.recurrence_until_date,
     )
-    created = rule is None
-    desired_next_run_date = _next_run_date(now.date())
-    if rule is None:
-        rule = ClientAutoInvoiceRule(
-            user_id=billing.id,
-            legal_entity_id=quote.legal_entity_id,
-            created_by_user_id=actor_user_id,
-            updated_by_user_id=actor_user_id,
-            created_at=now,
-            updated_at=now,
-        )
-        needs_update = True
-    else:
-        needs_update = any(
-            [
-                rule.cycle_start_date != START_DATE,
-                rule.frequency != "MONTHLY",
-                rule.billing_timing != "UPCOMING_LESSONS",
-                rule.due_date_rule_type != "X_DAYS_AFTER_ISSUE",
-                rule.due_date_days_offset != DUE_DAYS_OFFSET,
-                not bool(rule.include_pending_lines),
-                bool(rule.include_cancelled_lines),
-                rule.next_run_date != desired_next_run_date,
-                rule.status != "ACTIVE",
-            ]
-        )
-
-    if needs_update:
-        rule.cycle_start_date = START_DATE
-        rule.frequency = "MONTHLY"
-        rule.billing_timing = "UPCOMING_LESSONS"
-        rule.due_date_rule_type = "X_DAYS_AFTER_ISSUE"
-        rule.due_date_days_offset = DUE_DAYS_OFFSET
-        rule.include_pending_lines = True
-        rule.include_cancelled_lines = False
-        rule.next_run_date = desired_next_run_date
-        rule.status = "ACTIVE"
-        rule.updated_by_user_id = actor_user_id
-        rule.updated_at = now
-
-    if apply and (created or needs_update):
-        db.add(rule)
-        db.flush()
-
-    _print(
-        "auto_rule_"
-        f"{'create' if created else 'update'} quote={quote.quote_number}|billing={billing.id}|"
-        f"legal_entity={quote.legal_entity_id}|cycle_start={START_DATE.isoformat()}|"
-        f"next_run={desired_next_run_date.isoformat()}|due_offset={DUE_DAYS_OFFSET}|"
-        f"needs_update={needs_update}"
-    )
-
-    archived_rules = db.scalars(
-        select(ClientAutoInvoiceRule)
-        .where(
-            ClientAutoInvoiceRule.user_id == billing.id,
-            ClientAutoInvoiceRule.legal_entity_id == quote.legal_entity_id,
-            ClientAutoInvoiceRule.id != rule.id,
-            ClientAutoInvoiceRule.status.in_(["ACTIVE", "PAUSED"]),
-        )
-        .with_for_update()
-    ).all()
-    for archived_rule in archived_rules:
-        _print(f"archive_duplicate_rule={archived_rule.id}|billing={billing.id}|legal_entity={quote.legal_entity_id}")
-        if apply:
-            archived_rule.status = "ARCHIVED"
-            archived_rule.updated_by_user_id = actor_user_id
-            archived_rule.updated_at = now
-            db.add(archived_rule)
-
-    return rule.id if rule.id is not None else quote.id
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--apply", action="store_true", help="Apply the repair. Without it, only prints a dry-run.")
+    parser.add_argument("--apply", action="store_true", help="Create missing Bar-le-Duc sessions.")
     args = parser.parse_args()
 
     with SessionLocal() as db:
-        actor_id = db.scalar(select(User.id).where(User.email == "admin@piano-academie.com").limit(1))
+        location = db.scalar(select(Location).where(Location.code == LOCATION_CODE).limit(1))
+        if location is None:
+            raise RuntimeError(f"Location not found: {LOCATION_CODE}")
+        excluded = _excluded_dates_for_location(db, location_id=str(location.id))
+
         rows = db.execute(
-            select(QuoteAcceptanceFollowup, Quote)
-            .join(Quote, Quote.id == QuoteAcceptanceFollowup.quote_id)
-            .where(QuoteAcceptanceFollowup.status == "completed")
-            .order_by(QuoteAcceptanceFollowup.updated_at.asc())
+            select(CourseSession, CourseType)
+            .join(CourseType, CourseType.id == CourseSession.course_type_id)
+            .where(
+                CourseSession.location_id == location.id,
+                CourseSession.status == SessionStatus.SCHEDULED,
+                CourseSession.recurrence_group_id.is_not(None),
+                CourseSession.start_at_utc >= datetime(2026, 9, 1, tzinfo=timezone.utc),
+                CourseSession.start_at_utc < datetime(2027, 7, 1, tzinfo=timezone.utc),
+            )
+            .order_by(CourseSession.start_at_utc.asc())
         ).all()
 
-        inspected = 0
-        candidates = 0
-        transactions_updated = 0
-        transactions_skipped_deposit = 0
-        transactions_skipped_invoiced = 0
-        transactions_already_on_start_date = 0
-        transactions_missing = 0
-        rules_touched = 0
-
-        for followup, quote in rows:
-            inspected += 1
-            execution = _followup_execution(followup)
-            if str(execution.get("status") or "").strip().lower() != "executed":
+        by_group: dict[str, list[tuple[CourseSession, CourseType]]] = defaultdict(list)
+        for session_obj, course in rows:
+            name = str(course.name or "").casefold()
+            if "bar-le-duc" not in name or "vacances" in name:
                 continue
-            if not _uses_monthly_card_payment(quote, followup):
+            by_group[str(session_obj.recurrence_group_id)].append((session_obj, course))
+
+        created_dates: list[str] = []
+        already_present = 0
+        planned_creates = 0
+
+        for group_id, group_rows in sorted(by_group.items()):
+            group_sessions = [item[0] for item in group_rows]
+            course = group_rows[0][1]
+            local_rows = [(_local_parts(session_obj), session_obj) for session_obj in group_sessions]
+            weekdays = sorted({parts[1] for parts, _session_obj in local_rows})
+            starts = sorted({parts[2] for parts, _session_obj in local_rows})
+            ends = sorted({parts[3] for parts, _session_obj in local_rows})
+            if len(weekdays) != 1 or len(starts) != 1 or len(ends) != 1:
+                _print(f"skip_mixed_group={group_id}|course={course.name}")
                 continue
-
-            billing_id = _parse_uuid(execution.get("billing_client_id"))
-            billing = db.scalar(select(User).where(User.id == billing_id).with_for_update().limit(1)) if billing_id else None
-            if billing is None:
-                _print(f"skip_missing_billing quote={quote.quote_number}|billing_id={billing_id or '-'}")
-                continue
-
-            candidates += 1
-            _print(f"candidate quote={quote.quote_number}|followup={followup.id}|billing={billing.id}|client={billing.email}")
-
-            touched_transaction_ids: list[str] = []
-            for raw_id in _json_list(execution.get("created_transaction_ids")):
-                transaction_id = _parse_uuid(raw_id)
-                if transaction_id is None:
-                    continue
-                transaction = db.scalar(
-                    select(ClientManualTransaction)
-                    .where(ClientManualTransaction.id == transaction_id)
-                    .with_for_update()
+            last_date = max(parts[0] for parts, _session_obj in local_rows)
+            missing_dates = _expected_missing_dates(last_date, weekday=weekdays[0], excluded=excluded)
+            template = max(group_sessions, key=lambda session_obj: _local_parts(session_obj)[0])
+            _print(
+                f"group={group_id}|course={course.name}|weekday={weekdays[0]}|"
+                f"time={starts[0].strftime('%H:%M')}-{ends[0].strftime('%H:%M')}|"
+                f"last={last_date.isoformat()}|missing={','.join(day.isoformat() for day in missing_dates) or '-'}"
+            )
+            for target_date in missing_dates:
+                tz = ZoneInfo(template.timezone or "Europe/Paris")
+                start_utc = datetime.combine(target_date, starts[0], tzinfo=tz).astimezone(timezone.utc)
+                end_utc = datetime.combine(target_date, ends[0], tzinfo=tz).astimezone(timezone.utc)
+                existing = db.scalar(
+                    select(CourseSession.id)
+                    .where(
+                        CourseSession.course_type_id == template.course_type_id,
+                        CourseSession.location_id == template.location_id,
+                        CourseSession.status == SessionStatus.SCHEDULED,
+                        CourseSession.start_at_utc == start_utc,
+                        CourseSession.end_at_utc == end_utc,
+                    )
                     .limit(1)
                 )
-                if transaction is None:
-                    transactions_missing += 1
-                    _print(f"missing_transaction quote={quote.quote_number}|transaction={transaction_id}")
+                if existing is not None:
+                    already_present += 1
                     continue
-                if _is_deposit_transaction(transaction):
-                    transactions_skipped_deposit += 1
-                    _print(f"skip_deposit_transaction quote={quote.quote_number}|transaction={transaction.id}|label={transaction.label}")
-                    continue
-                if _transaction_is_invoiced(db, transaction):
-                    transactions_skipped_invoiced += 1
-                    _print(f"skip_already_invoiced quote={quote.quote_number}|transaction={transaction.id}|label={transaction.label}")
-                    continue
-                if transaction.occurred_at.date() == START_DATE:
-                    transactions_already_on_start_date += 1
-                    _print(
-                        f"ok_transaction_date quote={quote.quote_number}|transaction={transaction.id}|"
-                        f"label={transaction.label}|date={START_DATE.isoformat()}"
-                    )
-                    touched_transaction_ids.append(str(transaction.id))
-                    continue
-
-                _print(
-                    "update_transaction_date "
-                    f"quote={quote.quote_number}|transaction={transaction.id}|label={transaction.label}|"
-                    f"type={transaction.transaction_type}|old={transaction.occurred_at.isoformat()}|new={START_DATE.isoformat()}"
-                )
-                transactions_updated += 1
-                touched_transaction_ids.append(str(transaction.id))
+                planned_creates += 1
                 if args.apply:
-                    transaction.occurred_at = _issued_at_for_start_date()
-                    transaction.updated_at = _utcnow()
-                    db.add(transaction)
-
-            rule_id = _upsert_auto_invoice_rule(db, billing=billing, quote=quote, actor_user_id=actor_id, apply=args.apply)
-            if rule_id is not None:
-                rules_touched += 1
-
-            if args.apply:
-                execution["monthly_card_existing_quote_repair"] = {
-                    "repaired_at": _utcnow().isoformat(),
-                    "fixed_fee_date": START_DATE.isoformat(),
-                    "auto_invoice_rule_id": str(rule_id) if rule_id is not None else None,
-                    "updated_transaction_ids": touched_transaction_ids,
-                    "deposit_policy": "untouched",
-                    "invoiced_transaction_policy": "untouched",
-                }
-                _set_followup_execution(followup, execution)
-                db.add(followup)
+                    session_obj = _copy_session(template, target_date=target_date)
+                    db.add(session_obj)
+                    db.flush()
+                    created_dates.append(target_date.isoformat())
 
         if args.apply:
             db.commit()
@@ -311,14 +198,12 @@ def main() -> None:
             db.rollback()
 
         summary = (
-            f"apply={args.apply}|inspected={inspected}|candidates={candidates}|"
-            f"transactions_updated={transactions_updated}|transactions_already_on_start_date={transactions_already_on_start_date}|"
-            f"transactions_skipped_deposit={transactions_skipped_deposit}|"
-            f"transactions_skipped_invoiced={transactions_skipped_invoiced}|transactions_missing={transactions_missing}|"
-            f"rules_touched={rules_touched}|start_date={START_DATE.isoformat()}|due_date=2026-09-02"
+            f"apply={args.apply}|groups={len(by_group)}|planned_creates={planned_creates}|"
+            f"created={len(created_dates)}|already_present={already_present}|"
+            f"created_dates={','.join(created_dates) or '-'}"
         )
         _print(f"summary {summary}")
-        print(f"::notice title=Monthly card billing repair::{summary}")
+        print(f"::notice title=Bar-le-Duc missing sessions repair::{summary}")
 
 
 if __name__ == "__main__":
