@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import traceback
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -192,10 +193,17 @@ def main() -> None:
                     db.flush()
                     created_dates.append(target_date.isoformat())
 
-        if args.apply:
-            db.commit()
-        else:
+        try:
+            if args.apply:
+                db.commit()
+            else:
+                db.rollback()
+        except Exception as exc:
             db.rollback()
+            _print(f"exception={type(exc).__name__}|message={exc}")
+            traceback.print_exc()
+            print(f"::error title=Bar-le-Duc repair failed::{type(exc).__name__}: {exc}")
+            raise
 
         summary = (
             f"apply={args.apply}|groups={len(by_group)}|planned_creates={planned_creates}|"
