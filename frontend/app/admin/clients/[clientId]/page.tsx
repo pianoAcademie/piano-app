@@ -584,6 +584,17 @@ function isTrackedCheckPayment(row: AdminClientPaymentOut): boolean {
   );
 }
 
+function isReceivedManualPaymentMovement(row: AdminClientPaymentOut): boolean {
+  if ((row.source || "").trim().toUpperCase() !== "MANUAL") {
+    return false;
+  }
+  if ((row.manual_transaction_type || "").trim().toUpperCase() !== "PAYMENT") {
+    return false;
+  }
+  const status = normalizePaymentStatus(row.status);
+  return PAID_PAYMENT_STATUSES.has(status) || status === "CHECK_RECEIVED" || status === "CHECK_DEPOSITED";
+}
+
 function isPaidPreRegistrationDepositCharge(row: AdminClientPaymentOut): boolean {
   if ((row.source || "").trim().toUpperCase() !== "MANUAL") {
     return false;
@@ -2643,6 +2654,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
   const totalsByCurrency = new Map<string, number>();
   const paidTotalsByCurrency = new Map<string, number>();
+  const receivedPaymentTotalsByCurrency = new Map<string, number>();
   const cancelledOrNotBillableTotalsByCurrency = new Map<string, number>();
   const activeIssuedRangeInvoicesAsOfDate = rangeInvoices.filter((row) => {
     if ((row.invoice_status || "").trim().toUpperCase() !== "ISSUED") {
@@ -2689,10 +2701,12 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       const current = paidTotalsByCurrency.get(currency) ?? 0;
       paidTotalsByCurrency.set(currency, current + Math.abs(amount));
     }
+    if (isReceivedManualPaymentMovement(row)) {
+      const current = receivedPaymentTotalsByCurrency.get(currency) ?? 0;
+      receivedPaymentTotalsByCurrency.set(currency, current + Math.abs(amount));
+    }
   }
-  const pendingTotalsByCurrency = new Map(
-    [...totalsByCurrency.entries()].filter(([, total]) => total > 0.009),
-  );
+  const pendingTotalsByCurrency = new Map([...receivedPaymentTotalsByCurrency.entries()].filter(([, total]) => total > 0.009));
 
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error");
