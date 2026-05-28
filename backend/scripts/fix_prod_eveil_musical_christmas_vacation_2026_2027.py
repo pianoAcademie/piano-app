@@ -3,322 +3,216 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from calendar import monthrange
 from datetime import date, datetime, time, timezone
-from uuid import UUID
+from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.db.session import SessionLocal
-from app.models.client_record import ClientAutoInvoiceRule, ClientInvoiceLine, ClientManualTransaction
-from app.models.quote import Quote, QuoteAcceptanceFollowup
-from app.models.user import User
+from app.models.catalog import CourseSession, SessionStatus
+from app.models.quote import Quote, QuoteLine
 
-SCRIPT_PREFIX = "PROD_REPAIR_MONTHLY_CARD_QUOTE_BILLING"
-EXECUTION_KEY = "quote_to_enrollment_execution"
-START_DATE = date(2026, 9, 1)
-DUE_DAYS_OFFSET = 1
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _json_object(value: object | None) -> dict[str, object]:
-    return dict(value) if isinstance(value, dict) else {}
-
-
-def _json_list(value: object | None) -> list[object]:
-    return list(value) if isinstance(value, list) else []
-
-
-def _parse_uuid(value: object | None) -> UUID | None:
-    raw = str(value or "").strip()
-    if not raw:
-        return None
-    try:
-        return UUID(raw)
-    except ValueError:
-        return None
+SCRIPT_PREFIX = "PROD_REPAIR_ASSAS_ADULT_COLLECTIVE_MISSING_SESSIONS"
+QUOTE_NUMBER = "DV-20260528100238-F277"
+LINE_TITLE = "Cours collectifs ado/adultes"
+COURSE_ID = "43c77f63-0ac4-40ca-8e49-fafa4fba3c6e"
+LOCATION_ID = "1be3c4dc-2f55-4712-bcf9-32a4624ff1ad"
+SERIES_KEY = "071696b4-b6db-45eb-ab91-5803b367c707"
+TARGET_DATES = (date(2027, 3, 31), date(2027, 5, 19))
+START_TIME = time(19, 0)
+END_TIME = time(20, 0)
+TARGET_QUANTITY = Decimal("32.00")
 
 
 def _print(line: str) -> None:
     print(f"[{SCRIPT_PREFIX}] {line}")
 
 
-def _object_mentions_monthly_card_payment(value: object) -> bool:
-    if isinstance(value, str):
-        return value.strip().upper() == "CARD_MONTHLY"
-    if isinstance(value, dict):
-        return any(_object_mentions_monthly_card_payment(item) for item in value.values())
-    if isinstance(value, list):
-        return any(_object_mentions_monthly_card_payment(item) for item in value)
-    return False
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
-def _followup_execution(followup: QuoteAcceptanceFollowup) -> dict[str, object]:
-    return _json_object(_json_object(followup.payload).get(EXECUTION_KEY))
+def _q2(value: Decimal) -> Decimal:
+    return Decimal(value or 0).quantize(Decimal("0.01"))
 
 
-def _set_followup_execution(followup: QuoteAcceptanceFollowup, execution: dict[str, object]) -> None:
-    payload = _json_object(followup.payload)
-    payload[EXECUTION_KEY] = execution
-    followup.payload = payload
-    followup.updated_at = _utcnow()
+def _local_parts(session_obj: CourseSession) -> tuple[date, time, time]:
+    tz = ZoneInfo(session_obj.timezone or "Europe/Paris")
+    start = session_obj.start_at_utc.astimezone(tz)
+    end = session_obj.end_at_utc.astimezone(tz)
+    return start.date(), start.time().replace(tzinfo=None), end.time().replace(tzinfo=None)
 
 
-def _uses_monthly_card_payment(quote: Quote, followup: QuoteAcceptanceFollowup) -> bool:
-    payload = _json_object(followup.payload)
-    terms = _json_object(quote.payment_terms_snapshot)
-    for source in (payload, terms):
-        for key in ("payment_method_code", "paymentMethodCode", "payment_method", "paymentMethod"):
-            if str(source.get(key) or "").strip().upper() == "CARD_MONTHLY":
-                return True
-    return _object_mentions_monthly_card_payment(payload) or _object_mentions_monthly_card_payment(terms)
+def _nearest_template(sessions: list[CourseSession], target_date: date) -> CourseSession:
+    candidates = [
+        session_obj
+        for session_obj in sessions
+        if _local_parts(session_obj)[1:] == (START_TIME, END_TIME)
+    ]
+    if not candidates:
+        raise RuntimeError("No template session found")
+    return min(candidates, key=lambda session_obj: abs((_local_parts(session_obj)[0] - target_date).days))
 
 
-def _add_months(value: date, months: int) -> date:
-    month_index = (value.month - 1) + months
-    year = value.year + (month_index // 12)
-    month = (month_index % 12) + 1
-    day = min(value.day, monthrange(year, month)[1])
-    return date(year, month, day)
-
-
-def _next_run_date(today: date) -> date:
-    next_date = START_DATE
-    while next_date < today:
-        next_date = _add_months(next_date, 1)
-    return next_date
-
-
-def _issued_at_for_start_date() -> datetime:
-    return datetime.combine(START_DATE, time.min, tzinfo=timezone.utc)
-
-
-def _is_deposit_transaction(transaction: ClientManualTransaction) -> bool:
-    reference = str(transaction.reference or "").upper()
-    label = str(transaction.label or "").casefold()
-    return ":DEPOSIT" in reference or "acompte" in label
-
-
-def _transaction_is_invoiced(db, transaction: ClientManualTransaction) -> bool:
-    return db.scalar(
-        select(ClientInvoiceLine.id)
-        .where(
-            ClientInvoiceLine.source == "MANUAL",
-            ClientInvoiceLine.source_payment_id == transaction.id,
-        )
-        .limit(1)
-    ) is not None
-
-
-def _upsert_auto_invoice_rule(db, *, billing: User, quote: Quote, actor_user_id: UUID | None, apply: bool) -> UUID | None:
-    if quote.legal_entity_id is None:
-        _print(f"skip_rule_no_legal_entity quote={quote.quote_number}")
-        return None
-
-    now = _utcnow()
-    rule = db.scalar(
-        select(ClientAutoInvoiceRule)
-        .where(
-            ClientAutoInvoiceRule.user_id == billing.id,
-            ClientAutoInvoiceRule.legal_entity_id == quote.legal_entity_id,
-            ClientAutoInvoiceRule.status.in_(["ACTIVE", "PAUSED"]),
-        )
-        .order_by(ClientAutoInvoiceRule.updated_at.desc(), ClientAutoInvoiceRule.created_at.desc())
-        .with_for_update()
-        .limit(1)
+def _copy_session(template: CourseSession, *, target_date: date) -> CourseSession:
+    tz = ZoneInfo(template.timezone or "Europe/Paris")
+    start_utc = datetime.combine(target_date, START_TIME, tzinfo=tz).astimezone(timezone.utc)
+    end_utc = datetime.combine(target_date, END_TIME, tzinfo=tz).astimezone(timezone.utc)
+    deadline_delta = template.start_at_utc - template.auto_cancel_deadline_utc
+    if deadline_delta.total_seconds() <= 0:
+        deadline_delta = template.end_at_utc - template.start_at_utc
+    return CourseSession(
+        course_type_id=template.course_type_id,
+        billing_entity_snapshot=template.billing_entity_snapshot,
+        snapshot_seller_legal_entity_id=template.snapshot_seller_legal_entity_id,
+        snapshot_payor_legal_entity_id=template.snapshot_payor_legal_entity_id,
+        location_id=template.location_id,
+        professor_id=template.professor_id,
+        substitute_teacher_id=template.substitute_teacher_id,
+        substitute_set_at=template.substitute_set_at,
+        substitute_set_by=template.substitute_set_by,
+        substitute_note=template.substitute_note,
+        title=template.title,
+        description=template.description,
+        private_description=template.private_description,
+        group_note=template.group_note,
+        professor_reminder_note=template.professor_reminder_note,
+        start_at_utc=start_utc,
+        end_at_utc=end_utc,
+        is_all_day=template.is_all_day,
+        capacity_max=template.capacity_max,
+        status=SessionStatus.SCHEDULED,
+        auto_cancel_deadline_utc=start_utc - deadline_delta,
+        cancel_reason=None,
+        zoom_link=template.zoom_link,
+        is_private=template.is_private,
+        allow_online_booking=template.allow_online_booking,
+        visibility_scope=template.visibility_scope,
+        booking_scope=template.booking_scope,
+        external_booking_price_ttc=template.external_booking_price_ttc,
+        show_external_remaining_seats=template.show_external_remaining_seats,
+        timezone=template.timezone,
+        recurrence_group_id=template.recurrence_group_id,
+        recurrence_rule=template.recurrence_rule,
+        recurrence_until_date=template.recurrence_until_date,
     )
-    created = rule is None
-    desired_next_run_date = _next_run_date(now.date())
-    if rule is None:
-        rule = ClientAutoInvoiceRule(
-            user_id=billing.id,
-            legal_entity_id=quote.legal_entity_id,
-            created_by_user_id=actor_user_id,
-            updated_by_user_id=actor_user_id,
-            created_at=now,
-            updated_at=now,
-        )
-        needs_update = True
-    else:
-        needs_update = any(
-            [
-                rule.cycle_start_date != START_DATE,
-                rule.frequency != "MONTHLY",
-                rule.billing_timing != "UPCOMING_LESSONS",
-                rule.due_date_rule_type != "X_DAYS_AFTER_ISSUE",
-                rule.due_date_days_offset != DUE_DAYS_OFFSET,
-                not bool(rule.include_pending_lines),
-                bool(rule.include_cancelled_lines),
-                rule.next_run_date != desired_next_run_date,
-                rule.status != "ACTIVE",
-            ]
-        )
-
-    if needs_update:
-        rule.cycle_start_date = START_DATE
-        rule.frequency = "MONTHLY"
-        rule.billing_timing = "UPCOMING_LESSONS"
-        rule.due_date_rule_type = "X_DAYS_AFTER_ISSUE"
-        rule.due_date_days_offset = DUE_DAYS_OFFSET
-        rule.include_pending_lines = True
-        rule.include_cancelled_lines = False
-        rule.next_run_date = desired_next_run_date
-        rule.status = "ACTIVE"
-        rule.updated_by_user_id = actor_user_id
-        rule.updated_at = now
-
-    if apply and (created or needs_update):
-        db.add(rule)
-        db.flush()
-
-    _print(
-        "auto_rule_"
-        f"{'create' if created else 'update'} quote={quote.quote_number}|billing={billing.id}|"
-        f"legal_entity={quote.legal_entity_id}|cycle_start={START_DATE.isoformat()}|"
-        f"next_run={desired_next_run_date.isoformat()}|due_offset={DUE_DAYS_OFFSET}|"
-        f"needs_update={needs_update}"
-    )
-
-    archived_rules = db.scalars(
-        select(ClientAutoInvoiceRule)
-        .where(
-            ClientAutoInvoiceRule.user_id == billing.id,
-            ClientAutoInvoiceRule.legal_entity_id == quote.legal_entity_id,
-            ClientAutoInvoiceRule.id != rule.id,
-            ClientAutoInvoiceRule.status.in_(["ACTIVE", "PAUSED"]),
-        )
-        .with_for_update()
-    ).all()
-    for archived_rule in archived_rules:
-        _print(f"archive_duplicate_rule={archived_rule.id}|billing={billing.id}|legal_entity={quote.legal_entity_id}")
-        if apply:
-            archived_rule.status = "ARCHIVED"
-            archived_rule.updated_by_user_id = actor_user_id
-            archived_rule.updated_at = now
-            db.add(archived_rule)
-
-    return rule.id if rule.id is not None else quote.id
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--apply", action="store_true", help="Apply the repair. Without it, only prints a dry-run.")
+    parser.add_argument("--apply", action="store_true", help="Apply the Assas quote and planning repair.")
     args = parser.parse_args()
 
     with SessionLocal() as db:
-        actor_id = db.scalar(select(User.id).where(User.email == "admin@piano-academie.com").limit(1))
-        rows = db.execute(
-            select(QuoteAcceptanceFollowup, Quote)
-            .join(Quote, Quote.id == QuoteAcceptanceFollowup.quote_id)
-            .where(QuoteAcceptanceFollowup.status == "completed")
-            .order_by(QuoteAcceptanceFollowup.updated_at.asc())
+        sessions = db.scalars(
+            select(CourseSession)
+            .where(
+                CourseSession.course_type_id == COURSE_ID,
+                CourseSession.location_id == LOCATION_ID,
+                CourseSession.recurrence_group_id == SERIES_KEY,
+                CourseSession.status == SessionStatus.SCHEDULED,
+            )
+            .order_by(CourseSession.start_at_utc.asc())
         ).all()
 
-        inspected = 0
-        candidates = 0
-        transactions_updated = 0
-        transactions_skipped_deposit = 0
-        transactions_skipped_invoiced = 0
-        transactions_already_on_start_date = 0
-        transactions_missing = 0
-        rules_touched = 0
-
-        for followup, quote in rows:
-            inspected += 1
-            execution = _followup_execution(followup)
-            if str(execution.get("status") or "").strip().lower() != "executed":
-                continue
-            if not _uses_monthly_card_payment(quote, followup):
-                continue
-
-            billing_id = _parse_uuid(execution.get("billing_client_id"))
-            billing = db.scalar(select(User).where(User.id == billing_id).with_for_update().limit(1)) if billing_id else None
-            if billing is None:
-                _print(f"skip_missing_billing quote={quote.quote_number}|billing_id={billing_id or '-'}")
-                continue
-
-            candidates += 1
-            _print(f"candidate quote={quote.quote_number}|followup={followup.id}|billing={billing.id}|client={billing.email}")
-
-            touched_transaction_ids: list[str] = []
-            for raw_id in _json_list(execution.get("created_transaction_ids")):
-                transaction_id = _parse_uuid(raw_id)
-                if transaction_id is None:
-                    continue
-                transaction = db.scalar(
-                    select(ClientManualTransaction)
-                    .where(ClientManualTransaction.id == transaction_id)
-                    .with_for_update()
-                    .limit(1)
+        created_dates: list[str] = []
+        already_present = 0
+        would_create = 0
+        for target_date in TARGET_DATES:
+            template = _nearest_template(sessions, target_date)
+            tz = ZoneInfo(template.timezone or "Europe/Paris")
+            start_utc = datetime.combine(target_date, START_TIME, tzinfo=tz).astimezone(timezone.utc)
+            end_utc = datetime.combine(target_date, END_TIME, tzinfo=tz).astimezone(timezone.utc)
+            existing = db.scalar(
+                select(CourseSession.id)
+                .where(
+                    CourseSession.course_type_id == COURSE_ID,
+                    CourseSession.location_id == LOCATION_ID,
+                    CourseSession.status == SessionStatus.SCHEDULED,
+                    CourseSession.start_at_utc == start_utc,
+                    CourseSession.end_at_utc == end_utc,
                 )
-                if transaction is None:
-                    transactions_missing += 1
-                    _print(f"missing_transaction quote={quote.quote_number}|transaction={transaction_id}")
-                    continue
-                if _is_deposit_transaction(transaction):
-                    transactions_skipped_deposit += 1
-                    _print(f"skip_deposit_transaction quote={quote.quote_number}|transaction={transaction.id}|label={transaction.label}")
-                    continue
-                if _transaction_is_invoiced(db, transaction):
-                    transactions_skipped_invoiced += 1
-                    _print(f"skip_already_invoiced quote={quote.quote_number}|transaction={transaction.id}|label={transaction.label}")
-                    continue
-                if transaction.occurred_at.date() == START_DATE:
-                    transactions_already_on_start_date += 1
-                    _print(
-                        f"ok_transaction_date quote={quote.quote_number}|transaction={transaction.id}|"
-                        f"label={transaction.label}|date={START_DATE.isoformat()}"
-                    )
-                    touched_transaction_ids.append(str(transaction.id))
-                    continue
-
-                _print(
-                    "update_transaction_date "
-                    f"quote={quote.quote_number}|transaction={transaction.id}|label={transaction.label}|"
-                    f"type={transaction.transaction_type}|old={transaction.occurred_at.isoformat()}|new={START_DATE.isoformat()}"
-                )
-                transactions_updated += 1
-                touched_transaction_ids.append(str(transaction.id))
-                if args.apply:
-                    transaction.occurred_at = _issued_at_for_start_date()
-                    transaction.updated_at = _utcnow()
-                    db.add(transaction)
-
-            rule_id = _upsert_auto_invoice_rule(db, billing=billing, quote=quote, actor_user_id=actor_id, apply=args.apply)
-            if rule_id is not None:
-                rules_touched += 1
-
+                .limit(1)
+            )
+            if existing is not None:
+                already_present += 1
+                _print(f"already_present date={target_date.isoformat()}|session={existing}")
+                continue
+            would_create += 1
+            _print(f"create_session date={target_date.isoformat()}|template={template.id}|apply={args.apply}")
             if args.apply:
-                execution["monthly_card_existing_quote_repair"] = {
-                    "repaired_at": _utcnow().isoformat(),
-                    "fixed_fee_date": START_DATE.isoformat(),
-                    "auto_invoice_rule_id": str(rule_id) if rule_id is not None else None,
-                    "updated_transaction_ids": touched_transaction_ids,
-                    "deposit_policy": "untouched",
-                    "invoiced_transaction_policy": "untouched",
-                }
-                _set_followup_execution(followup, execution)
-                db.add(followup)
+                session_obj = _copy_session(template, target_date=target_date)
+                db.add(session_obj)
+                db.flush()
+                sessions.append(session_obj)
+                created_dates.append(target_date.isoformat())
 
+        quote = db.scalar(select(Quote).where(Quote.quote_number == QUOTE_NUMBER).with_for_update().limit(1))
+        if quote is None:
+            raise RuntimeError(f"Quote not found: {QUOTE_NUMBER}")
+        line = db.scalar(
+            select(QuoteLine)
+            .where(QuoteLine.quote_id == quote.id, QuoteLine.title == LINE_TITLE)
+            .with_for_update()
+            .limit(1)
+        )
+        if line is None:
+            raise RuntimeError(f"Quote line not found: {QUOTE_NUMBER} / {LINE_TITLE}")
+
+        old_quantity = Decimal(line.quantity or 0)
+        old_amount_ttc = Decimal(line.amount_ttc or 0)
+        new_amount_ttc = _q2(Decimal(line.unit_price_ttc or 0) * TARGET_QUANTITY)
+        _print(
+            f"line_update line={line.id}|old_quantity={old_quantity}|new_quantity={TARGET_QUANTITY}|"
+            f"old_amount_ttc={old_amount_ttc}|new_amount_ttc={new_amount_ttc}|apply={args.apply}"
+        )
+
+        quote_total_ttc = Decimal(quote.total_ttc or 0)
         if args.apply:
+            line.quantity = TARGET_QUANTITY
+            line.amount_ht = _q2(Decimal(line.unit_price_ht or 0) * TARGET_QUANTITY)
+            line.amount_vat = _q2(Decimal(line.unit_vat_amount or 0) * TARGET_QUANTITY)
+            line.amount_ttc = new_amount_ttc
+            meta = dict(line.meta or {})
+            meta["typeform_planned_quantity"] = str(TARGET_QUANTITY)
+            meta["planning_session_limit"] = int(TARGET_QUANTITY)
+            line.meta = meta
+            line.updated_at = _utcnow()
+            db.add(line)
+            db.flush()
+
+            lines_total = db.scalar(
+                select(func.coalesce(func.sum(QuoteLine.amount_ttc), Decimal("0"))).where(QuoteLine.quote_id == quote.id)
+            )
+            quote_total_ttc = _q2(Decimal(lines_total or 0))
+            quote.total_ttc = quote_total_ttc
+            quote.price_snapshot = {
+                "catalog_id": str(quote.pricing_catalog_id) if quote.pricing_catalog_id else None,
+                "currency": quote.currency,
+                "lines_total_ttc": str(quote_total_ttc),
+                "total_ttc": str(quote_total_ttc),
+            }
+            quote.document_status = "stale"
+            quote.document_hash = None
+            quote.document_generated_at = None
+            quote.document_snapshot_id = None
+            quote.updated_at = _utcnow()
+            db.add(quote)
             db.commit()
         else:
             db.rollback()
 
         summary = (
-            f"apply={args.apply}|inspected={inspected}|candidates={candidates}|"
-            f"transactions_updated={transactions_updated}|transactions_already_on_start_date={transactions_already_on_start_date}|"
-            f"transactions_skipped_deposit={transactions_skipped_deposit}|"
-            f"transactions_skipped_invoiced={transactions_skipped_invoiced}|transactions_missing={transactions_missing}|"
-            f"rules_touched={rules_touched}|start_date={START_DATE.isoformat()}|due_date=2026-09-02"
+            f"apply={args.apply}|created={len(created_dates)}|would_create={would_create}|"
+            f"already_present={already_present}|created_dates={','.join(created_dates) or '-'}|"
+            f"old_quantity={old_quantity}|target_quantity={TARGET_QUANTITY}|"
+            f"old_amount_ttc={old_amount_ttc}|target_amount_ttc={new_amount_ttc}|quote_total_ttc={quote_total_ttc}"
         )
         _print(f"summary {summary}")
-        print(f"::notice title=Monthly card billing repair::{summary}")
+        print(f"::notice title=Assas adult collective missing sessions repair::{summary}")
 
 
 if __name__ == "__main__":
