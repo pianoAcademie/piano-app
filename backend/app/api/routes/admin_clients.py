@@ -2193,6 +2193,62 @@ def _normalize_phone_recipient(raw_value: str | None) -> str | None:
     return candidate
 
 
+def _send_check_received_notification_email(
+    db: Session,
+    *,
+    client: User,
+    amount: Decimal,
+    currency: str,
+    received_at: datetime,
+    description: str | None = None,
+) -> tuple[list[str], str | None, str | None]:
+    billing_profile = resolve_billing_profile(db, client)
+    try:
+        recipients = _normalize_email_recipients([billing_profile.email, client.email])
+    except HTTPException as exc:
+        return [], None, str(exc.detail or "Adresse email invalide")
+    if not recipients:
+        return [], None, "Aucune adresse email destinataire"
+
+    client_name = _display_name(billing_profile.first_name, billing_profile.last_name, client.email)
+    received_label = received_at.strftime("%d/%m/%Y")
+    body_lines = [
+        f"Bonjour {client_name},",
+        "",
+        f"Nous confirmons la bonne reception de votre cheque de {amount:.2f} {currency}.",
+        f"Date de reception: {received_label}.",
+        "",
+        "Ce message confirme uniquement la reception du cheque. L'encaissement interviendra lors du depot en banque.",
+    ]
+    normalized_description = _normalize_optional(description)
+    if normalized_description:
+        body_lines.extend(["", f"Information de suivi: {normalized_description}"])
+    body_lines.extend(["", "Cordialement,"])
+
+    sender = resolve_sender_profile(db, sender_kind="STUDIO")
+    subject = f"Reception de votre cheque - {client_name}"
+    body = "\n".join(body_lines).strip()
+    try:
+        message_ids = [
+            send_email(
+                to_email=recipient,
+                subject=subject,
+                body=body,
+                body_format="TEXT",
+                context="CHECK_RECEIVED_NOTIFICATION",
+                recipient_user_id=client.id,
+                from_email=sender.from_email,
+                from_name=sender.from_name,
+                reply_to=sender.reply_to,
+                subject_prefix=sender.subject_prefix,
+            )
+            for recipient in recipients
+        ]
+    except Exception as exc:  # pragma: no cover - defensive safety for SMTP providers
+        return recipients, None, str(exc).strip() or "Erreur technique d'envoi"
+    return recipients, message_ids[0] if message_ids else None, None
+
+
 def _build_range_invoice_email_defaults(
     db: Session,
     *,
@@ -9032,60 +9088,70 @@ def create_admin_client_manual_transaction(
     receipt_message_id: str | None = None
     receipt_send_error: str | None = None
     if payload.send_receipt_email:
-        billing_profile = resolve_billing_profile(db, client)
-        receipt_recipients = _normalize_email_recipients([billing_profile.email, client.email])
-        if not receipt_recipients:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucune adresse email destinataire")
-        payment_method_label = _payment_method_label_client(payment_method_code) if payment_method_code else "Paiement manuel"
-        client_name = _display_name(billing_profile.first_name, billing_profile.last_name, client.email)
-        invoice_numbers = [invoice_number for _, _, _, invoice_number in reconciled_invoices]
-        receipt_lines = [
-            f"Bonjour {client_name},",
-            "",
-            f"Nous confirmons la reception de votre paiement de {total_abs:.2f} {currency}.",
-            f"Date du paiement: {occurred_at.strftime('%d/%m/%Y')}.",
-            f"Mode de paiement: {payment_method_label}.",
-        ]
-        if invoice_numbers:
-            receipt_lines.append(f"Facture(s) rapprochee(s): {', '.join(invoice_numbers)}.")
-            receipt_lines.append("")
-            receipt_lines.append("Acces facture(s):")
-            for note, metadata, _, invoice_number in reconciled_invoices:
-                invoice_url = _invoice_range_download_url(
-                    client_id=client.id,
-                    note_id=note.id,
-                    metadata=metadata,
-                    inline=True,
-                )
-                receipt_lines.append(f"- {invoice_number}: {invoice_url}")
-        receipt_lines.extend(
-            [
+        if payment_method_code == "CHECK":
+            receipt_recipients, receipt_message_id, receipt_send_error = _send_check_received_notification_email(
+                db,
+                client=client,
+                amount=total_abs,
+                currency=currency,
+                received_at=occurred_at,
+                description=description,
+            )
+        else:
+            billing_profile = resolve_billing_profile(db, client)
+            receipt_recipients = _normalize_email_recipients([billing_profile.email, client.email])
+            if not receipt_recipients:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Aucune adresse email destinataire")
+            payment_method_label = _payment_method_label_client(payment_method_code) if payment_method_code else "Paiement manuel"
+            client_name = _display_name(billing_profile.first_name, billing_profile.last_name, client.email)
+            invoice_numbers = [invoice_number for _, _, _, invoice_number in reconciled_invoices]
+            receipt_lines = [
+                f"Bonjour {client_name},",
                 "",
-                "Ce message tient lieu de recu.",
+                f"Nous confirmons la reception de votre paiement de {total_abs:.2f} {currency}.",
+                f"Date du paiement: {occurred_at.strftime('%d/%m/%Y')}.",
+                f"Mode de paiement: {payment_method_label}.",
             ]
-        )
-        sender = resolve_sender_profile(db, sender_kind="STUDIO")
-        subject = f"Recu de paiement - {client_name}"
-        body = "\n".join(receipt_lines).strip()
-        try:
-            message_ids = [
-                send_email(
-                    to_email=recipient,
-                    subject=subject,
-                    body=body,
-                    body_format="TEXT",
-                    context="MANUAL_PAYMENT_RECEIPT",
-                    recipient_user_id=client.id,
-                    from_email=sender.from_email,
-                    from_name=sender.from_name,
-                    reply_to=sender.reply_to,
-                    subject_prefix=sender.subject_prefix,
-                )
-                for recipient in receipt_recipients
-            ]
-            receipt_message_id = message_ids[0] if message_ids else None
-        except Exception as exc:  # pragma: no cover - defensive safety for SMTP providers
-            receipt_send_error = str(exc).strip() or "Erreur technique d'envoi"
+            if invoice_numbers:
+                receipt_lines.append(f"Facture(s) rapprochee(s): {', '.join(invoice_numbers)}.")
+                receipt_lines.append("")
+                receipt_lines.append("Acces facture(s):")
+                for note, metadata, _, invoice_number in reconciled_invoices:
+                    invoice_url = _invoice_range_download_url(
+                        client_id=client.id,
+                        note_id=note.id,
+                        metadata=metadata,
+                        inline=True,
+                    )
+                    receipt_lines.append(f"- {invoice_number}: {invoice_url}")
+            receipt_lines.extend(
+                [
+                    "",
+                    "Ce message tient lieu de recu.",
+                ]
+            )
+            sender = resolve_sender_profile(db, sender_kind="STUDIO")
+            subject = f"Recu de paiement - {client_name}"
+            body = "\n".join(receipt_lines).strip()
+            try:
+                message_ids = [
+                    send_email(
+                        to_email=recipient,
+                        subject=subject,
+                        body=body,
+                        body_format="TEXT",
+                        context="MANUAL_PAYMENT_RECEIPT",
+                        recipient_user_id=client.id,
+                        from_email=sender.from_email,
+                        from_name=sender.from_name,
+                        reply_to=sender.reply_to,
+                        subject_prefix=sender.subject_prefix,
+                    )
+                    for recipient in receipt_recipients
+                ]
+                receipt_message_id = message_ids[0] if message_ids else None
+            except Exception as exc:  # pragma: no cover - defensive safety for SMTP providers
+                receipt_send_error = str(exc).strip() or "Erreur technique d'envoi"
 
     direction_label = "debiteur" if sign > 0 else "crediteur"
     note_message = (
@@ -9109,10 +9175,16 @@ def create_admin_client_manual_transaction(
                 note_message += " Montant paiement inferieur au total facture(s): facture(s) laissee(s) en statut emise."
     if payload.send_receipt_email:
         if receipt_send_error:
-            note_message += f" Echec envoi recu par courriel: {receipt_send_error}."
+            if payment_method_code == "CHECK":
+                note_message += f" Echec envoi notification cheque recu: {receipt_send_error}."
+            else:
+                note_message += f" Echec envoi recu par courriel: {receipt_send_error}."
         else:
             recipients_label = ", ".join(receipt_recipients)
-            note_message += f" Recu envoye par courriel a: {recipients_label}."
+            if payment_method_code == "CHECK":
+                note_message += f" Notification cheque recu envoyee par courriel a: {recipients_label}."
+            else:
+                note_message += f" Recu envoye par courriel a: {recipients_label}."
             if receipt_message_id:
                 note_message += f" Message id: {receipt_message_id}."
     _create_client_note(

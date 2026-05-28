@@ -6243,6 +6243,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   paymentMethodRequired
                   reconcilableInvoices={manualReconcilableInvoices}
                   showReconciliation
+                  showReceiptEmailOption
                   language={language}
                 />
               ) : (
@@ -6274,15 +6275,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   placeholder={t("admin.client_detail.description_invoice_help")}
                 />
               </label>
-              {manualIsPayment ? (
-                <>
-                  <input type="hidden" name="send_receipt_email" value="off" />
-                  <label className="checkline span-2">
-                    <input type="checkbox" name="send_receipt_email" value="on" />
-                    {t("admin.client_detail.send_receipt_email")}
-                  </label>
-                </>
-              ) : null}
               {!manualIsCashFlow && manualChargeCategories.length === 0 ? (
                 <p className="muted">
                   {t("admin.client_detail.no_catalog_items_help")}{" "}

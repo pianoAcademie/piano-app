@@ -24,6 +24,11 @@ type ReconcilableInvoiceOption = {
   sellerLegalEntityName: string | null;
 };
 
+type EmailPreview = {
+  subject: string;
+  body: string;
+};
+
 type ManualTransactionLegalEntityFieldsProps = {
   legalEntities: LegalEntityOption[];
   paymentMethods?: PaymentMethodOption[];
@@ -32,6 +37,7 @@ type ManualTransactionLegalEntityFieldsProps = {
   initialLegalEntityId?: string | null;
   reconcilableInvoices?: ReconcilableInvoiceOption[];
   showReconciliation?: boolean;
+  showReceiptEmailOption?: boolean;
   language?: "fr" | "en";
 };
 
@@ -43,6 +49,7 @@ export default function ManualTransactionLegalEntityFields({
   initialLegalEntityId = null,
   reconcilableInvoices = [],
   showReconciliation = false,
+  showReceiptEmailOption = false,
   language,
 }: ManualTransactionLegalEntityFieldsProps): JSX.Element {
   const searchParams = useSearchParams();
@@ -63,6 +70,14 @@ export default function ManualTransactionLegalEntityFields({
         noInvoice: "No issued invoice waiting for payment matching.",
         markPaid: "Manually mark selected invoices as paid (if the payment amount is sufficient)",
         checkHint: "Checks are tracked as received first. Mark them as cashed from the payment list after bank deposit.",
+        checkDepositMonth: "Expected deposit month (optional)",
+        checkDepositHelp: "When filled, the payment label and comment are prepared automatically.",
+        receiptEmailGeneric: "Send a receipt email to the client",
+        receiptEmailCheck: "Notify the client that the check has been received",
+        emailPreviewTitle: "Email preview",
+        emailPreviewSubject: "Subject",
+        emailPreviewBody: "Message",
+        unknownClient: "client",
         reconciliationHint:
           "If payment amount < invoice total(s), they remain unpaid. If payment amount >= invoice total(s), you can validate them as paid.",
         legalEntityRequired: "Legal entity *",
@@ -83,6 +98,14 @@ export default function ManualTransactionLegalEntityFields({
         noInvoice: "Aucune facture emise en attente de paiement a rapprocher.",
         markPaid: "Marquer manuellement les factures selectionnees comme payees (si montant regle suffisant)",
         checkHint: "Les cheques sont d'abord enregistres comme recus. Passez-les en encaisses depuis la liste des paiements apres depot en banque.",
+        checkDepositMonth: "Mois de depot prevu (optionnel)",
+        checkDepositHelp: "Si renseigne, le libelle et le commentaire du paiement sont prepares automatiquement.",
+        receiptEmailGeneric: "Envoyer un recu par courriel au client",
+        receiptEmailCheck: "Notifier le client que le cheque a bien ete recu",
+        emailPreviewTitle: "Apercu du mail",
+        emailPreviewSubject: "Objet",
+        emailPreviewBody: "Message",
+        unknownClient: "client",
         reconciliationHint:
           "Si le montant du paiement est inferieur au total des factures, elles restent a payer. S il couvre le total, vous pouvez les valider comme payees.",
         legalEntityRequired: "Entite legale *",
@@ -93,6 +116,12 @@ export default function ManualTransactionLegalEntityFields({
   const [paymentMethodCode, setPaymentMethodCode] = useState<string>(initialPaymentMethodCode);
   const [manualLegalEntityId, setManualLegalEntityId] = useState<string>(initialLegalEntityId ?? "");
   const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set<string>());
+  const [checkDepositMonth, setCheckDepositMonth] = useState<string>("");
+  const [receiptEmailChecked, setReceiptEmailChecked] = useState<boolean>(false);
+  const [checkEmailPreview, setCheckEmailPreview] = useState<EmailPreview | null>(null);
+  const receiptEmailTouchedRef = useRef<boolean>(false);
+  const lastAutoCheckDescriptionRef = useRef<string>("");
+  const lastAutoCheckLabelRef = useRef<string>("");
 
   const paymentDefaultByMethod = useMemo(() => {
     const out = new Map<string, string>();
@@ -173,6 +202,92 @@ export default function ManualTransactionLegalEntityFields({
   const resolvedLegalEntityId = derivedLegalEntityId ?? manualLegalEntityId;
   const showManualSelector = derivedLegalEntityId === null;
   const isCheckPayment = paymentMethodCode.trim().toUpperCase() === "CHECK";
+
+  useEffect(() => {
+    const form = rootRef.current?.closest("form");
+    if (!form || !isCheckPayment || !checkDepositMonth) {
+      return;
+    }
+    const descriptionField = form.querySelector<HTMLTextAreaElement>("textarea[name='description']");
+    const labelField = form.querySelector<HTMLInputElement>("input[name='label']");
+    const occurredAtField = form.querySelector<HTMLInputElement>("input[name='occurred_at']");
+    const receivedLabel = formatInputDateLabel(occurredAtField?.value || "", resolvedLanguage);
+    const depositLabel = formatInputMonthLabel(checkDepositMonth, resolvedLanguage);
+    const autoText = isEnglish
+      ? `Check received on ${receivedLabel} - to deposit in ${depositLabel}`
+      : `Cheque recu le ${receivedLabel} - a deposer en ${depositLabel}`;
+
+    if (
+      descriptionField &&
+      (!descriptionField.value.trim() || descriptionField.value === lastAutoCheckDescriptionRef.current)
+    ) {
+      descriptionField.value = autoText;
+      lastAutoCheckDescriptionRef.current = autoText;
+    }
+    if (labelField && (!labelField.value.trim() || labelField.value === lastAutoCheckLabelRef.current)) {
+      labelField.value = autoText;
+      lastAutoCheckLabelRef.current = autoText;
+    }
+  }, [checkDepositMonth, isCheckPayment, resolvedLanguage, isEnglish]);
+
+  useEffect(() => {
+    if (!showReceiptEmailOption || receiptEmailTouchedRef.current) {
+      return;
+    }
+    setReceiptEmailChecked(isCheckPayment);
+  }, [isCheckPayment, showReceiptEmailOption]);
+
+  useEffect(() => {
+    if (!isCheckPayment || !receiptEmailChecked) {
+      setCheckEmailPreview(null);
+      return undefined;
+    }
+    const form = rootRef.current?.closest("form");
+    if (!form) {
+      setCheckEmailPreview(null);
+      return undefined;
+    }
+
+    const updatePreview = () => {
+      const amount = form.querySelector<HTMLInputElement>("input[name='amount_incl_vat']")?.value || "";
+      const currency = form.querySelector<HTMLInputElement>("input[name='currency']")?.value || "EUR";
+      const occurredAt = form.querySelector<HTMLInputElement>("input[name='occurred_at']")?.value || "";
+      const description = form.querySelector<HTMLTextAreaElement>("textarea[name='description']")?.value.trim() || "";
+      const amountLabel = formatAmountLabel(amount, currency, resolvedLanguage);
+      const receivedLabel = formatInputDateLabel(occurredAt, resolvedLanguage);
+      const subject = isEnglish ? `Check received - ${text.unknownClient}` : `Reception de votre cheque - ${text.unknownClient}`;
+      const bodyLines = isEnglish
+        ? [
+            `Hello ${text.unknownClient},`,
+            "",
+            `We confirm that we have received your check for ${amountLabel}.`,
+            `Date received: ${receivedLabel}.`,
+            "",
+            "This message only confirms receipt of the check. It will be cashed when it is deposited at the bank.",
+          ]
+        : [
+            `Bonjour ${text.unknownClient},`,
+            "",
+            `Nous confirmons la bonne reception de votre cheque de ${amountLabel}.`,
+            `Date de reception: ${receivedLabel}.`,
+            "",
+            "Ce message confirme uniquement la reception du cheque. L'encaissement interviendra lors du depot en banque.",
+          ];
+      if (description) {
+        bodyLines.push("", isEnglish ? `Tracking note: ${description}` : `Information de suivi: ${description}`);
+      }
+      bodyLines.push("", isEnglish ? "Best regards," : "Cordialement,");
+      setCheckEmailPreview({ subject, body: bodyLines.join("\n") });
+    };
+
+    updatePreview();
+    form.addEventListener("input", updatePreview);
+    form.addEventListener("change", updatePreview);
+    return () => {
+      form.removeEventListener("input", updatePreview);
+      form.removeEventListener("change", updatePreview);
+    };
+  }, [isCheckPayment, receiptEmailChecked, resolvedLanguage, isEnglish, text.unknownClient]);
 
   return (
     <div ref={rootRef} className="span-2 grid">
@@ -255,6 +370,51 @@ export default function ManualTransactionLegalEntityFields({
         </fieldset>
       ) : null}
 
+      {isCheckPayment ? (
+        <>
+          <label>
+            {text.checkDepositMonth}
+            <input
+              type="month"
+              value={checkDepositMonth}
+              onChange={(event) => setCheckDepositMonth(event.currentTarget.value)}
+            />
+          </label>
+          <p className="muted">{text.checkDepositHelp}</p>
+        </>
+      ) : null}
+
+      {showReceiptEmailOption ? (
+        <>
+          <input type="hidden" name="send_receipt_email" value="off" />
+          <label className="checkline span-2">
+            <input
+              type="checkbox"
+              name="send_receipt_email"
+              value="on"
+              checked={receiptEmailChecked}
+              onChange={(event) => {
+                receiptEmailTouchedRef.current = true;
+                setReceiptEmailChecked(event.currentTarget.checked);
+              }}
+            />
+            {isCheckPayment ? text.receiptEmailCheck : text.receiptEmailGeneric}
+          </label>
+          {isCheckPayment && receiptEmailChecked && checkEmailPreview ? (
+            <div className="span-2 flash-info">
+              <strong>{text.emailPreviewTitle}</strong>
+              <p>
+                <strong>{text.emailPreviewSubject}:</strong> {checkEmailPreview.subject}
+              </p>
+              <p>
+                <strong>{text.emailPreviewBody}:</strong>
+              </p>
+              <pre className="quote-email-preview-body quote-email-preview-text">{checkEmailPreview.body}</pre>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
       <label>
         {text.legalEntityRequired}
         {showManualSelector ? (
@@ -283,4 +443,37 @@ export default function ManualTransactionLegalEntityFields({
       ) : null}
     </div>
   );
+}
+
+function formatInputDateLabel(value: string, language: "fr" | "en"): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) {
+    return new Intl.DateTimeFormat(language === "en" ? "en-GB" : "fr-FR").format(new Date());
+  }
+  const [, year, month, day] = match;
+  return language === "en" ? `${day}/${month}/${year}` : `${day}/${month}/${year}`;
+}
+
+function formatInputMonthLabel(value: string, language: "fr" | "en"): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(value.trim());
+  if (!match) {
+    return value.trim();
+  }
+  const [, year, month] = match;
+  const date = new Date(Number(year), Number(month) - 1, 1);
+  return new Intl.DateTimeFormat(language === "en" ? "en-GB" : "fr-FR", {
+    month: "long",
+    year: "numeric",
+  }).format(date);
+}
+
+function formatAmountLabel(value: string, currency: string, language: "fr" | "en"): string {
+  const amount = Number(value.trim().replace(",", "."));
+  if (!Number.isFinite(amount)) {
+    return `0.00 ${currency || "EUR"}`;
+  }
+  return new Intl.NumberFormat(language === "en" ? "en-GB" : "fr-FR", {
+    style: "currency",
+    currency: currency || "EUR",
+  }).format(amount);
 }
