@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from app.db.session import SessionLocal
 from app.models.catalog import CourseSession, CourseType, Location, SessionStatus
-from app.models.quote import Quote
+from app.models.quote import Quote, QuoteLine
 
 PREFIX = "PROD_ONLINE_CHILD_PIANO_SERIES_INSPECT"
 COURSE_NAME = "Cours de piano collectif en ligne - enfants (1h)"
@@ -49,6 +49,17 @@ def main() -> None:
                     f"start={block.get('start_date')}|end={block.get('end_date')}|"
                     f"time={block.get('start_time')}-{block.get('end_time')}|count={block.get('sessions_count')}|"
                     f"limit={block.get('planning_session_limit')}"
+                )
+            lines = db.scalars(
+                select(QuoteLine)
+                .where(QuoteLine.quote_id == quote.id)
+                .order_by(QuoteLine.position.asc(), QuoteLine.created_at.asc())
+            ).all()
+            for line in lines:
+                p(
+                    f"quote_line id={line.id}|title={line.title}|activity={line.activity_id}|"
+                    f"category={line.line_category}|type={line.line_type}|quantity={line.quantity}|unit={line.pricing_unit}|"
+                    f"unit_ht={line.unit_price_ht}|total_ht={line.total_ht}|total_ttc={line.total_ttc}|meta={line.meta}"
                 )
 
         course = db.scalar(select(CourseType).where(CourseType.name == COURSE_NAME).limit(1))
