@@ -29,26 +29,18 @@ def _json_object(value: object | None) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
-def _json_list(value: object | None) -> list[object]:
-    return value if isinstance(value, list) else []
-
-
-def _uuid_values(value: object | None) -> list[UUID]:
-    out: list[UUID] = []
-    for item in _json_list(value):
-        try:
-            out.append(UUID(str(item)))
-        except (TypeError, ValueError):
-            continue
-    return out
+def _uuid_value(value: object | None) -> UUID | None:
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def _add_months(value: date, months: int) -> date:
     month_index = (value.month - 1) + months
     year = value.year + month_index // 12
     month = month_index % 12 + 1
-    day = min(value.day, monthrange(year, month)[1])
-    return date(year, month, day)
+    return date(year, month, min(value.day, monthrange(year, month)[1]))
 
 
 def _months_for_frequency(frequency: str) -> int:
@@ -73,176 +65,121 @@ def _due_date_for_rule(rule: ClientAutoInvoiceRule) -> date:
     return rule.next_run_date
 
 
-def _user_label(user: User | None) -> str:
-    if user is None:
-        return "-"
-    name = f"{user.first_name or ''} {user.last_name or ''}".strip()
-    return f"{name or '-'} <{user.email}> id={user.id} kind={getattr(user.client_kind, 'value', user.client_kind)}"
-
-
 def main() -> None:
     with SessionLocal() as db:
-        users = db.scalars(
+        emilie = db.scalar(
             select(User)
             .where(
-                or_(
-                    User.email.ilike("%thuilliez%"),
-                    User.first_name.ilike("%emilie%"),
-                    User.first_name.ilike("%emilie%"),
-                    User.last_name.ilike("%thuilliez%"),
-                )
+                User.last_name.ilike("%thuilliez%"),
+                or_(User.first_name.ilike("%emilie%"), User.email.ilike("%boulmimienoah%")),
             )
             .order_by(User.created_at.desc())
-        ).all()
-        users = [
-            user for user in users
-            if "thuilliez" in f"{user.first_name or ''} {user.last_name or ''} {user.email or ''}".casefold()
-            or "emilie" in f"{user.first_name or ''} {user.last_name or ''} {user.email or ''}".casefold()
-        ]
-        _print(f"user_matches={len(users)}")
-        for user in users:
-            _print(f"user={_user_label(user)} created_at={user.created_at} status={getattr(user.client_status, 'value', user.client_status)}")
+            .limit(1)
+        )
+        if emilie is None:
+            raise SystemExit(f"[{SCRIPT_PREFIX}] emilie_thuilliez_not_found")
+        _print(f"user={emilie.id}|{emilie.first_name} {emilie.last_name}|{emilie.email}|status={getattr(emilie.client_status, 'value', emilie.client_status)}")
 
         quote_rows = db.execute(
             select(Quote, QuoteAcceptanceFollowup)
             .join(QuoteAcceptanceFollowup, QuoteAcceptanceFollowup.quote_id == Quote.id, isouter=True)
             .where(
                 or_(
+                    Quote.client_id == emilie.id,
                     cast(Quote.meta, JSONB).cast(String).ilike("%Thuilliez%"),
-                    cast(Quote.meta, JSONB).cast(String).ilike("%Emilie%"),
                     cast(QuoteAcceptanceFollowup.payload, JSONB).cast(String).ilike("%Thuilliez%"),
-                    cast(QuoteAcceptanceFollowup.payload, JSONB).cast(String).ilike("%Emilie%"),
-                    Quote.client_id.in_([user.id for user in users]) if users else false(),
                 )
             )
             .order_by(Quote.updated_at.desc())
-            .limit(10)
+            .limit(5)
         ).all()
-        _print(f"quote_matches={len(quote_rows)}")
 
-        relevant_user_ids = {user.id for user in users}
-        relevant_subscription_ids: set[UUID] = set()
+        relevant_user_ids = {emilie.id}
+        subscription_id: UUID | None = None
         for quote, followup in quote_rows:
             payload = _json_object(followup.payload if followup is not None else None)
             execution = _json_object(payload.get("quote_to_enrollment_execution"))
-            subscription_id_raw = str(execution.get("subscription_id") or "").strip()
-            created_subscription_ids = _uuid_values(execution.get("created_subscription_ids"))
-            for subscription_id in created_subscription_ids:
-                relevant_subscription_ids.add(subscription_id)
-            if subscription_id_raw:
-                try:
-                    relevant_subscription_ids.add(UUID(subscription_id_raw))
-                except ValueError:
-                    pass
-            student_id = str(execution.get("student_client_id") or "").strip()
-            billing_id = str(execution.get("billing_client_id") or "").strip()
-            for raw in [student_id, billing_id]:
-                try:
-                    relevant_user_ids.add(UUID(raw))
-                except ValueError:
-                    pass
+            candidate_subscription_id = _uuid_value(execution.get("subscription_id"))
+            student_id = _uuid_value(execution.get("student_client_id"))
+            billing_id = _uuid_value(execution.get("billing_client_id"))
+            if student_id:
+                relevant_user_ids.add(student_id)
+            if billing_id:
+                relevant_user_ids.add(billing_id)
+            if quote.quote_number == "DV-20260520080553-B33C" or (candidate_subscription_id and quote.client_id == emilie.id):
+                subscription_id = candidate_subscription_id
             _print(
                 "quote="
-                f"{quote.quote_number}|id={quote.id}|status={quote.status}|total_ttc={quote.total_ttc}|"
-                f"approved_at={quote.approved_at}|updated_at={quote.updated_at}|"
-                f"followup_status={followup.status if followup else '-'}|"
-                f"payment_method_status={followup.payment_method_status if followup else '-'}|"
-                f"execution_status={execution.get('status') or '-'}|executed_at={execution.get('executed_at') or '-'}|"
-                f"subscription_id={subscription_id_raw or '-'}|student_id={student_id or '-'}|billing_id={billing_id or '-'}"
+                f"{quote.quote_number}|status={quote.status}|total={quote.total_ttc}|approved_at={quote.approved_at}|"
+                f"followup={followup.status if followup else '-'}|payment_status={followup.payment_method_status if followup else '-'}|"
+                f"executed_at={execution.get('executed_at') or '-'}|subscription_id={candidate_subscription_id or '-'}|"
+                f"student_id={student_id or '-'}|billing_id={billing_id or '-'}"
             )
 
-        subscriptions = []
-        if relevant_subscription_ids:
-            subscriptions.extend(
-                db.execute(
-                    select(ClientPlanSubscription, Plan)
-                    .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
-                    .where(ClientPlanSubscription.id.in_(relevant_subscription_ids))
-                    .order_by(ClientPlanSubscription.created_at.desc())
-                ).all()
-            )
-        if relevant_user_ids:
-            existing_subscription_ids = {subscription.id for subscription, _ in subscriptions}
-            subscriptions.extend(
-                row for row in db.execute(
-                    select(ClientPlanSubscription, Plan)
-                    .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
-                    .where(
-                        or_(
-                            ClientPlanSubscription.user_id.in_(relevant_user_ids),
-                            ClientPlanSubscription.payer_contact_id.in_(relevant_user_ids),
-                        )
-                    )
-                    .order_by(ClientPlanSubscription.created_at.desc())
-                    .limit(20)
-                ).all()
-                if row[0].id not in existing_subscription_ids
-            )
+        if subscription_id is None:
+            _print("target_subscription=missing")
+            return
 
-        _print(f"subscriptions={len(subscriptions)}")
-        for subscription, plan in subscriptions:
-            relevant_subscription_ids.add(subscription.id)
-            relevant_user_ids.add(subscription.user_id)
-            if subscription.payer_contact_id:
-                relevant_user_ids.add(subscription.payer_contact_id)
-            student = db.get(User, subscription.user_id)
-            payer = db.get(User, subscription.payer_contact_id) if subscription.payer_contact_id else None
-            _print(
-                "subscription="
-                f"{subscription.id}|plan={plan.name}|plan_kind={getattr(plan.kind, 'value', plan.kind)}|"
-                f"student={_user_label(student)}|payer={_user_label(payer)}|"
-                f"status={getattr(subscription.status, 'value', subscription.status)}|billing_method={subscription.billing_method_code or '-'}|"
-                f"started_at={subscription.started_at}|ends_at={subscription.ends_at}|"
-                f"next_payment_at={subscription.next_payment_at}|current_period_start={subscription.current_period_start}|"
-                f"current_period_end={subscription.current_period_end}|auto_renew={subscription.auto_renew}"
-            )
+        row = db.execute(
+            select(ClientPlanSubscription, Plan)
+            .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
+            .where(ClientPlanSubscription.id == subscription_id)
+            .limit(1)
+        ).first()
+        if row is None:
+            _print(f"subscription_missing={subscription_id}")
+            return
+        subscription, plan = row
+        relevant_user_ids.add(subscription.user_id)
+        if subscription.payer_contact_id:
+            relevant_user_ids.add(subscription.payer_contact_id)
+        student = db.get(User, subscription.user_id)
+        payer = db.get(User, subscription.payer_contact_id) if subscription.payer_contact_id else None
+        _print(
+            "subscription="
+            f"{subscription.id}|plan={plan.name}|kind={getattr(plan.kind, 'value', plan.kind)}|"
+            f"student={student.first_name if student else '-'} {student.last_name if student else ''}|"
+            f"payer={payer.first_name if payer else '-'} {payer.last_name if payer else ''}|"
+            f"status={getattr(subscription.status, 'value', subscription.status)}|billing_method={subscription.billing_method_code or '-'}|"
+            f"started_at={subscription.started_at}|next_payment_at={subscription.next_payment_at}|"
+            f"current_period={subscription.current_period_start}->{subscription.current_period_end}|auto_renew={subscription.auto_renew}"
+        )
 
-        if relevant_user_ids:
-            rules = db.scalars(
-                select(ClientAutoInvoiceRule)
-                .where(ClientAutoInvoiceRule.user_id.in_(relevant_user_ids))
-                .order_by(ClientAutoInvoiceRule.updated_at.desc(), ClientAutoInvoiceRule.created_at.desc())
-            ).all()
-        else:
-            rules = []
+        rules = db.scalars(
+            select(ClientAutoInvoiceRule)
+            .where(ClientAutoInvoiceRule.user_id.in_(relevant_user_ids), ClientAutoInvoiceRule.status.in_(["ACTIVE", "PAUSED"]))
+            .order_by(ClientAutoInvoiceRule.updated_at.desc(), ClientAutoInvoiceRule.created_at.desc())
+        ).all()
         _print(f"auto_invoice_rules={len(rules)}")
         for rule in rules:
             period_start, period_end = _period_for_rule(rule)
             due_date = _due_date_for_rule(rule)
             _print(
-                "auto_invoice_rule="
-                f"{rule.id}|client_id={rule.user_id}|legal_entity_id={rule.legal_entity_id}|status={rule.status}|"
-                f"cycle_start_date={rule.cycle_start_date}|frequency={rule.frequency}|billing_timing={rule.billing_timing}|"
-                f"next_run_date={rule.next_run_date}|preview_period={period_start}->{period_end}|"
-                f"due_rule={rule.due_date_rule_type}|due_offset={rule.due_date_days_offset}|preview_due_date={due_date}|"
-                f"include_pending={rule.include_pending_lines}|include_cancelled={rule.include_cancelled_lines}|"
-                f"last_generated_at={rule.last_generated_at}"
+                "auto_rule="
+                f"{rule.id}|client_id={rule.user_id}|status={rule.status}|cycle_start={rule.cycle_start_date}|"
+                f"frequency={rule.frequency}|timing={rule.billing_timing}|next_run={rule.next_run_date}|"
+                f"period={period_start}->{period_end}|due_rule={rule.due_date_rule_type}|offset={rule.due_date_days_offset}|due_date={due_date}"
             )
-
             occurrences = db.scalars(
                 select(ClientAutoInvoiceOccurrence)
                 .where(ClientAutoInvoiceOccurrence.rule_id == rule.id)
                 .order_by(ClientAutoInvoiceOccurrence.generated_at.desc())
-                .limit(10)
+                .limit(3)
             ).all()
-            _print(f"auto_invoice_occurrences_for_rule_{rule.id}={len(occurrences)}")
             for occurrence in occurrences:
                 _print(
-                    "auto_invoice_occurrence="
-                    f"{occurrence.id}|cycle_key={occurrence.cycle_key}|period={occurrence.period_start_date}->{occurrence.period_end_date}|"
+                    "occurrence="
+                    f"{occurrence.cycle_key}|period={occurrence.period_start_date}->{occurrence.period_end_date}|"
                     f"status={occurrence.status}|note_id={occurrence.note_id or '-'}|generated_at={occurrence.generated_at}"
                 )
 
-        if relevant_user_ids:
-            notes = db.scalars(
-                select(ClientNoteEntry)
-                .where(ClientNoteEntry.user_id.in_(relevant_user_ids))
-                .order_by(ClientNoteEntry.created_at.desc())
-                .limit(80)
-            ).all()
-        else:
-            notes = []
-        invoice_matches = []
+        notes = db.scalars(
+            select(ClientNoteEntry)
+            .where(ClientNoteEntry.user_id.in_(relevant_user_ids))
+            .order_by(ClientNoteEntry.created_at.desc())
+            .limit(80)
+        ).all()
+        september_invoices = []
         for note in notes:
             metadata = _parse_invoice_range_note_entry(note)
             if not metadata:
@@ -251,19 +188,16 @@ def main() -> None:
                 str(metadata.get("issued_date") or "").startswith("2026-09")
                 or str(metadata.get("start_date") or "").startswith("2026-09")
                 or str(metadata.get("auto_cycle_start_date") or "").startswith("2026-09")
-                or str(metadata.get("generation_mode") or "").upper() == "AUTO"
             ):
-                invoice_matches.append((note, metadata))
-        _print(f"invoice_note_matches={len(invoice_matches)}")
-        for note, metadata in invoice_matches[:20]:
+                september_invoices.append((note, metadata))
+        _print(f"september_invoice_notes={len(september_invoices)}")
+        for note, metadata in september_invoices[:5]:
             _print(
-                "invoice_note="
-                f"{note.id}|client_id={note.user_id}|created_at={note.created_at}|invoice_number={metadata.get('invoice_number') or '-'}|"
-                f"generation_mode={metadata.get('generation_mode') or '-'}|issued_date={metadata.get('issued_date') or '-'}|"
-                f"due_date={metadata.get('due_date') or '-'}|no_due_date={metadata.get('no_due_date')}|"
+                "invoice="
+                f"{metadata.get('invoice_number') or '-'}|mode={metadata.get('generation_mode') or '-'}|"
+                f"issued={metadata.get('issued_date') or '-'}|due={metadata.get('due_date') or '-'}|"
                 f"period={metadata.get('start_date') or '-'}->{metadata.get('end_date') or '-'}|"
-                f"auto_cycle_start_date={metadata.get('auto_cycle_start_date') or '-'}|"
-                f"total={metadata.get('total_incl_vat') or '-'} {metadata.get('currency') or ''}"
+                f"auto_cycle={metadata.get('auto_cycle_start_date') or '-'}|note_id={note.id}"
             )
 
 
