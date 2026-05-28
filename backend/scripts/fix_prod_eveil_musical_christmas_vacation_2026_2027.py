@@ -73,30 +73,12 @@ def main() -> None:
                         amount_ht = round((unit_price_ht * :quantity)::numeric, 2),
                         amount_vat = round((unit_vat_amount * :quantity)::numeric, 2),
                         amount_ttc = round((unit_price_ttc * :quantity)::numeric, 2),
-                        meta = jsonb_set(
-                            jsonb_set(
-                                coalesce(meta, '{}'::jsonb),
-                                '{planning_session_limit}',
-                                to_jsonb(:planning_session_limit::int),
-                                true
-                            ),
-                            '{norah_online_piano_quantity_repair}',
-                            jsonb_build_object(
-                                'old_quantity', :old_quantity_text,
-                                'new_quantity', :new_quantity_text,
-                                'reason', 'Live planning series contains 33 scheduled sessions through 2027-06-15.'
-                            ),
-                            true
-                        ),
                         updated_at = now()
                     where id = :line_id
                     """
                 ),
                 {
                     "quantity": TARGET_QUANTITY,
-                    "planning_session_limit": int(TARGET_QUANTITY),
-                    "old_quantity_text": str(row["old_quantity"]),
-                    "new_quantity_text": str(TARGET_QUANTITY),
                     "line_id": row["line_id"],
                 },
             )
