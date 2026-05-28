@@ -608,6 +608,7 @@ export default function QuoteToEnrollmentWizard({
           amountTtc: stored.amountTtc,
           label: stored.label,
           editable: stored.editable,
+          effectiveDate: stored.effectiveDate || row.effectiveDate || null,
           status: stored.status,
         };
         return { ...next, status: billingStatus(next) };

@@ -23,6 +23,7 @@ from app.core.config import settings
 from app.api.routes.admin_clients import (
     _allocate_invoice_number_for_seller_entity,
     _build_invoice_range_note_message,
+    _compute_auto_invoice_next_run_date,
     _create_client_note,
     _default_subscription_billing_method,
     _effective_pack_credits_for_plan,
@@ -39,7 +40,7 @@ from app.api.routes.bookings import (
     _restore_pack_credit,
 )
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, SessionStatus
-from app.models.client_record import ClientInvoiceLine, ClientManualTransaction, ClientNoteEntry
+from app.models.client_record import ClientAutoInvoiceRule, ClientInvoiceLine, ClientManualTransaction, ClientNoteEntry
 from app.models.family import ClientFamilyLink
 from app.models.ops import AppSetting, CommunicationSenderCategory, LegalEntity
 from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, SubscriptionStatus
@@ -199,6 +200,8 @@ QUOTE_CHANGE_REQUEST_REVISION_ID_META_KEY = "change_request_revision_quote_id"
 QUOTE_CHANGE_REQUEST_REVISION_NUMBER_META_KEY = "change_request_revision_quote_number"
 QUOTE_TRANSFORMATION_PAYLOAD_KEY = "quote_to_enrollment"
 QUOTE_TRANSFORMATION_EXECUTION_KEY = "quote_to_enrollment_execution"
+QUOTE_MONTHLY_CARD_BILLING_START_DATE = date(2026, 9, 1)
+QUOTE_MONTHLY_CARD_DUE_DAYS_OFFSET = 1
 CARD_4X_FEES_PAYMENT_INSTRUCTION = (
     "Le paiement par carte bancaire en 4 fois est géré par notre partenaire Oney.\n"
     "Votre dossier sera donc soumis à Oney, qui pourra l’accepter ou le refuser.\n"
@@ -434,6 +437,98 @@ def _payment_method_label_from_code(method_code: str) -> str:
     if normalized == "CARD_4X_FEES":
         return "4 fois avec frais"
     return normalized or "Paiement"
+
+
+def _object_mentions_monthly_card_payment(value: object) -> bool:
+    if isinstance(value, str):
+        return value.strip().upper() == "CARD_MONTHLY"
+    if isinstance(value, dict):
+        return any(_object_mentions_monthly_card_payment(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_object_mentions_monthly_card_payment(item) for item in value)
+    return False
+
+
+def _quote_followup_uses_monthly_card_payment(*, quote: Quote, followup: QuoteAcceptanceFollowup) -> bool:
+    payload = _json_object(followup.payload)
+    for key in ("payment_method_code", "paymentMethodCode", "payment_method", "paymentMethod"):
+        if str(payload.get(key) or "").strip().upper() == "CARD_MONTHLY":
+            return True
+    terms_snapshot = _json_object(quote.payment_terms_snapshot)
+    for key in ("payment_method", "payment_method_code", "paymentMethodCode"):
+        if str(terms_snapshot.get(key) or "").strip().upper() == "CARD_MONTHLY":
+            return True
+    return _object_mentions_monthly_card_payment(payload) or _object_mentions_monthly_card_payment(terms_snapshot)
+
+
+def _upsert_quote_monthly_card_auto_invoice_rule(
+    db: Session,
+    *,
+    billing: User,
+    quote: Quote,
+    actor_user_id: UUID | None,
+) -> ClientAutoInvoiceRule | None:
+    if quote.legal_entity_id is None:
+        return None
+
+    now = _utcnow()
+    next_run_date = _compute_auto_invoice_next_run_date(
+        cycle_start_date=QUOTE_MONTHLY_CARD_BILLING_START_DATE,
+        frequency="MONTHLY",
+        today=now.date(),
+    )
+    rule = db.scalar(
+        select(ClientAutoInvoiceRule)
+        .where(
+            ClientAutoInvoiceRule.user_id == billing.id,
+            ClientAutoInvoiceRule.legal_entity_id == quote.legal_entity_id,
+            ClientAutoInvoiceRule.status.in_(["ACTIVE", "PAUSED"]),
+        )
+        .order_by(ClientAutoInvoiceRule.updated_at.desc(), ClientAutoInvoiceRule.created_at.desc())
+        .with_for_update()
+        .limit(1)
+    )
+    if rule is None:
+        rule = ClientAutoInvoiceRule(
+            user_id=billing.id,
+            legal_entity_id=quote.legal_entity_id,
+            created_by_user_id=actor_user_id,
+            updated_by_user_id=actor_user_id,
+            created_at=now,
+            updated_at=now,
+        )
+
+    rule.cycle_start_date = QUOTE_MONTHLY_CARD_BILLING_START_DATE
+    rule.frequency = "MONTHLY"
+    rule.billing_timing = "UPCOMING_LESSONS"
+    rule.due_date_rule_type = "X_DAYS_AFTER_ISSUE"
+    rule.due_date_days_offset = QUOTE_MONTHLY_CARD_DUE_DAYS_OFFSET
+    rule.include_pending_lines = True
+    rule.include_cancelled_lines = False
+    rule.next_run_date = next_run_date
+    rule.status = "ACTIVE"
+    rule.updated_by_user_id = actor_user_id
+    rule.updated_at = now
+    db.add(rule)
+    db.flush()
+
+    archived_rules = db.scalars(
+        select(ClientAutoInvoiceRule)
+        .where(
+            ClientAutoInvoiceRule.user_id == billing.id,
+            ClientAutoInvoiceRule.legal_entity_id == quote.legal_entity_id,
+            ClientAutoInvoiceRule.id != rule.id,
+            ClientAutoInvoiceRule.status.in_(["ACTIVE", "PAUSED"]),
+        )
+        .with_for_update()
+    ).all()
+    for archived_rule in archived_rules:
+        archived_rule.status = "ARCHIVED"
+        archived_rule.updated_by_user_id = actor_user_id
+        archived_rule.updated_at = now
+        db.add(archived_rule)
+
+    return rule
 
 
 def _bool_or_default(value: object, default: bool) -> bool:
@@ -9035,6 +9130,7 @@ def _create_followup_manual_transactions(
     actor_user_id: UUID | None,
     created_transaction_ids: list[UUID],
     skip_row_ids: set[str] | None = None,
+    forced_effective_date: date | None = None,
 ) -> None:
     billing_resolution = _json_object(transformation_payload.get("billingResolution"))
     rows = _json_list(billing_resolution.get("rows"))
@@ -9075,7 +9171,11 @@ def _create_followup_manual_transactions(
             continue
         source_line = line_by_id.get(_source_line_id_from_billing_row(row))
         category = _resolve_quote_transaction_category(db, row=row, source_line=source_line)
-        occurred_at = _effective_at_from_billing_row(row, now=now)
+        occurred_at = (
+            _invoice_issued_at_for_date(issued_date=forced_effective_date, now=now)
+            if forced_effective_date is not None
+            else _effective_at_from_billing_row(row, now=now)
+        )
         transaction = ClientManualTransaction(
             user_id=billing.id,
             student_user_id=student.id,
@@ -9297,6 +9397,17 @@ def _execute_quote_followup_transformation(
         transformation_payload=transformation_payload,
         created_subscription_ids=created_subscription_ids,
     )
+    monthly_card_billing = _quote_followup_uses_monthly_card_payment(quote=quote, followup=followup)
+    monthly_card_auto_rule_id: UUID | None = None
+    monthly_card_fixed_fee_date = QUOTE_MONTHLY_CARD_BILLING_START_DATE if monthly_card_billing else None
+    if monthly_card_billing:
+        monthly_card_auto_rule = _upsert_quote_monthly_card_auto_invoice_rule(
+            db,
+            billing=billing,
+            quote=quote,
+            actor_user_id=current_user.id,
+        )
+        monthly_card_auto_rule_id = monthly_card_auto_rule.id if monthly_card_auto_rule is not None else None
     forfait_discount_row_ids = _apply_followup_forfait_discount_rows(
         db,
         quote=quote,
@@ -9488,6 +9599,7 @@ def _execute_quote_followup_transformation(
         actor_user_id=current_user.id,
         created_transaction_ids=created_transaction_ids,
         skip_row_ids=forfait_discount_row_ids,
+        forced_effective_date=monthly_card_fixed_fee_date,
     )
     _create_followup_deposit_invoice(
         db,
@@ -9543,6 +9655,8 @@ def _execute_quote_followup_transformation(
         "created_booking_ids": _serialize_uuid_list(created_booking_ids),
         "created_transaction_ids": _serialize_uuid_list(created_transaction_ids),
         "created_invoice_note_ids": _serialize_uuid_list(created_invoice_note_ids),
+        "monthly_card_fixed_fee_date": monthly_card_fixed_fee_date.isoformat() if monthly_card_fixed_fee_date else None,
+        "monthly_card_auto_invoice_rule_id": str(monthly_card_auto_rule_id) if monthly_card_auto_rule_id is not None else None,
         "user_snapshots": _serialize_snapshot_map(user_snapshots),
         "prospect_snapshots": _serialize_snapshot_map(prospect_snapshots),
         "quote_snapshot": quote_snapshot,
