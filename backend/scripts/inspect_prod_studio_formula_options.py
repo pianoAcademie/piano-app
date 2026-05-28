@@ -53,13 +53,13 @@ def main() -> None:
             lines = db.scalars(
                 select(QuoteLine)
                 .where(QuoteLine.quote_id == quote.id)
-                .order_by(QuoteLine.position.asc(), QuoteLine.created_at.asc())
+                .order_by(QuoteLine.sort_order.asc(), QuoteLine.created_at.asc())
             ).all()
             for line in lines:
                 p(
                     f"quote_line id={line.id}|title={line.title}|activity={line.activity_id}|"
                     f"category={line.line_category}|type={line.line_type}|quantity={line.quantity}|unit={line.pricing_unit}|"
-                    f"unit_ht={line.unit_price_ht}|total_ht={line.total_ht}|total_ttc={line.total_ttc}|meta={line.meta}"
+                    f"unit_ht={line.unit_price_ht}|amount_ht={line.amount_ht}|amount_ttc={line.amount_ttc}|meta={line.meta}"
                 )
 
         course = db.scalar(select(CourseType).where(CourseType.name == COURSE_NAME).limit(1))
