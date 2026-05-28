@@ -5778,7 +5778,18 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
   }
   const markReconciledInvoicesPaid = parseCheckboxFlag(formData, "mark_reconciled_invoices_paid", false);
   const sendReceiptEmail = parseCheckboxFlag(formData, "send_receipt_email", false);
-  const checkDepositLabel = optionalField(formData, "check_deposit_label");
+  const rawCheckDepositLabel = optionalField(formData, "check_deposit_label");
+  const checkDepositMonth = String(formData.get("check_deposit_month") ?? "").trim();
+  const checkDepositYear = String(formData.get("check_deposit_year") ?? "").trim();
+  const checkDepositLabel =
+    rawCheckDepositLabel
+    || (
+      paymentMethodCode === "CHECK" && /^\d{1,2}$/.test(checkDepositMonth) && /^\d{4}$/.test(checkDepositYear)
+        ? new Intl.DateTimeFormat(language === "en" ? "en-GB" : "fr-FR", { month: "long", year: "numeric" }).format(
+            new Date(Number(checkDepositYear), Number(checkDepositMonth) - 1, 1),
+          )
+        : null
+    );
   if (!["PAYMENT", "REFUND", "CHARGE", "DISCOUNT"].includes(transactionType)) {
     redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", t("admin.client_action.invalid_transaction_type")));
   }
@@ -16526,6 +16537,10 @@ export async function createGeneratedReportAction(formData: FormData): Promise<v
     segment: String(formData.get("segment") ?? "").trim(),
     status: String(formData.get("status") ?? "").trim(),
     min_children: String(formData.get("min_children") ?? "2").trim() || "2",
+    month: String(formData.get("month") ?? "").trim(),
+    year: String(formData.get("year") ?? "").trim(),
+    legal_entity_id: String(formData.get("legal_entity_id") ?? "").trim(),
+    file_format: String(formData.get("file_format") ?? "").trim(),
   };
   const result = await backendRequest<{ id: string }>(
     "/api/v1/admin/reports/generated",

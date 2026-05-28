@@ -9038,6 +9038,17 @@ def create_admin_client_manual_transaction(
     status_value = MANUAL_TRANSACTION_STATUS_BY_TYPE.get(transaction_type, "COMPLETED")
     if transaction_type == "PAYMENT" and payment_method_code == "CHECK":
         status_value = "CHECK_RECEIVED"
+        check_deposit_label = _normalize_optional(payload.check_deposit_label)
+        if check_deposit_label:
+            received_label = occurred_at.astimezone(_invoice_render_timezone()).strftime("%d/%m/%Y")
+            deposit_tracking = f"Cheque recu le {received_label} - a deposer en {check_deposit_label}"
+            if not description:
+                description = deposit_tracking
+            elif _normalize_check_match_reference(check_deposit_label) not in _normalize_check_match_reference(description):
+                description = f"{description}\nDepot prevu: {check_deposit_label}"
+            default_payment_label = MANUAL_TRANSACTION_LABEL_BY_TYPE.get(transaction_type, "Transaction manuelle")
+            if not label or label == default_payment_label:
+                label = deposit_tracking
 
     reconciled_note_ids: list[UUID] = []
     seen_reconciled_note_ids: set[UUID] = set()

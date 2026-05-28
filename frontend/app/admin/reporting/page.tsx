@@ -353,7 +353,9 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
                   </div>
                 </form>
               ) : reportDefinition.type === "check-deposits" ? (
-                <form className="grid cols-2 config-form-grid" method="get" action="/admin/reporting/check-deposits">
+                <form className="grid cols-2 config-form-grid" action={createGeneratedReportAction}>
+                  <input type="hidden" name="report_type" value={reportDefinition.type} />
+                  <input type="hidden" name="return_to" value="/admin/reporting" />
                   <label>
                     Mois de depot
                     <select name="month" defaultValue={selectedDepositMonth}>

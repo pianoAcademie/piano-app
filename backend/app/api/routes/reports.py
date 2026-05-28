@@ -387,6 +387,41 @@ def _check_deposit_report_rows(
     return legal_entity, report_rows
 
 
+def _check_deposit_report_row_json(row: dict[str, object]) -> dict[str, object]:
+    amount = row.get("amount")
+    return {
+        "responsible_last_name": _text(row.get("responsible_last_name")),
+        "responsible_first_name": _text(row.get("responsible_first_name")),
+        "student_last_name": _text(row.get("student_last_name")),
+        "student_first_name": _text(row.get("student_first_name")),
+        "received_at": _text(row.get("received_at")),
+        "deposit_label": _text(row.get("deposit_label")),
+        "amount": str(amount if isinstance(amount, Decimal) else Decimal("0.00")),
+    }
+
+
+def _check_deposit_report_rows_from_content(row: GeneratedReport) -> tuple[int, int, str, list[dict[str, object]]]:
+    content = _json_object(row.content_json)
+    month = int(content.get("month") or 1)
+    year = int(content.get("year") or datetime.now(ADMIN_COMMUNICATION_TIMEZONE).year)
+    legal_entity_name = _text(content.get("legal_entity_name")) or "-"
+    items = [_json_object(item) for item in _json_list(content.get("items"))]
+    rows: list[dict[str, object]] = []
+    for item in items:
+        rows.append(
+            {
+                "responsible_last_name": _text(item.get("responsible_last_name")),
+                "responsible_first_name": _text(item.get("responsible_first_name")),
+                "student_last_name": _text(item.get("student_last_name")),
+                "student_first_name": _text(item.get("student_first_name")),
+                "received_at": _text(item.get("received_at")),
+                "deposit_label": _text(item.get("deposit_label")),
+                "amount": Decimal(_text(item.get("amount")) or "0.00"),
+            }
+        )
+    return month, year, legal_entity_name, rows
+
+
 def _render_check_deposit_report_pdf(
     *,
     rows: list[dict[str, object]],
@@ -454,6 +489,20 @@ def _render_check_deposit_report_pdf(
     return output.getvalue()
 
 
+def _render_stored_check_deposit_report_pdf(row: GeneratedReport) -> bytes:
+    month, year, legal_entity_name, rows = _check_deposit_report_rows_from_content(row)
+
+    class StoredLegalEntity:
+        name = legal_entity_name
+
+    return _render_check_deposit_report_pdf(
+        rows=rows,
+        month=month,
+        year=year,
+        legal_entity=StoredLegalEntity(),
+    )
+
+
 def _render_check_deposit_report_xlsx(
     *,
     rows: list[dict[str, object]],
@@ -502,6 +551,20 @@ def _render_check_deposit_report_xlsx(
     output = io.BytesIO()
     workbook.save(output)
     return output.getvalue()
+
+
+def _render_stored_check_deposit_report_xlsx(row: GeneratedReport) -> bytes:
+    month, year, legal_entity_name, rows = _check_deposit_report_rows_from_content(row)
+
+    class StoredLegalEntity:
+        name = legal_entity_name
+
+    return _render_check_deposit_report_xlsx(
+        rows=rows,
+        month=month,
+        year=year,
+        legal_entity=StoredLegalEntity(),
+    )
 
 
 def _generated_report_out(row: GeneratedReport) -> GeneratedReportOut:
@@ -2210,11 +2273,31 @@ def _generated_report_html(row: GeneratedReport) -> str:
 
 
 def _render_generated_report_pdf(row: GeneratedReport) -> bytes:
+    if row.report_type == "check-deposits":
+        return _render_stored_check_deposit_report_pdf(row)
     output = io.BytesIO()
     result = pisa.CreatePDF(src=_generated_report_html(row), dest=output, encoding="utf-8")
     if result.err:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Generation PDF impossible")
     return output.getvalue()
+
+
+def _generated_report_filename(row: GeneratedReport, extension: str) -> str:
+    slug = _normalize_token(row.report_label) or _normalize_token(row.report_type) or "rapport"
+    created = row.created_at.astimezone(ADMIN_COMMUNICATION_TIMEZONE).strftime("%Y%m%d-%H%M")
+    return f"{slug}-{created}.{extension}"
+
+
+def _render_generated_report_download(row: GeneratedReport) -> tuple[bytes, str, str]:
+    if row.file_format.upper() == "XLSX":
+        if row.report_type != "check-deposits":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Export Excel indisponible pour ce rapport")
+        return (
+            _render_stored_check_deposit_report_xlsx(row),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            _generated_report_filename(row, "xlsx"),
+        )
+    return _render_generated_report_pdf(row), "application/pdf", _generated_report_filename(row, "pdf")
 
 
 @router.get("/generated", response_model=list[GeneratedReportOut])
@@ -2240,6 +2323,9 @@ def create_generated_report(
     if period_start is not None and period_end is not None and period_start > period_end:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="'period_start' must be before 'period_end'")
 
+    file_format = _text(criteria.get("file_format")).upper() or "PDF"
+    if file_format not in {"PDF", "XLSX"}:
+        file_format = "PDF"
     content: dict[str, object] = {"items": []}
     row_count = 0
     if report_type == "intake-families":
@@ -2303,11 +2389,41 @@ def create_generated_report(
         period_end = effective_period_end
         content = {"items": rows}
         row_count = len(rows)
+    elif report_type == "check-deposits":
+        try:
+            month = int(criteria.get("month") or 0)
+            year = int(criteria.get("year") or 0)
+        except (TypeError, ValueError):
+            month = 0
+            year = 0
+        if month < 1 or month > 12 or year < 2000 or year > 2100:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Mois de depot invalide")
+        try:
+            legal_entity_id = UUID(_text(criteria.get("legal_entity_id")))
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Entite legale invalide") from exc
+        legal_entity, rows = _check_deposit_report_rows(
+            db,
+            month=month,
+            year=year,
+            legal_entity_id=legal_entity_id,
+        )
+        period_start = date(year, month, 1)
+        period_end = date(year + (1 if month == 12 else 0), 1 if month == 12 else month + 1, 1) - timedelta(days=1)
+        report_label = f"{report_label} - {_month_year_label(month, year)} - {legal_entity.name}"
+        content = {
+            "items": [_check_deposit_report_row_json(item) for item in rows],
+            "month": month,
+            "year": year,
+            "legal_entity_id": str(legal_entity.id),
+            "legal_entity_name": legal_entity.name,
+        }
+        row_count = len(rows)
 
     row = GeneratedReport(
         report_type=report_type,
         report_label=report_label,
-        file_format="PDF",
+        file_format=file_format,
         period_start=period_start,
         period_end=period_end,
         note=_text(payload.note) or None,
@@ -2338,6 +2454,23 @@ def download_generated_report_pdf(
         content=_render_generated_report_pdf(row),
         media_type="application/pdf",
         headers={"Content-Disposition": f'{disposition}; filename="{filename}"'},
+    )
+
+
+@router.get("/generated/{report_id}/download")
+def download_generated_report(
+    report_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> Response:
+    row = db.get(GeneratedReport, report_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rapport introuvable")
+    content, media_type, filename = _render_generated_report_download(row)
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename.replace(chr(34), "")}"'},
     )
 
 

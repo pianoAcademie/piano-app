@@ -160,16 +160,18 @@ export function GeneratedReportsTable({
                 <td>{row.note || "-"}</td>
                 <td>
                   <div className="form-actions">
-                    <Link
-                      className="button-link"
-                      href={`/admin/reporting/generated/${encodeURIComponent(row.id)}/pdf?inline=1`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Visualiser
-                    </Link>
-                    <Link className="button-link" href={`/admin/reporting/generated/${encodeURIComponent(row.id)}/pdf`}>
-                      {labels.downloadPdf}
+                    {row.file_format.toUpperCase() === "PDF" ? (
+                      <Link
+                        className="button-link"
+                        href={`/admin/reporting/generated/${encodeURIComponent(row.id)}/pdf?inline=1`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Visualiser
+                      </Link>
+                    ) : null}
+                    <Link className="button-link" href={`/admin/reporting/generated/${encodeURIComponent(row.id)}/download`}>
+                      {row.file_format.toUpperCase() === "XLSX" ? "Telecharger Excel" : labels.downloadPdf}
                     </Link>
                     <button className="danger-button" type="submit" name="report_id" value={row.id} formAction={deleteOneAction}>
                       Supprimer
