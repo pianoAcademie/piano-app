@@ -2654,8 +2654,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
   const totalsByCurrency = new Map<string, number>();
   const paidTotalsByCurrency = new Map<string, number>();
-  const receivedPaymentTotalsByCurrency = new Map<string, number>();
   const cancelledOrNotBillableTotalsByCurrency = new Map<string, number>();
+  const rangeInvoicesAsOfDate = rangeInvoices.filter((row) => {
+    if ((row.invoice_status || "").trim().toUpperCase() === "CANCELLED") {
+      return false;
+    }
+    return endOfDateUtcMs(row.issued_date) <= selectedBalanceDateEndMs;
+  });
   const activeIssuedRangeInvoicesAsOfDate = rangeInvoices.filter((row) => {
     if ((row.invoice_status || "").trim().toUpperCase() !== "ISSUED") {
       return false;
@@ -2663,6 +2668,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     return endOfDateUtcMs(row.issued_date) <= selectedBalanceDateEndMs;
   });
   const activeIssuedRangeInvoiceNoteIds = new Set(activeIssuedRangeInvoicesAsOfDate.map((row) => row.note_id));
+  const nonCancelledRangeInvoiceNoteIds = new Set(rangeInvoicesAsOfDate.map((row) => row.note_id));
 
   for (const invoice of activeIssuedRangeInvoicesAsOfDate) {
     const remainingByCurrency =
@@ -2684,14 +2690,22 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     const status = normalizePaymentStatus(row.status);
     const coveredByActiveRangeInvoice =
       Boolean(row.invoice_note_id) && activeIssuedRangeInvoiceNoteIds.has(row.invoice_note_id || "");
+    const coveredByNonCancelledRangeInvoice =
+      Boolean(row.invoice_note_id) && nonCancelledRangeInvoiceNoteIds.has(row.invoice_note_id || "");
     const excludePaidDepositCharge =
       isPaidPreRegistrationDepositCharge(row) &&
       settledManualPaymentInvoiceNumbers.has((row.invoice_number || "").trim());
+    const shouldApplyReceivedPaymentToIssuedInvoice = coveredByActiveRangeInvoice && isReceivedManualPaymentMovement(row);
 
     const dueCurrent = totalsByCurrency.get(currency) ?? 0;
     totalsByCurrency.set(
       currency,
-      dueCurrent + (!coveredByActiveRangeInvoice && shouldCountInClientBalance(row) && !excludePaidDepositCharge ? amount : 0),
+      dueCurrent +
+        ((shouldApplyReceivedPaymentToIssuedInvoice || !coveredByNonCancelledRangeInvoice) &&
+        shouldCountInClientBalance(row) &&
+        !excludePaidDepositCharge
+          ? amount
+          : 0),
     );
 
     if (status === "NOT_BILLABLE" || status === "REFUNDED" || CANCELLED_PAYMENT_STATUSES.has(status)) {
@@ -2701,12 +2715,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       const current = paidTotalsByCurrency.get(currency) ?? 0;
       paidTotalsByCurrency.set(currency, current + Math.abs(amount));
     }
-    if (isReceivedManualPaymentMovement(row)) {
-      const current = receivedPaymentTotalsByCurrency.get(currency) ?? 0;
-      receivedPaymentTotalsByCurrency.set(currency, current + Math.abs(amount));
-    }
   }
-  const pendingTotalsByCurrency = new Map([...receivedPaymentTotalsByCurrency.entries()].filter(([, total]) => total > 0.009));
 
   const okMessage = readParam(searchParams, "ok");
   const errorMessage = readParam(searchParams, "error");
@@ -5755,14 +5764,6 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 {[...totalsByCurrency.entries()].map(([currency, total]) => (
                   <span key={currency} className="badge">
                     {t("admin.client_detail.balance_currency", {
-                      currency,
-                      amount: formatMoney(String(total), currency, language),
-                    })}
-                  </span>
-                ))}
-                {[...pendingTotalsByCurrency.entries()].map(([currency, total]) => (
-                  <span key={`pending-${currency}`} className="badge">
-                    {t("admin.client_detail.pending_currency", {
                       currency,
                       amount: formatMoney(String(total), currency, language),
                     })}
