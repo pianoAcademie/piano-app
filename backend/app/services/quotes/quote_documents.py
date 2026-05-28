@@ -3047,11 +3047,11 @@ def _apply_child_client_family_data(*, db: Session | None, quote: Quote, values:
 
     adult = _family_adult_for_child(db, child.id)
     if adult is not None:
-        values["parent_first_name"] = values.get("parent_first_name") or (adult.first_name or "").strip()
-        values["parent_last_name"] = values.get("parent_last_name") or (adult.last_name or "").strip()
-        values["parent_full_name"] = values.get("parent_full_name") or _name(adult.first_name, adult.last_name, fallback="")
-        values["parent_email"] = values.get("parent_email") or _public_email(adult.email)
-        values["parent_phone"] = values.get("parent_phone") or (adult.mobile_phone_1 or adult.phone or "").strip()
+        values["parent_first_name"] = (adult.first_name or "").strip() or values.get("parent_first_name") or ""
+        values["parent_last_name"] = (adult.last_name or "").strip() or values.get("parent_last_name") or ""
+        values["parent_full_name"] = _name(adult.first_name, adult.last_name, fallback="") or values.get("parent_full_name") or ""
+        values["parent_email"] = _public_email(adult.email) or values.get("parent_email") or ""
+        values["parent_phone"] = (adult.mobile_phone_1 or adult.phone or "").strip() or values.get("parent_phone") or ""
         values["parent_address"] = values.get("parent_address") or _resolved_parent_address_for_quote_adult(
             db=db,
             quote=quote,

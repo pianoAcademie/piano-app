@@ -77,9 +77,22 @@ def _load_quote_client(db: Session, quote: Quote) -> User | None:
     return db.scalar(select(User).where(User.id == quote.client_id))
 
 
+def _primary_guardian_for_quote_client(db: Session, quote: Quote) -> User | None:
+    client = _load_quote_client(db, quote)
+    if client is None or client.client_kind != ClientKind.CHILD:
+        return None
+    return _load_primary_guardian(db, child_user_id=client.id)
+
+
 def resolve_quote_recipient_email(db: Session, quote: Quote, explicit_email: str | None = None) -> str | None:
     if explicit_email and explicit_email.strip():
         return explicit_email.strip().lower()
+
+    guardian = _primary_guardian_for_quote_client(db, quote)
+    if guardian is not None:
+        from_guardian = _normalize_email(guardian.email)
+        if from_guardian:
+            return from_guardian
 
     meta = quote.meta or {}
     from_meta = _normalize_email(str(meta.get("recipient_email") or ""))
@@ -106,11 +119,6 @@ def resolve_quote_recipient_email(db: Session, quote: Quote, explicit_email: str
 
     client = _load_quote_client(db, quote)
     if client is not None:
-        guardian = _load_primary_guardian(db, child_user_id=client.id) if client.client_kind == ClientKind.CHILD else None
-        if guardian is not None:
-            from_guardian = _normalize_email(guardian.email)
-            if from_guardian:
-                return from_guardian
         from_client = _normalize_email(client.email)
         if from_client and not _is_synthetic_email(from_client):
             return from_client
@@ -121,6 +129,12 @@ def resolve_quote_recipient_email(db: Session, quote: Quote, explicit_email: str
 def resolve_quote_recipient_phone(db: Session, quote: Quote, explicit_phone: str | None = None) -> str | None:
     if explicit_phone and explicit_phone.strip():
         return explicit_phone.strip()
+
+    guardian = _primary_guardian_for_quote_client(db, quote)
+    if guardian is not None:
+        from_guardian = _preferred_user_phone(guardian)
+        if from_guardian:
+            return from_guardian
 
     meta = quote.meta or {}
     from_meta = _normalize_phone(str(meta.get("recipient_phone") or ""))
@@ -147,11 +161,6 @@ def resolve_quote_recipient_phone(db: Session, quote: Quote, explicit_phone: str
 
     client = _load_quote_client(db, quote)
     if client is not None:
-        guardian = _load_primary_guardian(db, child_user_id=client.id) if client.client_kind == ClientKind.CHILD else None
-        if guardian is not None:
-            from_guardian = _preferred_user_phone(guardian)
-            if from_guardian:
-                return from_guardian
         from_client = _preferred_user_phone(client)
         if from_client:
             return from_client
