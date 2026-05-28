@@ -5778,6 +5778,7 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
   }
   const markReconciledInvoicesPaid = parseCheckboxFlag(formData, "mark_reconciled_invoices_paid", false);
   const sendReceiptEmail = parseCheckboxFlag(formData, "send_receipt_email", false);
+  const checkDepositLabel = optionalField(formData, "check_deposit_label");
   if (!["PAYMENT", "REFUND", "CHARGE", "DISCOUNT"].includes(transactionType)) {
     redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=paiements`, "error", t("admin.client_action.invalid_transaction_type")));
   }
@@ -5817,6 +5818,7 @@ export async function createAdminClientManualTransactionAction(formData: FormDat
         reconciled_invoice_note_ids: reconciledInvoiceNoteIds,
         mark_reconciled_invoices_paid: markReconciledInvoicesPaid,
         send_receipt_email: sendReceiptEmail,
+        check_deposit_label: checkDepositLabel,
       }),
     },
     token,

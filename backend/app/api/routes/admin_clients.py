@@ -2200,6 +2200,7 @@ def _send_check_received_notification_email(
     amount: Decimal,
     currency: str,
     received_at: datetime,
+    check_deposit_label: str | None = None,
     description: str | None = None,
 ) -> tuple[list[str], str | None, str | None]:
     billing_profile = resolve_billing_profile(db, client)
@@ -2212,14 +2213,20 @@ def _send_check_received_notification_email(
 
     client_name = _display_name(billing_profile.first_name, billing_profile.last_name, client.email)
     received_label = received_at.strftime("%d/%m/%Y")
+    amount_label = f"{amount:.2f} {currency}"
+    if currency.upper() == "EUR":
+        amount_label = f"{amount:.2f}".replace(".", ",") + " €"
     body_lines = [
         f"Bonjour {client_name},",
         "",
-        f"Nous confirmons la bonne reception de votre cheque de {amount:.2f} {currency}.",
+        f"Nous confirmons la bonne reception de votre cheque de {amount_label}.",
         f"Date de reception: {received_label}.",
         "",
         "Ce message confirme uniquement la reception du cheque. L'encaissement interviendra lors du depot en banque.",
     ]
+    normalized_deposit_label = _normalize_optional(check_deposit_label)
+    if normalized_deposit_label:
+        body_lines.extend(["", f"Depot en banque prevu: {normalized_deposit_label}."])
     normalized_description = _normalize_optional(description)
     if normalized_description:
         body_lines.extend(["", f"Information de suivi: {normalized_description}"])
@@ -9095,6 +9102,7 @@ def create_admin_client_manual_transaction(
                 amount=total_abs,
                 currency=currency,
                 received_at=occurred_at,
+                check_deposit_label=payload.check_deposit_label,
                 description=description,
             )
         else:

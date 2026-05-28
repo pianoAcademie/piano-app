@@ -71,6 +71,8 @@ export default function ManualTransactionLegalEntityFields({
         markPaid: "Manually mark selected invoices as paid (if the payment amount is sufficient)",
         checkHint: "Checks are tracked as received first. Mark them as cashed from the payment list after bank deposit.",
         checkDepositMonth: "Expected deposit month (optional)",
+        checkDepositMonthPlaceholder: "Month",
+        checkDepositYearPlaceholder: "Year",
         checkDepositHelp: "When filled, the payment label and comment are prepared automatically.",
         receiptEmailGeneric: "Send a receipt email to the client",
         receiptEmailCheck: "Notify the client that the check has been received",
@@ -99,6 +101,8 @@ export default function ManualTransactionLegalEntityFields({
         markPaid: "Marquer manuellement les factures selectionnees comme payees (si montant regle suffisant)",
         checkHint: "Les cheques sont d'abord enregistres comme recus. Passez-les en encaisses depuis la liste des paiements apres depot en banque.",
         checkDepositMonth: "Mois de depot prevu (optionnel)",
+        checkDepositMonthPlaceholder: "Mois",
+        checkDepositYearPlaceholder: "Annee",
         checkDepositHelp: "Si renseigne, le libelle et le commentaire du paiement sont prepares automatiquement.",
         receiptEmailGeneric: "Envoyer un recu par courriel au client",
         receiptEmailCheck: "Notifier le client que le cheque a bien ete recu",
@@ -117,6 +121,7 @@ export default function ManualTransactionLegalEntityFields({
   const [manualLegalEntityId, setManualLegalEntityId] = useState<string>(initialLegalEntityId ?? "");
   const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(new Set<string>());
   const [checkDepositMonth, setCheckDepositMonth] = useState<string>("");
+  const [checkDepositYear, setCheckDepositYear] = useState<string>(String(new Date().getFullYear()));
   const [receiptEmailChecked, setReceiptEmailChecked] = useState<boolean>(false);
   const [checkEmailPreview, setCheckEmailPreview] = useState<EmailPreview | null>(null);
   const receiptEmailTouchedRef = useRef<boolean>(false);
@@ -202,20 +207,27 @@ export default function ManualTransactionLegalEntityFields({
   const resolvedLegalEntityId = derivedLegalEntityId ?? manualLegalEntityId;
   const showManualSelector = derivedLegalEntityId === null;
   const isCheckPayment = paymentMethodCode.trim().toUpperCase() === "CHECK";
+  const checkDepositLabel =
+    checkDepositMonth && checkDepositYear
+      ? formatMonthYearLabel(checkDepositMonth, checkDepositYear, resolvedLanguage)
+      : "";
+  const checkDepositYearOptions = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    return Array.from({ length: 5 }, (_, index) => String(currentYear + index));
+  }, []);
 
   useEffect(() => {
     const form = rootRef.current?.closest("form");
-    if (!form || !isCheckPayment || !checkDepositMonth) {
+    if (!form || !isCheckPayment || !checkDepositLabel) {
       return;
     }
     const descriptionField = form.querySelector<HTMLTextAreaElement>("textarea[name='description']");
     const labelField = form.querySelector<HTMLInputElement>("input[name='label']");
     const occurredAtField = form.querySelector<HTMLInputElement>("input[name='occurred_at']");
     const receivedLabel = formatInputDateLabel(occurredAtField?.value || "", resolvedLanguage);
-    const depositLabel = formatInputMonthLabel(checkDepositMonth, resolvedLanguage);
     const autoText = isEnglish
-      ? `Check received on ${receivedLabel} - to deposit in ${depositLabel}`
-      : `Cheque recu le ${receivedLabel} - a deposer en ${depositLabel}`;
+      ? `Check received on ${receivedLabel} - to deposit in ${checkDepositLabel}`
+      : `Cheque recu le ${receivedLabel} - a deposer en ${checkDepositLabel}`;
 
     if (
       descriptionField &&
@@ -228,7 +240,7 @@ export default function ManualTransactionLegalEntityFields({
       labelField.value = autoText;
       lastAutoCheckLabelRef.current = autoText;
     }
-  }, [checkDepositMonth, isCheckPayment, resolvedLanguage, isEnglish]);
+  }, [checkDepositLabel, isCheckPayment, resolvedLanguage, isEnglish]);
 
   useEffect(() => {
     if (!showReceiptEmailOption || receiptEmailTouchedRef.current) {
@@ -253,6 +265,7 @@ export default function ManualTransactionLegalEntityFields({
       const currency = form.querySelector<HTMLInputElement>("input[name='currency']")?.value || "EUR";
       const occurredAt = form.querySelector<HTMLInputElement>("input[name='occurred_at']")?.value || "";
       const description = form.querySelector<HTMLTextAreaElement>("textarea[name='description']")?.value.trim() || "";
+      const depositLabel = form.querySelector<HTMLInputElement>("input[name='check_deposit_label']")?.value.trim() || "";
       const amountLabel = formatAmountLabel(amount, currency, resolvedLanguage);
       const receivedLabel = formatInputDateLabel(occurredAt, resolvedLanguage);
       const subject = isEnglish ? `Check received - ${text.unknownClient}` : `Reception de votre cheque - ${text.unknownClient}`;
@@ -273,6 +286,9 @@ export default function ManualTransactionLegalEntityFields({
             "",
             "Ce message confirme uniquement la reception du cheque. L'encaissement interviendra lors du depot en banque.",
           ];
+      if (depositLabel) {
+        bodyLines.push("", isEnglish ? `Expected bank deposit: ${depositLabel}.` : `Depot en banque prevu: ${depositLabel}.`);
+      }
       if (description) {
         bodyLines.push("", isEnglish ? `Tracking note: ${description}` : `Information de suivi: ${description}`);
       }
@@ -287,7 +303,7 @@ export default function ManualTransactionLegalEntityFields({
       form.removeEventListener("input", updatePreview);
       form.removeEventListener("change", updatePreview);
     };
-  }, [isCheckPayment, receiptEmailChecked, resolvedLanguage, isEnglish, text.unknownClient]);
+  }, [isCheckPayment, receiptEmailChecked, resolvedLanguage, isEnglish, text.unknownClient, checkDepositLabel]);
 
   return (
     <div ref={rootRef} className="span-2 grid">
@@ -372,15 +388,31 @@ export default function ManualTransactionLegalEntityFields({
 
       {isCheckPayment ? (
         <>
-          <label>
-            {text.checkDepositMonth}
-            <input
-              type="month"
-              value={checkDepositMonth}
-              onChange={(event) => setCheckDepositMonth(event.currentTarget.value)}
-            />
-          </label>
-          <p className="muted">{text.checkDepositHelp}</p>
+          <div className="span-2 grid">
+            <input type="hidden" name="check_deposit_label" value={checkDepositLabel} />
+            <label>
+              {text.checkDepositMonth}
+              <select value={checkDepositMonth} onChange={(event) => setCheckDepositMonth(event.currentTarget.value)}>
+                <option value="">{text.checkDepositMonthPlaceholder}</option>
+                {monthOptions(resolvedLanguage).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              {text.checkDepositYearPlaceholder}
+              <select value={checkDepositYear} onChange={(event) => setCheckDepositYear(event.currentTarget.value)}>
+                {checkDepositYearOptions.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <p className="muted span-2">{text.checkDepositHelp}</p>
         </>
       ) : null}
 
@@ -454,12 +486,19 @@ function formatInputDateLabel(value: string, language: "fr" | "en"): string {
   return language === "en" ? `${day}/${month}/${year}` : `${day}/${month}/${year}`;
 }
 
-function formatInputMonthLabel(value: string, language: "fr" | "en"): string {
-  const match = /^(\d{4})-(\d{2})$/.exec(value.trim());
-  if (!match) {
-    return value.trim();
-  }
-  const [, year, month] = match;
+function monthOptions(language: "fr" | "en"): Array<{ value: string; label: string }> {
+  return Array.from({ length: 12 }, (_, index) => {
+    const month = String(index + 1).padStart(2, "0");
+    return {
+      value: month,
+      label: new Intl.DateTimeFormat(language === "en" ? "en-GB" : "fr-FR", { month: "long" }).format(
+        new Date(2026, index, 1),
+      ),
+    };
+  });
+}
+
+function formatMonthYearLabel(month: string, year: string, language: "fr" | "en"): string {
   const date = new Date(Number(year), Number(month) - 1, 1);
   return new Intl.DateTimeFormat(language === "en" ? "en-GB" : "fr-FR", {
     month: "long",

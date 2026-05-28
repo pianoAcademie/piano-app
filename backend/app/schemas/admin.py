@@ -1671,6 +1671,7 @@ class AdminClientManualTransactionCreateRequest(BaseModel):
     reconciled_invoice_note_ids: list[UUID] = Field(default_factory=list)
     mark_reconciled_invoices_paid: bool = False
     send_receipt_email: bool = False
+    check_deposit_label: str | None = Field(default=None, max_length=80)
 
 
 class AdminClientManualTransactionUpdateRequest(BaseModel):
