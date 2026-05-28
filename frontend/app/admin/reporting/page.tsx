@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { createGeneratedReportAction, deleteGeneratedReportAction, deleteGeneratedReportsAction } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
 import { GeneratedReportsTable } from "../../../components/generated-reports-table";
-import type { GeneratedReportOut, UserOut } from "../../../lib/types";
+import type { AdminLegalEntityOut, GeneratedReportOut, UserOut } from "../../../lib/types";
 import { normalizeUiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -186,6 +186,35 @@ function requiresStatus(reportType: ReportType): boolean {
   return ["intake-families", "quote-families", "expired-quotes", "payments", "quotes", "subscriptions", "check-deposits", "communications"].includes(reportType);
 }
 
+const MONTH_OPTIONS = [
+  { value: "1", label: "Janvier" },
+  { value: "2", label: "Fevrier" },
+  { value: "3", label: "Mars" },
+  { value: "4", label: "Avril" },
+  { value: "5", label: "Mai" },
+  { value: "6", label: "Juin" },
+  { value: "7", label: "Juillet" },
+  { value: "8", label: "Aout" },
+  { value: "9", label: "Septembre" },
+  { value: "10", label: "Octobre" },
+  { value: "11", label: "Novembre" },
+  { value: "12", label: "Decembre" },
+];
+
+function yearOptions(selectedValue: string): string[] {
+  const currentYear = new Date().getFullYear();
+  const values = Array.from({ length: 5 }, (_, index) => String(currentYear + index));
+  return Array.from(new Set([selectedValue, ...values].filter(Boolean)));
+}
+
+function normalizeName(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/gi, "")
+    .toLowerCase();
+}
+
 export default async function AdminReportingPage({ searchParams }: ReportingPageProps): Promise<JSX.Element> {
   const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
   if (!token) {
@@ -203,9 +232,18 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
   const reportDefinition = reportType ? REPORT_DEFINITIONS.find((item) => item.type === reportType) || null : null;
   const selectedSchoolYear = reportFilterValue(searchParams, "school_year_label", currentReportingSchoolYear());
   const availableSchoolYears = schoolYearOptions(selectedSchoolYear);
+  const selectedDepositMonth = reportFilterValue(searchParams, "month", String(new Date().getMonth() + 1));
+  const selectedDepositYear = reportFilterValue(searchParams, "year", String(new Date().getFullYear()));
+  const availableDepositYears = yearOptions(selectedDepositYear);
 
   const generatedReportsResult = await backendRequest<GeneratedReportOut[]>("/api/v1/admin/reports/generated", {}, token);
   const generatedReports = generatedReportsResult.ok ? generatedReportsResult.data : [];
+  const legalEntitiesResult = reportType === "check-deposits"
+    ? await backendRequest<AdminLegalEntityOut[]>("/api/v1/admin/legal-entities?include_inactive=false", {}, token)
+    : null;
+  const legalEntities = legalEntitiesResult?.ok ? legalEntitiesResult.data : [];
+  const defaultLegalEntity = legalEntities.find((entity) => normalizeName(entity.name) === "pianoacademie") ?? legalEntities[0] ?? null;
+  const selectedLegalEntityId = reportFilterValue(searchParams, "legal_entity_id", defaultLegalEntity?.id ?? "");
 
   return (
     <section className="admin-page-grid reporting-shell">
@@ -286,6 +324,64 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
                       Annuler
                     </Link>
                     <button type="submit">Continuer</button>
+                  </div>
+                </form>
+              ) : reportDefinition.type === "check-deposits" ? (
+                <form className="grid cols-2 config-form-grid" method="get" action="/admin/reporting/check-deposits">
+                  <label>
+                    Mois de depot
+                    <select name="month" defaultValue={selectedDepositMonth}>
+                      {MONTH_OPTIONS.map((month) => (
+                        <option key={month.value} value={month.value}>
+                          {month.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Annee de depot
+                    <select name="year" defaultValue={selectedDepositYear}>
+                      {availableDepositYears.map((year) => (
+                        <option key={year} value={year}>
+                          {year}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Entite legale
+                    <select name="legal_entity_id" defaultValue={selectedLegalEntityId} required>
+                      {legalEntities.length > 0 ? (
+                        legalEntities.map((entity) => (
+                          <option key={entity.id} value={entity.id}>
+                            {entity.name}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="">Aucune entite disponible</option>
+                      )}
+                    </select>
+                  </label>
+                  <label>
+                    Format
+                    <select name="file_format" defaultValue={reportFilterValue(searchParams, "file_format", "pdf")}>
+                      <option value="pdf">Fichier PDF</option>
+                      <option value="xlsx">Fichier Excel</option>
+                    </select>
+                  </label>
+                  {legalEntitiesResult && !legalEntitiesResult.ok ? (
+                    <p className="muted span-2">{t("admin.reporting.error_prefix", { message: legalEntitiesResult.message })}</p>
+                  ) : null}
+                  <p className="muted span-2">
+                    Colonnes exportees : responsable, eleve, date de reception, depot prevu, montant et date de depot banque a completer.
+                  </p>
+                  <div className="form-actions span-2">
+                    <Link className="button-link" href={withParams({ create: "1" })}>
+                      Retour
+                    </Link>
+                    <button type="submit" disabled={!selectedLegalEntityId}>
+                      Generer
+                    </button>
                   </div>
                 </form>
               ) : (

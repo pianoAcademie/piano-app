@@ -12,13 +12,16 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
 from xhtml2pdf import pisa
 from sqlalchemy import Numeric, Text, case, cast, extract, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
-from app.models.client_record import ClientInvoiceLine, ClientNoteEntry
+from app.models.client_record import ClientInvoiceLine, ClientManualTransaction, ClientNoteEntry
+from app.models.family import ClientFamilyLink
 from app.models.ops import CommunicationChannel as CommunicationChannelModel, CommunicationLog, LegalEntity
 from app.models.payout import ProfessorSessionPayout
 from app.models.quote import Prospect, Quote, QuoteLine
@@ -253,6 +256,252 @@ def _normalize_token(value: object | None) -> str:
 def _display_name(first_name: object | None, last_name: object | None, fallback: str = "-") -> str:
     label = " ".join(part for part in [_text(first_name), _text(last_name)] if part).strip()
     return label or fallback
+
+
+MONTH_LABELS_FR = [
+    "janvier",
+    "fevrier",
+    "mars",
+    "avril",
+    "mai",
+    "juin",
+    "juillet",
+    "aout",
+    "septembre",
+    "octobre",
+    "novembre",
+    "decembre",
+]
+MONTH_NUMBER_BY_TOKEN = {label: index + 1 for index, label in enumerate(MONTH_LABELS_FR)}
+
+
+def _month_year_label(month: int, year: int) -> str:
+    return f"{MONTH_LABELS_FR[month - 1]} {year}"
+
+
+def _manual_payment_method_code(reference: str | None) -> str | None:
+    normalized_reference = (reference or "").strip()
+    if not normalized_reference.upper().startswith("MODE:"):
+        return None
+    suffix = normalized_reference[5:].strip()
+    if not suffix:
+        return None
+    separator_index = suffix.upper().find("|REF:")
+    return (suffix[:separator_index] if separator_index >= 0 else suffix).strip().upper() or None
+
+
+def _deposit_month_year_from_text(value: str | None) -> tuple[int, int] | None:
+    normalized = unicodedata.normalize("NFKD", value or "")
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii").casefold()
+    ascii_text = re.sub(r"[^a-z0-9]+", " ", ascii_text)
+    pattern = r"\b(" + "|".join(MONTH_NUMBER_BY_TOKEN.keys()) + r")\s+((?:20|19)\d{2})\b"
+    matches = list(re.finditer(pattern, ascii_text))
+    if not matches:
+        return None
+    for match in matches:
+        prefix = ascii_text[max(0, match.start() - 40) : match.start()]
+        if "depos" in prefix or "banque" in prefix:
+            return MONTH_NUMBER_BY_TOKEN[match.group(1)], int(match.group(2))
+    match = matches[-1]
+    return MONTH_NUMBER_BY_TOKEN[match.group(1)], int(match.group(2))
+
+
+def _local_date_label(value: datetime | None) -> str:
+    if value is None:
+        return "-"
+    return value.astimezone(ADMIN_COMMUNICATION_TIMEZONE).strftime("%d/%m/%Y")
+
+
+def _amount_label(value: Decimal) -> str:
+    amount = value.quantize(Decimal("0.01"))
+    return f"{amount:,.2f}".replace(",", " ").replace(".", ",")
+
+
+def _check_deposit_students_for_transaction(
+    db: Session,
+    *,
+    client_id: UUID,
+    student_user_id: UUID | None,
+) -> list[User]:
+    if student_user_id is not None:
+        student = db.get(User, student_user_id)
+        return [student] if student is not None else []
+    return list(
+        db.scalars(
+            select(User)
+            .join(ClientFamilyLink, ClientFamilyLink.child_user_id == User.id)
+            .where(ClientFamilyLink.adult_user_id == client_id)
+            .order_by(User.last_name.asc().nulls_last(), User.first_name.asc().nulls_last())
+        ).all()
+    )
+
+
+def _check_deposit_report_rows(
+    db: Session,
+    *,
+    month: int,
+    year: int,
+    legal_entity_id: UUID,
+) -> tuple[LegalEntity, list[dict[str, object]]]:
+    legal_entity = db.get(LegalEntity, legal_entity_id)
+    if legal_entity is None or not legal_entity.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entite legale introuvable")
+
+    rows = db.execute(
+        select(ClientManualTransaction, User)
+        .join(User, User.id == ClientManualTransaction.user_id)
+        .where(
+            ClientManualTransaction.transaction_type == "PAYMENT",
+            ClientManualTransaction.status == "CHECK_RECEIVED",
+            ClientManualTransaction.legal_entity_id == legal_entity_id,
+            ClientManualTransaction.reference.ilike("%MODE:CHECK%"),
+        )
+        .order_by(ClientManualTransaction.occurred_at.asc(), User.last_name.asc().nulls_last(), User.first_name.asc().nulls_last())
+    ).all()
+    report_rows: list[dict[str, object]] = []
+    for transaction, client in rows:
+        deposit_month_year = (
+            _deposit_month_year_from_text(transaction.description)
+            or _deposit_month_year_from_text(transaction.label)
+        )
+        if deposit_month_year != (month, year):
+            continue
+        students = _check_deposit_students_for_transaction(
+            db,
+            client_id=client.id,
+            student_user_id=transaction.student_user_id,
+        )
+        student_names = [_display_name(student.first_name, student.last_name, "") for student in students]
+        report_rows.append(
+            {
+                "responsible_last_name": _text(client.last_name),
+                "responsible_first_name": _text(client.first_name),
+                "student_last_name": ", ".join(_text(student.last_name) for student in students if _text(student.last_name)),
+                "student_first_name": ", ".join(_text(student.first_name) for student in students if _text(student.first_name)),
+                "student_display": ", ".join(name for name in student_names if name),
+                "received_at": _local_date_label(transaction.occurred_at),
+                "deposit_label": _month_year_label(month, year),
+                "amount": abs(Decimal(transaction.total_incl_vat or 0)).quantize(Decimal("0.01")),
+            }
+        )
+    return legal_entity, report_rows
+
+
+def _render_check_deposit_report_pdf(
+    *,
+    rows: list[dict[str, object]],
+    month: int,
+    year: int,
+    legal_entity: LegalEntity,
+) -> bytes:
+    title = f"Cheques a deposer - {_month_year_label(month, year)} - {legal_entity.name}"
+    body_rows = "\n".join(
+        "<tr>"
+        f"<td>{html.escape(_text(row.get('responsible_last_name')))}</td>"
+        f"<td>{html.escape(_text(row.get('responsible_first_name')))}</td>"
+        f"<td>{html.escape(_text(row.get('student_last_name')))}</td>"
+        f"<td>{html.escape(_text(row.get('student_first_name')))}</td>"
+        f"<td>{html.escape(_text(row.get('received_at')))}</td>"
+        f"<td>{html.escape(_text(row.get('deposit_label')))}</td>"
+        f"<td class='amount'>{html.escape(_amount_label(row.get('amount') if isinstance(row.get('amount'), Decimal) else Decimal('0')))} EUR</td>"
+        "<td>&nbsp;</td>"
+        "</tr>"
+        for row in rows
+    )
+    if not body_rows:
+        body_rows = "<tr><td colspan='8' class='empty'>Aucun cheque recu a deposer pour cette periode.</td></tr>"
+    document = f"""
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <style>
+          @page {{ size: A4 landscape; margin: 18mm; }}
+          body {{ font-family: Helvetica, Arial, sans-serif; color: #1f2937; font-size: 10px; }}
+          h1 {{ font-size: 18px; margin: 0 0 6px; }}
+          p {{ margin: 0 0 16px; color: #6b7280; }}
+          table {{ width: 100%; border-collapse: collapse; }}
+          th {{ background: #eef2f7; font-weight: bold; }}
+          th, td {{ border: 1px solid #cbd5e1; padding: 7px 6px; vertical-align: top; }}
+          td.amount {{ text-align: right; white-space: nowrap; }}
+          td.empty {{ text-align: center; color: #6b7280; padding: 18px; }}
+        </style>
+      </head>
+      <body>
+        <h1>{html.escape(title)}</h1>
+        <p>Liste des cheques au statut recu, filtres par mois de depot prevu et entite legale.</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Nom responsable</th>
+              <th>Prenom responsable</th>
+              <th>Nom eleve</th>
+              <th>Prenom eleve</th>
+              <th>Date reception cheque</th>
+              <th>Date prevue depot en banque</th>
+              <th>Montant cheque</th>
+              <th>Date depot banque</th>
+            </tr>
+          </thead>
+          <tbody>{body_rows}</tbody>
+        </table>
+      </body>
+    </html>
+    """
+    output = io.BytesIO()
+    result = pisa.CreatePDF(io.StringIO(document), dest=output, encoding="utf-8")
+    if result.err:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Generation PDF impossible")
+    return output.getvalue()
+
+
+def _render_check_deposit_report_xlsx(
+    *,
+    rows: list[dict[str, object]],
+    month: int,
+    year: int,
+    legal_entity: LegalEntity,
+) -> bytes:
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Cheques a deposer"
+    worksheet.append([f"Cheques a deposer - {_month_year_label(month, year)} - {legal_entity.name}"])
+    worksheet.append([])
+    headers = [
+        "Nom responsable",
+        "Prenom responsable",
+        "Nom eleve",
+        "Prenom eleve",
+        "Date reception cheque",
+        "Date prevue depot en banque",
+        "Montant cheque",
+        "Date depot banque",
+    ]
+    worksheet.append(headers)
+    for cell in worksheet[3]:
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill("solid", fgColor="EEF2F7")
+    for row in rows:
+        worksheet.append(
+            [
+                _text(row.get("responsible_last_name")),
+                _text(row.get("responsible_first_name")),
+                _text(row.get("student_last_name")),
+                _text(row.get("student_first_name")),
+                _text(row.get("received_at")),
+                _text(row.get("deposit_label")),
+                float(row.get("amount") if isinstance(row.get("amount"), Decimal) else Decimal("0")),
+                "",
+            ]
+        )
+    worksheet.freeze_panes = "A4"
+    widths = [22, 22, 24, 24, 22, 28, 16, 22]
+    for index, width in enumerate(widths, start=1):
+        worksheet.column_dimensions[chr(64 + index)].width = width
+    for cell in worksheet["G"][3:]:
+        cell.number_format = '#,##0.00 "EUR"'
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
 
 
 def _generated_report_out(row: GeneratedReport) -> GeneratedReportOut:
@@ -1723,6 +1972,48 @@ def report_intake_families(
         status_filter=status_filter,
         min_children=min_children,
         limit=limit,
+    )
+
+
+@router.get("/check-deposits-due")
+def export_check_deposits_due_report(
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2000, le=2100),
+    legal_entity_id: UUID = Query(...),
+    file_format: str = Query(default="pdf", pattern="^(pdf|xlsx)$"),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> Response:
+    legal_entity, rows = _check_deposit_report_rows(
+        db,
+        month=month,
+        year=year,
+        legal_entity_id=legal_entity_id,
+    )
+    entity_slug = _normalize_token(legal_entity.name) or "entite"
+    filename_base = f"cheques-a-deposer-{year}-{month:02d}-{entity_slug}"
+    if file_format == "xlsx":
+        content = _render_check_deposit_report_xlsx(
+            rows=rows,
+            month=month,
+            year=year,
+            legal_entity=legal_entity,
+        )
+        return Response(
+            content,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename_base}.xlsx"'},
+        )
+    content = _render_check_deposit_report_pdf(
+        rows=rows,
+        month=month,
+        year=year,
+        legal_entity=legal_entity,
+    )
+    return Response(
+        content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename_base}.pdf"'},
     )
 
 
