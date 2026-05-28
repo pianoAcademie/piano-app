@@ -204,8 +204,12 @@ export default function ManualTransactionLegalEntityFields({
     };
   }, [blockingError]);
 
-  const resolvedLegalEntityId = derivedLegalEntityId ?? manualLegalEntityId;
-  const showManualSelector = derivedLegalEntityId === null;
+  const singleLegalEntity = legalEntities.length === 1 ? legalEntities[0] : null;
+  const fallbackSingleLegalEntityId = derivedLegalEntityId === null && !manualLegalEntityId ? singleLegalEntity?.id ?? null : null;
+  const fallbackSingleLegalEntityName = fallbackSingleLegalEntityId ? singleLegalEntity?.name ?? fallbackSingleLegalEntityId : null;
+  const finalLegalEntityId = derivedLegalEntityId ?? fallbackSingleLegalEntityId ?? manualLegalEntityId;
+  const finalLegalEntityName = derivedLegalEntityName ?? fallbackSingleLegalEntityName;
+  const showManualSelector = derivedLegalEntityId === null && fallbackSingleLegalEntityId === null;
   const isCheckPayment = paymentMethodCode.trim().toUpperCase() === "CHECK";
   const checkDepositLabel =
     checkDepositMonth && checkDepositYear
@@ -467,8 +471,8 @@ export default function ManualTransactionLegalEntityFields({
           </select>
         ) : (
           <>
-            <input type="text" value={derivedLegalEntityName ?? derivedLegalEntityId ?? ""} readOnly />
-            <input type="hidden" name="legal_entity_id" value={resolvedLegalEntityId} />
+            <input type="text" value={finalLegalEntityName ?? finalLegalEntityId ?? ""} readOnly />
+            <input type="hidden" name="legal_entity_id" value={finalLegalEntityId} />
           </>
         )}
       </label>
