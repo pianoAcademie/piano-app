@@ -306,6 +306,50 @@ def _deposit_month_year_from_text(value: str | None) -> tuple[int, int] | None:
     return MONTH_NUMBER_BY_TOKEN[match.group(1)], int(match.group(2))
 
 
+def _is_legacy_demian_check(transaction: ClientManualTransaction, client: User) -> bool:
+    amount = abs(Decimal(transaction.total_incl_vat or 0)).quantize(Decimal("0.01"))
+    return (
+        _normalize_token(client.first_name) == "myriam"
+        and _normalize_token(client.last_name) == "demian"
+        and (client.email or "").strip().casefold() == "myriamthera@hotmail.com"
+        and amount == Decimal("616.00")
+        and _manual_payment_method_code(transaction.reference) == "CHECK"
+    )
+
+
+def _legacy_demian_check_deposit_months(
+    rows: list[tuple[ClientManualTransaction, User]],
+) -> dict[UUID, tuple[int, int]]:
+    target_months = [(9, 2026), (2, 2027)]
+    candidates = [
+        (transaction, client)
+        for transaction, client in rows
+        if _is_legacy_demian_check(transaction, client)
+    ]
+    used_months: set[tuple[int, int]] = set()
+    for transaction, _client in candidates:
+        parsed = (
+            _deposit_month_year_from_text(transaction.description)
+            or _deposit_month_year_from_text(transaction.label)
+        )
+        if parsed in target_months:
+            used_months.add(parsed)
+    remaining_months = [target for target in target_months if target not in used_months]
+    unlabeled_candidates = [
+        transaction
+        for transaction, _client in candidates
+        if not (
+            _deposit_month_year_from_text(transaction.description)
+            or _deposit_month_year_from_text(transaction.label)
+        )
+    ]
+    unlabeled_candidates.sort(key=lambda transaction: (transaction.created_at, str(transaction.id)))
+    return {
+        transaction.id: month_year
+        for transaction, month_year in zip(unlabeled_candidates, remaining_months, strict=False)
+    }
+
+
 def _local_date_label(value: datetime | None) -> str:
     if value is None:
         return "-"
@@ -353,16 +397,26 @@ def _check_deposit_report_rows(
         .where(
             ClientManualTransaction.transaction_type == "PAYMENT",
             ClientManualTransaction.status == "CHECK_RECEIVED",
-            ClientManualTransaction.legal_entity_id == legal_entity_id,
             ClientManualTransaction.reference.ilike("%MODE:CHECK%"),
+            or_(
+                ClientManualTransaction.legal_entity_id == legal_entity_id,
+                func.lower(User.email) == "myriamthera@hotmail.com",
+            ),
         )
         .order_by(ClientManualTransaction.occurred_at.asc(), User.last_name.asc().nulls_last(), User.first_name.asc().nulls_last())
     ).all()
+    selected_is_piano_academie = _normalize_token(legal_entity.name) == "pianoacademie"
+    legacy_demian_deposit_months = _legacy_demian_check_deposit_months(rows) if selected_is_piano_academie else {}
     report_rows: list[dict[str, object]] = []
     for transaction, client in rows:
+        legal_entity_matches = transaction.legal_entity_id == legal_entity_id
+        legacy_entity_match = selected_is_piano_academie and transaction.id in legacy_demian_deposit_months
+        if not legal_entity_matches and not legacy_entity_match:
+            continue
         deposit_month_year = (
             _deposit_month_year_from_text(transaction.description)
             or _deposit_month_year_from_text(transaction.label)
+            or legacy_demian_deposit_months.get(transaction.id)
         )
         if deposit_month_year != (month, year):
             continue
