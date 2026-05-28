@@ -8,9 +8,8 @@ from uuid import UUID
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from sqlalchemy import cast, or_, select
+from sqlalchemy import String, cast, false, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.sql import String
 
 from app.db.session import SessionLocal
 from app.models.client_record import ClientAutoInvoiceOccurrence, ClientAutoInvoiceRule, ClientNoteEntry
@@ -113,7 +112,7 @@ def main() -> None:
                     cast(Quote.meta, JSONB).cast(String).ilike("%Emilie%"),
                     cast(QuoteAcceptanceFollowup.payload, JSONB).cast(String).ilike("%Thuilliez%"),
                     cast(QuoteAcceptanceFollowup.payload, JSONB).cast(String).ilike("%Emilie%"),
-                    Quote.client_id.in_([user.id for user in users]) if users else False,
+                    Quote.client_id.in_([user.id for user in users]) if users else false(),
                 )
             )
             .order_by(Quote.updated_at.desc())
