@@ -2,202 +2,176 @@ from __future__ import annotations
 
 import os
 import sys
-from calendar import monthrange
-from datetime import date, timedelta
-from uuid import UUID
+from datetime import datetime, timedelta, timezone
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from sqlalchemy import String, cast, false, or_, select
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import false, func, or_, select
 
+from app.api.routes.clients import _active_formula_options_for_course_type, _session_purchase_catalog
 from app.db.session import SessionLocal
-from app.models.client_record import ClientAutoInvoiceOccurrence, ClientAutoInvoiceRule, ClientNoteEntry
-from app.models.plan import ClientPlanSubscription, Plan
-from app.models.quote import Quote, QuoteAcceptanceFollowup
-from app.models.user import User
-from app.services.payment_receipts import _parse_invoice_range_note_entry
+from app.models.catalog import CourseSession, CourseType, CreditType, Location
+from app.models.plan import Plan, PlanCreditGrant, PlanEntitlement, PlanKind
+from app.services.session_audience import resolve_session_booking_scopes
 
-SCRIPT_PREFIX = "PROD_THUILLIEZ_EMILIE_BILLING_INSPECT"
+SCRIPT_PREFIX = "PROD_STUDIO_FORMULA_INSPECT"
 
 
 def _print(line: str) -> None:
     print(f"[{SCRIPT_PREFIX}] {line}")
 
 
-def _json_object(value: object | None) -> dict[str, object]:
-    return value if isinstance(value, dict) else {}
-
-
-def _uuid_value(value: object | None) -> UUID | None:
-    try:
-        return UUID(str(value))
-    except (TypeError, ValueError):
-        return None
-
-
-def _add_months(value: date, months: int) -> date:
-    month_index = (value.month - 1) + months
-    year = value.year + month_index // 12
-    month = month_index % 12 + 1
-    return date(year, month, min(value.day, monthrange(year, month)[1]))
-
-
-def _months_for_frequency(frequency: str) -> int:
-    normalized = (frequency or "").strip().upper()
-    if normalized == "QUARTERLY":
-        return 3
-    if normalized == "YEARLY":
-        return 12
-    return 1
-
-
-def _period_for_rule(rule: ClientAutoInvoiceRule) -> tuple[date, date]:
-    months = _months_for_frequency(rule.frequency)
-    if (rule.billing_timing or "").strip().upper() == "PREVIOUS_LESSONS":
-        return _add_months(rule.next_run_date, -months), rule.next_run_date
-    return rule.next_run_date, _add_months(rule.next_run_date, months)
-
-
-def _due_date_for_rule(rule: ClientAutoInvoiceRule) -> date:
-    if (rule.due_date_rule_type or "").strip().upper() == "X_DAYS_AFTER_ISSUE":
-        return rule.next_run_date + timedelta(days=max(0, int(rule.due_date_days_offset or 0)))
-    return rule.next_run_date
-
-
 def main() -> None:
     with SessionLocal() as db:
-        emilie = db.scalar(
-            select(User)
-            .where(
-                User.last_name.ilike("%thuilliez%"),
-                or_(User.first_name.ilike("%emilie%"), User.email.ilike("%boulmimienoah%")),
+        studio_course_types = db.execute(
+            select(
+                CourseType.id,
+                CourseType.name,
+                CourseType.service_code,
+                CourseType.credit_type_id,
+                CreditType.code,
+                CreditType.name,
             )
-            .order_by(User.created_at.desc())
-            .limit(1)
-        )
-        if emilie is None:
-            raise SystemExit(f"[{SCRIPT_PREFIX}] emilie_thuilliez_not_found")
-        _print(f"user={emilie.id}|{emilie.first_name} {emilie.last_name}|{emilie.email}|status={getattr(emilie.client_status, 'value', emilie.client_status)}")
+            .join(CreditType, CreditType.id == CourseType.credit_type_id, isouter=True)
+            .where(func.lower(CourseType.name).like("%studio%"))
+            .order_by(CourseType.name.asc())
+        ).all()
 
-        quote_rows = db.execute(
-            select(Quote, QuoteAcceptanceFollowup)
-            .join(QuoteAcceptanceFollowup, QuoteAcceptanceFollowup.quote_id == Quote.id, isouter=True)
-            .where(
-                or_(
-                    Quote.client_id == emilie.id,
-                    cast(Quote.meta, JSONB).cast(String).ilike("%Thuilliez%"),
-                    cast(QuoteAcceptanceFollowup.payload, JSONB).cast(String).ilike("%Thuilliez%"),
+        if not studio_course_types:
+            _print("no studio course types found")
+            return
+
+        _print(f"studio_course_types={len(studio_course_types)}")
+        for row in studio_course_types:
+            course_type_id, name, service_code, credit_type_id, credit_code, credit_name = row
+            _print(
+                "course_type="
+                f"{course_type_id}|name={name}|service_code={service_code or '-'}|"
+                f"credit_type_id={credit_type_id or '-'}|credit_type_code={credit_code or '-'}|credit_type_name={credit_name or '-'}"
+            )
+
+            exact_public_plans = db.execute(
+                select(
+                    Plan.id,
+                    Plan.code,
+                    Plan.name,
+                    Plan.kind,
+                    Plan.active,
+                    Plan.is_private,
                 )
-            )
-            .order_by(Quote.updated_at.desc())
-            .limit(5)
-        ).all()
-
-        relevant_user_ids = {emilie.id}
-        subscription_id: UUID | None = None
-        for quote, followup in quote_rows:
-            payload = _json_object(followup.payload if followup is not None else None)
-            execution = _json_object(payload.get("quote_to_enrollment_execution"))
-            candidate_subscription_id = _uuid_value(execution.get("subscription_id"))
-            student_id = _uuid_value(execution.get("student_client_id"))
-            billing_id = _uuid_value(execution.get("billing_client_id"))
-            if student_id:
-                relevant_user_ids.add(student_id)
-            if billing_id:
-                relevant_user_ids.add(billing_id)
-            if quote.quote_number == "DV-20260520080553-B33C" or (candidate_subscription_id and quote.client_id == emilie.id):
-                subscription_id = candidate_subscription_id
-            _print(
-                "quote="
-                f"{quote.quote_number}|status={quote.status}|total={quote.total_ttc}|approved_at={quote.approved_at}|"
-                f"followup={followup.status if followup else '-'}|payment_status={followup.payment_method_status if followup else '-'}|"
-                f"executed_at={execution.get('executed_at') or '-'}|subscription_id={candidate_subscription_id or '-'}|"
-                f"student_id={student_id or '-'}|billing_id={billing_id or '-'}"
-            )
-
-        if subscription_id is None:
-            _print("target_subscription=missing")
-            return
-
-        row = db.execute(
-            select(ClientPlanSubscription, Plan)
-            .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
-            .where(ClientPlanSubscription.id == subscription_id)
-            .limit(1)
-        ).first()
-        if row is None:
-            _print(f"subscription_missing={subscription_id}")
-            return
-        subscription, plan = row
-        relevant_user_ids.add(subscription.user_id)
-        if subscription.payer_contact_id:
-            relevant_user_ids.add(subscription.payer_contact_id)
-        student = db.get(User, subscription.user_id)
-        payer = db.get(User, subscription.payer_contact_id) if subscription.payer_contact_id else None
-        _print(
-            "subscription="
-            f"{subscription.id}|plan={plan.name}|kind={getattr(plan.kind, 'value', plan.kind)}|"
-            f"student={student.first_name if student else '-'} {student.last_name if student else ''}|"
-            f"payer={payer.first_name if payer else '-'} {payer.last_name if payer else ''}|"
-            f"status={getattr(subscription.status, 'value', subscription.status)}|billing_method={subscription.billing_method_code or '-'}|"
-            f"started_at={subscription.started_at}|next_payment_at={subscription.next_payment_at}|"
-            f"current_period={subscription.current_period_start}->{subscription.current_period_end}|auto_renew={subscription.auto_renew}"
-        )
-
-        rules = db.scalars(
-            select(ClientAutoInvoiceRule)
-            .where(ClientAutoInvoiceRule.user_id.in_(relevant_user_ids), ClientAutoInvoiceRule.status.in_(["ACTIVE", "PAUSED"]))
-            .order_by(ClientAutoInvoiceRule.updated_at.desc(), ClientAutoInvoiceRule.created_at.desc())
-        ).all()
-        _print(f"auto_invoice_rules={len(rules)}")
-        for rule in rules:
-            period_start, period_end = _period_for_rule(rule)
-            due_date = _due_date_for_rule(rule)
-            _print(
-                "auto_rule="
-                f"{rule.id}|client_id={rule.user_id}|status={rule.status}|cycle_start={rule.cycle_start_date}|"
-                f"frequency={rule.frequency}|timing={rule.billing_timing}|next_run={rule.next_run_date}|"
-                f"period={period_start}->{period_end}|due_rule={rule.due_date_rule_type}|offset={rule.due_date_days_offset}|due_date={due_date}"
-            )
-            occurrences = db.scalars(
-                select(ClientAutoInvoiceOccurrence)
-                .where(ClientAutoInvoiceOccurrence.rule_id == rule.id)
-                .order_by(ClientAutoInvoiceOccurrence.generated_at.desc())
-                .limit(3)
+                .select_from(Plan)
+                .join(PlanEntitlement, PlanEntitlement.plan_id == Plan.id)
+                .where(
+                    PlanEntitlement.course_type_id == course_type_id,
+                    Plan.active.is_(True),
+                    Plan.is_private.is_(False),
+                )
+                .order_by(Plan.name.asc())
             ).all()
-            for occurrence in occurrences:
+            _print(f"exact_public_plans_for_{name}={len(exact_public_plans)}")
+            for plan_id, plan_code, plan_name, kind, active, is_private in exact_public_plans:
                 _print(
-                    "occurrence="
-                    f"{occurrence.cycle_key}|period={occurrence.period_start_date}->{occurrence.period_end_date}|"
-                    f"status={occurrence.status}|note_id={occurrence.note_id or '-'}|generated_at={occurrence.generated_at}"
+                    "exact_public_plan="
+                    f"{plan_id}|code={plan_code}|name={plan_name}|kind={getattr(kind, 'value', kind)}|"
+                    f"active={active}|private={is_private}"
                 )
 
-        notes = db.scalars(
-            select(ClientNoteEntry)
-            .where(ClientNoteEntry.user_id.in_(relevant_user_ids))
-            .order_by(ClientNoteEntry.created_at.desc())
-            .limit(80)
-        ).all()
-        september_invoices = []
-        for note in notes:
-            metadata = _parse_invoice_range_note_entry(note)
-            if not metadata:
-                continue
-            if (
-                str(metadata.get("issued_date") or "").startswith("2026-09")
-                or str(metadata.get("start_date") or "").startswith("2026-09")
-                or str(metadata.get("auto_cycle_start_date") or "").startswith("2026-09")
-            ):
-                september_invoices.append((note, metadata))
-        _print(f"september_invoice_notes={len(september_invoices)}")
-        for note, metadata in september_invoices[:5]:
+            entitlement_rows = db.execute(
+                select(
+                    Plan.id,
+                    Plan.code,
+                    Plan.name,
+                    Plan.kind,
+                    Plan.active,
+                    Plan.is_private,
+                    Plan.options_json,
+                    PlanEntitlement.course_type_id,
+                    PlanCreditGrant.credit_type_id,
+                    PlanCreditGrant.credits_count,
+                )
+                .select_from(Plan)
+                .join(PlanEntitlement, PlanEntitlement.plan_id == Plan.id, isouter=True)
+                .join(PlanCreditGrant, PlanCreditGrant.plan_id == Plan.id, isouter=True)
+                .where(
+                    or_(
+                        PlanEntitlement.course_type_id == course_type_id,
+                        PlanCreditGrant.credit_type_id == credit_type_id if credit_type_id is not None else false(),
+                        func.lower(Plan.name).like("%studio%"),
+                        func.lower(Plan.code).like("%studio%"),
+                    )
+                )
+                .order_by(Plan.name.asc())
+            ).all()
+            _print(f"matching_plan_rows_for_{name}={len(entitlement_rows)}")
+            for prow in entitlement_rows:
+                (
+                    plan_id,
+                    plan_code,
+                    plan_name,
+                    kind,
+                    active,
+                    is_private,
+                    options_json,
+                    entitlement_course_type_id,
+                    grant_credit_type_id,
+                    grant_credits_count,
+                ) = prow
+                _print(
+                    "plan_row="
+                    f"{plan_id}|code={plan_code}|name={plan_name}|kind={getattr(kind, 'value', kind)}|"
+                    f"active={active}|private={is_private}|options={options_json}|"
+                    f"entitlement_course_type_id={entitlement_course_type_id or '-'}|"
+                    f"grant_credit_type_id={grant_credit_type_id or '-'}|grant_credits_count={grant_credits_count or 0}"
+                )
+
+            formula_options = _active_formula_options_for_course_type(
+                db,
+                course_type_id=course_type_id,
+                course_type_name=name,
+                course_type_service_code=service_code,
+                credit_type_id=credit_type_id,
+                allowed_plan_kinds={PlanKind.PACK, PlanKind.SUBSCRIPTION, PlanKind.FORFAIT},
+            )
             _print(
-                "invoice="
-                f"{metadata.get('invoice_number') or '-'}|mode={metadata.get('generation_mode') or '-'}|"
-                f"issued={metadata.get('issued_date') or '-'}|due={metadata.get('due_date') or '-'}|"
-                f"period={metadata.get('start_date') or '-'}->{metadata.get('end_date') or '-'}|"
-                f"auto_cycle={metadata.get('auto_cycle_start_date') or '-'}|note_id={note.id}"
+                f"formula_options_for_{name}="
+                + (
+                    ",".join(
+                        f"{option.formula_code}:{option.name}:{getattr(option.formula_type, 'value', option.formula_type)}"
+                        for option in formula_options
+                    )
+                    or "-"
+                )
+            )
+
+        now = datetime.now(timezone.utc)
+        upcoming_sessions = db.execute(
+            select(CourseSession, CourseType, Location)
+            .join(CourseType, CourseType.id == CourseSession.course_type_id)
+            .join(Location, Location.id == CourseSession.location_id)
+            .where(
+                func.lower(CourseType.name).like("%studio%"),
+                CourseSession.start_at_utc >= now - timedelta(days=3),
+                CourseSession.start_at_utc <= now + timedelta(days=30),
+            )
+            .order_by(CourseSession.start_at_utc.asc())
+        ).all()
+        _print(f"upcoming_studio_sessions={len(upcoming_sessions)}")
+        for session_obj, course_type, location in upcoming_sessions:
+            formula_options, direct_payment_amount, direct_payment_currency, session_booking_scopes = _session_purchase_catalog(
+                db,
+                session_obj=session_obj,
+                course_type=course_type,
+            )
+            _print(
+                "session="
+                f"{session_obj.id}|start_at_utc={session_obj.start_at_utc.isoformat()}|location={location.name}|"
+                f"course_type={course_type.name}|course_type_id={course_type.id}|"
+                f"credit_type_id={course_type.credit_type_id or '-'}|status={getattr(session_obj.status, 'value', session_obj.status)}|"
+                f"price={session_obj.external_booking_price_ttc or '-'} EUR|"
+                f"booking_scopes={','.join(scope.value for scope in resolve_session_booking_scopes(session_obj, allows_student_bookings=bool(course_type.allows_student_bookings)))}|"
+                f"catalog_scopes={','.join(scope.value for scope in session_booking_scopes)}|"
+                f"catalog_direct_payment={direct_payment_amount or '-'} {direct_payment_currency or '-'}|"
+                f"catalog_formulas={(','.join(option.formula_code for option in formula_options) or '-')}"
             )
 
 
