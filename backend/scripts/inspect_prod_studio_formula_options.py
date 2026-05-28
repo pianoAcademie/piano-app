@@ -1,150 +1,177 @@
 from __future__ import annotations
 
-import json
 import os
 import sys
-from collections import defaultdict
-from datetime import date, datetime, time, timezone
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from sqlalchemy import select
+from sqlalchemy import false, func, or_, select
 
+from app.api.routes.clients import _active_formula_options_for_course_type, _session_purchase_catalog
 from app.db.session import SessionLocal
-from app.models.catalog import CourseSession, CourseType, Location, SessionStatus
-from app.models.ops import AppSetting
-from app.models.quote import Quote, QuoteLine
-from app.services.quotes.quote_documents import (
-    QUOTE_SCHOOL_CALENDARS_SETTING_KEY,
-    _calendar_row_applies_to_session,
-    _expand_calendar_vacation_dates,
-    _is_true,
-    _json_list,
-    _json_object,
-    _parse_iso_date_set,
-)
+from app.models.catalog import CourseSession, CourseType, CreditType, Location
+from app.models.plan import Plan, PlanCreditGrant, PlanEntitlement, PlanKind
+from app.services.session_audience import resolve_session_booking_scopes
 
-PREFIX = "PROD_ASSAS_ADULT_COLLECTIVE_SERIES_INSPECT"
-QUOTE_NUMBER = "DV-20260528100238-F277"
-TARGET_DATES = (date(2027, 3, 31), date(2027, 5, 19))
+SCRIPT_PREFIX = "PROD_STUDIO_FORMULA_INSPECT"
 
 
-def p(line: str) -> None:
-    print(f"[{PREFIX}] {line}")
-
-
-def local_parts(session_obj: CourseSession) -> tuple[date, str, str]:
-    tz = ZoneInfo(session_obj.timezone or "Europe/Paris")
-    start = session_obj.start_at_utc.astimezone(tz)
-    end = session_obj.end_at_utc.astimezone(tz)
-    return start.date(), start.strftime("%H:%M"), end.strftime("%H:%M")
+def _print(line: str) -> None:
+    print(f"[{SCRIPT_PREFIX}] {line}")
 
 
 def main() -> None:
     with SessionLocal() as db:
-        quote = db.scalar(select(Quote).where(Quote.quote_number == QUOTE_NUMBER).limit(1))
-        if quote is None:
-            p(f"quote_not_found={QUOTE_NUMBER}")
-            return
-        snapshot = quote.calendar_snapshot or {}
-        p(
-            f"quote={quote.quote_number}|status={quote.status}|document_status={quote.document_status}|"
-            f"total={quote.total_ttc}|snapshot_sessions={len(snapshot.get('sessions') or [])}|blocks={len(snapshot.get('blocks') or [])}"
-        )
-        for idx, block in enumerate(snapshot.get("blocks") or [], start=1):
-            if not isinstance(block, dict):
-                continue
-            p(
-                f"block#{idx}|activity={block.get('activity_label')}|location={block.get('location_label')}|"
-                f"series_key={block.get('series_key')}|start={block.get('start_date')}|end={block.get('end_date')}|"
-                f"time={block.get('start_time')}-{block.get('end_time')}|weekday={block.get('weekday')}|"
-                f"count={block.get('sessions_count')}|limit={block.get('planning_session_limit')}"
+        studio_course_types = db.execute(
+            select(
+                CourseType.id,
+                CourseType.name,
+                CourseType.service_code,
+                CourseType.credit_type_id,
+                CreditType.code,
+                CreditType.name,
             )
+            .join(CreditType, CreditType.id == CourseType.credit_type_id, isouter=True)
+            .where(func.lower(CourseType.name).like("%studio%"))
+            .order_by(CourseType.name.asc())
+        ).all()
 
-        for line in db.scalars(select(QuoteLine).where(QuoteLine.quote_id == quote.id).order_by(QuoteLine.sort_order.asc())):
-            p(
-                f"line={line.id}|title={line.title}|activity={line.activity_id}|category={line.line_category}|"
-                f"type={line.line_type}|quantity={line.quantity}|unit_price_ttc={line.unit_price_ttc}|amount_ttc={line.amount_ttc}|meta={line.meta}"
-            )
-
-        target_block = next(
-            (
-                block
-                for block in snapshot.get("blocks") or []
-                if isinstance(block, dict)
-                and str(block.get("location_label") or "").lower().find("assas") >= 0
-                and str(block.get("start_time") or "") == "19:00"
-            ),
-            None,
-        )
-        if not isinstance(target_block, dict):
-            p("target_block_not_found")
+        if not studio_course_types:
+            _print("no studio course types found")
             return
 
-        course_id = str(target_block.get("activity_id") or "").strip()
-        location_id = str(target_block.get("location_id") or "").strip()
-        series_key = str(target_block.get("series_key") or "").strip()
-        course = db.scalar(select(CourseType).where(CourseType.id == course_id).limit(1))
-        location = db.scalar(select(Location).where(Location.id == location_id).limit(1))
-        p(
-            f"target course={course.id if course else '-'}|course_name={course.name if course else '-'}|"
-            f"location={location.id if location else '-'}|location_name={location.name if location else '-'}|series={series_key}"
-        )
+        _print(f"studio_course_types={len(studio_course_types)}")
+        for row in studio_course_types:
+            course_type_id, name, service_code, credit_type_id, credit_code, credit_name = row
+            _print(
+                "course_type="
+                f"{course_type_id}|name={name}|service_code={service_code or '-'}|"
+                f"credit_type_id={credit_type_id or '-'}|credit_type_code={credit_code or '-'}|credit_type_name={credit_name or '-'}"
+            )
 
-        setting = db.scalar(select(AppSetting).where(AppSetting.key == QUOTE_SCHOOL_CALENDARS_SETTING_KEY))
-        rows = _json_list(json.loads(setting.value or "[]")) if setting else []
-        for target in TARGET_DATES:
-            p(f"date={target.isoformat()}")
-            blockers = 0
-            for idx, raw in enumerate(rows, start=1):
-                row = _json_object(raw)
-                if not _is_true(row.get("is_active", True)):
-                    continue
-                applies = _calendar_row_applies_to_session(row, location_id=location_id, session_date=target)
-                holidays = target in _parse_iso_date_set(row.get("holiday_dates"))
-                closures = target in _parse_iso_date_set(row.get("closure_dates"))
-                vacations = target in _expand_calendar_vacation_dates(row)
-                if applies and (holidays or closures or vacations):
-                    blockers += 1
-                    p(
-                        f"blocker idx={idx}|name={row.get('name')}|holiday={holidays}|closure={closures}|vacation={vacations}|"
-                        f"holiday_dates={row.get('holiday_dates')}|closure_dates={row.get('closure_dates')}|vacation_periods={row.get('vacation_periods')}"
+            exact_public_plans = db.execute(
+                select(
+                    Plan.id,
+                    Plan.code,
+                    Plan.name,
+                    Plan.kind,
+                    Plan.active,
+                    Plan.is_private,
+                )
+                .select_from(Plan)
+                .join(PlanEntitlement, PlanEntitlement.plan_id == Plan.id)
+                .where(
+                    PlanEntitlement.course_type_id == course_type_id,
+                    Plan.active.is_(True),
+                    Plan.is_private.is_(False),
+                )
+                .order_by(Plan.name.asc())
+            ).all()
+            _print(f"exact_public_plans_for_{name}={len(exact_public_plans)}")
+            for plan_id, plan_code, plan_name, kind, active, is_private in exact_public_plans:
+                _print(
+                    "exact_public_plan="
+                    f"{plan_id}|code={plan_code}|name={plan_name}|kind={getattr(kind, 'value', kind)}|"
+                    f"active={active}|private={is_private}"
+                )
+
+            entitlement_rows = db.execute(
+                select(
+                    Plan.id,
+                    Plan.code,
+                    Plan.name,
+                    Plan.kind,
+                    Plan.active,
+                    Plan.is_private,
+                    Plan.options_json,
+                    PlanEntitlement.course_type_id,
+                    PlanCreditGrant.credit_type_id,
+                    PlanCreditGrant.credits_count,
+                )
+                .select_from(Plan)
+                .join(PlanEntitlement, PlanEntitlement.plan_id == Plan.id, isouter=True)
+                .join(PlanCreditGrant, PlanCreditGrant.plan_id == Plan.id, isouter=True)
+                .where(
+                    or_(
+                        PlanEntitlement.course_type_id == course_type_id,
+                        PlanCreditGrant.credit_type_id == credit_type_id if credit_type_id is not None else false(),
+                        func.lower(Plan.name).like("%studio%"),
+                        func.lower(Plan.code).like("%studio%"),
                     )
-            if blockers == 0:
-                p(f"no_calendar_blocker date={target.isoformat()}")
+                )
+                .order_by(Plan.name.asc())
+            ).all()
+            _print(f"matching_plan_rows_for_{name}={len(entitlement_rows)}")
+            for prow in entitlement_rows:
+                (
+                    plan_id,
+                    plan_code,
+                    plan_name,
+                    kind,
+                    active,
+                    is_private,
+                    options_json,
+                    entitlement_course_type_id,
+                    grant_credit_type_id,
+                    grant_credits_count,
+                ) = prow
+                _print(
+                    "plan_row="
+                    f"{plan_id}|code={plan_code}|name={plan_name}|kind={getattr(kind, 'value', kind)}|"
+                    f"active={active}|private={is_private}|options={options_json}|"
+                    f"entitlement_course_type_id={entitlement_course_type_id or '-'}|"
+                    f"grant_credit_type_id={grant_credit_type_id or '-'}|grant_credits_count={grant_credits_count or 0}"
+                )
 
-        tz = ZoneInfo((location.timezone if location else None) or "Europe/Paris")
-        start_utc = datetime.combine(date(2026, 9, 1), time.min, tzinfo=tz).astimezone(timezone.utc)
-        end_utc = datetime.combine(date(2027, 6, 30), time.max, tzinfo=tz).astimezone(timezone.utc)
-        sessions = db.scalars(
-            select(CourseSession)
+            formula_options = _active_formula_options_for_course_type(
+                db,
+                course_type_id=course_type_id,
+                course_type_name=name,
+                course_type_service_code=service_code,
+                credit_type_id=credit_type_id,
+                allowed_plan_kinds={PlanKind.PACK, PlanKind.SUBSCRIPTION, PlanKind.FORFAIT},
+            )
+            _print(
+                f"formula_options_for_{name}="
+                + (
+                    ",".join(
+                        f"{option.formula_code}:{option.name}:{getattr(option.formula_type, 'value', option.formula_type)}"
+                        for option in formula_options
+                    )
+                    or "-"
+                )
+            )
+
+        now = datetime.now(timezone.utc)
+        upcoming_sessions = db.execute(
+            select(CourseSession, CourseType, Location)
+            .join(CourseType, CourseType.id == CourseSession.course_type_id)
+            .join(Location, Location.id == CourseSession.location_id)
             .where(
-                CourseSession.course_type_id == course.id,
-                CourseSession.location_id == location.id,
-                CourseSession.status == SessionStatus.SCHEDULED,
-                CourseSession.start_at_utc >= start_utc,
-                CourseSession.start_at_utc <= end_utc,
+                func.lower(CourseType.name).like("%studio%"),
+                CourseSession.start_at_utc >= now - timedelta(days=3),
+                CourseSession.start_at_utc <= now + timedelta(days=30),
             )
             .order_by(CourseSession.start_at_utc.asc())
-        ).all() if course is not None and location is not None else []
-
-        by_group: dict[str, list[CourseSession]] = defaultdict(list)
-        for session_obj in sessions:
-            by_group[str(session_obj.recurrence_group_id or session_obj.id)].append(session_obj)
-        p(f"sessions_total={len(sessions)}|groups={len(by_group)}")
-        for group_id, group_sessions in sorted(by_group.items(), key=lambda item: min(local_parts(row)[0] for row in item[1])):
-            target_rows = [
-                row for row in group_sessions
-                if local_parts(row)[0].weekday() == 2 and local_parts(row)[1:] == ("19:00", "20:00")
-            ]
-            if not target_rows:
-                continue
-            dates = [local_parts(row)[0] for row in target_rows]
-            p(
-                f"group={group_id}|count={len(target_rows)}|first={min(dates)}|last={max(dates)}|"
-                f"untils={','.join(sorted({str(row.recurrence_until_date or '-') for row in target_rows}))}|"
-                f"dates={','.join(day.isoformat() for day in dates)}"
+        ).all()
+        _print(f"upcoming_studio_sessions={len(upcoming_sessions)}")
+        for session_obj, course_type, location in upcoming_sessions:
+            formula_options, direct_payment_amount, direct_payment_currency, session_booking_scopes = _session_purchase_catalog(
+                db,
+                session_obj=session_obj,
+                course_type=course_type,
+            )
+            _print(
+                "session="
+                f"{session_obj.id}|start_at_utc={session_obj.start_at_utc.isoformat()}|location={location.name}|"
+                f"course_type={course_type.name}|course_type_id={course_type.id}|"
+                f"credit_type_id={course_type.credit_type_id or '-'}|status={getattr(session_obj.status, 'value', session_obj.status)}|"
+                f"price={session_obj.external_booking_price_ttc or '-'} EUR|"
+                f"booking_scopes={','.join(scope.value for scope in resolve_session_booking_scopes(session_obj, allows_student_bookings=bool(course_type.allows_student_bookings)))}|"
+                f"catalog_scopes={','.join(scope.value for scope in session_booking_scopes)}|"
+                f"catalog_direct_payment={direct_payment_amount or '-'} {direct_payment_currency or '-'}|"
+                f"catalog_formulas={(','.join(option.formula_code for option in formula_options) or '-')}"
             )
 
 
