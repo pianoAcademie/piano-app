@@ -49,7 +49,7 @@ def upgrade() -> None:
               AND cmt.status = 'PENDING'
               AND cmt.total_incl_vat = 200.00
               AND cmt.label LIKE 'Acompte preinscription - DV-20260529064557-3592%'
-              AND coalesce(cmt.reference, '') LIKE 'QUOTE:%:DEPOSIT'
+              AND coalesce(cmt.reference, '') LIKE concat('QUOTE', chr(58), '%', chr(58), 'DEPOSIT')
             )
           )
         """
