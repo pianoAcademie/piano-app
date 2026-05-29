@@ -218,8 +218,9 @@ class QuoteCreateRequest(BaseModel):
 
 
 class QuoteDuplicateForChildRequest(BaseModel):
-    first_name: str = Field(min_length=1, max_length=120)
-    last_name: str = Field(min_length=1, max_length=120)
+    child_client_id: UUID | None = None
+    first_name: str | None = Field(default=None, max_length=120)
+    last_name: str | None = Field(default=None, max_length=120)
     birth_date: date | None = None
     notes: str | None = None
 

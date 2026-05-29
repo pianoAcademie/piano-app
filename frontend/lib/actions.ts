@@ -12301,6 +12301,7 @@ export async function duplicateQuoteForChildAction(formData: FormData): Promise<
   const quoteId = String(formData.get("quote_id") ?? "").trim();
   const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
   const successReturnTo = withUiLanguage(returnTo, language);
+  const childClientId = parseUuid(String(formData.get("child_client_id") ?? ""));
   const firstName = String(formData.get("child_first_name") ?? "").trim();
   const lastName = String(formData.get("child_last_name") ?? "").trim();
   const birthDate = parseDateOnly(String(formData.get("child_birth_date") ?? ""));
@@ -12308,7 +12309,7 @@ export async function duplicateQuoteForChildAction(formData: FormData): Promise<
   if (!quoteId) {
     redirect(withUiMessageCode(successReturnTo, "error", "quote_not_found", { lang: language }));
   }
-  if (!firstName || !lastName) {
+  if (!childClientId && (!firstName || !lastName)) {
     redirect(withUiMessageCode(successReturnTo, "error", "invalid_prospect_fields", { lang: language }));
   }
 
@@ -12317,6 +12318,7 @@ export async function duplicateQuoteForChildAction(formData: FormData): Promise<
     {
       method: "POST",
       body: JSON.stringify({
+        child_client_id: childClientId,
         first_name: firstName,
         last_name: lastName,
         birth_date: birthDate,

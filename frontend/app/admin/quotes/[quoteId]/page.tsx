@@ -2269,6 +2269,13 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     ? prospectDetailResult.data
     : selectedProspectFromList || null;
   const clientFamily = clientFamilyResult && clientFamilyResult.ok ? clientFamilyResult.data : null;
+  const firstLinkedAdultId = selectedClient?.client_kind === "CHILD"
+    ? clientFamily?.links_as_child[0]?.adult.id ?? null
+    : null;
+  const parentClientFamilyResult = firstLinkedAdultId
+    ? await backendRequest<AdminClientFamilyOut>(`/api/v1/admin/clients/${encodeURIComponent(firstLinkedAdultId)}/family`, {}, token)
+    : null;
+  const parentClientFamily = parentClientFamilyResult && parentClientFamilyResult.ok ? parentClientFamilyResult.data : null;
 
   const owner = detail.quote.context_type === "acquisition"
     ? selectedProspect
@@ -2319,6 +2326,18 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
       })),
     ]
     : [];
+  const existingFamilyChildren = (
+    selectedClient?.client_kind === "ADULT"
+      ? clientFamily?.links_as_adult.map((link) => link.child) ?? []
+      : parentClientFamily?.links_as_adult.map((link) => link.child) ?? []
+  )
+    .filter((child) => child.id !== selectedClient?.id)
+    .filter((child, index, rows) => rows.findIndex((row) => row.id === child.id) === index)
+    .sort((a, b) => displayName(a.first_name, a.last_name, a.email, language).localeCompare(
+      displayName(b.first_name, b.last_name, b.email, language),
+      language === "fr" ? "fr" : "en",
+      { sensitivity: "base" },
+    ));
   const inferredParentFromFamily = clientFamily
     ? (clientFamily.links_as_child.find((link) => link.is_billing_recipient) ?? clientFamily.links_as_child[0] ?? null)
     : null;
@@ -3227,6 +3246,39 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                   ) : null}
                 </article>
               </div>
+              {selectedClient && existingFamilyChildren.length > 0 ? (
+                <article className="item top-gap-sm">
+                  <div className="row spread wrap gap-sm">
+                    <div>
+                      <h4>{t("admin.quote_detail.existing_child_quote_title")}</h4>
+                      <p className="muted">{t("admin.quote_detail.existing_child_quote_help")}</p>
+                    </div>
+                  </div>
+                  <form action={duplicateQuoteForChildAction} className="grid cols-2 top-gap-sm">
+                    <input type="hidden" name="quote_id" value={detail.quote.id} />
+                    <input type="hidden" name="return_to" value={selfPath} />
+                    <label>
+                      {t("admin.quote_detail.existing_child_select")}
+                      <select name="child_client_id" required defaultValue="">
+                        <option value="">{t("common.select")}</option>
+                        {existingFamilyChildren.map((child) => (
+                          <option key={child.id} value={child.id}>
+                            {displayName(child.first_name, child.last_name, child.email, language)}
+                            {child.email ? ` - ${child.email}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      {t("admin.quote_detail.sibling_notes")}
+                      <input type="text" name="notes" defaultValue={t("admin.quote_detail.sibling_default_note", { quote: detail.quote.quote_number })} />
+                    </label>
+                    <div className="row wrap gap-sm">
+                      <button type="submit">{t("admin.quote_detail.existing_child_create_quote")}</button>
+                    </div>
+                  </form>
+                </article>
+              ) : null}
               {selectedProspect && isChildSource ? (
                 <article className="item top-gap-sm">
                   <div className="row spread wrap gap-sm">

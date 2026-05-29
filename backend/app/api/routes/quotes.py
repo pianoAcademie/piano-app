@@ -6020,10 +6020,149 @@ def duplicate_quote_for_child(
 ) -> QuoteDetailOut:
     source = _load_quote(db, quote_id)
     lines = _load_quote_lines(db, quote_id)
-    parent, source_child = _quote_source_parent_for_sibling(db, source)
     now = _utcnow()
-    child_first_name = payload.first_name.strip()
-    child_last_name = payload.last_name.strip()
+    if payload.child_client_id is not None:
+        child_client = db.scalar(select(User).where(User.id == payload.child_client_id))
+        if child_client is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Child client not found")
+        if child_client.client_kind != ClientKind.CHILD:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Target client must be a child")
+        if source.client_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Existing child duplication is only available from a client quote",
+            )
+        source_family_link = db.scalar(
+            select(ClientFamilyLink)
+            .where(or_(ClientFamilyLink.adult_user_id == source.client_id, ClientFamilyLink.child_user_id == source.client_id))
+            .limit(1)
+        )
+        if source_family_link is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Source client has no family link")
+        source_adult_ids = {
+            row[0]
+            for row in db.execute(
+                select(ClientFamilyLink.adult_user_id).where(
+                    or_(ClientFamilyLink.child_user_id == source.client_id, ClientFamilyLink.adult_user_id == source.client_id)
+                )
+            ).all()
+        }
+        if source.client_id in source_adult_ids:
+            source_adult_ids.add(source.client_id)
+        source_adult_ids.update(
+            row[0]
+            for row in db.execute(
+                select(ClientFamilyLink.adult_user_id).where(ClientFamilyLink.child_user_id == source.client_id)
+            ).all()
+        )
+        shares_family = db.scalar(
+            select(ClientFamilyLink.id)
+            .where(
+                ClientFamilyLink.child_user_id == child_client.id,
+                ClientFamilyLink.adult_user_id.in_(source_adult_ids),
+            )
+            .limit(1)
+        ) is not None
+        if not shares_family:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Target child is not linked to the same family")
+
+        clone = Quote(
+            quote_number=_new_quote_number(),
+            context_type=source.context_type,
+            quote_type=source.quote_type,
+            quote_type_id=source.quote_type_id,
+            pricing_catalog_id=source.pricing_catalog_id,
+            prospect_id=None,
+            client_id=child_client.id,
+            location_id=source.location_id,
+            legal_entity_id=source.legal_entity_id,
+            payment_plan_id=source.payment_plan_id,
+            quote_template_id=source.quote_template_id,
+            quote_template_version_id=source.quote_template_version_id,
+            terms_template_id=source.terms_template_id,
+            terms_template_version_id=source.terms_template_version_id,
+            status="created",
+            version_number=1,
+            parent_quote_id=source.id,
+            currency=source.currency,
+            total_ttc=source.total_ttc,
+            expiry_days=source.expiry_days,
+            expires_at=None,
+            school_year_label=source.school_year_label,
+            language=source.language,
+            vat_rate=source.vat_rate,
+            estimated_solfege_level=source.estimated_solfege_level,
+            solfege_duration_minutes=source.solfege_duration_minutes,
+            selected_solfege_slot=deepcopy(source.selected_solfege_slot or {}),
+            calendar_snapshot=deepcopy(source.calendar_snapshot or {}),
+            payment_terms_snapshot=deepcopy(source.payment_terms_snapshot or {}),
+            cgv_snapshot=deepcopy(source.cgv_snapshot or {}),
+            price_snapshot=deepcopy(source.price_snapshot or {}),
+            meta={
+                **_json_object(source.meta),
+                "duplicated_from": str(source.id),
+                "duplicated_for_child_client_id": str(child_client.id),
+                "duplicated_for_child_name": _user_display_label(child_client),
+            },
+            created_by_user_id=current_user.id,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(clone)
+        db.flush()
+
+        for line in lines:
+            db.add(
+                QuoteLine(
+                    quote_id=clone.id,
+                    line_category=line.line_category,
+                    line_type=line.line_type,
+                    master_item_type=line.master_item_type,
+                    master_item_id=line.master_item_id,
+                    activity_id=line.activity_id,
+                    product_id=line.product_id,
+                    kit_id=line.kit_id,
+                    code=line.code,
+                    title=line.title,
+                    description=line.description,
+                    duration_minutes=line.duration_minutes,
+                    pricing_unit=line.pricing_unit,
+                    quantity=line.quantity,
+                    vat_rate=line.vat_rate,
+                    unit_price_ht=line.unit_price_ht,
+                    unit_vat_amount=line.unit_vat_amount,
+                    unit_price_ttc=line.unit_price_ttc,
+                    amount_ht=line.amount_ht,
+                    amount_vat=line.amount_vat,
+                    amount_ttc=line.amount_ttc,
+                    sort_order=line.sort_order,
+                    meta=deepcopy(line.meta or {}),
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+
+        db.add(
+            QuoteEvent(
+                quote_id=clone.id,
+                event_type="quote_duplicated_for_child",
+                actor_type="admin",
+                actor_id=current_user.id,
+                payload={
+                    "source_quote_id": str(source.id),
+                    "child_client_id": str(child_client.id),
+                },
+            )
+        )
+        db.commit()
+        db.refresh(clone)
+        return _quote_detail_out(db, clone)
+
+    parent, source_child = _quote_source_parent_for_sibling(db, source)
+    child_first_name = (payload.first_name or "").strip()
+    child_last_name = (payload.last_name or "").strip()
+    if not child_first_name or not child_last_name:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Child first name and last name are required")
     child_birth_date = payload.birth_date.isoformat() if payload.birth_date is not None else None
 
     child_meta: dict[str, object] = {
