@@ -5273,15 +5273,17 @@ def list_quotes_page(
         ]
         total = len(filtered_rows)
         page_rows = filtered_rows[offset : offset + page_size]
+        stats_rows = filtered_rows
     else:
         total = int(db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0)
         page_rows = db.scalars(stmt.order_by(Quote.created_at.desc()).offset(offset).limit(page_size)).all()
+        stats_rows = db.scalars(stmt.order_by(Quote.created_at.desc())).all()
     return QuoteListPageOut(
         items=[_quote_out(row) for row in page_rows],
         total=total,
         page=page,
         page_size=page_size,
-        stats=_quote_admin_stats(page_rows),
+        stats=_quote_admin_stats(stats_rows),
     )
 
 
