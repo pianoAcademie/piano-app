@@ -309,32 +309,43 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
                   <input type="hidden" name="language" value={language} />
                   {shouldShowSolfegeSelector && solfegeSelection ? (
                     <section className="quote-public-solfege-box">
-                      <strong>{t("quote_public.solfege_title")}</strong>
-                      <p className="muted">{t("quote_public.solfege_help")}</p>
-                      {solfegeSelection.level_code ? (
-                        <p className="muted">{t("quote_public.solfege_level", { level: solfegeSelection.level_code })}</p>
-                      ) : null}
-                      {solfegeSelection.duration_minutes ? (
-                        <p className="muted">{t("quote_public.solfege_duration", { duration: solfegeSelection.duration_minutes })}</p>
-                      ) : null}
+                      <div className="quote-public-solfege-header">
+                        <div>
+                          <span className="quote-public-solfege-kicker">{t("quote_public.solfege_kicker")}</span>
+                          <strong>{t("quote_public.solfege_title")}</strong>
+                        </div>
+                        <span className="quote-public-solfege-badge">
+                          {t(solfegeSelection.required ? "quote_public.solfege_required_badge" : "quote_public.solfege_optional_badge")}
+                        </span>
+                      </div>
+                      <p className="quote-public-solfege-help">{t("quote_public.solfege_help")}</p>
+                      <div className="quote-public-solfege-meta">
+                        {solfegeSelection.level_code ? (
+                          <span>{t("quote_public.solfege_level", { level: solfegeSelection.level_code })}</span>
+                        ) : null}
+                        {solfegeSelection.duration_minutes ? (
+                          <span>{t("quote_public.solfege_duration", { duration: solfegeSelection.duration_minutes })}</span>
+                        ) : null}
+                      </div>
                       <input type="hidden" name="solfege_slot_required" value={solfegeSelection.required ? "1" : "0"} />
-                      <label>
-                        {t("quote_public.solfege_slot_label")}
-                        <select
-                          name="selected_solfege_slot_key"
-                          defaultValue={solfegeSelection.selected_key ?? ""}
-                          required={solfegeSelection.required}
-                        >
-                          {solfegeSelection.required && !solfegeSelection.selected_key ? (
-                            <option value="">{t("quote_public.solfege_slot_placeholder")}</option>
-                          ) : null}
-                          {solfegeSelection.available_slots.map((option) => (
-                            <option key={option.key} value={option.key}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                      <fieldset className="quote-public-solfege-options">
+                        <legend>{t("quote_public.solfege_slot_label")}</legend>
+                        {solfegeSelection.available_slots.map((option) => (
+                          <label key={option.key} className="quote-public-solfege-option">
+                            <input
+                              type="radio"
+                              name="selected_solfege_slot_key"
+                              value={option.key}
+                              defaultChecked={option.key === solfegeSelection.selected_key}
+                              required={solfegeSelection.required}
+                            />
+                            <span className="quote-public-solfege-option-main">
+                              <span className="quote-public-solfege-option-title">{option.label}</span>
+                              <span className="quote-public-solfege-option-helper">{t("quote_public.solfege_option_helper")}</span>
+                            </span>
+                          </label>
+                        ))}
+                      </fieldset>
                       {solfegeSelection.selected_label ? (
                         <p className="muted">{t("quote_public.solfege_selected_hint", { slot: solfegeSelection.selected_label })}</p>
                       ) : null}
