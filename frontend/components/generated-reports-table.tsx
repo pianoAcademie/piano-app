@@ -98,26 +98,22 @@ export function GeneratedReportsTable({
   };
 
   const preventEmptyBulkDelete = (event: FormEvent<HTMLFormElement>): void => {
-    const submitter = (event.nativeEvent as SubmitEvent).submitter;
-    if (submitter instanceof HTMLButtonElement && submitter.name === "report_id") {
-      return;
-    }
     if (selectedIds.size === 0) {
       event.preventDefault();
     }
   };
 
   return (
-    <form action={deleteManyAction} onSubmit={preventEmptyBulkDelete}>
-      <input type="hidden" name="return_to" value="/admin/reporting" />
-      {Array.from(selectedIds).map((reportId) => (
-        <input key={reportId} type="hidden" name="report_ids" value={reportId} />
-      ))}
-      <div className="form-actions top-gap-sm">
+    <>
+      <form action={deleteManyAction} onSubmit={preventEmptyBulkDelete} className="form-actions top-gap-sm">
+        <input type="hidden" name="return_to" value="/admin/reporting" />
+        {Array.from(selectedIds).map((reportId) => (
+          <input key={reportId} type="hidden" name="report_ids" value={reportId} />
+        ))}
         <button className="danger-button" type="submit" disabled={selectedIds.size === 0}>
           Supprimer la selection
         </button>
-      </div>
+      </form>
       <div className="table-wrap top-gap-sm">
         <table className="data-table">
           <thead>
@@ -173,9 +169,13 @@ export function GeneratedReportsTable({
                     <Link className="button-link" href={`/admin/reporting/generated/${encodeURIComponent(row.id)}/download`}>
                       {row.file_format.toUpperCase() === "XLSX" ? "Telecharger Excel" : labels.downloadPdf}
                     </Link>
-                    <button className="danger-button" type="submit" name="report_id" value={row.id} formAction={deleteOneAction}>
-                      Supprimer
-                    </button>
+                    <form action={deleteOneAction}>
+                      <input type="hidden" name="return_to" value="/admin/reporting" />
+                      <input type="hidden" name="report_id" value={row.id} />
+                      <button className="danger-button" type="submit">
+                        Supprimer
+                      </button>
+                    </form>
                   </div>
                 </td>
               </tr>
@@ -204,6 +204,6 @@ export function GeneratedReportsTable({
           </button>
         </div>
       </div>
-    </form>
+    </>
   );
 }
