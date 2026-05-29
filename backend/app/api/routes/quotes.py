@@ -9246,10 +9246,186 @@ def _quote_deposit_invoice_breakdown(
     return deposit_amount_ttc, amount_ht, vat_rate, vat_amount
 
 
+def _parse_quote_invoice_range_note_entry(note: ClientNoteEntry) -> dict[str, object] | None:
+    message = (note.message or "").strip()
+    prefix_index = message.find("INVOICE_RANGE::")
+    if prefix_index < 0:
+        return None
+    raw_payload = message[prefix_index + len("INVOICE_RANGE::") :].strip()
+    if not raw_payload:
+        return None
+    try:
+        parsed = json.loads(raw_payload)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _quote_deposit_preserved_payment_ids(followup: QuoteAcceptanceFollowup, *, quote: Quote) -> list[UUID]:
+    payload = _quote_followup_payload(followup)
+    rows = _json_list(payload.get("preserved_deposit_payments"))
+    quote_id_text = str(quote.id)
+    school_year = (quote.school_year_label or "").strip().lower()
+    result: list[UUID] = []
+    seen: set[UUID] = set()
+    for raw_row in rows:
+        row = _json_object(raw_row)
+        if str(row.get("quote_id") or "") != quote_id_text:
+            continue
+        if school_year and str(row.get("school_year_label") or "").strip().lower() != school_year:
+            continue
+        payment_id = _parse_uuid_value(row.get("payment_transaction_id"))
+        if payment_id is None or payment_id in seen:
+            continue
+        seen.add(payment_id)
+        result.append(payment_id)
+    return result
+
+
+def _remember_quote_deposit_payments_from_note(
+    followup: QuoteAcceptanceFollowup,
+    *,
+    quote: Quote,
+    note: ClientNoteEntry,
+) -> None:
+    metadata = _parse_quote_invoice_range_note_entry(note)
+    if not metadata:
+        return
+    if str(metadata.get("source_quote_id") or "") != str(quote.id):
+        return
+    if str(metadata.get("invoice_status") or "").strip().upper() != "PAID":
+        return
+    school_year = (quote.school_year_label or "").strip()
+    if school_year and str(metadata.get("source_school_year_label") or "").strip().lower() != school_year.lower():
+        return
+
+    payment_ids = [_parse_uuid_value(item) for item in _json_list(metadata.get("reconciled_manual_payment_ids"))]
+    payment_ids = [payment_id for payment_id in payment_ids if payment_id is not None]
+    if not payment_ids:
+        payment_id = _parse_uuid_value(metadata.get("payment_transaction_id"))
+        if payment_id is not None:
+            payment_ids = [payment_id]
+    if not payment_ids:
+        return
+
+    payload = _quote_followup_payload(followup)
+    rows = _json_list(payload.get("preserved_deposit_payments"))
+    existing_keys = {
+        (
+            str(_json_object(row).get("quote_id") or ""),
+            str(_json_object(row).get("school_year_label") or "").strip().lower(),
+            str(_json_object(row).get("payment_transaction_id") or ""),
+        )
+        for row in rows
+    }
+    for payment_id in payment_ids:
+        row = {
+            "quote_id": str(quote.id),
+            "quote_number": quote.quote_number,
+            "school_year_label": school_year,
+            "payment_transaction_id": str(payment_id),
+            "preserved_at": _utcnow().isoformat(),
+        }
+        key = (str(quote.id), school_year.lower(), str(payment_id))
+        if key not in existing_keys:
+            rows.append(row)
+            existing_keys.add(key)
+    payload["preserved_deposit_payments"] = rows
+    _set_quote_followup_payload(followup, payload)
+
+
+def _active_invoice_range_reconciled_payment_ids(db: Session, *, client_id: UUID) -> set[UUID]:
+    used: set[UUID] = set()
+    notes = db.scalars(select(ClientNoteEntry).where(ClientNoteEntry.user_id == client_id)).all()
+    for note in notes:
+        metadata = _parse_quote_invoice_range_note_entry(note)
+        if not metadata:
+            continue
+        if str(metadata.get("invoice_status") or "ISSUED").strip().upper() == "CANCELLED":
+            continue
+        for raw_value in _json_list(metadata.get("reconciled_manual_payment_ids")):
+            payment_id = _parse_uuid_value(raw_value)
+            if payment_id is not None:
+                used.add(payment_id)
+    return used
+
+
+def _find_reusable_followup_deposit_payment(
+    db: Session,
+    *,
+    quote: Quote,
+    followup: QuoteAcceptanceFollowup,
+    billing: User,
+    deposit_amount_ttc: Decimal,
+    currency: str,
+) -> ClientManualTransaction | None:
+    used_payment_ids = _active_invoice_range_reconciled_payment_ids(db, client_id=billing.id)
+    candidate_ids = _quote_deposit_preserved_payment_ids(followup, quote=quote)
+    if candidate_ids:
+        preserved_rows = db.scalars(
+            select(ClientManualTransaction)
+            .where(ClientManualTransaction.id.in_(candidate_ids))
+            .order_by(ClientManualTransaction.occurred_at.desc(), ClientManualTransaction.created_at.desc())
+        ).all()
+        for row in preserved_rows:
+            if row.id in used_payment_ids:
+                continue
+            if row.user_id != billing.id:
+                continue
+            if (row.transaction_type or "").strip().upper() != "PAYMENT":
+                continue
+            if (row.status or "").strip().upper() != "COMPLETED":
+                continue
+            if (row.currency or "EUR").strip().upper() != currency:
+                continue
+            if _q2(abs(Decimal(row.total_incl_vat or 0))) != deposit_amount_ttc:
+                continue
+            return row
+
+    school_year = (quote.school_year_label or "").strip()
+    if not school_year:
+        return None
+
+    created_at = quote.created_at
+    lower_bound = created_at - timedelta(days=45) if created_at is not None else None
+    upper_bound = _utcnow() + timedelta(days=1)
+    stmt = (
+        select(ClientManualTransaction)
+        .where(
+            ClientManualTransaction.user_id == billing.id,
+            ClientManualTransaction.transaction_type == "PAYMENT",
+            ClientManualTransaction.status == "COMPLETED",
+            ClientManualTransaction.total_incl_vat < 0,
+            func.upper(ClientManualTransaction.currency) == currency,
+            or_(
+                ClientManualTransaction.category == "INVOICE_RANGE_PUBLIC_PAYMENT",
+                ClientManualTransaction.category == "INVOICE_RANGE_ADMIN_BANK_TRANSFER",
+                ClientManualTransaction.category == "INVOICE_RANGE_BANK_TRANSFER",
+                ClientManualTransaction.label.ilike("Paiement en ligne facture %"),
+            ),
+        )
+        .order_by(ClientManualTransaction.occurred_at.desc(), ClientManualTransaction.created_at.desc())
+    )
+    for row in db.scalars(stmt).all():
+        if row.id in used_payment_ids:
+            continue
+        if quote.legal_entity_id is not None and row.legal_entity_id not in {None, quote.legal_entity_id}:
+            continue
+        if lower_bound is not None and row.occurred_at < lower_bound:
+            continue
+        if row.occurred_at > upper_bound:
+            continue
+        if _q2(abs(Decimal(row.total_incl_vat or 0))) != deposit_amount_ttc:
+            continue
+        return row
+    return None
+
+
 def _create_followup_deposit_invoice(
     db: Session,
     *,
     quote: Quote,
+    followup: QuoteAcceptanceFollowup,
     student: User,
     billing: User,
     current_user: User,
@@ -9279,6 +9455,15 @@ def _create_followup_deposit_invoice(
     legal_entity = db.scalar(select(LegalEntity).where(LegalEntity.id == quote.legal_entity_id)) if quote.legal_entity_id else None
     billing_entity = normalize_billing_entity(legal_entity.name if legal_entity is not None else None)
     currency = (quote.currency or "EUR").upper()
+    reusable_payment = _find_reusable_followup_deposit_payment(
+        db,
+        quote=quote,
+        followup=followup,
+        billing=billing,
+        deposit_amount_ttc=deposit_amount_ttc,
+        currency=currency,
+    )
+    reusable_payment_total = _q2(Decimal(reusable_payment.total_incl_vat or 0)) if reusable_payment is not None else None
 
     transaction = ClientManualTransaction(
         user_id=billing.id,
@@ -9326,10 +9511,32 @@ def _create_followup_deposit_invoice(
         "auto_include_previous_balance": False,
         "included_payment_keys": [f"MANUAL:{transaction.id}"],
         "totals_by_currency": {currency: f"{deposit_amount_ttc:.2f}"},
-        "invoice_status": "ISSUED",
+        "invoice_status": "PAID" if reusable_payment is not None else "ISSUED",
+        "source_quote_id": str(quote.id),
+        "source_quote_number": quote.quote_number,
+        "source_school_year_label": (quote.school_year_label or "").strip(),
         "public_note": f"Facture d acompte liee au devis {quote.quote_number}.",
         "private_note": f"Transformation devis {quote.quote_number} - acompte preinscription.",
     }
+    if reusable_payment is not None and reusable_payment_total is not None:
+        total_to_pay = _q2(deposit_amount_ttc + reusable_payment_total)
+        if total_to_pay < Decimal("0.00"):
+            total_to_pay = Decimal("0.00")
+        metadata.update(
+            {
+                "paid_at": reusable_payment.occurred_at.isoformat(),
+                "payment_amount_paid": f"{abs(reusable_payment_total):.2f}",
+                "payment_currency": currency,
+                "payment_transaction_id": str(reusable_payment.id),
+                "reconciled_manual_payment_ids": [str(reusable_payment.id)],
+                "applied_payment_totals_by_currency": {currency: f"{reusable_payment_total:.2f}"},
+                "total_to_pay_by_currency": {currency: f"{total_to_pay:.2f}"},
+                "public_note": (
+                    f"Facture d acompte liee au devis {quote.quote_number}. "
+                    "Acompte deja recu et rapproche automatiquement."
+                ),
+            }
+        )
     note = _create_client_note(
         db,
         client_id=billing.id,
@@ -9606,6 +9813,7 @@ def _execute_quote_followup_transformation(
     _create_followup_deposit_invoice(
         db,
         quote=quote,
+        followup=followup,
         student=student,
         billing=billing,
         current_user=current_user,
@@ -9731,6 +9939,7 @@ def _rollback_quote_followup_transformation(
             continue
         note = db.scalar(select(ClientNoteEntry).where(ClientNoteEntry.id == note_id).with_for_update())
         if note is not None:
+            _remember_quote_deposit_payments_from_note(followup, quote=quote, note=note)
             db.delete(note)
 
     for transaction_id in created_transaction_ids:
@@ -9783,8 +9992,33 @@ def _rollback_quote_followup_transformation(
             _restore_prospect_state(prospect, _json_object(snapshot))
             db.add(prospect)
 
+    preserved_deposit_rows = _json_list(_quote_followup_payload(followup).get("preserved_deposit_payments"))
+
     _restore_quote_state_from_snapshot(quote, _json_object(execution.get("quote_snapshot")))
     _restore_quote_followup_from_snapshot(followup, _json_object(execution.get("followup_snapshot")))
+    if preserved_deposit_rows:
+        restored_payload = _quote_followup_payload(followup)
+        restored_rows = _json_list(restored_payload.get("preserved_deposit_payments"))
+        existing_keys = {
+            (
+                str(_json_object(row).get("quote_id") or ""),
+                str(_json_object(row).get("school_year_label") or "").strip().lower(),
+                str(_json_object(row).get("payment_transaction_id") or ""),
+            )
+            for row in restored_rows
+        }
+        for row in preserved_deposit_rows:
+            item = _json_object(row)
+            key = (
+                str(item.get("quote_id") or ""),
+                str(item.get("school_year_label") or "").strip().lower(),
+                str(item.get("payment_transaction_id") or ""),
+            )
+            if key not in existing_keys:
+                restored_rows.append(item)
+                existing_keys.add(key)
+        restored_payload["preserved_deposit_payments"] = restored_rows
+        _set_quote_followup_payload(followup, restored_payload)
 
     rolled_back_at = _utcnow()
     execution["status"] = "rolled_back"
