@@ -221,6 +221,7 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
   );
 
   const canAct = payload ? ["sent", "change_requested"].includes(payload.quote.status) : false;
+  const canRequestChange = payload?.quote.status === "sent";
   const selfPath = buildSelfPath(quoteId, token, language);
   const solfegeSelection = payload?.solfege_selection ?? null;
   const requiresSolfegeSelection = canAct && Boolean(solfegeSelection?.required);
@@ -355,23 +356,25 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
                   <button type="submit" className="quote-cta-success">{t("quote_public.approve_cta")}</button>
                 </form>
 
-                <form action={changeRequestPublicQuoteAction} className="quote-public-change-request top-gap-sm">
-                  <input type="hidden" name="quote_id" value={quoteId} />
-                  <input type="hidden" name="public_token" value={token} />
-                  <input type="hidden" name="return_to" value={selfPath} />
-                  <input type="hidden" name="language" value={language} />
-                  <label>
-                    <span className="quote-public-change-title">{t("quote_public.change_request_title")}</span>
-                    <span className="quote-public-change-help">{t("quote_public.change_request_help")}</span>
-                    <textarea
-                      name="change_message"
-                      required
-                      rows={4}
-                      placeholder={t("quote_public.change_request_placeholder")}
-                    />
-                  </label>
-                  <button type="submit" className="quote-cta-change">{t("quote_public.change_request_submit")}</button>
-                </form>
+                {canRequestChange ? (
+                  <form action={changeRequestPublicQuoteAction} className="quote-public-change-request top-gap-sm">
+                    <input type="hidden" name="quote_id" value={quoteId} />
+                    <input type="hidden" name="public_token" value={token} />
+                    <input type="hidden" name="return_to" value={selfPath} />
+                    <input type="hidden" name="language" value={language} />
+                    <label>
+                      <span className="quote-public-change-title">{t("quote_public.change_request_title")}</span>
+                      <span className="quote-public-change-help">{t("quote_public.change_request_help")}</span>
+                      <textarea
+                        name="change_message"
+                        required
+                        rows={4}
+                        placeholder={t("quote_public.change_request_placeholder")}
+                      />
+                    </label>
+                    <button type="submit" className="quote-cta-change">{t("quote_public.change_request_submit")}</button>
+                  </form>
+                ) : null}
 
                 <form action={rejectPublicQuoteAction} className="quote-public-form-action quote-public-reject-action top-gap-sm">
                   <input type="hidden" name="quote_id" value={quoteId} />

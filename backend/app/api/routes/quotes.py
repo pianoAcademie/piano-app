@@ -10381,6 +10381,17 @@ def public_change_request_quote(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid quote token")
     if quote.status not in {"sent", "change_requested"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Quote cannot accept change request in current status")
+    quote_meta = _quote_meta_dict(quote)
+    last_public_action = str(quote_meta.get(QUOTE_PUBLIC_RESPONSE_LAST_ACTION_META_KEY) or "").strip().lower()
+    if str(quote.status or "").strip().lower() == "change_requested" and last_public_action == "change_requested":
+        lines = _load_quote_lines(db, quote.id)
+        public_bundle = render_quote_document_bundle(db=db, quote=quote, lines=lines, audience=AUDIENCE_PUBLIC_PAGE)
+        public_schedule = (
+            list((quote.payment_terms_snapshot or {}).get("schedule", []))
+            if bool((public_bundle.get("display_flags") or {}).get("showPaymentScheduleDetailed"))
+            else []
+        )
+        return _quote_public_out(db, quote, lines, public_schedule)
 
     now = _utcnow()
     previous_status = str(quote.status or "").strip().lower()
