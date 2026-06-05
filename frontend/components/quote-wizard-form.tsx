@@ -160,6 +160,7 @@ type WizardLine = {
 const WEEKDAY_UNSET = -1;
 const DEFAULT_QUOTE_SCHOOL_YEAR = "2026-2027";
 const DEFAULT_EXPIRY_DAYS = "7";
+const DEFAULT_QUOTE_TEMPLATE_NAME = "Template cours collectif enfant";
 const WEEKDAY_SHORT_LABELS: Record<UiLanguage, string[]> = {
   fr: ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"],
   en: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
@@ -471,6 +472,10 @@ function isCardPaymentPlan(item: PaymentPlanOption): boolean {
   return method === "CARD" || method === "CARD_MONTHLY" || name.includes("cb") || name.includes("carte bancaire");
 }
 
+function isDefaultQuoteTemplateCandidate(item: QuoteTemplateOption): boolean {
+  return normalizeSearchValue(item.name) === normalizeSearchValue(DEFAULT_QUOTE_TEMPLATE_NAME);
+}
+
 function SearchablePersonSelect({
   name,
   label,
@@ -636,6 +641,7 @@ export default function QuoteWizardForm({
   const initialQuoteType = quoteTypes.find(isDefaultQuoteTypeCandidate) ?? quoteTypes[0] ?? null;
   const initialQuoteTypeId = initialQuoteType?.id ?? "";
   const defaultPaymentPlan = paymentPlans.find(isCardPaymentPlan) ?? paymentPlans[0] ?? null;
+  const defaultQuoteTemplate = quoteTemplates.find(isDefaultQuoteTemplateCandidate) ?? null;
   const [contextType, setContextType] = useState<"acquisition" | "active_client">("acquisition");
   const [selectedProspectId, setSelectedProspectId] = useState<string>(defaultProspectId || "");
   const [selectedClientId, setSelectedClientId] = useState<string>("");
@@ -643,9 +649,9 @@ export default function QuoteWizardForm({
   const [selectedQuoteTypeId, setSelectedQuoteTypeId] = useState<string>(initialQuoteTypeId);
   const [expiryDaysInput, setExpiryDaysInput] = useState<string>(DEFAULT_EXPIRY_DAYS);
   const [schoolYearLabelInput, setSchoolYearLabelInput] = useState<string>(DEFAULT_QUOTE_SCHOOL_YEAR);
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(defaultQuoteTemplate?.id ?? "");
   const [selectedTermsTemplateId, setSelectedTermsTemplateId] = useState<string>("");
-  const [language, setLanguage] = useState<UiLanguage>(normalizeLang(uiLanguage));
+  const [language, setLanguage] = useState<UiLanguage>(normalizeLang(defaultQuoteTemplate?.language ?? uiLanguage));
   const [currency, setCurrency] = useState<string>("EUR");
   const [preRegistrationDepositEnabled, setPreRegistrationDepositEnabled] = useState<"no" | "yes">("no");
   const [preRegistrationDepositAmount, setPreRegistrationDepositAmount] = useState<string>("200.00");
