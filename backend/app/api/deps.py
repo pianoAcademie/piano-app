@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Generator
+from typing import Any
 from uuid import UUID
 
 import jwt
@@ -29,7 +30,7 @@ BACKOFFICE_PERMISSION_KEYS = {
 }
 
 
-def normalize_admin_permission_map(permission_map: dict[str, bool]) -> dict[str, bool]:
+def normalize_admin_permission_map(permission_map: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(permission_map)
     if normalized.get("can_edit_planning"):
         normalized["can_view_planning"] = True
@@ -114,7 +115,7 @@ def require_roles(*allowed_roles: UserRole) -> Callable[..., User]:
     return _require_role
 
 
-def get_admin_permission_map(db: Session, user: User) -> dict[str, bool]:
+def get_admin_permission_map(db: Session, user: User) -> dict[str, Any]:
     if user.role == UserRole.ADMIN:
         return {}
     if user.role != UserRole.PROF:

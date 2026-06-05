@@ -87,6 +87,8 @@ class ProfessorPermissionOut(BaseModel):
     can_view_admin_dashboard: bool
     can_view_admin_reservations: bool
     can_access_collaborators: bool
+    can_view_planning_simulation: bool
+    planning_simulation_location_id: UUID | None = None
     can_configure_app: bool
     can_list_payments: bool
     can_manage_events: bool

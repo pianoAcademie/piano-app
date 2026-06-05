@@ -1490,6 +1490,7 @@ def update_collaborator_permissions(
     is_admin = values.pop("is_admin", None)
     teacher_profile = bool(values.pop("teacher_profile", False))
     manager_profile = bool(values.pop("manager_profile", False))
+    planning_simulation_location_id = values.pop("planning_simulation_location_id", None)
 
     can_take_attendance = bool(values.get("can_take_attendance"))
     can_edit_own_sessions = bool(values.get("can_edit_own_sessions"))
@@ -1551,6 +1552,12 @@ def update_collaborator_permissions(
 
     for field in PERMISSION_FIELDS:
         setattr(row, field, bool(values[field]))
+    if planning_simulation_location_id is not None:
+        if db.scalar(select(Location.id).where(Location.id == planning_simulation_location_id).limit(1)) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Location not found")
+        row.planning_simulation_location_id = planning_simulation_location_id
+    else:
+        row.planning_simulation_location_id = None
 
     row.updated_at = _utcnow()
     db.add(row)

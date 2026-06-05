@@ -14,7 +14,7 @@ type AdminSidebarProps = {
   email: string;
   roleLabel: string;
   isFullAdmin?: boolean;
-  permissions?: Partial<Record<string, boolean>>;
+  permissions?: Partial<Record<string, boolean | string | null>>;
 };
 
 function initialsFromDisplayName(value: string): string {

@@ -27,7 +27,7 @@ from app.api.routes.bookings import (
     _select_eligible_subscription,
     _waitlist_position,
 )
-from app.api.deps import get_db, require_admin_or_permissions, require_roles
+from app.api.deps import get_admin_permission_map, get_db, require_admin_or_permissions, require_roles
 from app.models.catalog import (
     Booking,
     BookingStatus,
@@ -2493,8 +2493,19 @@ def get_planning_simulation(
     activity_id: UUID | None = Query(default=None),
     activity_group: str | None = Query(default=None),
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_permissions("can_view_planning_simulation")),
+    current_user: User = Depends(require_admin_or_permissions("can_view_planning_simulation")),
 ) -> AdminPlanningSimulationOut:
+    permission_map = get_admin_permission_map(db, current_user)
+    scoped_location_id = permission_map.get("planning_simulation_location_id")
+    if scoped_location_id is not None:
+        try:
+            scoped_location_uuid = scoped_location_id if isinstance(scoped_location_id, UUID) else UUID(str(scoped_location_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid planning simulation location scope") from exc
+        if location_id is not None and location_id != scoped_location_uuid:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Planning simulation location not allowed")
+        location_id = scoped_location_uuid
+
     available_school_years = _available_school_year_labels(db)
     requested_school_year = (school_year_label or "").strip() or _default_school_year_label()
     bounds = _parse_school_year_bounds(requested_school_year)

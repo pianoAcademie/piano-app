@@ -72,7 +72,7 @@ type AdminNavProps = {
   collapsed: boolean;
   language?: UiLanguage;
   isFullAdmin?: boolean;
-  permissions?: Partial<Record<string, boolean>>;
+  permissions?: Partial<Record<string, boolean | string | null>>;
 };
 
 function isLinkActive(pathname: string, href: string): boolean {
@@ -89,7 +89,7 @@ function withUiLanguage(href: string, language: UiLanguage): string {
   return `${href}${href.includes("?") ? "&" : "?"}lang=en`;
 }
 
-function hasVisiblePermission(permission: string, permissions: Partial<Record<string, boolean>>): boolean {
+function hasVisiblePermission(permission: string, permissions: Partial<Record<string, boolean | string | null>>): boolean {
   if (permission === "can_view_planning" && permissions.can_edit_planning) {
     return true;
   }

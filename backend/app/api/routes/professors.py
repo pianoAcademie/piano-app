@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -77,7 +78,7 @@ def _resolve_professor_profile(db: Session, *, current_user: User) -> ProfessorM
     return professor
 
 
-def _resolve_professor_permissions(db: Session, *, professor_id: UUID) -> dict[str, bool]:
+def _resolve_professor_permissions(db: Session, *, professor_id: UUID) -> dict[str, Any]:
     row = db.scalar(select(ProfessorPermission).where(ProfessorPermission.professor_id == professor_id))
     # Legacy fallback keeps pre-existing coaches operational until explicit permission setup.
     return permissions_dict(row, legacy_if_missing=True)

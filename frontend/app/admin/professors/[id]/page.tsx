@@ -464,7 +464,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
   }
 
   const professor = profResult.data;
-  const permissionState = professor.permissions as Record<string, boolean>;
+  const permissionState = professor.permissions as Record<string, boolean | string | null>;
   const isTeacherProfile =
     professor.role !== "admin" &&
     Boolean(permissionState.can_view_planning) &&
@@ -492,6 +492,23 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
   const courseTypes = courseTypesResult.ok ? courseTypesResult.data : [];
   const sessions = sessionsResult.ok ? sessionsResult.data : [];
   const locations = locationsResult.ok ? locationsResult.data : [];
+  const selectedSimulationLocationId = String(permissionState.planning_simulation_location_id ?? "");
+  const simulationLocationOptions = selectedSimulationLocationId && !locations.some((location) => location.id === selectedSimulationLocationId)
+    ? [
+        ...locations,
+        {
+          id: selectedSimulationLocationId,
+          code: "",
+          name: t("admin.professor_detail.permissions.simulation_location_configured"),
+          address_line: null,
+          city: null,
+          country_code: "FR",
+          is_online: false,
+          timezone: "Europe/Paris",
+          active: true,
+        },
+      ]
+    : locations;
   const accountConfig = accountResult.ok ? accountResult.data : null;
   const defaultProfessorGrid = defaultProfessorGridResult.ok ? defaultProfessorGridResult.data : { lines: [], updated_at: null };
   const contractGrids = contractGridsResult.ok ? contractGridsResult.data : [];
@@ -1011,6 +1028,26 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
               </label>
               <p className="muted">{t("admin.professor_detail.permissions_admin_all_help")}</p>
             </article>
+            <article className="item span-2">
+              <label>
+                {t("admin.professor_detail.permissions.simulation_location_scope")}
+                <select
+                  name="planning_simulation_location_id"
+                  defaultValue={selectedSimulationLocationId}
+                >
+                  <option value="">{t("admin.professor_detail.permissions.simulation_location_all")}</option>
+                  {simulationLocationOptions
+                    .slice()
+                    .sort((a, b) => a.name.localeCompare(b.name, "fr"))
+                    .map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <p className="muted">{t("admin.professor_detail.permissions.simulation_location_scope_help")}</p>
+            </article>
 
             {PERMISSION_SECTIONS.map((section) => (
               <article key={section.titleKey} className="item">
@@ -1018,7 +1055,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                 <div className="grid">
                   {section.keys.map(({ key, labelKey }) => (
                     <label key={key} className="checkline">
-                      <input type="checkbox" name={key} defaultChecked={Boolean((professor.permissions as Record<string, boolean>)[key])} />
+                      <input type="checkbox" name={key} defaultChecked={Boolean(permissionState[key])} />
                       {t(labelKey)}
                     </label>
                   ))}

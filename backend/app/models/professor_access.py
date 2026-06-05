@@ -49,6 +49,11 @@ class ProfessorPermission(Base):
     can_view_admin_reservations: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     can_access_collaborators: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     can_view_planning_simulation: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    planning_simulation_location_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("locations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     can_view_intakes: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     can_view_quotes: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     can_configure_app: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))

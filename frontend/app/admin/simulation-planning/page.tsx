@@ -409,7 +409,9 @@ export default async function AdminSimulationPlanningPage({
 
   const language = normalizeUiLanguage(meResult.data.preferred_language);
   const requestedSchoolYear = readParam(searchParams ?? {}, "school_year").trim() || DEFAULT_SIMULATION_SCHOOL_YEAR;
-  const requestedLocationId = readParam(searchParams ?? {}, "location_id").trim();
+  const scopedLocationId = String(meResult.data.admin_permissions?.planning_simulation_location_id ?? "").trim();
+  const rawRequestedLocationId = readParam(searchParams ?? {}, "location_id").trim();
+  const requestedLocationId = scopedLocationId || rawRequestedLocationId;
   const requestedActivityFilter = activityFilterFromParams(searchParams ?? {});
   const requestedActivityId = requestedActivityFilter.startsWith(ACTIVITY_FILTER_PREFIX)
     ? requestedActivityFilter.slice(ACTIVITY_FILTER_PREFIX.length)
@@ -432,7 +434,11 @@ export default async function AdminSimulationPlanningPage({
     backendRequest<AdminPlanningSimulationOut>(simulationPath, {}, token),
   ]);
 
-  const locations = locationsResult.ok ? locationsResult.data : [];
+  const locations = locationsResult.ok
+    ? scopedLocationId
+      ? locationsResult.data.filter((location) => location.id === scopedLocationId)
+      : locationsResult.data
+    : [];
   const courseTypes = courseTypesResult.ok
     ? courseTypesResult.data.filter((courseType) => courseType.code.toUpperCase() !== VACATION_COURSE_TYPE_CODE)
     : [];
@@ -488,7 +494,7 @@ export default async function AdminSimulationPlanningPage({
           <label>
             <span>{text(language, "Local", "Location")}</span>
             <select name="location_id" defaultValue={requestedLocationId}>
-              <option value="">{text(language, "Tous les locaux", "All locations")}</option>
+              {scopedLocationId ? null : <option value="">{text(language, "Tous les locaux", "All locations")}</option>}
               {locations
                 .slice()
                 .sort((a, b) => a.name.localeCompare(b.name, "fr"))

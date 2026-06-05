@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -117,13 +118,18 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def permissions_dict(row: ProfessorPermission | None, *, legacy_if_missing: bool = False) -> dict[str, bool]:
+def permissions_dict(row: ProfessorPermission | None, *, legacy_if_missing: bool = False) -> dict[str, Any]:
     if row is None:
         if legacy_if_missing:
-            return dict(LEGACY_FALLBACK_PERMISSIONS)
-        return dict(DEFAULT_PROFESSOR_PERMISSIONS)
+            payload = dict(LEGACY_FALLBACK_PERMISSIONS)
+        else:
+            payload = dict(DEFAULT_PROFESSOR_PERMISSIONS)
+        payload["planning_simulation_location_id"] = None
+        return payload
 
-    return {field: bool(getattr(row, field)) for field in PERMISSION_FIELDS}
+    payload = {field: bool(getattr(row, field)) for field in PERMISSION_FIELDS}
+    payload["planning_simulation_location_id"] = row.planning_simulation_location_id
+    return payload
 
 
 def ensure_permissions_row(

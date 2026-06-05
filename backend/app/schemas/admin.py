@@ -1834,6 +1834,7 @@ class ProfessorPermissionOut(BaseModel):
     can_view_admin_reservations: bool
     can_access_collaborators: bool
     can_view_planning_simulation: bool
+    planning_simulation_location_id: UUID | None = None
     can_view_intakes: bool
     can_view_quotes: bool
     can_configure_app: bool
@@ -1883,6 +1884,7 @@ class ProfessorPermissionUpdateRequest(BaseModel):
     can_view_admin_reservations: bool = False
     can_access_collaborators: bool = False
     can_view_planning_simulation: bool = False
+    planning_simulation_location_id: UUID | None = None
     can_view_intakes: bool = False
     can_view_quotes: bool = False
     can_configure_app: bool = False

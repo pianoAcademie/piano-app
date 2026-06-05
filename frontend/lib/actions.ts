@@ -1140,7 +1140,11 @@ function isActiveFromClientStatus(status: string): boolean {
   return normalized === "ACTIVE" || normalized === "RESPONSABLE" || normalized === "TRIAL";
 }
 
-const PROFESSOR_PERMISSION_KEYS: Array<keyof ProfessorPermissionOut> = [
+type ProfessorPermissionBooleanKey = {
+  [K in keyof ProfessorPermissionOut]: ProfessorPermissionOut[K] extends boolean ? K : never;
+}[keyof ProfessorPermissionOut];
+
+const PROFESSOR_PERMISSION_KEYS: ProfessorPermissionBooleanKey[] = [
   "can_view_dashboard",
   "can_view_clients",
   "can_export_clients",
@@ -1195,6 +1199,7 @@ function parseProfessorPermissions(formData: FormData): ProfessorPermissionOut {
   for (const key of PROFESSOR_PERMISSION_KEYS) {
     permissions[key] = checkboxField(formData, key);
   }
+  permissions.planning_simulation_location_id = optionalField(formData, "planning_simulation_location_id");
 
   return permissions;
 }

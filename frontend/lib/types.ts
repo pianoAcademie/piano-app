@@ -914,6 +914,7 @@ export type ProfessorPermissionOut = {
   can_view_admin_reservations: boolean;
   can_access_collaborators: boolean;
   can_view_planning_simulation: boolean;
+  planning_simulation_location_id: string | null;
   can_view_intakes: boolean;
   can_view_quotes: boolean;
   can_configure_app: boolean;

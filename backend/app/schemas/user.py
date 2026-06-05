@@ -3,6 +3,7 @@ from __future__ import annotations
 import enum
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -46,7 +47,7 @@ class UserOut(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
-    admin_permissions: dict[str, bool] | None = None
+    admin_permissions: dict[str, Any] | None = None
     admin_access_profile: str | None = None
 
 
