@@ -54,6 +54,7 @@ type TermsTemplateOut = {
 
 type QuoteTemplateV2Out = {
   id: string;
+  code: string;
   name: string;
   language: string;
   is_default: boolean;
@@ -222,6 +223,7 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
         legalEntities={legalEntities.map((row) => ({ id: row.id, name: row.name }))}
         quoteTemplates={quoteTemplates.map((row) => ({
           id: row.id,
+          code: row.code,
           name: row.name,
           language: row.language,
           is_default: row.is_default,

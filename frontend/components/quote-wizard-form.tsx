@@ -56,6 +56,7 @@ type LegalEntityOption = {
 
 type QuoteTemplateOption = {
   id: string;
+  code: string;
   name: string;
   language: string;
   is_default: boolean;
@@ -160,6 +161,7 @@ type WizardLine = {
 const WEEKDAY_UNSET = -1;
 const DEFAULT_QUOTE_SCHOOL_YEAR = "2026-2027";
 const DEFAULT_EXPIRY_DAYS = "7";
+const DEFAULT_QUOTE_TEMPLATE_CODE = "TEMPLATE_COURS_COLLECTIF_ENFANT";
 const DEFAULT_QUOTE_TEMPLATE_NAME = "Template cours collectif enfant";
 const WEEKDAY_SHORT_LABELS: Record<UiLanguage, string[]> = {
   fr: ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"],
@@ -469,11 +471,11 @@ function isDefaultQuoteTypeCandidate(item: QuoteTypeOption): boolean {
 function isCardPaymentPlan(item: PaymentPlanOption): boolean {
   const method = String(item.payment_method || "").trim().toUpperCase();
   const name = normalizeSearchValue(item.name);
-  return method === "CARD" || method === "CARD_MONTHLY" || name.includes("cb") || name.includes("carte bancaire");
+  return method === "CARD" && name === "carte bancaire";
 }
 
 function isDefaultQuoteTemplateCandidate(item: QuoteTemplateOption): boolean {
-  return normalizeSearchValue(item.name) === normalizeSearchValue(DEFAULT_QUOTE_TEMPLATE_NAME);
+  return item.code === DEFAULT_QUOTE_TEMPLATE_CODE || normalizeSearchValue(item.name) === normalizeSearchValue(DEFAULT_QUOTE_TEMPLATE_NAME);
 }
 
 function SearchablePersonSelect({

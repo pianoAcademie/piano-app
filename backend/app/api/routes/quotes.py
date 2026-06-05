@@ -2385,6 +2385,29 @@ def _active_terms_template_version(db: Session, template_id: UUID, *, lock: bool
     return db.scalar(stmt)
 
 
+def _default_child_group_quote_template(db: Session) -> QuoteTemplate | None:
+    return db.scalar(
+        select(QuoteTemplate)
+        .where(
+            QuoteTemplate.code == "TEMPLATE_COURS_COLLECTIF_ENFANT",
+            QuoteTemplate.is_active.is_(True),
+        )
+        .limit(1)
+    )
+
+
+def _default_card_payment_plan_id(db: Session) -> UUID | None:
+    row = db.scalar(
+        select(PaymentPlan)
+        .where(
+            PaymentPlan.name == "Carte bancaire",
+            PaymentPlan.payment_method == "CARD",
+        )
+        .limit(1)
+    )
+    return row.id if row is not None else None
+
+
 def _quote_template_version_out(row: QuoteTemplateVersion) -> QuoteTemplateVersionOut:
     return QuoteTemplateVersionOut(
         id=row.id,
@@ -2699,7 +2722,7 @@ def _resolve_document_templates(
         currency=currency,
     )
 
-    if selected_quote_template_version is None and binding and binding.quote_template_version_id is not None:
+    if selected_quote_template is None and selected_quote_template_version is None and binding and binding.quote_template_version_id is not None:
         selected_quote_template_version = db.scalar(
             select(QuoteTemplateVersion).where(QuoteTemplateVersion.id == binding.quote_template_version_id)
         )
@@ -5367,6 +5390,8 @@ def create_quote_from_payload(
         selected_quote_template = db.scalar(select(QuoteTemplate).where(QuoteTemplate.id == payload.quote_template_uuid))
         if selected_quote_template is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote template UUID not found")
+    if selected_quote_template is None and payload.quote_template_version_id is None:
+        selected_quote_template = _default_child_group_quote_template(db)
     selected_quote_template_version = None
     if payload.quote_template_version_id is not None:
         selected_quote_template_version = db.scalar(
@@ -5474,6 +5499,8 @@ def create_quote_from_payload(
     quote_meta[QUOTE_FINANCIAL_ADJUSTMENT_META_KEY] = _normalize_quote_adjustment(quote_meta)
     quote_meta[QUOTE_PRE_REGISTRATION_DEPOSIT_META_KEY] = _normalize_quote_deposit(quote_meta)
 
+    payment_plan_id = payload.payment_plan_id or _default_card_payment_plan_id(db)
+
     row = Quote(
         quote_number=_new_quote_number(),
         context_type=payload.context_type,
@@ -5484,7 +5511,7 @@ def create_quote_from_payload(
         client_id=payload.client_id,
         location_id=payload.location_id,
         legal_entity_id=payload.legal_entity_id,
-        payment_plan_id=payload.payment_plan_id,
+        payment_plan_id=payment_plan_id,
         quote_template_id=selected_quote_template.id if selected_quote_template is not None else None,
         quote_template_version_id=selected_quote_template_version.id if selected_quote_template_version is not None else None,
         terms_template_id=selected_terms_template.id if selected_terms_template is not None else None,
