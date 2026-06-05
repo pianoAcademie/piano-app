@@ -446,6 +446,19 @@ function sortedPersonOptions<T extends SearchablePersonOption>(options: T[], lan
     });
 }
 
+function filterPersonOptions<T extends SearchablePersonOption>(options: T[], normalizedQuery: string): T[] {
+  if (!normalizedQuery) {
+    return options.slice(0, 40);
+  }
+  const tokens = normalizedQuery.split(/\s+/).filter(Boolean);
+  return options
+    .filter((item) => {
+      const haystack = normalizeSearchValue(`${item.label} ${item.email}`);
+      return tokens.every((token) => haystack.includes(token));
+    })
+    .slice(0, 40);
+}
+
 function isDefaultQuoteTypeCandidate(item: QuoteTypeOption): boolean {
   const name = normalizeSearchValue(item.name);
   const schoolYear = normalizeSearchValue(item.school_year_label ?? "");
@@ -466,10 +479,15 @@ function SearchablePersonSelect({
   selectPlaceholder,
   options,
   value,
+  query,
   language,
   onChange,
+  onQueryChange,
   emptyActionHref,
   emptyActionLabel,
+  alternateOptions,
+  alternateActionLabel,
+  onAlternateAction,
 }: {
   name: string;
   label: string;
@@ -478,31 +496,37 @@ function SearchablePersonSelect({
   selectPlaceholder: string;
   options: SearchablePersonOption[];
   value: string;
+  query: string;
   language: UiLanguage;
   onChange: (value: string) => void;
+  onQueryChange: (value: string) => void;
   emptyActionHref?: string;
   emptyActionLabel?: string;
+  alternateOptions?: SearchablePersonOption[];
+  alternateActionLabel?: string | ((count: number) => string);
+  onAlternateAction?: () => void;
 }): JSX.Element {
-  const [query, setQuery] = useState("");
   const sortedOptions = useMemo(() => sortedPersonOptions(options, language), [options, language]);
+  const sortedAlternateOptions = useMemo(
+    () => sortedPersonOptions(alternateOptions ?? [], language),
+    [alternateOptions, language],
+  );
   const normalizedQuery = normalizeSearchValue(query);
   const filteredOptions = useMemo(() => {
-    if (!normalizedQuery) {
-      return sortedOptions.slice(0, 40);
-    }
-    const tokens = normalizedQuery.split(/\s+/).filter(Boolean);
-    return sortedOptions
-      .filter((item) => {
-        const haystack = normalizeSearchValue(`${item.label} ${item.email}`);
-        return tokens.every((token) => haystack.includes(token));
-      })
-      .slice(0, 40);
+    return filterPersonOptions(sortedOptions, normalizedQuery);
   }, [normalizedQuery, sortedOptions]);
+  const alternateFilteredOptions = useMemo(() => {
+    return normalizedQuery ? filterPersonOptions(sortedAlternateOptions, normalizedQuery) : [];
+  }, [normalizedQuery, sortedAlternateOptions]);
   const selectedOption = value ? sortedOptions.find((item) => item.id === value) ?? null : null;
   const visibleOptions =
     selectedOption && !filteredOptions.some((item) => item.id === selectedOption.id)
       ? [selectedOption, ...filteredOptions]
       : filteredOptions;
+  const alternateLabel =
+    typeof alternateActionLabel === "function"
+      ? alternateActionLabel(alternateFilteredOptions.length)
+      : alternateActionLabel;
 
   return (
     <div className="top-gap-sm stack gap-xs">
@@ -511,7 +535,7 @@ function SearchablePersonSelect({
         <input
           type="search"
           value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          onChange={(event) => onQueryChange(event.target.value)}
           placeholder={placeholder}
           autoComplete="off"
         />
@@ -531,6 +555,11 @@ function SearchablePersonSelect({
             <Link className="ghost" href={emptyActionHref}>
               {emptyActionLabel}
             </Link>
+          ) : null}
+          {alternateFilteredOptions.length > 0 && alternateLabel && onAlternateAction ? (
+            <button className="ghost" type="button" onClick={onAlternateAction}>
+              {alternateLabel}
+            </button>
           ) : null}
         </div>
       ) : null}
@@ -610,6 +639,7 @@ export default function QuoteWizardForm({
   const [contextType, setContextType] = useState<"acquisition" | "active_client">("acquisition");
   const [selectedProspectId, setSelectedProspectId] = useState<string>(defaultProspectId || "");
   const [selectedClientId, setSelectedClientId] = useState<string>("");
+  const [recipientQuery, setRecipientQuery] = useState<string>("");
   const [selectedQuoteTypeId, setSelectedQuoteTypeId] = useState<string>(initialQuoteTypeId);
   const [expiryDaysInput, setExpiryDaysInput] = useState<string>(DEFAULT_EXPIRY_DAYS);
   const [schoolYearLabelInput, setSchoolYearLabelInput] = useState<string>(DEFAULT_QUOTE_SCHOOL_YEAR);
@@ -879,10 +909,18 @@ export default function QuoteWizardForm({
               selectPlaceholder={t("admin.quote_new.select_prospect")}
               options={prospects}
               value={selectedProspectId}
+              query={recipientQuery}
               language={language}
               onChange={setSelectedProspectId}
+              onQueryChange={setRecipientQuery}
               emptyActionHref={newProspectHref}
               emptyActionLabel={t("admin.quote_new.new_prospect")}
+              alternateOptions={clients}
+              alternateActionLabel={(count) => t("admin.quote_new.matching_clients_found", { count })}
+              onAlternateAction={() => {
+                setSelectedProspectId("");
+                setContextType("active_client");
+              }}
             />
           ) : (
             <SearchablePersonSelect
@@ -893,8 +931,16 @@ export default function QuoteWizardForm({
               selectPlaceholder={t("admin.quote_new.select_client")}
               options={clients}
               value={selectedClientId}
+              query={recipientQuery}
               language={language}
               onChange={setSelectedClientId}
+              onQueryChange={setRecipientQuery}
+              alternateOptions={prospects}
+              alternateActionLabel={(count) => t("admin.quote_new.matching_prospects_found", { count })}
+              onAlternateAction={() => {
+                setSelectedClientId("");
+                setContextType("acquisition");
+              }}
             />
           )}
         </article>
