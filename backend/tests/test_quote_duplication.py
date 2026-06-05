@@ -11,7 +11,12 @@ from uuid import uuid4
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.api.routes.quotes import _create_quote_revision_from_change_request, duplicate_quote, duplicate_quote_for_child
+from app.api.routes.quotes import (
+    _create_quote_revision_from_change_request,
+    _quote_admin_stats,
+    duplicate_quote,
+    duplicate_quote_for_child,
+)
 from app.schemas.quote import QuoteDuplicateForChildRequest
 from app.models.quote import Prospect, Quote, QuoteEvent, QuoteLine
 
@@ -43,6 +48,36 @@ class _FakeSession:
 
 
 class QuoteDuplicationTests(unittest.TestCase):
+    def test_change_requested_quotes_are_excluded_from_potential_enrollments(self) -> None:
+        approved = Quote(
+            quote_number="DV-APPROVED",
+            context_type="acquisition",
+            status="approved",
+            meta={},
+            calendar_snapshot={"blocks": [{"location_label": "Paris"}]},
+        )
+        paris_change_request = Quote(
+            quote_number="DV-CHANGE-PARIS",
+            context_type="acquisition",
+            status="change_requested",
+            meta={},
+            calendar_snapshot={"blocks": [{"location_label": "Paris"}]},
+        )
+        bld_change_request = Quote(
+            quote_number="DV-CHANGE-BLD",
+            context_type="acquisition",
+            status="change_requested",
+            meta={},
+            calendar_snapshot={"blocks": [{"location_label": "Bar-le-Duc"}]},
+        )
+
+        stats = _quote_admin_stats([approved, paris_change_request, bld_change_request])
+
+        self.assertEqual(stats["changeRequests"], 2)
+        self.assertEqual(stats["potentialEnrollments"], 1)
+        self.assertEqual(stats["potentialParis"], 1)
+        self.assertEqual(stats["potentialBarLeDuc"], 0)
+
     def test_duplicate_quote_preserves_tax_and_document_fields(self) -> None:
         source_id = uuid4()
         quote_template_id = uuid4()

@@ -5014,7 +5014,6 @@ def _quote_admin_stats(rows: list[Quote]) -> dict[str, int]:
         "pret_a_envoyer",
         "envoye",
         "consulte",
-        "modification_demandee",
         "valide",
     }
     for row in rows:
