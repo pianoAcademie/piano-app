@@ -16,6 +16,12 @@ type ClientOption = {
   email: string;
 };
 
+type SearchablePersonOption = {
+  id: string;
+  label: string;
+  email: string;
+};
+
 type QuoteTypeOption = {
   id: string;
   name: string;
@@ -418,6 +424,91 @@ function paymentMethodLabel(methodCode: string, language: UiLanguage): string {
   return normalized;
 }
 
+function normalizeSearchValue(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function sortedPersonOptions<T extends SearchablePersonOption>(options: T[], language: UiLanguage): T[] {
+  const collator = new Intl.Collator(localeForUiLanguage(language), { sensitivity: "base" });
+  return options
+    .slice()
+    .sort((left, right) => {
+      const byLabel = collator.compare(left.label, right.label);
+      return byLabel || collator.compare(left.email, right.email);
+    });
+}
+
+function SearchablePersonSelect({
+  name,
+  label,
+  placeholder,
+  emptyLabel,
+  selectPlaceholder,
+  options,
+  value,
+  language,
+  onChange,
+}: {
+  name: string;
+  label: string;
+  placeholder: string;
+  emptyLabel: string;
+  selectPlaceholder: string;
+  options: SearchablePersonOption[];
+  value: string;
+  language: UiLanguage;
+  onChange: (value: string) => void;
+}): JSX.Element {
+  const [query, setQuery] = useState("");
+  const sortedOptions = useMemo(() => sortedPersonOptions(options, language), [options, language]);
+  const normalizedQuery = normalizeSearchValue(query);
+  const filteredOptions = useMemo(() => {
+    if (!normalizedQuery) {
+      return sortedOptions.slice(0, 40);
+    }
+    const tokens = normalizedQuery.split(/\s+/).filter(Boolean);
+    return sortedOptions
+      .filter((item) => {
+        const haystack = normalizeSearchValue(`${item.label} ${item.email}`);
+        return tokens.every((token) => haystack.includes(token));
+      })
+      .slice(0, 40);
+  }, [normalizedQuery, sortedOptions]);
+  const selectedOption = value ? sortedOptions.find((item) => item.id === value) ?? null : null;
+  const visibleOptions =
+    selectedOption && !filteredOptions.some((item) => item.id === selectedOption.id)
+      ? [selectedOption, ...filteredOptions]
+      : filteredOptions;
+
+  return (
+    <div className="top-gap-sm stack gap-xs">
+      <label>
+        {label}
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder={placeholder}
+          autoComplete="off"
+        />
+      </label>
+      <select name={name} value={value} onChange={(event) => onChange(event.target.value)} required>
+        <option value="">{selectPlaceholder}</option>
+        {visibleOptions.map((item) => (
+          <option key={item.id} value={item.id}>
+            {item.label} - {item.email}
+          </option>
+        ))}
+      </select>
+      {visibleOptions.length === 0 ? <small className="muted">{emptyLabel}</small> : null}
+    </div>
+  );
+}
+
 function modalityLabel(value: string | null | undefined, language: UiLanguage): string {
   const normalized = String(value || "").trim().toUpperCase();
   if (!normalized || normalized === "AUTO") {
@@ -749,29 +840,29 @@ export default function QuoteWizardForm({
             </label>
           </div>
           {contextType === "acquisition" ? (
-            <label className="top-gap-sm">
-              {t("admin.quote_new.prospect")}
-              <select name="prospect_id" value={selectedProspectId} onChange={(event) => setSelectedProspectId(event.target.value)} required>
-                <option value="">{t("admin.quote_new.select_prospect")}</option>
-                {prospects.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.label} - {item.email}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <SearchablePersonSelect
+              name="prospect_id"
+              label={t("admin.quote_new.prospect")}
+              placeholder={t("admin.quote_new.search_prospect")}
+              emptyLabel={t("admin.quote_new.no_prospect_results")}
+              selectPlaceholder={t("admin.quote_new.select_prospect")}
+              options={prospects}
+              value={selectedProspectId}
+              language={language}
+              onChange={setSelectedProspectId}
+            />
           ) : (
-            <label className="top-gap-sm">
-              {t("admin.quote_new.client")}
-              <select name="client_id" value={selectedClientId} onChange={(event) => setSelectedClientId(event.target.value)} required>
-                <option value="">{t("admin.quote_new.select_client")}</option>
-                {clients.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.label} - {item.email}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <SearchablePersonSelect
+              name="client_id"
+              label={t("admin.quote_new.client")}
+              placeholder={t("admin.quote_new.search_client")}
+              emptyLabel={t("admin.quote_new.no_client_results")}
+              selectPlaceholder={t("admin.quote_new.select_client")}
+              options={clients}
+              value={selectedClientId}
+              language={language}
+              onChange={setSelectedClientId}
+            />
           )}
         </article>
 
