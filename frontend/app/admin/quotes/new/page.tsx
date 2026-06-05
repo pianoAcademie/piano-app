@@ -119,7 +119,7 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
     legalEntitiesResult,
   ] = await Promise.all([
     backendRequest<ProspectOut[]>("/api/v1/prospects?limit=1000", {}, token),
-    backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=800&include_archived=false", {}, token),
+    backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=5000&include_archived=true", {}, token),
     backendRequest<QuoteTypeOut[]>("/api/v1/quote-types", {}, token),
     backendRequest<PricingCatalogOut[]>("/api/v1/pricing-catalogs", {}, token),
     backendRequest<PaymentPlanOut[]>("/api/v1/payment-plans", {}, token),
@@ -197,6 +197,7 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
 
       <QuoteWizardForm
         returnTo={quotesNewHref}
+        newProspectHref={newProspectHref}
         prospects={prospects.map((row) => ({
           id: row.id,
           label: displayName(row.first_name, row.last_name, row.email),

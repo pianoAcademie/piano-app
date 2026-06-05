@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import ConfirmSubmitButton from "./confirm-submit-button";
 import { localeForUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
@@ -126,6 +127,7 @@ function normalizeLang(value: string | null | undefined): UiLanguage {
 
 type QuoteWizardFormProps = {
   returnTo: string;
+  newProspectHref: string;
   prospects: ProspectOption[];
   clients: ClientOption[];
   quoteTypes: QuoteTypeOption[];
@@ -156,6 +158,8 @@ type WizardLine = {
 };
 
 const WEEKDAY_UNSET = -1;
+const DEFAULT_QUOTE_SCHOOL_YEAR = "2026-2027";
+const DEFAULT_EXPIRY_DAYS = "7";
 const WEEKDAY_SHORT_LABELS: Record<UiLanguage, string[]> = {
   fr: ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"],
   en: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
@@ -442,6 +446,18 @@ function sortedPersonOptions<T extends SearchablePersonOption>(options: T[], lan
     });
 }
 
+function isDefaultQuoteTypeCandidate(item: QuoteTypeOption): boolean {
+  const name = normalizeSearchValue(item.name);
+  const schoolYear = normalizeSearchValue(item.school_year_label ?? "");
+  return name.includes("forfait") && (name.includes(DEFAULT_QUOTE_SCHOOL_YEAR) || schoolYear === DEFAULT_QUOTE_SCHOOL_YEAR);
+}
+
+function isCardPaymentPlan(item: PaymentPlanOption): boolean {
+  const method = String(item.payment_method || "").trim().toUpperCase();
+  const name = normalizeSearchValue(item.name);
+  return method === "CARD" || method === "CARD_MONTHLY" || name.includes("cb") || name.includes("carte bancaire");
+}
+
 function SearchablePersonSelect({
   name,
   label,
@@ -452,6 +468,8 @@ function SearchablePersonSelect({
   value,
   language,
   onChange,
+  emptyActionHref,
+  emptyActionLabel,
 }: {
   name: string;
   label: string;
@@ -462,6 +480,8 @@ function SearchablePersonSelect({
   value: string;
   language: UiLanguage;
   onChange: (value: string) => void;
+  emptyActionHref?: string;
+  emptyActionLabel?: string;
 }): JSX.Element {
   const [query, setQuery] = useState("");
   const sortedOptions = useMemo(() => sortedPersonOptions(options, language), [options, language]);
@@ -504,7 +524,16 @@ function SearchablePersonSelect({
           </option>
         ))}
       </select>
-      {visibleOptions.length === 0 ? <small className="muted">{emptyLabel}</small> : null}
+      {visibleOptions.length === 0 ? (
+        <div className="row wrap gap-sm">
+          <small className="muted">{emptyLabel}</small>
+          {emptyActionHref && emptyActionLabel ? (
+            <Link className="ghost" href={emptyActionHref}>
+              {emptyActionLabel}
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -553,6 +582,7 @@ function isCatalogKind(kind: LineKind): boolean {
 
 export default function QuoteWizardForm({
   returnTo,
+  newProspectHref,
   prospects,
   clients,
   quoteTypes,
@@ -574,14 +604,15 @@ export default function QuoteWizardForm({
   const createDraftFormId = "quote-wizard-create-draft-form";
   const defaultLegalEntity =
     legalEntities.find((item) => item.name.toUpperCase().includes("PIANO ACADEMIE")) ?? legalEntities[0] ?? null;
-  const initialQuoteTypeId = quoteTypes[0]?.id ?? "";
-  const initialQuoteType = quoteTypes.find((item) => item.id === initialQuoteTypeId) ?? null;
+  const initialQuoteType = quoteTypes.find(isDefaultQuoteTypeCandidate) ?? quoteTypes[0] ?? null;
+  const initialQuoteTypeId = initialQuoteType?.id ?? "";
+  const defaultPaymentPlan = paymentPlans.find(isCardPaymentPlan) ?? paymentPlans[0] ?? null;
   const [contextType, setContextType] = useState<"acquisition" | "active_client">("acquisition");
   const [selectedProspectId, setSelectedProspectId] = useState<string>(defaultProspectId || "");
   const [selectedClientId, setSelectedClientId] = useState<string>("");
   const [selectedQuoteTypeId, setSelectedQuoteTypeId] = useState<string>(initialQuoteTypeId);
-  const [expiryDaysInput, setExpiryDaysInput] = useState<string>(String(initialQuoteType?.default_expiry_days ?? 10));
-  const [schoolYearLabelInput, setSchoolYearLabelInput] = useState<string>(initialQuoteType?.school_year_label ?? "");
+  const [expiryDaysInput, setExpiryDaysInput] = useState<string>(DEFAULT_EXPIRY_DAYS);
+  const [schoolYearLabelInput, setSchoolYearLabelInput] = useState<string>(DEFAULT_QUOTE_SCHOOL_YEAR);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const [selectedTermsTemplateId, setSelectedTermsTemplateId] = useState<string>("");
   const [language, setLanguage] = useState<UiLanguage>(normalizeLang(uiLanguage));
@@ -850,6 +881,8 @@ export default function QuoteWizardForm({
               value={selectedProspectId}
               language={language}
               onChange={setSelectedProspectId}
+              emptyActionHref={newProspectHref}
+              emptyActionLabel={t("admin.quote_new.new_prospect")}
             />
           ) : (
             <SearchablePersonSelect
@@ -940,7 +973,7 @@ export default function QuoteWizardForm({
             </label>
             <label>
               {t("admin.quote_new.payment_plan")}
-              <select name="payment_plan_id" defaultValue={paymentPlans[0]?.id ?? ""}>
+              <select name="payment_plan_id" defaultValue={defaultPaymentPlan?.id ?? ""}>
                 <option value="">{t("admin.quote_new.none")}</option>
                 {paymentPlans.map((item) => (
                   <option key={item.id} value={item.id}>
