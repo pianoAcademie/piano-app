@@ -64,7 +64,6 @@ def _build_series_definitions() -> list[SeriesDefinition]:
         SeriesDefinition(key="eveil-pompe-wed-16", location_code="POMPE", weekday=2, hour=16),
         SeriesDefinition(key="eveil-pompe-sat-10", location_code="POMPE", weekday=5, hour=10),
         SeriesDefinition(key="eveil-assas-wed-16", location_code="ASSAS", weekday=2, hour=16),
-        SeriesDefinition(key="eveil-assas-sat-10", location_code="ASSAS", weekday=5, hour=10),
         SeriesDefinition(key="eveil-richelieu-wed-16", location_code="RICHELIEU", weekday=2, hour=16),
         SeriesDefinition(key="eveil-richelieu-sat-10", location_code="RICHELIEU", weekday=5, hour=10),
     ]
@@ -242,6 +241,8 @@ def main() -> None:
                     zoom_link=None,
                     is_private=True,
                     allow_online_booking=False,
+                    visibility_scope="PRIVATE",
+                    booking_scope="PRIVATE",
                     timezone=session_timezone,
                     recurrence_group_id=recurrence_group_id,
                     recurrence_rule=recurrence_rule,

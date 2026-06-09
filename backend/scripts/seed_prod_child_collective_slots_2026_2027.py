@@ -119,13 +119,17 @@ def _build_series_definitions() -> list[SeriesDefinition]:
         3: (17,),
         4: (17,),
     }
+    assas_wednesday_only = {
+        2: (10, 11, 14, 15, 16, 17, 18),
+    }
 
     _append_series(definitions, location_code="SCHEFFER", lane=1, slot_map=scheffer_primary)
     _append_series(definitions, location_code="SCHEFFER", lane=2, slot_map=scheffer_secondary)
 
-    for location_code in ("POMPE", "RICHELIEU", "ASSAS"):
+    for location_code in ("POMPE", "RICHELIEU"):
         _append_series(definitions, location_code=location_code, lane=1, slot_map=standard_primary)
 
+    _append_series(definitions, location_code="ASSAS", lane=1, slot_map=assas_wednesday_only)
     _append_series(definitions, location_code="POMPE", lane=2, slot_map=pompe_secondary)
     return definitions
 
@@ -265,6 +269,8 @@ def main() -> None:
                     zoom_link=None,
                     is_private=True,
                     allow_online_booking=False,
+                    visibility_scope="PRIVATE",
+                    booking_scope="PRIVATE",
                     timezone=session_timezone,
                     recurrence_group_id=recurrence_group_id,
                     recurrence_rule=recurrence_rule,
