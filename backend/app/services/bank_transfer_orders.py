@@ -96,30 +96,35 @@ def _invoice_number(note: ClientNoteEntry | None) -> str:
     return "-"
 
 
-def _build_review_digest_body(rows: list[tuple[BankTransferOrder, User, ClientNoteEntry | None]], *, now: datetime) -> str:
-    generated_at = _format_local_datetime(_aware_utc(now))
+def _review_digest_status_label(status: str | None) -> str:
+    if status == BANK_TRANSFER_ORDER_STATUS_PENDING:
+        return "A verifier"
+    if status == BANK_TRANSFER_ORDER_STATUS_EXPIRED:
+        return "Expire - relancer"
+    return str(status or "")
+
+
+def _review_digest_row_html(rows: list[tuple[BankTransferOrder, User, ClientNoteEntry | None]], *, empty_message: str) -> str:
     if not rows:
-        rows_html = "<tr><td colspan='7' style='padding:10px;color:#6b7280;'>Aucun virement bancaire en attente.</td></tr>"
-    else:
-        rows_html = "".join(
-            "<tr>"
-            f"<td style='padding:8px 10px;border-top:1px solid #e5e7eb;'>{html.escape(order.order_reference)}</td>"
-            f"<td style='padding:8px 10px;border-top:1px solid #e5e7eb;'>{html.escape(_invoice_number(note))}</td>"
-            f"<td style='padding:8px 10px;border-top:1px solid #e5e7eb;'>{html.escape(_display_name(customer))}<br>"
-            f"<span style='color:#6b7280;'>{html.escape(customer.email)}</span></td>"
-            f"<td style='padding:8px 10px;border-top:1px solid #e5e7eb;text-align:right;'>{html.escape(_format_amount(order.amount_incl_vat, order.currency))}</td>"
-            f"<td style='padding:8px 10px;border-top:1px solid #e5e7eb;'>{html.escape(_format_local_datetime(order.created_at))}</td>"
-            f"<td style='padding:8px 10px;border-top:1px solid #e5e7eb;'>{html.escape(_format_local_datetime(order.expires_at))}</td>"
-            f"<td style='padding:8px 10px;border-top:1px solid #e5e7eb;'>{html.escape(str(order.status or ''))}</td>"
-            "</tr>"
-            for order, customer, note in rows
-        )
+        return f"<tr><td colspan='7' style='padding:10px;color:#6b7280;'>{html.escape(empty_message)}</td></tr>"
+    return "".join(
+        "<tr>"
+        f"<td style='padding:8px 10px;border-top:1px solid #e5e7eb;'>{html.escape(order.order_reference)}</td>"
+        f"<td style='padding:8px 10px;border-top:1px solid #e5e7eb;'>{html.escape(_invoice_number(note))}</td>"
+        f"<td style='padding:8px 10px;border-top:1px solid #e5e7eb;'>{html.escape(_display_name(customer))}<br>"
+        f"<span style='color:#6b7280;'>{html.escape(customer.email)}</span></td>"
+        f"<td style='padding:8px 10px;border-top:1px solid #e5e7eb;text-align:right;'>{html.escape(_format_amount(order.amount_incl_vat, order.currency))}</td>"
+        f"<td style='padding:8px 10px;border-top:1px solid #e5e7eb;'>{html.escape(_format_local_datetime(order.created_at))}</td>"
+        f"<td style='padding:8px 10px;border-top:1px solid #e5e7eb;'>{html.escape(_format_local_datetime(order.expires_at))}</td>"
+        f"<td style='padding:8px 10px;border-top:1px solid #e5e7eb;'>{html.escape(_review_digest_status_label(order.status))}</td>"
+        "</tr>"
+        for order, customer, note in rows
+    )
+
+
+def _review_digest_table_html(rows: list[tuple[BankTransferOrder, User, ClientNoteEntry | None]], *, empty_message: str) -> str:
+    rows_html = _review_digest_row_html(rows, empty_message=empty_message)
     return (
-        "<div style='font-family:Arial,sans-serif;color:#111827;font-size:14px;line-height:1.45;'>"
-        "<h1 style='font-size:18px;margin:0 0 12px;'>Virements bancaires a verifier</h1>"
-        f"<p style='margin:0 0 14px;'>Generation : {html.escape(generated_at)}.</p>"
-        "<p style='margin:0 0 14px;'>Ces commandes ont ete choisies en paiement par virement et attendent une verification bancaire. "
-        "Une fois le virement retrouve sur le compte, utilisez l'action admin <strong>V€</strong> sur la facture pour la marquer payee.</p>"
         "<table style='border-collapse:collapse;width:100%;font-size:13px;'>"
         "<thead><tr style='background:#f3f4f6;'>"
         "<th style='text-align:left;padding:8px 10px;'>Reference</th>"
@@ -132,6 +137,52 @@ def _build_review_digest_body(rows: list[tuple[BankTransferOrder, User, ClientNo
         "</tr></thead>"
         f"<tbody>{rows_html}</tbody>"
         "</table>"
+    )
+
+
+def _latest_review_digest_rows(
+    rows: list[tuple[BankTransferOrder, User, ClientNoteEntry | None]],
+    *,
+    limit: int,
+) -> list[tuple[BankTransferOrder, User, ClientNoteEntry | None]]:
+    latest_by_invoice: dict[object, tuple[BankTransferOrder, User, ClientNoteEntry | None]] = {}
+    for row in rows:
+        order = row[0]
+        key: object
+        if order.invoice_note_id is not None:
+            key = ("invoice", order.customer_id, order.invoice_note_id)
+        else:
+            key = ("order", order.id)
+        current = latest_by_invoice.get(key)
+        if current is None or order.created_at > current[0].created_at:
+            latest_by_invoice[key] = row
+    return sorted(
+        latest_by_invoice.values(),
+        key=lambda row: (
+            0 if row[0].status == BANK_TRANSFER_ORDER_STATUS_PENDING else 1,
+            row[0].created_at,
+            str(row[0].id),
+        ),
+    )[:limit]
+
+
+def _build_review_digest_body(rows: list[tuple[BankTransferOrder, User, ClientNoteEntry | None]], *, now: datetime) -> str:
+    generated_at = _format_local_datetime(_aware_utc(now))
+    pending_rows = [row for row in rows if row[0].status == BANK_TRANSFER_ORDER_STATUS_PENDING]
+    expired_rows = [row for row in rows if row[0].status == BANK_TRANSFER_ORDER_STATUS_EXPIRED]
+    pending_table = _review_digest_table_html(pending_rows, empty_message="Aucun virement bancaire en attente.")
+    expired_table = _review_digest_table_html(expired_rows, empty_message="Aucun virement bancaire expire a relancer.")
+    return (
+        "<div style='font-family:Arial,sans-serif;color:#111827;font-size:14px;line-height:1.45;'>"
+        "<h1 style='font-size:18px;margin:0 0 12px;'>Virements bancaires a verifier</h1>"
+        f"<p style='margin:0 0 14px;'>Generation : {html.escape(generated_at)}.</p>"
+        "<p style='margin:0 0 14px;'>Ces commandes ont ete choisies en paiement par virement. "
+        "Les virements en attente doivent etre verifies sur le compte bancaire ; les demandes expirees doivent etre relancees si le paiement n'a pas ete retrouve. "
+        "Une fois le virement retrouve sur le compte, utilisez l'action admin <strong>V€</strong> sur la facture pour la marquer payee.</p>"
+        "<h2 style='font-size:16px;margin:18px 0 8px;'>A verifier</h2>"
+        f"{pending_table}"
+        "<h2 style='font-size:16px;margin:18px 0 8px;'>Expires a relancer</h2>"
+        f"{expired_table}"
         "</div>"
     )
 
@@ -171,14 +222,18 @@ def run_bank_transfer_review_digest_job(
     if not _is_due_for_digest(current) or _digest_already_processed(db, digest_date=digest_date):
         return BankTransferReviewDigestJobResult(checked=0, sent=0, skipped=1, failed=0)
 
-    rows = db.execute(
+    raw_rows = db.execute(
         select(BankTransferOrder, User, ClientNoteEntry)
         .join(User, User.id == BankTransferOrder.customer_id)
         .outerjoin(ClientNoteEntry, ClientNoteEntry.id == BankTransferOrder.invoice_note_id)
-        .where(BankTransferOrder.status == BANK_TRANSFER_ORDER_STATUS_PENDING)
-        .order_by(BankTransferOrder.created_at.asc(), BankTransferOrder.id.asc())
-        .limit(limit)
+        .where(BankTransferOrder.status.in_([BANK_TRANSFER_ORDER_STATUS_PENDING, BANK_TRANSFER_ORDER_STATUS_EXPIRED]))
+        .order_by(BankTransferOrder.created_at.desc(), BankTransferOrder.id.desc())
+        .limit(max(limit * 3, limit))
     ).all()
+    rows = _latest_review_digest_rows(
+        [(order, customer, note) for order, customer, note in raw_rows],
+        limit=limit,
+    )
     recipients = [recipient.email for recipient in resolve_admin_bank_transfer_review_recipients(db) if recipient.email]
     if not rows or not recipients:
         _mark_digest_processed(db, digest_date=digest_date, now=current)
