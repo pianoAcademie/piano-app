@@ -15928,6 +15928,13 @@ button.danger:focus-visible {
   color: #fff8ef;
 }
 
+.embed-planning-card a.embed-planning-primary-link,
+.embed-planning-detail a.embed-planning-primary-link {
+  color: #fff8ef;
+  font-weight: 800;
+  text-shadow: 0 1px 1px rgba(31, 23, 18, 0.28);
+}
+
 @media (min-width: 900px) {
   .embed-planning-page {
     min-height: auto;
