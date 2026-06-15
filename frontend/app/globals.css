@@ -3459,6 +3459,30 @@ button.danger:focus-visible {
   gap: 12px;
 }
 
+.embed-planning-guide {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px solid #d6c094;
+  border-radius: 16px;
+  background: #fff8e8;
+  color: #4d3820;
+}
+
+.embed-planning-guide strong,
+.embed-planning-step-label {
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.embed-planning-guide span {
+  color: #6b5d4c;
+}
+
 .embed-planning-day {
   background: #fffdf8;
   border: 1px solid #ead9ba;
@@ -3512,6 +3536,33 @@ button.danger:focus-visible {
 
 .embed-slot-card small {
   color: #6f6555;
+}
+
+.embed-slot-card-action {
+  justify-self: start;
+  margin-top: 2px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #f3e3c7;
+  color: #5b3f1e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.embed-planning-detail-priority {
+  margin: 12px 0 14px;
+  scroll-margin-top: 12px;
+}
+
+.embed-planning-step-label {
+  display: block;
+  margin-bottom: 4px;
+  color: #7a5a27;
+  font-weight: 800;
+}
+
+.embed-planning-detail h2 {
+  margin-bottom: 0;
 }
 
 .embed-planning-detail-grid {
@@ -15848,6 +15899,13 @@ button.danger:focus-visible {
   box-shadow: 0 12px 26px rgba(31, 23, 18, 0.05);
 }
 
+.embed-planning-guide,
+.embed-planning-detail-priority {
+  background: linear-gradient(180deg, rgba(255, 252, 245, 0.96), rgba(248, 239, 224, 0.96));
+  border-color: rgba(196, 138, 58, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
 .embed-slot-card:hover,
 .embed-slot-card.is-selected {
   border-color: rgba(196, 138, 58, 0.5);
@@ -15858,6 +15916,16 @@ button.danger:focus-visible {
   font-family: var(--brand-serif);
   font-size: 19px;
   line-height: 1.08;
+}
+
+.embed-slot-card-action {
+  background: rgba(196, 138, 58, 0.16);
+  color: #5a3715;
+}
+
+.embed-slot-card.is-selected .embed-slot-card-action {
+  background: linear-gradient(135deg, var(--brand-gold), var(--brand-gold-deep));
+  color: #fff8ef;
 }
 
 .public-buy-page {

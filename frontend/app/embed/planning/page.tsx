@@ -16,6 +16,7 @@ type EmbedDay = {
 };
 
 const PARIS_LOCATION_GROUP = "paris";
+const ACTIVE_CLIENT_BOOKING_STATUSES = new Set(["BOOKED", "WAITLISTED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"]);
 
 function readParam(params: SearchParams | undefined, key: string): string {
   const value = params?.[key];
@@ -350,6 +351,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const bookingsBySessionId = new Map(
     ownBookings
       .filter((booking) => sessionIds.has(booking.session.id))
+      .filter((booking) => ACTIVE_CLIENT_BOOKING_STATUSES.has(booking.status))
       .map((booking) => [booking.session.id, booking]),
   );
   const locationOptions = locations
@@ -417,6 +419,64 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const sessionCheckoutLoginHref = `/login?mode=login&return_to=${encodeURIComponent(sessionCheckoutHref)}${language === "en" ? "&lang=en" : ""}`;
   const selectedSessionRequiresCheckout =
     selectedSession !== null && Number(selectedSession.external_booking_price_ttc ?? "0") > 0 && !selectedSessionIsFull;
+  const selectedSessionDetail = selectedSession ? (
+    <section className="embed-planning-detail embed-planning-detail-priority">
+      <div className="row spread">
+        <div>
+          <small className="embed-planning-step-label">{t("embed_planning.selected_slot_label")}</small>
+          <h2>{selectedSession.title}</h2>
+        </div>
+        <Link className="reset-link" href={closeSessionHref}>{uiText(language, "common.close")}</Link>
+      </div>
+
+      <p className="muted">
+        {formatDateTime(selectedSession.start_at_utc, timezone, language)} · {usesParisLocationGroup ? selectedSession.location.name : selectedLocationName || t("embed_planning.location_to_confirm")}
+      </p>
+
+      <div className="embed-planning-detail-grid">
+        <article className="item">
+          <small className="muted">{t("embed_planning.external_rate")}</small>
+          <p>{formatMoney(selectedSession.external_booking_price_ttc, selectedSession.external_booking_currency, language)}</p>
+        </article>
+        <article className="item">
+          <small className="muted">{t("embed_planning.availability_label")}</small>
+          <p>{externalAvailabilityLabel(selectedSession, language)}</p>
+        </article>
+        <article className="item">
+          <small className="muted">{t("embed_planning.coach_label")}</small>
+          <p>{selectedSession.effective_teacher_display_name || t("embed_planning.to_confirm")}</p>
+        </article>
+      </div>
+
+      {selectedSession.description ? <p>{selectedSession.description}</p> : null}
+
+      {!portalToken ? (
+        <div className="embed-planning-cta-stack">
+          <p className="muted">{t("embed_planning.unauthenticated_help")}</p>
+          <Link className="mode-link embed-planning-primary-link" href={selectedSessionRequiresCheckout ? sessionCheckoutLoginHref : loginHref}>
+            {t("embed_planning.reserve_cta")}
+          </Link>
+        </div>
+      ) : selectedBooking ? (
+        <div className="embed-planning-cta-stack">
+          <p className="flash-ok">{t("embed_planning.current_status", { status: bookingStatusLabel(selectedBooking.status, language) })}</p>
+        </div>
+      ) : selectedSessionStarted ? (
+        <p className="flash-err">{t("embed_planning.already_started")}</p>
+      ) : selectedSessionRequiresCheckout ? (
+        <div className="embed-planning-cta-stack">
+          <p className="muted">{t("embed_planning.secure_payment_help")}</p>
+          <Link className="mode-link embed-planning-primary-link" href={sessionCheckoutHref}>{t("embed_planning.continue_to_payment")}</Link>
+        </div>
+      ) : (
+        <form action={reservePublicPlanningSessionAction} className="embed-planning-book-form">
+          <input type="hidden" name="session_id" value={selectedSession.id} />
+          <input type="hidden" name="return_to" value={selectedSessionReturnTo} />
+          <button type="submit">{selectedSessionIsFull ? t("embed_planning.join_waitlist") : t("embed_planning.reserve_slot")}</button>
+        </form>
+      )}
+    </section>
+  ) : null;
 
   return (
     <main className="embed-planning-page">
@@ -499,6 +559,13 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
           {sessionOkMessage ? <section className="flash-ok">{sessionOkMessage}</section> : null}
           {sessionErrorMessage ? <section className="flash-err">{sessionErrorMessage}</section> : null}
 
+          {selectedSessionDetail ?? (
+            <section className="embed-planning-guide" aria-label={t("embed_planning.booking_steps_title")}>
+              <strong>{t("embed_planning.booking_steps_title")}</strong>
+              <span>{t("embed_planning.booking_steps_body")}</span>
+            </section>
+          )}
+
           <div className="embed-planning-week-grid">
             {embedDays.map((dayValue) => (
               <section key={dayValue.key} className="embed-planning-day">
@@ -511,7 +578,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
                   ) : (
                     dayValue.sessions.map((session) => {
                       const booking = bookingsBySessionId.get(session.id) ?? null;
-                      const isReserved = booking !== null && ["BOOKED", "WAITLISTED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"].includes(booking.status);
+                      const isReserved = booking !== null && ACTIVE_CLIENT_BOOKING_STATUSES.has(booking.status);
                       const detailHref = buildPlanningHref({
                         courseTypeId,
                         locationId: usesParisLocationGroup ? null : locationId,
@@ -521,7 +588,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
                         language,
                       });
                       return (
-                        <Link key={session.id} className={`embed-slot-card${selectedSession?.id === session.id ? " is-selected" : ""}`} href={detailHref}>
+                        <Link key={session.id} className={`embed-slot-card${selectedSession?.id === session.id ? " is-selected" : ""}`} href={detailHref} scroll>
                           <div className="embed-slot-card-top">
                             <strong>{formatTime(session.start_at_utc, timezone, language)} - {formatTime(session.end_at_utc, timezone, language)}</strong>
                             {isReserved ? <span className="badge">{t("embed_planning.reserved_badge")}</span> : null}
@@ -531,6 +598,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
                           {!usesParisLocationGroup && !selectedLocation ? <small>{session.location?.name || t("embed_planning.location_to_confirm")}</small> : null}
                           <small>{formatMoney(session.external_booking_price_ttc, session.external_booking_currency, language)}</small>
                           <small>{externalAvailabilityLabel(session, language)}</small>
+                          <span className="embed-slot-card-action">{isReserved ? t("embed_planning.reserved_badge") : t("embed_planning.select_slot_cta")}</span>
                         </Link>
                       );
                     })
@@ -540,62 +608,6 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
             ))}
           </div>
         </article>
-
-        {selectedSession ? (
-          <section className="card embed-planning-detail">
-            <div className="row spread">
-              <h2>{selectedSession.title}</h2>
-              <Link className="reset-link" href={closeSessionHref}>{uiText(language, "common.close")}</Link>
-            </div>
-
-            <p className="muted">
-              {formatDateTime(selectedSession.start_at_utc, timezone, language)} · {usesParisLocationGroup ? selectedSession.location.name : selectedLocationName || t("embed_planning.location_to_confirm")}
-            </p>
-
-            <div className="embed-planning-detail-grid">
-              <article className="item">
-                <small className="muted">{t("embed_planning.external_rate")}</small>
-                <p>{formatMoney(selectedSession.external_booking_price_ttc, selectedSession.external_booking_currency, language)}</p>
-              </article>
-              <article className="item">
-                <small className="muted">{t("embed_planning.availability_label")}</small>
-                <p>{externalAvailabilityLabel(selectedSession, language)}</p>
-              </article>
-              <article className="item">
-                <small className="muted">{t("embed_planning.coach_label")}</small>
-                <p>{selectedSession.effective_teacher_display_name || t("embed_planning.to_confirm")}</p>
-              </article>
-            </div>
-
-            {selectedSession.description ? <p>{selectedSession.description}</p> : null}
-
-            {!portalToken ? (
-              <div className="embed-planning-cta-stack">
-                <p className="muted">{t("embed_planning.unauthenticated_help")}</p>
-                <Link className="mode-link embed-planning-primary-link" href={selectedSessionRequiresCheckout ? sessionCheckoutLoginHref : loginHref}>
-                  {t("embed_planning.reserve_cta")}
-                </Link>
-              </div>
-            ) : selectedBooking ? (
-              <div className="embed-planning-cta-stack">
-                <p className="flash-ok">{t("embed_planning.current_status", { status: bookingStatusLabel(selectedBooking.status, language) })}</p>
-              </div>
-            ) : selectedSessionStarted ? (
-              <p className="flash-err">{t("embed_planning.already_started")}</p>
-            ) : selectedSessionRequiresCheckout ? (
-              <div className="embed-planning-cta-stack">
-                <p className="muted">{t("embed_planning.secure_payment_help")}</p>
-                <Link className="mode-link embed-planning-primary-link" href={sessionCheckoutHref}>{t("embed_planning.continue_to_payment")}</Link>
-              </div>
-            ) : (
-              <form action={reservePublicPlanningSessionAction} className="embed-planning-book-form">
-                <input type="hidden" name="session_id" value={selectedSession.id} />
-                <input type="hidden" name="return_to" value={selectedSessionReturnTo} />
-                <button type="submit">{selectedSessionIsFull ? t("embed_planning.join_waitlist") : t("embed_planning.reserve_slot")}</button>
-              </form>
-            )}
-          </section>
-        ) : null}
       </section>
     </main>
   );
