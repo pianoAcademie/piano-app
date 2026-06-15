@@ -1172,15 +1172,13 @@ async function loadLivePlanningSeriesOptions({
     if (!local) {
       continue;
     }
-    const recurrenceKey = String(session.recurrence_group_id || "").trim();
-    const fallbackKey = [
+    const key = [
       session.course_type_id,
       session.location_id,
       local.weekday,
       local.start_time,
       local.end_time,
     ].join("|");
-    const key = recurrenceKey ? `${session.course_type_id}|${session.location_id}|${recurrenceKey}` : fallbackKey;
     const rows = groups.get(key) ?? [];
     rows.push({ session, local });
     groups.set(key, rows);
@@ -1208,7 +1206,24 @@ async function loadLivePlanningSeriesOptions({
       ...(activity?.exclude_holidays_in_recurrence === false ? [] : (preset?.holiday_dates ?? [])),
       ...(activity?.exclude_school_vacations_in_recurrence === false ? [] : (preset?.closure_dates ?? [])),
     ]);
-    const filteredRows = rows.filter((row) => !excludedDates.has(row.local.date));
+    const seenFilteredRows = new Set<string>();
+    const filteredRows = rows.filter((row) => {
+      if (excludedDates.has(row.local.date)) {
+        return false;
+      }
+      const rowKey = [
+        row.local.date,
+        row.local.start_time,
+        row.local.end_time,
+        row.session.course_type_id,
+        row.session.location_id || "",
+      ].join("|");
+      if (seenFilteredRows.has(rowKey)) {
+        return false;
+      }
+      seenFilteredRows.add(rowKey);
+      return true;
+    });
     const firstFiltered = filteredRows[0];
     const lastFiltered = filteredRows[filteredRows.length - 1];
     if (!firstFiltered || !lastFiltered) {
@@ -1231,14 +1246,16 @@ async function loadLivePlanningSeriesOptions({
     const weekdayText = uiText(language, QUOTE_PLANNING_WEEKDAY_KEYS[firstFiltered.local.weekday] || "admin.quote_planning.weekday_unset");
     const period = `${formatDateForLivePlanningLabel(startDate)} -> ${formatDateForLivePlanningLabel(endDate)}`;
     const sessionsText = uiText(language, "admin.quote_planning.live_slot_sessions", { count: sessionsCount });
-    const seriesKey = String(session.recurrence_group_id || "").trim();
-    const optionKey = seriesKey || [
+    const recurrenceGroups = Array.from(
+      new Set(filteredRows.map((row) => String(row.session.recurrence_group_id || "").trim()).filter(Boolean)),
+    );
+    const seriesKey = recurrenceGroups.length === 1 ? recurrenceGroups[0] : "";
+    const optionKey = [
       session.course_type_id,
       session.location_id,
       firstFiltered.local.weekday,
       firstFiltered.local.start_time,
       firstFiltered.local.end_time,
-      firstFiltered.local.date,
     ].join("|");
     options.push({
       key: optionKey,

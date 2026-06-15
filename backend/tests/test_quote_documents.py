@@ -746,6 +746,75 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertEqual(hydrated["sessions_count"], 1)
         self.assertEqual(hydrated["sessions"][0]["series_key"], str(expected_recurrence_id))
 
+    def test_live_planning_block_expands_across_split_recurrence_groups(self) -> None:
+        activity_id = uuid4()
+        location_id = uuid4()
+        first_recurrence_id = uuid4()
+        second_recurrence_id = uuid4()
+        duplicate_recurrence_id = uuid4()
+        paris = ZoneInfo("Europe/Paris")
+
+        def live_row(iso_date: str, recurrence_id) -> tuple[SimpleNamespace, SimpleNamespace, SimpleNamespace]:
+            local_day = date.fromisoformat(iso_date)
+            local_start = datetime.combine(local_day, time(17, 0), tzinfo=paris)
+            local_end = datetime.combine(local_day, time(18, 0), tzinfo=paris)
+            return (
+                SimpleNamespace(
+                    id=uuid4(),
+                    course_type_id=activity_id,
+                    location_id=location_id,
+                    status="SCHEDULED",
+                    start_at_utc=local_start.astimezone(timezone.utc),
+                    end_at_utc=local_end.astimezone(timezone.utc),
+                    timezone="Europe/Paris",
+                    recurrence_group_id=recurrence_id,
+                ),
+                SimpleNamespace(id=activity_id, name="Cours de piano collectif en presentiel (1h)", mode="ONSITE"),
+                SimpleNamespace(id=location_id, name="Rue Scheffer", timezone="Europe/Paris", is_online=False),
+            )
+
+        rows = [
+            live_row("2026-09-11", first_recurrence_id),
+            live_row("2027-01-29", first_recurrence_id),
+            live_row("2027-02-05", second_recurrence_id),
+            live_row("2027-02-05", duplicate_recurrence_id),
+            live_row("2027-06-18", second_recurrence_id),
+        ]
+        fake_db = SimpleNamespace(
+            scalar=lambda _query: None,
+            execute=lambda _query: SimpleNamespace(all=lambda: rows),
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "source": "live_planning",
+                    "activity_id": str(activity_id),
+                    "activity_label": "Cours de piano collectif en presentiel (1h)",
+                    "location_id": str(location_id),
+                    "location_label": "Rue Scheffer",
+                    "weekday": 4,
+                    "weekday_label": "Vendredi",
+                    "start_date": "2026-09-11",
+                    "end_date": "2027-01-29",
+                    "start_time": "17:00",
+                    "end_time": "18:00",
+                    "series_key": str(first_recurrence_id),
+                    "calendar_school_year": "2026-2027",
+                    "selection_pending": False,
+                }
+            ],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_planning_sessions(fake_db, snapshot)
+
+        self.assertEqual(
+            [item["date"] for item in hydrated["sessions"]],
+            ["2026-09-11", "2027-01-29", "2027-02-05", "2027-06-18"],
+        )
+        self.assertEqual(hydrated["sessions_count"], 4)
+        self.assertEqual(hydrated["blocks"][0]["end_date"], "2027-06-18")
+
     def test_calendar_snapshot_hydration_replaces_shifted_legacy_session_times(self) -> None:
         activity_id = uuid4()
         location_id = uuid4()

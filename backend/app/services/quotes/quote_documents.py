@@ -1664,6 +1664,9 @@ def _expected_sessions_from_planning_block(block: dict[str, Any]) -> list[dict[s
         session_limit=session_limit,
         school_year_label=str(block.get("school_year_label") or block.get("calendar_school_year") or ""),
     )
+    school_year_bounds = _school_year_bounds_from_label(str(block.get("school_year_label") or block.get("calendar_school_year") or ""))
+    if session_limit > 0:
+        effective_end_date = school_year_bounds[1] if school_year_bounds is not None else start_date + timedelta(days=370)
     location_id = _parse_uuid(block.get("location_id"))
     snapshot = generate_calendar_snapshot(
         CalendarGenerationInput(
@@ -1725,6 +1728,14 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
         session_limit=session_limit,
         school_year_label=str(block.get("school_year_label") or block.get("calendar_school_year") or ""),
     )
+    school_year_bounds = _school_year_bounds_from_label(str(block.get("school_year_label") or block.get("calendar_school_year") or ""))
+    is_live_planning_block = str(block.get("source") or "").strip() == "live_planning"
+    if is_live_planning_block and school_year_bounds is not None:
+        query_end_date = school_year_bounds[1]
+    elif session_limit > 0:
+        query_end_date = school_year_bounds[1] if school_year_bounds is not None else start_date + timedelta(days=370)
+    else:
+        query_end_date = effective_end_date
     start_time = str(block.get("start_time") or "").strip()
     if not start_time:
         return []
@@ -1737,7 +1748,7 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
     excluded_dates = _parse_iso_date_set(block.get("holiday_dates")) | _parse_iso_date_set(block.get("closure_dates"))
 
     lower_bound = datetime.combine(start_date - timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
-    upper_bound = datetime.combine(effective_end_date + timedelta(days=2), datetime.min.time(), tzinfo=timezone.utc)
+    upper_bound = datetime.combine(query_end_date + timedelta(days=2), datetime.min.time(), tzinfo=timezone.utc)
     conditions = [
         CourseSession.course_type_id == activity_id,
         CourseSession.status == SessionStatus.SCHEDULED,
@@ -1755,8 +1766,9 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
         .where(*conditions)
         .order_by(CourseSession.start_at_utc.asc())
     ).all()
-    def collect_sessions(*, enforce_series_key: bool) -> list[dict[str, Any]]:
+    def collect_sessions(*, enforce_series_key: bool, max_date: date) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str, str]] = set()
         for session_obj, activity, location in rows:
             row_series_key = str(session_obj.recurrence_group_id or session_obj.id)
             if enforce_series_key and series_key and row_series_key != series_key:
@@ -1764,7 +1776,7 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
             zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
             local_start = session_obj.start_at_utc.astimezone(zone)
             local_end = session_obj.end_at_utc.astimezone(zone)
-            if local_start.date() < start_date or local_start.date() > effective_end_date:
+            if local_start.date() < start_date or local_start.date() > max_date:
                 continue
             if local_start.date() in excluded_dates:
                 continue
@@ -1772,6 +1784,15 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
                 continue
             if local_start.strftime("%H:%M") != start_time:
                 continue
+            key = (
+                local_start.date().isoformat(),
+                local_start.strftime("%H:%M"),
+                str(activity.id),
+                str(location.id),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
             modality = _course_type_modality(activity, location)
             out.append(
                 {
@@ -1792,9 +1813,14 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
             )
         return out
 
-    sessions = collect_sessions(enforce_series_key=True)
-    if session_limit > 0 and series_key and len(sessions) < session_limit:
-        widened_sessions = collect_sessions(enforce_series_key=False)
+    limited_series_end_date = query_end_date if session_limit > 0 else effective_end_date
+    sessions = collect_sessions(enforce_series_key=True, max_date=limited_series_end_date)
+    if is_live_planning_block:
+        widened_sessions = collect_sessions(enforce_series_key=False, max_date=query_end_date)
+        if len(widened_sessions) > len(sessions):
+            sessions = widened_sessions
+    elif session_limit > 0 and series_key and len(sessions) < session_limit:
+        widened_sessions = collect_sessions(enforce_series_key=False, max_date=query_end_date)
         if len(widened_sessions) > len(sessions):
             sessions = widened_sessions
     sessions, _ = _filter_sessions_blocked_by_quote_school_calendar(db, sessions)

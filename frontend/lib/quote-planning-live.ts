@@ -115,6 +115,19 @@ function blockIsOnline(block: LivePlanningBlockInput): boolean {
   return haystack.includes("online") || haystack.includes("ligne");
 }
 
+function schoolYearEndDateFromBlock(block: LivePlanningBlockInput): string | null {
+  const label = String(block.calendar_school_year || block.school_year_label || "").trim();
+  const match = label.match(/^(\d{4})-(\d{4})$/);
+  if (!match) {
+    return null;
+  }
+  return `${match[2]}-08-31`;
+}
+
+function shouldWidenLivePlanningBlock(block: LivePlanningBlockInput): boolean {
+  return String(block.source || "").trim() === "live_planning";
+}
+
 export async function loadLivePlanningMatchForBlock({
   block,
   token,
@@ -146,49 +159,73 @@ export async function loadLivePlanningMatchForBlock({
       .filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item)),
   );
   const blockSeriesKey = String(block.series_key || "").trim();
-  const buildMatches = (enforceSeriesKey: boolean) => result.data
-    .map((session) => ({ session, local: sessionLocalParts(session) }))
-    .filter((item): item is { session: AdminSessionOut; local: LocalSessionParts } => item.local !== null)
-    .filter(({ session, local }) => {
-      if (
-        enforceSeriesKey
-        && blockSeriesKey
-        && String(session.recurrence_group_id || session.id || "").trim() !== blockSeriesKey
-      ) {
-        return false;
-      }
-      if (session.course_type_id !== block.activity_id) {
-        return false;
-      }
-      if (block.location_id && !isOnlineBlock && session.location_id !== block.location_id) {
-        return false;
-      }
-      if (local.date < block.start_date) {
-        return false;
-      }
-      if (local.date > block.end_date) {
-        return false;
-      }
-      if (excludedDates.has(local.date)) {
-        return false;
-      }
-      return (
-        local.weekday === block.weekday
-        && local.start_time === block.start_time
-        && local.end_time === block.end_time
-      );
-    })
-    .sort((left, right) => {
-      const byDate = left.local.date.localeCompare(right.local.date);
-      if (byDate !== 0) {
-        return byDate;
-      }
-      return left.local.start_time.localeCompare(right.local.start_time);
-    });
+  const schoolYearEndDate = schoolYearEndDateFromBlock(block);
+  const widenedEndDate = shouldWidenLivePlanningBlock(block) && schoolYearEndDate ? schoolYearEndDate : block.end_date;
+  const buildMatches = (enforceSeriesKey: boolean, maxDate: string) => {
+    const seen = new Set<string>();
+    return result.data
+      .map((session) => ({ session, local: sessionLocalParts(session) }))
+      .filter((item): item is { session: AdminSessionOut; local: LocalSessionParts } => item.local !== null)
+      .filter(({ session, local }) => {
+        if (
+          enforceSeriesKey
+          && blockSeriesKey
+          && String(session.recurrence_group_id || session.id || "").trim() !== blockSeriesKey
+        ) {
+          return false;
+        }
+        if (session.course_type_id !== block.activity_id) {
+          return false;
+        }
+        if (block.location_id && !isOnlineBlock && session.location_id !== block.location_id) {
+          return false;
+        }
+        if (local.date < block.start_date) {
+          return false;
+        }
+        if (local.date > maxDate) {
+          return false;
+        }
+        if (excludedDates.has(local.date)) {
+          return false;
+        }
+        return (
+          local.weekday === block.weekday
+          && local.start_time === block.start_time
+          && local.end_time === block.end_time
+        );
+      })
+      .filter(({ local, session }) => {
+        const key = [
+          local.date,
+          local.start_time,
+          local.end_time,
+          session.course_type_id,
+          session.location_id || "",
+        ].join("|");
+        if (seen.has(key)) {
+          return false;
+        }
+        seen.add(key);
+        return true;
+      })
+      .sort((left, right) => {
+        const byDate = left.local.date.localeCompare(right.local.date);
+        if (byDate !== 0) {
+          return byDate;
+        }
+        return left.local.start_time.localeCompare(right.local.start_time);
+      });
+  };
 
-  let matched = buildMatches(true);
-  if (sessionLimit > 0 && blockSeriesKey && matched.length < sessionLimit) {
-    const widenedMatches = buildMatches(false);
+  let matched = buildMatches(true, block.end_date);
+  if (shouldWidenLivePlanningBlock(block)) {
+    const widenedMatches = buildMatches(false, widenedEndDate);
+    if (widenedMatches.length > matched.length) {
+      matched = widenedMatches;
+    }
+  } else if (sessionLimit > 0 && blockSeriesKey && matched.length < sessionLimit) {
+    const widenedMatches = buildMatches(false, block.end_date);
     if (widenedMatches.length > matched.length) {
       matched = widenedMatches;
     }
