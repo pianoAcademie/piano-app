@@ -15928,6 +15928,125 @@ button.danger:focus-visible {
   color: #fff8ef;
 }
 
+@media (min-width: 900px) {
+  .embed-planning-page {
+    min-height: auto;
+    padding: 10px;
+  }
+
+  .embed-planning-shell {
+    gap: 10px;
+  }
+
+  .embed-planning-card,
+  .embed-planning-detail {
+    padding: 14px 16px;
+  }
+
+  .embed-planning-header {
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .embed-brand-lockup {
+    display: none;
+  }
+
+  .embed-planning-header h1 {
+    font-size: clamp(24px, 2.5vw, 32px);
+    line-height: 1;
+  }
+
+  .embed-planning-header .muted {
+    font-size: 14px;
+    line-height: 1.25;
+  }
+
+  .embed-planning-card > form.grid.cols-2 {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 8px 10px;
+    margin-top: 8px;
+  }
+
+  .embed-planning-card > form.grid.cols-2 > .row {
+    grid-column: auto;
+    align-self: end;
+  }
+
+  .embed-planning-card > form label {
+    gap: 4px;
+    font-size: 13px;
+  }
+
+  .embed-planning-card > form input,
+  .embed-planning-card > form select {
+    min-height: 38px;
+    padding: 8px 10px;
+  }
+
+  .embed-planning-card > form button,
+  .embed-planning-card > form .small-btn {
+    min-height: 38px;
+    padding: 8px 12px;
+  }
+
+  .embed-planning-guide {
+    gap: 6px 10px;
+    margin: 10px 0;
+    padding: 9px 12px;
+    border-radius: 14px;
+    font-size: 13px;
+  }
+
+  .embed-planning-week-grid {
+    gap: 8px;
+  }
+
+  .embed-planning-day {
+    min-height: auto;
+    border-radius: 16px;
+  }
+
+  .embed-planning-day-head {
+    padding: 9px 10px;
+    font-size: 14px;
+  }
+
+  .embed-planning-day-body {
+    gap: 7px;
+    padding: 8px;
+  }
+
+  .embed-slot-card {
+    gap: 4px;
+    padding: 8px;
+    border-radius: 12px;
+  }
+
+  .embed-slot-card-top strong {
+    font-size: 14px;
+    line-height: 1.1;
+  }
+
+  .embed-slot-card p {
+    font-size: 15px;
+    line-height: 1.02;
+  }
+
+  .embed-slot-card small {
+    font-size: 11px;
+    line-height: 1.12;
+  }
+
+  .embed-slot-card-action {
+    padding: 4px 7px;
+    font-size: 11px;
+    line-height: 1;
+    white-space: nowrap;
+  }
+}
+
 .public-buy-page {
   padding: 18px 0;
 }

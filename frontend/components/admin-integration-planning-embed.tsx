@@ -5,6 +5,7 @@ import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } fro
 import CopyLinkButton from "./copy-link-button";
 
 const VIRTUAL_PARIS_LOCATION_ID = "__virtual_paris__";
+const EMBED_IFRAME_HEIGHT = 900;
 
 function normalizeBaseUrl(raw: string | null | undefined): string {
   const value = (raw ?? "").trim();
@@ -111,7 +112,7 @@ export default function AdminIntegrationPlanningEmbed({
       ? `${t("admin.integration_embed.iframe_title_prefix")} ${selectedActivity.name}${selectedLocationLabel ? ` - ${selectedLocationLabel}` : ""}`
       : t("admin.integration_embed.external_planning");
   const iframeHtml = absoluteEmbedUrl
-    ? `<iframe src="${absoluteEmbedUrl}" title="${iframeTitle}" width="100%" height="840" style="width:100%;min-height:840px;border:0;border-radius:16px;overflow:hidden;" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`
+    ? `<iframe src="${absoluteEmbedUrl}" title="${iframeTitle}" width="100%" height="${EMBED_IFRAME_HEIGHT}" style="width:100%;min-height:${EMBED_IFRAME_HEIGHT}px;border:0;border-radius:16px;overflow:hidden;" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`
     : "";
 
   return (
