@@ -8,6 +8,7 @@ import sys
 import unittest
 from types import SimpleNamespace
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -24,6 +25,7 @@ from app.api.routes.typeform_intakes import (
     _apply_planned_quantities_to_activity_lines,
     _intake_list_out_fast,
     _line_allows_session_modality,
+    _load_selected_session_school_year_series,
     _normalize_payload,
     _requires_strict_typeform_location_matching,
     _session_recommendations_have_options,
@@ -954,6 +956,7 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
             },
             warnings_json=[{"message": "A verifier"}],
             blocking_reasons_json=[],
+            admin_comment=None,
         )
         config = SimpleNamespace(
             configuration_json={"label": "Paris Enfants 2026-2027"},
@@ -1690,6 +1693,65 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
         )
 
         self.assertEqual(adjusted_lines[0].quantity, Decimal("1.00"))
+
+    def test_selected_late_occurrence_loads_full_school_year_series_once_per_slot(self) -> None:
+        recurrence_group_id = uuid4()
+        activity_id = uuid4()
+        location_id = uuid4()
+        paris = ZoneInfo("Europe/Paris")
+
+        def session_row(session_id, start_month, start_day):
+            year = 2026 if start_month >= 9 else 2027
+            local_start = datetime(year, start_month, start_day, 11, 0, tzinfo=paris)
+            local_end = datetime(year, start_month, start_day, 12, 0, tzinfo=paris)
+            return SimpleNamespace(
+                id=session_id,
+                recurrence_group_id=recurrence_group_id,
+                course_type_id=activity_id,
+                location_id=location_id,
+                start_at_utc=local_start.astimezone(timezone.utc),
+                end_at_utc=local_end.astimezone(timezone.utc),
+                timezone="Europe/Paris",
+            )
+
+        september_first = session_row(uuid4(), 9, 9)
+        september_duplicate = session_row(uuid4(), 9, 9)
+        september_second = session_row(uuid4(), 9, 16)
+        selected_march = session_row(uuid4(), 3, 3)
+        other_time = SimpleNamespace(
+            id=uuid4(),
+            recurrence_group_id=recurrence_group_id,
+            course_type_id=activity_id,
+            location_id=location_id,
+            start_at_utc=datetime(2026, 9, 9, 10, 0, tzinfo=paris).astimezone(timezone.utc),
+            end_at_utc=datetime(2026, 9, 9, 11, 0, tzinfo=paris).astimezone(timezone.utc),
+            timezone="Europe/Paris",
+        )
+
+        class _FakeScalars:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def all(self):
+                return list(self._rows)
+
+        db = SimpleNamespace(
+            scalars=lambda _stmt: _FakeScalars(
+                [selected_march, september_second, other_time, september_duplicate, september_first]
+            )
+        )
+
+        series = _load_selected_session_school_year_series(
+            db,
+            selected_session=selected_march,
+            location=SimpleNamespace(id=location_id, timezone="Europe/Paris"),
+            school_year_label="2026-2027",
+        )
+
+        self.assertEqual(
+            [row.start_at_utc.date().isoformat() for row in series],
+            ["2026-09-09", "2026-09-16", "2027-03-03"],
+        )
 
     def test_should_try_future_school_year_config_when_slots_are_requested_but_no_option_matches(self) -> None:
         should_try = _should_try_future_school_year_config(

@@ -3584,6 +3584,101 @@ def _school_year_start_year(label: object | None) -> int | None:
     return bounds[0].year
 
 
+def _session_local_slot_key(
+    session_obj: CourseSession,
+    *,
+    fallback_timezone: object | None = None,
+) -> tuple[date, str, str, str, str]:
+    zone = _safe_zoneinfo(getattr(session_obj, "timezone", None) or fallback_timezone)
+    local_start = session_obj.start_at_utc.astimezone(zone)
+    local_end = session_obj.end_at_utc.astimezone(zone)
+    return (
+        local_start.date(),
+        local_start.strftime("%H:%M"),
+        local_end.strftime("%H:%M"),
+        str(session_obj.course_type_id),
+        str(session_obj.location_id),
+    )
+
+
+def _dedupe_sessions_by_local_slot(
+    session_rows: list[CourseSession],
+    *,
+    fallback_timezone: object | None = None,
+) -> list[CourseSession]:
+    deduped: list[CourseSession] = []
+    seen: set[tuple[date, str, str, str, str]] = set()
+    for row in sorted(session_rows, key=lambda item: item.start_at_utc):
+        slot_key = _session_local_slot_key(row, fallback_timezone=fallback_timezone)
+        if slot_key in seen:
+            continue
+        seen.add(slot_key)
+        deduped.append(row)
+    return deduped
+
+
+def _local_school_year_bounds_utc(
+    label: object | None,
+    *,
+    zone: ZoneInfo,
+) -> tuple[datetime, datetime] | None:
+    bounds = _school_year_bounds_from_label(label)
+    if bounds is None:
+        return None
+    school_year_start, school_year_end = bounds
+    start_local = datetime.combine(school_year_start, time.min, tzinfo=zone)
+    end_local = datetime.combine(school_year_end + timedelta(days=1), time.min, tzinfo=zone)
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
+
+
+def _load_selected_session_school_year_series(
+    db: Session,
+    *,
+    selected_session: CourseSession,
+    location: Location,
+    school_year_label: object | None,
+) -> list[CourseSession]:
+    if selected_session.recurrence_group_id is None:
+        return [selected_session]
+
+    zone = _safe_zoneinfo(selected_session.timezone or location.timezone)
+    selected_local_start = selected_session.start_at_utc.astimezone(zone)
+    selected_local_end = selected_session.end_at_utc.astimezone(zone)
+    selected_start_label = selected_local_start.strftime("%H:%M")
+    selected_end_label = selected_local_end.strftime("%H:%M")
+
+    stmt = select(CourseSession).where(
+        CourseSession.recurrence_group_id == selected_session.recurrence_group_id,
+        CourseSession.status == SessionStatus.SCHEDULED,
+        CourseSession.course_type_id == selected_session.course_type_id,
+        CourseSession.location_id == selected_session.location_id,
+    )
+    school_year_bounds_utc = _local_school_year_bounds_utc(school_year_label, zone=zone)
+    if school_year_bounds_utc is not None:
+        school_year_start_utc, school_year_end_utc = school_year_bounds_utc
+        stmt = stmt.where(
+            CourseSession.start_at_utc >= school_year_start_utc,
+            CourseSession.start_at_utc < school_year_end_utc,
+        )
+
+    rows = db.scalars(stmt.order_by(CourseSession.start_at_utc.asc())).all()
+    matching_rows = []
+    for row in rows:
+        row_zone = _safe_zoneinfo(row.timezone or location.timezone)
+        local_start = row.start_at_utc.astimezone(row_zone)
+        local_end = row.end_at_utc.astimezone(row_zone)
+        if local_start.weekday() != selected_local_start.weekday():
+            continue
+        if local_start.strftime("%H:%M") != selected_start_label:
+            continue
+        if local_end.strftime("%H:%M") != selected_end_label:
+            continue
+        matching_rows.append(row)
+
+    series_rows = _dedupe_sessions_by_local_slot(matching_rows, fallback_timezone=location.timezone)
+    return series_rows or [selected_session]
+
+
 def _source_code_school_year_family(source_code: object | None) -> str:
     normalized = _text(source_code).strip().lower()
     return re.sub(r"20\d{2}_20\d{2}", "{school_year}", normalized)
@@ -6012,18 +6107,12 @@ def _calendar_snapshot_from_analysis(
                 continue
 
             session_obj, activity, location = selected_row
-            if session_obj.recurrence_group_id is not None:
-                series_sessions = db.scalars(
-                    select(CourseSession)
-                    .where(
-                        CourseSession.recurrence_group_id == session_obj.recurrence_group_id,
-                        CourseSession.status == SessionStatus.SCHEDULED,
-                        CourseSession.start_at_utc >= session_obj.start_at_utc - timedelta(minutes=1),
-                    )
-                    .order_by(CourseSession.start_at_utc.asc())
-                ).all()
-            else:
-                series_sessions = [session_obj]
+            series_sessions = _load_selected_session_school_year_series(
+                db,
+                selected_session=session_obj,
+                location=location,
+                school_year_label=runtime_context.get("school_year_label"),
+            )
             if not series_sessions:
                 series_sessions = [session_obj]
             session_limit = session_limit_by_key.get(_session_recommendation_key(recommendation)) or session_limit_by_key.get(
