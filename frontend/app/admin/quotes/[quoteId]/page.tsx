@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import ConfirmSubmitButton from "../../../../components/confirm-submit-button";
+import { QuoteLanguageTemplateFields } from "../../../../components/admin/quote-language-template-fields";
 import CopyLinkButton from "../../../../components/copy-link-button";
 import QuoteEmailPreviewSubmitButton from "../../../../components/quote-email-preview-submit-button";
 import QuoteClientMatchCard from "../../../../components/quotes/quote-client-match-card";
@@ -2724,11 +2725,9 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     const haystack = `${selectedTemplate.name || ""} ${selectedTemplate.code || ""}`.trim().toLowerCase();
     return haystack.includes("eveil") || haystack.includes("initiation");
   })();
-  const templateOptions = languageQuoteTemplates;
   const quoteTemplateSelectValue = selectedTemplate ? quoteTemplateId : "";
   const languageTermsTemplates = termsTemplates.filter((row) => normalizeLang(row.language) === quoteLanguage);
   const selectedTermsTemplate = languageTermsTemplates.find((row) => row.id === quoteTermsTemplateId);
-  const termsOptions = languageTermsTemplates;
   const termsTemplateSelectValue = selectedTermsTemplate ? quoteTermsTemplateId : "";
   const pdfVersionTag = String(detail.quote.document_hash || detail.quote.document_generated_at || "").trim();
   const adminPdfHref = withUiLanguage(
@@ -3963,31 +3962,23 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	              {t("admin.quote_detail.saved_value_hint")}
 	            </small>
 	          </label>
-	          <label>
-	            {t("admin.quote_detail.quote_template")}
-	            <select name="quote_template_uuid" defaultValue={quoteTemplateSelectValue} disabled={!canEditQuote}>
-	              <option value="">{t("admin.quote_detail.none")}</option>
-              {templateOptions.map((row) => (
-                <option key={row.id} value={row.id}>{row.name}</option>
-              ))}
-            </select>
-	          </label>
-	          <label>
-	            {t("admin.quote_detail.terms_template")}
-	            <select name="terms_template_id" defaultValue={termsTemplateSelectValue} disabled={!canEditQuote}>
-	              <option value="">{t("admin.quote_detail.keep_current_snapshot")}</option>
-              {termsOptions.map((row) => (
-                <option key={row.id} value={row.id}>{row.name}</option>
-              ))}
-            </select>
-	          </label>
-	          <label>
-	            {t("common.language")}
-	            <select name="language" defaultValue={quoteLanguage} disabled={!canEditQuote}>
-	              <option value="fr">{t("common.french")}</option>
-	              <option value="en">{t("common.english")}</option>
-	            </select>
-	          </label>
+            <QuoteLanguageTemplateFields
+              canEdit={canEditQuote}
+              initialLanguage={quoteLanguage}
+              initialQuoteTemplateId={quoteTemplateSelectValue}
+              initialTermsTemplateId={termsTemplateSelectValue}
+              quoteTemplates={quoteTemplates}
+              termsTemplates={termsTemplates}
+              labels={{
+                quoteTemplate: t("admin.quote_detail.quote_template"),
+                none: t("admin.quote_detail.none"),
+                termsTemplate: t("admin.quote_detail.terms_template"),
+                keepCurrentSnapshot: t("admin.quote_detail.keep_current_snapshot"),
+                language: t("common.language"),
+                french: t("common.french"),
+                english: t("common.english"),
+              }}
+            />
 	          <label>
 	            {t("admin.quote_detail.currency")}
             <select name="currency" defaultValue={detail.quote.currency || "EUR"} disabled={!canEditQuote}>
