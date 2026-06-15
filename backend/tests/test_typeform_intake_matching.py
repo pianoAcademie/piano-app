@@ -1695,12 +1695,13 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
         self.assertEqual(adjusted_lines[0].quantity, Decimal("1.00"))
 
     def test_selected_late_occurrence_loads_full_school_year_series_once_per_slot(self) -> None:
-        recurrence_group_id = uuid4()
+        first_semester_group_id = uuid4()
+        second_semester_group_id = uuid4()
         activity_id = uuid4()
         location_id = uuid4()
         paris = ZoneInfo("Europe/Paris")
 
-        def session_row(session_id, start_month, start_day):
+        def session_row(session_id, recurrence_group_id, start_month, start_day):
             year = 2026 if start_month >= 9 else 2027
             local_start = datetime(year, start_month, start_day, 11, 0, tzinfo=paris)
             local_end = datetime(year, start_month, start_day, 12, 0, tzinfo=paris)
@@ -1714,13 +1715,13 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
                 timezone="Europe/Paris",
             )
 
-        september_first = session_row(uuid4(), 9, 9)
-        september_duplicate = session_row(uuid4(), 9, 9)
-        september_second = session_row(uuid4(), 9, 16)
-        selected_march = session_row(uuid4(), 3, 3)
+        september_first = session_row(uuid4(), first_semester_group_id, 9, 9)
+        september_duplicate = session_row(uuid4(), first_semester_group_id, 9, 9)
+        september_second = session_row(uuid4(), first_semester_group_id, 9, 16)
+        selected_march = session_row(uuid4(), second_semester_group_id, 3, 3)
         other_time = SimpleNamespace(
             id=uuid4(),
-            recurrence_group_id=recurrence_group_id,
+            recurrence_group_id=first_semester_group_id,
             course_type_id=activity_id,
             location_id=location_id,
             start_at_utc=datetime(2026, 9, 9, 10, 0, tzinfo=paris).astimezone(timezone.utc),

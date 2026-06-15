@@ -3648,7 +3648,6 @@ def _load_selected_session_school_year_series(
     selected_end_label = selected_local_end.strftime("%H:%M")
 
     stmt = select(CourseSession).where(
-        CourseSession.recurrence_group_id == selected_session.recurrence_group_id,
         CourseSession.status == SessionStatus.SCHEDULED,
         CourseSession.course_type_id == selected_session.course_type_id,
         CourseSession.location_id == selected_session.location_id,
