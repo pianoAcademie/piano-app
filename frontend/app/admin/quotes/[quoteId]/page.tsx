@@ -2452,7 +2452,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     (quoteCancelSmsTemplates[0] ? messagingTemplateRef(quoteCancelSmsTemplates[0]) : "");
   const validationClientStatusLabel = validationClientLabelFromQuote(detail.quote, language);
   const validationClientStatusDetail = validationClientDateLabelFromQuote(detail.quote, language);
-  const quoteLanguage = readStringMeta(detail.quote.meta || {}, "language", "fr").toLowerCase();
+  const quoteLanguage = normalizeLang(readStringMeta(detail.quote.meta || {}, "language", "fr"));
   const quoteTemplateId = detail.quote.quote_template_id || readStringMeta(detail.quote.meta || {}, "quote_template_uuid");
   const interactionEvents = Array.isArray(detail.events)
     ? detail.events.filter((event) => QUOTE_INTERACTION_EVENT_TYPES.has(String(event.event_type || "").trim().toLowerCase()))
@@ -2711,8 +2711,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const signedAdjustment = adjustmentSignedAmount(quoteAdjustment);
   const totalTtcNumber = Number(detail.quote.total_ttc);
   const totalBeforeAdjustment = Number.isFinite(totalTtcNumber) ? totalTtcNumber - signedAdjustment : null;
-  const languageQuoteTemplates = quoteTemplates.filter((row) => normalizeLang(row.language) === normalizeLang(quoteLanguage));
-  const selectedTemplate = quoteTemplates.find((row) => row.id === quoteTemplateId);
+  const languageQuoteTemplates = quoteTemplates.filter((row) => normalizeLang(row.language) === quoteLanguage);
+  const selectedTemplate = languageQuoteTemplates.find((row) => row.id === quoteTemplateId);
   const hidePassRecupForTemplate = (() => {
     if (!selectedTemplate) {
       return false;
@@ -2724,26 +2724,12 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     const haystack = `${selectedTemplate.name || ""} ${selectedTemplate.code || ""}`.trim().toLowerCase();
     return haystack.includes("eveil") || haystack.includes("initiation");
   })();
-  const templateOptions = (() => {
-    if (!selectedTemplate) {
-      return languageQuoteTemplates;
-    }
-    if (languageQuoteTemplates.some((row) => row.id === selectedTemplate.id)) {
-      return languageQuoteTemplates;
-    }
-    return [selectedTemplate, ...languageQuoteTemplates];
-  })();
-  const languageTermsTemplates = termsTemplates.filter((row) => normalizeLang(row.language) === normalizeLang(quoteLanguage));
-  const selectedTermsTemplate = termsTemplates.find((row) => row.id === quoteTermsTemplateId);
-  const termsOptions = (() => {
-    if (!selectedTermsTemplate) {
-      return languageTermsTemplates;
-    }
-    if (languageTermsTemplates.some((row) => row.id === selectedTermsTemplate.id)) {
-      return languageTermsTemplates;
-    }
-    return [selectedTermsTemplate, ...languageTermsTemplates];
-  })();
+  const templateOptions = languageQuoteTemplates;
+  const quoteTemplateSelectValue = selectedTemplate ? quoteTemplateId : "";
+  const languageTermsTemplates = termsTemplates.filter((row) => normalizeLang(row.language) === quoteLanguage);
+  const selectedTermsTemplate = languageTermsTemplates.find((row) => row.id === quoteTermsTemplateId);
+  const termsOptions = languageTermsTemplates;
+  const termsTemplateSelectValue = selectedTermsTemplate ? quoteTermsTemplateId : "";
   const pdfVersionTag = String(detail.quote.document_hash || detail.quote.document_generated_at || "").trim();
   const adminPdfHref = withUiLanguage(
     `/admin/quotes/${detail.quote.id}/pdf${pdfVersionTag ? `?v=${encodeURIComponent(pdfVersionTag)}` : ""}`,
@@ -3979,7 +3965,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	          </label>
 	          <label>
 	            {t("admin.quote_detail.quote_template")}
-	            <select name="quote_template_uuid" defaultValue={quoteTemplateId} disabled={!canEditQuote}>
+	            <select name="quote_template_uuid" defaultValue={quoteTemplateSelectValue} disabled={!canEditQuote}>
 	              <option value="">{t("admin.quote_detail.none")}</option>
               {templateOptions.map((row) => (
                 <option key={row.id} value={row.id}>{row.name}</option>
@@ -3988,7 +3974,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	          </label>
 	          <label>
 	            {t("admin.quote_detail.terms_template")}
-	            <select name="terms_template_id" defaultValue={quoteTermsTemplateId} disabled={!canEditQuote}>
+	            <select name="terms_template_id" defaultValue={termsTemplateSelectValue} disabled={!canEditQuote}>
 	              <option value="">{t("admin.quote_detail.keep_current_snapshot")}</option>
               {termsOptions.map((row) => (
                 <option key={row.id} value={row.id}>{row.name}</option>
