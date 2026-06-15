@@ -1073,11 +1073,6 @@ function expectedWeeklyDates({
   return out;
 }
 
-function schoolYearEndDateFromPlanningStart(start: Date): Date {
-  const startYear = start.getUTCMonth() + 1 >= 9 ? start.getUTCFullYear() : start.getUTCFullYear() - 1;
-  return new Date(Date.UTC(startYear + 1, 7, 31));
-}
-
 function planningBlockEstimatedDates(block: Record<string, unknown>): string[] {
   const startDate = String(block.start_date ?? "").trim();
   const endDate = String(block.end_date ?? "").trim();
@@ -1089,15 +1084,13 @@ function planningBlockEstimatedDates(block: Record<string, unknown>): string[] {
   }
 
   const limit = positiveInt(block.planning_session_limit);
-  const schoolYearEnd = schoolYearEndDateFromPlanningStart(start);
-  const effectiveEnd = limit > 0 && schoolYearEnd > end ? schoolYearEnd : end;
   const excludedDates = new Set([
     ...normalizeCalendarDateList(block.holiday_dates),
     ...normalizeCalendarDateList(block.closure_dates),
   ]);
   const matchedDates = expectedWeeklyDates({
     startDate,
-    endDate: isoDateOnly(effectiveEnd),
+    endDate,
     weekday,
     excludedDates,
     limit: 0,

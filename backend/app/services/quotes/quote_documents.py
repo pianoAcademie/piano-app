@@ -1638,14 +1638,7 @@ def _effective_planning_block_end_date(
     session_limit: int,
     school_year_label: str | None,
 ) -> date:
-    effective_end_date = end_date
-    if session_limit <= 0:
-        return effective_end_date
-    school_year_bounds = _school_year_bounds_from_label(school_year_label)
-    if school_year_bounds is not None:
-        return max(effective_end_date, school_year_bounds[1])
-    fallback_end_year = start_date.year + 1 if start_date.month >= 9 else start_date.year
-    return max(effective_end_date, date(fallback_end_year, 8, 31))
+    return end_date
 
 
 def _expected_sessions_from_planning_block(block: dict[str, Any]) -> list[dict[str, Any]]:

@@ -166,7 +166,7 @@ export async function loadLivePlanningMatchForBlock({
       if (local.date < block.start_date) {
         return false;
       }
-      if (sessionLimit <= 0 && local.date > block.end_date) {
+      if (local.date > block.end_date) {
         return false;
       }
       if (excludedDates.has(local.date)) {

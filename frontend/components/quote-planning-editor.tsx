@@ -279,11 +279,6 @@ function timeToMinutes(value: string): number | null {
   return hours * 60 + minutes;
 }
 
-function schoolYearEndDateFromStart(start: Date): Date {
-  const startYear = start.getUTCMonth() + 1 >= 9 ? start.getUTCFullYear() : start.getUTCFullYear() - 1;
-  return new Date(Date.UTC(startYear + 1, 7, 31));
-}
-
 function planningSessionLimit(block: PlanningBlock): number {
   const parsed = Number.parseInt(String(block.planning_session_limit ?? ""), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
@@ -296,11 +291,10 @@ function estimateSessionDates(block: PlanningBlock): string[] {
     return [];
   }
   const limit = planningSessionLimit(block);
-  const effectiveEnd = limit > 0 && schoolYearEndDateFromStart(start) > end ? schoolYearEndDateFromStart(start) : end;
   const excluded = new Set(uniqueSortedDateList([...block.holiday_dates, ...block.closure_dates]));
   const matchedDates: string[] = [];
   const cursor = new Date(start);
-  while (cursor <= effectiveEnd) {
+  while (cursor <= end) {
     const normalizedWeekday = (cursor.getUTCDay() + 6) % 7;
     const dayIso = cursor.toISOString().slice(0, 10);
     if (normalizedWeekday === block.weekday && !excluded.has(dayIso)) {
