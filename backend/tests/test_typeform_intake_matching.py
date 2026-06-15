@@ -31,6 +31,7 @@ from app.api.routes.typeform_intakes import (
     _should_try_future_school_year_config,
     _solfege_slot_proposal_from_normalized,
     _stored_messages,
+    _bar_le_duc_document_codes,
     _template_for_runtime_context,
     _template_matches_when,
     _template_matches_segment_target,
@@ -676,6 +677,55 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
             language="fr",
         )
 
+        self.assertIs(
+            _typeform_default_quote_template(FakeDb([quote_template]), config=config),  # type: ignore[arg-type]
+            quote_template,
+        )
+        self.assertIs(
+            _typeform_default_terms_template(FakeDb([terms_template]), config=config),  # type: ignore[arg-type]
+            terms_template,
+        )
+
+    def test_bar_le_duc_child_document_defaults_include_prod_codes(self) -> None:
+        class FakeScalars:
+            def __init__(self, rows: list[SimpleNamespace]) -> None:
+                self._rows = rows
+
+            def all(self) -> list[SimpleNamespace]:
+                return self._rows
+
+        class FakeDb:
+            def __init__(self, rows: list[SimpleNamespace]) -> None:
+                self._rows = rows
+
+            def scalars(self, _stmt: object) -> FakeScalars:
+                return FakeScalars(self._rows)
+
+        config = SimpleNamespace(
+            default_language="fr",
+            audience_segment="child",
+            location_code="BAR_LE_DUC",
+            source_code="typeform_bld_child_2026_2027",
+            typeform_form_id="G9u3xvbq",
+            configuration_json={},
+        )
+        quote_template = SimpleNamespace(
+            code="TEMPLATE_DEVIS_COLLECTIF_ENFANTS_BAR_LE_DUC",
+            name="Template devis collectif enfants Bar-le-Duc",
+            description="",
+            target="",
+            language="fr",
+        )
+        terms_template = SimpleNamespace(
+            code="COLLECTIF_ENFANTS_2025_2026_BAR_LE_DUC",
+            name="CGV BLD- Enfants - 2026 / 2027",
+            description="",
+            target="",
+            language="fr",
+        )
+
+        self.assertIn("TEMPLATE_DEVIS_COLLECTIF_ENFANTS_BAR_LE_DUC", _bar_le_duc_document_codes(segment="child", document_kind="quote"))
+        self.assertIn("COLLECTIF_ENFANTS_2025_2026_BAR_LE_DUC", _bar_le_duc_document_codes(segment="child", document_kind="terms"))
         self.assertIs(
             _typeform_default_quote_template(FakeDb([quote_template]), config=config),  # type: ignore[arg-type]
             quote_template,

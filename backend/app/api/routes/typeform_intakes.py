@@ -244,6 +244,8 @@ def _is_bar_le_duc_config(config: TypeformFormConfig) -> bool:
 def _bar_le_duc_document_codes(*, segment: str, document_kind: str) -> list[str]:
     if document_kind == "quote" and segment == "child":
         return [
+            "TEMPLATE_DEVIS_COLLECTIF_ENFANTS_BAR_LE_DUC",
+            "TEMPLATE_DEVIS_COLLECTIF_ENFANTS_BAR_LE_DUC_EN",
             "TEMPLATE_BAR_LE_DUC_ENFANT",
             "TEMPLATE_BAR_LE_DUC_ENFANTS",
             "TEMPLATE_BLD_ENFANT",
@@ -253,6 +255,8 @@ def _bar_le_duc_document_codes(*, segment: str, document_kind: str) -> list[str]
         ]
     if document_kind == "quote" and segment == "adult":
         return [
+            "TEMPLATE_ADULTE_BAR_LE_DUC",
+            "TEMPLATE_ADULTE_BAR_LE_DUC_EN",
             "TEMPLATE_BAR_LE_DUC_ADULTE",
             "TEMPLATE_BAR_LE_DUC_ADULTES",
             "TEMPLATE_BLD_ADULTE",
@@ -262,6 +266,8 @@ def _bar_le_duc_document_codes(*, segment: str, document_kind: str) -> list[str]
         ]
     if document_kind == "terms" and segment == "child":
         return [
+            "COLLECTIF_ENFANTS_2025_2026_BAR_LE_DUC",
+            "COLLECTIF_ENFANTS_2025_2026_BAR_LE_DUC_EN",
             "CGV_BAR_LE_DUC_ENFANTS_2026_2027",
             "CGV_BLD_ENFANTS_2026_2027",
             "CGV_ENFANTS_BAR_LE_DUC_2026_2027",
@@ -269,6 +275,10 @@ def _bar_le_duc_document_codes(*, segment: str, document_kind: str) -> list[str]
         ]
     if document_kind == "terms" and segment == "adult":
         return [
+            "CONDITIONS_D_ENGAGEMENT_COURS_ADULTES_A_BAR_LE_DUC",
+            "CONDITIONS_D_ENGAGEMENT_COURS_ADULTES_A_BAR_LE_DUC_EN",
+            "CGV_ADULTES_10_COURS_BAR_LE_DUC",
+            "CGV_ADULTES_10_COURS_BAR_LE_DUC_EN",
             "CGV_BAR_LE_DUC_ADULTES_2026_2027",
             "CGV_BLD_ADULTES_2026_2027",
             "CGV_ADULTES_BAR_LE_DUC_2026_2027",
@@ -6622,7 +6632,20 @@ def create_draft_quote_from_typeform_intake(
         preview_quote = analysis["preview_quote"]
         preview_template_lines = list(preview_quote.lines) if preview_quote is not None else []
     quote_type_id = _parse_uuid(_json_object(analysis.get("runtime_context")).get("quote_type_id")) or config.default_quote_type_id
-    default_quote_template, default_terms_template = _typeform_document_templates_from_binding(
+    default_quote_template = None
+    default_terms_template = None
+    if _is_bar_le_duc_config(config):
+        default_quote_template = _typeform_default_quote_template(
+            db,
+            config=config,
+            preview_lines=preview_template_lines,
+        )
+        default_terms_template = _typeform_default_terms_template(
+            db,
+            config=config,
+            preview_lines=preview_template_lines,
+        )
+    binding_quote_template, binding_terms_template = _typeform_document_templates_from_binding(
         db,
         prospect_id=prospect_id,
         client_id=client_id,
@@ -6632,6 +6655,8 @@ def create_draft_quote_from_typeform_intake(
         currency="EUR",
         preview_lines=preview_template_lines,
     )
+    default_quote_template = default_quote_template or binding_quote_template
+    default_terms_template = default_terms_template or binding_terms_template
     default_quote_template = default_quote_template or _typeform_default_quote_template(
         db,
         config=config,
