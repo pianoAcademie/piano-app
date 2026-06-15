@@ -19,6 +19,13 @@ const commonSecurityHeaders = [
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
 ];
+const defaultFrameAncestors = "'self'";
+const publicEmbedFrameAncestors = "'self' https://piano-academie.com https://www.piano-academie.com";
+const embeddedBookingSources = [
+  "/embed/:path*",
+  "/login",
+  "/buy/session/checkout",
+];
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -30,19 +37,19 @@ const nextConfig = {
   async headers() {
     return [
       {
-        source: "/embed/:path*",
-        headers: [
-          ...commonSecurityHeaders,
-          { key: "Content-Security-Policy", value: buildCsp("'self' https:") },
-        ],
-      },
-      {
         source: "/:path*",
         headers: [
           ...commonSecurityHeaders,
-          { key: "Content-Security-Policy", value: buildCsp("'self'") },
+          { key: "Content-Security-Policy", value: buildCsp(defaultFrameAncestors) },
         ],
       },
+      ...embeddedBookingSources.map((source) => ({
+        source,
+        headers: [
+          ...commonSecurityHeaders,
+          { key: "Content-Security-Policy", value: buildCsp(publicEmbedFrameAncestors) },
+        ],
+      })),
     ];
   },
 };
