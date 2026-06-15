@@ -2393,6 +2393,117 @@ def _searchable_text(value: Any) -> str:
     return "".join(char for char in normalized if not unicodedata.combining(char))
 
 
+ENGLISH_BUSINESS_LABELS = {
+    "cours collectifs ado/adultes": "Teen/adult group lessons",
+    "cours collectif ado/adulte": "Teen/adult group lesson",
+    "cours collectifs ado adultes": "Teen/adult group lessons",
+    "cours collectif ado adulte": "Teen/adult group lesson",
+    "cours collectifs adolescents/adultes": "Teen/adult group lessons",
+    "cours collectif adolescent/adulte": "Teen/adult group lesson",
+    "cours collectifs enfants": "Children's group lessons",
+    "cours collectif enfant": "Children's group lesson",
+    "eveil musical": "Early music discovery",
+    "éveil musical": "Early music discovery",
+    "initiation au piano": "Piano initiation",
+}
+
+ENGLISH_LOCATION_LABELS = {
+    "rue richelieu": "Richelieu Street",
+    "richelieu": "Richelieu Street",
+    "rue de pompe": "Pompe Street",
+    "pompe": "Pompe Street",
+    "rue scheffer": "Scheffer Street",
+    "scheffer": "Scheffer Street",
+    "rue d'assas": "Assas Street",
+    "rue assas": "Assas Street",
+    "assas": "Assas Street",
+    "rue dulong": "Dulong Street",
+    "dulong": "Dulong Street",
+    "en ligne": "Online",
+}
+
+ENGLISH_WEEKDAY_LABELS = {
+    "lundi": "Monday",
+    "mardi": "Tuesday",
+    "mercredi": "Wednesday",
+    "jeudi": "Thursday",
+    "vendredi": "Friday",
+    "samedi": "Saturday",
+    "dimanche": "Sunday",
+}
+
+ENGLISH_TEXT_FRAGMENTS = (
+    ("Conditions générales de vente et d’inscription", "General terms of sale and enrollment"),
+    ("Conditions generales de vente et d’inscription", "General terms of sale and enrollment"),
+    ("Conditions générales de vente et d'inscription", "General terms of sale and enrollment"),
+    ("Conditions generales de vente et d'inscription", "General terms of sale and enrollment"),
+    ("Conditions générales de vente", "Terms and conditions of sale"),
+    ("Conditions generales de vente", "Terms and conditions of sale"),
+    ("Conditions d’inscription", "Enrollment terms"),
+    ("Conditions d'inscription", "Enrollment terms"),
+    ("Pour finaliser votre inscription", "To finalize your enrollment"),
+)
+
+
+def _is_english_quote_language(language: str | None) -> bool:
+    return _quote_doc_language(language=language).lower().startswith("en")
+
+
+def _localized_business_label(value: Any, *, language: str | None = None) -> str:
+    text = _harmonize_display_text(value)
+    if not text or not _is_english_quote_language(language):
+        return text
+    normalized = _searchable_text(text)
+    if normalized in ENGLISH_BUSINESS_LABELS:
+        return ENGLISH_BUSINESS_LABELS[normalized]
+    for source, replacement in ENGLISH_BUSINESS_LABELS.items():
+        if source in normalized:
+            return replacement
+    return text
+
+
+def _localized_location_label(value: Any, *, language: str | None = None) -> str:
+    text = str(value or "").strip()
+    if not text or text == "-" or not _is_english_quote_language(language):
+        return text or "-"
+    normalized = _searchable_text(text)
+    return ENGLISH_LOCATION_LABELS.get(normalized, text)
+
+
+def _localized_weekday_label(value: Any, *, language: str | None = None) -> str:
+    text = str(value or "").strip()
+    if not text or text == "-":
+        return text or "-"
+    if not _is_english_quote_language(language):
+        return text
+    return ENGLISH_WEEKDAY_LABELS.get(_searchable_text(text), text)
+
+
+def _weekday_label_from_fields(label_value: Any, weekday_value: Any, *, language: str | None = None) -> str:
+    label = str(label_value or "").strip()
+    if label:
+        return _localized_weekday_label(label, language=language)
+    return _weekday_label(weekday_value, language=language)
+
+
+def _planning_activity_display_label(block: dict[str, Any], *, language: str | None = None) -> str:
+    return _localized_business_label(str(block.get("activity_label") or "-").strip() or "-", language=language)
+
+
+def _quote_line_display_title(line: Any, *, language: str | None = None) -> str:
+    title = str(getattr(line, "title", "") or "-").strip() or "-"
+    return _localized_business_label(title, language=language)
+
+
+def _localized_english_text_fragments(value: Any, *, language: str | None = None) -> str:
+    text = str(value or "")
+    if not text or not _is_english_quote_language(language):
+        return text
+    for source, replacement in ENGLISH_TEXT_FRAGMENTS:
+        text = text.replace(source, replacement)
+    return text
+
+
 def _time_slot_parts(slot: dict[str, Any]) -> tuple[str, str] | None:
     start = str(slot.get("start_time") or slot.get("start") or "").strip()
     end = str(slot.get("end_time") or slot.get("end") or "").strip()
@@ -2521,10 +2632,10 @@ def _slot_label(value: dict[str, Any], *, fallback_location_label: str = "", lan
     label = _sanitize_slot_label_text(value.get("label"), language=language)
     if label:
         return label
-    weekday = str(value.get("weekday_label") or "").strip() or _weekday_label(value.get("weekday"), language=language)
+    weekday = _weekday_label_from_fields(value.get("weekday_label"), value.get("weekday"), language=language)
     start = str(value.get("start_time") or value.get("start") or "").strip()
     end = str(value.get("end_time") or value.get("end") or "").strip()
-    location_label = str(value.get("location_label") or fallback_location_label or "").strip()
+    location_label = _localized_location_label(str(value.get("location_label") or fallback_location_label or "").strip(), language=language)
     modality_label = _slot_mode_label(value.get("modality"), language=language)
 
     parts: list[str] = []
@@ -2564,7 +2675,7 @@ def _pending_planning_block_display(block: dict[str, Any], *, language: str | No
         activity_label += f" ({_quote_doc_text('course_included_quote', language=language)})"
         return activity_label, "-", _quote_doc_text("to_select_short", language=language), "-"
     return (
-        _harmonize_display_text(str(block.get("activity_label") or "-").strip() or "-"),
+        _planning_activity_display_label(block, language=language),
         _quote_doc_text("to_select_short", language=language),
         _quote_doc_text("to_select_short", language=language),
         "-",
@@ -2589,7 +2700,7 @@ def _planning_blocks_table_html(
             if label:
                 pending_slot_labels.append(label)
                 continue
-            weekday_text = str(raw_slot.get("weekday_label") or "").strip() or _weekday_label(raw_slot.get("weekday"), language=language)
+            weekday_text = _weekday_label_from_fields(raw_slot.get("weekday_label"), raw_slot.get("weekday"), language=language)
             start = str(raw_slot.get("start_time") or raw_slot.get("start") or "").strip()
             end = str(raw_slot.get("end_time") or raw_slot.get("end") or "").strip()
             if weekday_text and start and end:
@@ -2600,19 +2711,20 @@ def _planning_blocks_table_html(
         except (TypeError, ValueError):
             weekday_value = -99
         selection_pending = bool(block.get("selection_pending")) or weekday_value == -1
-        activity_label = _harmonize_display_text(str(block.get("activity_label") or "-").strip() or "-")
+        activity_label = _planning_activity_display_label(block, language=language)
         activity_type = str(block.get("activity_type_label") or "").strip()
         if not activity_type:
             activity_type = _modality_label(block.get("modality"), language=language)
         activity_type = _harmonize_display_text(activity_type)
-        location_label = str(block.get("location_label") or "-").strip() or "-"
+        location_label = _localized_location_label(str(block.get("location_label") or "-").strip() or "-", language=language)
         if selection_pending:
             is_solfege_block = _is_solfege_planning_block(block)
             if is_solfege_block and normalized_selected_solfege_slot:
                 activity_label, _, _, _ = _pending_planning_block_display(block, language=language)
-                weekday = (
-                    str(normalized_selected_solfege_slot.get("weekday_label") or "").strip()
-                    or _weekday_label(normalized_selected_solfege_slot.get("weekday"), language=language)
+                weekday = _weekday_label_from_fields(
+                    normalized_selected_solfege_slot.get("weekday_label"),
+                    normalized_selected_solfege_slot.get("weekday"),
+                    language=language,
                 )
                 start_time = str(normalized_selected_solfege_slot.get("start_time") or normalized_selected_solfege_slot.get("start") or "").strip()
                 end_time = str(normalized_selected_solfege_slot.get("end_time") or normalized_selected_solfege_slot.get("end") or "").strip()
@@ -2622,11 +2734,15 @@ def _planning_blocks_table_html(
                     end_time=end_time,
                     fallback_minutes=normalized_selected_solfege_slot.get("duration_minutes") or block.get("duration_minutes"),
                 )
-                location_label = str(
-                    normalized_selected_solfege_slot.get("location_label")
-                    or block.get("location_label")
-                    or "-"
-                ).strip() or "-"
+                location_label = _localized_location_label(
+                    str(
+                        normalized_selected_solfege_slot.get("location_label")
+                        or block.get("location_label")
+                        or "-"
+                    ).strip()
+                    or "-",
+                    language=language,
+                )
                 activity_type = _quote_doc_text("course_solfege", language=language)
             else:
                 activity_label, weekday, time_range, duration = _pending_planning_block_display(block, language=language)
@@ -2635,7 +2751,7 @@ def _planning_blocks_table_html(
             elif deduped_pending_slots:
                 time_range = _quote_doc_text("to_select", language=language)
         else:
-            weekday = str(block.get("weekday_label") or "").strip() or _weekday_label(block.get("weekday"), language=language)
+            weekday = _weekday_label_from_fields(block.get("weekday_label"), block.get("weekday"), language=language)
             start_time = str(block.get("start_time") or "").strip()
             end_time = str(block.get("end_time") or "").strip()
             time_range = f"{start_time} - {end_time}" if start_time and end_time else "-"
@@ -2668,9 +2784,9 @@ def _planning_block_pdf_row(
     selected_solfege_slot: dict[str, Any] | None = None,
     language: str | None = None,
 ) -> list[str]:
-    activity = _harmonize_display_text(str(block.get("activity_label") or "-"))
-    location = str(block.get("location_label") or "-").strip() or "-"
-    day = str(block.get("weekday_label") or "").strip() or _weekday_label(block.get("weekday"), language=language) or "-"
+    activity = _planning_activity_display_label(block, language=language)
+    location = _localized_location_label(str(block.get("location_label") or "-").strip() or "-", language=language)
+    day = _weekday_label_from_fields(block.get("weekday_label"), block.get("weekday"), language=language) or "-"
     start = str(block.get("start_time") or "").strip()
     end = str(block.get("end_time") or "").strip()
     time_range = f"{start} - {end}" if start and end else "-"
@@ -2691,7 +2807,7 @@ def _planning_block_pdf_row(
     slot = _json_object(selected_solfege_slot)
     if is_solfege_block and slot:
         activity, _, _, _ = _pending_planning_block_display(block, language=language)
-        slot_day = str(slot.get("weekday_label") or "").strip() or _weekday_label(slot.get("weekday"), language=language)
+        slot_day = _weekday_label_from_fields(slot.get("weekday_label"), slot.get("weekday"), language=language)
         slot_start = str(slot.get("start_time") or slot.get("start") or "").strip()
         slot_end = str(slot.get("end_time") or slot.get("end") or "").strip()
         slot_time_range = f"{slot_start} - {slot_end}" if slot_start and slot_end else "-"
@@ -2700,7 +2816,7 @@ def _planning_block_pdf_row(
             end_time=slot_end,
             fallback_minutes=slot.get("duration_minutes") or block.get("duration_minutes"),
         )
-        slot_location = str(slot.get("location_label") or block.get("location_label") or "-").strip() or "-"
+        slot_location = _localized_location_label(str(slot.get("location_label") or block.get("location_label") or "-").strip() or "-", language=language)
         if slot_day and slot_day != "-" and slot_time_range != "-":
             return [activity, slot_location, slot_day, slot_time_range, slot_duration]
 
@@ -4389,8 +4505,9 @@ def _build_quote_pdf_blocks_html(
     audience: str,
 ) -> str:
     values, html_keys, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
-    cgv_label, cgv_content = _load_terms_template_content(db=db, quote=quote)
     language = _quote_doc_language(quote=quote)
+    cgv_label, cgv_content = _load_terms_template_content(db=db, quote=quote)
+    cgv_content = _localized_english_text_fragments(cgv_content, language=language)
     terms_html = _simplify_rich_text_to_pdf_paragraphs(cgv_content, values=values, language=language)
 
     template = (
@@ -4692,7 +4809,7 @@ def _build_template_values(
         ],
         [
             [
-                _harmonize_display_text(line.title or "-"),
+                _quote_line_display_title(line, language=language),
                 _compact_quantity_label(line.quantity),
                 f"{int(line.duration_minutes)} min" if line.duration_minutes else "-",
                 f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
@@ -4716,7 +4833,7 @@ def _build_template_values(
             [
                 {
                     "html": (
-                        f"<div>{escape(line.title or '-')}</div>"
+                        f"<div>{escape(_quote_line_display_title(line, language=language))}</div>"
                         + _small_description_html(
                             "\n".join(
                                 _unique_text_parts(
@@ -4750,7 +4867,7 @@ def _build_template_values(
             [
                 {
                     "html": (
-                        f"<div>{escape(line.title or '-')}</div>"
+                        f"<div>{escape(_quote_line_display_title(line, language=language))}</div>"
                         + _small_description_html(
                             "\n".join(
                                 _unique_text_parts(
@@ -4791,7 +4908,7 @@ def _build_template_values(
                     if (line.master_item_type or "").strip().lower() == "discount_rule"
                     else _quote_doc_text("fee_surcharge", language=language)
                 ),
-                _harmonize_display_text(line.title or "-"),
+                _quote_line_display_title(line, language=language),
                 _compact_quantity_label(line.quantity),
                 f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
                 _money(Decimal(line.unit_price_ttc or 0), currency),
@@ -4811,7 +4928,7 @@ def _build_template_values(
         ],
         [
             [
-                _harmonize_display_text(line.title or "-"),
+                _quote_line_display_title(line, language=language),
                 _compact_quantity_label(line.quantity),
                 f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
                 _money(Decimal(line.unit_price_ttc or 0), currency),
@@ -4841,7 +4958,7 @@ def _build_template_values(
                     if ((line.line_category or "").lower() == "service" or _line_is_service_fee(line, service_product_ids=service_product_ids))
                     else (_quote_doc_text("fee_kit", language=language) if line.kit_id else _quote_doc_text("fee_material", language=language))
                 ),
-                _harmonize_display_text(line.title or "-"),
+                _quote_line_display_title(line, language=language),
                 _compact_quantity_label(line.quantity),
                 f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))} %",
                 _money(Decimal(line.unit_price_ttc or 0), currency),
@@ -4987,6 +5104,7 @@ def _build_template_values(
     calendar_section_html = _section_html(_quote_doc_text("section_calendar", language=language), calendar_table_html)
 
     cgv_label, _ = _load_terms_template_content(db=db, quote=quote)
+    cgv_label = _localized_english_text_fragments(cgv_label, language=language)
     prospect_data = document_context["prospect_data"]
     client_data = document_context["client_data"]
     recipient_name = (
@@ -5596,8 +5714,10 @@ def _render_quote_terms_html(
     lines: list[QuoteLine],
     audience: str = DEFAULT_AUDIENCE,
 ) -> str:
-    cgv_label, cgv_content = _load_terms_template_content(db=db, quote=quote)
     language = _quote_doc_language(quote=quote)
+    cgv_label, cgv_content = _load_terms_template_content(db=db, quote=quote)
+    cgv_label = _localized_english_text_fragments(cgv_label, language=language)
+    cgv_content = _localized_english_text_fragments(cgv_content, language=language)
     values, html_keys, _ = _build_template_values(db=db, quote=quote, lines=lines, audience=audience)
     rendered_terms = _render_terms_content_html(content=cgv_content, values=values, html_keys=html_keys)
     header_html = values.get("header_standard_html", "")
@@ -5622,8 +5742,15 @@ def render_quote_combined_html(
     lines: list[QuoteLine],
     audience: str = DEFAULT_AUDIENCE,
 ) -> str:
-    body_html = _render_quote_body_html(db=db, quote=quote, lines=lines, audience=audience)
-    terms_html = _render_quote_terms_html(db=db, quote=quote, lines=lines, audience=audience)
+    language = _quote_doc_language(quote=quote)
+    body_html = _localized_english_text_fragments(
+        _render_quote_body_html(db=db, quote=quote, lines=lines, audience=audience),
+        language=language,
+    )
+    terms_html = _localized_english_text_fragments(
+        _render_quote_terms_html(db=db, quote=quote, lines=lines, audience=audience),
+        language=language,
+    )
     base_css = _document_style_html()
     return (
         "<html><head><meta charset='utf-8'/>"
@@ -5654,8 +5781,15 @@ def render_quote_parts_html(
     lines: list[QuoteLine],
     audience: str = DEFAULT_AUDIENCE,
 ) -> tuple[str, str, str]:
-    body_html = _render_quote_body_html(db=db, quote=quote, lines=lines, audience=audience)
-    terms_html = _render_quote_terms_html(db=db, quote=quote, lines=lines, audience=audience)
+    language = _quote_doc_language(quote=quote)
+    body_html = _localized_english_text_fragments(
+        _render_quote_body_html(db=db, quote=quote, lines=lines, audience=audience),
+        language=language,
+    )
+    terms_html = _localized_english_text_fragments(
+        _render_quote_terms_html(db=db, quote=quote, lines=lines, audience=audience),
+        language=language,
+    )
     base_css = _document_style_html()
     combined_html = (
         "<html><head><meta charset='utf-8'/>"
@@ -6297,9 +6431,11 @@ def _render_quote_pdf_blocks(
     product_long_descriptions = _product_long_descriptions_by_id(db=db, products=products)
     kit_long_descriptions = _kit_long_descriptions_by_id(db=db, kits=kits)
     kit_composition = _kit_composition_by_id(db=db, kits=kits, language=language)
-    cgv_label, cgv_content = _load_terms_template_content(db=db, quote=quote)
     schedule = [item for item in _json_list(context.get("schedule")) if isinstance(item, dict)]
     styles = _quote_pdf_styles()
+    cgv_label, cgv_content = _load_terms_template_content(db=db, quote=quote)
+    cgv_label = _localized_english_text_fragments(cgv_label, language=language)
+    cgv_content = _localized_english_text_fragments(cgv_content, language=language)
     terms_flowables = _terms_flowables_for_pdf(cgv_content, values=values, html_keys=html_keys, styles=styles, language=language)
     logo_reader = _safe_logo_reader(_account_logo_data_url(db=db))
 
@@ -6399,7 +6535,7 @@ def _render_quote_pdf_blocks(
     story.append(Paragraph(_quote_doc_text("section_services", language=language), styles["h2"]))
     service_rows = [
         [
-            _harmonize_display_text(line.title or "-"),
+            _quote_line_display_title(line, language=language),
             _compact_quantity_label(line.quantity),
             f"{int(line.duration_minutes)} min" if line.duration_minutes else "-",
             f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))}%",
@@ -6436,7 +6572,7 @@ def _render_quote_pdf_blocks(
                 if (line.master_item_type or "").strip().lower() == "discount_rule"
                 else _quote_doc_text("fee_surcharge", language=language)
             ),
-            _harmonize_display_text(line.title or "-"),
+            _quote_line_display_title(line, language=language),
             _compact_quantity_label(line.quantity),
             f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))}%",
             _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
@@ -6467,7 +6603,7 @@ def _render_quote_pdf_blocks(
     product_rows = [
         [
             {
-                "text": _harmonize_display_text(line.title or "-"),
+                "text": _quote_line_display_title(line, language=language),
                 "subtext": "\n".join(
                     _unique_text_parts(
                         line.description,
@@ -6508,7 +6644,7 @@ def _render_quote_pdf_blocks(
     kit_rows = [
         [
             {
-                "text": _harmonize_display_text(line.title or "-"),
+                "text": _quote_line_display_title(line, language=language),
                 "subtext": "\n".join(
                     _unique_text_parts(
                         line.description,
@@ -6553,7 +6689,7 @@ def _render_quote_pdf_blocks(
 
     other_fee_rows = [
         [
-            _harmonize_display_text(line.title or "-"),
+            _quote_line_display_title(line, language=language),
             _compact_quantity_label(line.quantity),
             f"{_decimal_str(Decimal(getattr(line, 'vat_rate', 0) or 0))}%",
             _money(Decimal(line.unit_price_ttc or 0), values.get("currency", "EUR")),
