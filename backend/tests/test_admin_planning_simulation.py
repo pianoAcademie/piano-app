@@ -13,6 +13,7 @@ from app.api.routes.admin import (
     _planning_simulation_clean_location_label,
     _planning_simulation_quote_person_key,
     _planning_simulation_quote_location_name,
+    _planning_simulation_resolve_live_slot_for_quote,
     _planning_simulation_search_text,
     _planning_simulation_select_live_slot_for_quote,
     _safe_zoneinfo,
@@ -70,6 +71,37 @@ class AdminPlanningSimulationTests(unittest.TestCase):
         self.assertEqual(
             _planning_simulation_select_live_slot_for_quote(slot_entries, ["series:full", "series:available"]),
             "series:available",
+        )
+
+    def test_planning_simulation_rebalances_parallel_slots_even_with_series_key(self) -> None:
+        slot_entries = {
+            "series::scheffer-tue-17-a": {
+                "capacity_max": 6,
+                "_booked_user_ids": {"1", "2", "3", "4", "5", "6"},
+                "_approved_quote_ids": {"quote-1", "quote-2"},
+                "_pending_quote_ids": set(),
+                "_draft_quote_ids": set(),
+            },
+            "series::scheffer-tue-17-b": {
+                "capacity_max": 6,
+                "_booked_user_ids": {"7", "8"},
+                "_approved_quote_ids": set(),
+                "_pending_quote_ids": set(),
+                "_draft_quote_ids": set(),
+            },
+        }
+        live_slot_keys_by_signature = {
+            "scheffer|piano|1|17:00|18:00": {"series::scheffer-tue-17-a", "series::scheffer-tue-17-b"}
+        }
+
+        self.assertEqual(
+            _planning_simulation_resolve_live_slot_for_quote(
+                slot_entries=slot_entries,
+                live_slot_keys_by_signature=live_slot_keys_by_signature,
+                signature="scheffer|piano|1|17:00|18:00",
+                block_series_key="scheffer-tue-17-a",
+            ),
+            "series::scheffer-tue-17-b",
         )
 
     def test_planning_simulation_labels_online_quote_slots(self) -> None:

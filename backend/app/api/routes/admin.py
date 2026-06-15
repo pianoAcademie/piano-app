@@ -1503,6 +1503,26 @@ def _planning_simulation_select_live_slot_for_quote(
     return sorted(candidates)[0][3]
 
 
+def _planning_simulation_resolve_live_slot_for_quote(
+    *,
+    slot_entries: dict[str, dict[str, object]],
+    live_slot_keys_by_signature: dict[str, set[str]],
+    signature: str,
+    block_series_key: str,
+) -> str | None:
+    matching_live_keys = sorted(live_slot_keys_by_signature.get(signature, set()))
+    if len(matching_live_keys) > 1:
+        return _planning_simulation_select_live_slot_for_quote(slot_entries, matching_live_keys)
+    if len(matching_live_keys) == 1:
+        return matching_live_keys[0]
+
+    if block_series_key:
+        candidate_key = f"series::{block_series_key}"
+        if candidate_key in slot_entries:
+            return candidate_key
+    return None
+
+
 def _planning_simulation_collective_piano_course_type_ids(db: Session) -> set[UUID]:
     rows = db.scalars(
         select(CourseType).where(
@@ -2805,14 +2825,12 @@ def get_planning_simulation(
             if quote_person_key and signature in live_signatures_by_person_key.get(quote_person_key, set()):
                 continue
             block_series_key = str(block.get("series_key") or "").strip()
-            resolved_slot_key: str | None = None
-            if block_series_key:
-                candidate_key = f"series::{block_series_key}"
-                if candidate_key in slot_entries:
-                    resolved_slot_key = candidate_key
-            if resolved_slot_key is None:
-                matching_live_keys = sorted(live_slot_keys_by_signature.get(signature, set()))
-                resolved_slot_key = _planning_simulation_select_live_slot_for_quote(slot_entries, matching_live_keys)
+            resolved_slot_key = _planning_simulation_resolve_live_slot_for_quote(
+                slot_entries=slot_entries,
+                live_slot_keys_by_signature=live_slot_keys_by_signature,
+                signature=signature,
+                block_series_key=block_series_key,
+            )
             slot_note: str | None = None
             if resolved_slot_key is None:
                 resolved_slot_key = f"quote::{signature}"
