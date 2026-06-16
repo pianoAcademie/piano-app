@@ -1016,9 +1016,13 @@ function positiveInt(value: unknown): number {
 function quoteLinePlanningLimit(line: QuoteLineOut): number {
   const meta = readObject(line.meta || {}) || {};
   const template = readObject(meta.typeform_template) || {};
-  return positiveInt(meta.planning_session_limit)
-    || positiveInt(template.planning_session_limit)
-    || positiveInt(line.quantity);
+  const explicit = positiveInt(meta.planning_session_limit)
+    || positiveInt(template.planning_session_limit);
+  if (explicit > 0) {
+    return explicit;
+  }
+  const quantity = positiveInt(line.quantity);
+  return quantity > 1 ? quantity : 0;
 }
 
 function inferUniqueActivityPlanningLimit(activityId: string, lines: QuoteLineOut[]): number {

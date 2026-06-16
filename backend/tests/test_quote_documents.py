@@ -22,6 +22,7 @@ from app.services.quotes.quote_documents import (
     _calendar_snapshot_with_current_solfege_block,
     _check_payment_instruction_lines,
     _current_solfege_document_info,
+    _expected_sessions_from_planning_block,
     _line_groups,
     _line_matches_end_year_concert,
     _pass_recup_compact_notice_markup,
@@ -901,6 +902,32 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertIn("2027-06-18", dates)
         self.assertNotIn("2027-06-25", dates)
         self.assertEqual(hydrated["blocks"][0]["end_date"], "2027-06-18")
+
+    def test_planning_block_ignores_single_commercial_quantity_as_session_limit(self) -> None:
+        activity_id = uuid4()
+        location_id = uuid4()
+        block = {
+            "activity_id": str(activity_id),
+            "activity_label": "Cours de piano collectif en presentiel (1h)",
+            "location_id": str(location_id),
+            "location_label": "Rue d Assas",
+            "weekday": 1,
+            "weekday_label": "Mardi",
+            "start_date": "2026-09-08",
+            "end_date": "2027-06-15",
+            "start_time": "18:00",
+            "end_time": "19:00",
+            "calendar_school_year": "2026-2027",
+            "planning_session_limit": 1,
+            "selection_pending": False,
+        }
+
+        sessions = _expected_sessions_from_planning_block(block)
+
+        dates = [item["date"] for item in sessions]
+        self.assertGreater(len(dates), 1)
+        self.assertIn("2026-09-08", dates)
+        self.assertIn("2027-06-15", dates)
 
     def test_calendar_snapshot_hydration_replaces_shifted_legacy_session_times(self) -> None:
         activity_id = uuid4()

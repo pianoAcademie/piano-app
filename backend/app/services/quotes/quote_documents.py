@@ -1727,10 +1727,7 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
     end_date = _parse_iso_date(block.get("end_date"))
     if start_date is None or end_date is None:
         return []
-    try:
-        session_limit = int(str(block.get("planning_session_limit") or "").strip())
-    except (TypeError, ValueError):
-        session_limit = 0
+    session_limit = _planning_session_limit_from_block(block) or 0
     effective_end_date = _effective_planning_block_end_date(
         start_date,
         end_date,
@@ -2160,7 +2157,7 @@ def _planning_session_limit_from_block(block: dict[str, Any]) -> int | None:
         limit = int(str(block.get("planning_session_limit") or "").strip())
     except (TypeError, ValueError):
         return None
-    return limit if limit > 0 else None
+    return limit if limit > 1 else None
 
 
 def _calendar_snapshot_with_line_recommendation_keys(

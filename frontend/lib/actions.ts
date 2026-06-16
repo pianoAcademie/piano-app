@@ -12870,7 +12870,8 @@ function quoteLinePlanningLimit(line: QuotePlanningLineInput): number {
   if (templateLimit > 0) {
     return templateLimit;
   }
-  return positiveInt(line.quantity);
+  const quantity = positiveInt(line.quantity);
+  return quantity > 1 ? quantity : 0;
 }
 
 function inferPlanningSessionLimitForBlock(
@@ -12915,7 +12916,9 @@ function normalizePlanningBlockSessionLimit(
 ): QuotePlanningBlockInput {
   const inferred = inferPlanningSessionLimitForBlock(block, quoteLines);
   if (inferred <= 0) {
-    return block;
+    return positiveInt(block.planning_session_limit) <= 1
+      ? { ...block, planning_session_limit: null }
+      : block;
   }
   return positiveInt(block.planning_session_limit) === inferred
     ? block
