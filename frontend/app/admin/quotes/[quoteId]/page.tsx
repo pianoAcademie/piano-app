@@ -918,6 +918,10 @@ function schoolYearDateRangeFromLabel(label: string | null | undefined): { from:
   };
 }
 
+function schoolYearTeachingEndDateFromLabel(label: string | null | undefined): string | null {
+  return String(label ?? "").trim() === "2026-2027" ? "2027-06-18" : null;
+}
+
 function derivePlanningSnapshotSchoolYearLabel(
   snapshot: Record<string, unknown>,
   fallback: string | null | undefined,
@@ -1156,11 +1160,12 @@ async function loadLivePlanningSeriesOptions({
   if (!range) {
     return [];
   }
+  const liveSeriesEndDate = schoolYearTeachingEndDateFromLabel(schoolYearLabel) ?? range.to.slice(0, 10);
   const activityById = new Map(activities.map((activity) => [activity.id, activity]));
   const query = new URLSearchParams();
   query.set("status", "SCHEDULED");
   query.set("from", range.from);
-  query.set("to", range.to);
+  query.set("to", `${liveSeriesEndDate}T23:59:59.999Z`);
   const result = await backendRequest<AdminSessionOut[]>(`/api/v1/admin/sessions?${query.toString()}`, {}, token);
   if (!result.ok) {
     return [];
@@ -1234,7 +1239,7 @@ async function loadLivePlanningSeriesOptions({
     const expectedDates = planningSessionLimit > 0
       ? expectedWeeklyDates({
         startDate: firstFiltered.local.date,
-        endDate: range.to.slice(0, 10),
+        endDate: liveSeriesEndDate,
         weekday: firstFiltered.local.weekday,
         excludedDates,
         limit: planningSessionLimit,

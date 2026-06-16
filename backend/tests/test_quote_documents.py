@@ -867,6 +867,42 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertEqual(hydrated["sessions_count"], 4)
         self.assertEqual(hydrated["blocks"][0]["end_date"], "2027-06-18")
 
+    def test_live_planning_block_limit_stops_at_teaching_year_end(self) -> None:
+        activity_id = uuid4()
+        location_id = uuid4()
+        fake_db = SimpleNamespace(
+            scalar=lambda _query: None,
+            execute=lambda _query: SimpleNamespace(all=lambda: []),
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "source": "live_planning",
+                    "activity_id": str(activity_id),
+                    "activity_label": "Cours de piano collectif en presentiel (1h)",
+                    "location_id": str(location_id),
+                    "location_label": "Rue de Richelieu",
+                    "weekday": 4,
+                    "weekday_label": "Vendredi",
+                    "start_date": "2026-09-11",
+                    "end_date": "2027-08-27",
+                    "start_time": "17:00",
+                    "end_time": "18:00",
+                    "calendar_school_year": "2026-2027",
+                    "planning_session_limit": 64,
+                    "selection_pending": False,
+                }
+            ],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_planning_sessions(fake_db, snapshot)
+
+        dates = [item["date"] for item in hydrated["sessions"]]
+        self.assertIn("2027-06-18", dates)
+        self.assertNotIn("2027-06-25", dates)
+        self.assertEqual(hydrated["blocks"][0]["end_date"], "2027-06-18")
+
     def test_calendar_snapshot_hydration_replaces_shifted_legacy_session_times(self) -> None:
         activity_id = uuid4()
         location_id = uuid4()
