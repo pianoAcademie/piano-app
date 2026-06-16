@@ -2200,8 +2200,17 @@ def _calendar_snapshot_with_line_recommendation_keys(
             normalized_blocks.append(block)
             continue
 
+        activity_lines = lines_by_activity_id.get(activity_id) or []
         existing_key = str(block.get("recommendation_key") or "").strip()
-        if existing_key and existing_key != activity_id:
+        should_reassign_duplicate_line_key = (
+            len(activity_lines) > 1
+            and (
+                not existing_key
+                or ":line:" in existing_key
+                or existing_key not in lines_by_recommendation_key
+            )
+        )
+        if existing_key and existing_key != activity_id and not should_reassign_duplicate_line_key:
             matching_line = lines_by_recommendation_key.get(existing_key)
             limit = _planning_session_limit_from_quote_line_meta(matching_line)
             if limit is not None and _planning_session_limit_from_block(block) != limit:
@@ -2210,7 +2219,6 @@ def _calendar_snapshot_with_line_recommendation_keys(
             normalized_blocks.append(block)
             continue
 
-        activity_lines = lines_by_activity_id.get(activity_id) or []
         cursor = cursors.get(activity_id, 0)
         line = activity_lines[min(cursor, len(activity_lines) - 1)] if activity_lines else None
         cursors[activity_id] = cursor + 1

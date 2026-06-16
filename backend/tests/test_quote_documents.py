@@ -588,6 +588,58 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
 
         self.assertEqual(hydrated["blocks"][0]["planning_session_limit"], 31)
 
+    def test_line_recommendation_keys_repair_stale_duplicate_activity_line_keys(self) -> None:
+        activity_id = uuid4()
+        first_line_id = uuid4()
+        second_line_id = uuid4()
+        stale_line_id = uuid4()
+        first_line = SimpleNamespace(
+            id=first_line_id,
+            activity_id=activity_id,
+            line_category="service",
+            pricing_unit="session",
+            quantity=Decimal("33.00"),
+            sort_order=0,
+            created_at=datetime(2026, 6, 15, 10, 0, tzinfo=timezone.utc),
+            meta={},
+        )
+        second_line = SimpleNamespace(
+            id=second_line_id,
+            activity_id=activity_id,
+            line_category="service",
+            pricing_unit="session",
+            quantity=Decimal("32.00"),
+            sort_order=1,
+            created_at=datetime(2026, 6, 15, 10, 1, tzinfo=timezone.utc),
+            meta={"typeform_automatic_line": "second_piano_course"},
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(activity_id),
+                    "weekday": 1,
+                    "start_time": "18:00",
+                    "recommendation_key": f"{activity_id}:line:{stale_line_id}",
+                    "planning_session_limit": 32,
+                },
+                {
+                    "activity_id": str(activity_id),
+                    "weekday": 4,
+                    "start_time": "17:00",
+                    "recommendation_key": f"{activity_id}:line:{first_line_id}",
+                    "planning_session_limit": 33,
+                },
+            ],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_line_recommendation_keys(None, snapshot, lines=[first_line, second_line])
+
+        self.assertEqual(hydrated["blocks"][0]["recommendation_key"], f"{activity_id}:line:{first_line_id}")
+        self.assertEqual(hydrated["blocks"][0]["planning_session_limit"], 33)
+        self.assertEqual(hydrated["blocks"][1]["recommendation_key"], f"{activity_id}:second_piano_course")
+        self.assertEqual(hydrated["blocks"][1]["planning_session_limit"], 32)
+
     def test_calendar_generation_truncates_to_session_limit_after_exclusions(self) -> None:
         snapshot = generate_calendar_snapshot(
             CalendarGenerationInput(
