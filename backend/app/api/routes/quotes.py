@@ -5106,6 +5106,7 @@ def _quote_list_stmt(
         )
     if q:
         pattern = f"%{q.strip()}%"
+        family_adult_search = User.__table__.alias("family_adult_search")
         stmt = stmt.where(
             or_(
                 Quote.quote_number.ilike(pattern),
@@ -5134,6 +5135,28 @@ def _quote_list_stmt(
                             User.mobile_phone_1.ilike(pattern),
                             User.mobile_phone_2.ilike(pattern),
                             User.home_phone.ilike(pattern),
+                        ),
+                    )
+                    .limit(1)
+                ),
+                exists(
+                    select(ClientFamilyLink.id)
+                    .select_from(
+                        ClientFamilyLink.__table__.join(
+                            family_adult_search,
+                            family_adult_search.c.id == ClientFamilyLink.adult_user_id,
+                        )
+                    )
+                    .where(
+                        ClientFamilyLink.child_user_id == Quote.client_id,
+                        or_(
+                            family_adult_search.c.email.ilike(pattern),
+                            family_adult_search.c.first_name.ilike(pattern),
+                            family_adult_search.c.last_name.ilike(pattern),
+                            family_adult_search.c.phone.ilike(pattern),
+                            family_adult_search.c.mobile_phone_1.ilike(pattern),
+                            family_adult_search.c.mobile_phone_2.ilike(pattern),
+                            family_adult_search.c.home_phone.ilike(pattern),
                         ),
                     )
                     .limit(1)
