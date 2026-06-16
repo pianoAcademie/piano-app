@@ -118,7 +118,7 @@ function blockIsOnline(block: LivePlanningBlockInput): boolean {
 function schoolYearEndDateFromBlock(block: LivePlanningBlockInput): string | null {
   const label = String(block.calendar_school_year || block.school_year_label || "").trim();
   if (label === "2026-2027") {
-    return "2027-06-18";
+    return "2027-06-19";
   }
   const match = label.match(/^(\d{4})-(\d{4})$/);
   if (!match) {

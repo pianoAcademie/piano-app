@@ -919,7 +919,7 @@ function schoolYearDateRangeFromLabel(label: string | null | undefined): { from:
 }
 
 function schoolYearTeachingEndDateFromLabel(label: string | null | undefined): string | null {
-  return String(label ?? "").trim() === "2026-2027" ? "2027-06-18" : null;
+  return String(label ?? "").trim() === "2026-2027" ? "2027-06-19" : null;
 }
 
 function derivePlanningSnapshotSchoolYearLabel(

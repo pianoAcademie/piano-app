@@ -1643,7 +1643,7 @@ def _effective_planning_block_end_date(
 
 def _school_year_teaching_end_from_label(school_year_label: str | None) -> date | None:
     if str(school_year_label or "").strip() == "2026-2027":
-        return date(2027, 6, 18)
+        return date(2027, 6, 19)
     return None
 
 

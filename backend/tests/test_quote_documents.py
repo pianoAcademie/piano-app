@@ -903,6 +903,41 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertNotIn("2027-06-25", dates)
         self.assertEqual(hydrated["blocks"][0]["end_date"], "2027-06-18")
 
+    def test_saturday_planning_block_includes_final_teaching_day(self) -> None:
+        activity_id = uuid4()
+        location_id = uuid4()
+        fake_db = SimpleNamespace(
+            scalar=lambda _query: None,
+            execute=lambda _query: SimpleNamespace(all=lambda: []),
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(activity_id),
+                    "activity_label": "Initiation au piano",
+                    "location_id": str(location_id),
+                    "location_label": "Rue de la Pompe",
+                    "weekday": 5,
+                    "weekday_label": "Samedi",
+                    "start_date": "2026-09-12",
+                    "end_date": "2027-08-28",
+                    "start_time": "11:00",
+                    "end_time": "12:00",
+                    "calendar_school_year": "2026-2027",
+                    "planning_session_limit": 64,
+                    "selection_pending": False,
+                }
+            ],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_planning_sessions(fake_db, snapshot)
+
+        dates = [item["date"] for item in hydrated["sessions"]]
+        self.assertIn("2027-06-19", dates)
+        self.assertNotIn("2027-06-26", dates)
+        self.assertEqual(hydrated["blocks"][0]["end_date"], "2027-06-19")
+
     def test_planning_block_ignores_single_commercial_quantity_as_session_limit(self) -> None:
         activity_id = uuid4()
         location_id = uuid4()
