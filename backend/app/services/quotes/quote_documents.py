@@ -1674,7 +1674,7 @@ def _expected_sessions_from_planning_block(block: dict[str, Any]) -> list[dict[s
     if session_limit > 0:
         effective_end_date = school_year_bounds[1] if school_year_bounds is not None else start_date + timedelta(days=370)
     teaching_end_date = _school_year_teaching_end_from_label(str(block.get("school_year_label") or block.get("calendar_school_year") or ""))
-    if str(block.get("source") or "").strip() == "live_planning" and teaching_end_date is not None:
+    if teaching_end_date is not None:
         effective_end_date = min(effective_end_date, teaching_end_date)
     location_id = _parse_uuid(block.get("location_id"))
     snapshot = generate_calendar_snapshot(
@@ -1740,10 +1740,14 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
     school_year_bounds = _school_year_bounds_from_label(str(block.get("school_year_label") or block.get("calendar_school_year") or ""))
     teaching_end_date = _school_year_teaching_end_from_label(str(block.get("school_year_label") or block.get("calendar_school_year") or ""))
     is_live_planning_block = str(block.get("source") or "").strip() == "live_planning"
+    if teaching_end_date is not None:
+        effective_end_date = min(effective_end_date, teaching_end_date)
     if is_live_planning_block and school_year_bounds is not None:
-        query_end_date = teaching_end_date or school_year_bounds[1]
+        query_end_date = min(teaching_end_date or school_year_bounds[1], school_year_bounds[1])
     elif session_limit > 0:
         query_end_date = school_year_bounds[1] if school_year_bounds is not None else start_date + timedelta(days=370)
+        if teaching_end_date is not None:
+            query_end_date = min(query_end_date, teaching_end_date)
     else:
         query_end_date = effective_end_date
     start_time = str(block.get("start_time") or "").strip()

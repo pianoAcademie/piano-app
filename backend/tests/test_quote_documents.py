@@ -867,7 +867,7 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertEqual(hydrated["sessions_count"], 4)
         self.assertEqual(hydrated["blocks"][0]["end_date"], "2027-06-18")
 
-    def test_live_planning_block_limit_stops_at_teaching_year_end(self) -> None:
+    def test_planning_block_limit_stops_at_teaching_year_end(self) -> None:
         activity_id = uuid4()
         location_id = uuid4()
         fake_db = SimpleNamespace(
@@ -877,7 +877,6 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         snapshot = {
             "blocks": [
                 {
-                    "source": "live_planning",
                     "activity_id": str(activity_id),
                     "activity_label": "Cours de piano collectif en presentiel (1h)",
                     "location_id": str(location_id),
