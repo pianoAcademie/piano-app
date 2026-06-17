@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from app.services.quotes.quote_documents import (
+    _calendar_group_heading,
     _localized_catalog_text,
     _localized_english_text_fragments,
     _localized_location_label,
@@ -64,6 +65,14 @@ def test_translates_french_weekday_label_for_english_quote() -> None:
 
 def test_translates_french_location_label_for_english_quote() -> None:
     assert _localized_location_label("Rue Richelieu", language="en") == "Richelieu Street"
+    assert _localized_location_label("Rue de Richelieu", language="en") == "Richelieu Street"
+
+
+def test_translates_calendar_group_heading_for_english_quote() -> None:
+    assert (
+        _calendar_group_heading("Cours collectifs ado/adultes · Rue de Richelieu", 1, language="en")
+        == "Teen/adult group lessons · Richelieu Street"
+    )
 
 
 def test_translates_terms_fragments_for_english_quote() -> None:

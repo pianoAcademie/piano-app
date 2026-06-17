@@ -1271,6 +1271,11 @@ def _calendar_group_heading(title: Any, index: int, *, language: str | None = No
     cleaned = str(title or "").strip()
     if not cleaned or cleaned.lower() in {"activite", "activité", "cours"}:
         return _quote_doc_text("calendar_heading_default", language=language, index=index)
+    if _is_english_quote_language(language) and "·" in cleaned:
+        raw_activity, raw_location = [part.strip() for part in cleaned.split("·", 1)]
+        activity = _localized_business_label(raw_activity, language=language)
+        location = _localized_location_label(raw_location, language=language)
+        return f"{activity} · {location}" if location else activity
     return cleaned
 
 
@@ -2470,8 +2475,10 @@ ENGLISH_CATALOG_LABELS = {
 
 ENGLISH_LOCATION_LABELS = {
     "rue richelieu": "Richelieu Street",
+    "rue de richelieu": "Richelieu Street",
     "richelieu": "Richelieu Street",
     "rue de pompe": "Pompe Street",
+    "rue de la pompe": "Pompe Street",
     "pompe": "Pompe Street",
     "rue scheffer": "Scheffer Street",
     "scheffer": "Scheffer Street",
