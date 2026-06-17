@@ -2443,6 +2443,29 @@ ENGLISH_BUSINESS_LABELS = {
     "eveil musical": "Early music discovery",
     "éveil musical": "Early music discovery",
     "initiation au piano": "Piano initiation",
+    "cours de solfege": "Music theory lesson",
+    "cours de solfege en ligne": "Online music theory lesson",
+    "solfege": "Music theory",
+}
+
+ENGLISH_CATALOG_LABELS = {
+    "cahier de solfege de niveau 1": "Music theory workbook - Level 1",
+    "cahier de solfege de niveau 2": "Music theory workbook - Level 2",
+    "cahier de solfege de niveau 3": "Music theory workbook - Level 3",
+    "cahier de solfege de niveau 4": "Music theory workbook - Level 4",
+    "cahier de solfege de niveau 5": "Music theory workbook - Level 5",
+    "partitions ados": "Teen sheet music",
+    "partitions ado": "Teen sheet music",
+    "kit ado": "Teen kit",
+    "kit ados": "Teen kit",
+    "kit adulte": "Adult kit",
+    "kit adultes": "Adult kit",
+    "kit enfant": "Children's kit",
+    "kit enfants": "Children's kit",
+    "frais de dossier": "Enrollment fee",
+    "cours de controle": "Assessment lesson",
+    "cours de controle x 2": "Assessment lessons x 2",
+    "avec son cahier de travail": "Includes its workbook",
 }
 
 ENGLISH_LOCATION_LABELS = {
@@ -2495,8 +2518,37 @@ def _localized_business_label(value: Any, *, language: str | None = None) -> str
     if normalized in ENGLISH_BUSINESS_LABELS:
         return ENGLISH_BUSINESS_LABELS[normalized]
     for source, replacement in ENGLISH_BUSINESS_LABELS.items():
+        if source in {"solfege", "cours de solfege"}:
+            continue
         if source in normalized:
             return replacement
+    return text
+
+
+def _localized_catalog_text(value: Any, *, language: str | None = None) -> str:
+    text = _harmonize_display_text(value)
+    if not text or not _is_english_quote_language(language):
+        return text
+    normalized = _searchable_text(text)
+    if normalized in ENGLISH_CATALOG_LABELS:
+        return ENGLISH_CATALOG_LABELS[normalized]
+
+    if "\n" in text:
+        return "\n".join(_localized_catalog_text(line, language=language) for line in text.splitlines())
+
+    match = re.fullmatch(r"cahier de solfege de niveau\s+(\d+)", normalized)
+    if match:
+        return f"Music theory workbook - Level {match.group(1)}"
+
+    match = re.fullmatch(r"solfege\s*-?\s*niveau\s+(\d+)", normalized)
+    if match:
+        return f"Music theory - Level {match.group(1)}"
+
+    for source, replacement in ENGLISH_CATALOG_LABELS.items():
+        text = re.sub(re.escape(source), replacement, text, flags=re.IGNORECASE)
+    text = re.sub(r"\bcours de contr[oô]le\s*x\s*2\b", "Assessment lessons x 2", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bcours de contr[oô]le\b", "Assessment lesson", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b[Ss]olfège\b", "Music theory", text)
     return text
 
 
@@ -2530,7 +2582,8 @@ def _planning_activity_display_label(block: dict[str, Any], *, language: str | N
 
 def _quote_line_display_title(line: Any, *, language: str | None = None) -> str:
     title = str(getattr(line, "title", "") or "-").strip() or "-"
-    return _localized_business_label(title, language=language)
+    business_label = _localized_business_label(title, language=language)
+    return _localized_catalog_text(business_label, language=language)
 
 
 def _localized_english_text_fragments(value: Any, *, language: str | None = None) -> str:
@@ -3019,6 +3072,7 @@ def _kit_composition_by_id(*, db: Session | None, kits: list[QuoteLine], languag
         quantity_value = _decimal_from_any(quantity, Decimal("1"))
         quantity_label = _compact_quantity_label(quantity)
         rendered_label = f"{label} x {quantity_label}" if quantity_value > Decimal("1") else label
+        rendered_label = _localized_catalog_text(rendered_label, language=language)
         result.setdefault(kit_id, []).append(rendered_label)
     return result
 
@@ -4873,11 +4927,14 @@ def _build_template_values(
                     "html": (
                         f"<div>{escape(_quote_line_display_title(line, language=language))}</div>"
                         + _small_description_html(
-                            "\n".join(
-                                _unique_text_parts(
-                                    line.description,
-                                    product_long_descriptions.get(line.product_id),
-                                )
+                            _localized_catalog_text(
+                                "\n".join(
+                                    _unique_text_parts(
+                                        line.description,
+                                        product_long_descriptions.get(line.product_id),
+                                    )
+                                ),
+                                language=language,
                             )
                         )
                     )
@@ -4907,11 +4964,14 @@ def _build_template_values(
                     "html": (
                         f"<div>{escape(_quote_line_display_title(line, language=language))}</div>"
                         + _small_description_html(
-                            "\n".join(
-                                _unique_text_parts(
-                                    line.description,
-                                    kit_long_descriptions.get(line.kit_id),
-                                )
+                            _localized_catalog_text(
+                                "\n".join(
+                                    _unique_text_parts(
+                                        line.description,
+                                        kit_long_descriptions.get(line.kit_id),
+                                    )
+                                ),
+                                language=language,
                             )
                         )
                         + _kit_composition_html(kit_composition.get(line.kit_id, []), language=language)
