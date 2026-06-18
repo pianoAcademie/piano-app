@@ -138,8 +138,35 @@ function schoolYearEndDateFromBlock(block: LivePlanningBlockInput): string | nul
   return `${match[2]}-08-31`;
 }
 
+function defaultSchoolYearEndDateFromBlock(block: LivePlanningBlockInput): string | null {
+  const label = String(block.calendar_school_year || block.school_year_label || "").trim();
+  if (label === "2026-2027") {
+    return "2027-06-19";
+  }
+  const match = label.match(/^(\d{4})-(\d{4})$/);
+  return match ? `${match[2]}-08-31` : null;
+}
+
+function daysBetween(left: string, right: string): number | null {
+  const leftDate = new Date(`${left}T00:00:00.000Z`);
+  const rightDate = new Date(`${right}T00:00:00.000Z`);
+  if (Number.isNaN(leftDate.getTime()) || Number.isNaN(rightDate.getTime())) {
+    return null;
+  }
+  return Math.round((rightDate.getTime() - leftDate.getTime()) / 86_400_000);
+}
+
 function shouldWidenLivePlanningBlock(block: LivePlanningBlockInput): boolean {
-  return String(block.source || "").trim() === "live_planning";
+  if (String(block.source || "").trim() === "live_planning") {
+    return true;
+  }
+  const locationEndDate = schoolYearEndDateFromBlock(block);
+  const defaultEndDate = defaultSchoolYearEndDateFromBlock(block);
+  if (!locationEndDate || !defaultEndDate || locationEndDate <= defaultEndDate) {
+    return false;
+  }
+  const daysFromBlockEndToDefault = daysBetween(block.end_date, defaultEndDate);
+  return daysFromBlockEndToDefault !== null && daysFromBlockEndToDefault >= 0 && daysFromBlockEndToDefault <= 6;
 }
 
 export async function loadLivePlanningMatchForBlock({

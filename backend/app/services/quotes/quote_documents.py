@@ -1670,6 +1670,20 @@ def _school_year_teaching_end_from_block(block: dict[str, Any]) -> date | None:
     return _school_year_teaching_end_from_label(school_year_label, location_label)
 
 
+def _planning_block_should_extend_to_location_teaching_end(
+    block: dict[str, Any],
+    end_date: date,
+    teaching_end_date: date | None,
+) -> bool:
+    if teaching_end_date is None:
+        return False
+    school_year_label = str(block.get("school_year_label") or block.get("calendar_school_year") or "")
+    default_teaching_end = _school_year_teaching_end_from_label(school_year_label)
+    if default_teaching_end is None or teaching_end_date <= default_teaching_end:
+        return False
+    return default_teaching_end - timedelta(days=6) <= end_date <= default_teaching_end
+
+
 def _expected_sessions_from_planning_block(block: dict[str, Any]) -> list[dict[str, Any]]:
     activity_id = _parse_uuid(block.get("activity_id"))
     start_date = _parse_iso_date(block.get("start_date"))
@@ -1698,7 +1712,10 @@ def _expected_sessions_from_planning_block(block: dict[str, Any]) -> list[dict[s
         effective_end_date = school_year_bounds[1] if school_year_bounds is not None else start_date + timedelta(days=370)
     teaching_end_date = _school_year_teaching_end_from_block(block)
     if teaching_end_date is not None:
-        effective_end_date = min(effective_end_date, teaching_end_date)
+        if _planning_block_should_extend_to_location_teaching_end(block, effective_end_date, teaching_end_date):
+            effective_end_date = teaching_end_date
+        else:
+            effective_end_date = min(effective_end_date, teaching_end_date)
     location_id = _parse_uuid(block.get("location_id"))
     snapshot = generate_calendar_snapshot(
         CalendarGenerationInput(
@@ -1761,7 +1778,10 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
     teaching_end_date = _school_year_teaching_end_from_block(block)
     is_live_planning_block = str(block.get("source") or "").strip() == "live_planning"
     if teaching_end_date is not None:
-        effective_end_date = min(effective_end_date, teaching_end_date)
+        if _planning_block_should_extend_to_location_teaching_end(block, effective_end_date, teaching_end_date):
+            effective_end_date = teaching_end_date
+        else:
+            effective_end_date = min(effective_end_date, teaching_end_date)
     if is_live_planning_block and school_year_bounds is not None:
         query_end_date = min(teaching_end_date or school_year_bounds[1], school_year_bounds[1])
     elif session_limit > 0:
