@@ -359,6 +359,28 @@ class AdminClientPaymentDocumentTests(unittest.TestCase):
         self.assertIsNone(row.invoice_status)
         self.assertIsNone(row.invoice_number)
 
+    def test_manual_discount_gets_no_invoice_presentation(self) -> None:
+        row = AdminClientPaymentOut(
+            id=uuid4(),
+            source="MANUAL",
+            occurred_at=datetime(2026, 6, 18, 9, 24, tzinfo=timezone.utc),
+            label="Remise famille",
+            status="COMPLETED",
+            amount_excl_vat="-128.00",
+            vat_rate="0.00",
+            vat_amount="0.00",
+            total_incl_vat="-128.00",
+            currency="EUR",
+            reference=None,
+            category=None,
+            manual_transaction_type="DISCOUNT",
+        )
+
+        _apply_invoice_presentation_to_payment_item(row)
+
+        self.assertIsNone(row.invoice_status)
+        self.assertIsNone(row.invoice_number)
+
     def test_download_booking_payment_receipt_manual_row_uses_receipt_pdf(self) -> None:
         client_id = uuid4()
         payment_id = uuid4()

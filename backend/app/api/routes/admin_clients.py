@@ -4275,6 +4275,10 @@ def _apply_invoice_presentation_to_payment_item(
         item.invoice_status = None
         item.invoice_number = None
         return
+    if item.source.strip().upper() == "MANUAL" and (item.manual_transaction_type or "").strip().upper() == "DISCOUNT":
+        item.invoice_status = None
+        item.invoice_number = None
+        return
 
     invoice_status = _invoice_status_from_payment_status(item.status)
     item.invoice_status = invoice_status

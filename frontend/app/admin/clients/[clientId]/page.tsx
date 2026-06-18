@@ -608,6 +608,13 @@ function isPaidPreRegistrationDepositCharge(row: AdminClientPaymentOut): boolean
   return manualType === "CHARGE" && category === "PRE_REGISTRATION_DEPOSIT";
 }
 
+function isManualDiscountMovement(row: AdminClientPaymentOut): boolean {
+  return (
+    (row.source || "").trim().toUpperCase() === "MANUAL" &&
+    (row.manual_transaction_type || "").trim().toUpperCase() === "DISCOUNT"
+  );
+}
+
 function invoiceStatusLabel(status: string | null, language: UiLanguage = "fr"): string {
   const normalized = (status ?? "").trim().toUpperCase();
   if (normalized === "PAID") {
@@ -2511,6 +2518,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const paymentInvoices: InvoiceListRow[] = payments
     .filter((row) => {
       if (row.invoice_note_id) {
+        return false;
+      }
+      if (isManualDiscountMovement(row)) {
         return false;
       }
       const normalizedInvoiceStatus = (row.invoice_status ?? "").toUpperCase();
