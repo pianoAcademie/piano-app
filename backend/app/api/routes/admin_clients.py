@@ -1316,9 +1316,10 @@ def _latest_bank_transfer_order_for_invoice(
     *,
     client_id: UUID,
     note_id: UUID,
+    for_update: bool = False,
 ) -> BankTransferOrder | None:
     _expire_stale_bank_transfer_orders(db)
-    return db.scalar(
+    stmt = (
         select(BankTransferOrder)
         .where(
             BankTransferOrder.customer_id == client_id,
@@ -1327,6 +1328,9 @@ def _latest_bank_transfer_order_for_invoice(
         .order_by(BankTransferOrder.created_at.desc())
         .limit(1)
     )
+    if for_update:
+        stmt = stmt.with_for_update()
+    return db.scalar(stmt)
 
 
 def _generate_bank_transfer_order_reference(db: Session, *, now: datetime | None = None) -> str:
@@ -1834,7 +1838,11 @@ def _record_invoice_range_public_payment(
     )
     if not _normalize_optional(str(metadata.get("booking_confirmation_emails_sent_at") or "")):
         try:
-            if _send_invoice_range_booking_confirmation_emails(db, metadata=metadata):
+            booking_ids_for_confirmation = _invoice_range_booking_ids_for_payment(metadata)
+            if len(booking_ids_for_confirmation) > 1:
+                metadata["booking_confirmation_emails_sent_at"] = now.isoformat()
+                metadata["booking_confirmation_emails_suppressed_reason"] = "MULTI_BOOKING_INVOICE_RANGE_PAYMENT"
+            elif _send_invoice_range_booking_confirmation_emails(db, metadata=metadata):
                 metadata["booking_confirmation_emails_sent_at"] = now.isoformat()
         except Exception:
             logger.exception(
@@ -2624,16 +2632,20 @@ def _normalize_invoice_range_payment_keys(raw: object) -> list[str]:
     return out
 
 
+def _invoice_range_booking_ids_for_payment(metadata: dict[str, object]) -> list[UUID]:
+    return [
+        UUID(key.split(":", 1)[1])
+        for key in _normalize_invoice_range_payment_keys(metadata.get("included_payment_keys"))
+        if key.startswith("BOOKING:")
+    ]
+
+
 def _send_invoice_range_booking_confirmation_emails(
     db: Session,
     *,
     metadata: dict[str, object],
 ) -> bool:
-    booking_ids = [
-        UUID(key.split(":", 1)[1])
-        for key in _normalize_invoice_range_payment_keys(metadata.get("included_payment_keys"))
-        if key.startswith("BOOKING:")
-    ]
+    booking_ids = _invoice_range_booking_ids_for_payment(metadata)
     if not booking_ids:
         return False
 
@@ -3041,6 +3053,7 @@ def _normalize_invoice_range_metadata(payload: dict[str, object]) -> dict[str, o
         "payment_last_lookup_at",
         "paid_at",
         "booking_confirmation_emails_sent_at",
+        "booking_confirmation_emails_suppressed_reason",
         "payment_confirmation_emails_sent_at",
         "admin_payment_confirmation_emails_sent_at",
     ):
@@ -10678,7 +10691,32 @@ def mark_admin_client_range_invoice_bank_transfer_paid(
 ) -> AdminRangeInvoiceOut:
     client = _require_client(db, client_id)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
-    order = _latest_bank_transfer_order_for_invoice(db, client_id=client_id, note_id=note_id)
+    order = _latest_bank_transfer_order_for_invoice(db, client_id=client_id, note_id=note_id, for_update=True)
+    invoice_status = str(metadata.get("invoice_status") or "ISSUED").strip().upper()
+    if invoice_status == "PAID":
+        if order is not None and order.status == BANK_TRANSFER_ORDER_STATUS_PENDING:
+            paid_by_this_order = (
+                _normalize_optional(str(metadata.get("payment_provider_reference") or "")) == order.order_reference
+            )
+            if paid_by_this_order:
+                paid_at = _parse_iso_datetime(metadata.get("paid_at")) or _utcnow()
+                transaction_id = _parse_optional_uuid(metadata.get("payment_transaction_id"))
+                order.status = BANK_TRANSFER_ORDER_STATUS_PAID
+                order.paid_at = paid_at
+                if transaction_id is not None:
+                    order.manual_transaction_id = transaction_id
+                order.updated_at = _utcnow()
+                db.add(order)
+                metadata = _update_invoice_metadata_with_bank_transfer_order(metadata, order)
+                note.message = _build_invoice_range_note_message(metadata)
+                db.add(note)
+                db.commit()
+        related_invoices = _related_invoice_references_for_split_group(
+            db,
+            client_id=client_id,
+            split_group_id=_normalize_optional(str(metadata.get("split_group_id") or "")),
+        )
+        return _invoice_range_out(note_id=note.id, metadata=metadata, related_invoices=related_invoices)
     if order is None or order.status != BANK_TRANSFER_ORDER_STATUS_PENDING:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Aucune commande virement en attente")
     metadata = _invoice_range_metadata_with_display_totals(

@@ -61,6 +61,7 @@ import ManualTransactionLegalEntityFields from "../../../../components/manual-tr
 import RichMessageEditor from "../../../../components/rich-message-editor";
 import ModalFirstErrorFocus from "../../../../components/modal-first-error-focus";
 import SearchMultiSelect from "../../../../components/search-multi-select";
+import ClientActionSubmitButton from "../../../../components/client-action-submit-button";
 import type {
   AdminClientBookingOut,
   AdminClientFamilyOut,
@@ -5610,9 +5611,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   <input type="hidden" name="client_id" value={client.id} />
                                   <input type="hidden" name="note_id" value={row.noteId} />
                                   <input type="hidden" name="return_tab" value="factures" />
-                                  <button type="submit" className="client-action-icon" title="Valider le virement recu">
+                                  <ClientActionSubmitButton
+                                    className="client-action-icon"
+                                    title="Valider le virement recu"
+                                    pendingLabel="..."
+                                  >
                                     V€
-                                  </button>
+                                  </ClientActionSubmitButton>
                                 </form>
                               ) : null}
                               {row.status === "ISSUED" && row.bankTransferOrderStatus !== "pending_bank_transfer" ? (
