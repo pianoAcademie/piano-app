@@ -1646,10 +1646,28 @@ def _effective_planning_block_end_date(
     return end_date
 
 
-def _school_year_teaching_end_from_label(school_year_label: str | None) -> date | None:
+def _normalized_location_text(value: Any) -> str:
+    return (
+        unicodedata.normalize("NFKD", str(value or ""))
+        .encode("ascii", "ignore")
+        .decode("ascii")
+        .lower()
+    )
+
+
+def _school_year_teaching_end_from_label(school_year_label: str | None, location_label: str | None = None) -> date | None:
     if str(school_year_label or "").strip() == "2026-2027":
+        normalized_location = _normalized_location_text(location_label)
+        if "bar-le-duc" in normalized_location or "bar le duc" in normalized_location:
+            return date(2027, 6, 26)
         return date(2027, 6, 19)
     return None
+
+
+def _school_year_teaching_end_from_block(block: dict[str, Any]) -> date | None:
+    school_year_label = str(block.get("school_year_label") or block.get("calendar_school_year") or "")
+    location_label = str(block.get("location_label") or "")
+    return _school_year_teaching_end_from_label(school_year_label, location_label)
 
 
 def _expected_sessions_from_planning_block(block: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1678,7 +1696,7 @@ def _expected_sessions_from_planning_block(block: dict[str, Any]) -> list[dict[s
     school_year_bounds = _school_year_bounds_from_label(str(block.get("school_year_label") or block.get("calendar_school_year") or ""))
     if session_limit > 0:
         effective_end_date = school_year_bounds[1] if school_year_bounds is not None else start_date + timedelta(days=370)
-    teaching_end_date = _school_year_teaching_end_from_label(str(block.get("school_year_label") or block.get("calendar_school_year") or ""))
+    teaching_end_date = _school_year_teaching_end_from_block(block)
     if teaching_end_date is not None:
         effective_end_date = min(effective_end_date, teaching_end_date)
     location_id = _parse_uuid(block.get("location_id"))
@@ -1740,7 +1758,7 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
         school_year_label=str(block.get("school_year_label") or block.get("calendar_school_year") or ""),
     )
     school_year_bounds = _school_year_bounds_from_label(str(block.get("school_year_label") or block.get("calendar_school_year") or ""))
-    teaching_end_date = _school_year_teaching_end_from_label(str(block.get("school_year_label") or block.get("calendar_school_year") or ""))
+    teaching_end_date = _school_year_teaching_end_from_block(block)
     is_live_planning_block = str(block.get("source") or "").strip() == "live_planning"
     if teaching_end_date is not None:
         effective_end_date = min(effective_end_date, teaching_end_date)

@@ -918,8 +918,26 @@ function schoolYearDateRangeFromLabel(label: string | null | undefined): { from:
   };
 }
 
-function schoolYearTeachingEndDateFromLabel(label: string | null | undefined): string | null {
-  return String(label ?? "").trim() === "2026-2027" ? "2027-06-19" : null;
+function normalizedLocationText(value: unknown): string {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function schoolYearTeachingEndDateFromLabel(label: string | null | undefined, locationLabel?: string | null): string | null {
+  if (String(label ?? "").trim() === "2026-2027") {
+    const normalizedLocation = normalizedLocationText(locationLabel);
+    if (normalizedLocation.includes("bar-le-duc") || normalizedLocation.includes("bar le duc")) {
+      return "2027-06-26";
+    }
+    return "2027-06-19";
+  }
+  return null;
+}
+
+function widestSchoolYearTeachingEndDateFromLabel(label: string | null | undefined): string | null {
+  return String(label ?? "").trim() === "2026-2027" ? "2027-06-26" : null;
 }
 
 function derivePlanningSnapshotSchoolYearLabel(
@@ -1164,7 +1182,7 @@ async function loadLivePlanningSeriesOptions({
   if (!range) {
     return [];
   }
-  const liveSeriesEndDate = schoolYearTeachingEndDateFromLabel(schoolYearLabel) ?? range.to.slice(0, 10);
+  const liveSeriesEndDate = widestSchoolYearTeachingEndDateFromLabel(schoolYearLabel) ?? range.to.slice(0, 10);
   const activityById = new Map(activities.map((activity) => [activity.id, activity]));
   const query = new URLSearchParams();
   query.set("status", "SCHEDULED");
@@ -1239,32 +1257,39 @@ async function loadLivePlanningSeriesOptions({
       continue;
     }
     const activityLabel = activity?.name || session.type_label || null;
+    const seriesTeachingEndDate = schoolYearTeachingEndDateFromLabel(schoolYearLabel, session.location_label) ?? liveSeriesEndDate;
+    const cappedFilteredRows = filteredRows.filter((row) => row.local.date <= seriesTeachingEndDate);
+    const firstCapped = cappedFilteredRows[0];
+    const lastCapped = cappedFilteredRows[cappedFilteredRows.length - 1];
+    if (!firstCapped || !lastCapped) {
+      continue;
+    }
     const planningSessionLimit = inferUniqueActivityPlanningLimit(session.course_type_id, lines);
     const expectedDates = planningSessionLimit > 0
       ? expectedWeeklyDates({
-        startDate: firstFiltered.local.date,
-        endDate: liveSeriesEndDate,
-        weekday: firstFiltered.local.weekday,
+        startDate: firstCapped.local.date,
+        endDate: seriesTeachingEndDate,
+        weekday: firstCapped.local.weekday,
         excludedDates,
         limit: planningSessionLimit,
       })
-      : filteredRows.map((row) => row.local.date);
-    const startDate = expectedDates[0] ?? firstFiltered.local.date;
-    const endDate = expectedDates[expectedDates.length - 1] ?? lastFiltered.local.date;
-    const sessionsCount = expectedDates.length || filteredRows.length;
-    const weekdayText = uiText(language, QUOTE_PLANNING_WEEKDAY_KEYS[firstFiltered.local.weekday] || "admin.quote_planning.weekday_unset");
+      : cappedFilteredRows.map((row) => row.local.date);
+    const startDate = expectedDates[0] ?? firstCapped.local.date;
+    const endDate = expectedDates[expectedDates.length - 1] ?? lastCapped.local.date;
+    const sessionsCount = expectedDates.length || cappedFilteredRows.length;
+    const weekdayText = uiText(language, QUOTE_PLANNING_WEEKDAY_KEYS[firstCapped.local.weekday] || "admin.quote_planning.weekday_unset");
     const period = `${formatDateForLivePlanningLabel(startDate)} -> ${formatDateForLivePlanningLabel(endDate)}`;
     const sessionsText = uiText(language, "admin.quote_planning.live_slot_sessions", { count: sessionsCount });
     const recurrenceGroups = Array.from(
-      new Set(filteredRows.map((row) => String(row.session.recurrence_group_id || "").trim()).filter(Boolean)),
+      new Set(cappedFilteredRows.map((row) => String(row.session.recurrence_group_id || "").trim()).filter(Boolean)),
     );
     const seriesKey = recurrenceGroups.length === 1 ? recurrenceGroups[0] : "";
     const optionKey = [
       session.course_type_id,
       session.location_id,
-      firstFiltered.local.weekday,
-      firstFiltered.local.start_time,
-      firstFiltered.local.end_time,
+      firstCapped.local.weekday,
+      firstCapped.local.start_time,
+      firstCapped.local.end_time,
     ].join("|");
     options.push({
       key: optionKey,
@@ -1273,15 +1298,15 @@ async function loadLivePlanningSeriesOptions({
       location_id: session.location_id,
       location_label: session.location_label || null,
       series_key: seriesKey,
-      weekday: firstFiltered.local.weekday,
+      weekday: firstCapped.local.weekday,
       start_date: startDate,
       end_date: endDate,
-      start_time: firstFiltered.local.start_time,
-      end_time: firstFiltered.local.end_time,
+      start_time: firstCapped.local.start_time,
+      end_time: firstCapped.local.end_time,
       sessions_count: sessionsCount,
       planning_session_limit: planningSessionLimit > 0 ? planningSessionLimit : null,
       modality,
-      label: `${weekdayText} ${firstFiltered.local.start_time}-${firstFiltered.local.end_time} · ${period} · ${sessionsText}`,
+      label: `${weekdayText} ${firstCapped.local.start_time}-${firstCapped.local.end_time} · ${period} · ${sessionsText}`,
     });
   }
 

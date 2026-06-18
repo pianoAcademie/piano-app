@@ -115,9 +115,20 @@ function blockIsOnline(block: LivePlanningBlockInput): boolean {
   return haystack.includes("online") || haystack.includes("ligne");
 }
 
+function normalizedLocationText(value: unknown): string {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
 function schoolYearEndDateFromBlock(block: LivePlanningBlockInput): string | null {
   const label = String(block.calendar_school_year || block.school_year_label || "").trim();
   if (label === "2026-2027") {
+    const location = normalizedLocationText(block.location_label);
+    if (location.includes("bar-le-duc") || location.includes("bar le duc")) {
+      return "2027-06-26";
+    }
     return "2027-06-19";
   }
   const match = label.match(/^(\d{4})-(\d{4})$/);
