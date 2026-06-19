@@ -3504,6 +3504,8 @@ button.danger:focus-visible {
 }
 
 .embed-slot-card {
+  --slot-accent-rgb: 196 138 58;
+  --slot-accent-text: #573818;
   display: grid;
   gap: 6px;
   padding: 12px;
@@ -3513,6 +3515,13 @@ button.danger:focus-visible {
   color: inherit;
   text-decoration: none;
   transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.embed-slot-card[class*="location-color-"] {
+  border-left: 5px solid rgb(var(--slot-accent-rgb));
+  background:
+    linear-gradient(90deg, rgb(var(--slot-accent-rgb) / 0.1), transparent 34%),
+    #ffffff;
 }
 
 .embed-slot-card:hover,
@@ -3541,11 +3550,66 @@ button.danger:focus-visible {
 .embed-slot-location {
   justify-self: start;
   padding: 4px 8px;
-  border: 1px solid rgba(196, 138, 58, 0.24);
+  border: 1px solid rgb(var(--slot-accent-rgb) / 0.36);
   border-radius: 999px;
-  background: rgba(196, 138, 58, 0.12);
-  color: #573818;
+  background: rgb(var(--slot-accent-rgb) / 0.16);
+  color: var(--slot-accent-text);
   font-weight: 800;
+}
+
+.location-color-dulong {
+  --slot-accent-rgb: 15 118 110;
+  --slot-accent-text: #064e47;
+}
+
+.location-color-scheffer {
+  --slot-accent-rgb: 22 128 82;
+  --slot-accent-text: #14532d;
+}
+
+.location-color-assas {
+  --slot-accent-rgb: 208 79 47;
+  --slot-accent-text: #7c2d12;
+}
+
+.location-color-richelieu {
+  --slot-accent-rgb: 37 99 235;
+  --slot-accent-text: #1e3a8a;
+}
+
+.location-color-pompe {
+  --slot-accent-rgb: 124 58 237;
+  --slot-accent-text: #4c1d95;
+}
+
+.embed-location-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.embed-location-legend-chip {
+  --slot-accent-rgb: 196 138 58;
+  --slot-accent-text: #573818;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid rgb(var(--slot-accent-rgb) / 0.3);
+  border-radius: 999px;
+  background: rgb(var(--slot-accent-rgb) / 0.12);
+  color: var(--slot-accent-text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.embed-location-legend-chip span {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: rgb(var(--slot-accent-rgb));
+  box-shadow: 0 0 0 3px rgb(var(--slot-accent-rgb) / 0.14);
 }
 
 .embed-slot-card-action {
@@ -15909,6 +15973,14 @@ button.danger:focus-visible {
   box-shadow: 0 12px 26px rgba(31, 23, 18, 0.05);
 }
 
+.embed-slot-card[class*="location-color-"] {
+  border-color: rgb(var(--slot-accent-rgb) / 0.28);
+  border-left-color: rgb(var(--slot-accent-rgb));
+  background:
+    linear-gradient(90deg, rgb(var(--slot-accent-rgb) / 0.12), transparent 38%),
+    rgba(255, 253, 249, 0.94);
+}
+
 .embed-planning-guide,
 .embed-planning-detail-priority {
   background: linear-gradient(180deg, rgba(255, 252, 245, 0.96), rgba(248, 239, 224, 0.96));
@@ -15918,7 +15990,8 @@ button.danger:focus-visible {
 
 .embed-slot-card:hover,
 .embed-slot-card.is-selected {
-  border-color: rgba(196, 138, 58, 0.5);
+  border-color: rgb(var(--slot-accent-rgb) / 0.58);
+  border-left-color: rgb(var(--slot-accent-rgb));
   box-shadow: 0 18px 36px rgba(31, 23, 18, 0.12);
 }
 

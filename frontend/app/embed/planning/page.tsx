@@ -169,6 +169,12 @@ function resolveParisLocationIds(locations: LocationOut[]): string[] {
     .map((location) => location.id);
 }
 
+function resolveLocationColorClass(locationName: string | null | undefined): string {
+  const normalized = normalizeLocationName(locationName ?? "");
+  const token = PARIS_LOCATION_TOKENS.find((candidate) => normalized.includes(candidate));
+  return token ? `location-color-${token}` : "location-color-default";
+}
+
 function buildPlanningHref({
   courseTypeId,
   locationId,
@@ -371,6 +377,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
     .filter((location) => location.active)
     .sort((left, right) => left.name.localeCompare(right.name, localeForUiLanguage(language)));
   const parisLocationOptions = locationOptions.filter((location) => parisLocationIds.includes(location.id));
+  const showParisLocationLegend = usesParisLocationGroup && !selectedParisLocationId && parisLocationOptions.length > 1;
 
   const sessionsByDay = new Map<string, SessionOut[]>();
   for (const session of sessions) {
@@ -587,6 +594,17 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
             </section>
           )}
 
+          {showParisLocationLegend ? (
+            <section className="embed-location-legend" aria-label={language === "en" ? "Paris location colours" : "Couleurs des lieux parisiens"}>
+              {parisLocationOptions.map((location) => (
+                <span key={location.id} className={`embed-location-legend-chip ${resolveLocationColorClass(location.name)}`}>
+                  <span aria-hidden="true" />
+                  {location.name}
+                </span>
+              ))}
+            </section>
+          ) : null}
+
           <div className="embed-planning-week-grid">
             {embedDays.map((dayValue) => (
               <section key={dayValue.key} className="embed-planning-day">
@@ -609,7 +627,12 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
                         language,
                       });
                       return (
-                        <Link key={session.id} className={`embed-slot-card${selectedSession?.id === session.id ? " is-selected" : ""}`} href={detailHref} scroll>
+                        <Link
+                          key={session.id}
+                          className={`embed-slot-card ${resolveLocationColorClass(session.location?.name)}${selectedSession?.id === session.id ? " is-selected" : ""}`}
+                          href={detailHref}
+                          scroll
+                        >
                           <div className="embed-slot-card-top">
                             <strong>{formatTime(session.start_at_utc, timezone, language)} - {formatTime(session.end_at_utc, timezone, language)}</strong>
                             {isReserved ? <span className="badge">{t("embed_planning.reserved_badge")}</span> : null}
