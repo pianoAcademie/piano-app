@@ -711,6 +711,14 @@ function planningKeyFromSnapshotRow(row: Record<string, unknown>, activityId: st
   return planningKeyFromActivityAndSource(activityId, readString(row.typeform_automatic_line));
 }
 
+function lineHasExplicitPlanningKey(line: QuoteTransformLine): boolean {
+  return Boolean(
+    readString(line.meta?.recommendation_key)
+      || readString(line.meta?.line_recommendation_key)
+      || readString(line.meta?.typeform_automatic_line),
+  );
+}
+
 function calendarSnapshotRows(calendarSnapshot: Record<string, unknown>): Record<string, unknown>[] {
   return [
     ...(Array.isArray(calendarSnapshot.blocks) ? calendarSnapshot.blocks : []),
@@ -729,6 +737,61 @@ export function deriveCalendarSnapshotActivityIds(calendarSnapshot: Record<strin
     }
   }
   return [...seen];
+}
+
+function snapshotSessionsCount(row: Record<string, unknown>): number | null {
+  const value = row.sessions_count ?? row.planning_session_limit;
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return null;
+  }
+  const parsed = readNumber(value, Number.NaN);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function snapshotLocationName(row: Record<string, unknown>): string {
+  return readString(row.location_label) || readString(row.location_name) || readString(row.location_id);
+}
+
+function snapshotMatchesExpectedLocation(row: Record<string, unknown>, fallbackLocationName: string): boolean {
+  const expectedGroup = locationGroup(fallbackLocationName);
+  if (expectedGroup === "unknown") {
+    return true;
+  }
+  const snapshotGroup = locationGroup(snapshotLocationName(row));
+  if (snapshotGroup === "unknown") {
+    return true;
+  }
+  return snapshotGroup === expectedGroup;
+}
+
+function inferSnapshotPlanningKeyForLine(
+  line: QuoteTransformLine,
+  activityId: string,
+  quantity: number,
+  calendarSnapshot: Record<string, unknown>,
+  fallbackLocationName: string,
+): string | null {
+  if (lineHasExplicitPlanningKey(line)) {
+    return null;
+  }
+
+  const expectedCount = Math.round(quantity);
+  const candidates = calendarSnapshotRows(calendarSnapshot).filter((row) => {
+    if (readString(row.activity_id) !== activityId) {
+      return false;
+    }
+    if (!readString(row.recommendation_key)) {
+      return false;
+    }
+    if (!snapshotMatchesExpectedLocation(row, fallbackLocationName)) {
+      return false;
+    }
+    const count = snapshotSessionsCount(row);
+    return count !== null && Math.round(count) === expectedCount;
+  });
+
+  const keys = new Set(candidates.map((row) => planningKeyFromSnapshotRow(row, activityId)).filter(Boolean));
+  return keys.size === 1 ? [...keys][0] : null;
 }
 
 function lineLooksLikeSolfege(lineText: string): boolean {
@@ -811,9 +874,17 @@ export function buildActivityPricingRows(
     .filter((line) => line.activityId)
     .map((line, index) => {
       const activityId = line.activityId || "";
-      const scheduleKey = planningKeyFromLine(line, activityId, duplicatedActivityIds);
       const activity = activitiesById.get(activityId);
       const quantity = line.quantity > 0 ? line.quantity : 1;
+      const defaultScheduleKey = planningKeyFromLine(line, activityId, duplicatedActivityIds);
+      const inferredScheduleKey = inferSnapshotPlanningKeyForLine(
+        line,
+        activityId,
+        quantity,
+        calendarSnapshot,
+        fallbackLocationName,
+      );
+      const scheduleKey = inferredScheduleKey || defaultScheduleKey;
       const expectedTtc = Number(line.amountTtc.toFixed(2));
       const baseRate = activity?.defaultCourseRateTtc ?? null;
       let currentSystemTtc = baseRate !== null ? Number((baseRate * quantity).toFixed(2)) : expectedTtc;
