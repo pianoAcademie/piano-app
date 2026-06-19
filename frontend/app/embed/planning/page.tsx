@@ -16,6 +16,7 @@ type EmbedDay = {
 };
 
 const PARIS_LOCATION_GROUP = "paris";
+const PARIS_LOCATION_TOKENS = ["dulong", "scheffer", "assas", "richelieu", "pompe"];
 const ACTIVE_CLIENT_BOOKING_STATUSES = new Set(["BOOKED", "WAITLISTED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"]);
 
 function readParam(params: SearchParams | undefined, key: string): string {
@@ -163,7 +164,7 @@ function resolveParisLocationIds(locations: LocationOut[]): string[] {
   return locations
     .filter((location) => {
       const normalized = normalizeLocationName(location.name);
-      return ["scheffer", "pompe", "richelieu", "assas"].some((token) => normalized.includes(token));
+      return PARIS_LOCATION_TOKENS.some((token) => normalized.includes(token));
     })
     .map((location) => location.id);
 }
@@ -187,6 +188,9 @@ function buildPlanningHref({
   params.set("course_type_id", courseTypeId);
   if (locationGroup) {
     params.set("location_group", locationGroup);
+    if (locationId) {
+      params.set("location_id", locationId);
+    }
   } else if (locationId) {
     params.set("location_id", locationId);
   }
@@ -251,7 +255,14 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const locations = locationsResult.ok ? locationsResult.data : [];
   const parisLocationIds = resolveParisLocationIds(locations);
   const usesParisLocationGroup = locationGroup === PARIS_LOCATION_GROUP && parisLocationIds.length > 0;
-  const effectiveLocationIds = usesParisLocationGroup ? parisLocationIds : locationId ? [locationId] : [];
+  const selectedParisLocationId = usesParisLocationGroup && parisLocationIds.includes(locationId) ? locationId : "";
+  const effectiveLocationIds = usesParisLocationGroup
+    ? selectedParisLocationId
+      ? [selectedParisLocationId]
+      : parisLocationIds
+    : locationId
+      ? [locationId]
+      : [];
 
   if (!courseTypeId || effectiveLocationIds.length === 0) {
     return (
@@ -281,8 +292,10 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
     }
   }
   const selectedCourseType = courseTypeById.get(courseTypeId) ?? null;
-  const selectedLocation = usesParisLocationGroup ? null : locations.find((row) => row.id === locationId) ?? null;
-  const selectedLocationName = usesParisLocationGroup ? "Paris" : (selectedLocation?.name ?? "");
+  const selectedLocation = locations.find((row) => row.id === (usesParisLocationGroup ? selectedParisLocationId : locationId)) ?? null;
+  const selectedLocationName = usesParisLocationGroup
+    ? selectedLocation?.name ?? (language === "en" ? "Paris - all locations" : "Paris - tous les lieux")
+    : (selectedLocation?.name ?? "");
   const timezone = resolveTimezone(selectedLocation?.timezone || "Europe/Paris");
 
   if (!selectedCourseType || (!usesParisLocationGroup && !selectedLocation)) {
@@ -357,6 +370,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const locationOptions = locations
     .filter((location) => location.active)
     .sort((left, right) => left.name.localeCompare(right.name, localeForUiLanguage(language)));
+  const parisLocationOptions = locationOptions.filter((location) => parisLocationIds.includes(location.id));
 
   const sessionsByDay = new Map<string, SessionOut[]>();
   for (const session of sessions) {
@@ -380,7 +394,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const selectedSessionIsFull = selectedSession ? selectedSession.seats_remaining <= 0 : false;
   const selectedSessionReturnTo = buildPlanningHref({
     courseTypeId,
-    locationId: usesParisLocationGroup ? null : locationId,
+    locationId: usesParisLocationGroup ? selectedParisLocationId : locationId,
     locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
     date: weekStartKey,
     sessionId: selectedSession?.id ?? null,
@@ -388,28 +402,28 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   });
   const previousHref = buildPlanningHref({
     courseTypeId,
-    locationId: usesParisLocationGroup ? null : locationId,
+    locationId: usesParisLocationGroup ? selectedParisLocationId : locationId,
     locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
     date: utcDateToKey(addUtcDays(weekStart, -7)),
     language,
   });
   const nextHref = buildPlanningHref({
     courseTypeId,
-    locationId: usesParisLocationGroup ? null : locationId,
+    locationId: usesParisLocationGroup ? selectedParisLocationId : locationId,
     locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
     date: utcDateToKey(addUtcDays(weekStart, 7)),
     language,
   });
   const todayHref = buildPlanningHref({
     courseTypeId,
-    locationId: usesParisLocationGroup ? null : locationId,
+    locationId: usesParisLocationGroup ? selectedParisLocationId : locationId,
     locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
     date: todayKeyInTimezone(timezone),
     language,
   });
   const closeSessionHref = buildPlanningHref({
     courseTypeId,
-    locationId: usesParisLocationGroup ? null : locationId,
+    locationId: usesParisLocationGroup ? selectedParisLocationId : locationId,
     locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
     date: weekStartKey,
     language,
@@ -513,7 +527,14 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
                 <input type="hidden" name="location_group" value={PARIS_LOCATION_GROUP} />
                 <label>
                   {uiText(language, "common.location")}
-                  <input type="text" value={selectedLocationName} readOnly />
+                  <select name="location_id" defaultValue={selectedParisLocationId}>
+                    <option value="">{language === "en" ? "All Paris locations" : "Tous les lieux parisiens"}</option>
+                    {parisLocationOptions.map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </select>
                 </label>
               </>
             ) : (
@@ -537,7 +558,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
 
             <div className="row">
               <button type="submit">{uiText(language, "common.apply")}</button>
-              {(locationId || readParam(searchParams, "date").trim()) ? (
+              {(selectedParisLocationId || (!usesParisLocationGroup && locationId) || readParam(searchParams, "date").trim()) ? (
                 <Link
                   className="ghost small-btn"
                   href={buildPlanningHref({
@@ -581,7 +602,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
                       const isReserved = booking !== null && ACTIVE_CLIENT_BOOKING_STATUSES.has(booking.status);
                       const detailHref = buildPlanningHref({
                         courseTypeId,
-                        locationId: usesParisLocationGroup ? null : locationId,
+                        locationId: usesParisLocationGroup ? selectedParisLocationId : locationId,
                         locationGroup: usesParisLocationGroup ? PARIS_LOCATION_GROUP : null,
                         date: weekStartKey,
                         sessionId: session.id,
@@ -594,8 +615,10 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
                             {isReserved ? <span className="badge">{t("embed_planning.reserved_badge")}</span> : null}
                           </div>
                           <p>{session.title}</p>
-                          {usesParisLocationGroup ? <small>{session.location.name}</small> : null}
-                          {!usesParisLocationGroup && !selectedLocation ? <small>{session.location?.name || t("embed_planning.location_to_confirm")}</small> : null}
+                          {usesParisLocationGroup ? <small className="embed-slot-location">{session.location.name}</small> : null}
+                          {!usesParisLocationGroup && !selectedLocation ? (
+                            <small className="embed-slot-location">{session.location?.name || t("embed_planning.location_to_confirm")}</small>
+                          ) : null}
                           <small>{formatMoney(session.external_booking_price_ttc, session.external_booking_currency, language)}</small>
                           <small>{externalAvailabilityLabel(session, language)}</small>
                           <span className="embed-slot-card-action">{isReserved ? t("embed_planning.reserved_badge") : t("embed_planning.select_slot_cta")}</span>

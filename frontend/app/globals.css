@@ -3538,6 +3538,16 @@ button.danger:focus-visible {
   color: #6f6555;
 }
 
+.embed-slot-location {
+  justify-self: start;
+  padding: 4px 8px;
+  border: 1px solid rgba(196, 138, 58, 0.24);
+  border-radius: 999px;
+  background: rgba(196, 138, 58, 0.12);
+  color: #573818;
+  font-weight: 800;
+}
+
 .embed-slot-card-action {
   justify-self: start;
   margin-top: 2px;

@@ -6,6 +6,7 @@ import CopyLinkButton from "./copy-link-button";
 
 const VIRTUAL_PARIS_LOCATION_ID = "__virtual_paris__";
 const EMBED_IFRAME_HEIGHT = 900;
+const PARIS_LOCATION_TOKENS = ["dulong", "scheffer", "assas", "richelieu", "pompe"];
 
 function normalizeBaseUrl(raw: string | null | undefined): string {
   const value = (raw ?? "").trim();
@@ -29,7 +30,7 @@ function normalizeLocationName(value: string): string {
 
 function isParisAggregateLocation(location: LocationOut): boolean {
   const normalized = normalizeLocationName(location.name);
-  return ["scheffer", "pompe", "richelieu", "assas"].some((token) => normalized.includes(token));
+  return PARIS_LOCATION_TOKENS.some((token) => normalized.includes(token));
 }
 
 function isIsoDate(value: string): boolean {
@@ -70,7 +71,7 @@ export default function AdminIntegrationPlanningEmbed({
       ? [
           {
             id: VIRTUAL_PARIS_LOCATION_ID,
-            name: "Paris (Scheffer, Pompe, Richelieu, Assas)",
+            name: "Paris - tous les lieux",
           },
         ]
       : []),
@@ -84,7 +85,7 @@ export default function AdminIntegrationPlanningEmbed({
   const selectedLocation = activeLocations.find((location) => location.id === selectedLocationId) ?? null;
   const isParisVirtualLocation = selectedLocationId === VIRTUAL_PARIS_LOCATION_ID && parisLocations.length > 0;
   const selectedLocationLabel = isParisVirtualLocation
-    ? "Paris (Scheffer, Pompe, Richelieu, Assas)"
+    ? "Paris - tous les lieux"
     : (selectableLocations.find((location) => location.id === selectedLocationId)?.name ?? "");
   const embedPath = (() => {
     if (!selectedActivity || (!selectedLocation && !isParisVirtualLocation)) {
