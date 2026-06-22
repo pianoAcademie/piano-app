@@ -2178,16 +2178,6 @@ def _planning_session_limit_from_quote_line_meta(line: QuoteLine | None) -> int 
     raw_limit = line_meta.get("planning_session_limit")
     if raw_limit is None:
         raw_limit = template.get("planning_session_limit")
-    if raw_limit is None:
-        line_category = str(getattr(line, "line_category", "") or "").strip().lower()
-        pricing_unit = str(getattr(line, "pricing_unit", "") or "").strip().lower()
-        if (
-            getattr(line, "activity_id", None) is not None
-            and (line_category == "service" or pricing_unit in {"session", "per_session"})
-        ):
-            quantity = _decimal_from_any(getattr(line, "quantity", None), Decimal("0"))
-            if quantity > Decimal("1") and quantity == quantity.to_integral_value():
-                raw_limit = int(quantity)
     try:
         limit = int(str(raw_limit).strip())
     except (TypeError, ValueError):

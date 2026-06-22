@@ -1716,6 +1716,63 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
 
         self.assertEqual(adjusted_lines[0].quantity, Decimal("2.00"))
 
+    def test_planned_quantities_split_duplicate_activity_lines_by_recommendation_key(self) -> None:
+        activity_id = uuid4()
+        first_line = QuoteLineIn(
+            line_category="service",
+            line_type="item",
+            master_item_type="activity",
+            master_item_id=activity_id,
+            activity_id=activity_id,
+            title="Cours collectif",
+            quantity=Decimal("1.00"),
+            vat_rate=Decimal("20.00"),
+            unit_price_ttc=Decimal("38.00"),
+            pricing_unit="session",
+            meta={},
+        )
+        second_line = QuoteLineIn(
+            line_category="service",
+            line_type="item",
+            master_item_type="activity",
+            master_item_id=activity_id,
+            activity_id=activity_id,
+            title="Cours collectif",
+            quantity=Decimal("1.00"),
+            vat_rate=Decimal("20.00"),
+            unit_price_ttc=Decimal("32.00"),
+            pricing_unit="session",
+            meta={"typeform_automatic_line": "second_piano_course"},
+        )
+        first_key = f"{activity_id}:line:preview-main"
+        second_key = f"{activity_id}:second_piano_course"
+
+        _adjusted_preview, adjusted_lines = _apply_planned_quantities_to_activity_lines(
+            preview_lines=[],
+            quote_lines=[first_line, second_line],
+            calendar_snapshot={
+                "blocks": [
+                    {"activity_id": str(activity_id), "recommendation_key": first_key},
+                    {"activity_id": str(activity_id), "recommendation_key": second_key},
+                ],
+                "sessions": [
+                    *[
+                        {"activity_id": str(activity_id), "recommendation_key": first_key, "date": f"2027-06-{day:02d}"}
+                        for day in range(1, 33)
+                    ],
+                    *[
+                        {"activity_id": str(activity_id), "recommendation_key": second_key, "date": f"2027-07-{day:02d}"}
+                        for day in range(1, 32)
+                    ],
+                ],
+            },
+        )
+
+        self.assertEqual(adjusted_lines[0].quantity, Decimal("32.00"))
+        self.assertEqual(adjusted_lines[0].meta["typeform_planned_quantity"], "32.00")
+        self.assertEqual(adjusted_lines[1].quantity, Decimal("31.00"))
+        self.assertEqual(adjusted_lines[1].meta["typeform_planned_quantity"], "31.00")
+
     def test_planned_quantities_do_not_change_products(self) -> None:
         product_id = uuid4()
         product_line = QuoteLineIn(

@@ -4189,6 +4189,49 @@ def _planned_quantities_from_calendar_snapshot(calendar_snapshot: dict[str, obje
     return quantities
 
 
+def _planned_quantities_by_recommendation_key(calendar_snapshot: dict[str, object]) -> dict[str, Decimal]:
+    quantities: dict[str, Decimal] = {}
+    for raw_session in _json_list(_json_object(calendar_snapshot).get("sessions")):
+        if not isinstance(raw_session, dict):
+            continue
+        recommendation_key = _text(raw_session.get("recommendation_key"))
+        if not recommendation_key:
+            continue
+        quantities[recommendation_key] = quantities.get(recommendation_key, Decimal("0.00")) + Decimal("1.00")
+    return quantities
+
+
+def _planned_recommendation_key_order_by_activity(calendar_snapshot: dict[str, object]) -> dict[str, list[str]]:
+    snapshot = _json_object(calendar_snapshot)
+    keys_by_activity: dict[str, list[str]] = {}
+    seen_by_activity: dict[str, set[str]] = {}
+
+    def add_key(activity_id: str, recommendation_key: str) -> None:
+        if not activity_id or not recommendation_key:
+            return
+        seen = seen_by_activity.setdefault(activity_id, set())
+        if recommendation_key in seen:
+            return
+        seen.add(recommendation_key)
+        keys_by_activity.setdefault(activity_id, []).append(recommendation_key)
+
+    for raw_block in _json_list(snapshot.get("blocks")):
+        if not isinstance(raw_block, dict):
+            continue
+        activity_id = _text(raw_block.get("activity_id"))
+        recommendation_key = _text(raw_block.get("recommendation_key"))
+        add_key(activity_id, recommendation_key)
+
+    for raw_session in _json_list(snapshot.get("sessions")):
+        if not isinstance(raw_session, dict):
+            continue
+        activity_id = _text(raw_session.get("activity_id"))
+        recommendation_key = _text(raw_session.get("recommendation_key"))
+        add_key(activity_id, recommendation_key)
+
+    return keys_by_activity
+
+
 def _preview_line_with_quantity(line: TypeformQuotePreviewLineOut, quantity: Decimal, meta: dict[str, object]) -> TypeformQuotePreviewLineOut:
     amount_ht = _q2(line.unit_price_ht * quantity)
     amount_vat = _q2(line.unit_vat_amount * quantity)
@@ -4216,23 +4259,48 @@ def _apply_planned_quantities_to_activity_lines(
     planned_quantities = _planned_quantities_from_calendar_snapshot(calendar_snapshot)
     if not planned_quantities:
         return preview_lines, quote_lines
+    recommendation_quantities = _planned_quantities_by_recommendation_key(calendar_snapshot)
+    recommendation_keys_by_activity = _planned_recommendation_key_order_by_activity(calendar_snapshot)
+    activity_line_counts: dict[str, int] = {}
+    for line in quote_lines:
+        if line.activity_id is None:
+            continue
+        activity_id = str(line.activity_id)
+        activity_line_counts[activity_id] = activity_line_counts.get(activity_id, 0) + 1
+    used_recommendation_keys: set[str] = set()
 
     adjusted_preview_lines: list[TypeformQuotePreviewLineOut] = []
     adjusted_quote_lines: list[QuoteLineIn] = []
     for index, quote_line in enumerate(quote_lines):
         preview_line = preview_lines[index] if index < len(preview_lines) else None
         planned_quantity: Decimal | None = None
+        matched_recommendation_key: str | None = None
         recommendation_key = _quote_line_recommendation_key(quote_line)
-        if recommendation_key:
-            planned_quantity = planned_quantities.get(recommendation_key)
+        if recommendation_key and recommendation_key in recommendation_quantities:
+            planned_quantity = recommendation_quantities.get(recommendation_key)
+            matched_recommendation_key = recommendation_key
         if planned_quantity is None and quote_line.activity_id is not None:
-            planned_quantity = planned_quantities.get(str(quote_line.activity_id))
+            activity_id = str(quote_line.activity_id)
+            if activity_line_counts.get(activity_id, 0) > 1:
+                for candidate_key in recommendation_keys_by_activity.get(activity_id, []):
+                    if candidate_key in used_recommendation_keys:
+                        continue
+                    candidate_quantity = recommendation_quantities.get(candidate_key)
+                    if candidate_quantity is None:
+                        continue
+                    planned_quantity = candidate_quantity
+                    matched_recommendation_key = candidate_key
+                    break
+            else:
+                planned_quantity = planned_quantities.get(activity_id)
 
         if quote_line.activity_id is None or planned_quantity is None or planned_quantity <= Decimal("0.00"):
             adjusted_quote_lines.append(quote_line)
             if preview_line is not None:
                 adjusted_preview_lines.append(preview_line)
             continue
+        if matched_recommendation_key:
+            used_recommendation_keys.add(matched_recommendation_key)
 
         meta = dict(quote_line.meta or {})
         if _q2(quote_line.quantity) != _q2(planned_quantity):

@@ -562,7 +562,7 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
 
         self.assertEqual(hydrated["blocks"][0]["planning_session_limit"], 32)
 
-    def test_line_recommendation_keys_infer_session_limit_from_service_quantity(self) -> None:
+    def test_line_recommendation_keys_do_not_infer_session_limit_from_service_quantity(self) -> None:
         activity_id = uuid4()
         line = SimpleNamespace(
             id=uuid4(),
@@ -587,7 +587,7 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
 
         hydrated = _calendar_snapshot_with_line_recommendation_keys(None, snapshot, lines=[line])
 
-        self.assertEqual(hydrated["blocks"][0]["planning_session_limit"], 31)
+        self.assertNotIn("planning_session_limit", hydrated["blocks"][0])
 
     def test_line_recommendation_keys_repair_stale_duplicate_activity_line_keys(self) -> None:
         activity_id = uuid4()

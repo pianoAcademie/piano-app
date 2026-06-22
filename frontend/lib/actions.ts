@@ -12870,8 +12870,7 @@ function quoteLinePlanningLimit(line: QuotePlanningLineInput): number {
   if (templateLimit > 0) {
     return templateLimit;
   }
-  const quantity = positiveInt(line.quantity);
-  return quantity > 1 ? quantity : 0;
+  return 0;
 }
 
 function inferPlanningSessionLimitForBlock(

@@ -1036,11 +1036,7 @@ function quoteLinePlanningLimit(line: QuoteLineOut): number {
   const template = readObject(meta.typeform_template) || {};
   const explicit = positiveInt(meta.planning_session_limit)
     || positiveInt(template.planning_session_limit);
-  if (explicit > 0) {
-    return explicit;
-  }
-  const quantity = positiveInt(line.quantity);
-  return quantity > 1 ? quantity : 0;
+  return explicit > 0 ? explicit : 0;
 }
 
 function inferUniqueActivityPlanningLimit(activityId: string, lines: QuoteLineOut[]): number {
