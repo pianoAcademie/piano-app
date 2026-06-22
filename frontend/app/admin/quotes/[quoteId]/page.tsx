@@ -2601,8 +2601,13 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     }
     ensurePlanningSummary(planningKey).plannedQuantity += 1;
   }
-  let estimatedPlanningSessionTotal = 0;
-  const estimatedPlanningQuantityByKey: Record<string, number> = {};
+  const planningKeysWithSessions = new Set(
+    Object.entries(planningByActivityId)
+      .filter(([, summary]) => summary.plannedQuantity > 0)
+      .map(([planningKey]) => planningKey),
+  );
+  let fallbackEstimatedPlanningSessionTotal = 0;
+  const fallbackEstimatedPlanningQuantityByKey: Record<string, number> = {};
   for (const block of planningBlocks) {
     const planningKey = planningKeyFromSnapshotItem(block);
     if (!planningKey) {
@@ -2611,21 +2616,24 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     const normalizedBlock = withQuoteLinePlanningLimit(block);
     const summary = ensurePlanningSummary(planningKey);
     const estimatedCount = planningBlockEstimatedDates(normalizedBlock).length;
-    estimatedPlanningSessionTotal += estimatedCount;
-    estimatedPlanningQuantityByKey[planningKey] = (estimatedPlanningQuantityByKey[planningKey] || 0) + estimatedCount;
+    if (!planningKeysWithSessions.has(planningKey)) {
+      fallbackEstimatedPlanningSessionTotal += estimatedCount;
+      fallbackEstimatedPlanningQuantityByKey[planningKey] =
+        (fallbackEstimatedPlanningQuantityByKey[planningKey] || 0) + estimatedCount;
+    }
     const rawPending = block.selection_pending;
     const isPending = rawPending === true || String(rawPending ?? "").trim().toLowerCase() === "true";
     if (isPending) {
       summary.pendingSelection = true;
     }
   }
-  for (const [planningKey, estimatedCount] of Object.entries(estimatedPlanningQuantityByKey)) {
+  for (const [planningKey, estimatedCount] of Object.entries(fallbackEstimatedPlanningQuantityByKey)) {
     const summary = ensurePlanningSummary(planningKey);
     if (estimatedCount > 0) {
       summary.plannedQuantity = estimatedCount;
     }
   }
-  const planningSessionDisplayCount = estimatedPlanningSessionTotal > 0 ? estimatedPlanningSessionTotal : calendarSessions.length;
+  const planningSessionDisplayCount = calendarSessions.length + fallbackEstimatedPlanningSessionTotal;
   const activityById = new Map(activities.map((activity) => [activity.id, activity]));
   const sendQuantityMismatchWarnings = detail.lines
     .filter((line) => Boolean(line.activity_id))
