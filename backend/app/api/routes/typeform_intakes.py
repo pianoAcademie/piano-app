@@ -1969,7 +1969,10 @@ def _normalize_payload(
         segment=config_segment or None,
     )
     if explicit_main_slot_preferences:
-        requested_slot_preferences = explicit_main_slot_preferences
+        requested_slot_preferences = _prefer_more_complete_slot_preferences(
+            explicit_main_slot_preferences,
+            fallback_main_slot_preferences,
+        )
     else:
         requested_slot_preferences = _prefer_more_complete_slot_preferences(
             requested_slot_preferences,

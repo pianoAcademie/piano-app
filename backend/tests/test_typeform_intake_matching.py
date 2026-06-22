@@ -1068,6 +1068,52 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
             ],
         )
 
+    def test_normalize_payload_prefers_complete_creneau_over_day_only_answer(self) -> None:
+        config = SimpleNamespace(
+            configuration_json={
+                "field_mapping": {
+                    "requested_location": ["requested_location"],
+                },
+                "field_labels": {},
+            },
+            audience_segment="child",
+            location_code="paris_dulong",
+        )
+        payload = {
+            "form_response": {
+                "answers": [
+                    {
+                        "field": {"ref": "requested_location", "title": "Lieu du cours souhaité"},
+                        "choice": {"label": "Paris 17 - Dulong"},
+                    },
+                    {
+                        "field": {"id": "day", "title": "Jour de la semaine pour votre cours"},
+                        "choice": {"label": "Mercredi"},
+                    },
+                    {
+                        "field": {"id": "slot", "title": "Créneaux proposés le mercredi"},
+                        "choice": {"label": "Mercredi 16h"},
+                    },
+                ]
+            }
+        }
+
+        normalized, _ = _normalize_payload(payload=payload, config=config)
+
+        self.assertEqual(normalized["requested_days"], ["mercredi"])
+        self.assertEqual(normalized["requested_times"], ["16:00"])
+        self.assertEqual(
+            normalized["requested_slot_preferences"],
+            [
+                {
+                    "day": "mercredi",
+                    "time": "16:00",
+                    "location": "Paris 17 - Dulong",
+                    "segment": "child",
+                }
+            ],
+        )
+
     def test_normalize_payload_resolves_multisite_location_from_creneau_label(self) -> None:
         config = SimpleNamespace(
             configuration_json={
