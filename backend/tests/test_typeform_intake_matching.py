@@ -26,6 +26,7 @@ from app.api.routes.typeform_intakes import (
     _intake_list_out_fast,
     _line_allows_session_modality,
     _load_selected_session_school_year_series,
+    _normalize_day_values,
     _normalize_payload,
     _normalize_slot_preferences,
     _requires_strict_typeform_location_matching,
@@ -1633,6 +1634,24 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
 
         self.assertTrue(_activity_matches_line_for_slot_fallback(activity, line))  # type: ignore[arg-type]
 
+    def test_collective_teen_line_matches_generic_onsite_collective_slot_fallback(self) -> None:
+        line = SimpleNamespace(
+            code="",
+            title="Cours collectifs ado/adultes",
+            description="",
+            meta={
+                "typeform_template": {
+                    "title": "Cours collectifs ado/adultes",
+                }
+            },
+        )
+        activity = SimpleNamespace(
+            code="PIANO_GROUP_ONSITE_1H",
+            name="Cours de piano collectif en presentiel (1h)",
+        )
+
+        self.assertTrue(_activity_matches_line_for_slot_fallback(activity, line))  # type: ignore[arg-type]
+
     def test_generic_onsite_collective_line_matches_child_collective_slot(self) -> None:
         line = SimpleNamespace(
             code="PIANO_GROUP_ONSITE_1H",
@@ -1646,6 +1665,12 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
         )
 
         self.assertTrue(_activity_matches_line_for_slot_fallback(activity, line))  # type: ignore[arg-type]
+
+    def test_day_values_keep_multiple_days_from_one_sentence(self) -> None:
+        self.assertEqual(
+            _normalize_day_values(["Soit le mardi ou le vendredi (mais on ajustera en septembre)"]),
+            ["mardi", "vendredi"],
+        )
 
     def test_slot_preferences_keep_multiple_day_time_pairs_from_one_answer(self) -> None:
         preferences = _normalize_slot_preferences(

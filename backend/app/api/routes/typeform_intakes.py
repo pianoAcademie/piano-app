@@ -876,12 +876,19 @@ def _normalize_day_values(values: list[object]) -> list[str]:
         else:
             chunks = [_text(item)]
         for chunk in chunks:
-            label = _extract_weekday_label(chunk)
-            if label is None:
-                continue
-            if label not in seen:
-                seen.add(label)
-                out.append(label)
+            labels = [
+                DAY_LABELS[weekday].lower()
+                for match in _DAY_TOKEN_RE.finditer(chunk)
+                for weekday in [_weekday_from_label(match.group(1))]
+                if weekday is not None
+            ]
+            if not labels:
+                label = _extract_weekday_label(chunk)
+                labels = [label] if label is not None else []
+            for label in labels:
+                if label not in seen:
+                    seen.add(label)
+                    out.append(label)
     return out
 
 
@@ -4038,6 +4045,8 @@ def _activity_matches_line_for_slot_fallback(activity: CourseType, line: Typefor
     if both_collective and (line_words & teen_adult_words) and (activity_words & teen_adult_words):
         return True
     if both_collective and (line_words & teen_adult_words) and (activity_words & child_words):
+        return True
+    if both_collective and (line_words & teen_adult_words) and (activity_words & onsite_words):
         return True
     if (
         both_collective
