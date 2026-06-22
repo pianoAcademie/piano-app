@@ -27,6 +27,7 @@ from app.api.routes.typeform_intakes import (
     _line_allows_session_modality,
     _load_selected_session_school_year_series,
     _normalize_payload,
+    _normalize_slot_preferences,
     _requires_strict_typeform_location_matching,
     _session_recommendations_have_options,
     _should_search_onsite_solfege_without_main_slot_filters,
@@ -1614,6 +1615,24 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
 
         self.assertTrue(_activity_matches_line_for_slot_fallback(activity, line))  # type: ignore[arg-type]
 
+    def test_collective_teen_line_matches_child_collective_slot_fallback(self) -> None:
+        line = SimpleNamespace(
+            code="",
+            title="Cours collectifs ado/adultes",
+            description="",
+            meta={
+                "typeform_template": {
+                    "title": "Cours collectifs ado/adultes",
+                }
+            },
+        )
+        activity = SimpleNamespace(
+            code="PIANO_GROUP_CHILD_ONSITE_1H",
+            name="Cours de piano collectif en presentiel (1h)",
+        )
+
+        self.assertTrue(_activity_matches_line_for_slot_fallback(activity, line))  # type: ignore[arg-type]
+
     def test_generic_onsite_collective_line_matches_child_collective_slot(self) -> None:
         line = SimpleNamespace(
             code="PIANO_GROUP_ONSITE_1H",
@@ -1627,6 +1646,31 @@ class TypeformIntakeMatchingTests(unittest.TestCase):
         )
 
         self.assertTrue(_activity_matches_line_for_slot_fallback(activity, line))  # type: ignore[arg-type]
+
+    def test_slot_preferences_keep_multiple_day_time_pairs_from_one_answer(self) -> None:
+        preferences = _normalize_slot_preferences(
+            ["mardi 18h, vendredi 18h"],
+            requested_location="Paris 16 - Rue Scheffer",
+            segment="teen",
+        )
+
+        self.assertEqual(
+            preferences,
+            [
+                {
+                    "day": "mardi",
+                    "time": "18:00",
+                    "location": "Paris 16 - Rue Scheffer",
+                    "segment": "teen",
+                },
+                {
+                    "day": "vendredi",
+                    "time": "18:00",
+                    "location": "Paris 16 - Rue Scheffer",
+                    "segment": "teen",
+                },
+            ],
+        )
 
     def test_planned_quantities_are_applied_to_activity_quote_lines(self) -> None:
         activity_id = uuid4()

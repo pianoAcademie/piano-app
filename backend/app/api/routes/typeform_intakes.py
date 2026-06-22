@@ -981,6 +981,16 @@ def _normalize_slot_preferences(
                     seen.add(key)
                     out.append(child)
             continue
+        if isinstance(item, str):
+            chunks = [chunk.strip() for chunk in item.replace("/", ",").replace(";", ",").split(",") if chunk.strip()]
+            if len(chunks) > 1:
+                nested = _normalize_slot_preferences(chunks, requested_location=requested_location, segment=segment)
+                for child in nested:
+                    key = (_text(child.get("day")) or None, _text(child.get("time")) or None)
+                    if key not in seen:
+                        seen.add(key)
+                        out.append(child)
+                continue
         day = _extract_weekday_label(item)
         times = _extract_time_tokens(item)
         if not day and not times:
@@ -1315,9 +1325,12 @@ def _second_course_request_from_simplified_answers(
                 requested_days.append(day)
             continue
         if "creneau" in label_token or "horaire" in label_token:
-            time_value = _first_start_time_from_choice(value)
-            if time_value and time_value not in requested_times:
-                requested_times.append(time_value)
+            for day in _normalize_day_values([value]):
+                if day and day not in requested_days:
+                    requested_days.append(day)
+            for time_value in _normalize_time_values([value]):
+                if time_value and time_value not in requested_times:
+                    requested_times.append(time_value)
 
     request_token = _normalize_token(request_value)
     requested = bool(request_token and "oui" in request_token and "non" not in request_token)
@@ -4021,10 +4034,13 @@ def _activity_matches_line_for_slot_fallback(activity: CourseType, line: Typefor
     teen_adult_words = {"ado", "ados", "adult", "adulte", "adultes"}
     child_words = {"child", "children", "enfant", "enfants"}
     onsite_words = {"onsite", "presentiel"}
-    if shared_words & collective_words and (line_words & teen_adult_words) and (activity_words & teen_adult_words):
+    both_collective = bool((line_words & collective_words) and (activity_words & collective_words))
+    if both_collective and (line_words & teen_adult_words) and (activity_words & teen_adult_words):
+        return True
+    if both_collective and (line_words & teen_adult_words) and (activity_words & child_words):
         return True
     if (
-        shared_words & collective_words
+        both_collective
         and (line_words & onsite_words)
         and (activity_words & child_words)
         and not (activity_words & teen_adult_words)
