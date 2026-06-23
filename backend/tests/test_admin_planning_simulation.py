@@ -5,12 +5,14 @@ from pathlib import Path
 import sys
 import unittest
 from types import SimpleNamespace
+from uuid import uuid4
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.admin import (
     _parse_school_year_bounds,
     _planning_simulation_clean_location_label,
+    _planning_simulation_live_slot_key,
     _planning_simulation_quote_person_key,
     _planning_simulation_quote_location_name,
     _planning_simulation_resolve_live_slot_for_quote,
@@ -48,6 +50,22 @@ class AdminPlanningSimulationTests(unittest.TestCase):
         self.assertEqual(
             _planning_simulation_search_text("Cours collectif Éveil musical - Répétition"),
             "cours collectif eveil musical - repetition",
+        )
+
+    def test_planning_simulation_groups_recurrent_orphan_sessions_by_signature(self) -> None:
+        signature = "richelieu|solfege|2|18:05|18:35"
+
+        self.assertEqual(
+            _planning_simulation_live_slot_key(
+                session_id=uuid4(),
+                recurrence_group_id=None,
+                signature=signature,
+            ),
+            _planning_simulation_live_slot_key(
+                session_id=uuid4(),
+                recurrence_group_id=None,
+                signature=signature,
+            ),
         )
 
     def test_planning_simulation_selects_least_loaded_live_slot_for_quote(self) -> None:

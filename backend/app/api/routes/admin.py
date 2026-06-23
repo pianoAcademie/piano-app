@@ -1459,6 +1459,17 @@ def _planning_simulation_signature(
     )
 
 
+def _planning_simulation_live_slot_key(
+    *,
+    session_id: UUID,
+    recurrence_group_id: UUID | None,
+    signature: str,
+) -> str:
+    if recurrence_group_id is not None:
+        return f"series::{recurrence_group_id}"
+    return f"series-signature::{signature}"
+
+
 def _planning_simulation_quote_person_key(quote: Quote, prospect: Prospect | None) -> str | None:
     if quote.client_id is not None:
         return f"client:{quote.client_id}"
@@ -2661,13 +2672,17 @@ def get_planning_simulation(
         weekday = local_start.weekday()
         start_time = local_start.strftime("%H:%M")
         end_time = local_end.strftime("%H:%M")
-        slot_key = f"series::{session_obj.recurrence_group_id or session_obj.id}"
         signature = _planning_simulation_signature(
             location_id=location.id,
             course_type_id=course_type.id,
             weekday=weekday,
             start_time=start_time,
             end_time=end_time,
+        )
+        slot_key = _planning_simulation_live_slot_key(
+            session_id=session_obj.id,
+            recurrence_group_id=session_obj.recurrence_group_id,
+            signature=signature,
         )
         live_slot_keys_by_signature.setdefault(signature, set()).add(slot_key)
         session_slot_by_id[session_obj.id] = slot_key
