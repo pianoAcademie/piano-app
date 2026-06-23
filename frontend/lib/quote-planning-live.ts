@@ -157,9 +157,6 @@ function daysBetween(left: string, right: string): number | null {
 }
 
 function shouldWidenLivePlanningBlock(block: LivePlanningBlockInput): boolean {
-  if (String(block.source || "").trim() === "live_planning") {
-    return true;
-  }
   const locationEndDate = schoolYearEndDateFromBlock(block);
   const defaultEndDate = defaultSchoolYearEndDateFromBlock(block);
   if (!locationEndDate || !defaultEndDate || locationEndDate <= defaultEndDate) {
