@@ -10,6 +10,7 @@ from app.services.bank_transfer_orders import (
     BANK_TRANSFER_ORDER_STATUS_PENDING,
     _build_review_digest_body,
     _latest_review_digest_rows,
+    _reviewable_bank_transfer_rows,
 )
 
 
@@ -35,6 +36,14 @@ def _order(
 
 
 class BankTransferReviewDigestTests(unittest.TestCase):
+    def _range_invoice_note(self, *, invoice_number: str, invoice_status: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            message=(
+                f"Facture {invoice_number} generee.\n"
+                f'INVOICE_RANGE::{{"invoice_number":"{invoice_number}","invoice_status":"{invoice_status}"}}'
+            )
+        )
+
     def test_digest_body_identifies_expired_orders_to_relaunch(self) -> None:
         customer = SimpleNamespace(first_name="Elvira", last_name="Giner", email="elvira@example.com")
         note = SimpleNamespace(message="Facture PA26-0079 generee.")
@@ -80,6 +89,32 @@ class BankTransferReviewDigestTests(unittest.TestCase):
         )
 
         self.assertEqual([row[0].order_reference for row in rows], ["VIR-NEW"])
+
+    def test_digest_excludes_bank_transfer_when_invoice_is_already_paid(self) -> None:
+        customer = SimpleNamespace(first_name="Herve", last_name="Louis", email="herve@example.com")
+        paid_note = self._range_invoice_note(invoice_number="PA26-0260", invoice_status="PAID")
+        pending_order = _order(
+            reference="VIR-20260619-FEC8E25A",
+            status=BANK_TRANSFER_ORDER_STATUS_PENDING,
+            created_at=datetime(2026, 6, 19, 7, 13, tzinfo=timezone.utc),
+        )
+
+        rows = _reviewable_bank_transfer_rows([(pending_order, customer, paid_note)])
+
+        self.assertEqual(rows, [])
+
+    def test_digest_excludes_expired_bank_transfer_when_invoice_is_paid_by_newer_order(self) -> None:
+        customer = SimpleNamespace(first_name="Sonia", last_name="Thornton", email="sonia@example.com")
+        paid_note = self._range_invoice_note(invoice_number="PA26-0206", invoice_status="PAID")
+        expired_order = _order(
+            reference="VIR-20260604-8FAF7D53",
+            status=BANK_TRANSFER_ORDER_STATUS_EXPIRED,
+            created_at=datetime(2026, 6, 4, 10, 14, tzinfo=timezone.utc),
+        )
+
+        rows = _reviewable_bank_transfer_rows([(expired_order, customer, paid_note)])
+
+        self.assertEqual(rows, [])
 
 
 if __name__ == "__main__":

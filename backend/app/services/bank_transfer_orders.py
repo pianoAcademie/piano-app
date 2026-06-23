@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from decimal import Decimal, InvalidOperation
 import html
+import json
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -19,8 +20,11 @@ from app.services.notifications.infrastructure.repository import get_job_cursor,
 
 BANK_TRANSFER_ORDER_STATUS_PENDING = "pending_bank_transfer"
 BANK_TRANSFER_ORDER_STATUS_EXPIRED = "expired"
+BANK_TRANSFER_ORDER_STATUS_PAID = "paid"
+BANK_TRANSFER_ORDER_STATUS_CLOSED = "closed"
 BANK_TRANSFER_REVIEW_DIGEST_CURSOR = "bank_transfer_review_daily_digest"
 BANK_TRANSFER_REVIEW_DIGEST_LOCAL_TIME = time(8, 0)
+INVOICE_RANGE_NOTE_PREFIX = "INVOICE_RANGE::"
 PARIS_TZ = ZoneInfo("Europe/Paris")
 UTC = timezone.utc
 
@@ -96,6 +100,49 @@ def _invoice_number(note: ClientNoteEntry | None) -> str:
     return "-"
 
 
+def _invoice_range_metadata_from_note(note: ClientNoteEntry | None) -> dict[str, object] | None:
+    if note is None:
+        return None
+    message = (note.message or "").strip()
+    prefix_index = message.find(INVOICE_RANGE_NOTE_PREFIX)
+    if prefix_index < 0:
+        return None
+    raw_payload = message[prefix_index + len(INVOICE_RANGE_NOTE_PREFIX) :].strip()
+    if not raw_payload:
+        return None
+    try:
+        parsed = json.loads(raw_payload)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _invoice_status_from_note(note: ClientNoteEntry | None) -> str:
+    metadata = _invoice_range_metadata_from_note(note)
+    if metadata is None:
+        return ""
+    return str(metadata.get("invoice_status") or "").strip().upper()
+
+
+def _invoice_paid_at_from_note(note: ClientNoteEntry | None) -> datetime | None:
+    metadata = _invoice_range_metadata_from_note(note)
+    if metadata is None:
+        return None
+    paid_at = metadata.get("paid_at")
+    if not isinstance(paid_at, str) or not paid_at.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(paid_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return _aware_utc(parsed)
+
+
+def _row_needs_bank_transfer_review(row: tuple[BankTransferOrder, User, ClientNoteEntry | None]) -> bool:
+    invoice_status = _invoice_status_from_note(row[2])
+    return invoice_status not in {"PAID", "CANCELLED"}
+
+
 def _review_digest_status_label(status: str | None) -> str:
     if status == BANK_TRANSFER_ORDER_STATUS_PENDING:
         return "A verifier"
@@ -166,6 +213,12 @@ def _latest_review_digest_rows(
     )[:limit]
 
 
+def _reviewable_bank_transfer_rows(
+    rows: list[tuple[BankTransferOrder, User, ClientNoteEntry | None]],
+) -> list[tuple[BankTransferOrder, User, ClientNoteEntry | None]]:
+    return [row for row in rows if _row_needs_bank_transfer_review(row)]
+
+
 def _build_review_digest_body(rows: list[tuple[BankTransferOrder, User, ClientNoteEntry | None]], *, now: datetime) -> str:
     generated_at = _format_local_datetime(_aware_utc(now))
     pending_rows = [row for row in rows if row[0].status == BANK_TRANSFER_ORDER_STATUS_PENDING]
@@ -203,12 +256,27 @@ def run_bank_transfer_order_expiration_job(
         .order_by(BankTransferOrder.expires_at.asc())
         .limit(limit)
     ).all()
+    expired = 0
     for row in rows:
+        note = db.scalar(select(ClientNoteEntry).where(ClientNoteEntry.id == row.invoice_note_id)) if row.invoice_note_id else None
+        invoice_status = _invoice_status_from_note(note)
+        if invoice_status == "PAID":
+            row.status = BANK_TRANSFER_ORDER_STATUS_PAID
+            row.paid_at = _invoice_paid_at_from_note(note) or current
+            row.updated_at = current
+            db.add(row)
+            continue
+        if invoice_status == "CANCELLED":
+            row.status = BANK_TRANSFER_ORDER_STATUS_CLOSED
+            row.updated_at = current
+            db.add(row)
+            continue
         row.status = BANK_TRANSFER_ORDER_STATUS_EXPIRED
         row.expired_at = current
         row.updated_at = current
         db.add(row)
-    return BankTransferExpirationJobResult(checked=len(rows), expired=len(rows))
+        expired += 1
+    return BankTransferExpirationJobResult(checked=len(rows), expired=expired)
 
 
 def run_bank_transfer_review_digest_job(
@@ -230,8 +298,11 @@ def run_bank_transfer_review_digest_job(
         .order_by(BankTransferOrder.created_at.desc(), BankTransferOrder.id.desc())
         .limit(max(limit * 3, limit))
     ).all()
+    reviewable_raw_rows = _reviewable_bank_transfer_rows(
+        [(order, customer, note) for order, customer, note in raw_rows]
+    )
     rows = _latest_review_digest_rows(
-        [(order, customer, note) for order, customer, note in raw_rows],
+        reviewable_raw_rows,
         limit=limit,
     )
     recipients = [recipient.email for recipient in resolve_admin_bank_transfer_review_recipients(db) if recipient.email]
