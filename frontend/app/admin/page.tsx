@@ -1149,6 +1149,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     ...queryForLinks,
     activityIds: [],
     courseTypeId: "",
+    locationId: "",
     locationIds: [],
     professorIds: [],
     status: "ALL",
