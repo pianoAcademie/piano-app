@@ -6060,6 +6060,42 @@ def _parent_referent_meta_from_prospect(parent: Prospect) -> dict[str, object | 
     }
 
 
+def _quote_meta_for_duplicated_child(
+    source_meta: object | None,
+    *,
+    child_first_name: str,
+    child_last_name: str,
+    child_birth_date: date | str | None,
+    extra: dict[str, object],
+) -> dict[str, object]:
+    meta = deepcopy(_json_object(source_meta))
+    full_name = _quote_join_name(child_first_name, child_last_name) or child_first_name or child_last_name
+    birth_date_text = child_birth_date.isoformat() if isinstance(child_birth_date, date) else (str(child_birth_date).strip() if child_birth_date else None)
+    typeform_meta = _json_object(meta.get("typeform_intake"))
+    normalized = _json_object(typeform_meta.get("normalized_payload"))
+    if normalized:
+        normalized["child_first_name"] = child_first_name
+        normalized["child_last_name"] = child_last_name
+        normalized["child_full_name"] = full_name
+        if "student_first_name" in normalized:
+            normalized["student_first_name"] = child_first_name
+        if "student_last_name" in normalized:
+            normalized["student_last_name"] = child_last_name
+        if "student_full_name" in normalized:
+            normalized["student_full_name"] = full_name
+        if birth_date_text:
+            normalized["child_birth_date"] = birth_date_text
+            if "student_birth_date" in normalized:
+                normalized["student_birth_date"] = birth_date_text
+        else:
+            normalized.pop("child_birth_date", None)
+            normalized.pop("student_birth_date", None)
+        typeform_meta["normalized_payload"] = normalized
+        meta["typeform_intake"] = typeform_meta
+    meta.update(extra)
+    return meta
+
+
 @router.post("/quotes/{quote_id}/duplicate-for-child", response_model=QuoteDetailOut, status_code=status.HTTP_201_CREATED)
 def duplicate_quote_for_child(
     quote_id: UUID,
@@ -6147,12 +6183,17 @@ def duplicate_quote_for_child(
             payment_terms_snapshot=deepcopy(source.payment_terms_snapshot or {}),
             cgv_snapshot=deepcopy(source.cgv_snapshot or {}),
             price_snapshot=deepcopy(source.price_snapshot or {}),
-            meta={
-                **_json_object(source.meta),
-                "duplicated_from": str(source.id),
-                "duplicated_for_child_client_id": str(child_client.id),
-                "duplicated_for_child_name": _user_display_label(child_client),
-            },
+            meta=_quote_meta_for_duplicated_child(
+                source.meta,
+                child_first_name=child_client.first_name or "",
+                child_last_name=child_client.last_name or "",
+                child_birth_date=child_client.birth_date,
+                extra={
+                    "duplicated_from": str(source.id),
+                    "duplicated_for_child_client_id": str(child_client.id),
+                    "duplicated_for_child_name": _user_display_label(child_client),
+                },
+            ),
             created_by_user_id=current_user.id,
             created_at=now,
             updated_at=now,
@@ -6278,12 +6319,17 @@ def duplicate_quote_for_child(
         payment_terms_snapshot=deepcopy(source.payment_terms_snapshot or {}),
         cgv_snapshot=deepcopy(source.cgv_snapshot or {}),
         price_snapshot=deepcopy(source.price_snapshot or {}),
-        meta={
-            **_json_object(source.meta),
-            "duplicated_from": str(source.id),
-            "duplicated_for_child_prospect_id": str(child.id),
-            "duplicated_for_child_name": f"{child_first_name} {child_last_name}".strip(),
-        },
+        meta=_quote_meta_for_duplicated_child(
+            source.meta,
+            child_first_name=child_first_name,
+            child_last_name=child_last_name,
+            child_birth_date=child_birth_date,
+            extra={
+                "duplicated_from": str(source.id),
+                "duplicated_for_child_prospect_id": str(child.id),
+                "duplicated_for_child_name": f"{child_first_name} {child_last_name}".strip(),
+            },
+        ),
         created_by_user_id=current_user.id,
         created_at=now,
         updated_at=now,

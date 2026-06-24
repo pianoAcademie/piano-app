@@ -14,6 +14,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.api.routes.quotes import (
     _create_quote_revision_from_change_request,
     _quote_admin_stats,
+    _quote_meta_for_duplicated_child,
     duplicate_quote,
     duplicate_quote_for_child,
 )
@@ -387,6 +388,49 @@ class QuoteDuplicationTests(unittest.TestCase):
             sibling_prospect_id=child.id,
         )
         self.assertEqual(duplicate_event.event_type, "quote_duplicated_for_child")
+
+    def test_duplicate_quote_for_child_rewrites_typeform_child_identity(self) -> None:
+        source_id = uuid4()
+        child_id = uuid4()
+        source_meta = {
+            "source": "typeform_intake",
+            "recipient_email": "parent@example.com",
+            "typeform_intake": {
+                "intake_id": str(uuid4()),
+                "normalized_payload": {
+                    "parent_first_name": "Angela",
+                    "parent_last_name": "Zghun",
+                    "parent_email": "parent@example.com",
+                    "child_first_name": "Marco",
+                    "child_last_name": "NORMA",
+                    "child_full_name": "Marco NORMA",
+                    "child_birth_date": "2018-02-06",
+                    "requested_times": ["18:00"],
+                },
+            },
+        }
+
+        meta = _quote_meta_for_duplicated_child(
+            source_meta,
+            child_first_name="Camila",
+            child_last_name="NORMA",
+            child_birth_date="2014-04-18",
+            extra={
+                "duplicated_from": str(source_id),
+                "duplicated_for_child_client_id": str(child_id),
+                "duplicated_for_child_name": "Camila NORMA",
+            },
+        )
+
+        normalized = meta["typeform_intake"]["normalized_payload"]
+        self.assertEqual(normalized["parent_first_name"], "Angela")
+        self.assertEqual(normalized["child_first_name"], "Camila")
+        self.assertEqual(normalized["child_last_name"], "NORMA")
+        self.assertEqual(normalized["child_full_name"], "Camila NORMA")
+        self.assertEqual(normalized["child_birth_date"], "2014-04-18")
+        self.assertEqual(normalized["requested_times"], ["18:00"])
+        self.assertEqual(meta["duplicated_from"], str(source_id))
+        self.assertEqual(meta["duplicated_for_child_client_id"], str(child_id))
 
 
 if __name__ == "__main__":
