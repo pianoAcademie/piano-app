@@ -134,6 +134,7 @@ export type QuoteTransformSession = {
   id: string;
   courseTypeId: string;
   locationId: string;
+  recurrenceGroupId: string | null;
   locationName: string | null;
   title: string;
   startAtUtc: string;
@@ -190,6 +191,9 @@ export type SessionMatchOption = {
   score: number;
   reasons: string[];
   recommended?: boolean;
+  seriesSize?: number;
+  usesSeriesAvailability?: boolean;
+  hasFullSeriesSession?: boolean;
 };
 
 type SessionMatchDraft = SessionMatchOption & {
@@ -457,6 +461,7 @@ export function translateQuoteTransformMessage(message: string, language: UiLang
     "statut non ideal": "admin.quote_transform.reason_status_not_ideal",
     "place disponible": "admin.quote_transform.reason_seat_available",
     "complet": "admin.quote_transform.reason_full",
+    "serie avec au moins une seance complete": "admin.quote_transform.reason_series_has_full_session",
     "date demarrage coherente": "admin.quote_transform.reason_start_date_consistent",
     "jour coherent": "admin.quote_transform.reason_weekday_consistent",
     "horaire demarrage coherent": "admin.quote_transform.reason_start_time_consistent",
@@ -1251,11 +1256,15 @@ function recurringSlotLabel(
 }
 
 function recurringSlotKey(option: SessionMatchDraft): string {
+  const recurrenceKey = option.session.recurrenceGroupId ? `recurrence:${option.session.recurrenceGroupId}` : null;
   const locationKey = locationGroup(option.locationName || option.session.locationName || "") || normalizeText(option.locationName);
   const titleKey = normalizeText(option.label || option.session.title);
   const teacherKey = normalizeText(option.teacher || option.session.teacherDisplayName);
   const weekdayKey = option.localParts.weekday === null ? "day:unknown" : `day:${option.localParts.weekday}`;
   const timeKey = option.localParts.timeKey || "time:unknown";
+  if (recurrenceKey) {
+    return recurrenceKey;
+  }
   return [
     option.session.courseTypeId || "course:unknown",
     locationKey || option.session.locationId || "location:unknown",
@@ -1308,10 +1317,21 @@ function groupRecurringSessionOptions(
     : null;
 
   const groupedOptions = Array.from(groups.values()).map((group) => {
-    const sortedGroup = [...group].sort(compareSessionMatchDrafts);
-    const representative = sortedGroup[0];
-    const minSeatsRemaining = group.reduce((acc, option) => Math.min(acc, option.seatsRemaining), Number.POSITIVE_INFINITY);
-    const groupSize = group.length;
+    const chronologicalGroup = [...group].sort((a, b) => {
+      const aStart = new Date(a.session.startAtUtc).getTime();
+      const bStart = new Date(b.session.startAtUtc).getTime();
+      if (Number.isFinite(aStart) && Number.isFinite(bStart) && aStart !== bStart) {
+        return aStart - bStart;
+      }
+      return compareSessionMatchDrafts(a, b);
+    });
+    const relevantGroup = expectedSessionCount === null
+      ? chronologicalGroup
+      : chronologicalGroup.slice(0, expectedSessionCount);
+    const representative = relevantGroup[0] || chronologicalGroup[0];
+    const minSeatsRemaining = relevantGroup.reduce((acc, option) => Math.min(acc, option.seatsRemaining), Number.POSITIVE_INFINITY);
+    const groupSize = relevantGroup.length;
+    const hasFullSeriesSession = Number.isFinite(minSeatsRemaining) && minSeatsRemaining <= 0;
     const quantityDelta = expectedSessionCount === null ? null : Math.abs(groupSize - expectedSessionCount);
     const quantityScore = quantityDelta === null
       ? 0
@@ -1337,12 +1357,19 @@ function groupRecurringSessionOptions(
     const recurrentReason = language === "en"
       ? `recurring slot grouped (${groupSize} ${sessionWord}${groupSize > 1 ? "s" : ""})`
       : `creneau recurrent regroupe (${groupSize} ${sessionWord}${groupSize > 1 ? "s" : ""})`;
+    const availabilityReason = hasFullSeriesSession ? "serie avec au moins une seance complete" : null;
+    const representativeReasons = hasFullSeriesSession
+      ? representative.reasons.filter((reason) => reason !== "place disponible")
+      : representative.reasons;
     return {
       ...representative,
       dateLabel: `${recurringSlotLabel(representative.session, representative.localParts, locale)} · ${groupSize} ${sessionWord}${groupSize > 1 ? "s" : ""}`,
       seatsRemaining: Number.isFinite(minSeatsRemaining) ? minSeatsRemaining : representative.seatsRemaining,
-      score: representative.score + quantityScore,
-      reasons: [...representative.reasons, recurrentReason, ...(quantityReason ? [quantityReason] : [])],
+      score: representative.score + quantityScore + (hasFullSeriesSession ? -60 : 0),
+      reasons: [...representativeReasons, recurrentReason, ...(availabilityReason ? [availabilityReason] : []), ...(quantityReason ? [quantityReason] : [])],
+      seriesSize: groupSize,
+      usesSeriesAvailability: groupSize > 1,
+      hasFullSeriesSession,
     };
   });
 
@@ -1448,7 +1475,36 @@ export function buildSessionMatches(
     return locationScopedSessions;
   })();
 
-  const optionDrafts = scopedSessions
+  const recurringScopedSessions = (() => {
+    if (!hint || !hint.startDate || activityRow.quantity <= 1) {
+      return scopedSessions;
+    }
+    const targetDay = dayNumberFromDateKey(hint.startDate);
+    const sessionsWithParts = locationScopedSessions.map((session) => ({
+      session,
+      local: isoPartsInTimezone(session.startAtUtc, session.timezone),
+    }));
+    const candidates = sessionsWithParts.filter((item) => {
+      if (hint.weekday !== null && item.local.weekday !== hint.weekday) {
+        return false;
+      }
+      if (hint.startTime && item.local.timeKey !== hint.startTime && !sessionContainsHintTime(item.session, hint)) {
+        return false;
+      }
+      if (targetDay !== null) {
+        const dayNumber = dayNumberFromDateKey(item.local.dateKey || "");
+        if (dayNumber !== null && dayNumber < targetDay) {
+          return false;
+        }
+      }
+      return true;
+    });
+    return candidates.length > 0 ? candidates.map((item) => item.session) : scopedSessions;
+  })();
+
+  const optionSourceSessions = activityRow.quantity > 1 ? recurringScopedSessions : scopedSessions;
+
+  const optionDrafts = optionSourceSessions
     .map((session) => {
       const scoreData = matchScore(session, hint, expectedLocationId);
       const localParts = isoPartsInTimezone(session.startAtUtc, session.timezone);
@@ -1473,7 +1529,7 @@ export function buildSessionMatches(
     })
     .sort(compareSessionMatchDrafts);
 
-  const groupedOptions = selectionModeRef.value === "all" && activityRow.quantity > 1
+  const groupedOptions = activityRow.quantity > 1
     ? groupRecurringSessionOptions(optionDrafts, locale, language, activityRow.quantity)
     : optionDrafts;
 

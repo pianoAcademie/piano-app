@@ -428,6 +428,7 @@ export default async function AdminQuoteTransformPage({ params, searchParams }: 
         id: session.id,
         courseTypeId: session.course_type_id,
         locationId: session.location_id,
+        recurrenceGroupId: session.recurrence_group_id,
         locationName: session.location_label,
         title: session.title,
         startAtUtc: session.start_at_utc,

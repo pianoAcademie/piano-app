@@ -1608,7 +1608,14 @@ export default function QuoteToEnrollmentWizard({
                                     ) : null}
                                   </div>
                                   <p className="muted">{option.dateLabel} · {option.locationName} · {option.teacher}</p>
-                                  <p className="muted">{t("admin.quote_transform.seats_remaining", { count: option.seatsRemaining })} · {t("admin.quote_transform.score", { score: option.score })}</p>
+                                  <p className="muted">
+                                    {t(option.usesSeriesAvailability ? "admin.quote_transform.series_min_seats_remaining" : "admin.quote_transform.seats_remaining", { count: option.seatsRemaining })}
+                                    {" · "}
+                                    {t("admin.quote_transform.score", { score: option.score })}
+                                  </p>
+                                  {option.hasFullSeriesSession ? (
+                                    <p className="muted">{t("admin.quote_transform.series_has_full_session")}</p>
+                                  ) : null}
                                   <p className="muted">{option.reasons.map((reason) => translateQuoteTransformMessage(reason, language)).join(" · ")}</p>
                                 </div>
                               </label>
