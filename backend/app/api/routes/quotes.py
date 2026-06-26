@@ -9081,9 +9081,16 @@ def _create_followup_booking(
 
     booked_count = _count_booked(db, session_obj.id)
     if booked_count >= int(session_obj.capacity_max or 0):
+        zone = _safe_zoneinfo(session_obj.timezone)
+        local_start = session_obj.start_at_utc.astimezone(zone)
+        full_slot_label = f"{session_obj.title} le {local_start.strftime('%d/%m/%Y')} a {local_start.strftime('%H:%M')}"
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Un des creneaux vises est maintenant complet",
+            detail=(
+                "Transformation bloquee : "
+                f"{full_slot_label} est complet "
+                f"({booked_count}/{int(session_obj.capacity_max or 0)})."
+            ),
         )
 
     if subscription is not None and plan is not None:
