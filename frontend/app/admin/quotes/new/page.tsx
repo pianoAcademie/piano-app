@@ -228,7 +228,7 @@ export default async function AdminQuoteNewPage({ searchParams }: { searchParams
           language: row.language,
           is_default: row.is_default,
         }))}
-        locations={locations.map((row) => ({ id: row.id, name: row.name }))}
+        locations={locations.map((row) => ({ id: row.id, name: row.name, city: row.city }))}
         activities={activities.map((row) => ({
           id: row.id,
           name: row.name,

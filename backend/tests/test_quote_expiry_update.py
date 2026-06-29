@@ -11,6 +11,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.api.routes.quotes import (
     _apply_quote_expiry_days_update,
     _mark_quote_sent_for_first_delivery,
+    _quote_expiry_days_for_context,
     _sync_draft_quote_expiry_days_from_type,
 )
 from app.services.quotes.quote_documents import display_quote_expires_at
@@ -114,6 +115,54 @@ class QuoteExpiryUpdateTests(unittest.TestCase):
         self.assertIsNone(quote.expires_at)
         self.assertEqual(quote.document_status, "stale")
         self.assertIsNone(quote.document_hash)
+
+    def test_default_expiry_days_uses_five_days_for_paris_location(self) -> None:
+        db = SimpleNamespace(scalar=lambda _query: "Paris")
+
+        expiry_days = _quote_expiry_days_for_context(
+            db,
+            quote_type=SimpleNamespace(default_expiry_days=7),
+            location_id="paris-location-id",
+        )
+
+        self.assertEqual(expiry_days, 5)
+
+    def test_default_expiry_days_preserves_quote_type_for_non_paris_location(self) -> None:
+        db = SimpleNamespace(scalar=lambda _query: "Bar-le-Duc")
+
+        expiry_days = _quote_expiry_days_for_context(
+            db,
+            quote_type=SimpleNamespace(default_expiry_days=7),
+            location_id="bar-le-duc-location-id",
+        )
+
+        self.assertEqual(expiry_days, 7)
+
+    def test_draft_syncs_paris_quote_to_five_days(self) -> None:
+        quote = SimpleNamespace(
+            sent_at=None,
+            quote_type_id="quote-type-id",
+            location_id="paris-location-id",
+            expiry_days=7,
+            expires_at=datetime(2026, 5, 28, 12, 0, tzinfo=timezone.utc),
+            document_status="generated",
+            document_hash="hash",
+            document_snapshot_id="snapshot-id",
+            document_generated_at=datetime(2026, 5, 18, 12, 0, tzinfo=timezone.utc),
+            updated_at=None,
+        )
+        scalar_results = iter([SimpleNamespace(default_expiry_days=7), "Paris"])
+        db = SimpleNamespace(
+            scalar=lambda _query: next(scalar_results),
+            add=lambda _row: None,
+        )
+
+        changed = _sync_draft_quote_expiry_days_from_type(db, quote)
+
+        self.assertTrue(changed)
+        self.assertEqual(quote.expiry_days, 5)
+        self.assertIsNone(quote.expires_at)
+        self.assertEqual(quote.document_status, "stale")
 
     def test_sent_quote_does_not_sync_expiry_days_from_quote_type(self) -> None:
         quote = SimpleNamespace(

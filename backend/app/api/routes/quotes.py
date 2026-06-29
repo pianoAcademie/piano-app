@@ -184,6 +184,8 @@ from app.services.subscriptions import add_months_utc, default_next_payment_at
 
 router = APIRouter()
 
+PARIS_QUOTE_DEFAULT_EXPIRY_DAYS = 5
+QUOTE_FALLBACK_EXPIRY_DAYS = 10
 QUOTE_FINANCIAL_ADJUSTMENT_META_KEY = "financial_adjustment"
 QUOTE_FINANCIAL_ADJUSTMENT_NONE = "none"
 QUOTE_FINANCIAL_ADJUSTMENT_CREDIT = "credit"
@@ -4464,13 +4466,38 @@ def _apply_quote_expiry_days_update(
     return True
 
 
+def _quote_type_default_expiry_days(quote_type: QuoteType | object | None) -> int:
+    return int(getattr(quote_type, "default_expiry_days", None) or QUOTE_FALLBACK_EXPIRY_DAYS)
+
+
+def _is_paris_location_city(city: object | None) -> bool:
+    return str(city or "").strip().casefold() == "paris"
+
+
+def _quote_expiry_days_for_context(
+    db: Session,
+    *,
+    quote_type: QuoteType | object | None,
+    location_id: UUID | object | None,
+) -> int:
+    if location_id is not None:
+        city = db.scalar(select(Location.city).where(Location.id == location_id).limit(1))
+        if _is_paris_location_city(city):
+            return PARIS_QUOTE_DEFAULT_EXPIRY_DAYS
+    return _quote_type_default_expiry_days(quote_type)
+
+
 def _sync_draft_quote_expiry_days_from_type(db: Session, quote: Quote) -> bool:
     if quote.sent_at is not None or quote.quote_type_id is None:
         return False
     quote_type = db.scalar(select(QuoteType).where(QuoteType.id == quote.quote_type_id))
     if quote_type is None:
         return False
-    next_expiry_days = int(quote_type.default_expiry_days or 10)
+    next_expiry_days = _quote_expiry_days_for_context(
+        db,
+        quote_type=quote_type,
+        location_id=getattr(quote, "location_id", None),
+    )
     if int(quote.expiry_days or 0) == next_expiry_days:
         return False
     quote.expiry_days = next_expiry_days
@@ -5454,8 +5481,14 @@ def create_quote_from_payload(
         if selected_quote_type is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote type not found")
 
-    effective_expiry_days = int(payload.expiry_days) if payload.expiry_days is not None else int(
-        selected_quote_type.default_expiry_days if selected_quote_type and selected_quote_type.default_expiry_days else 10
+    effective_expiry_days = (
+        int(payload.expiry_days)
+        if payload.expiry_days is not None
+        else _quote_expiry_days_for_context(
+            db,
+            quote_type=selected_quote_type,
+            location_id=payload.location_id,
+        )
     )
     effective_school_year_label = (
         payload.school_year_label.strip()
