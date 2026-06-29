@@ -2794,7 +2794,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           placeholder={t("admin.messaging_settings.quote_reminder_lead_hours_placeholder")}
                         />
                         <input type="hidden" name="quote_reminder_lead_hours" value={messagingSettings.quote_reminder_lead_hours} />
-                        <span className="muted">{t("admin.messaging_settings.quote_reminder_lead_hours_hint", { example: "120,24" })}</span>
+                        <span className="muted">{t("admin.messaging_settings.quote_reminder_lead_hours_hint", { example: "72,24" })}</span>
                       </label>
                       <label className="checkline">
                         <input

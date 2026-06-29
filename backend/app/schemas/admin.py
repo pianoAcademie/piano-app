@@ -299,7 +299,7 @@ class AdminMessagingSettingsUpdateRequest(BaseModel):
     quote_reminder_enabled: bool = True
     quote_reminder_sms_enabled: bool = False
     quote_reminder_lead_hours: int = Field(default=24, ge=1, le=168)
-    quote_reminder_lead_hours_csv: str = Field(default="24", max_length=120)
+    quote_reminder_lead_hours_csv: str = Field(default="72,24", max_length=120)
     quote_daily_job_local_time: str = Field(default="07:00", max_length=5)
     quote_auto_cancel_enabled: bool = True
     quote_auto_cancel_delay_hours: int = Field(default=24, ge=0, le=720)

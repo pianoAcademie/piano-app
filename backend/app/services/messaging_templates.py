@@ -74,6 +74,7 @@ MESSAGING_SETTINGS_QUOTE_REMINDER_ENABLED_KEY = "config_messaging_quote_reminder
 MESSAGING_SETTINGS_QUOTE_REMINDER_SMS_ENABLED_KEY = "config_messaging_quote_reminder_sms_enabled"
 MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_KEY = "config_messaging_quote_reminder_lead_hours"
 MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_CSV_KEY = "config_messaging_quote_reminder_lead_hours_csv"
+QUOTE_REMINDER_LEAD_HOURS_DEFAULT = "72,24"
 MESSAGING_SETTINGS_QUOTE_DAILY_JOB_LOCAL_TIME_KEY = "config_messaging_quote_daily_job_local_time"
 MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_ENABLED_KEY = "config_messaging_quote_auto_cancel_enabled"
 MESSAGING_SETTINGS_QUOTE_AUTO_CANCEL_DELAY_HOURS_KEY = "config_messaging_quote_auto_cancel_delay_hours"
@@ -1995,7 +1996,7 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
             _get_setting_value(
                 db,
                 MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_CSV_KEY,
-                _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_KEY, "24"),
+                _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_KEY, QUOTE_REMINDER_LEAD_HOURS_DEFAULT),
             ),
             default=[24],
             minimum=1,
@@ -2006,7 +2007,7 @@ def load_messaging_settings(db: Session) -> tuple[dict[str, object], datetime | 
                 _get_setting_value(
                     db,
                     MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_CSV_KEY,
-                    _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_KEY, "24"),
+                    _get_setting_value(db, MESSAGING_SETTINGS_QUOTE_REMINDER_LEAD_HOURS_KEY, QUOTE_REMINDER_LEAD_HOURS_DEFAULT),
                 ),
                 default=[24],
                 minimum=1,
