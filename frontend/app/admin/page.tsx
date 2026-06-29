@@ -3181,7 +3181,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     ) : null}
 
                     <details className="attendance-v2-notes">
-                      <summary>{isEnglish ? "Notes (optional)" : "Notes (optionnel)"}</summary>
+                      <summary>{isEnglish ? "Family message (optional)" : "Message famille (optionnel)"}</summary>
                       <form action={adminUpdateSessionBookingNoteAction} className="attendance-v2-note-form">
                         <input type="hidden" name="session_id" value={selectedSession.id} />
                         <input type="hidden" name="booking_id" value={focusedAttendanceBooking.id} />
@@ -3189,19 +3189,25 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         <input type="hidden" name="student_display_name" value={focusedAttendanceBooking.client_display_name || pickText(language, "Eleve", "Student")} />
                         <input type="hidden" name="session_title" value={selectedSession.title} />
                         <input type="hidden" name="return_to" value={attendanceBookingHref(focusedAttendanceBooking.id)} />
+                        <input type="hidden" name="note_visibility" value="FAMILY" />
+                        <p className="note-safety-message note-safety-family">
+                          {isEnglish
+                            ? "This field can be sent to parents. Do not write internal information here."
+                            : "Ce champ peut etre envoye aux parents. N y mettez aucune information interne."}
+                        </p>
                         <label className="session-edit-span">
-                          {isEnglish ? "Message" : "Message"}
+                          {isEnglish ? "Message visible to parents" : "Message visible par les parents"}
                           <input type="hidden" name="student_note_format" value="TEXT" />
                           <textarea
                             name="student_note"
                             rows={5}
-                            placeholder={isEnglish ? "Internal note..." : "Note interne..."}
+                            placeholder={isEnglish ? "Message to send to parents..." : "Message a envoyer aux parents..."}
                             defaultValue={stripHtml(focusedAttendanceBooking.student_note ?? "")}
                           />
                         </label>
                         <div className="row">
                           <button type="submit" name="note_action" value="SAVE_INTERNAL" className="ghost">
-                            {isEnglish ? "Save note" : "Enregistrer la note"}
+                            {isEnglish ? "Save without sending" : "Enregistrer sans envoyer"}
                           </button>
                           <button type="submit" name="note_action" value="SEND_PARENTS" className="ghost">
                             {isEnglish ? "Send to parents" : "Envoyer aux parents"}

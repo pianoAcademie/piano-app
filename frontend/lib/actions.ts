@@ -2198,12 +2198,16 @@ export async function professorSendSessionMessageAction(formData: FormData): Pro
   const subject = String(formData.get("subject") ?? "").trim();
   const body = String(formData.get("body") ?? "").trim();
   const bodyFormat = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
-  const recipientTarget = String(formData.get("recipient_target") ?? "GROUP").trim().toUpperCase();
+  const recipientTarget = String(formData.get("recipient_target") ?? "").trim().toUpperCase();
   const targetUserId = recipientTarget.startsWith("STUDENT:") ? parseUuid(recipientTarget.slice("STUDENT:".length)) : null;
-  const recipientScope = targetUserId ? "STUDENT" : recipientTarget === "ADMIN" ? "ADMIN" : "GROUP";
+  const recipientScope =
+    targetUserId ? "STUDENT" : recipientTarget === "ADMIN" ? "ADMIN" : recipientTarget === "GROUP" ? "GROUP" : null;
 
   if (!sessionId || !subject || !body) {
     redirect(appendQueryMessage(returnTo, "error", t("teacher.action.subject_message_required")));
+  }
+  if (!recipientScope) {
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.invalid_message_recipient")));
   }
 
   const result = await backendRequest<{ message_id: string; recipient_count: number }>(
@@ -2226,7 +2230,8 @@ export async function professorSendSessionMessageAction(formData: FormData): Pro
   }
 
   revalidatePath("/prof");
-  redirect(appendQueryMessage(returnTo, "ok", t("teacher.action.message_sent_summary", { count: result.data.recipient_count })));
+  const messageKey = recipientScope === "ADMIN" ? "teacher.action.internal_note_sent_admin" : "teacher.action.message_sent_summary";
+  redirect(appendQueryMessage(returnTo, "ok", t(messageKey, { count: result.data.recipient_count })));
 }
 
 export async function professorMarkSessionAbsentAction(formData: FormData): Promise<void> {
@@ -3551,10 +3556,14 @@ export async function adminUpdateSessionBookingNoteAction(formData: FormData): P
   const studentDisplayName = String(formData.get("student_display_name") ?? "").trim();
   const sessionTitle = String(formData.get("session_title") ?? "").trim();
   const noteAction = String(formData.get("note_action") ?? "SAVE_INTERNAL").trim().toUpperCase();
+  const noteVisibility = String(formData.get("note_visibility") ?? "").trim().toUpperCase();
   const studentNote = optionalField(formData, "student_note");
   const studentNoteFormat = String(formData.get("student_note_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
   if (!sessionId || !bookingId) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.invalid_booking")));
+  }
+  if (noteAction === "SEND_PARENTS" && noteVisibility !== "FAMILY") {
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.student_note_visibility_required")));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -3609,7 +3618,7 @@ export async function adminUpdateSessionBookingNoteAction(formData: FormData): P
   }
 
   revalidatePath("/admin");
-  redirect(appendQueryMessage(returnTo, "ok", t("admin.planning_action.internal_note_saved")));
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.planning_action.family_note_saved")));
 }
 
 export async function adminUpdateSessionBookingStudentTimeAction(formData: FormData): Promise<void> {

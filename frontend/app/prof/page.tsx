@@ -1406,6 +1406,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                   <details className="teacher-attendance-accordion">
                     <summary>{t("teacher.notify_students_section")}</summary>
                     <div className="teacher-attendance-accordion-body">
+                      <p className="teacher-note-safety-text teacher-note-safety-family">{t("teacher.notify_students_help")}</p>
                       <form action={professorSendSessionMessageAction} className="grid">
                         <input type="hidden" name="session_id" value={selectedSession.id} />
                         <input
@@ -1443,6 +1444,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                   <details className="teacher-attendance-accordion">
                     <summary>{t("teacher.admin_note_section")}</summary>
                     <div className="teacher-attendance-accordion-body">
+                      <p className="teacher-note-safety-text teacher-note-safety-internal">{t("teacher.admin_note_help")}</p>
                       <form action={professorSendSessionMessageAction} className="grid">
                         <input type="hidden" name="session_id" value={selectedSession.id} />
                         <input
