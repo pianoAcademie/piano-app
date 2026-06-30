@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import {
   adminAddClientToSessionAction,
   adminRemoveClientFromSessionAction,
+  adminSendSessionBookingInternalNoteAction,
   adminSendSessionBroadcastAction,
   adminUpdateSessionAttendanceAction,
   adminUpdateSessionBookingNoteAction,
@@ -3211,6 +3212,36 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                           </button>
                           <button type="submit" name="note_action" value="SEND_PARENTS" className="ghost">
                             {isEnglish ? "Send to parents" : "Envoyer aux parents"}
+                          </button>
+                        </div>
+                      </form>
+                    </details>
+
+                    <details className="attendance-v2-notes" open>
+                      <summary>{isEnglish ? "Internal admin note (never sent to parents)" : "Note interne administration (jamais envoyee aux parents)"}</summary>
+                      <form action={adminSendSessionBookingInternalNoteAction} className="attendance-v2-note-form">
+                        <input type="hidden" name="session_id" value={selectedSession.id} />
+                        <input type="hidden" name="student_display_name" value={focusedAttendanceBooking.client_display_name || pickText(language, "Eleve", "Student")} />
+                        <input type="hidden" name="session_title" value={selectedSession.title} />
+                        <input type="hidden" name="return_to" value={attendanceBookingHref(focusedAttendanceBooking.id)} />
+                        <p className="note-safety-message note-safety-internal">
+                          {isEnglish
+                            ? "This note is sent only to the administration. It is never sent to students or parents."
+                            : "Cette note part uniquement a l administration. Elle n est jamais envoyee aux eleves ni aux parents."}
+                        </p>
+                        <label className="session-edit-span">
+                          {isEnglish ? "Internal note" : "Note interne"}
+                          <input type="hidden" name="body_format" value="TEXT" />
+                          <textarea
+                            name="body"
+                            rows={4}
+                            placeholder={isEnglish ? "Internal note for the administration..." : "Note interne pour l administration..."}
+                            required
+                          />
+                        </label>
+                        <div className="row">
+                          <button type="submit" className="ghost">
+                            {isEnglish ? "Send internally" : "Envoyer en interne"}
                           </button>
                         </div>
                       </form>

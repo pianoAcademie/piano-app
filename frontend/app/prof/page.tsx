@@ -1403,6 +1403,44 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
               <aside className="teacher-attendance-secondary">
                 {canMessageStudents ? (
+                  <details className="teacher-attendance-accordion" open>
+                    <summary>{t("teacher.admin_note_section")}</summary>
+                    <div className="teacher-attendance-accordion-body">
+                      <p className="teacher-note-safety-text teacher-note-safety-internal">{t("teacher.admin_note_help")}</p>
+                      <form action={professorSendSessionMessageAction} className="grid">
+                        <input type="hidden" name="session_id" value={selectedSession.id} />
+                        <input
+                          type="hidden"
+                          name="return_to"
+                          value={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id, attendanceFilter })}
+                        />
+                        <input type="hidden" name="recipient_target" value="ADMIN" />
+                        <label>
+                          {t("teacher.subject")}
+                          <input
+                            type="text"
+                            name="subject"
+                            required
+                            maxLength={255}
+                            defaultValue={t("teacher.lesson_note_subject", { title: selectedSession.title })}
+                          />
+                        </label>
+                        <label>
+                          {t("teacher.internal_note")}
+                          <input type="hidden" name="body_format" value="TEXT" />
+                          <textarea name="body" rows={4} maxLength={12000} placeholder={t("teacher.note_admin_placeholder")} required />
+                        </label>
+                        <div className="row">
+                          <button type="submit" className="ghost">
+                            {t("teacher.save_note")}
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  </details>
+                ) : null}
+
+                {canMessageStudents ? (
                   <details className="teacher-attendance-accordion">
                     <summary>{t("teacher.notify_students_section")}</summary>
                     <div className="teacher-attendance-accordion-body">
@@ -1433,38 +1471,6 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                         <div className="row">
                           <button type="submit" className="primary">
                             {t("teacher.send_students_message")}
-                          </button>
-                        </div>
-                      </form>
-                    </div>
-                  </details>
-                ) : null}
-
-                {canMessageStudents ? (
-                  <details className="teacher-attendance-accordion">
-                    <summary>{t("teacher.admin_note_section")}</summary>
-                    <div className="teacher-attendance-accordion-body">
-                      <p className="teacher-note-safety-text teacher-note-safety-internal">{t("teacher.admin_note_help")}</p>
-                      <form action={professorSendSessionMessageAction} className="grid">
-                        <input type="hidden" name="session_id" value={selectedSession.id} />
-                        <input
-                          type="hidden"
-                          name="return_to"
-                          value={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id, attendanceFilter })}
-                        />
-                        <input type="hidden" name="recipient_target" value="ADMIN" />
-                        <label>
-                          {t("teacher.subject")}
-                          <input type="text" name="subject" required maxLength={255} defaultValue={t("teacher.lesson_note_subject", { title: selectedSession.title })} />
-                        </label>
-                        <label>
-                          {t("teacher.internal_note")}
-                          <input type="hidden" name="body_format" value="TEXT" />
-                          <textarea name="body" rows={4} maxLength={12000} placeholder={t("teacher.note_admin_placeholder")} />
-                        </label>
-                        <div className="row">
-                          <button type="submit" className="ghost">
-                            {t("teacher.save_note")}
                           </button>
                         </div>
                       </form>

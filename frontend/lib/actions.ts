@@ -3621,6 +3621,71 @@ export async function adminUpdateSessionBookingNoteAction(formData: FormData): P
   redirect(appendQueryMessage(returnTo, "ok", t("admin.planning_action.family_note_saved")));
 }
 
+export async function adminSendSessionBookingInternalNoteAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const returnTo = safeAdminReturnPath(formData, "/admin?edit=1");
+
+  const sessionId = String(formData.get("session_id") ?? "").trim();
+  const studentDisplayName = String(formData.get("student_display_name") ?? "").trim();
+  const sessionTitle = String(formData.get("session_title") ?? "").trim();
+  const body = String(formData.get("body") ?? "").trim();
+  const bodyFormat = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
+
+  if (!sessionId) {
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.invalid_session")));
+  }
+  if (!body) {
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.booking_internal_note_required")));
+  }
+
+  const subject = t("admin.planning_action.booking_internal_note_subject", {
+    student: studentDisplayName || t("admin.planning_action.student_fallback"),
+    title: sessionTitle || t("admin.planning_action.slot_fallback"),
+  });
+  const prefixedBody = `${t("admin.planning_action.booking_internal_note_context", {
+    student: studentDisplayName || t("admin.planning_action.student_fallback"),
+    title: sessionTitle || t("admin.planning_action.slot_fallback"),
+  })}\n\n${body}`;
+
+  const result = await backendRequest<{
+    channel: "EMAIL";
+    recipient_count: number;
+    cc_count: number;
+    skipped_count: number;
+    details: string[];
+  }>(
+    `/api/v1/admin/sessions/${sessionId}/broadcast`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        channel: "EMAIL",
+        audience: "ADMINS",
+        included_student_ids: [],
+        send_to_self: true,
+        subject,
+        body: prefixedBody,
+        body_format: bodyFormat,
+        cc_emails: [],
+        cc_phone_numbers: [],
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin");
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.planning_action.booking_internal_note_sent", { count: result.data.recipient_count })));
+}
+
 export async function adminUpdateSessionBookingStudentTimeAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

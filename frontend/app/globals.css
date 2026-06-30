@@ -5187,7 +5187,8 @@ button.danger:focus-visible {
   color: #7c3f08;
 }
 
-.teacher-note-safety-internal {
+.teacher-note-safety-internal,
+.note-safety-internal {
   border-color: #bfd7c7;
   background: #eef8f0;
   color: #1d6b3a;
