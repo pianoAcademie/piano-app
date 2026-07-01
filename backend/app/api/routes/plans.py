@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, require_roles
+from app.api.deps import get_admin_permission_map, get_current_user, get_db, require_roles
 from app.core.config import settings
 from app.models.catalog import CourseType
 from app.models.family import ClientFamilyLink
@@ -451,8 +451,13 @@ def _forfait_period_bounds(plan: Plan) -> tuple[datetime, datetime]:
 def list_plans(
     active: bool = True,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.CLIENT, UserRole.ADMIN)),
+    current_user: User = Depends(get_current_user),
 ) -> list[PlanOut]:
+    if current_user.role not in {UserRole.CLIENT, UserRole.ADMIN}:
+        permission_map = get_admin_permission_map(db, current_user)
+        if not (permission_map.get("can_view_clients") or permission_map.get("can_view_quotes")):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+
     stmt = select(Plan)
     if active:
         stmt = stmt.where(Plan.active.is_(True))

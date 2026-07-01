@@ -1561,7 +1561,7 @@ def sync_admin_external_content_wordpress_learndash(
 def list_admin_legal_entities(
     include_inactive: bool = Query(default=False),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_clients", "can_view_quotes")),
 ) -> list[AdminLegalEntityOut]:
     stmt = select(LegalEntity).order_by(LegalEntity.name.asc())
     if not include_inactive:
@@ -2126,7 +2126,7 @@ def replace_admin_activity_content_mappings(
 @router.get("/config/account", response_model=AdminConfigAccountOut)
 def get_admin_config_account(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(require_admin_or_permissions("can_view_clients", "can_view_quotes")),
 ) -> AdminConfigAccountOut:
     allowed_currencies = _parse_allowed_currencies(_get_setting_value(db, ACCOUNT_ALLOWED_CURRENCIES_KEY, "EUR,USD"))
     default_currency = _parse_default_currency(
@@ -2291,7 +2291,7 @@ def update_admin_subscription_settings(
 @router.get("/config/payment-methods", response_model=AdminPaymentMethodsOut)
 def get_admin_payment_methods(
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_clients", "can_view_quotes")),
 ) -> AdminPaymentMethodsOut:
     raw = _get_setting_value(db, PAYMENT_METHODS_SETTING_KEY, "")
     if raw:
@@ -2371,7 +2371,7 @@ def update_admin_payment_methods(
 @router.get("/config/product-categories", response_model=AdminProductCategoriesOut)
 def get_admin_product_categories(
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_clients", "can_view_quotes")),
 ) -> AdminProductCategoriesOut:
     categories_rows = db.scalars(
         select(ProductCategory)
@@ -2960,7 +2960,7 @@ def update_admin_professor_default_grid_period_rules(
 def list_admin_formulas(
     include_inactive: bool = Query(default=False),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_clients", "can_view_quotes")),
 ) -> list[AdminFormulaOut]:
     stmt = select(Plan).order_by(Plan.created_at.asc())
     if not include_inactive:
@@ -3020,7 +3020,7 @@ def list_admin_formulas(
 def get_admin_formula(
     plan_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_clients", "can_view_quotes")),
 ) -> AdminFormulaOut:
     plan = db.scalar(select(Plan).where(Plan.id == plan_id))
     if plan is None:

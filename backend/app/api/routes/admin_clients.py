@@ -3693,7 +3693,7 @@ def _active_invoice_lock_by_payment_key(
 def list_admin_client_range_invoices(
     client_id: UUID,
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_clients")),
 ) -> list[AdminRangeInvoiceOut]:
     client = _require_client(db, client_id)
     if _expire_stale_bank_transfer_orders(db):

@@ -13,7 +13,7 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db, require_roles
+from app.api.deps import get_db, require_admin_or_permissions, require_roles
 from app.models.catalog import Location
 from app.models.product_catalog import (
     CatalogKit,
@@ -582,7 +582,7 @@ def delete_admin_catalog_category(
 def list_admin_catalog_products(
     include_inactive: bool = Query(default=True),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    _: User = Depends(require_admin_or_permissions("can_view_clients", "can_view_quotes")),
 ) -> list[AdminCatalogProductOut]:
     stmt = select(CatalogProduct)
     if not include_inactive:
