@@ -427,6 +427,19 @@ function parseMessageSubject(subject: string): { cleanedSubject: string; targetL
   return { cleanedSubject: subject, targetLabel: null };
 }
 
+function plainMessagePreview(raw: string, format: string): string {
+  const plainText =
+    format === "HTML"
+      ? raw
+          .replace(/<\s*br\s*\/?>/gi, "\n")
+          .replace(/<\s*\/\s*p\s*>/gi, "\n")
+          .replace(/<\s*\/\s*div\s*>/gi, "\n")
+          .replace(/<\s*li\b[^>]*>/gi, "- ")
+          .replace(/<[^>]+>/g, "")
+      : raw;
+  return plainText.replace(/\n{3,}/g, "\n\n").trim();
+}
+
 function pendingAttendanceCount(session: ProfessorSessionOut): number {
   return session.students.filter((student) => student.attendance_status === "BOOKED").length;
 }
@@ -665,6 +678,9 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   const todayAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: todayKeyUtc(), dayDetails: "" });
   const archivedMessages = messagesResult.ok ? messagesResult.data : [];
   const selectedMessage = selectedMessageId ? archivedMessages.find((message) => message.id === selectedMessageId) ?? null : null;
+  const selectedSessionMessages = selectedSession
+    ? archivedMessages.filter((message) => message.session_id === selectedSession.id)
+    : [];
 
   const navTabs: Array<{ id: Tab; label: string; icon: string }> = [
     { id: "overview", label: uiText(language, "teacher.todo"), icon: "🗂" },
@@ -1402,6 +1418,48 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
               </section>
 
               <aside className="teacher-attendance-secondary">
+                <details className="teacher-attendance-accordion" open={selectedSessionMessages.length > 0}>
+                  <summary>{t("teacher.session_messages_section")}</summary>
+                  <div className="teacher-attendance-accordion-body">
+                    <p className="teacher-session-message-help">{t("teacher.session_messages_help")}</p>
+                    {selectedSessionMessages.length > 0 ? (
+                      <div className="teacher-session-message-list">
+                        {selectedSessionMessages.slice(0, 5).map((message) => {
+                          const parsedSubject = parseMessageSubject(message.subject);
+                          const targetLabel =
+                            parsedSubject.targetLabel === "Administration"
+                              ? t("teacher.admin_target")
+                              : parsedSubject.targetLabel
+                                ? t("teacher.student_target", { name: parsedSubject.targetLabel })
+                                : t("teacher.group_target");
+                          const preview = plainMessagePreview(message.body, message.body_format);
+                          return (
+                            <article key={message.id} className="teacher-session-message-card">
+                              <div className="teacher-session-message-card-head">
+                                <strong>{parsedSubject.cleanedSubject}</strong>
+                                <span className="badge">{targetLabel}</span>
+                              </div>
+                              <p className="muted">
+                                {t("teacher.sent_on", { date: formatDateTime(message.sent_at, language) })} ·{" "}
+                                {t("teacher.recipient_count", { count: message.recipient_count })}
+                              </p>
+                              <p className="teacher-session-message-preview">{preview || "-"}</p>
+                              <Link
+                                className="reset-link"
+                                href={buildProfHref({ tab: "messages", agendaView, agendaDate, messageId: message.id })}
+                              >
+                                {t("teacher.open_message")}
+                              </Link>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="muted">{t("teacher.no_session_message")}</p>
+                    )}
+                  </div>
+                </details>
+
                 {canMessageStudents ? (
                   <details className="teacher-attendance-accordion" open>
                     <summary>{t("teacher.admin_note_section")}</summary>

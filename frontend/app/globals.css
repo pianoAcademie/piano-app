@@ -5198,6 +5198,55 @@ button.danger:focus-visible {
   gap: 10px;
 }
 
+.teacher-session-message-help {
+  margin: 0;
+  color: #6f7b8c;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.teacher-session-message-list {
+  display: grid;
+  gap: 8px;
+}
+
+.teacher-session-message-card {
+  border: 1px solid #e6e8ee;
+  border-radius: 12px;
+  background: #fbfcfe;
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.teacher-session-message-card p {
+  margin: 0;
+}
+
+.teacher-session-message-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.teacher-session-message-card-head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.teacher-session-message-preview {
+  color: #25364b;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .teacher-attendance-accordion-danger {
   border-color: #efcfcf;
 }
