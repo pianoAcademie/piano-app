@@ -178,6 +178,10 @@ def _quantize_money(value: Decimal) -> Decimal:
     return Decimal(value).quantize(Decimal("0.01"))
 
 
+def _booking_total_incl_vat(booking: Booking) -> Decimal:
+    return _quantize_money(Decimal(booking.total_incl_vat_snapshot or 0))
+
+
 def _display_name(first_name: str | None, last_name: str | None, email: str | None) -> str:
     value = " ".join(part for part in [(first_name or "").strip(), (last_name or "").strip()] if part).strip()
     return value or (email or "").strip() or "-"
@@ -949,7 +953,7 @@ def build_final_invoice_metadata(
     total_paid: Decimal,
     issuer_snapshot: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    total_amount = _quantize_money(Decimal(booking.total_incl_vat_snapshot))
+    total_amount = _booking_total_incl_vat(booking)
     total_to_pay = _quantize_money(max(total_amount - total_paid, Decimal("0.00")))
     metadata: dict[str, object] = {
         "kind": "INVOICE_RANGE",
@@ -1007,6 +1011,8 @@ def generate_final_invoice_for_booking(
         raise ValueError("Booking status is not eligible for final invoicing")
     if session_obj.status != SessionStatus.COMPLETED:
         raise ValueError("Final invoice can only be generated once the service is completed")
+    if _booking_total_incl_vat(booking) <= Decimal("0.00"):
+        raise ValueError("Zero-total bookings do not require a final invoice")
 
     snapshot = build_booking_receipt_snapshot(
         db,

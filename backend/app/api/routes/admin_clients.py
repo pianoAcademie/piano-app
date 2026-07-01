@@ -11314,15 +11314,18 @@ def generate_admin_client_booking_final_invoice(
     booking, session_obj, course_type, location, owner = _booking_context_for_receipt(db, booking_id=booking_id)
     if owner.id != client_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reservation introuvable")
-    note, metadata, _ = generate_final_invoice_for_booking(
-        db,
-        booking=booking,
-        session_obj=session_obj,
-        course_type=course_type,
-        location=location,
-        owner=owner,
-        author_user_id=actor.id,
-    )
+    try:
+        note, metadata, _ = generate_final_invoice_for_booking(
+            db,
+            booking=booking,
+            session_obj=session_obj,
+            course_type=course_type,
+            location=location,
+            owner=owner,
+            author_user_id=actor.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     invoice_customer = db.scalar(select(User).where(User.id == note.user_id, User.role == UserRole.CLIENT))
     if invoice_customer is not None:
         try:

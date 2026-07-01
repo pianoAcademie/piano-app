@@ -190,6 +190,29 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
                     author_user_id=None,
                 )
 
+    def test_zero_total_booking_never_generates_final_invoice(self) -> None:
+        free_booking = SimpleNamespace(
+            id=self.booking_id,
+            status=BookingStatus.ATTENDED,
+            total_incl_vat_snapshot=Decimal("0.00"),
+        )
+
+        with patch("app.services.payment_receipts._invoice_note_for_booking", return_value=None), patch(
+            "app.services.payment_receipts.build_booking_receipt_snapshot",
+        ) as build_snapshot:
+            with self.assertRaisesRegex(ValueError, "Zero-total bookings do not require a final invoice"):
+                generate_final_invoice_for_booking(
+                    _FakeSession(),
+                    booking=free_booking,
+                    session_obj=self.session_obj,
+                    course_type=SimpleNamespace(),
+                    location=SimpleNamespace(),
+                    owner=SimpleNamespace(),
+                    author_user_id=None,
+                )
+
+        build_snapshot.assert_not_called()
+
     def test_duplicate_generation_returns_existing_invoice(self) -> None:
         existing_note = SimpleNamespace(id=uuid4(), message="existing")
         existing_metadata = {"invoice_number": "PA26-0009", "invoice_status": "ISSUED"}
