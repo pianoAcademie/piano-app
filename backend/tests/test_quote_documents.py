@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 import json
 from pathlib import Path
 import sys
@@ -867,6 +867,148 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         )
         self.assertEqual(hydrated["sessions_count"], 4)
         self.assertEqual(hydrated["blocks"][0]["end_date"], "2027-06-18")
+
+    def test_live_planning_block_extends_expected_sessions_after_sparse_live_tail(self) -> None:
+        activity_id = uuid4()
+        location_id = uuid4()
+        recurrence_id = uuid4()
+        paris = ZoneInfo("Europe/Paris")
+
+        def live_row(iso_date: str) -> tuple[SimpleNamespace, SimpleNamespace, SimpleNamespace]:
+            local_day = date.fromisoformat(iso_date)
+            local_start = datetime.combine(local_day, time(16, 0), tzinfo=paris)
+            local_end = datetime.combine(local_day, time(17, 0), tzinfo=paris)
+            return (
+                SimpleNamespace(
+                    id=uuid4(),
+                    course_type_id=activity_id,
+                    location_id=location_id,
+                    status="SCHEDULED",
+                    start_at_utc=local_start.astimezone(timezone.utc),
+                    end_at_utc=local_end.astimezone(timezone.utc),
+                    timezone="Europe/Paris",
+                    recurrence_group_id=recurrence_id,
+                ),
+                SimpleNamespace(id=activity_id, name="Eveil musical", mode="ONSITE"),
+                SimpleNamespace(id=location_id, name="Rue de Richelieu", timezone="Europe/Paris", is_online=False),
+            )
+
+        live_dates: list[str] = []
+        current = date(2026, 9, 23)
+        while current <= date(2027, 4, 14):
+            live_dates.append(current.isoformat())
+            current += timedelta(days=7)
+        rows = [live_row(iso_date) for iso_date in live_dates]
+        fake_db = SimpleNamespace(
+            scalar=lambda _query: None,
+            execute=lambda _query: SimpleNamespace(all=lambda: rows),
+        )
+        closure_dates = [
+            "2026-10-18",
+            "2026-10-19",
+            "2026-10-20",
+            "2026-10-21",
+            "2026-10-22",
+            "2026-10-23",
+            "2026-10-24",
+            "2026-10-25",
+            "2026-10-26",
+            "2026-10-27",
+            "2026-10-28",
+            "2026-10-29",
+            "2026-10-30",
+            "2026-10-31",
+            "2026-11-01",
+            "2026-12-20",
+            "2026-12-21",
+            "2026-12-22",
+            "2026-12-23",
+            "2026-12-24",
+            "2026-12-25",
+            "2026-12-26",
+            "2026-12-27",
+            "2026-12-28",
+            "2026-12-29",
+            "2026-12-30",
+            "2026-12-31",
+            "2027-01-01",
+            "2027-01-02",
+            "2027-01-03",
+            "2027-02-07",
+            "2027-02-08",
+            "2027-02-09",
+            "2027-02-10",
+            "2027-02-11",
+            "2027-02-12",
+            "2027-02-13",
+            "2027-02-14",
+            "2027-02-15",
+            "2027-02-16",
+            "2027-02-17",
+            "2027-02-18",
+            "2027-02-19",
+            "2027-02-20",
+            "2027-02-21",
+            "2027-04-04",
+            "2027-04-05",
+            "2027-04-06",
+            "2027-04-07",
+            "2027-04-08",
+            "2027-04-09",
+            "2027-04-10",
+            "2027-04-11",
+            "2027-04-12",
+            "2027-04-13",
+            "2027-04-14",
+            "2027-04-15",
+            "2027-04-16",
+            "2027-04-17",
+            "2027-04-18",
+            "2027-05-07",
+        ]
+        snapshot = {
+            "blocks": [
+                {
+                    "source": "live_planning",
+                    "activity_id": str(activity_id),
+                    "activity_label": "Eveil musical",
+                    "location_id": str(location_id),
+                    "location_label": "Rue de Richelieu",
+                    "weekday": 2,
+                    "weekday_label": "Mercredi",
+                    "start_date": "2026-09-23",
+                    "end_date": "2027-03-31",
+                    "start_time": "16:00",
+                    "end_time": "17:00",
+                    "series_key": str(recurrence_id),
+                    "calendar_school_year": "2026-2027",
+                    "holiday_dates": [
+                        "2026-08-15",
+                        "2026-11-01",
+                        "2026-11-11",
+                        "2026-12-25",
+                        "2027-01-01",
+                        "2027-03-29",
+                        "2027-05-01",
+                        "2027-05-06",
+                        "2027-05-08",
+                        "2027-05-17",
+                        "2027-07-14",
+                    ],
+                    "closure_dates": closure_dates,
+                    "selection_pending": False,
+                }
+            ],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_planning_sessions(fake_db, snapshot)
+
+        dates = [item["date"] for item in hydrated["sessions"]]
+        self.assertEqual(hydrated["sessions_count"], 30)
+        self.assertIn("2027-06-16", dates)
+        self.assertNotIn("2027-06-23", dates)
+        self.assertEqual(hydrated["blocks"][0]["end_date"], "2027-06-16")
 
     def test_planning_block_limit_stops_at_teaching_year_end(self) -> None:
         activity_id = uuid4()

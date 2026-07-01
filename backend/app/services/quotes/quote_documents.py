@@ -1759,6 +1759,15 @@ def _expected_sessions_from_planning_block(block: dict[str, Any]) -> list[dict[s
     return rows
 
 
+def _expected_sessions_from_planning_block_until(
+    block: dict[str, Any],
+    end_date: date,
+) -> list[dict[str, Any]]:
+    expected_block = dict(block)
+    expected_block["end_date"] = end_date.isoformat()
+    return _expected_sessions_from_planning_block(expected_block)
+
+
 def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[dict[str, Any]]:
     activity_id = _parse_uuid(block.get("activity_id"))
     if activity_id is None:
@@ -1878,6 +1887,29 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
         if len(widened_sessions) > len(sessions):
             sessions = widened_sessions
     sessions, _ = _filter_sessions_blocked_by_quote_school_calendar(db, sessions)
+    if is_live_planning_block and teaching_end_date is not None:
+        expected_sessions = _expected_sessions_from_planning_block_until(block, teaching_end_date)
+        expected_sessions, _ = _filter_sessions_blocked_by_quote_school_calendar(db, expected_sessions)
+        last_live_date = max(
+            (_parse_iso_date(item.get("date")) for item in sessions),
+            default=None,
+        )
+        if last_live_date is None and expected_sessions:
+            sessions = expected_sessions
+        elif last_live_date is not None:
+            tail_sessions = [
+                item
+                for item in expected_sessions
+                if (_parse_iso_date(item.get("date")) or date.min) > last_live_date
+            ]
+            if tail_sessions:
+                seen_keys = {_calendar_session_dedupe_key(item) for item in sessions}
+                for item in tail_sessions:
+                    key = _calendar_session_dedupe_key(item)
+                    if key in seen_keys:
+                        continue
+                    seen_keys.add(key)
+                    sessions.append(item)
     if session_limit > 0 and len(sessions) < session_limit:
         expected_sessions = _expected_sessions_from_planning_block(block)
         expected_sessions, _ = _filter_sessions_blocked_by_quote_school_calendar(db, expected_sessions)
@@ -2170,7 +2202,11 @@ def _quote_line_recommendation_key(line: QuoteLine, *, force_line_key: bool = Fa
     return activity_id
 
 
-def _planning_session_limit_from_quote_line_meta(line: QuoteLine | None) -> int | None:
+def _planning_session_limit_from_quote_line_meta(
+    line: QuoteLine | None,
+    *,
+    allow_session_quantity: bool = False,
+) -> int | None:
     if line is None:
         return None
     line_meta = _json_object(getattr(line, "meta", None))
@@ -2181,8 +2217,21 @@ def _planning_session_limit_from_quote_line_meta(line: QuoteLine | None) -> int 
     try:
         limit = int(str(raw_limit).strip())
     except (TypeError, ValueError):
+        limit = 0
+    if limit > 0:
+        return limit
+    if not allow_session_quantity:
         return None
-    return limit if limit > 0 else None
+    if str(getattr(line, "pricing_unit", "") or "").strip().lower() != "session":
+        return None
+    try:
+        quantity = Decimal(str(getattr(line, "quantity", "") or ""))
+    except Exception:
+        return None
+    if quantity != quantity.to_integral_value():
+        return None
+    inferred_limit = int(quantity)
+    return inferred_limit if inferred_limit > 1 else None
 
 
 def _planning_session_limit_from_block(block: dict[str, Any]) -> int | None:
@@ -2256,7 +2305,10 @@ def _calendar_snapshot_with_line_recommendation_keys(
         )
         if existing_key and existing_key != activity_id and not should_reassign_duplicate_line_key:
             matching_line = lines_by_recommendation_key.get(existing_key)
-            limit = _planning_session_limit_from_quote_line_meta(matching_line)
+            limit = _planning_session_limit_from_quote_line_meta(
+                matching_line,
+                allow_session_quantity=len(activity_lines) > 1,
+            )
             if limit is not None and _planning_session_limit_from_block(block) != limit:
                 block = {**block, "planning_session_limit": limit}
                 changed_blocks = True
@@ -2274,7 +2326,10 @@ def _calendar_snapshot_with_line_recommendation_keys(
         if recommendation_key and recommendation_key != existing_key:
             block = {**block, "recommendation_key": recommendation_key}
             changed_blocks = True
-        limit = _planning_session_limit_from_quote_line_meta(line)
+        limit = _planning_session_limit_from_quote_line_meta(
+            line,
+            allow_session_quantity=len(activity_lines) > 1,
+        )
         if limit is not None and _planning_session_limit_from_block(block) != limit:
             block = {**block, "planning_session_limit": limit}
             changed_blocks = True
