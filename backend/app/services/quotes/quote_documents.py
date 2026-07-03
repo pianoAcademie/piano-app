@@ -1670,11 +1670,40 @@ def _school_year_teaching_end_from_block(block: dict[str, Any]) -> date | None:
     return _school_year_teaching_end_from_label(school_year_label, location_label)
 
 
+def _planning_block_has_custom_period(block: dict[str, Any]) -> bool:
+    source = str(block.get("source") or "").strip().lower()
+    return bool(block.get("custom_period")) or bool(block.get("forced_planning")) or source in {"custom_period", "forced_planning"}
+
+
+def _normalize_custom_planning_block(block: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    if not _planning_block_has_custom_period(block):
+        return block, False
+    normalized = dict(block)
+    changed = False
+    if "planning_session_limit" in normalized:
+        normalized.pop("planning_session_limit", None)
+        changed = True
+    if normalized.get("custom_period") is not True:
+        normalized["custom_period"] = True
+        changed = True
+    forced_planning = bool(normalized.get("forced_planning")) or str(normalized.get("source") or "").strip().lower() == "forced_planning"
+    target_source = "forced_planning" if forced_planning else "custom_period"
+    if forced_planning and normalized.get("forced_planning") is not True:
+        normalized["forced_planning"] = True
+        changed = True
+    if str(normalized.get("source") or "").strip().lower() != target_source:
+        normalized["source"] = target_source
+        changed = True
+    return normalized, changed
+
+
 def _planning_block_should_extend_to_location_teaching_end(
     block: dict[str, Any],
     end_date: date,
     teaching_end_date: date | None,
 ) -> bool:
+    if _planning_block_has_custom_period(block):
+        return False
     if teaching_end_date is None:
         return False
     school_year_label = str(block.get("school_year_label") or block.get("calendar_school_year") or "")
@@ -2235,6 +2264,8 @@ def _planning_session_limit_from_quote_line_meta(
 
 
 def _planning_session_limit_from_block(block: dict[str, Any]) -> int | None:
+    if _planning_block_has_custom_period(block):
+        return None
     try:
         limit = int(str(block.get("planning_session_limit") or "").strip())
     except (TypeError, ValueError):
@@ -2282,12 +2313,25 @@ def _calendar_snapshot_with_line_recommendation_keys(
         or any(_planning_session_limit_from_quote_line_meta(line) is not None for line in activity_lines)
     }
     if not target_activity_ids:
+        normalized_blocks: list[dict[str, Any]] = []
+        changed_blocks = False
+        for block in blocks:
+            block, custom_changed = _normalize_custom_planning_block(block)
+            changed_blocks = changed_blocks or custom_changed
+            normalized_blocks.append(block)
+        if changed_blocks:
+            snapshot["blocks"] = normalized_blocks
         return snapshot
 
     cursors: dict[str, int] = {}
     changed_blocks = False
     normalized_blocks: list[dict[str, Any]] = []
     for block in blocks:
+        if _planning_block_has_custom_period(block):
+            block, custom_changed = _normalize_custom_planning_block(block)
+            changed_blocks = changed_blocks or custom_changed
+            normalized_blocks.append(block)
+            continue
         activity_id = str(block.get("activity_id") or "").strip()
         if activity_id not in target_activity_ids:
             normalized_blocks.append(block)
@@ -2371,15 +2415,27 @@ def _calendar_snapshot_with_line_recommendation_keys(
 
 def _calendar_snapshot_with_planning_sessions(db: Session | None, calendar_snapshot: dict[str, Any]) -> dict[str, Any]:
     snapshot = dict(_json_object(calendar_snapshot))
+    blocks = [dict(item) for item in _json_list(snapshot.get("blocks")) if isinstance(item, dict)]
     if db is None:
+        normalized_blocks: list[dict[str, Any]] = []
+        changed_blocks = False
+        for block in blocks:
+            block, custom_changed = _normalize_custom_planning_block(block)
+            changed_blocks = changed_blocks or custom_changed
+            normalized_blocks.append(block)
+        if changed_blocks:
+            snapshot["blocks"] = normalized_blocks
         return snapshot
     sessions, deduped_existing = _dedupe_calendar_sessions(
         [dict(item) for item in _json_list(snapshot.get("sessions")) if isinstance(item, dict)]
     )
-    blocks = [dict(item) for item in _json_list(snapshot.get("blocks")) if isinstance(item, dict)]
     changed = deduped_existing
     seen: set[tuple[str, str, str, str]] = {_calendar_session_dedupe_key(item) for item in sessions}
-    for block in blocks:
+    for block_index, block in enumerate(blocks):
+        block, custom_block_changed = _normalize_custom_planning_block(block)
+        if custom_block_changed:
+            blocks[block_index] = block
+        changed = changed or custom_block_changed
         refreshed_block_sessions = _sessions_from_planning_block(db, block)
         if refreshed_block_sessions:
             refreshed_dates = {str(item.get("date") or "").strip() for item in refreshed_block_sessions}
@@ -2393,7 +2449,11 @@ def _calendar_snapshot_with_planning_sessions(db: Session | None, calendar_snaps
                 seen = {_calendar_session_dedupe_key(item) for item in sessions}
                 changed = True
             last_refreshed_date = str(refreshed_block_sessions[-1].get("date") or "").strip()
-            if last_refreshed_date and str(block.get("end_date") or "").strip() != last_refreshed_date:
+            if (
+                last_refreshed_date
+                and not _planning_block_has_custom_period(block)
+                and str(block.get("end_date") or "").strip() != last_refreshed_date
+            ):
                 block["end_date"] = last_refreshed_date
                 changed = True
         for item in refreshed_block_sessions:

@@ -406,6 +406,141 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertEqual(hydrated["sessions_count"], 3)
         self.assertEqual(hydrated["blocks"][0]["end_date"], "2026-09-30")
 
+    def test_calendar_snapshot_hydration_preserves_custom_period_end_date_and_ignores_limit(self) -> None:
+        activity_id = uuid4()
+        location_id = uuid4()
+        recurrence_id = uuid4()
+        paris = ZoneInfo("Europe/Paris")
+
+        def live_row(iso_date: str) -> tuple[SimpleNamespace, SimpleNamespace, SimpleNamespace]:
+            local_day = date.fromisoformat(iso_date)
+            local_start = datetime.combine(local_day, time(8, 30), tzinfo=paris)
+            local_end = datetime.combine(local_day, time(9, 30), tzinfo=paris)
+            return (
+                SimpleNamespace(
+                    id=uuid4(),
+                    course_type_id=activity_id,
+                    location_id=location_id,
+                    status="SCHEDULED",
+                    start_at_utc=local_start.astimezone(timezone.utc),
+                    end_at_utc=local_end.astimezone(timezone.utc),
+                    timezone="Europe/Paris",
+                    recurrence_group_id=recurrence_id,
+                ),
+                SimpleNamespace(id=activity_id, name="Cours collectif adulte", mode="ONSITE"),
+                SimpleNamespace(id=location_id, name="Bar-le-Duc", timezone="Europe/Paris", is_online=False),
+            )
+
+        fake_db = SimpleNamespace(
+            scalar=lambda _query: None,
+            execute=lambda _query: SimpleNamespace(
+                all=lambda: [
+                    live_row("2026-09-07"),
+                    live_row("2026-12-14"),
+                    live_row("2027-01-04"),
+                ]
+            ),
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(activity_id),
+                    "activity_label": "Cours collectif adulte",
+                    "location_id": str(location_id),
+                    "location_label": "Bar-le-Duc",
+                    "weekday": 0,
+                    "weekday_label": "Lundi",
+                    "start_date": "2026-09-07",
+                    "end_date": "2026-12-20",
+                    "start_time": "08:30",
+                    "end_time": "09:30",
+                    "series_key": str(recurrence_id),
+                    "calendar_school_year": "2026-2027",
+                    "planning_session_limit": 32,
+                    "custom_period": True,
+                    "source": "custom_period",
+                    "selection_pending": False,
+                }
+            ],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_planning_sessions(fake_db, snapshot)
+
+        self.assertEqual([item["date"] for item in hydrated["sessions"]], ["2026-09-07", "2026-12-14"])
+        self.assertEqual(hydrated["sessions_count"], 2)
+        self.assertEqual(hydrated["blocks"][0]["end_date"], "2026-12-20")
+        self.assertNotIn("planning_session_limit", hydrated["blocks"][0])
+
+    def test_calendar_snapshot_hydration_preserves_forced_planning_period(self) -> None:
+        activity_id = uuid4()
+        location_id = uuid4()
+        recurrence_id = uuid4()
+        paris = ZoneInfo("Europe/Paris")
+
+        def live_row(iso_date: str) -> tuple[SimpleNamespace, SimpleNamespace, SimpleNamespace]:
+            local_day = date.fromisoformat(iso_date)
+            local_start = datetime.combine(local_day, time(8, 30), tzinfo=paris)
+            local_end = datetime.combine(local_day, time(9, 30), tzinfo=paris)
+            return (
+                SimpleNamespace(
+                    id=uuid4(),
+                    course_type_id=activity_id,
+                    location_id=location_id,
+                    status="SCHEDULED",
+                    start_at_utc=local_start.astimezone(timezone.utc),
+                    end_at_utc=local_end.astimezone(timezone.utc),
+                    timezone="Europe/Paris",
+                    recurrence_group_id=recurrence_id,
+                ),
+                SimpleNamespace(id=activity_id, name="Cours collectif adulte", mode="ONSITE"),
+                SimpleNamespace(id=location_id, name="Bar-le-Duc", timezone="Europe/Paris", is_online=False),
+            )
+
+        fake_db = SimpleNamespace(
+            scalar=lambda _query: None,
+            execute=lambda _query: SimpleNamespace(
+                all=lambda: [
+                    live_row("2026-09-07"),
+                    live_row("2026-12-14"),
+                    live_row("2027-01-04"),
+                ]
+            ),
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(activity_id),
+                    "activity_label": "Cours collectif adulte",
+                    "location_id": str(location_id),
+                    "location_label": "Bar-le-Duc",
+                    "weekday": 0,
+                    "weekday_label": "Lundi",
+                    "start_date": "2026-09-07",
+                    "end_date": "2026-12-20",
+                    "start_time": "08:30",
+                    "end_time": "09:30",
+                    "series_key": str(recurrence_id),
+                    "calendar_school_year": "2026-2027",
+                    "planning_session_limit": 32,
+                    "forced_planning": True,
+                    "source": "forced_planning",
+                    "selection_pending": False,
+                }
+            ],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_planning_sessions(fake_db, snapshot)
+
+        self.assertEqual([item["date"] for item in hydrated["sessions"]], ["2026-09-07", "2026-12-14"])
+        self.assertEqual(hydrated["sessions_count"], 2)
+        self.assertEqual(hydrated["blocks"][0]["end_date"], "2026-12-20")
+        self.assertTrue(hydrated["blocks"][0]["custom_period"])
+        self.assertTrue(hydrated["blocks"][0]["forced_planning"])
+        self.assertEqual(hydrated["blocks"][0]["source"], "forced_planning")
+        self.assertNotIn("planning_session_limit", hydrated["blocks"][0])
+
     def test_calendar_snapshot_uses_expected_block_sessions_when_live_series_is_shorter(self) -> None:
         activity_id = uuid4()
         location_id = uuid4()
@@ -561,6 +696,73 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         hydrated = _calendar_snapshot_with_line_recommendation_keys(None, snapshot, lines=[line])
 
         self.assertEqual(hydrated["blocks"][0]["planning_session_limit"], 32)
+
+    def test_line_recommendation_keys_preserve_custom_period_without_session_limit(self) -> None:
+        activity_id = uuid4()
+        line = SimpleNamespace(
+            id=uuid4(),
+            activity_id=activity_id,
+            sort_order=0,
+            created_at=datetime(2026, 5, 26, tzinfo=timezone.utc),
+            meta={
+                "typeform_automatic_line": "collective_course",
+                "planning_session_limit": 32,
+            },
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(activity_id),
+                    "start_date": "2026-09-07",
+                    "end_date": "2026-12-20",
+                    "planning_session_limit": 32,
+                    "custom_period": True,
+                    "source": "custom_period",
+                }
+            ],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_line_recommendation_keys(None, snapshot, lines=[line])
+
+        self.assertTrue(hydrated["blocks"][0]["custom_period"])
+        self.assertEqual(hydrated["blocks"][0]["source"], "custom_period")
+        self.assertNotIn("planning_session_limit", hydrated["blocks"][0])
+        self.assertNotIn("recommendation_key", hydrated["blocks"][0])
+
+    def test_line_recommendation_keys_preserve_forced_planning_without_session_limit(self) -> None:
+        activity_id = uuid4()
+        line = SimpleNamespace(
+            id=uuid4(),
+            activity_id=activity_id,
+            sort_order=0,
+            created_at=datetime(2026, 5, 26, tzinfo=timezone.utc),
+            meta={
+                "typeform_automatic_line": "collective_course",
+                "planning_session_limit": 32,
+            },
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(activity_id),
+                    "start_date": "2026-09-07",
+                    "end_date": "2026-12-20",
+                    "planning_session_limit": 32,
+                    "forced_planning": True,
+                    "source": "forced_planning",
+                }
+            ],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_line_recommendation_keys(None, snapshot, lines=[line])
+
+        self.assertTrue(hydrated["blocks"][0]["custom_period"])
+        self.assertTrue(hydrated["blocks"][0]["forced_planning"])
+        self.assertEqual(hydrated["blocks"][0]["source"], "forced_planning")
+        self.assertNotIn("planning_session_limit", hydrated["blocks"][0])
+        self.assertNotIn("recommendation_key", hydrated["blocks"][0])
 
     def test_line_recommendation_keys_do_not_infer_session_limit_from_service_quantity(self) -> None:
         activity_id = uuid4()

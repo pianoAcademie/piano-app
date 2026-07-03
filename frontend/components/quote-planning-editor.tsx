@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
 
@@ -30,6 +30,8 @@ type PlanningBlock = {
   duration_minutes: number | null;
   sessions_count: number | null;
   planning_session_limit: number | null;
+  custom_period: boolean;
+  forced_planning: boolean;
   weekday: number;
   recurrence_frequency: "weekly" | "biweekly" | "monthly";
   start_date: string;
@@ -646,6 +648,12 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
         const durationMinutesRaw = Number.parseInt(String(row.duration_minutes ?? ""), 10);
         const sessionsCountRaw = Number.parseInt(String(row.sessions_count ?? ""), 10);
         const planningSessionLimitRaw = Number.parseInt(String(row.planning_session_limit ?? ""), 10);
+        const sourceKey = String(row.source ?? "").trim().toLowerCase();
+        const forcedPlanning = Boolean(row.forced_planning) || sourceKey === "forced_planning";
+        const customPeriod =
+          forcedPlanning
+          || Boolean(row.custom_period)
+          || sourceKey === "custom_period";
         const modality = typeof row.modality === "string" ? row.modality : "";
         const holidayDates = Array.isArray(row.holiday_dates)
           ? row.holiday_dates.map((item) => String(item)).filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item))
@@ -665,7 +673,9 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
           duration_minutes: Number.isFinite(durationMinutesRaw) && durationMinutesRaw > 0 ? durationMinutesRaw : null,
           sessions_count: Number.isFinite(sessionsCountRaw) && sessionsCountRaw >= 0 ? sessionsCountRaw : null,
           planning_session_limit:
-            Number.isFinite(planningSessionLimitRaw) && planningSessionLimitRaw > 0 ? planningSessionLimitRaw : null,
+            !customPeriod && Number.isFinite(planningSessionLimitRaw) && planningSessionLimitRaw > 0 ? planningSessionLimitRaw : null,
+          custom_period: customPeriod,
+          forced_planning: forcedPlanning,
           weekday: selectionPending
             ? WEEKDAY_UNSET
             : Number.isFinite(weekday) && weekday >= 0 && weekday <= 6
@@ -712,6 +722,8 @@ function parseInitialBlocks(snapshot: Record<string, unknown>): PlanningBlock[] 
         duration_minutes: null,
         sessions_count: null,
         planning_session_limit: null,
+        custom_period: false,
+        forced_planning: false,
         weekday: weekday >= 0 && weekday <= 6 ? weekday : WEEKDAY_UNSET,
         recurrence_frequency: "weekly",
         start_date: startDate,
@@ -745,6 +757,8 @@ function newPlanningBlock(activities: ActivityOption[], locations: LocationOptio
     duration_minutes: null,
     sessions_count: null,
     planning_session_limit: null,
+    custom_period: false,
+    forced_planning: false,
     weekday: 0,
     recurrence_frequency: "weekly",
     start_date: "",
@@ -794,6 +808,8 @@ function editablePlanningBlockChanged(current: PlanningBlock, next: PlanningBloc
     || current.recurrence_frequency !== next.recurrence_frequency
     || current.start_date !== next.start_date
     || current.end_date !== next.end_date
+    || current.custom_period !== next.custom_period
+    || current.forced_planning !== next.forced_planning
     || current.start_time !== next.start_time
     || current.end_time !== next.end_time
     || current.modality !== next.modality;
@@ -920,6 +936,8 @@ export default function QuotePlanningEditor({
             duration_minutes: row.duration_minutes,
             sessions_count: row.sessions_count,
             planning_session_limit: row.planning_session_limit,
+            custom_period: row.custom_period,
+            forced_planning: row.forced_planning,
             calendar_name: row.calendar_name || null,
             weekday: row.weekday,
             weekday_label: row.weekday === WEEKDAY_UNSET ? null : weekdayLabel(row.weekday, language),
@@ -1002,6 +1020,8 @@ export default function QuotePlanningEditor({
       source: "live_planning",
       sessions_count: option.sessions_count,
       planning_session_limit: option.planning_session_limit ?? block.planning_session_limit,
+      custom_period: false,
+      forced_planning: false,
       weekday: option.weekday,
       recurrence_frequency: "weekly",
       start_date: option.start_date,
@@ -1041,9 +1061,10 @@ export default function QuotePlanningEditor({
           ? {
               series_key: "",
               recommendation_key: "",
-              source: "",
+              source: patch.custom_period ? "custom_period" : "",
               sessions_count: null,
               planning_session_limit: null,
+              forced_planning: false,
             }
           : {}),
       };
@@ -1076,6 +1097,83 @@ export default function QuotePlanningEditor({
       activity_id: activityId,
       modality: resolvePlanningModality(activity, activity?.mode),
     }, { autoApplyLiveSeries: true });
+  }
+
+  function blockHasAnnualBinding(block: PlanningBlock): boolean {
+    return !block.custom_period
+      && (Boolean(block.series_key) || Boolean(block.source) || planningSessionLimit(block) > 0);
+  }
+
+  function updateCustomPeriodDate(patch: Pick<Partial<PlanningBlock>, "start_date" | "end_date">): void {
+    if (!editorBlock) {
+      return;
+    }
+    const changesDate =
+      (Object.prototype.hasOwnProperty.call(patch, "start_date") && patch.start_date !== editorBlock.start_date)
+      || (Object.prototype.hasOwnProperty.call(patch, "end_date") && patch.end_date !== editorBlock.end_date);
+    if (changesDate && blockHasAnnualBinding(editorBlock)) {
+      const confirmed = window.confirm(t("admin.quote_planning.custom_period_confirm"));
+      if (!confirmed) {
+        return;
+      }
+    }
+    updateEditor({
+      ...patch,
+      custom_period: true,
+      forced_planning: false,
+      source: "custom_period",
+      series_key: "",
+      recommendation_key: "",
+      sessions_count: null,
+      planning_session_limit: null,
+    });
+  }
+
+  function forceEditorPlanning(): void {
+    if (!editorState) {
+      return;
+    }
+    const confirmed = window.confirm(t("admin.quote_planning.force_planning_confirm"));
+    if (!confirmed) {
+      return;
+    }
+    const forcedDraft = normalizePlanningBlockWithActivity(
+      {
+        ...editorState.block,
+        custom_period: true,
+        forced_planning: true,
+        source: "forced_planning",
+        series_key: "",
+        recommendation_key: "",
+        sessions_count: null,
+        planning_session_limit: null,
+      },
+      activities,
+      calendarPresetMap,
+    );
+    const draftState = {
+      ...editorState,
+      block: forcedDraft,
+    };
+    if (draftState.originalUid === null) {
+      setBlocks((prev) => [...prev, draftState.block]);
+      setEditorState(null);
+      return;
+    }
+    setBlocks((prev) =>
+      prev.map((row) => {
+        if (row.uid !== draftState.originalUid) {
+          return row;
+        }
+        return {
+          ...draftState.block,
+          uid: row.uid,
+          saved: row.saved,
+          dirty: row.saved ? true : draftState.block.dirty,
+        };
+      }),
+    );
+    setEditorState(null);
   }
 
   function commitEditor(): void {
@@ -1115,6 +1213,17 @@ export default function QuotePlanningEditor({
   const removedSavedCount = initialBlocks.filter((row) => row.saved && !currentSavedUids.has(row.uid)).length;
   const draftCount = modifiedCount + newCount + removedSavedCount;
   const pendingSaveCount = draftCount;
+  const customPeriodPendingSave = blocks.some((row) => row.custom_period && (!row.saved || row.dirty));
+
+  function handlePlanningSubmit(event: FormEvent<HTMLFormElement>): void {
+    if (!customPeriodPendingSave) {
+      return;
+    }
+    const confirmed = window.confirm(t("admin.quote_planning.custom_period_save_confirm"));
+    if (!confirmed) {
+      event.preventDefault();
+    }
+  }
 
   function blockStatusLabel(block: PlanningBlock): string {
     if (!block.saved) {
@@ -1133,7 +1242,7 @@ export default function QuotePlanningEditor({
   }
 
   return (
-    <form action={saveAction}>
+    <form action={saveAction} onSubmit={handlePlanningSubmit}>
       <input type="hidden" name="quote_id" value={quoteId} />
       <input type="hidden" name="return_to" value={returnTo} />
       <input type="hidden" name="school_year_label" value={schoolYearLabel || ""} />
@@ -1174,7 +1283,7 @@ export default function QuotePlanningEditor({
               const locationLabel = locations.find((item) => item.id === block.location_id)?.name || t("admin.quote_detail.location_not_defined");
               const selectionPending = block.weekday === WEEKDAY_UNSET;
               const calculatedDates = datesFromSnapshotSessions(block, snapshotSessions);
-              const targetSessionLimit = planningSessionLimit(block);
+              const targetSessionLimit = block.custom_period ? 0 : planningSessionLimit(block);
               const theoreticalDates = estimateSessionDates(block);
               const estimatedDates =
                 calculatedDates.length > 0 && (targetSessionLimit <= 0 || calculatedDates.length >= targetSessionLimit)
@@ -1191,6 +1300,11 @@ export default function QuotePlanningEditor({
                     <div className="quote-saved-card-head">
                       <div className="quote-saved-card-badges">
                         <span className="quote-line-kind-pill">{t("admin.quote_planning.kind_planning")}</span>
+                        {block.custom_period ? (
+                          <span className="quote-line-kind-pill quote-line-kind-pill-warning">
+                            {t(block.forced_planning ? "admin.quote_planning.force_planning_badge" : "admin.quote_planning.custom_period_badge")}
+                          </span>
+                        ) : null}
                         <span className={`quote-status-chip ${blockStatusClass(block)}`}>{blockStatusLabel(block)}</span>
                       </div>
                       <button
@@ -1261,6 +1375,11 @@ export default function QuotePlanningEditor({
                   <div className="quote-saved-card-footer">
                     <span>{t("admin.quote_planning.location_value", { location: locationLabel })}</span>
                     {selectionPending ? <span>{t("admin.quote_planning.slot_to_confirm")}</span> : null}
+                    {block.custom_period ? (
+                      <span>
+                        {t(block.forced_planning ? "admin.quote_planning.force_planning_footer" : "admin.quote_planning.custom_period_footer")}
+                      </span>
+                    ) : null}
                   </div>
                   {isExpanded ? (
                     <div className="quote-saved-card-detail top-gap-sm">
@@ -1396,6 +1515,8 @@ export default function QuotePlanningEditor({
                               end_date: "",
                               start_time: "",
                               end_time: "",
+                              custom_period: false,
+                              forced_planning: false,
                             });
                             return;
                           }
@@ -1474,7 +1595,7 @@ export default function QuotePlanningEditor({
                       <input
                         type="date"
                         value={editorBlock.start_date}
-                        onChange={(event) => updateEditor({ start_date: event.target.value })}
+                        onChange={(event) => updateCustomPeriodDate({ start_date: event.target.value })}
                         disabled={!editable || selectionPending}
                       />
                     </label>
@@ -1483,7 +1604,7 @@ export default function QuotePlanningEditor({
                       <input
                         type="date"
                         value={editorBlock.end_date}
-                        onChange={(event) => updateEditor({ end_date: event.target.value })}
+                        onChange={(event) => updateCustomPeriodDate({ end_date: event.target.value })}
                         disabled={!editable || selectionPending}
                       />
                     </label>
@@ -1512,6 +1633,11 @@ export default function QuotePlanningEditor({
                     <p className="muted span-2">
                       {t("admin.quote_planning.distinct_activities_hint")}
                     </p>
+                    {editorBlock.custom_period ? (
+                      <p className="quote-editor-empty quote-editor-warning span-2">
+                        {t(editorBlock.forced_planning ? "admin.quote_planning.force_planning_hint" : "admin.quote_planning.custom_period_hint")}
+                      </p>
+                    ) : null}
                     {selectionPending && blockSolfegeLevel ? (
                       <div className="span-2">
                         <p className="muted">{t("admin.quote_planning.solfege_level_pending", { level: blockSolfegeLevel })}</p>
@@ -1530,6 +1656,9 @@ export default function QuotePlanningEditor({
                   <div className="row end gap-sm top-gap-sm">
                     <button type="button" className="ghost" onClick={closeEditor}>
                       {t("common.cancel")}
+                    </button>
+                    <button type="button" className="secondary" onClick={forceEditorPlanning} disabled={!editable || selectionPending}>
+                      {t("admin.quote_planning.force_planning")}
                     </button>
                     <button type="button" onClick={commitEditor} disabled={!editable}>
                       {t("admin.quote_lines.apply_draft")}

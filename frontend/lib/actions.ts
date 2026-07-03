@@ -2231,7 +2231,8 @@ export async function professorSendSessionMessageAction(formData: FormData): Pro
 
   revalidatePath("/prof");
   const messageKey = recipientScope === "ADMIN" ? "teacher.action.internal_note_sent_admin" : "teacher.action.message_sent_summary";
-  redirect(appendQueryMessage(returnTo, "ok", t(messageKey, { count: result.data.recipient_count })));
+  const returnWithMessageId = appendQueryMessage(returnTo, "sent_message_id", result.data.message_id);
+  redirect(appendQueryMessage(returnWithMessageId, "ok", t(messageKey, { count: result.data.recipient_count })));
 }
 
 export async function professorMarkSessionAbsentAction(formData: FormData): Promise<void> {
@@ -12607,6 +12608,8 @@ type QuotePlanningBlockInput = {
   duration_minutes?: number | null;
   sessions_count?: number | null;
   planning_session_limit?: number | null;
+  custom_period?: boolean;
+  forced_planning?: boolean;
   calendar_name?: string | null;
   weekday: number;
   weekday_label: string | null;
@@ -12672,9 +12675,15 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
       const seriesKey = String(item.series_key ?? "").trim();
       const recommendationKey = String(item.recommendation_key ?? "").trim();
       const source = String(item.source ?? "").trim();
+      const sourceKey = source.toLowerCase();
       const durationMinutesRaw = Number.parseInt(String(item.duration_minutes ?? ""), 10);
       const sessionsCountRaw = Number.parseInt(String(item.sessions_count ?? ""), 10);
       const planningSessionLimitRaw = Number.parseInt(String(item.planning_session_limit ?? ""), 10);
+      const forcedPlanning = Boolean(item.forced_planning) || sourceKey === "forced_planning";
+      const customPeriod =
+        forcedPlanning
+        || sourceKey === "custom_period"
+        || Boolean(item.custom_period);
       const calendarName = String(item.calendar_name ?? "").trim();
       const modalityRaw = String(item.modality ?? "").trim().toUpperCase();
       const recurrenceRaw = String(item.recurrence_frequency ?? "").trim().toLowerCase();
@@ -12737,11 +12746,13 @@ function parsePlanningBlocksJson(raw: string): QuotePlanningBlockInput[] | null 
         location_label: locationLabel || null,
         series_key: seriesKey || null,
         recommendation_key: recommendationKey || null,
-        source: source || null,
+        source: forcedPlanning ? "forced_planning" : customPeriod ? "custom_period" : source || null,
         duration_minutes: Number.isFinite(durationMinutesRaw) && durationMinutesRaw > 0 ? durationMinutesRaw : null,
         sessions_count: Number.isFinite(sessionsCountRaw) && sessionsCountRaw >= 0 ? sessionsCountRaw : null,
         planning_session_limit:
-          Number.isFinite(planningSessionLimitRaw) && planningSessionLimitRaw > 0 ? planningSessionLimitRaw : null,
+          !customPeriod && Number.isFinite(planningSessionLimitRaw) && planningSessionLimitRaw > 0 ? planningSessionLimitRaw : null,
+        custom_period: customPeriod,
+        forced_planning: forcedPlanning,
         calendar_name: calendarName || null,
         weekday: selectionPending ? -1 : weekday,
         weekday_label: selectionPending ? (weekdayLabel || "Selection a faire") : (weekdayLabel || null),
@@ -12987,6 +12998,11 @@ function normalizePlanningBlockSessionLimit(
   block: QuotePlanningBlockInput,
   quoteLines: QuotePlanningLineInput[],
 ): QuotePlanningBlockInput {
+  if (block.custom_period) {
+    return positiveInt(block.planning_session_limit) > 0
+      ? { ...block, planning_session_limit: null }
+      : block;
+  }
   const inferred = inferPlanningSessionLimitForBlock(block, quoteLines);
   if (inferred <= 0) {
     return positiveInt(block.planning_session_limit) <= 1
@@ -13110,7 +13126,7 @@ async function buildCalendarSnapshotFromBlocks({
     const resolvedCalendar = await resolveLocationCalendar(block.location_id, inferredSchoolYearLabel);
     const holidayDates = block.exclude_holidays_in_recurrence === false ? [] : resolvedCalendar.holiday_dates;
     const closureDates = block.exclude_school_vacations_in_recurrence === false ? [] : resolvedCalendar.closure_dates;
-    const sessionLimit = positiveInt(block.planning_session_limit);
+    const sessionLimit = block.custom_period ? 0 : positiveInt(block.planning_session_limit);
     if (block.selection_pending) {
       Object.assign(block, {
         calendar_id: String(resolvedCalendar.calendar?.id ?? ""),
@@ -13164,10 +13180,12 @@ async function buildCalendarSnapshotFromBlocks({
         ? localRows
         : previewLimitedRows;
 
-    const liveMatch = await loadLivePlanningMatchForBlock({
-      block: block as LivePlanningBlockInput,
-      token,
-    });
+    const liveMatch = block.custom_period
+      ? null
+      : await loadLivePlanningMatchForBlock({
+          block: block as LivePlanningBlockInput,
+          token,
+        });
     if (liveMatch && liveMatch.sessions.length > 0 && liveMatch.sessions.length >= rows.length) {
       sessions.push(...liveMatch.sessions);
       Object.assign(block, liveMatch.block, {
@@ -13195,7 +13213,7 @@ async function buildCalendarSnapshotFromBlocks({
       calendar_id: String(resolvedCalendar.calendar?.id ?? ""),
       calendar_name: String(resolvedCalendar.calendar?.name ?? ""),
       calendar_school_year: String(resolvedCalendar.calendar?.school_year_label ?? ""),
-      end_date: String(rows[rows.length - 1]?.date ?? block.end_date),
+      end_date: block.custom_period ? block.end_date : String(rows[rows.length - 1]?.date ?? block.end_date),
       sessions_count: rows.length,
       holiday_dates: holidayDates,
       closure_dates: closureDates,
