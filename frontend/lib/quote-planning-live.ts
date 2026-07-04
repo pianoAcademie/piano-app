@@ -17,6 +17,7 @@ export type LivePlanningBlockInput = {
   selection_pending?: boolean;
   series_key?: string | null;
   planning_session_limit?: number | null;
+  custom_period?: boolean | null;
   holiday_dates?: string[] | null;
   closure_dates?: string[] | null;
   [key: string]: unknown;
@@ -157,6 +158,9 @@ function daysBetween(left: string, right: string): number | null {
 }
 
 function shouldWidenLivePlanningBlock(block: LivePlanningBlockInput): boolean {
+  if (block.custom_period) {
+    return false;
+  }
   const locationEndDate = schoolYearEndDateFromBlock(block);
   const defaultEndDate = defaultSchoolYearEndDateFromBlock(block);
   if (!locationEndDate || !defaultEndDate || locationEndDate <= defaultEndDate) {
@@ -173,6 +177,9 @@ export async function loadLivePlanningMatchForBlock({
   block: LivePlanningBlockInput;
   token: string;
 }): Promise<LivePlanningMatch | null> {
+  if (block.custom_period) {
+    return null;
+  }
   if (!validBlock(block) || !block.activity_id) {
     return null;
   }

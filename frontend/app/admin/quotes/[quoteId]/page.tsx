@@ -1148,6 +1148,11 @@ function planningBlockEstimatedDates(block: Record<string, unknown>): string[] {
   return limit > 0 ? matchedDates.slice(0, limit) : matchedDates;
 }
 
+function planningBlockHasCustomPeriod(block: Record<string, unknown>): boolean {
+  return Boolean(block.custom_period)
+    || String(block.source ?? "").trim().toLowerCase() === "custom_period";
+}
+
 function calendarPresetForLiveSeries(
   presets: PlanningCalendarPreset[],
   locationId: string,
@@ -1477,6 +1482,10 @@ async function hydratePlanningSnapshotWithLiveSessions({
   let didUseLivePlanning = false;
 
   for (const block of blocks) {
+    if (planningBlockHasCustomPeriod(block)) {
+      nextBlocks.push(block);
+      continue;
+    }
     const liveMatch = await loadLivePlanningMatchForBlock({
       block: block as LivePlanningBlockInput,
       token,
@@ -2580,6 +2589,9 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
     return Array.from(values)[0] || 0;
   };
   const withQuoteLinePlanningLimit = (block: Record<string, unknown>): Record<string, unknown> => {
+    if (planningBlockHasCustomPeriod(block)) {
+      return block;
+    }
     const activityId = String(block.activity_id ?? "").trim();
     const planningKey = planningKeyFromSnapshotItem(block);
     const lineLimit =

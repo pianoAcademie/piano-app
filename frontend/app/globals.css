@@ -14056,6 +14056,11 @@ button.danger:focus-visible {
   color: #39516f;
 }
 
+.quote-line-kind-pill-warning {
+  background: #fff3d4;
+  color: #7a4f12;
+}
+
 .quote-saved-card-title-button {
   appearance: none;
   border: 0;
