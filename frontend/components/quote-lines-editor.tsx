@@ -96,6 +96,8 @@ type ResolvedUnitPrice = {
   sourceLabel: string;
 };
 
+const EXCEPTIONAL_PERCENT_DISCOUNT_KIND = "exceptional_percent";
+
 function PencilIcon(): JSX.Element {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -126,9 +128,23 @@ function PlusIcon(): JSX.Element {
   );
 }
 
+function signedUnitPrice(line: EditableLine): number {
+  const price = Number(line.unitPrice);
+  if (!Number.isFinite(price)) {
+    return 0;
+  }
+  if (line.kind === "discount") {
+    return -Math.abs(price);
+  }
+  if (line.kind === "surcharge") {
+    return Math.abs(price);
+  }
+  return price;
+}
+
 function lineAmount(line: EditableLine): number {
   const qty = Number(line.quantity);
-  const price = Number(line.unitPrice);
+  const price = signedUnitPrice(line);
   if (!Number.isFinite(qty) || !Number.isFinite(price)) {
     return 0;
   }
@@ -144,7 +160,7 @@ function lineVatRate(line: EditableLine): number {
 }
 
 function lineUnitHt(line: EditableLine): number {
-  const ttc = Number(line.unitPrice);
+  const ttc = signedUnitPrice(line);
   const rate = lineVatRate(line);
   if (!Number.isFinite(ttc)) {
     return 0;
@@ -156,7 +172,7 @@ function lineUnitHt(line: EditableLine): number {
 }
 
 function lineUnitVat(line: EditableLine): number {
-  return Number(line.unitPrice) - lineUnitHt(line);
+  return signedUnitPrice(line) - lineUnitHt(line);
 }
 
 function lineAmountHt(line: EditableLine): number {
@@ -209,63 +225,141 @@ function normalizePercentInput(value: string | null | undefined): string {
   return parsed.toFixed(2);
 }
 
-function buildLinePayload(line: EditableLine, index: number): Record<string, unknown> {
+function normalizeDiscountPercentInput(value: string | null | undefined): string {
+  const parsed = Number(String(value ?? "").trim());
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return "0.00";
+  }
+  return Math.min(100, parsed).toFixed(2);
+}
+
+function isExceptionalPercentDiscount(line: Pick<EditableLine, "kind" | "meta">): boolean {
+  return line.kind === "discount" && readStringMeta(line.meta, "discount_kind") === EXCEPTIONAL_PERCENT_DISCOUNT_KIND;
+}
+
+function exceptionalDiscountPercent(line: Pick<EditableLine, "meta">): string {
+  return normalizeDiscountPercentInput(
+    readStringMeta(line.meta, "discount_percent")
+      || readStringMeta(line.meta, "exceptional_discount_percent")
+      || "10",
+  );
+}
+
+function quoteTotalBeforeExceptionalDiscount(lines: EditableLine[], excludedUid: string | null = null): number {
+  return lines.reduce((sum, line) => {
+    if (excludedUid && line.uid === excludedUid) {
+      return sum;
+    }
+    if (isExceptionalPercentDiscount(line)) {
+      return sum;
+    }
+    return sum + lineAmount(line);
+  }, 0);
+}
+
+function exceptionalDiscountAmount(baseTotal: number, percentValue: string): number {
+  const percent = Number(normalizeDiscountPercentInput(percentValue));
+  if (!Number.isFinite(baseTotal) || !Number.isFinite(percent)) {
+    return 0;
+  }
+  return Math.max(0, baseTotal) * percent / 100;
+}
+
+function exceptionalDiscountMeta(
+  current: Record<string, unknown>,
+  percentValue: string,
+  baseTotal: number,
+): Record<string, unknown> {
+  return {
+    ...(current || {}),
+    discount_kind: EXCEPTIONAL_PERCENT_DISCOUNT_KIND,
+    discount_scope: "quote_total",
+    discount_percent: normalizeDiscountPercentInput(percentValue),
+    discount_base_ttc: Math.max(0, baseTotal).toFixed(2),
+  };
+}
+
+function materializeExceptionalDiscountLine(
+  line: EditableLine,
+  allLines: EditableLine[],
+  excludedUid: string | null = null,
+): EditableLine {
+  if (!isExceptionalPercentDiscount(line)) {
+    return line;
+  }
+  const baseTotal = quoteTotalBeforeExceptionalDiscount(allLines, excludedUid);
+  const percent = exceptionalDiscountPercent(line);
+  const amount = exceptionalDiscountAmount(baseTotal, percent);
+  return {
+    ...line,
+    refId: "",
+    title: line.title || "Remise exceptionnelle",
+    quantity: "1",
+    unitPrice: amount.toFixed(2),
+    meta: exceptionalDiscountMeta(line.meta, percent, baseTotal),
+    manualUnitPriceOverride: false,
+  };
+}
+
+function buildLinePayload(line: EditableLine, index: number, allLines: EditableLine[] = []): Record<string, unknown> {
+  const payloadLine = materializeExceptionalDiscountLine(line, allLines, line.uid);
   const meta: Record<string, unknown> = { ...(line.meta || {}) };
-  if (line.manualUnitPriceOverride) {
+  Object.assign(meta, payloadLine.meta || {});
+  if (payloadLine.manualUnitPriceOverride) {
     meta.manual_unit_price_override = true;
   } else {
     delete meta.manual_unit_price_override;
   }
-  if (line.kind === "discount") {
+  if (payloadLine.kind === "discount") {
     return {
       line_category: "product",
       line_type: "discount",
       master_item_type: "discount_rule",
-      title: line.title || "Discount",
-      quantity: normalizeQuantityInput(line.quantity),
-      vat_rate: line.vatRate || "0",
-      unit_price_ttc: String(Math.abs(Number(line.unitPrice || "0"))),
+      title: payloadLine.title || "Discount",
+      quantity: normalizeQuantityInput(payloadLine.quantity),
+      vat_rate: payloadLine.vatRate || "0",
+      unit_price_ttc: String(Math.abs(Number(payloadLine.unitPrice || "0"))),
       meta,
       sort_order: index,
     };
   }
-  if (line.kind === "surcharge") {
+  if (payloadLine.kind === "surcharge") {
     return {
       line_category: "product",
       line_type: "surcharge",
       master_item_type: "surcharge_rule",
-      title: line.title || "Surcharge",
-      quantity: normalizeQuantityInput(line.quantity),
-      vat_rate: line.vatRate || "0",
-      unit_price_ttc: String(Math.abs(Number(line.unitPrice || "0"))),
+      title: payloadLine.title || "Surcharge",
+      quantity: normalizeQuantityInput(payloadLine.quantity),
+      vat_rate: payloadLine.vatRate || "0",
+      unit_price_ttc: String(Math.abs(Number(payloadLine.unitPrice || "0"))),
       meta,
       sort_order: index,
     };
   }
-  if (line.kind === "activity") {
+  if (payloadLine.kind === "activity") {
     return {
       line_category: "service",
       line_type: "item",
       master_item_type: "activity",
-      activity_id: line.refId || null,
-      title: line.title || "Activity",
-      quantity: normalizeQuantityInput(line.quantity),
-      vat_rate: line.vatRate || "0",
-      unit_price_ttc: line.unitPrice || "0",
+      activity_id: payloadLine.refId || null,
+      title: payloadLine.title || "Activity",
+      quantity: normalizeQuantityInput(payloadLine.quantity),
+      vat_rate: payloadLine.vatRate || "0",
+      unit_price_ttc: payloadLine.unitPrice || "0",
       meta,
       sort_order: index,
     };
   }
-  if (line.kind === "kit") {
+  if (payloadLine.kind === "kit") {
     return {
       line_category: "product",
       line_type: "item",
       master_item_type: "kit",
-      kit_id: line.refId || null,
-      title: line.title || "Kit",
-      quantity: normalizeQuantityInput(line.quantity),
-      vat_rate: line.vatRate || "0",
-      unit_price_ttc: line.unitPrice || "0",
+      kit_id: payloadLine.refId || null,
+      title: payloadLine.title || "Kit",
+      quantity: normalizeQuantityInput(payloadLine.quantity),
+      vat_rate: payloadLine.vatRate || "0",
+      unit_price_ttc: payloadLine.unitPrice || "0",
       meta,
       sort_order: index,
     };
@@ -274,11 +368,11 @@ function buildLinePayload(line: EditableLine, index: number): Record<string, unk
     line_category: "product",
     line_type: "item",
     master_item_type: "product",
-    product_id: line.refId || null,
-    title: line.title || "Product",
-    quantity: normalizeQuantityInput(line.quantity),
-    vat_rate: line.vatRate || "0",
-    unit_price_ttc: line.unitPrice || "0",
+    product_id: payloadLine.refId || null,
+    title: payloadLine.title || "Product",
+    quantity: normalizeQuantityInput(payloadLine.quantity),
+    vat_rate: payloadLine.vatRate || "0",
+    unit_price_ttc: payloadLine.unitPrice || "0",
     meta,
     sort_order: index,
   };
@@ -359,6 +453,10 @@ function selectedOptionLabel(
 
 function normalizeDiscountRuleMeta(rule: DiscountRuleOption | undefined, current: Record<string, unknown>): Record<string, unknown> {
   const next = { ...(current || {}) };
+  delete next.discount_kind;
+  delete next.discount_scope;
+  delete next.discount_percent;
+  delete next.discount_base_ttc;
   if (!rule) {
     delete next.discount_rule_id;
     delete next.discount_rule_code;
@@ -520,6 +618,7 @@ function editableLineChanged(current: EditableLine, next: EditableLine): boolean
     || String(current.quantity) !== String(next.quantity)
     || String(current.vatRate) !== String(next.vatRate)
     || String(current.unitPrice) !== String(next.unitPrice)
+    || JSON.stringify(current.meta || {}) !== JSON.stringify(next.meta || {})
     || current.manualUnitPriceOverride !== next.manualUnitPriceOverride;
 }
 
@@ -628,10 +727,14 @@ export default function QuoteLinesEditor({
     router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
   }, [language, pathname, router, searchParams]);
 
-  const linesJson = useMemo(() => JSON.stringify(lines.map((line, index) => buildLinePayload(line, index))), [lines]);
-  const total = useMemo(() => lines.reduce((sum, line) => sum + lineAmount(line), 0), [lines]);
-  const totalHt = useMemo(() => lines.reduce((sum, line) => sum + lineAmountHt(line), 0), [lines]);
-  const totalVat = useMemo(() => lines.reduce((sum, line) => sum + lineAmountVat(line), 0), [lines]);
+  const materializedLines = useMemo(
+    () => lines.map((line) => materializeExceptionalDiscountLine(line, lines, line.uid)),
+    [lines],
+  );
+  const linesJson = useMemo(() => JSON.stringify(lines.map((line, index) => buildLinePayload(line, index, lines))), [lines]);
+  const total = useMemo(() => materializedLines.reduce((sum, line) => sum + lineAmount(line), 0), [materializedLines]);
+  const totalHt = useMemo(() => materializedLines.reduce((sum, line) => sum + lineAmountHt(line), 0), [materializedLines]);
+  const totalVat = useMemo(() => materializedLines.reduce((sum, line) => sum + lineAmountVat(line), 0), [materializedLines]);
   const savedCount = lines.filter((line) => line.saved && !line.dirty).length;
   const modifiedCount = lines.filter((line) => line.saved && line.dirty).length;
   const newCount = lines.filter((line) => !line.saved).length;
@@ -647,6 +750,23 @@ export default function QuoteLinesEditor({
     setEditorState({
       originalUid: null,
       line: newLine(kind, defaultVatRate),
+    });
+  }
+
+  function openCreateExceptionalDiscountModal(): void {
+    const baseTotal = quoteTotalBeforeExceptionalDiscount(lines);
+    const percent = "10.00";
+    setEditorState({
+      originalUid: null,
+      line: materializeExceptionalDiscountLine(
+        {
+          ...newLine("discount", defaultVatRate),
+          title: t("admin.quote_lines.kind_exceptional_discount"),
+          vatRate: normalizePercentInput(defaultVatRate),
+          meta: exceptionalDiscountMeta({}, percent, baseTotal),
+        },
+        lines,
+      ),
     });
   }
 
@@ -784,11 +904,82 @@ export default function QuoteLinesEditor({
     });
   }
 
+  function setExceptionalDiscountMode(enabled: boolean): void {
+    if (!editorState) {
+      return;
+    }
+    setEditorState((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      const line = prev.line;
+      if (!enabled) {
+        const nextMeta = { ...(line.meta || {}) };
+        delete nextMeta.discount_kind;
+        delete nextMeta.discount_scope;
+        delete nextMeta.discount_percent;
+        delete nextMeta.discount_base_ttc;
+        return {
+          ...prev,
+          line: {
+            ...line,
+            meta: nextMeta,
+            unitPrice: "0",
+            quantity: "1",
+            manualUnitPriceOverride: false,
+          },
+        };
+      }
+      const baseTotal = quoteTotalBeforeExceptionalDiscount(lines, prev.originalUid);
+      const percent = exceptionalDiscountPercent(line);
+      return {
+        ...prev,
+        line: materializeExceptionalDiscountLine(
+          {
+            ...line,
+            refId: "",
+            title: line.title || t("admin.quote_lines.kind_exceptional_discount"),
+            quantity: "1",
+            vatRate: line.vatRate || normalizePercentInput(defaultVatRate),
+            meta: exceptionalDiscountMeta(line.meta, percent, baseTotal),
+            manualUnitPriceOverride: false,
+          },
+          lines,
+          prev.originalUid,
+        ),
+      };
+    });
+  }
+
+  function updateExceptionalDiscountPercent(value: string): void {
+    if (!editorState) {
+      return;
+    }
+    const percent = normalizeDiscountPercentInput(value);
+    setEditorState((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      const baseTotal = quoteTotalBeforeExceptionalDiscount(lines, prev.originalUid);
+      return {
+        ...prev,
+        line: materializeExceptionalDiscountLine(
+          {
+            ...prev.line,
+            meta: exceptionalDiscountMeta(prev.line.meta, percent, baseTotal),
+          },
+          lines,
+          prev.originalUid,
+        ),
+      };
+    });
+  }
+
   function commitEditor(): void {
     if (!editorState) {
       return;
     }
-    const draft = editorState.line;
+    const draft = materializeExceptionalDiscountLine(editorState.line, lines, editorState.originalUid);
     if (editorState.originalUid === null) {
       setLines((prev) => [...prev, draft]);
       setEditorState(null);
@@ -838,6 +1029,18 @@ export default function QuoteLinesEditor({
   }
 
   const editorLine = editorState?.line ?? null;
+  const editorPreviewLine = editorLine
+    ? materializeExceptionalDiscountLine(editorLine, lines, editorState?.originalUid ?? null)
+    : null;
+  const editorIsExceptionalPercentDiscount = editorLine ? isExceptionalPercentDiscount(editorLine) : false;
+  const editorExceptionalDiscountBase = editorLine
+    ? quoteTotalBeforeExceptionalDiscount(lines, editorState?.originalUid ?? null)
+    : 0;
+  const editorExceptionalDiscountPercent = editorLine ? exceptionalDiscountPercent(editorLine) : "0.00";
+  const editorExceptionalDiscountAmount = exceptionalDiscountAmount(
+    editorExceptionalDiscountBase,
+    editorExceptionalDiscountPercent,
+  );
   const editorSelectedLabel = editorLine
     ? selectedOptionLabel(editorLine.kind, editorLine.refId, activities, products, kits)
     : null;
@@ -898,6 +1101,10 @@ export default function QuoteLinesEditor({
           <button type="button" className="ghost quote-add-button" onClick={() => openCreateModal("discount")} disabled={!editable}>
             <PlusIcon />
             <span>{t("admin.quote_lines.kind_discount")}</span>
+          </button>
+          <button type="button" className="ghost quote-add-button" onClick={openCreateExceptionalDiscountModal} disabled={!editable}>
+            <PlusIcon />
+            <span>{t("admin.quote_lines.kind_exceptional_discount")}</span>
           </button>
           <button type="button" className="ghost quote-add-button" onClick={() => openCreateModal("surcharge")} disabled={!editable}>
             <PlusIcon />
@@ -969,7 +1176,7 @@ export default function QuoteLinesEditor({
                     </div>
                     <div>
                       <span>{t("admin.quote_lines.unit_price_ttc_short")}</span>
-                      <strong>{toMoney(Number(line.unitPrice || "0"), currency, language)}</strong>
+                      <strong>{toMoney(signedUnitPrice(line), currency, language)}</strong>
                     </div>
                     <div>
                       <span>{t("admin.quote_lines.total_ttc")}</span>
@@ -1048,7 +1255,30 @@ export default function QuoteLinesEditor({
                   ) : null}
                 </>
               ) : null}
-              {editorLine.kind === "discount" && discountRules.length > 0 ? (
+              {editorLine.kind === "discount" ? (
+                <div className="quote-discount-mode cols-span-4 top-gap-sm" role="group" aria-label={t("admin.quote_lines.discount_mode")}>
+                  <span>{t("admin.quote_lines.discount_mode")}</span>
+                  <button
+                    type="button"
+                    className={!editorIsExceptionalPercentDiscount ? "is-active" : ""}
+                    aria-pressed={!editorIsExceptionalPercentDiscount}
+                    onClick={() => setExceptionalDiscountMode(false)}
+                    disabled={!editable}
+                  >
+                    {t("admin.quote_lines.discount_mode_fixed")}
+                  </button>
+                  <button
+                    type="button"
+                    className={editorIsExceptionalPercentDiscount ? "is-active" : ""}
+                    aria-pressed={editorIsExceptionalPercentDiscount}
+                    onClick={() => setExceptionalDiscountMode(true)}
+                    disabled={!editable}
+                  >
+                    {t("admin.quote_lines.discount_mode_percent")}
+                  </button>
+                </div>
+              ) : null}
+              {editorLine.kind === "discount" && !editorIsExceptionalPercentDiscount && discountRules.length > 0 ? (
                 <label className="top-gap-sm">
                   {t("admin.quote_lines.discount_rule")}
                   <select
@@ -1077,16 +1307,40 @@ export default function QuoteLinesEditor({
                     disabled={!editable}
                   />
                 </label>
+                {editorIsExceptionalPercentDiscount ? (
+                  <>
+                    <label className="cols-span-2">
+                      {t("admin.quote_lines.discount_percent")}
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step="0.01"
+                        value={editorExceptionalDiscountPercent}
+                        onChange={(event) => updateExceptionalDiscountPercent(event.target.value)}
+                        required
+                        disabled={!editable}
+                      />
+                    </label>
+                    <div className="quote-discount-preview cols-span-2">
+                      <span>{t("admin.quote_lines.discount_percent_base", { base: toMoney(editorExceptionalDiscountBase, currency, language) })}</span>
+                      <strong>{t("admin.quote_lines.discount_percent_amount", { amount: toMoney(-editorExceptionalDiscountAmount, currency, language) })}</strong>
+                    </div>
+                    <p className="quote-discount-preview is-muted cols-span-4">
+                      {t("admin.quote_lines.discount_percent_hint")}
+                    </p>
+                  </>
+                ) : null}
                 <label>
                   {t("common.quantity")}
                   <input
                     type="number"
                     min={1}
                     step={1}
-                    value={editorLine.quantity}
+                    value={editorIsExceptionalPercentDiscount ? "1" : editorLine.quantity}
                     onChange={(event) => updateEditor({ quantity: normalizeQuantityInput(event.target.value) })}
                     required
-                    disabled={!editable}
+                    disabled={!editable || editorIsExceptionalPercentDiscount}
                   />
                 </label>
                 {editorCanAlignQuantity ? (
@@ -1126,10 +1380,10 @@ export default function QuoteLinesEditor({
                   <input
                     type="number"
                     step="0.01"
-                    value={editorLine.unitPrice}
+                    value={editorIsExceptionalPercentDiscount ? editorExceptionalDiscountAmount.toFixed(2) : editorLine.unitPrice}
                     onChange={(event) => updateEditor({ unitPrice: event.target.value, manualUnitPriceOverride: true })}
                     required
-                    disabled={!editable}
+                    disabled={!editable || editorIsExceptionalPercentDiscount}
                   />
                 </label>
                 {editorResolvedSourcePrice ? (
@@ -1154,15 +1408,15 @@ export default function QuoteLinesEditor({
                 <div className="quote-line-amounts-row">
                   <div className="quote-line-amount">
                     <span>{t("admin.quote_lines.line_total_ttc")}</span>
-                    <strong>{toMoney(lineAmount(editorLine), currency, language)}</strong>
+                    <strong>{toMoney(lineAmount(editorPreviewLine ?? editorLine), currency, language)}</strong>
                   </div>
                   <div className="quote-line-amount">
                     <span>{t("admin.quote_lines.amount_ht")}</span>
-                    <strong>{toMoney(lineAmountHt(editorLine), currency, language)}</strong>
+                    <strong>{toMoney(lineAmountHt(editorPreviewLine ?? editorLine), currency, language)}</strong>
                   </div>
                   <div className="quote-line-amount">
                     <span>{t("admin.quote_lines.amount_vat")}</span>
-                    <strong>{toMoney(lineAmountVat(editorLine), currency, language)}</strong>
+                    <strong>{toMoney(lineAmountVat(editorPreviewLine ?? editorLine), currency, language)}</strong>
                   </div>
                 </div>
               </div>

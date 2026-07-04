@@ -4245,6 +4245,23 @@ def _effective_item_price(
     return code, title, description, duration, unit_price, meta
 
 
+def _is_exceptional_percent_discount_line(line: QuoteLineIn, meta: dict[str, object]) -> bool:
+    return line.line_type == "discount" and str(meta.get("discount_kind") or "").strip() == "exceptional_percent"
+
+
+def _exceptional_discount_percent(meta: dict[str, object]) -> Decimal:
+    raw = meta.get("discount_percent") or meta.get("exceptional_discount_percent") or Decimal("0")
+    try:
+        parsed = Decimal(str(raw).replace(",", ".").strip())
+    except Exception:
+        parsed = Decimal("0")
+    if parsed < Decimal("0"):
+        return Decimal("0")
+    if parsed > Decimal("100"):
+        return Decimal("100")
+    return _q2(parsed)
+
+
 def _materialize_quote_lines(
     db: Session,
     *,
@@ -4253,6 +4270,7 @@ def _materialize_quote_lines(
 ) -> Decimal:
     db.query(QuoteLine).filter(QuoteLine.quote_id == quote.id).delete(synchronize_session=False)
     lines_total = Decimal("0.00")
+    prepared_lines: list[dict[str, object]] = []
 
     for item in lines_in:
         if item.line_category == "service" and item.line_type == "item" and item.activity_id is None:
@@ -4268,6 +4286,58 @@ def _materialize_quote_lines(
         )
 
         quantity = _q2(item.quantity)
+        prepared_lines.append({
+            "item": item,
+            "code": code,
+            "title": title,
+            "description": description,
+            "duration": duration,
+            "unit_price": unit_price,
+            "meta": meta,
+            "quantity": quantity,
+        })
+
+    exceptional_discount_base_ttc = Decimal("0.00")
+    for prepared in prepared_lines:
+        item = prepared["item"]
+        meta = _json_object(prepared["meta"])
+        if not isinstance(item, QuoteLineIn):
+            continue
+        if _is_exceptional_percent_discount_line(item, meta):
+            continue
+        quantity = prepared["quantity"] if isinstance(prepared["quantity"], Decimal) else Decimal("0")
+        unit_price = prepared["unit_price"] if isinstance(prepared["unit_price"], Decimal) else Decimal("0")
+        amount = _q2(quantity * unit_price)
+        if item.line_type == "discount":
+            amount = _q2(-abs(amount))
+        elif item.line_type == "surcharge":
+            amount = _q2(abs(amount))
+        exceptional_discount_base_ttc += amount
+
+    exceptional_discount_base_ttc = _q2(max(Decimal("0.00"), exceptional_discount_base_ttc))
+
+    for prepared in prepared_lines:
+        item = prepared["item"]
+        if not isinstance(item, QuoteLineIn):
+            continue
+        code_value = prepared["code"]
+        code = code_value if isinstance(code_value, str) else None
+        title = str(prepared["title"] or item.title)
+        description = prepared["description"] if isinstance(prepared["description"], str) or prepared["description"] is None else str(prepared["description"])
+        duration = prepared["duration"] if isinstance(prepared["duration"], int) or prepared["duration"] is None else None
+        unit_price = prepared["unit_price"] if isinstance(prepared["unit_price"], Decimal) else Decimal("0")
+        meta = _json_object(prepared["meta"])
+        quantity = prepared["quantity"] if isinstance(prepared["quantity"], Decimal) else _q2(item.quantity)
+
+        if _is_exceptional_percent_discount_line(item, meta):
+            percent = _exceptional_discount_percent(meta)
+            quantity = Decimal("1.00")
+            unit_price = _q2(exceptional_discount_base_ttc * percent / Decimal("100"))
+            meta["discount_kind"] = "exceptional_percent"
+            meta["discount_scope"] = "quote_total"
+            meta["discount_percent"] = str(_q2(percent))
+            meta["discount_base_ttc"] = str(exceptional_discount_base_ttc)
+
         amount = _q2(quantity * unit_price)
         if item.line_type == "discount":
             amount = _q2(-abs(amount))

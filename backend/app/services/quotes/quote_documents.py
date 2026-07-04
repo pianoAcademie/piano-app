@@ -2730,10 +2730,29 @@ def _planning_activity_display_label(block: dict[str, Any], *, language: str | N
     return _localized_business_label(str(block.get("activity_label") or "-").strip() or "-", language=language)
 
 
+def _quote_line_exceptional_discount_suffix(line: Any, *, language: str | None = None) -> str:
+    if str(getattr(line, "line_type", "") or "").strip() != "discount":
+        return ""
+    meta = getattr(line, "meta", None)
+    if not isinstance(meta, dict):
+        return ""
+    if str(meta.get("discount_kind") or "").strip() != "exceptional_percent":
+        return ""
+    percent = _decimal_from_any(meta.get("discount_percent"), Decimal("0.00")).quantize(Decimal("0.01"))
+    percent_label = _decimal_str(percent).rstrip("0").rstrip(",")
+    if _is_english_quote_language(language):
+        return f"{percent_label}% of quote total"
+    return f"{percent_label}% du devis"
+
+
 def _quote_line_display_title(line: Any, *, language: str | None = None) -> str:
     title = str(getattr(line, "title", "") or "-").strip() or "-"
     business_label = _localized_business_label(title, language=language)
-    return _localized_catalog_text(business_label, language=language)
+    display_title = _localized_catalog_text(business_label, language=language)
+    suffix = _quote_line_exceptional_discount_suffix(line, language=language)
+    if suffix:
+        return f"{display_title} ({suffix})"
+    return display_title
 
 
 def _localized_english_text_fragments(value: Any, *, language: str | None = None) -> str:
