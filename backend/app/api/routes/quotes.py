@@ -3964,6 +3964,14 @@ def _build_payment_terms_snapshot_for_quote(db: Session, quote: Quote, *, total_
     )
 
 
+def _payment_terms_snapshot_matches_total(snapshot: object | None, total_ttc: Decimal) -> bool:
+    normalized = _json_object(snapshot)
+    snapshot_total = _decimal_or_none(normalized.get("total_ttc_after_adjustment"))
+    if snapshot_total is None:
+        snapshot_total = _decimal_or_none(normalized.get("total_ttc"))
+    return snapshot_total is not None and _q2(snapshot_total) == _q2(total_ttc)
+
+
 def _extract_vat_rate(meta: dict[str, object] | None) -> Decimal | None:
     if not meta:
         return None
@@ -5701,7 +5709,7 @@ def create_quote_from_payload(
     )
     row.calendar_snapshot = _calendar_snapshot_with_planning_sessions(db, row.calendar_snapshot)
     lines_total = _quote_lines_total_ttc(db, quote_id=row.id)
-    if not row.payment_terms_snapshot:
+    if not row.payment_terms_snapshot or not _payment_terms_snapshot_matches_total(row.payment_terms_snapshot, total):
         row.payment_terms_snapshot = _build_payment_terms_snapshot_for_quote(db, row, total_ttc=total)
     if not row.price_snapshot:
         row.price_snapshot = {
@@ -5931,11 +5939,13 @@ def update_quote(
             computed_total = _q2(Decimal(row.total_ttc or 0))
             document_dirty = True
 
-    if payload.payment_terms_snapshot is None and (
-        payment_plan_changed or payload.lines is not None or adjustment_changed or deposit_changed or activity_lines_removed
-    ):
+    if payment_plan_changed or payload.lines is not None or adjustment_changed or deposit_changed or activity_lines_removed:
         total_for_schedule = computed_total if computed_total is not None else _q2(Decimal(row.total_ttc or 0))
-        row.payment_terms_snapshot = _build_payment_terms_snapshot_for_quote(db, row, total_ttc=total_for_schedule)
+        if payload.payment_terms_snapshot is None or not _payment_terms_snapshot_matches_total(
+            row.payment_terms_snapshot,
+            total_for_schedule,
+        ):
+            row.payment_terms_snapshot = _build_payment_terms_snapshot_for_quote(db, row, total_ttc=total_for_schedule)
 
     if payload.price_snapshot is None and (payload.lines is not None or adjustment_changed or activity_lines_removed):
         lines_total_ttc = _quote_lines_total_ttc(db, quote_id=row.id)

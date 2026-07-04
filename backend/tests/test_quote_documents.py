@@ -29,6 +29,8 @@ from app.services.quotes.quote_documents import (
     _planning_block_pdf_row,
     _planning_blocks_table_html,
     _normalise_check_schedule_deposit_months,
+    _quote_line_display_title,
+    _rebalance_payment_schedule_amounts,
     _quote_template_disables_pass_recup,
     _quote_template_allows_end_year_concert,
     _resolve_prospect_data,
@@ -36,10 +38,41 @@ from app.services.quotes.quote_documents import (
     _solfege_pending_block_info,
 )
 from app.services.quotes.calendar_engine import CalendarGenerationInput, generate_calendar_snapshot
-from app.api.routes.quotes import _resolve_quote_pdf_bytes
+from app.api.routes.quotes import _payment_terms_snapshot_matches_total, _resolve_quote_pdf_bytes
 
 
 class QuoteDocumentMarkupTests(unittest.TestCase):
+    def test_exceptional_percent_discount_label_includes_quote_scope(self) -> None:
+        line = SimpleNamespace(
+            title="Remise exceptionnelle famille",
+            line_type="discount",
+            meta={"discount_kind": "exceptional_percent", "discount_percent": "10.00"},
+        )
+
+        self.assertEqual(
+            _quote_line_display_title(line, language="fr"),
+            "Remise exceptionnelle famille (10% du devis)",
+        )
+
+    def test_payment_terms_snapshot_total_must_match_quote_total(self) -> None:
+        snapshot = {"total_ttc_after_adjustment": "1696.00", "schedule": []}
+
+        self.assertTrue(_payment_terms_snapshot_matches_total(snapshot, Decimal("1696.00")))
+        self.assertFalse(_payment_terms_snapshot_matches_total(snapshot, Decimal("1526.40")))
+
+    def test_rebalance_payment_schedule_amounts_preserves_count_and_target_total(self) -> None:
+        schedule = [
+            {"label": "1", "amount_ttc": "149.60"},
+            {"label": "2", "amount_ttc": "149.60"},
+            {"label": "3", "amount_ttc": "149.60"},
+        ]
+
+        rebalanced = _rebalance_payment_schedule_amounts(schedule, Decimal("403.92"))
+
+        self.assertEqual(len(rebalanced), 3)
+        self.assertEqual(sum(Decimal(item["amount_ttc"]) for item in rebalanced), Decimal("403.92"))
+        self.assertEqual(schedule[0]["amount_ttc"], "149.60")
+
     def test_session_blocked_by_quote_school_calendar_honors_vacation_periods(self) -> None:
         session = {
             "date": "2026-10-20",

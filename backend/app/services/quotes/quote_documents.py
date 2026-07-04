@@ -198,6 +198,8 @@ QUOTE_DOC_TEXT = {
         "fee_material": "Matériel",
         "fee_kit": "Kit",
         "financial_title": "Montant total du devis",
+        "financial_total_before_exceptional_discount": "Total TTC avant remise exceptionnelle",
+        "financial_exceptional_discount": "Remise exceptionnelle",
         "financial_total_before_adjustment": "Total TTC avant ajustement",
         "financial_adjustment": "Ajustement",
         "financial_impact": "Impact",
@@ -403,6 +405,8 @@ QUOTE_DOC_TEXT = {
         "fee_material": "Material",
         "fee_kit": "Kit",
         "financial_title": "Total quote amount",
+        "financial_total_before_exceptional_discount": "Gross total before exceptional discount",
+        "financial_exceptional_discount": "Exceptional discount",
         "financial_total_before_adjustment": "Gross total before adjustment",
         "financial_adjustment": "Adjustment",
         "financial_impact": "Impact",
@@ -861,6 +865,45 @@ def _normalise_check_schedule_deposit_months(
         return normalised
     second["due_month"] = 12
     second["due_label"] = _quote_doc_text("calendar_month_12", language=language).lower()
+    return normalised
+
+
+def _payment_snapshot_total_ttc(snapshot: dict[str, Any]) -> Decimal | None:
+    for key in ("total_ttc_after_adjustment", "total_ttc"):
+        if key not in snapshot:
+            continue
+        amount = _decimal_from_any(snapshot.get(key), Decimal("0.00")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        if amount > Decimal("0.00"):
+            return amount
+    return None
+
+
+def _rebalance_payment_schedule_amounts(schedule: list[dict[str, Any]], target_total: Decimal) -> list[dict[str, Any]]:
+    target_total = target_total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if not schedule or target_total <= Decimal("0.00"):
+        return schedule
+    normalised = [dict(item) for item in schedule]
+    current_amounts = [
+        _decimal_from_any(item.get("amount_ttc"), Decimal("0.00")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        for item in normalised
+    ]
+    current_total = sum(current_amounts, Decimal("0.00")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if current_total == target_total:
+        return normalised
+
+    allocated = Decimal("0.00")
+    last_index = len(normalised) - 1
+    for index, item in enumerate(normalised):
+        if index == last_index:
+            amount = (target_total - allocated).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        elif current_total > Decimal("0.00"):
+            amount = (target_total * current_amounts[index] / current_total).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            allocated += amount
+        else:
+            remaining_count = len(normalised) - index
+            amount = ((target_total - allocated) / Decimal(remaining_count)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            allocated += amount
+        item["amount_ttc"] = str(amount)
     return normalised
 
 
@@ -2731,18 +2774,21 @@ def _planning_activity_display_label(block: dict[str, Any], *, language: str | N
 
 
 def _quote_line_exceptional_discount_suffix(line: Any, *, language: str | None = None) -> str:
-    if str(getattr(line, "line_type", "") or "").strip() != "discount":
+    if not _is_exceptional_percent_discount_quote_line(line):
         return ""
     meta = getattr(line, "meta", None)
-    if not isinstance(meta, dict):
-        return ""
-    if str(meta.get("discount_kind") or "").strip() != "exceptional_percent":
-        return ""
     percent = _decimal_from_any(meta.get("discount_percent"), Decimal("0.00")).quantize(Decimal("0.01"))
     percent_label = _decimal_str(percent).rstrip("0").rstrip(",")
     if _is_english_quote_language(language):
         return f"{percent_label}% of quote total"
     return f"{percent_label}% du devis"
+
+
+def _is_exceptional_percent_discount_quote_line(line: Any) -> bool:
+    if str(getattr(line, "line_type", "") or "").strip() != "discount":
+        return False
+    meta = getattr(line, "meta", None)
+    return isinstance(meta, dict) and str(meta.get("discount_kind") or "").strip() == "exceptional_percent"
 
 
 def _quote_line_display_title(line: Any, *, language: str | None = None) -> str:
@@ -4145,6 +4191,9 @@ def _extract_document_context(
     schedule = _normalise_check_schedule_deposit_months(schedule, language=language)
     has_installment_schedule = len(schedule) > 1
     schedule_visibility = _resolve_schedule_visibility_by_audience(quote=quote)
+    quote_total_ttc = Decimal(quote.total_ttc or 0).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    snapshot_total_ttc = _payment_snapshot_total_ttc(payment_snapshot)
+    snapshot_matches_quote_total = snapshot_total_ttc is None or snapshot_total_ttc == quote_total_ttc
     deposit_data = _json_object(payment_snapshot.get("deposit"))
     meta = _json_object(quote.meta)
     if not deposit_data:
@@ -4157,7 +4206,11 @@ def _extract_document_context(
     if deposit_amount_ttc <= Decimal("0.00"):
         deposit_enabled = False
         deposit_amount_ttc = Decimal("0.00")
-    total_after_adjustment = _decimal_from_any(payment_snapshot.get("total_ttc_after_adjustment"), quote.total_ttc)
+    total_after_adjustment = (
+        _decimal_from_any(payment_snapshot.get("total_ttc_after_adjustment"), quote.total_ttc)
+        if snapshot_matches_quote_total
+        else quote_total_ttc
+    )
     if deposit_amount_ttc > total_after_adjustment:
         deposit_amount_ttc = total_after_adjustment
     remaining_ttc_after_deposit = _decimal_from_any(
@@ -4166,6 +4219,8 @@ def _extract_document_context(
     ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     if remaining_ttc_after_deposit < Decimal("0.00"):
         remaining_ttc_after_deposit = Decimal("0.00")
+    if not snapshot_matches_quote_total:
+        schedule = _rebalance_payment_schedule_amounts(schedule, remaining_ttc_after_deposit)
 
     calendar_snapshot = _calendar_snapshot_with_line_recommendation_keys(
         db,
@@ -4956,6 +5011,19 @@ def _build_template_values(
     has_credit_adjustment = adjustment_type == "credit"
     has_debt_adjustment = adjustment_type == "debt"
 
+    exceptional_discount_lines = [line for line in lines if _is_exceptional_percent_discount_quote_line(line)]
+    exceptional_discount_ttc = sum(
+        (abs(Decimal(getattr(line, "amount_ttc", Decimal("0")) or Decimal("0"))) for line in exceptional_discount_lines),
+        Decimal("0.00"),
+    ).quantize(Decimal("0.01"))
+    has_exceptional_discount = exceptional_discount_ttc > Decimal("0.00")
+    exceptional_discount_label = (
+        _quote_line_display_title(exceptional_discount_lines[0], language=language)
+        if exceptional_discount_lines
+        else _quote_doc_text("financial_exceptional_discount", language=language)
+    )
+    total_ttc_before_exceptional_discount = (total_before_adjustment + exceptional_discount_ttc).quantize(Decimal("0.01"))
+
     total_ht_before_adjustment = total_ht_before_from_lines
     vat_amount_before_adjustment = vat_amount_before_from_lines
     if adjustment_type == "none":
@@ -4993,6 +5061,15 @@ def _build_template_values(
         total_ttc_before_adjustment_html = (
             f"<p><strong>{escape(_quote_doc_text('financial_total_before_adjustment', language=language))} :</strong> {_decimal_str(total_before_adjustment)} {escape(currency)}</p>"
         )
+    exceptional_financial_recap_rows: list[tuple[str, str]] = []
+    if has_exceptional_discount:
+        exceptional_financial_recap_rows = [
+            (
+                _quote_doc_text("financial_total_before_exceptional_discount", language=language),
+                f"{_decimal_str(total_ttc_before_exceptional_discount)} {currency}",
+            ),
+            (exceptional_discount_label, f"-{_decimal_str(exceptional_discount_ttc)} {currency}"),
+        ]
     if adjustment_type == "none":
         financial_recap_rows: list[tuple[str, str]] = [
             (_quote_doc_text("financial_total_ht", language=language), f"{_decimal_str(total_ht_after_adjustment)} {currency}"),
@@ -5014,6 +5091,7 @@ def _build_template_values(
                 (_quote_doc_text("financial_total_ttc_quote", language=language), f"{_decimal_str(total_after_adjustment)} {currency}"),
             ]
         )
+    financial_recap_rows = exceptional_financial_recap_rows + financial_recap_rows
     if has_deposit:
         financial_recap_rows.extend(
             [
@@ -5638,6 +5716,10 @@ def _build_template_values(
         "recipient_name": recipient_name,
         "recipient_email": recipient_email,
         "total_ttc": _decimal_str(total_ttc),
+        "has_exceptional_discount": "true" if has_exceptional_discount else "false",
+        "exceptional_discount_label": exceptional_discount_label if has_exceptional_discount else "",
+        "exceptional_discount_amount_ttc": _decimal_str(exceptional_discount_ttc),
+        "total_ttc_before_exceptional_discount": _decimal_str(total_ttc_before_exceptional_discount),
         "total_ttc_before_adjustment": _decimal_str(total_before_adjustment),
         "total_ttc_after_adjustment": _decimal_str(total_after_adjustment),
         "total_ht": _decimal_str(total_ht_after_adjustment),
@@ -6986,6 +7068,19 @@ def _render_quote_pdf_blocks(
     story.append(PageBreak())
     story.append(Paragraph(_quote_doc_text("financial_title", language=language), styles["h2"]))
     financial_rows: list[list[str]] = []
+    if values.get("has_exceptional_discount") == "true":
+        financial_rows.append(
+            [
+                _quote_doc_text("financial_total_before_exceptional_discount", language=language),
+                f"{values.get('total_ttc_before_exceptional_discount', values.get('total_ttc_before_adjustment', values.get('total_ttc', '0,00')))} {values.get('currency', 'EUR')}",
+            ]
+        )
+        financial_rows.append(
+            [
+                values.get("exceptional_discount_label") or _quote_doc_text("financial_exceptional_discount", language=language),
+                f"-{values.get('exceptional_discount_amount_ttc', '0,00')} {values.get('currency', 'EUR')}",
+            ]
+        )
     if values.get("has_financial_adjustment") == "true":
         financial_rows.append([_quote_doc_text("financial_total_before_adjustment", language=language), f"{values.get('total_ttc_before_adjustment', '0,00')} {values.get('currency', 'EUR')}"])
         financial_rows.append([values.get("financial_adjustment_type_label", _quote_doc_text("financial_adjustment", language=language)), f"{values.get('financial_adjustment_amount_ttc', '0,00')} {values.get('currency', 'EUR')}"])
