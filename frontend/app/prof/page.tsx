@@ -655,6 +655,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
       : selectedSessionStudents;
   const editableAttendanceStudents = selectedSessionStudents.filter((student) => student.attendance_status !== "WAITLISTED");
   const selectedMessageId = readParam(searchParams, "message_id");
+  const sentMessageId = readParam(searchParams, "sent_message_id");
 
   const pendingRows = pendingResult.ok ? pendingResult.data : [];
   const pendingCount = pendingRows.reduce((sum, row) => sum + row.pending_students_count, 0);
@@ -678,6 +679,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   const todayAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: todayKeyUtc(), dayDetails: "" });
   const archivedMessages = messagesResult.ok ? messagesResult.data : [];
   const selectedMessage = selectedMessageId ? archivedMessages.find((message) => message.id === selectedMessageId) ?? null : null;
+  const sentMessage = sentMessageId ? archivedMessages.find((message) => message.id === sentMessageId) ?? null : null;
   const selectedSessionMessages = selectedSession
     ? archivedMessages.filter((message) => message.session_id === selectedSession.id)
     : [];
@@ -1422,6 +1424,18 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                   <summary>{t("teacher.session_messages_section")}</summary>
                   <div className="teacher-attendance-accordion-body">
                     <p className="teacher-session-message-help">{t("teacher.session_messages_help")}</p>
+                    {sentMessage && selectedSession && sentMessage.session_id === selectedSession.id ? (
+                      <p className="teacher-message-sent-confirmation">
+                        {t("teacher.sent_message_archived")}
+                        {" "}
+                        <Link
+                          className="reset-link"
+                          href={buildProfHref({ tab: "messages", agendaView, agendaDate, messageId: sentMessage.id })}
+                        >
+                          {t("teacher.open_message")}
+                        </Link>
+                      </p>
+                    ) : null}
                     {selectedSessionMessages.length > 0 ? (
                       <div className="teacher-session-message-list">
                         {selectedSessionMessages.slice(0, 5).map((message) => {
@@ -1434,7 +1448,10 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                                 : t("teacher.group_target");
                           const preview = plainMessagePreview(message.body, message.body_format);
                           return (
-                            <article key={message.id} className="teacher-session-message-card">
+                            <article
+                              key={message.id}
+                              className={`teacher-session-message-card ${message.id === sentMessageId ? "teacher-session-message-card-highlight" : ""}`}
+                            >
                               <div className="teacher-session-message-card-head">
                                 <strong>{parsedSubject.cleanedSubject}</strong>
                                 <span className="badge">{targetLabel}</span>

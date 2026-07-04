@@ -5205,6 +5205,18 @@ button.danger:focus-visible {
   line-height: 1.35;
 }
 
+.teacher-message-sent-confirmation {
+  margin: 0;
+  border: 1px solid #bfd7c7;
+  border-radius: 10px;
+  background: #eef8f0;
+  color: #1d6b3a;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
 .teacher-session-message-list {
   display: grid;
   gap: 8px;
@@ -5217,6 +5229,12 @@ button.danger:focus-visible {
   padding: 10px 12px;
   display: grid;
   gap: 6px;
+}
+
+.teacher-session-message-card-highlight {
+  border-color: #8fc6a0;
+  background: #f3fbf5;
+  box-shadow: 0 0 0 2px rgba(47, 143, 88, 0.12);
 }
 
 .teacher-session-message-card p {
