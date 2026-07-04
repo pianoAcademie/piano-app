@@ -243,6 +243,42 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         freeze_mock.assert_called_once()
         render_mock.assert_called_once()
 
+    def test_admin_pdf_uses_current_render_when_frozen_snapshot_is_stale(self) -> None:
+        quote = SimpleNamespace(
+            id=uuid4(),
+            document_status="frozen",
+            document_snapshot_id=uuid4(),
+            calendar_snapshot={},
+        )
+        snapshot = SimpleNamespace(
+            combined_html_snapshot="<html>old</html>",
+            document_hash="old-hash",
+        )
+        db = SimpleNamespace(scalar=lambda _query: snapshot)
+
+        with patch(
+            "app.api.routes.quotes.render_quote_parts_html",
+            return_value=("<html>body</html>", "<html>terms</html>", "<html>current</html>"),
+        ) as parts_mock, patch(
+            "app.api.routes.quotes._freeze_quote_document_snapshot",
+            side_effect=AssertionError("admin preview should not refreeze the public document"),
+        ) as freeze_mock, patch(
+            "app.api.routes.quotes.render_quote_pdf_from_combined_html",
+            return_value=b"%PDF current",
+        ) as render_mock:
+            pdf_bytes = _resolve_quote_pdf_bytes(
+                db,
+                quote=quote,
+                lines=[],
+                freeze_state="generated",
+            )
+
+        self.assertEqual(pdf_bytes, b"%PDF current")
+        parts_mock.assert_called_once()
+        freeze_mock.assert_not_called()
+        render_mock.assert_called_once()
+        self.assertEqual(render_mock.call_args.kwargs["combined_html"], "<html>current</html>")
+
     def test_calendar_snapshot_hydrates_missing_block_sessions_from_planning(self) -> None:
         activity_id = uuid4()
         location_id = uuid4()

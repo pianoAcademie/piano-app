@@ -4087,6 +4087,22 @@ def _resolve_quote_pdf_bytes(
     if quote.document_snapshot_id:
         snapshot = db.scalar(select(QuoteDocumentSnapshot).where(QuoteDocumentSnapshot.id == quote.document_snapshot_id))
         if snapshot is not None and snapshot.combined_html_snapshot:
+            if freeze_state == "generated":
+                _body_html, _terms_html, current_combined_html = render_quote_parts_html(
+                    db=db,
+                    quote=quote,
+                    lines=lines,
+                    audience=audience,
+                )
+                current_hash = hashlib.sha256(current_combined_html.encode("utf-8")).hexdigest()
+                if current_hash != snapshot.document_hash:
+                    return render_quote_pdf_from_combined_html(
+                        db=db,
+                        quote=quote,
+                        lines=lines,
+                        combined_html=current_combined_html,
+                        audience=audience,
+                    )
             if freeze_state == "frozen" and _quote_has_limited_planning_blocks(quote):
                 _body_html, _terms_html, current_combined_html = render_quote_parts_html(
                     db=db,
