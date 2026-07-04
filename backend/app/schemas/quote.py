@@ -132,6 +132,7 @@ class QuoteOut(BaseModel):
     cancelled_at: datetime | None = None
     school_year_label: str | None = None
     language: str | None = None
+    timezone: str | None = None
     vat_rate: Decimal | None = None
     estimated_solfege_level: str | None = None
     solfege_duration_minutes: int | None = None

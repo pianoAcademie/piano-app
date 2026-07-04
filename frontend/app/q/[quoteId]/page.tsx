@@ -35,6 +35,7 @@ type QuoteOut = {
   public_token: string | null;
   pdf_token: string | null;
   language: string | null;
+  timezone: string | null;
 };
 
 type QuoteLineOut = {
@@ -129,7 +130,17 @@ function resolveQuotePublicErrorMessage(rawError: string, errorCode: string, err
   return "";
 }
 
-function formatDate(value: string | null, language: UiLanguage): string {
+function normalizeTimezone(value: string | null | undefined): string {
+  const candidate = (value ?? "").trim() || "Europe/Paris";
+  try {
+    new Intl.DateTimeFormat("fr-FR", { timeZone: candidate }).format(new Date());
+    return candidate;
+  } catch {
+    return "Europe/Paris";
+  }
+}
+
+function formatDate(value: string | null, language: UiLanguage, timezone: string | null | undefined): string {
   if (!value) {
     return "-";
   }
@@ -137,7 +148,11 @@ function formatDate(value: string | null, language: UiLanguage): string {
   if (Number.isNaN(parsed.getTime())) {
     return "-";
   }
-  return parsed.toLocaleString(localeForUiLanguage(language), { dateStyle: "full", timeStyle: "short" });
+  return parsed.toLocaleString(localeForUiLanguage(language), {
+    dateStyle: "full",
+    timeStyle: "short",
+    timeZone: normalizeTimezone(timezone),
+  });
 }
 
 function formatAmount(value: string, currency: string, language: UiLanguage): string {
@@ -271,7 +286,7 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
                   </article>
                   <article>
                     <span>{t("quote_public.expires_on")}</span>
-                    <strong>{formatDate(payload.quote.expires_at, language)}</strong>
+                    <strong>{formatDate(payload.quote.expires_at, language, payload.quote.timezone)}</strong>
                   </article>
                 </div>
               </article>

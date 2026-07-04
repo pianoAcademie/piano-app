@@ -1883,7 +1883,24 @@ def _line_out(row: QuoteLine) -> QuoteLineOut:
     )
 
 
-def _quote_out(row: Quote, *, calendar_snapshot: dict[str, object] | None = None) -> QuoteOut:
+def _quote_display_timezone(db: Session, quote: Quote) -> str:
+    if quote.client_id is not None:
+        client = db.scalar(select(User).where(User.id == quote.client_id))
+        if client is not None and str(client.timezone or "").strip():
+            return str(client.timezone).strip()
+    if quote.location_id is not None:
+        location = db.scalar(select(Location).where(Location.id == quote.location_id))
+        if location is not None and str(location.timezone or "").strip():
+            return str(location.timezone).strip()
+    return "Europe/Paris"
+
+
+def _quote_out(
+    row: Quote,
+    *,
+    calendar_snapshot: dict[str, object] | None = None,
+    timezone_name: str | None = None,
+) -> QuoteOut:
     meta = row.meta or {}
     fallback_language = str(meta.get("language") or "").strip().lower() or None
     fallback_vat = _extract_vat_rate(meta)
@@ -1924,6 +1941,7 @@ def _quote_out(row: Quote, *, calendar_snapshot: dict[str, object] | None = None
         cancelled_at=row.cancelled_at,
         school_year_label=row.school_year_label,
         language=row.language or fallback_language,
+        timezone=timezone_name,
         vat_rate=_q2(Decimal(row.vat_rate or 0)) if row.vat_rate is not None else fallback_vat,
         estimated_solfege_level=row.estimated_solfege_level,
         solfege_duration_minutes=row.solfege_duration_minutes,
@@ -3573,7 +3591,7 @@ def _resolve_public_selected_solfege_slot(
 
 def _quote_public_out(db: Session, quote: Quote, lines: list[QuoteLine], payment_schedule: list[dict[str, object]]) -> QuotePublicOut:
     return QuotePublicOut(
-        quote=_quote_out(quote),
+        quote=_quote_out(quote, timezone_name=_quote_display_timezone(db, quote)),
         lines=[_line_out(row) for row in lines],
         payment_schedule=payment_schedule,
         solfege_selection=_public_quote_solfege_selection(db, quote),
