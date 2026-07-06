@@ -78,12 +78,20 @@ def _monthly_parts_from_service_months(
 
     delta = _quantize(total - sum(amount for _, amount in month_amounts))
     if delta:
-        first_key, first_amount = month_amounts[0]
-        if delta < Decimal("0.00") and _quantize(first_amount + delta) >= Decimal("0.00"):
+        if delta > Decimal("0.00"):
+            first_key, first_amount = month_amounts[0]
             month_amounts[0] = (first_key, _quantize(first_amount + delta))
         else:
-            last_key, last_amount = month_amounts[-1]
-            month_amounts[-1] = (last_key, _quantize(last_amount + delta))
+            remaining_credit = _quantize(-delta)
+            adjusted_month_amounts: list[tuple[str, Decimal]] = []
+            for month_key, amount in month_amounts:
+                if remaining_credit <= Decimal("0.00"):
+                    adjusted_month_amounts.append((month_key, amount))
+                    continue
+                reduction = min(amount, remaining_credit)
+                adjusted_month_amounts.append((month_key, _quantize(amount - reduction)))
+                remaining_credit = _quantize(remaining_credit - reduction)
+            month_amounts = adjusted_month_amounts
     return [(month_key, _quantize(amount)) for month_key, amount in month_amounts]
 
 

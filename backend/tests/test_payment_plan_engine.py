@@ -95,6 +95,28 @@ def test_monthly_card_schedule_uses_real_course_months_and_first_fixed_fees() ->
     assert schedule[-1]["due_label"] == "1er juin 2027"
 
 
+def test_monthly_card_schedule_applies_credit_to_earliest_service_months() -> None:
+    schedule = build_payment_schedule(
+        PaymentPlanScheduleInput(
+            payment_method_code="CARD_MONTHLY",
+            payment_method_label="Carte bancaire mensuelle",
+            schedule_type="monthly",
+            schedule_rules={"installment_count": 3},
+            total_ttc=Decimal("100.00"),
+            monthly_service_amounts_ttc={
+                "2026-09": Decimal("50.00"),
+                "2026-10": Decimal("50.00"),
+                "2026-11": Decimal("50.00"),
+            },
+            registration_date=date(2026, 5, 20),
+        )
+    )
+
+    amounts = _amounts(schedule)
+    assert amounts == [Decimal("0.00"), Decimal("50.00"), Decimal("50.00")]
+    assert sum(amounts) == Decimal("100.00")
+
+
 def test_monthly_card_schedule_keeps_total_when_rounding_with_fixed_fees() -> None:
     schedule = build_payment_schedule(
         PaymentPlanScheduleInput(
