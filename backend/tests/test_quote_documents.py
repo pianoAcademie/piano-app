@@ -610,6 +610,96 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertEqual(hydrated["blocks"][0]["source"], "forced_planning")
         self.assertNotIn("planning_session_limit", hydrated["blocks"][0])
 
+    def test_calendar_snapshot_hydration_keeps_forced_planning_sessions_during_school_breaks(self) -> None:
+        activity_id = uuid4()
+        location_id = uuid4()
+        recurrence_id = uuid4()
+        paris = ZoneInfo("Europe/Paris")
+
+        def live_row(iso_date: str) -> tuple[SimpleNamespace, SimpleNamespace, SimpleNamespace]:
+            local_day = date.fromisoformat(iso_date)
+            local_start = datetime.combine(local_day, time(16, 30), tzinfo=paris)
+            local_end = datetime.combine(local_day, time(17, 30), tzinfo=paris)
+            return (
+                SimpleNamespace(
+                    id=uuid4(),
+                    course_type_id=activity_id,
+                    location_id=location_id,
+                    status="SCHEDULED",
+                    start_at_utc=local_start.astimezone(timezone.utc),
+                    end_at_utc=local_end.astimezone(timezone.utc),
+                    timezone="Europe/Paris",
+                    recurrence_group_id=recurrence_id,
+                ),
+                SimpleNamespace(
+                    id=activity_id,
+                    name="Cours collectif - enfants - Bar-le-Duc",
+                    mode="ONSITE",
+                    exclude_holidays_in_recurrence=True,
+                    exclude_school_vacations_in_recurrence=True,
+                ),
+                SimpleNamespace(id=location_id, name="Bar-le-Duc", timezone="Europe/Paris", is_online=False),
+            )
+
+        calendar_rows = [
+            {
+                "is_active": True,
+                "location_id": str(location_id),
+                "school_year_label": "2026-2027",
+                "holiday_dates": [],
+                "closure_dates": [],
+                "vacation_periods": [{"start_date": "2026-10-18", "end_date": "2026-11-01"}],
+            }
+        ]
+        fake_db = SimpleNamespace(
+            scalar=lambda _query: SimpleNamespace(value=json.dumps(calendar_rows)),
+            scalars=lambda _query: SimpleNamespace(
+                all=lambda: [
+                    SimpleNamespace(
+                        id=activity_id,
+                        exclude_holidays_in_recurrence=True,
+                        exclude_school_vacations_in_recurrence=True,
+                    )
+                ]
+            ),
+            execute=lambda _query: SimpleNamespace(
+                all=lambda: [
+                    live_row("2026-10-28"),
+                    live_row("2026-11-04"),
+                ]
+            ),
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(activity_id),
+                    "activity_label": "Cours collectif - enfants - Bar-le-Duc",
+                    "location_id": str(location_id),
+                    "location_label": "Bar-le-Duc",
+                    "weekday": 2,
+                    "weekday_label": "Mercredi",
+                    "start_date": "2026-10-28",
+                    "end_date": "2026-11-04",
+                    "start_time": "16:30",
+                    "end_time": "17:30",
+                    "series_key": str(recurrence_id),
+                    "calendar_school_year": "2026-2027",
+                    "forced_planning": True,
+                    "source": "forced_planning",
+                    "selection_pending": False,
+                }
+            ],
+            "sessions": [],
+        }
+
+        hydrated = _calendar_snapshot_with_planning_sessions(fake_db, snapshot)
+
+        self.assertEqual([item["date"] for item in hydrated["sessions"]], ["2026-10-28", "2026-11-04"])
+        self.assertEqual(hydrated["sessions_count"], 2)
+        self.assertTrue(all(item["custom_period"] for item in hydrated["sessions"]))
+        self.assertTrue(all(item["forced_planning"] for item in hydrated["sessions"]))
+        self.assertEqual({item["source"] for item in hydrated["sessions"]}, {"forced_planning"})
+
     def test_calendar_snapshot_uses_expected_block_sessions_when_live_series_is_shorter(self) -> None:
         activity_id = uuid4()
         location_id = uuid4()

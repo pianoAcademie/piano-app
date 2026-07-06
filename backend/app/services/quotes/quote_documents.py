@@ -1718,6 +1718,30 @@ def _planning_block_has_custom_period(block: dict[str, Any]) -> bool:
     return bool(block.get("custom_period")) or bool(block.get("forced_planning")) or source in {"custom_period", "forced_planning"}
 
 
+def _planning_block_custom_period_source(block: dict[str, Any]) -> str:
+    if not _planning_block_has_custom_period(block):
+        return ""
+    source = str(block.get("source") or "").strip().lower()
+    if bool(block.get("forced_planning")) or source == "forced_planning":
+        return "forced_planning"
+    return "custom_period"
+
+
+def _calendar_session_has_custom_period_source(session: dict[str, Any]) -> bool:
+    source = str(session.get("source") or "").strip().lower()
+    return bool(session.get("custom_period")) or bool(session.get("forced_planning")) or source in {"custom_period", "forced_planning"}
+
+
+def _mark_calendar_session_custom_period(session: dict[str, Any], source: str) -> dict[str, Any]:
+    if source not in {"custom_period", "forced_planning"}:
+        return session
+    session["custom_period"] = True
+    session["source"] = source
+    if source == "forced_planning":
+        session["forced_planning"] = True
+    return session
+
+
 def _normalize_custom_planning_block(block: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     if not _planning_block_has_custom_period(block):
         return block, False
@@ -1810,6 +1834,7 @@ def _expected_sessions_from_planning_block(block: dict[str, Any]) -> list[dict[s
     weekday_label = str(block.get("weekday_label") or "").strip() or DAY_LABELS_FR.get(weekday, "")
     recommendation_key = str(block.get("recommendation_key") or "").strip()
     series_key = str(block.get("series_key") or "").strip()
+    custom_period_source = _planning_block_custom_period_source(block)
     rows: list[dict[str, Any]] = []
     for raw_session in _json_list(snapshot.get("sessions")):
         if not isinstance(raw_session, dict):
@@ -1827,6 +1852,7 @@ def _expected_sessions_from_planning_block(block: dict[str, Any]) -> list[dict[s
             row["recommendation_key"] = recommendation_key
         if series_key:
             row["series_key"] = series_key
+        _mark_calendar_session_custom_period(row, custom_period_source)
         rows.append(row)
     return rows
 
@@ -1881,6 +1907,7 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
     location_id = _parse_uuid(block.get("location_id"))
     enforce_location = location_id is not None and not _block_is_online(block)
     excluded_dates = _parse_iso_date_set(block.get("holiday_dates")) | _parse_iso_date_set(block.get("closure_dates"))
+    custom_period_source = _planning_block_custom_period_source(block)
 
     lower_bound = datetime.combine(start_date - timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
     upper_bound = datetime.combine(query_end_date + timedelta(days=2), datetime.min.time(), tzinfo=timezone.utc)
@@ -1929,23 +1956,22 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
                 continue
             seen.add(key)
             modality = _course_type_modality(activity, location)
-            out.append(
-                {
-                    "date": local_start.date().isoformat(),
-                    "start_time": local_start.strftime("%H:%M"),
-                    "end_time": local_end.strftime("%H:%M"),
-                    "duration_minutes": int((local_end - local_start).total_seconds() // 60),
-                    "activity_id": str(activity.id),
-                    "activity_label": activity.name,
-                    "location_id": str(location.id),
-                    "location_label": location.name,
-                    "recommendation_key": block.get("recommendation_key") or None,
-                    "series_key": str(session_obj.recurrence_group_id or session_obj.id),
-                    "weekday": local_start.weekday(),
-                    "weekday_label": DAY_LABELS_FR.get(local_start.weekday(), local_start.strftime("%A")),
-                    "modality": modality,
-                }
-            )
+            item = {
+                "date": local_start.date().isoformat(),
+                "start_time": local_start.strftime("%H:%M"),
+                "end_time": local_end.strftime("%H:%M"),
+                "duration_minutes": int((local_end - local_start).total_seconds() // 60),
+                "activity_id": str(activity.id),
+                "activity_label": activity.name,
+                "location_id": str(location.id),
+                "location_label": location.name,
+                "recommendation_key": block.get("recommendation_key") or None,
+                "series_key": str(session_obj.recurrence_group_id or session_obj.id),
+                "weekday": local_start.weekday(),
+                "weekday_label": DAY_LABELS_FR.get(local_start.weekday(), local_start.strftime("%A")),
+                "modality": modality,
+            }
+            out.append(_mark_calendar_session_custom_period(item, custom_period_source))
         return out
 
     limited_series_end_date = query_end_date if session_limit > 0 or is_live_planning_block else effective_end_date
@@ -2250,7 +2276,8 @@ def _filter_sessions_blocked_by_quote_school_calendar(
     filtered = [
         item
         for item in sessions
-        if not _session_blocked_by_quote_school_calendar(
+        if _calendar_session_has_custom_period_source(item)
+        or not _session_blocked_by_quote_school_calendar(
             session=item,
             calendar_rows=calendar_rows,
             activity_exclusion_flags=activity_exclusion_flags,
