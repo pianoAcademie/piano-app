@@ -3595,21 +3595,27 @@ button.danger:focus-visible {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 9px;
-  border: 1px solid rgb(var(--slot-accent-rgb) / 0.3);
+  padding: 5px 10px 5px 8px;
+  border: 1px solid rgb(var(--slot-accent-rgb) / 0.34);
+  border-left: 4px solid rgb(var(--slot-accent-rgb));
   border-radius: 999px;
-  background: rgb(var(--slot-accent-rgb) / 0.12);
+  background:
+    linear-gradient(90deg, rgb(var(--slot-accent-rgb) / 0.18), rgb(var(--slot-accent-rgb) / 0.08)),
+    #fffdf9;
   color: var(--slot-accent-text);
   font-size: 12px;
   font-weight: 800;
+  box-shadow: 0 1px 0 rgb(var(--slot-accent-rgb) / 0.12);
 }
 
 .embed-location-legend-chip span {
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
   border-radius: 999px;
   background: rgb(var(--slot-accent-rgb));
-  box-shadow: 0 0 0 3px rgb(var(--slot-accent-rgb) / 0.14);
+  box-shadow:
+    0 0 0 3px rgb(var(--slot-accent-rgb) / 0.16),
+    0 1px 2px rgb(var(--slot-accent-rgb) / 0.24);
 }
 
 .embed-slot-card-action {
