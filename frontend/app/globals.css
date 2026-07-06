@@ -6196,6 +6196,42 @@ button.danger:focus-visible {
   gap: 6px;
 }
 
+.integration-course-picker {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #ead6b7;
+  border-radius: 8px;
+  background: #fffaf2;
+}
+
+.integration-course-picker legend {
+  padding: 0 4px;
+  font-weight: 800;
+}
+
+.integration-course-picker .muted {
+  margin: 0;
+}
+
+.integration-course-options {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.integration-course-option {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #eadfd0;
+  border-radius: 8px;
+  background: #fff;
+}
+
 .quote-config-section-head {
   display: flex;
   align-items: flex-start;

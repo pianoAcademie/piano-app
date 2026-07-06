@@ -41,7 +41,7 @@ type AdminIntegrationPlanningEmbedProps = {
   accountWebsite?: string | null;
   activities: AdminActivityOut[];
   locations: LocationOut[];
-  selectedActivityId?: string;
+  selectedActivityIds?: string[];
   selectedLocationId?: string;
   selectedDisplayDate?: string;
   language?: UiLanguage | string;
@@ -51,7 +51,7 @@ export default function AdminIntegrationPlanningEmbed({
   accountWebsite,
   activities,
   locations,
-  selectedActivityId = "",
+  selectedActivityIds = [],
   selectedLocationId = "",
   selectedDisplayDate = "",
   language: languageProp = "fr",
@@ -81,18 +81,23 @@ export default function AdminIntegrationPlanningEmbed({
     })),
   ];
 
-  const selectedActivity = eligibleActivities.find((activity) => activity.id === selectedActivityId) ?? null;
+  const eligibleActivityIds = new Set(eligibleActivities.map((activity) => activity.id));
+  const selectedActivityIdSet = new Set(selectedActivityIds.filter((id) => eligibleActivityIds.has(id)));
+  const selectedActivities = eligibleActivities.filter((activity) => selectedActivityIdSet.has(activity.id));
   const selectedLocation = activeLocations.find((location) => location.id === selectedLocationId) ?? null;
   const isParisVirtualLocation = selectedLocationId === VIRTUAL_PARIS_LOCATION_ID && parisLocations.length > 0;
   const selectedLocationLabel = isParisVirtualLocation
     ? "Paris - tous les lieux"
     : (selectableLocations.find((location) => location.id === selectedLocationId)?.name ?? "");
+  const selectedActivityLabel = selectedActivities.map((activity) => activity.name).join(" + ");
   const embedPath = (() => {
-    if (!selectedActivity || (!selectedLocation && !isParisVirtualLocation)) {
+    if (selectedActivities.length === 0 || (!selectedLocation && !isParisVirtualLocation)) {
       return "";
     }
     const params = new URLSearchParams();
-    params.set("course_type_id", selectedActivity.id);
+    selectedActivities.forEach((activity) => {
+      params.append("course_type_id", activity.id);
+    });
     if (isParisVirtualLocation) {
       params.set("location_group", "paris");
     } else if (selectedLocation) {
@@ -109,8 +114,8 @@ export default function AdminIntegrationPlanningEmbed({
   const normalizedBaseUrl = normalizeBaseUrl(accountWebsite);
   const absoluteEmbedUrl = embedPath && normalizedBaseUrl ? `${normalizedBaseUrl}${embedPath}` : "";
   const iframeTitle =
-    selectedActivity
-      ? `${t("admin.integration_embed.iframe_title_prefix")} ${selectedActivity.name}${selectedLocationLabel ? ` - ${selectedLocationLabel}` : ""}`
+    selectedActivities.length > 0
+      ? `${t("admin.integration_embed.iframe_title_prefix")} ${selectedActivityLabel}${selectedLocationLabel ? ` - ${selectedLocationLabel}` : ""}`
       : t("admin.integration_embed.external_planning");
   const iframeHtml = absoluteEmbedUrl
     ? `<iframe src="${absoluteEmbedUrl}" title="${iframeTitle}" width="100%" height="${EMBED_IFRAME_HEIGHT}" style="width:100%;min-height:${EMBED_IFRAME_HEIGHT}px;border:0;border-radius:16px;overflow:hidden;" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`
@@ -124,17 +129,23 @@ export default function AdminIntegrationPlanningEmbed({
       <form method="get" action="/admin/config" className="grid cols-2 config-form-grid top-gap-sm">
         <input type="hidden" name="section" value="integrations" />
 
-        <label>
-          {t("common.course")}
-          <select name="integration_course_type_id" defaultValue={selectedActivityId}>
-            <option value="">{t("admin.integration_embed.choose_course")}</option>
+        <fieldset className="integration-course-picker">
+          <legend>{t("common.course")}</legend>
+          <p className="muted">{t("admin.integration_embed.choose_courses_help")}</p>
+          <div className="integration-course-options">
             {eligibleActivities.map((activity) => (
-              <option key={activity.id} value={activity.id}>
-                {activity.name}
-              </option>
+              <label key={activity.id} className="checkline integration-course-option">
+                <input
+                  type="checkbox"
+                  name="integration_course_type_id"
+                  value={activity.id}
+                  defaultChecked={selectedActivityIdSet.has(activity.id)}
+                />
+                <span>{activity.name}</span>
+              </label>
             ))}
-          </select>
-        </label>
+          </div>
+        </fieldset>
 
         <label>
           {t("common.location")}
@@ -155,7 +166,7 @@ export default function AdminIntegrationPlanningEmbed({
 
         <div className="row span-2">
           <button type="submit">{t("admin.integration_embed.generate_iframe")}</button>
-          {selectedActivity || selectedLocationId || selectedDisplayDate ? (
+          {selectedActivities.length > 0 || selectedLocationId || selectedDisplayDate ? (
             <Link className="ghost small-btn" href="/admin/config?section=integrations">
               {t("common.reset")}
             </Link>
@@ -183,7 +194,7 @@ export default function AdminIntegrationPlanningEmbed({
             <div>
               <h4>{t("admin.integration_embed.result")}</h4>
               <p className="muted">
-                {selectedActivity?.name} · {selectedLocationLabel}
+                {selectedActivityLabel} · {selectedLocationLabel}
                 {isIsoDate(selectedDisplayDate) ? ` · ${t("admin.integration_embed.start_prefix")} ${selectedDisplayDate}` : ""}
               </p>
             </div>

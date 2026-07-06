@@ -380,6 +380,12 @@ function readParam(params: SearchParams, key: string): string {
   return value ?? "";
 }
 
+function readParamList(params: SearchParams, key: string): string[] {
+  const value = params[key];
+  const values = Array.isArray(value) ? value : value ? [value] : [];
+  return Array.from(new Set(values.map((item) => item.trim()).filter(Boolean)));
+}
+
 function isVacationServiceCode(serviceCode: string | null | undefined): boolean {
   return (serviceCode ?? "").trim().toUpperCase().startsWith("VACATION");
 }
@@ -1102,7 +1108,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
 
   const okMessage = readParam(params, "ok");
   const errorMessage = readParam(params, "error");
-  const selectedIntegrationActivityId = readParam(params, "integration_course_type_id").trim();
+  const selectedIntegrationActivityIds = readParamList(params, "integration_course_type_id");
   const selectedIntegrationLocationId = readParam(params, "integration_location_id").trim();
   const selectedIntegrationDate = readParam(params, "integration_date").trim();
 
@@ -5064,7 +5070,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               accountWebsite={account?.website ?? ""}
               activities={activities}
               locations={integrationLocations}
-              selectedActivityId={selectedIntegrationActivityId}
+              selectedActivityIds={selectedIntegrationActivityIds}
               selectedLocationId={selectedIntegrationLocationId}
               selectedDisplayDate={selectedIntegrationDate}
               language={language}
