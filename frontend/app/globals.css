@@ -8102,6 +8102,43 @@ button.danger:focus-visible {
   border-radius: 18px;
 }
 
+.client-planning-month-nav {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  margin-top: 14px;
+  padding: 10px;
+  border: 1px solid #ead9bd;
+  border-radius: 14px;
+  background: #fffaf1;
+}
+
+.client-planning-month-summary {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.client-planning-month-summary span {
+  color: #766a5d;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.15;
+  text-transform: uppercase;
+}
+
+.client-planning-month-summary strong {
+  color: #23180d;
+  font-size: 18px;
+  line-height: 1.15;
+}
+
+.client-planning-month-summary small {
+  color: #60738b;
+  line-height: 1.3;
+}
+
 .client-planning-reservation-list {
   display: grid;
   gap: 10px;
@@ -13393,6 +13430,20 @@ button.danger:focus-visible {
 
   .client-planning-mode-card strong {
     font-size: 15px;
+  }
+
+  .client-planning-month-nav {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .client-planning-month-nav .mode-link {
+    grid-column: 1 / -1;
+    width: 100%;
+    justify-content: center;
+  }
+
+  .client-planning-month-summary strong {
+    font-size: 16px;
   }
 
   .client-planning-reservation-card {

@@ -771,6 +771,39 @@ function todayKeyInTimezone(timezone: string): string {
   return dateKeyInTimezone(new Date().toISOString(), resolveTimezone(timezone));
 }
 
+function isMonthKey(value: string): boolean {
+  return /^\d{4}-\d{2}$/.test(value);
+}
+
+function monthKeyInTimezone(value: string, timezone: string): string {
+  return dateKeyInTimezone(value, timezone).slice(0, 7);
+}
+
+function shiftMonthKey(key: string, months: number): string {
+  const [yearRaw, monthRaw] = key.split("-");
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) {
+    return key;
+  }
+  const shifted = new Date(Date.UTC(year, month - 1 + months, 1));
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function formatMonthKey(key: string, language: UiLanguage): string {
+  const [yearRaw, monthRaw] = key.split("-");
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) {
+    return key;
+  }
+  return new Intl.DateTimeFormat(localeForUiLanguage(language), {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(year, month - 1, 1)));
+}
+
 function agendaDayLabel(dayKey: string, view: AgendaView, language: UiLanguage): string {
   const date = keyToUtcDate(dayKey);
   if (view === "day") {
@@ -1450,6 +1483,44 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     })
     .sort((a, b) => a.session.start_at_utc.localeCompare(b.session.start_at_utc));
 
+  const defaultReservationMonth = upcomingBookings[0]
+    ? monthKeyInTimezone(upcomingBookings[0].session.start_at_utc, timezone)
+    : todayKeyInTimezone(timezone).slice(0, 7);
+  const requestedReservationMonth = readParam(searchParams, "reservation_month");
+  const selectedReservationMonth = isMonthKey(requestedReservationMonth)
+    ? requestedReservationMonth
+    : defaultReservationMonth;
+  const selectedReservationMonthLabel = formatMonthKey(selectedReservationMonth, language);
+  const selectedMonthBookings = upcomingBookings.filter(
+    (booking) => monthKeyInTimezone(booking.session.start_at_utc, timezone) === selectedReservationMonth,
+  );
+  const reservationMonthQueryBase = {
+    tab: "planning",
+    planning_mode: "reservations",
+    session_id: null,
+    session_member_id: null,
+    ok: null,
+    error: null,
+    ok_code: null,
+    error_code: null,
+    session_ok: null,
+    session_error: null,
+    session_ok_code: null,
+    session_error_code: null,
+  };
+  const previousReservationMonthHref = withUpdatedQuery(rawParams, {
+    ...reservationMonthQueryBase,
+    reservation_month: shiftMonthKey(selectedReservationMonth, -1),
+  });
+  const nextReservationMonthHref = withUpdatedQuery(rawParams, {
+    ...reservationMonthQueryBase,
+    reservation_month: shiftMonthKey(selectedReservationMonth, 1),
+  });
+  const nextBookingMonthHref = withUpdatedQuery(rawParams, {
+    ...reservationMonthQueryBase,
+    reservation_month: defaultReservationMonth,
+  });
+
   const pastBookings = allBookings
     .filter((booking) => {
       const sessionStart = safeDate(booking.session.start_at_utc);
@@ -1680,6 +1751,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     tab: "planning",
     planning_mode: null,
     planning_slot_filter: null,
+    reservation_month: null,
     session_id: null,
     session_member_id: null,
   });
@@ -1688,6 +1760,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     planning_mode: "book",
     agenda_view: "week",
     planning_slot_filter: "AVAILABLE",
+    reservation_month: null,
     session_id: null,
     session_member_id: null,
   });
@@ -3207,59 +3280,99 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </a>
                     </div>
                   ) : (
-                    <div className="client-planning-reservation-list">
-                      {upcomingBookings.map((booking) => {
-                        const bookingSessionDetails = sessionDetailsById.get(booking.session.id);
-                        const bookingStatus = normalizeStatus(booking.status);
-                        const bookingStatusLabel =
-                          bookingStatus === "PENDING_PAYMENT"
-                            ? t("client.planning_status_payment_pending")
-                            : bookingStatus === "WAITLISTED"
-                              ? t("client.planning_status_waitlisted")
-                              : t("client.planning_status_already_booked");
-                        const bookingHref = withUpdatedQuery(rawParams, {
-                          tab: "planning",
-                          planning_mode: "reservations",
-                          agenda_view: "week",
-                          agenda_date: dateKeyInTimezone(booking.session.start_at_utc, timezone),
-                          session_id: booking.session.id,
-                          session_member_id: booking.owner_client_id,
-                          ok: null,
-                          error: null,
-                          ok_code: null,
-                          error_code: null,
-                          session_ok: null,
-                          session_error: null,
-                          session_ok_code: null,
-                          session_error_code: null,
-                        });
+                    <>
+                      <div className="client-planning-month-nav">
+                        <a
+                          className="client-date-nav-btn"
+                          href={previousReservationMonthHref}
+                          aria-label={t("client.previous_month")}
+                        >
+                          ←
+                        </a>
+                        <div className="client-planning-month-summary">
+                          <span>{t("client.reservation_month_label")}</span>
+                          <strong>{selectedReservationMonthLabel}</strong>
+                          <small>
+                            {t("client.reservation_month_count", {
+                              count: selectedMonthBookings.length,
+                              total: upcomingBookings.length,
+                            })}
+                          </small>
+                        </div>
+                        <a
+                          className="client-date-nav-btn"
+                          href={nextReservationMonthHref}
+                          aria-label={t("client.next_month")}
+                        >
+                          →
+                        </a>
+                        <a className="mode-link" href={nextBookingMonthHref}>
+                          {t("client.next_booking_month")}
+                        </a>
+                      </div>
 
-                        return (
-                          <article key={`booking-${booking.id}`} className="client-planning-reservation-card">
-                            <div className="client-planning-reservation-time">
-                              <strong>{formatTimeInTimezone(booking.session.start_at_utc, timezone, language)}</strong>
-                              <small>{formatTimeInTimezone(booking.session.end_at_utc, timezone, language)}</small>
-                            </div>
-                            <div className="client-planning-reservation-main">
-                              <strong>{booking.session.title}</strong>
-                              <small>{formatDateTimeInTimezone(booking.session.start_at_utc, timezone, language)}</small>
-                              <div className="client-planning-reservation-meta">
-                                <span className="badge">{t("client.reserved_for_member", { member: booking.owner_display_name })}</span>
-                                {bookingSessionDetails?.location.name ? <span className="badge">{bookingSessionDetails.location.name}</span> : null}
-                                <span className={`status-badge ${bookingStatus === "BOOKED" ? "status-booked" : "status-waitlist"}`}>
-                                  {bookingStatusLabel}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="client-planning-reservation-actions">
-                              <a className="mode-link" href={bookingHref}>
-                                {t("client.view_booking_detail")}
-                              </a>
-                            </div>
-                          </article>
-                        );
-                      })}
-                    </div>
+                      {selectedMonthBookings.length === 0 ? (
+                        <div className="client-planning-empty">
+                          <strong>{t("client.no_reservation_this_month")}</strong>
+                          <p className="muted">{t("client.no_reservation_this_month_help")}</p>
+                        </div>
+                      ) : (
+                        <div className="client-planning-reservation-list">
+                          {selectedMonthBookings.map((booking) => {
+                            const bookingSessionDetails = sessionDetailsById.get(booking.session.id);
+                            const bookingStatus = normalizeStatus(booking.status);
+                            const bookingStatusLabel =
+                              bookingStatus === "PENDING_PAYMENT"
+                                ? t("client.planning_status_payment_pending")
+                                : bookingStatus === "WAITLISTED"
+                                  ? t("client.planning_status_waitlisted")
+                                  : t("client.planning_status_already_booked");
+                            const bookingHref = withUpdatedQuery(rawParams, {
+                              tab: "planning",
+                              planning_mode: "reservations",
+                              agenda_view: "week",
+                              agenda_date: dateKeyInTimezone(booking.session.start_at_utc, timezone),
+                              reservation_month: selectedReservationMonth,
+                              session_id: booking.session.id,
+                              session_member_id: booking.owner_client_id,
+                              ok: null,
+                              error: null,
+                              ok_code: null,
+                              error_code: null,
+                              session_ok: null,
+                              session_error: null,
+                              session_ok_code: null,
+                              session_error_code: null,
+                            });
+
+                            return (
+                              <article key={`booking-${booking.id}`} className="client-planning-reservation-card">
+                                <div className="client-planning-reservation-time">
+                                  <strong>{formatTimeInTimezone(booking.session.start_at_utc, timezone, language)}</strong>
+                                  <small>{formatTimeInTimezone(booking.session.end_at_utc, timezone, language)}</small>
+                                </div>
+                                <div className="client-planning-reservation-main">
+                                  <strong>{booking.session.title}</strong>
+                                  <small>{formatDateTimeInTimezone(booking.session.start_at_utc, timezone, language)}</small>
+                                  <div className="client-planning-reservation-meta">
+                                    <span className="badge">{t("client.reserved_for_member", { member: booking.owner_display_name })}</span>
+                                    {bookingSessionDetails?.location.name ? <span className="badge">{bookingSessionDetails.location.name}</span> : null}
+                                    <span className={`status-badge ${bookingStatus === "BOOKED" ? "status-booked" : "status-waitlist"}`}>
+                                      {bookingStatusLabel}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="client-planning-reservation-actions">
+                                  <a className="mode-link" href={bookingHref}>
+                                    {t("client.view_booking_detail")}
+                                  </a>
+                                </div>
+                              </article>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
                   )}
 
                   {upcomingBookings.length > 0 ? (
