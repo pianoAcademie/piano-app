@@ -1063,7 +1063,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedLocation = readParam(searchParams, "location_id");
   const selectedCoachId = readParam(searchParams, "coach_id");
   const selectedTimeBucket = parseTimeBucket(readParam(searchParams, "time_bucket"));
-  const planningSlotFilter = parsePlanningSlotFilter(readParam(searchParams, "planning_slot_filter"));
+  const planningMode = readParam(searchParams, "planning_mode") === "book" ? "book" : "reservations";
+  const rawPlanningSlotFilter = parsePlanningSlotFilter(readParam(searchParams, "planning_slot_filter"));
+  const planningSlotFilter =
+    planningMode === "book" && rawPlanningSlotFilter === "ALL" ? "AVAILABLE" : rawPlanningSlotFilter;
   const timezone = resolveTimezone(readParam(searchParams, "timezone") || me.timezone || DEFAULT_TIMEZONE);
   const requestedAgendaView = parseAgendaView(readParam(searchParams, "agenda_view"));
   const familyResultPromise = backendRequest<ClientFamilyOverviewOut>("/api/v1/clients/me/family", {}, token);
@@ -1668,7 +1671,25 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       ? dateKeyInTimezone(firstHomeBooking.session.start_at_utc, timezone)
       : todayKeyInTimezone(timezone),
     session_id: null,
+    session_member_id: null,
+    planning_mode: null,
+    planning_slot_filter: null,
     booking_owner_id: FAMILY_BOOKING_OWNER,
+  });
+  const planningReservationsHref = withUpdatedQuery(rawParams, {
+    tab: "planning",
+    planning_mode: null,
+    planning_slot_filter: null,
+    session_id: null,
+    session_member_id: null,
+  });
+  const planningBookHref = withUpdatedQuery(rawParams, {
+    tab: "planning",
+    planning_mode: "book",
+    agenda_view: "week",
+    planning_slot_filter: "AVAILABLE",
+    session_id: null,
+    session_member_id: null,
   });
 
   const filteredSessions = sessions.filter((session) => {
@@ -1680,6 +1701,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     }
     return true;
   });
+  const sessionDetailsById = new Map(sessions.map((session) => [session.id, session]));
 
   const sessionsByDay = new Map<string, SessionOut[]>();
   for (const session of filteredSessions) {
@@ -2382,7 +2404,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     Boolean(selectedCourseType) ||
     Boolean(selectedCoachId) ||
     selectedTimeBucket !== "ALL" ||
-    planningSlotFilter !== "ALL" ||
+    rawPlanningSlotFilter !== "ALL" ||
     timezone !== (me.timezone || DEFAULT_TIMEZONE) ||
     bookingOwnerId !== FAMILY_BOOKING_OWNER;
 
@@ -2970,8 +2992,25 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   </a>
                 </div>
 
+                <div className="client-planning-mode-switch" aria-label={t("client.planning_mode_label")}>
+                  <a
+                    className={`client-planning-mode-card ${planningMode === "reservations" ? "active" : ""}`}
+                    href={planningReservationsHref}
+                  >
+                    <strong>{t("client.planning_mode_reservations")}</strong>
+                    <small>{t("client.planning_mode_reservations_help")}</small>
+                  </a>
+                  <a className={`client-planning-mode-card ${planningMode === "book" ? "active" : ""}`} href={planningBookHref}>
+                    <strong>{t("client.planning_mode_book")}</strong>
+                    <small>{t("client.planning_mode_book_help")}</small>
+                  </a>
+                </div>
+
+                {planningMode === "book" ? (
+                <>
                 <form method="get" className="client-planning-filter-form">
                   <input type="hidden" name="tab" value="planning" />
+                  <input type="hidden" name="planning_mode" value="book" />
                   <input type="hidden" name="agenda_view" value="week" />
 
                   <div className="client-planning-hero">
@@ -3002,6 +3041,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         className="client-planning-reset"
                         href={withUpdatedQuery(rawParams, {
                           tab: "planning",
+                          planning_mode: "book",
                           course_type_id: null,
                           location_id: null,
                           coach_id: null,
@@ -3011,6 +3051,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           agenda_view: "week",
                           agenda_date: todayKeyInTimezone(timezone),
                           booking_owner_id: FAMILY_BOOKING_OWNER,
+                          session_id: null,
+                          session_member_id: null,
                         })}
                         title={t("common.reset")}
                       >
@@ -3110,17 +3152,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <div className="client-week-toolbar-actions">
                       <a
                         className="client-date-nav-btn"
-                        href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: shiftDateKeyByDays(agendaDate, -7), agenda_view: "week" })}
+                        href={withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: shiftDateKeyByDays(agendaDate, -7), agenda_view: "week" })}
                         aria-label={t("client.previous_week")}
                       >
                         ←
                       </a>
-                      <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: todayKeyInTimezone(timezone), agenda_view: "week" })}>
+                      <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: todayKeyInTimezone(timezone), agenda_view: "week" })}>
                         {t("client.today")}
                       </a>
                       <a
                         className="client-date-nav-btn"
-                        href={withUpdatedQuery(rawParams, { tab: "planning", agenda_date: shiftDateKeyByDays(agendaDate, 7), agenda_view: "week" })}
+                        href={withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: shiftDateKeyByDays(agendaDate, 7), agenda_view: "week" })}
                         aria-label={t("client.next_week")}
                       >
                         →
@@ -3142,16 +3184,104 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     </span>
                   </div>
                 </div>
+                </>
+                ) : null}
               </Card>
 
+              {planningMode === "reservations" ? (
+                <Card className="client-reserved-section client-planning-reservations-panel">
+                  <div className="row spread">
+                    <div>
+                      <h2>{t("client.upcoming_reservations")}</h2>
+                      <p className="muted">{t("client.upcoming_reservations_help")}</p>
+                    </div>
+                    <span className="badge">{upcomingBookings.length}</span>
+                  </div>
+
+                  {upcomingBookings.length === 0 ? (
+                    <div className="client-planning-empty">
+                      <strong>{t("client.no_upcoming_reservation")}</strong>
+                      <p className="muted">{t("client.no_upcoming_reservation_help")}</p>
+                      <a className="mode-link" href={planningBookHref}>
+                        {t("client.book_another_lesson")}
+                      </a>
+                    </div>
+                  ) : (
+                    <div className="client-planning-reservation-list">
+                      {upcomingBookings.map((booking) => {
+                        const bookingSessionDetails = sessionDetailsById.get(booking.session.id);
+                        const bookingStatus = normalizeStatus(booking.status);
+                        const bookingStatusLabel =
+                          bookingStatus === "PENDING_PAYMENT"
+                            ? t("client.planning_status_payment_pending")
+                            : bookingStatus === "WAITLISTED"
+                              ? t("client.planning_status_waitlisted")
+                              : t("client.planning_status_already_booked");
+                        const bookingHref = withUpdatedQuery(rawParams, {
+                          tab: "planning",
+                          planning_mode: "reservations",
+                          agenda_view: "week",
+                          agenda_date: dateKeyInTimezone(booking.session.start_at_utc, timezone),
+                          session_id: booking.session.id,
+                          session_member_id: booking.owner_client_id,
+                          ok: null,
+                          error: null,
+                          ok_code: null,
+                          error_code: null,
+                          session_ok: null,
+                          session_error: null,
+                          session_ok_code: null,
+                          session_error_code: null,
+                        });
+
+                        return (
+                          <article key={`booking-${booking.id}`} className="client-planning-reservation-card">
+                            <div className="client-planning-reservation-time">
+                              <strong>{formatTimeInTimezone(booking.session.start_at_utc, timezone, language)}</strong>
+                              <small>{formatTimeInTimezone(booking.session.end_at_utc, timezone, language)}</small>
+                            </div>
+                            <div className="client-planning-reservation-main">
+                              <strong>{booking.session.title}</strong>
+                              <small>{formatDateTimeInTimezone(booking.session.start_at_utc, timezone, language)}</small>
+                              <div className="client-planning-reservation-meta">
+                                <span className="badge">{t("client.reserved_for_member", { member: booking.owner_display_name })}</span>
+                                {bookingSessionDetails?.location.name ? <span className="badge">{bookingSessionDetails.location.name}</span> : null}
+                                <span className={`status-badge ${bookingStatus === "BOOKED" ? "status-booked" : "status-waitlist"}`}>
+                                  {bookingStatusLabel}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="client-planning-reservation-actions">
+                              <a className="mode-link" href={bookingHref}>
+                                {t("client.view_booking_detail")}
+                              </a>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {upcomingBookings.length > 0 ? (
+                    <div className="client-planning-reservation-footer">
+                      <a className="mode-link" href={planningBookHref}>
+                        {t("client.book_another_lesson")}
+                      </a>
+                    </div>
+                  ) : null}
+                </Card>
+              ) : null}
+
+              {planningMode === "book" ? (
               <Card className="client-available-section client-week-planning-board">
                 <div className="row spread">
-                  <h2>{t("client.my_booking_week")}</h2>
+                  <h2>{t("client.additional_booking_week")}</h2>
                   <span className="badge">{agendaSessionCount}</span>
                 </div>
-                <p className="muted">{t("client.booking_week_help")}</p>
+                <p className="muted">{t("client.additional_booking_week_help")}</p>
                 <form method="get" className="client-planning-quick-filter-form">
                   <input type="hidden" name="tab" value="planning" />
+                  <input type="hidden" name="planning_mode" value="book" />
                   <input type="hidden" name="agenda_view" value="week" />
                   <input type="hidden" name="agenda_date" value={agendaDate} />
                   <input type="hidden" name="location_id" value={selectedLocation} />
@@ -3208,6 +3338,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             );
                             const openDetailsHref = withUpdatedQuery(rawParams, {
                               tab: "planning",
+                              planning_mode: "book",
                               session_id: session.id,
                               session_member_id: null,
                               ok: null,
@@ -3318,6 +3449,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   })}
                 </div>
               </Card>
+              ) : null}
 
               {selectedSession ? (
                 <section className="modal-overlay">
@@ -3448,6 +3580,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               const isSelected = option.member_id === selectedReservationMemberId;
                               const selectionHref = withUpdatedQuery(rawParams, {
                                 tab: "planning",
+                                planning_mode: planningMode,
                                 agenda_view: "week",
                                 agenda_date: agendaDate,
                                 location_id: selectedLocation || null,
