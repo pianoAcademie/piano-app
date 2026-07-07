@@ -385,6 +385,63 @@ class QuoteLiveSeriesMatchingTests(unittest.TestCase):
         self.assertEqual(db.scalar_calls, 2)
         self.assertEqual([row.id for row in rows], ["selected", "monday-2"])
 
+    def test_recurrence_group_fallback_accepts_envelope_sessions_for_student_time(self) -> None:
+        course_type_id = uuid4()
+        location_id = uuid4()
+        original_group_id = uuid4()
+        regenerated_group_id = uuid4()
+        selected = _session(
+            session_id="selected",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2026, 9, 11, 16, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 11, 17, 0, tzinfo=timezone.utc),
+            recurrence_group_id=original_group_id,
+        )
+        envelope_2 = _session(
+            session_id="envelope-2",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2026, 9, 18, 15, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 18, 18, 0, tzinfo=timezone.utc),
+            recurrence_group_id=regenerated_group_id,
+        )
+        envelope_3 = _session(
+            session_id="envelope-3",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2026, 9, 25, 15, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 25, 18, 0, tzinfo=timezone.utc),
+            recurrence_group_id=regenerated_group_id,
+        )
+        wrong_envelope = _session(
+            session_id="wrong-envelope",
+            course_type_id=course_type_id,
+            location_id=location_id,
+            start_at_utc=datetime(2026, 9, 18, 13, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 18, 15, 0, tzinfo=timezone.utc),
+            recurrence_group_id=regenerated_group_id,
+        )
+        db = _FakeSequentialSession([
+            [selected],
+            [selected, envelope_2, envelope_3, wrong_envelope],
+        ])
+
+        rows = _load_live_series_sessions(
+            db,
+            selected_session=selected,
+            expected_dates=[
+                date(2026, 9, 11),
+                date(2026, 9, 18),
+                date(2026, 9, 25),
+            ],
+            student_start_time_local="18:00",
+            student_end_time_local="19:00",
+        )
+
+        self.assertEqual(db.scalar_calls, 2)
+        self.assertEqual([row.id for row in rows], ["selected", "envelope-2", "envelope-3"])
+
     def test_recurrence_group_fallback_keeps_only_expected_dates(self) -> None:
         course_type_id = uuid4()
         location_id = uuid4()

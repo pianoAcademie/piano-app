@@ -8345,6 +8345,8 @@ def _load_live_series_sessions(
     *,
     selected_session: CourseSession,
     expected_dates: list[date],
+    student_start_time_local: str | None = None,
+    student_end_time_local: str | None = None,
 ) -> list[CourseSession]:
     expected_date_set = set(expected_dates)
     selected_zone = _safe_zoneinfo(selected_session.timezone)
@@ -8352,6 +8354,15 @@ def _load_live_series_sessions(
     selected_local_end = selected_session.end_at_utc.astimezone(selected_zone)
     selected_local_start_time = selected_local_start.timetz().replace(second=0, microsecond=0, tzinfo=None)
     selected_local_end_time = selected_local_end.timetz().replace(second=0, microsecond=0, tzinfo=None)
+    student_start_time = _parse_followup_student_time_local(student_start_time_local)
+    student_end_time = _parse_followup_student_time_local(student_end_time_local)
+    if (
+        student_start_time is None
+        or student_end_time is None
+        or student_end_time <= student_start_time
+    ):
+        student_start_time = None
+        student_end_time = None
     expected_start = min(expected_date_set) if expected_date_set else None
     expected_end = max(expected_date_set) if expected_date_set else None
 
@@ -8362,18 +8373,35 @@ def _load_live_series_sessions(
             zone = _safe_zoneinfo(session_obj.timezone)
             local_start = session_obj.start_at_utc.astimezone(zone)
             local_end = session_obj.end_at_utc.astimezone(zone)
-            key = (
-                session_obj.course_type_id,
-                session_obj.location_id,
-                session_obj.timezone,
-                local_start.date(),
-                local_start.timetz().replace(second=0, microsecond=0, tzinfo=None),
-                local_end.timetz().replace(second=0, microsecond=0, tzinfo=None),
-            )
+            if student_start_time is not None and student_end_time is not None:
+                key = (
+                    session_obj.course_type_id,
+                    session_obj.location_id,
+                    session_obj.timezone,
+                    local_start.date(),
+                    student_start_time,
+                    student_end_time,
+                )
+            else:
+                key = (
+                    session_obj.course_type_id,
+                    session_obj.location_id,
+                    session_obj.timezone,
+                    local_start.date(),
+                    local_start.timetz().replace(second=0, microsecond=0, tzinfo=None),
+                    local_end.timetz().replace(second=0, microsecond=0, tzinfo=None),
+                )
             current = unique_by_slot.get(key)
             if current is None or session_obj.id == selected_id:
                 unique_by_slot[key] = session_obj
         return sorted(unique_by_slot.values(), key=lambda session_obj: session_obj.start_at_utc)
+
+    def _contains_student_window(local_start: datetime, local_end: datetime) -> bool:
+        if student_start_time is None or student_end_time is None:
+            return False
+        requested_start = datetime.combine(local_start.date(), student_start_time, tzinfo=local_start.tzinfo)
+        requested_end = datetime.combine(local_start.date(), student_end_time, tzinfo=local_start.tzinfo)
+        return local_start <= requested_start and requested_end <= local_end
 
     def _matches_selected_series(session_obj: CourseSession, *, require_expected_date: bool = True) -> bool:
         if session_obj.course_type_id != selected_session.course_type_id:
@@ -8392,10 +8420,12 @@ def _load_live_series_sessions(
         if not require_expected_date and expected_start is not None and expected_end is not None:
             if local_start.date() < expected_start or local_start.date() > expected_end:
                 return False
-        return (
+        if (
             local_start_time == selected_local_start_time
             and local_end_time == selected_local_end_time
-        )
+        ):
+            return True
+        return _contains_student_window(local_start, local_end)
 
     def _load_signature_matches(*, require_expected_date: bool = True) -> list[CourseSession]:
         if not expected_dates:
@@ -10096,6 +10126,8 @@ def _execute_quote_followup_transformation(
             db,
             selected_session=selected_session,
             expected_dates=expected_dates,
+            student_start_time_local=student_start_time_local,
+            student_end_time_local=student_end_time_local,
         )
         if session_limit is not None:
             live_sessions = live_sessions[:session_limit]
@@ -10117,6 +10149,8 @@ def _execute_quote_followup_transformation(
                     db,
                     selected_session=selected_session,
                     expected_dates=expected_dates,
+                    student_start_time_local=student_start_time_local,
+                    student_end_time_local=student_end_time_local,
                 )
                 if session_limit is not None:
                     live_sessions = live_sessions[:session_limit]
