@@ -11327,6 +11327,67 @@ button.danger:focus-visible {
   align-items: end;
 }
 
+.client-offers-header {
+  display: grid;
+  gap: 14px;
+}
+
+.client-offers-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.client-offers-purchase-panel {
+  border-top: 1px solid #ead9b8;
+  padding-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.client-offers-purchase-panel h3 {
+  margin: 0;
+}
+
+.client-offers-secondary {
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.client-offers-secondary > summary {
+  list-style: none;
+  min-height: 48px;
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.client-offers-secondary > summary::-webkit-details-marker {
+  display: none;
+}
+
+.client-offers-secondary > summary::after {
+  content: "▾";
+  font-size: 12px;
+  color: rgba(17, 24, 39, 0.72);
+  transform: rotate(-90deg);
+  transition: transform 120ms ease;
+}
+
+.client-offers-secondary[open] > summary::after {
+  transform: rotate(0deg);
+}
+
+.client-offers-secondary-grid {
+  padding: 0 18px 18px;
+}
+
 .client-messages-table-wrap table thead th {
   position: sticky;
   top: 0;
