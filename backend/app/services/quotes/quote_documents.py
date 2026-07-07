@@ -1980,7 +1980,7 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
         widened_sessions = collect_sessions(enforce_series_key=False, max_date=query_end_date)
         if len(widened_sessions) > len(sessions):
             sessions = widened_sessions
-    elif session_limit > 0 and series_key and len(sessions) < session_limit:
+    elif session_limit > 0 and series_key and len(sessions) < session_limit and not _is_solfege_planning_block(block):
         widened_sessions = collect_sessions(enforce_series_key=False, max_date=query_end_date)
         if len(widened_sessions) > len(sessions):
             sessions = widened_sessions
@@ -2008,7 +2008,7 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
                         continue
                     seen_keys.add(key)
                     sessions.append(item)
-    if session_limit > 0 and not is_live_planning_block and len(sessions) < session_limit:
+    if session_limit > 0 and not is_live_planning_block and len(sessions) < session_limit and not _is_solfege_planning_block(block):
         expected_sessions = _expected_sessions_from_planning_block(block)
         expected_sessions, _ = _filter_sessions_blocked_by_quote_school_calendar(db, expected_sessions)
         if len(expected_sessions) > len(sessions):
@@ -4119,6 +4119,7 @@ def _calendar_snapshot_with_current_solfege_block(
         line_meta = _json_object(getattr(line, "meta", None))
         source_key = str(line_meta.get("typeform_automatic_line") or "").strip()
         recommendation_key = f"{line_activity_id}:{source_key}" if source_key else line_activity_id
+    planning_session_limit = _planning_session_limit_from_quote_line_meta(line) or base_block.get("planning_session_limit")
 
     live_rows: list[tuple[CourseSession, CourseType, Location]] = []
     live_location: Location | None = None
@@ -4157,6 +4158,7 @@ def _calendar_snapshot_with_current_solfege_block(
             "start_date": min(live_dates).isoformat() if live_dates else None,
             "end_date": max(live_dates).isoformat() if live_dates else None,
             "sessions_count": len(live_rows) if live_rows else None,
+            "planning_session_limit": planning_session_limit,
             "selection_pending": not bool(live_rows),
             "pending_solfege_level": line_level or base_block.get("pending_solfege_level") or slot.get("level_code"),
             "pending_slot_options": [] if live_rows else base_block.get("pending_slot_options") or [],

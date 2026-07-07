@@ -2118,6 +2118,7 @@ def _calendar_snapshot_with_selected_solfege_block(
     line_meta = _json_object(solfege_line.meta)
     source_key = str(line_meta.get("typeform_automatic_line") or "").strip()
     recommendation_key = f"{solfege_line.activity_id}:{source_key}" if source_key else str(solfege_line.activity_id)
+    planning_session_limit = _planning_session_limit_from_quote_line(solfege_line)
     series_key = str(live_sessions[0].recurrence_group_id or live_sessions[0].id) if live_sessions else ""
     location_id = str(live_location.id) if live_location is not None else str(selected_slot.get("location_id") or "").strip()
     location_label = str(live_location.name) if live_location is not None else str(selected_slot.get("location_label") or "").strip()
@@ -2138,6 +2139,7 @@ def _calendar_snapshot_with_selected_solfege_block(
         "duration_minutes": selected_slot.get("duration_minutes") or solfege_line.duration_minutes,
         "modality": selected_slot.get("modality") or None,
         "sessions_count": len(live_sessions) if live_sessions else None,
+        "planning_session_limit": planning_session_limit,
         "selection_pending": not bool(live_sessions),
         "pending_solfege_level": line_solfege_level or selected_slot.get("level_code") or quote.estimated_solfege_level or None,
         "pending_slot_options": [],
