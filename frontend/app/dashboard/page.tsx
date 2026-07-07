@@ -2522,23 +2522,31 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     ? TIMEZONE_OPTIONS
     : [{ value: timezone, label: `${timezone} (personnalise)` }, ...TIMEZONE_OPTIONS];
 
+  const tabLabels: Record<DashboardTab, string> = {
+    home: uiText(language, "client.home"),
+    planning: uiText(language, "client.planning"),
+    courses: uiText(language, "client.courses"),
+    reservations: uiText(language, "client.bookings"),
+    offers: uiText(language, "client.offers"),
+    finance: uiText(language, "client.finance"),
+    messages: uiText(language, "client.messages"),
+    account: uiText(language, "client.account"),
+  };
   const tabLinks: Array<{ id: DashboardTab; label: string; icon: string }> = [
-    { id: "home", label: uiText(language, "client.home"), icon: "🏠" },
-    { id: "planning", label: uiText(language, "client.planning"), icon: "📅" },
-    { id: "courses", label: uiText(language, "client.courses"), icon: "📚" },
-    { id: "reservations", label: uiText(language, "client.bookings"), icon: "✅" },
-    { id: "offers", label: uiText(language, "client.offers"), icon: "🧾" },
-    { id: "finance", label: uiText(language, "client.finance"), icon: "💳" },
-    { id: "messages", label: uiText(language, "client.messages"), icon: "✉️" },
-    { id: "account", label: uiText(language, "client.account"), icon: "👤" },
+    { id: "home", label: tabLabels.home, icon: "🏠" },
+    { id: "planning", label: tabLabels.planning, icon: "📅" },
+    { id: "courses", label: tabLabels.courses, icon: "📚" },
+    { id: "offers", label: tabLabels.offers, icon: "🧾" },
+    { id: "finance", label: tabLabels.finance, icon: "💳" },
+    { id: "messages", label: tabLabels.messages, icon: "✉️" },
+    { id: "account", label: tabLabels.account, icon: "👤" },
   ];
   const mobileTabLinks = [
-    { id: "home", label: uiText(language, "client.home"), icon: "🏠", href: withUpdatedQuery(rawParams, { tab: "home" }) },
-    { id: "planning", label: uiText(language, "client.planning"), icon: "📅", href: withUpdatedQuery(rawParams, { tab: "planning" }) },
-    { id: "courses", label: uiText(language, "client.courses"), icon: "📚", href: withUpdatedQuery(rawParams, { tab: "courses" }) },
-    { id: "reservations", label: uiText(language, "client.bookings"), icon: "✅", href: withUpdatedQuery(rawParams, { tab: "reservations" }) },
-    { id: "offers", label: uiText(language, "client.offers"), icon: "🧾", href: withUpdatedQuery(rawParams, { tab: "offers" }) },
-    { id: "account", label: uiText(language, "client.account"), icon: "👤", href: withUpdatedQuery(rawParams, { tab: "account" }) },
+    { id: "home", label: tabLabels.home, icon: "🏠", href: withUpdatedQuery(rawParams, { tab: "home" }) },
+    { id: "planning", label: tabLabels.planning, icon: "📅", href: withUpdatedQuery(rawParams, { tab: "planning" }) },
+    { id: "courses", label: tabLabels.courses, icon: "📚", href: withUpdatedQuery(rawParams, { tab: "courses" }) },
+    { id: "offers", label: tabLabels.offers, icon: "🧾", href: withUpdatedQuery(rawParams, { tab: "offers" }) },
+    { id: "account", label: tabLabels.account, icon: "👤", href: withUpdatedQuery(rawParams, { tab: "account" }) },
   ];
   const activeMobileTabId = mobileTabLinks.some((item) => item.id === tab)
     ? tab
@@ -2655,34 +2663,31 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
       <section className="client-portal-main">
         <MobileHeader
-          title={tabLinks.find((item) => item.id === tab)?.label ?? uiText(language, "portal.client")}
+          title={tabLabels[tab] ?? uiText(language, "portal.client")}
           subtitle={`${displayName} · ${timezone}`}
           menuLabel={uiText(language, "portal.client_menu")}
           menu={
             <div className="client-mobile-menu-items">
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "home" })}>
-                {uiText(language, "client.home")}
+                {tabLabels.home}
               </a>
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "planning" })}>
-                {uiText(language, "client.planning")}
-              </a>
-              <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "reservations" })}>
-                {uiText(language, "client.bookings")}
-              </a>
-              <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "offers" })}>
-                {uiText(language, "client.offers")}
-              </a>
-              <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "finance" })}>
-                {uiText(language, "client.finance")}
-              </a>
-              <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>
-                {uiText(language, "client.messages")}
+                {tabLabels.planning}
               </a>
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "courses" })}>
-                {uiText(language, "client.courses")}
+                {tabLabels.courses}
+              </a>
+              <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "offers" })}>
+                {tabLabels.offers}
+              </a>
+              <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "finance" })}>
+                {tabLabels.finance}
+              </a>
+              <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>
+                {tabLabels.messages}
               </a>
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "account" })}>
-                {uiText(language, "client.account")}
+                {tabLabels.account}
               </a>
               {isImpersonating ? (
                 <form action={endPortalImpersonationAction}>
@@ -2703,7 +2708,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
         <header className="client-topbar">
           <div>
-            <h1>{tabLinks.find((item) => item.id === tab)?.label ?? uiText(language, "client.default_title")}</h1>
+            <h1>{tabLabels[tab] ?? uiText(language, "client.default_title")}</h1>
             <p className="muted">
               {uiText(language, "client.active_bookings")}: {upcomingBookings.length} | {uiText(
                 language,
