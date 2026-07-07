@@ -95,6 +95,27 @@ def _monthly_parts_from_service_months(
     return [(month_key, _quantize(amount)) for month_key, amount in month_amounts]
 
 
+def _monthly_fixed_parts_from_service_months(
+    total: Decimal,
+    monthly_service_amounts_ttc: dict[str, Decimal],
+) -> list[tuple[str, Decimal]]:
+    month_keys: list[str] = []
+    seen: set[str] = set()
+    for month_key, raw_amount in monthly_service_amounts_ttc.items():
+        month_key_text = str(month_key)
+        if _month_key_parts(month_key_text) is None or month_key_text in seen:
+            continue
+        amount = _quantize(Decimal(raw_amount or 0))
+        if amount <= Decimal("0.00"):
+            continue
+        month_keys.append(month_key_text)
+        seen.add(month_key_text)
+    month_keys.sort()
+    if not month_keys:
+        return []
+    return list(zip(month_keys, _split_amount(total, len(month_keys))))
+
+
 def _month_label(month: int) -> str:
     labels = {
         1: "janvier",
@@ -143,7 +164,7 @@ def _default_installments(schedule_type: str) -> int:
         return 3
     if normalized == "split_4":
         return 4
-    if normalized == "monthly":
+    if normalized in {"monthly", "monthly_fixed", "fixed_monthly"}:
         return 10
     return 1
 
@@ -167,7 +188,7 @@ def _default_deferred_months(schedule_type: str, installments: int) -> list[int]
         return [12, 2]
     if normalized == "split_4":
         return [12, 2, 4]
-    if normalized == "monthly":
+    if normalized in {"monthly", "monthly_fixed", "fixed_monthly"}:
         start = _to_int(date.today().month, 1)
         out: list[int] = []
         for index in range(max(0, installments - 1)):
@@ -255,14 +276,22 @@ def build_payment_schedule(payload: PaymentPlanScheduleInput) -> list[dict[str, 
     elif method_code in {"CHECK", "CHEQUE"} and len(deferred_months) >= 1 and not isinstance(deferred_raw, list):
         deferred_months[0] = 12
 
-    is_monthly_schedule = schedule_type == "monthly" or method_code in {"CARD_MONTHLY", "CB_MONTHLY"}
+    is_fixed_monthly_schedule = (
+        schedule_type in {"monthly_fixed", "fixed_monthly"} or method_code in {"CARD_MONTHLY_FIXED", "CB_MONTHLY_FIXED"}
+    )
+    is_monthly_schedule = (
+        is_fixed_monthly_schedule or schedule_type == "monthly" or method_code in {"CARD_MONTHLY", "CB_MONTHLY"}
+    )
     monthly_parts: list[tuple[str, Decimal]] = []
     if is_monthly_schedule and payload.monthly_service_amounts_ttc:
-        monthly_parts = _monthly_parts_from_service_months(
-            total,
-            payload.monthly_service_amounts_ttc,
-            _quantize(payload.fixed_fees_ttc),
-        )
+        if is_fixed_monthly_schedule:
+            monthly_parts = _monthly_fixed_parts_from_service_months(total, payload.monthly_service_amounts_ttc)
+        else:
+            monthly_parts = _monthly_parts_from_service_months(
+                total,
+                payload.monthly_service_amounts_ttc,
+                _quantize(payload.fixed_fees_ttc),
+            )
     monthly_fallback_keys: list[str] = []
     if is_monthly_schedule and not monthly_parts:
         monthly_start_parts = _month_key_parts(str(payload.monthly_start_month or ""))
@@ -272,9 +301,13 @@ def build_payment_schedule(payload: PaymentPlanScheduleInput) -> list[dict[str, 
         [amount for _, amount in monthly_parts]
         if monthly_parts
         else (
-            _monthly_parts_with_first_fixed_fees(total, installments, _quantize(payload.fixed_fees_ttc))
-            if is_monthly_schedule
-            else _split_amount(total, installments)
+            _split_amount(total, installments)
+            if is_fixed_monthly_schedule
+            else (
+                _monthly_parts_with_first_fixed_fees(total, installments, _quantize(payload.fixed_fees_ttc))
+                if is_monthly_schedule
+                else _split_amount(total, installments)
+            )
         )
     )
     out: list[dict[str, object]] = []

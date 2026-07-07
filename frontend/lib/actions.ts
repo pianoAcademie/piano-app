@@ -13656,23 +13656,32 @@ function parseJsonObject(raw: string): Record<string, unknown> | null {
   }
 }
 
-function normalizePaymentPlanScheduleType(raw: string): "single" | "split_2" | "split_3" | "split_4" | "monthly" | null {
+type PaymentPlanScheduleType = "single" | "split_2" | "split_3" | "split_4" | "monthly" | "monthly_fixed";
+
+function normalizePaymentPlanScheduleType(raw: string): PaymentPlanScheduleType | null {
   const value = raw.trim().toLowerCase();
-  if (value === "single" || value === "split_2" || value === "split_3" || value === "split_4" || value === "monthly") {
+  if (
+    value === "single"
+    || value === "split_2"
+    || value === "split_3"
+    || value === "split_4"
+    || value === "monthly"
+    || value === "monthly_fixed"
+  ) {
     return value;
   }
   return null;
 }
 
-function defaultInstallmentsForScheduleType(scheduleType: "single" | "split_2" | "split_3" | "split_4" | "monthly"): number {
+function defaultInstallmentsForScheduleType(scheduleType: PaymentPlanScheduleType): number {
   if (scheduleType === "split_2") return 2;
   if (scheduleType === "split_3") return 3;
   if (scheduleType === "split_4") return 4;
-  if (scheduleType === "monthly") return 10;
+  if (scheduleType === "monthly" || scheduleType === "monthly_fixed") return 10;
   return 1;
 }
 
-function defaultDeferredMonthsForScheduleType(scheduleType: "single" | "split_2" | "split_3" | "split_4" | "monthly"): number[] {
+function defaultDeferredMonthsForScheduleType(scheduleType: PaymentPlanScheduleType): number[] {
   if (scheduleType === "split_2") return [12];
   if (scheduleType === "split_3") return [12, 2];
   if (scheduleType === "split_4") return [12, 2, 4];
@@ -13695,6 +13704,7 @@ function normalizePaymentPlanPresetLabel(raw: string): string {
   const allowed = new Set([
     "Carte bancaire",
     "Carte bancaire mensuelle",
+    "CB mensuel fixe",
     "Cheque en 1 fois",
     "Cheque en 2 fois",
     "Cheque en 4 fois",
@@ -13742,7 +13752,7 @@ function termsTemplateCodeFromName(name: string): string {
 }
 
 function buildPaymentPlanRules(
-  scheduleType: "single" | "split_2" | "split_3" | "split_4" | "monthly",
+  scheduleType: PaymentPlanScheduleType,
   feePercent: number | null,
   options: {
     deferredMonths: Array<number | null>;
@@ -13765,9 +13775,11 @@ function buildPaymentPlanRules(
     cadence:
       scheduleType === "monthly"
         ? "monthly"
-        : scheduleType === "single"
-          ? "single"
-          : "manual_split",
+        : scheduleType === "monthly_fixed"
+          ? "monthly_fixed"
+          : scheduleType === "single"
+            ? "single"
+            : "manual_split",
     has_fees: feePercent !== null && feePercent > 0,
     fee_percent: feePercent !== null && feePercent > 0 ? Number(feePercent.toFixed(2)) : 0,
     deferred_due_months: normalizedDeferredDueMonths,

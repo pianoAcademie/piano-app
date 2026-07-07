@@ -543,6 +543,7 @@ function paymentMethodLabel(methodCode: string, language: UiLanguage = "fr"): st
   const normalized = String(methodCode || "").trim().toUpperCase();
   if (normalized === "CARD") return uiText(language, "admin.quote_detail.payment_method_card");
   if (normalized === "CARD_MONTHLY") return uiText(language, "admin.quote_detail.payment_method_card_monthly");
+  if (normalized === "CARD_MONTHLY_FIXED") return uiText(language, "admin.quote_detail.payment_method_card_monthly_fixed");
   if (normalized === "CHECK") return uiText(language, "admin.quote_detail.payment_method_check");
   if (normalized === "BANK_TRANSFER") return uiText(language, "admin.quote_detail.payment_method_bank_transfer");
   if (normalized === "CASH") return uiText(language, "admin.quote_detail.payment_method_cash");

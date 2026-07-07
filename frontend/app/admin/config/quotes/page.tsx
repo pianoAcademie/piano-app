@@ -524,6 +524,7 @@ const WEEKDAY_VALUES = [0, 1, 2, 3, 4, 5, 6] as const;
 const PAYMENT_PLAN_PRESET_OPTIONS: Array<{ value: string; payment_method: string; schedule_type: string }> = [
   { value: "Carte bancaire", payment_method: "CARD", schedule_type: "single" },
   { value: "Carte bancaire mensuelle", payment_method: "CARD_MONTHLY", schedule_type: "monthly" },
+  { value: "CB mensuel fixe", payment_method: "CARD_MONTHLY_FIXED", schedule_type: "monthly_fixed" },
   { value: "Cheque en 1 fois", payment_method: "CHECK", schedule_type: "single" },
   { value: "Cheque en 2 fois", payment_method: "CHECK", schedule_type: "split_2" },
   { value: "Cheque en 4 fois", payment_method: "CHECK", schedule_type: "split_4" },
@@ -538,9 +539,10 @@ const PAYMENT_SCHEDULE_TYPE_OPTIONS: Array<{ value: string }> = [
   { value: "split_3" },
   { value: "split_4" },
   { value: "monthly" },
+  { value: "monthly_fixed" },
 ];
 
-const PAYMENT_METHOD_OPTIONS = ["CARD", "CARD_MONTHLY", "CHECK", "BANK_TRANSFER", "CASH", "CARD_4X_FEES"] as const;
+const PAYMENT_METHOD_OPTIONS = ["CARD", "CARD_MONTHLY", "CARD_MONTHLY_FIXED", "CHECK", "BANK_TRANSFER", "CASH", "CARD_4X_FEES"] as const;
 const MONTH_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
 
 function weekdayLabel(day: number, language: UiLanguage): string {
@@ -562,6 +564,7 @@ function paymentPlanPresetLabel(value: string, language: UiLanguage): string {
   const normalized = value.trim();
   if (normalized === "Carte bancaire") return uiText(language, "admin.quote_config.payment_preset_card");
   if (normalized === "Carte bancaire mensuelle") return uiText(language, "admin.quote_config.payment_preset_card_monthly");
+  if (normalized === "CB mensuel fixe") return uiText(language, "admin.quote_config.payment_preset_card_monthly_fixed");
   if (normalized === "Cheque en 1 fois") return uiText(language, "admin.quote_config.payment_preset_check_single");
   if (normalized === "Cheque en 2 fois") return uiText(language, "admin.quote_config.payment_preset_check_split_2");
   if (normalized === "Cheque en 4 fois") return uiText(language, "admin.quote_config.payment_preset_check_split_4");
@@ -578,6 +581,7 @@ function paymentScheduleTypeLabel(value: string, language: UiLanguage): string {
   if (normalized === "split_3") return uiText(language, "admin.quote_config.payment_schedule_split_3");
   if (normalized === "split_4") return uiText(language, "admin.quote_config.payment_schedule_split_4");
   if (normalized === "monthly") return uiText(language, "admin.quote_config.payment_schedule_monthly");
+  if (normalized === "monthly_fixed") return uiText(language, "admin.quote_config.payment_schedule_monthly_fixed");
   return value || "-";
 }
 
@@ -586,6 +590,7 @@ function paymentMethodLabel(value: string, language: UiLanguage): string {
   if (!normalized) return "-";
   if (normalized === "CARD") return uiText(language, "admin.quote_detail.payment_method_card");
   if (normalized === "CARD_MONTHLY") return uiText(language, "admin.quote_detail.payment_method_card_monthly");
+  if (normalized === "CARD_MONTHLY_FIXED") return uiText(language, "admin.quote_detail.payment_method_card_monthly_fixed");
   if (normalized === "CHECK") return uiText(language, "admin.quote_detail.payment_method_check");
   if (normalized === "BANK_TRANSFER") return uiText(language, "admin.quote_detail.payment_method_bank_transfer");
   if (normalized === "CASH") return uiText(language, "admin.quote_detail.payment_method_cash");
@@ -1994,7 +1999,7 @@ export default async function AdminQuoteConfigurationPage({ searchParams }: { se
                             <label>
                               {t("admin.quote_config.payment_method")}
                               <select name="payment_method" defaultValue={row.payment_method} required>
-                                {!["CARD", "CARD_MONTHLY", "CHECK", "BANK_TRANSFER", "CASH", "CARD_4X_FEES"].includes(row.payment_method) ? (
+                                {!["CARD", "CARD_MONTHLY", "CARD_MONTHLY_FIXED", "CHECK", "BANK_TRANSFER", "CASH", "CARD_4X_FEES"].includes(row.payment_method) ? (
                                   <option value={row.payment_method}>{row.payment_method}</option>
                                 ) : null}
                                 {paymentMethodOptions.map((option) => (

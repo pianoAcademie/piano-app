@@ -424,6 +424,8 @@ def _payment_method_label_from_code(method_code: str) -> str:
         return "Carte bancaire"
     if normalized == "CARD_MONTHLY":
         return "Carte bancaire mensuelle"
+    if normalized in {"CARD_MONTHLY_FIXED", "CB_MONTHLY_FIXED"}:
+        return "CB mensuel fixe"
     if normalized == "CHECK":
         return "Cheque"
     if normalized in {"CHECK_2", "CHEQUE_2", "CHEQUE_X2"}:

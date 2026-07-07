@@ -95,6 +95,49 @@ def test_monthly_card_schedule_uses_real_course_months_and_first_fixed_fees() ->
     assert schedule[-1]["due_label"] == "1er juin 2027"
 
 
+def test_monthly_fixed_card_schedule_uses_active_course_months_and_equal_amounts() -> None:
+    schedule = build_payment_schedule(
+        PaymentPlanScheduleInput(
+            payment_method_code="CARD_MONTHLY_FIXED",
+            payment_method_label="CB mensuel fixe",
+            schedule_type="monthly_fixed",
+            schedule_rules={"installment_count": 10},
+            total_ttc=Decimal("1000.00"),
+            fixed_fees_ttc=Decimal("120.00"),
+            monthly_service_amounts_ttc={
+                "2026-09": Decimal("300.00"),
+                "2026-10": Decimal("100.00"),
+                "2026-12": Decimal("600.00"),
+            },
+            registration_date=date(2026, 5, 20),
+        )
+    )
+
+    amounts = _amounts(schedule)
+    assert amounts == [Decimal("333.33"), Decimal("333.33"), Decimal("333.34")]
+    assert sum(amounts) == Decimal("1000.00")
+    assert [item["due_date"] for item in schedule] == ["2026-09-01", "2026-10-01", "2026-12-01"]
+    assert all(item["payment_method"] == "CB mensuel fixe" for item in schedule)
+
+
+def test_monthly_fixed_card_schedule_fallback_starts_on_first_course_month() -> None:
+    schedule = build_payment_schedule(
+        PaymentPlanScheduleInput(
+            payment_method_code="CARD_MONTHLY_FIXED",
+            payment_method_label="CB mensuel fixe",
+            schedule_type="monthly_fixed",
+            schedule_rules={"installment_count": 3},
+            total_ttc=Decimal("100.00"),
+            fixed_fees_ttc=Decimal("50.00"),
+            monthly_start_month="2026-09",
+            registration_date=date(2026, 5, 20),
+        )
+    )
+
+    assert [item["due_date"] for item in schedule] == ["2026-09-01", "2026-10-01", "2026-11-01"]
+    assert _amounts(schedule) == [Decimal("33.33"), Decimal("33.33"), Decimal("33.34")]
+
+
 def test_monthly_card_schedule_applies_credit_to_earliest_service_months() -> None:
     schedule = build_payment_schedule(
         PaymentPlanScheduleInput(
