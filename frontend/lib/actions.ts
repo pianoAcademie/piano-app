@@ -13186,7 +13186,8 @@ async function buildCalendarSnapshotFromBlocks({
           block: block as LivePlanningBlockInput,
           token,
         });
-    if (liveMatch && liveMatch.sessions.length > 0 && liveMatch.sessions.length >= rows.length) {
+    if (liveMatch && liveMatch.sessions.length > 0) {
+      // The live planning is authoritative: cancelled sessions are absent and must not be recreated from the theoretical calendar.
       sessions.push(...liveMatch.sessions);
       Object.assign(block, liveMatch.block, {
         calendar_id: String(resolvedCalendar.calendar?.id ?? ""),

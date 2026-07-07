@@ -2008,7 +2008,7 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
                         continue
                     seen_keys.add(key)
                     sessions.append(item)
-    if session_limit > 0 and len(sessions) < session_limit:
+    if session_limit > 0 and not is_live_planning_block and len(sessions) < session_limit:
         expected_sessions = _expected_sessions_from_planning_block(block)
         expected_sessions, _ = _filter_sessions_blocked_by_quote_school_calendar(db, expected_sessions)
         if len(expected_sessions) > len(sessions):
@@ -2157,6 +2157,14 @@ def _calendar_session_matches_planning_block(
 
     block_location_id = str(block.get("location_id") or "").strip()
     if block_location_id and str(session.get("location_id") or "").strip() != block_location_id:
+        return False
+
+    block_start_time = str(block.get("start_time") or "").strip()
+    if block_start_time and str(session.get("start_time") or "").strip() != block_start_time:
+        return False
+
+    block_end_time = str(block.get("end_time") or "").strip()
+    if block_end_time and str(session.get("end_time") or "").strip() != block_end_time:
         return False
 
     block_series_key = str(block.get("series_key") or "").strip()
@@ -2509,10 +2517,17 @@ def _calendar_snapshot_with_planning_sessions(db: Session | None, calendar_snaps
         refreshed_block_sessions = _sessions_from_planning_block(db, block)
         if refreshed_block_sessions:
             refreshed_dates = {str(item.get("date") or "").strip() for item in refreshed_block_sessions}
+            replacement_dates = set(refreshed_dates)
+            if str(block.get("source") or "").strip() == "live_planning":
+                replacement_dates.update(
+                    str(item.get("date") or "").strip()
+                    for item in _expected_sessions_from_planning_block(block)
+                    if str(item.get("date") or "").strip()
+                )
             kept_sessions = [
                 item
                 for item in sessions
-                if not _calendar_session_matches_planning_block(item, block, refreshed_dates=refreshed_dates)
+                if not _calendar_session_matches_planning_block(item, block, refreshed_dates=replacement_dates)
             ]
             if len(kept_sessions) != len(sessions):
                 sessions = kept_sessions

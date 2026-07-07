@@ -1229,6 +1229,79 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertEqual(hydrated["sessions_count"], 4)
         self.assertEqual(hydrated["blocks"][0]["end_date"], "2027-06-18")
 
+    def test_live_planning_block_removes_cancelled_session_from_existing_snapshot(self) -> None:
+        activity_id = uuid4()
+        location_id = uuid4()
+        recurrence_id = uuid4()
+        paris = ZoneInfo("Europe/Paris")
+
+        def live_row(iso_date: str) -> tuple[SimpleNamespace, SimpleNamespace, SimpleNamespace]:
+            local_day = date.fromisoformat(iso_date)
+            local_start = datetime.combine(local_day, time(18, 0), tzinfo=paris)
+            local_end = datetime.combine(local_day, time(19, 0), tzinfo=paris)
+            return (
+                SimpleNamespace(
+                    id=uuid4(),
+                    course_type_id=activity_id,
+                    location_id=location_id,
+                    status="SCHEDULED",
+                    start_at_utc=local_start.astimezone(timezone.utc),
+                    end_at_utc=local_end.astimezone(timezone.utc),
+                    timezone="Europe/Paris",
+                    recurrence_group_id=recurrence_id,
+                ),
+                SimpleNamespace(id=activity_id, name="Cours collectif Adulte - Bar-le-Duc", mode="ONSITE"),
+                SimpleNamespace(id=location_id, name="Bar-le-Duc", timezone="Europe/Paris", is_online=False),
+            )
+
+        rows = [live_row("2026-09-04"), live_row("2026-09-11"), live_row("2026-09-25")]
+        fake_db = SimpleNamespace(
+            scalar=lambda _query: None,
+            execute=lambda _query: SimpleNamespace(all=lambda: rows),
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "source": "live_planning",
+                    "activity_id": str(activity_id),
+                    "activity_label": "Cours collectif Adulte - Bar-le-Duc",
+                    "location_id": str(location_id),
+                    "location_label": "Bar-le-Duc",
+                    "weekday": 4,
+                    "weekday_label": "Vendredi",
+                    "start_date": "2026-09-04",
+                    "end_date": "2026-09-25",
+                    "start_time": "18:00",
+                    "end_time": "19:00",
+                    "series_key": str(recurrence_id),
+                    "selection_pending": False,
+                }
+            ],
+            "sessions": [
+                {
+                    "date": "2026-09-18",
+                    "start_time": "18:00",
+                    "end_time": "19:00",
+                    "duration_minutes": 60,
+                    "activity_id": str(activity_id),
+                    "activity_label": "Cours collectif Adulte - Bar-le-Duc",
+                    "location_id": str(location_id),
+                    "location_label": "Bar-le-Duc",
+                    "series_key": str(recurrence_id),
+                    "weekday": 4,
+                    "weekday_label": "Vendredi",
+                    "modality": "onsite",
+                }
+            ],
+        }
+
+        hydrated = _calendar_snapshot_with_planning_sessions(fake_db, snapshot)
+        dates = [item["date"] for item in hydrated["sessions"]]
+
+        self.assertEqual(dates, ["2026-09-04", "2026-09-11", "2026-09-25"])
+        self.assertNotIn("2026-09-18", dates)
+        self.assertEqual(hydrated["sessions_count"], 3)
+
     def test_live_planning_block_extends_expected_sessions_after_sparse_live_tail(self) -> None:
         activity_id = uuid4()
         location_id = uuid4()
