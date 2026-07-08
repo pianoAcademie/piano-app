@@ -581,6 +581,9 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertEqual(hydrated["sessions_count"], 26)
         self.assertEqual([item["date"] for item in hydrated["sessions"]], selected_dates)
         self.assertEqual(hydrated["blocks"][0]["end_date"], "2027-05-25")
+        self.assertEqual(hydrated["blocks"][0]["sessions_count"], 26)
+        self.assertEqual(hydrated["blocks"][0]["planning_session_limit"], 26)
+        self.assertEqual(hydrated["blocks"][0]["series_key"], str(selected_recurrence_id))
 
     def test_solfege_planning_without_series_key_uses_single_live_series_and_removes_old_june_dates(self) -> None:
         activity_id = uuid4()
@@ -682,6 +685,9 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertEqual([item["date"] for item in hydrated["sessions"]], selected_dates)
         self.assertNotIn("2027-06-01", [item["date"] for item in hydrated["sessions"]])
         self.assertEqual(hydrated["blocks"][0]["end_date"], "2027-05-25")
+        self.assertEqual(hydrated["blocks"][0]["sessions_count"], 26)
+        self.assertEqual(hydrated["blocks"][0]["planning_session_limit"], 26)
+        self.assertEqual(hydrated["blocks"][0]["series_key"], str(selected_recurrence_id))
 
     def test_calendar_snapshot_hydration_preserves_custom_period_end_date_and_ignores_limit(self) -> None:
         activity_id = uuid4()

@@ -2006,7 +2006,7 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
         widened_sessions = pick_best_live_series(collect_sessions(enforce_series_key=False, max_date=query_end_date))
         if len(widened_sessions) > len(sessions):
             sessions = widened_sessions
-    elif session_limit > 0 and _is_solfege_planning_block(block):
+    elif session_limit > 0 and _is_solfege_planning_block(block) and not series_key:
         widened_sessions = pick_best_live_series(collect_sessions(enforce_series_key=False, max_date=query_end_date))
         if widened_sessions:
             sessions = widened_sessions
@@ -2594,6 +2594,23 @@ def _calendar_snapshot_with_planning_sessions(db: Session | None, calendar_snaps
             ):
                 block["end_date"] = last_refreshed_date
                 changed = True
+            if refreshed_block_sessions and _is_solfege_planning_block(block) and not _planning_block_has_custom_period(block):
+                first_refreshed_date = str(refreshed_block_sessions[0].get("date") or "").strip()
+                refreshed_count = len(refreshed_block_sessions)
+                refreshed_series_key = str(refreshed_block_sessions[0].get("series_key") or "").strip()
+                if first_refreshed_date and str(block.get("start_date") or "").strip() != first_refreshed_date:
+                    block["start_date"] = first_refreshed_date
+                    changed = True
+                if block.get("sessions_count") != refreshed_count:
+                    block["sessions_count"] = refreshed_count
+                    changed = True
+                if _planning_session_limit_from_block(block) != refreshed_count:
+                    block["planning_session_limit"] = refreshed_count
+                    changed = True
+                if refreshed_series_key and str(block.get("series_key") or "").strip() != refreshed_series_key:
+                    block["series_key"] = refreshed_series_key
+                    changed = True
+                blocks[block_index] = block
         for item in refreshed_block_sessions:
             key = _calendar_session_dedupe_key(item)
             if key in seen:
