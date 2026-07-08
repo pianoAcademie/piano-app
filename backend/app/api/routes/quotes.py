@@ -2002,6 +2002,7 @@ def _selected_solfege_live_series_for_slot(
     activity_id: UUID,
     selected_slot: dict[str, object],
     school_year_label: str | None,
+    expected_session_count: int | None = None,
 ) -> tuple[list[CourseSession], Location | None]:
     if db is None:
         return [], None
@@ -2023,6 +2024,7 @@ def _selected_solfege_live_series_for_slot(
         return [], None
 
     selected_location_id = _parse_uuid_value(selected_slot.get("location_id"))
+    requested_start_date = _parse_iso_date(str(selected_slot.get("start_date") or selected_slot.get("date") or ""))
     selected_modality = _public_solfege_mode_semantic(
         selected_slot.get("modality") or selected_slot.get("location_label") or selected_slot.get("mode")
     )
@@ -2074,7 +2076,24 @@ def _selected_solfege_live_series_for_slot(
     if not grouped:
         return [], None
 
-    best_key = max(grouped, key=lambda key: len(grouped[key]))
+    expected_count = expected_session_count if expected_session_count is not None and expected_session_count > 0 else 0
+
+    def group_rank(group_key: str) -> tuple[int, int, int, int, int]:
+        group = grouped[group_key]
+        location = locations_by_group.get(group_key)
+        dates: list[date] = []
+        for session_obj in group:
+            timezone_name = session_obj.timezone or (location.timezone if location is not None else None)
+            dates.append(session_obj.start_at_utc.astimezone(_safe_zoneinfo(timezone_name)).date())
+        first_date = min(dates, default=date.max)
+        june_count = sum(1 for item in dates if item.month == 6)
+        no_june = 1 if june_count == 0 else 0
+        expected_match = 1 if expected_count > 0 and len(group) == expected_count else 0
+        expected_distance = -abs(len(group) - expected_count) if expected_count > 0 else 0
+        starts_on_requested_date = 1 if requested_start_date is not None and first_date == requested_start_date else 0
+        return no_june, expected_match, expected_distance, starts_on_requested_date, -first_date.toordinal()
+
+    best_key = max(grouped, key=group_rank)
     return sorted(grouped[best_key], key=lambda session_obj: session_obj.start_at_utc), locations_by_group.get(best_key)
 
 
@@ -2105,11 +2124,13 @@ def _calendar_snapshot_with_selected_solfege_block(
         weekday,
         language=_public_solfege_language(quote.language),
     )
+    planning_session_limit = _planning_session_limit_from_quote_line(solfege_line, allow_session_quantity=True)
     live_sessions, live_location = _selected_solfege_live_series_for_slot(
         db,
         activity_id=solfege_line.activity_id,
         selected_slot=selected_slot,
         school_year_label=quote.school_year_label,
+        expected_session_count=planning_session_limit,
     )
     live_dates = []
     for session_obj in live_sessions:
@@ -2120,7 +2141,6 @@ def _calendar_snapshot_with_selected_solfege_block(
     line_meta = _json_object(solfege_line.meta)
     source_key = str(line_meta.get("typeform_automatic_line") or "").strip()
     recommendation_key = f"{solfege_line.activity_id}:{source_key}" if source_key else str(solfege_line.activity_id)
-    planning_session_limit = _planning_session_limit_from_quote_line(solfege_line)
     series_key = str(live_sessions[0].recurrence_group_id or live_sessions[0].id) if live_sessions else ""
     location_id = str(live_location.id) if live_location is not None else str(selected_slot.get("location_id") or "").strip()
     location_label = str(live_location.name) if live_location is not None else str(selected_slot.get("location_label") or "").strip()
@@ -2141,7 +2161,7 @@ def _calendar_snapshot_with_selected_solfege_block(
         "duration_minutes": selected_slot.get("duration_minutes") or solfege_line.duration_minutes,
         "modality": selected_slot.get("modality") or None,
         "sessions_count": len(live_sessions) if live_sessions else None,
-        "planning_session_limit": planning_session_limit,
+        "planning_session_limit": len(live_sessions) if live_sessions else planning_session_limit,
         "selection_pending": not bool(live_sessions),
         "pending_solfege_level": line_solfege_level or selected_slot.get("level_code") or quote.estimated_solfege_level or None,
         "pending_slot_options": [],
@@ -8115,7 +8135,7 @@ def _quote_line_schedule_key(line: QuoteLine, duplicate_activity_ids: set[str] |
     return str(line.activity_id)
 
 
-def _planning_session_limit_from_quote_line(line: QuoteLine) -> int | None:
+def _planning_session_limit_from_quote_line(line: QuoteLine, *, allow_session_quantity: bool = False) -> int | None:
     meta = _json_object(line.meta)
     template = _json_object(meta.get("typeform_template"))
     raw_limit = meta.get("planning_session_limit")
@@ -8124,8 +8144,21 @@ def _planning_session_limit_from_quote_line(line: QuoteLine) -> int | None:
     try:
         limit = int(str(raw_limit).strip())
     except (TypeError, ValueError):
+        limit = 0
+    if limit > 0:
+        return limit
+    if not allow_session_quantity:
         return None
-    return limit if limit > 0 else None
+    if str(getattr(line, "pricing_unit", "") or "").strip().lower() != "session":
+        return None
+    try:
+        quantity = Decimal(str(getattr(line, "quantity", "") or ""))
+    except Exception:
+        return None
+    if quantity != quantity.to_integral_value():
+        return None
+    inferred_limit = int(quantity)
+    return inferred_limit if inferred_limit > 1 else None
 
 
 def _expected_activity_dates_from_snapshot(

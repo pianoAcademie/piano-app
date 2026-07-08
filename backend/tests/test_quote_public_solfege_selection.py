@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 from pathlib import Path
 import sys
 import unittest
 from types import SimpleNamespace
 from uuid import uuid4
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -14,8 +15,25 @@ from app.api.routes.quotes import _public_quote_solfege_selection
 from app.api.routes.quotes import _apply_selected_solfege_slot_to_calendar_snapshot
 from app.api.routes.quotes import _calendar_snapshot_with_selected_solfege_block
 from app.api.routes.quotes import _public_selected_solfege_slot_from_snapshot
+from app.api.routes.quotes import _selected_solfege_live_series_for_slot
 from app.api.routes.quotes import _session_matches_quote_selected_solfege_slot
 from app.models.catalog import DeliveryMode
+
+
+class _FakeExecuteResult:
+    def __init__(self, rows: list[object]) -> None:
+        self._rows = rows
+
+    def all(self) -> list[object]:
+        return list(self._rows)
+
+
+class _FakeExecuteSession:
+    def __init__(self, rows: list[object]) -> None:
+        self._rows = rows
+
+    def execute(self, _statement) -> _FakeExecuteResult:
+        return _FakeExecuteResult(self._rows)
 
 
 class QuotePublicSolfegeSelectionTests(unittest.TestCase):
@@ -100,6 +118,111 @@ class QuotePublicSolfegeSelectionTests(unittest.TestCase):
         self.assertTrue(block["selection_pending"])
         self.assertNotIn("start_date", block)
         self.assertNotIn("end_date", block)
+
+    def test_selected_solfege_live_series_prefers_expected_real_count_when_saving(self) -> None:
+        activity_id = uuid4()
+        online_location_id = uuid4()
+        real_group_id = uuid4()
+        stale_group_id = uuid4()
+        paris = ZoneInfo("Europe/Paris")
+
+        def live_row(local_date: date, *, group_id) -> tuple[SimpleNamespace, SimpleNamespace, SimpleNamespace]:
+            local_start = datetime.combine(local_date, time(17, 35), tzinfo=paris)
+            local_end = datetime.combine(local_date, time(18, 20), tzinfo=paris)
+            session = SimpleNamespace(
+                id=uuid4(),
+                course_type_id=activity_id,
+                location_id=online_location_id,
+                start_at_utc=local_start.astimezone(timezone.utc),
+                end_at_utc=local_end.astimezone(timezone.utc),
+                recurrence_group_id=group_id,
+                timezone="Europe/Paris",
+            )
+            activity = SimpleNamespace(id=activity_id, name="Solfège - niveau 2", mode=DeliveryMode.ONLINE)
+            location = SimpleNamespace(id=online_location_id, name="Online", timezone="Europe/Paris", is_online=True)
+            return session, activity, location
+
+        real_dates = [
+            date(2026, 10, 6),
+            date(2026, 10, 13),
+            date(2026, 11, 3),
+            date(2026, 11, 10),
+            date(2026, 11, 17),
+            date(2026, 11, 24),
+            date(2026, 12, 1),
+            date(2026, 12, 8),
+            date(2026, 12, 15),
+            date(2027, 1, 5),
+            date(2027, 1, 12),
+            date(2027, 1, 19),
+            date(2027, 1, 26),
+            date(2027, 2, 2),
+            date(2027, 2, 23),
+            date(2027, 3, 2),
+            date(2027, 3, 9),
+            date(2027, 3, 16),
+            date(2027, 3, 23),
+            date(2027, 3, 30),
+            date(2027, 4, 20),
+            date(2027, 4, 27),
+            date(2027, 5, 4),
+            date(2027, 5, 11),
+            date(2027, 5, 18),
+            date(2027, 5, 25),
+        ]
+        stale_dates = real_dates + [date(2027, 6, 1), date(2027, 6, 8), date(2027, 6, 15)]
+        rows = [live_row(day, group_id=stale_group_id) for day in stale_dates]
+        rows += [live_row(day, group_id=real_group_id) for day in real_dates]
+        selected_slot = {
+            "weekday": 1,
+            "start_time": "17:35",
+            "end_time": "18:20",
+            "location_label": "Online",
+            "modality": "ONLINE",
+        }
+
+        selected_rows, _location = _selected_solfege_live_series_for_slot(
+            _FakeExecuteSession(rows),
+            activity_id=activity_id,
+            selected_slot=selected_slot,
+            school_year_label="2026-2027",
+            expected_session_count=26,
+        )
+
+        selected_dates = [row.start_at_utc.astimezone(paris).date() for row in selected_rows]
+        self.assertEqual(len(selected_dates), 26)
+        self.assertEqual(selected_dates[-1], date(2027, 5, 25))
+        self.assertNotIn(date(2027, 6, 1), selected_dates)
+
+        quote = SimpleNamespace(
+            language="fr",
+            school_year_label="2026-2027",
+            estimated_solfege_level="2",
+            selected_solfege_slot=selected_slot,
+            calendar_snapshot={"blocks": []},
+        )
+        line = SimpleNamespace(
+            activity_id=activity_id,
+            title="Solfège - niveau 2",
+            description=None,
+            code=None,
+            duration_minutes=45,
+            quantity="26",
+            pricing_unit="session",
+            meta={"typeform_automatic_line": "online_solfege"},
+        )
+
+        snapshot = _calendar_snapshot_with_selected_solfege_block(
+            quote,
+            lines=[line],
+            db=_FakeExecuteSession(rows),
+        )
+
+        block = snapshot["blocks"][0]
+        assert isinstance(block, dict)
+        self.assertEqual(block["sessions_count"], 26)
+        self.assertEqual(block["planning_session_limit"], 26)
+        self.assertEqual(block["end_date"], "2027-05-25")
 
     def test_selected_solfege_slot_refreshes_stale_planning_block(self) -> None:
         quote = SimpleNamespace(
