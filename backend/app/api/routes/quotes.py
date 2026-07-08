@@ -8167,18 +8167,37 @@ def _expected_activity_dates_from_snapshot(
     activity_id: UUID,
     schedule_key: str | None = None,
     calendar_snapshot: dict[str, object] | None = None,
+    expected_series_key: str | None = None,
+    expected_weekday: int | None = None,
 ) -> list[date]:
     snapshot = _json_object(calendar_snapshot if calendar_snapshot is not None else quote.calendar_snapshot)
+    normalized_expected_series_key = str(expected_series_key or "").strip()
 
     def _row_matches(row: dict[str, object]) -> bool:
         if _parse_uuid_value(row.get("activity_id")) != activity_id:
             return False
         if not schedule_key:
-            return True
+            return _row_matches_expected_series(row)
         recommendation_key = str(row.get("recommendation_key") or "").strip()
         automatic_line = str(row.get("typeform_automatic_line") or "").strip()
         row_key = recommendation_key or (f"{activity_id}:{automatic_line}" if automatic_line else str(activity_id))
-        return row_key == schedule_key
+        return row_key == schedule_key and _row_matches_expected_series(row)
+
+    def _row_matches_expected_series(row: dict[str, object], *, parsed_date: date | None = None) -> bool:
+        series_key = str(row.get("series_key") or row.get("recurrence_group_id") or "").strip()
+        if normalized_expected_series_key and series_key and series_key != normalized_expected_series_key:
+            return False
+        if expected_weekday is None:
+            return True
+        if parsed_date is None:
+            parsed_date = _parse_iso_date(str(row.get("date") or row.get("start_date") or ""))
+        if parsed_date is not None and parsed_date.weekday() != expected_weekday:
+            return False
+        try:
+            row_weekday = int(row.get("weekday"))
+        except (TypeError, ValueError):
+            row_weekday = None
+        return row_weekday is None or row_weekday == expected_weekday
 
     session_dates: set[date] = set()
     for raw in _json_list(snapshot.get("sessions")):
@@ -8186,7 +8205,7 @@ def _expected_activity_dates_from_snapshot(
         if not _row_matches(row):
             continue
         parsed = _parse_iso_date(str(row.get("date") or ""))
-        if parsed is not None:
+        if parsed is not None and _row_matches_expected_series(row, parsed_date=parsed):
             session_dates.add(parsed)
     if session_dates:
         return sorted(session_dates)
@@ -8199,6 +8218,8 @@ def _expected_activity_dates_from_snapshot(
         parsed_start = _parse_iso_date(str(row.get("start_date") or ""))
         parsed_end = _parse_iso_date(str(row.get("end_date") or ""))
         if parsed_start is None:
+            continue
+        if not _row_matches_expected_series(row, parsed_date=parsed_start):
             continue
         try:
             weekday = int(row.get("weekday"))
@@ -8228,18 +8249,36 @@ def _expected_activity_time_window_from_snapshot(
     activity_id: UUID,
     schedule_key: str | None = None,
     calendar_snapshot: dict[str, object] | None = None,
+    expected_series_key: str | None = None,
+    expected_weekday: int | None = None,
 ) -> tuple[str | None, str | None]:
     snapshot = _json_object(calendar_snapshot if calendar_snapshot is not None else quote.calendar_snapshot)
+    normalized_expected_series_key = str(expected_series_key or "").strip()
 
     def _row_matches(row: dict[str, object]) -> bool:
         if _parse_uuid_value(row.get("activity_id")) != activity_id:
             return False
         if not schedule_key:
-            return True
+            return _row_matches_expected_series(row)
         recommendation_key = str(row.get("recommendation_key") or "").strip()
         automatic_line = str(row.get("typeform_automatic_line") or "").strip()
         row_key = recommendation_key or (f"{activity_id}:{automatic_line}" if automatic_line else str(activity_id))
-        return row_key == schedule_key
+        return row_key == schedule_key and _row_matches_expected_series(row)
+
+    def _row_matches_expected_series(row: dict[str, object]) -> bool:
+        series_key = str(row.get("series_key") or row.get("recurrence_group_id") or "").strip()
+        if normalized_expected_series_key and series_key and series_key != normalized_expected_series_key:
+            return False
+        if expected_weekday is None:
+            return True
+        parsed_date = _parse_iso_date(str(row.get("date") or row.get("start_date") or ""))
+        if parsed_date is not None and parsed_date.weekday() != expected_weekday:
+            return False
+        try:
+            row_weekday = int(row.get("weekday"))
+        except (TypeError, ValueError):
+            row_weekday = None
+        return row_weekday is None or row_weekday == expected_weekday
 
     for collection_name in ("blocks", "sessions"):
         for raw in _json_list(snapshot.get(collection_name)):
@@ -10134,17 +10173,26 @@ def _execute_quote_followup_transformation(
         if selected_session is None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Creneau selectionne introuvable")
 
+        selected_session_zone = _safe_zoneinfo(getattr(selected_session, "timezone", None))
+        selected_session_start_local = selected_session.start_at_utc.astimezone(selected_session_zone)
+        selected_series_key = str(getattr(selected_session, "recurrence_group_id", None) or selected_session.id)
+        selected_weekday = selected_session_start_local.weekday()
+
         expected_dates = _expected_activity_dates_from_snapshot(
             quote,
             activity_id=activity_id,
             schedule_key=schedule_key,
             calendar_snapshot=calendar_snapshot_for_transform,
+            expected_series_key=selected_series_key,
+            expected_weekday=selected_weekday,
         )
         student_start_time_local, student_end_time_local = _expected_activity_time_window_from_snapshot(
             quote,
             activity_id=activity_id,
             schedule_key=schedule_key,
             calendar_snapshot=calendar_snapshot_for_transform,
+            expected_series_key=selected_series_key,
+            expected_weekday=selected_weekday,
         )
         session_limit = session_limit_by_key.get(schedule_key) or session_limit_by_key.get(str(activity_id))
         if session_limit is not None:

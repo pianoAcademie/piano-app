@@ -155,6 +155,98 @@ class QuoteLiveSeriesMatchingTests(unittest.TestCase):
             [date(2026, 10, 7), date(2026, 10, 14), date(2026, 11, 4)],
         )
 
+    def test_expected_dates_keep_selected_series_when_duplicate_keys_are_shared(self) -> None:
+        activity_id = uuid4()
+        tuesday_series_id = uuid4()
+        friday_series_id = uuid4()
+        schedule_key = f"{activity_id}:second_piano_course"
+        quote = SimpleNamespace(
+            calendar_snapshot={
+                "sessions": [
+                    {
+                        "activity_id": str(activity_id),
+                        "recommendation_key": schedule_key,
+                        "series_key": str(tuesday_series_id),
+                        "date": "2026-09-08",
+                    },
+                    {
+                        "activity_id": str(activity_id),
+                        "recommendation_key": schedule_key,
+                        "series_key": str(tuesday_series_id),
+                        "date": "2026-09-15",
+                    },
+                    {
+                        "activity_id": str(activity_id),
+                        "recommendation_key": schedule_key,
+                        "series_key": str(friday_series_id),
+                        "date": "2026-09-11",
+                    },
+                    {
+                        "activity_id": str(activity_id),
+                        "recommendation_key": schedule_key,
+                        "series_key": str(friday_series_id),
+                        "date": "2026-09-18",
+                    },
+                ],
+                "blocks": [],
+            }
+        )
+
+        self.assertEqual(
+            _expected_activity_dates_from_snapshot(
+                quote,
+                activity_id=activity_id,
+                schedule_key=schedule_key,
+                expected_series_key=str(friday_series_id),
+                expected_weekday=4,
+            ),
+            [date(2026, 9, 11), date(2026, 9, 18)],
+        )
+
+    def test_expected_dates_keep_selected_block_series_when_duplicate_keys_are_shared(self) -> None:
+        activity_id = uuid4()
+        tuesday_series_id = uuid4()
+        friday_series_id = uuid4()
+        schedule_key = f"{activity_id}:second_piano_course"
+        quote = SimpleNamespace(
+            calendar_snapshot={
+                "sessions": [],
+                "blocks": [
+                    {
+                        "activity_id": str(activity_id),
+                        "recommendation_key": schedule_key,
+                        "series_key": str(tuesday_series_id),
+                        "start_date": "2026-09-08",
+                        "end_date": "2026-09-22",
+                        "weekday": 1,
+                        "start_time": "16:00",
+                        "end_time": "17:00",
+                    },
+                    {
+                        "activity_id": str(activity_id),
+                        "recommendation_key": schedule_key,
+                        "series_key": str(friday_series_id),
+                        "start_date": "2026-09-11",
+                        "end_date": "2026-09-25",
+                        "weekday": 4,
+                        "start_time": "16:00",
+                        "end_time": "17:00",
+                    },
+                ],
+            }
+        )
+
+        self.assertEqual(
+            _expected_activity_dates_from_snapshot(
+                quote,
+                activity_id=activity_id,
+                schedule_key=schedule_key,
+                expected_series_key=str(friday_series_id),
+                expected_weekday=4,
+            ),
+            [date(2026, 9, 11), date(2026, 9, 18), date(2026, 9, 25)],
+        )
+
     def test_student_time_resolves_to_teacher_envelope_session(self) -> None:
         course_type_id = uuid4()
         location_id = uuid4()
