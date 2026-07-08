@@ -34,11 +34,28 @@ from app.services.quotes.quote_documents import (
     _quote_template_disables_pass_recup,
     _quote_template_allows_end_year_concert,
     _resolve_prospect_data,
+    _selected_solfege_live_series_for_slot,
     _session_blocked_by_quote_school_calendar,
     _solfege_pending_block_info,
 )
 from app.services.quotes.calendar_engine import CalendarGenerationInput, generate_calendar_snapshot
 from app.api.routes.quotes import _payment_terms_snapshot_matches_total, _resolve_quote_pdf_bytes
+
+
+class _FakeExecuteResult:
+    def __init__(self, rows: list[object]) -> None:
+        self._rows = rows
+
+    def all(self) -> list[object]:
+        return list(self._rows)
+
+
+class _FakeExecuteSession:
+    def __init__(self, rows: list[object]) -> None:
+        self._rows = rows
+
+    def execute(self, _statement) -> _FakeExecuteResult:
+        return _FakeExecuteResult(self._rows)
 
 
 class QuoteDocumentMarkupTests(unittest.TestCase):
@@ -2207,6 +2224,83 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertIn("Cours de piano collectif", html)
         self.assertIn("Cours de solfège en ligne - niveau 1", html)
         self.assertIn("à choisir", html)
+
+    def test_current_solfege_block_prefers_real_series_without_june(self) -> None:
+        activity_id = uuid4()
+        online_location_id = uuid4()
+        stale_group_id = uuid4()
+        real_group_id = uuid4()
+        paris = ZoneInfo("Europe/Paris")
+
+        def live_row(day: date, *, group_id) -> tuple[object, object, object]:
+            local_start = datetime.combine(day, time(17, 35), tzinfo=paris)
+            local_end = datetime.combine(day, time(18, 20), tzinfo=paris)
+            session = SimpleNamespace(
+                id=uuid4(),
+                course_type_id=activity_id,
+                location_id=online_location_id,
+                start_at_utc=local_start.astimezone(timezone.utc),
+                end_at_utc=local_end.astimezone(timezone.utc),
+                recurrence_group_id=group_id,
+                timezone="Europe/Paris",
+            )
+            activity = SimpleNamespace(id=activity_id, name="Solfège - niveau 2", mode="ONLINE")
+            location = SimpleNamespace(id=online_location_id, name="Online", timezone="Europe/Paris", is_online=True)
+            return session, activity, location
+
+        real_dates = [
+            date(2026, 10, 6),
+            date(2026, 10, 13),
+            date(2026, 11, 3),
+            date(2026, 11, 10),
+            date(2026, 11, 17),
+            date(2026, 11, 24),
+            date(2026, 12, 1),
+            date(2026, 12, 8),
+            date(2026, 12, 15),
+            date(2027, 1, 5),
+            date(2027, 1, 12),
+            date(2027, 1, 19),
+            date(2027, 1, 26),
+            date(2027, 2, 2),
+            date(2027, 2, 23),
+            date(2027, 3, 2),
+            date(2027, 3, 9),
+            date(2027, 3, 16),
+            date(2027, 3, 23),
+            date(2027, 3, 30),
+            date(2027, 4, 20),
+            date(2027, 4, 27),
+            date(2027, 5, 4),
+            date(2027, 5, 11),
+            date(2027, 5, 18),
+            date(2027, 5, 25),
+        ]
+        stale_dates = real_dates + [date(2027, 6, 1), date(2027, 6, 8), date(2027, 6, 15)]
+        rows = [live_row(day, group_id=stale_group_id) for day in stale_dates]
+        rows += [live_row(day, group_id=real_group_id) for day in real_dates]
+
+        selected_rows, _location = _selected_solfege_live_series_for_slot(
+            _FakeExecuteSession(rows),
+            activity_id=activity_id,
+            selected_slot={
+                "weekday": 1,
+                "start_time": "17:35",
+                "end_time": "18:20",
+                "location_label": "Online",
+                "modality": "ONLINE",
+            },
+            school_year_label="2026-2027",
+            expected_session_count=26,
+        )
+
+        selected_dates = [
+            row[0].start_at_utc.astimezone(paris).date()
+            for row in selected_rows
+        ]
+        self.assertEqual(len(selected_dates), 26)
+        self.assertEqual(selected_dates[-1], date(2027, 5, 25))
+        self.assertNotIn(date(2027, 6, 1), selected_dates)
 
     def test_line_groups_route_service_products_to_other_fees(self) -> None:
         product_id = uuid4()

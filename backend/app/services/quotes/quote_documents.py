@@ -1975,7 +1975,7 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
         return out
 
     def pick_best_live_series(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if series_key or not _is_solfege_planning_block(block):
+        if not _is_solfege_planning_block(block):
             return items
         grouped: dict[str, list[dict[str, Any]]] = {}
         for item in items:
@@ -1986,10 +1986,16 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
         if len(grouped) <= 1:
             return items
 
-        def group_rank(group: list[dict[str, Any]]) -> tuple[int, int, int]:
-            first_date = min((_parse_iso_date(item.get("date")) or date.max for item in group), default=date.max)
+        def group_rank(group: list[dict[str, Any]]) -> tuple[int, int, int, int, int]:
+            dates = [_parse_iso_date(item.get("date")) for item in group]
+            dates = [item for item in dates if item is not None]
+            first_date = min(dates, default=date.max)
+            june_count = sum(1 for item in dates if item.month == 6)
+            no_june = 1 if june_count == 0 else 0
+            expected_match = 1 if session_limit > 0 and len(group) == session_limit else 0
+            expected_distance = -abs(len(group) - session_limit) if session_limit > 0 else 0
             starts_on_requested_date = 1 if first_date == start_date else 0
-            return starts_on_requested_date, len(group), -first_date.toordinal()
+            return no_june, expected_match, expected_distance, starts_on_requested_date, -first_date.toordinal()
 
         best_key = max(grouped, key=lambda key: group_rank(grouped[key]))
         return grouped[best_key]
@@ -1999,6 +2005,10 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
     if is_live_planning_block:
         widened_sessions = pick_best_live_series(collect_sessions(enforce_series_key=False, max_date=query_end_date))
         if len(widened_sessions) > len(sessions):
+            sessions = widened_sessions
+    elif session_limit > 0 and _is_solfege_planning_block(block):
+        widened_sessions = pick_best_live_series(collect_sessions(enforce_series_key=False, max_date=query_end_date))
+        if widened_sessions:
             sessions = widened_sessions
     elif session_limit > 0 and series_key and len(sessions) < session_limit and not _is_solfege_planning_block(block):
         widened_sessions = collect_sessions(enforce_series_key=False, max_date=query_end_date)
@@ -2044,6 +2054,7 @@ def _selected_solfege_live_series_for_slot(
     activity_id: UUID,
     selected_slot: dict[str, Any],
     school_year_label: str | None,
+    expected_session_count: int | None = None,
 ) -> tuple[list[tuple[CourseSession, CourseType, Location]], Location | None]:
     if db is None:
         return [], None
@@ -2060,6 +2071,7 @@ def _selected_solfege_live_series_for_slot(
     selected_end_time = str(selected_slot.get("end_time") or selected_slot.get("end") or "").strip()
     if not selected_start_time or not selected_end_time:
         return [], None
+    requested_start_date = _parse_iso_date(selected_slot.get("start_date") or selected_slot.get("date"))
 
     selected_location_id = _parse_uuid(selected_slot.get("location_id"))
     selected_modality = _solfege_mode_semantic(
@@ -2109,7 +2121,22 @@ def _selected_solfege_live_series_for_slot(
 
     if not grouped:
         return [], None
-    best_key = max(grouped, key=lambda key: len(grouped[key]))
+    expected_count = expected_session_count if expected_session_count is not None and expected_session_count > 0 else 0
+
+    def group_rank(group: list[tuple[CourseSession, CourseType, Location]]) -> tuple[int, int, int, int, int]:
+        dates: list[date] = []
+        for session_obj, _activity, location in group:
+            zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
+            dates.append(session_obj.start_at_utc.astimezone(zone).date())
+        first_date = min(dates, default=date.max)
+        june_count = sum(1 for item in dates if item.month == 6)
+        no_june = 1 if june_count == 0 else 0
+        expected_match = 1 if expected_count > 0 and len(group) == expected_count else 0
+        expected_distance = -abs(len(group) - expected_count) if expected_count > 0 else 0
+        starts_on_requested_date = 1 if requested_start_date is not None and first_date == requested_start_date else 0
+        return no_june, expected_match, expected_distance, starts_on_requested_date, -first_date.toordinal()
+
+    best_key = max(grouped, key=lambda key: group_rank(grouped[key]))
     return sorted(grouped[best_key], key=lambda row: row[0].start_at_utc), locations_by_group.get(best_key)
 
 
@@ -4145,7 +4172,10 @@ def _calendar_snapshot_with_current_solfege_block(
         line_meta = _json_object(getattr(line, "meta", None))
         source_key = str(line_meta.get("typeform_automatic_line") or "").strip()
         recommendation_key = f"{line_activity_id}:{source_key}" if source_key else line_activity_id
-    planning_session_limit = _planning_session_limit_from_quote_line_meta(line) or base_block.get("planning_session_limit")
+    planning_session_limit = (
+        _planning_session_limit_from_quote_line_meta(line, allow_session_quantity=True)
+        or base_block.get("planning_session_limit")
+    )
 
     live_rows: list[tuple[CourseSession, CourseType, Location]] = []
     live_location: Location | None = None
@@ -4156,6 +4186,7 @@ def _calendar_snapshot_with_current_solfege_block(
             activity_id=parsed_activity_id,
             selected_slot=slot,
             school_year_label=getattr(quote, "school_year_label", None),
+            expected_session_count=planning_session_limit if isinstance(planning_session_limit, int) else None,
         )
     live_dates: list[date] = []
     for session_obj, _activity, location in live_rows:
@@ -4184,7 +4215,7 @@ def _calendar_snapshot_with_current_solfege_block(
             "start_date": min(live_dates).isoformat() if live_dates else None,
             "end_date": max(live_dates).isoformat() if live_dates else None,
             "sessions_count": len(live_rows) if live_rows else None,
-            "planning_session_limit": planning_session_limit,
+            "planning_session_limit": len(live_rows) if live_rows else planning_session_limit,
             "selection_pending": not bool(live_rows),
             "pending_solfege_level": line_level or base_block.get("pending_solfege_level") or slot.get("level_code"),
             "pending_slot_options": [] if live_rows else base_block.get("pending_slot_options") or [],
