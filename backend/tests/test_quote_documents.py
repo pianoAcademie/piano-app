@@ -565,6 +565,107 @@ class QuoteDocumentMarkupTests(unittest.TestCase):
         self.assertEqual([item["date"] for item in hydrated["sessions"]], selected_dates)
         self.assertEqual(hydrated["blocks"][0]["end_date"], "2027-05-25")
 
+    def test_solfege_planning_without_series_key_uses_single_live_series_and_removes_old_june_dates(self) -> None:
+        activity_id = uuid4()
+        location_id = uuid4()
+        selected_recurrence_id = uuid4()
+        june_recurrence_id = uuid4()
+        paris = ZoneInfo("Europe/Paris")
+        selected_dates = [
+            "2026-10-06",
+            "2026-10-13",
+            "2026-11-03",
+            "2026-11-10",
+            "2026-11-17",
+            "2026-11-24",
+            "2026-12-01",
+            "2026-12-08",
+            "2026-12-15",
+            "2027-01-05",
+            "2027-01-12",
+            "2027-01-19",
+            "2027-01-26",
+            "2027-02-02",
+            "2027-02-23",
+            "2027-03-02",
+            "2027-03-09",
+            "2027-03-16",
+            "2027-03-23",
+            "2027-03-30",
+            "2027-04-20",
+            "2027-04-27",
+            "2027-05-04",
+            "2027-05-11",
+            "2027-05-18",
+            "2027-05-25",
+        ]
+        june_dates = ["2027-06-01", "2027-06-08", "2027-06-15"]
+
+        def live_row(iso_date: str, recurrence_id) -> tuple[SimpleNamespace, SimpleNamespace, SimpleNamespace]:
+            local_day = date.fromisoformat(iso_date)
+            local_start = datetime.combine(local_day, time(17, 35), tzinfo=paris)
+            local_end = datetime.combine(local_day, time(18, 20), tzinfo=paris)
+            return (
+                SimpleNamespace(
+                    id=uuid4(),
+                    course_type_id=activity_id,
+                    location_id=location_id,
+                    status="SCHEDULED",
+                    start_at_utc=local_start.astimezone(timezone.utc),
+                    end_at_utc=local_end.astimezone(timezone.utc),
+                    timezone="Europe/Paris",
+                    recurrence_group_id=recurrence_id,
+                ),
+                SimpleNamespace(id=activity_id, name="Solfège - niveau 2", mode="ONLINE"),
+                SimpleNamespace(id=location_id, name="Online", timezone="Europe/Paris", is_online=True),
+            )
+
+        rows = [live_row(iso_date, selected_recurrence_id) for iso_date in selected_dates]
+        rows += [live_row(iso_date, june_recurrence_id) for iso_date in june_dates]
+        fake_db = SimpleNamespace(
+            scalar=lambda _query: None,
+            scalars=lambda _query: SimpleNamespace(all=lambda: []),
+            execute=lambda _query: SimpleNamespace(all=lambda: rows),
+        )
+        snapshot = {
+            "blocks": [
+                {
+                    "activity_id": str(activity_id),
+                    "activity_label": "Solfège - niveau 2",
+                    "location_id": str(location_id),
+                    "location_label": "Online",
+                    "weekday": 1,
+                    "weekday_label": "Mardi",
+                    "start_date": "2026-10-06",
+                    "end_date": "2027-06-15",
+                    "start_time": "17:35",
+                    "end_time": "18:20",
+                    "modality": "ONLINE",
+                    "planning_session_limit": 29,
+                    "selection_pending": False,
+                }
+            ],
+            "sessions": [
+                {
+                    "date": iso_date,
+                    "start_time": "17:35",
+                    "end_time": "18:20",
+                    "activity_id": str(activity_id),
+                    "activity_label": "Solfège - niveau 2",
+                    "location_id": str(location_id),
+                    "location_label": "Online",
+                }
+                for iso_date in [*selected_dates, *june_dates]
+            ],
+        }
+
+        hydrated = _calendar_snapshot_with_planning_sessions(fake_db, snapshot)
+
+        self.assertEqual(hydrated["sessions_count"], 26)
+        self.assertEqual([item["date"] for item in hydrated["sessions"]], selected_dates)
+        self.assertNotIn("2027-06-01", [item["date"] for item in hydrated["sessions"]])
+        self.assertEqual(hydrated["blocks"][0]["end_date"], "2027-05-25")
+
     def test_calendar_snapshot_hydration_preserves_custom_period_end_date_and_ignores_limit(self) -> None:
         activity_id = uuid4()
         location_id = uuid4()

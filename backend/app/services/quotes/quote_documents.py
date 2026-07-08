@@ -1974,10 +1974,30 @@ def _sessions_from_planning_block(db: Session, block: dict[str, Any]) -> list[di
             out.append(_mark_calendar_session_custom_period(item, custom_period_source))
         return out
 
+    def pick_best_live_series(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if series_key or not _is_solfege_planning_block(block):
+            return items
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for item in items:
+            item_series_key = str(item.get("series_key") or "").strip()
+            if not item_series_key:
+                return items
+            grouped.setdefault(item_series_key, []).append(item)
+        if len(grouped) <= 1:
+            return items
+
+        def group_rank(group: list[dict[str, Any]]) -> tuple[int, int, int]:
+            first_date = min((_parse_iso_date(item.get("date")) or date.max for item in group), default=date.max)
+            starts_on_requested_date = 1 if first_date == start_date else 0
+            return starts_on_requested_date, len(group), -first_date.toordinal()
+
+        best_key = max(grouped, key=lambda key: group_rank(grouped[key]))
+        return grouped[best_key]
+
     limited_series_end_date = query_end_date if session_limit > 0 or is_live_planning_block else effective_end_date
-    sessions = collect_sessions(enforce_series_key=True, max_date=limited_series_end_date)
+    sessions = pick_best_live_series(collect_sessions(enforce_series_key=True, max_date=limited_series_end_date))
     if is_live_planning_block:
-        widened_sessions = collect_sessions(enforce_series_key=False, max_date=query_end_date)
+        widened_sessions = pick_best_live_series(collect_sessions(enforce_series_key=False, max_date=query_end_date))
         if len(widened_sessions) > len(sessions):
             sessions = widened_sessions
     elif session_limit > 0 and series_key and len(sessions) < session_limit and not _is_solfege_planning_block(block):
@@ -2159,6 +2179,10 @@ def _calendar_session_matches_planning_block(
     if block_location_id and str(session.get("location_id") or "").strip() != block_location_id:
         return False
 
+    block_series_key = str(block.get("series_key") or "").strip()
+    if block_series_key:
+        return str(session.get("series_key") or "").strip() == block_series_key
+
     block_start_time = str(block.get("start_time") or "").strip()
     if block_start_time and str(session.get("start_time") or "").strip() != block_start_time:
         return False
@@ -2166,10 +2190,6 @@ def _calendar_session_matches_planning_block(
     block_end_time = str(block.get("end_time") or "").strip()
     if block_end_time and str(session.get("end_time") or "").strip() != block_end_time:
         return False
-
-    block_series_key = str(block.get("series_key") or "").strip()
-    if block_series_key:
-        return str(session.get("series_key") or "").strip() == block_series_key
 
     block_recommendation_key = str(block.get("recommendation_key") or "").strip()
     if block_recommendation_key:
@@ -2518,11 +2538,17 @@ def _calendar_snapshot_with_planning_sessions(db: Session | None, calendar_snaps
         if refreshed_block_sessions:
             refreshed_dates = {str(item.get("date") or "").strip() for item in refreshed_block_sessions}
             replacement_dates = set(refreshed_dates)
-            if str(block.get("source") or "").strip() == "live_planning":
+            if str(block.get("source") or "").strip() == "live_planning" or _is_solfege_planning_block(block):
                 replacement_dates.update(
                     str(item.get("date") or "").strip()
                     for item in _expected_sessions_from_planning_block(block)
                     if str(item.get("date") or "").strip()
+                )
+            if _is_solfege_planning_block(block):
+                replacement_dates.update(
+                    str(item.get("date") or "").strip()
+                    for item in sessions
+                    if _session_snapshot_matches_block(item, block) and str(item.get("date") or "").strip()
                 )
             kept_sessions = [
                 item
