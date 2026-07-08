@@ -11,6 +11,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.quotes import (
     _expected_activity_dates_from_snapshot,
+    _expected_activity_time_window_from_snapshot,
     _load_live_series_sessions,
     _missing_dates_are_after_live_series_tail,
     _missing_expected_live_session_dates,
@@ -201,6 +202,73 @@ class QuoteLiveSeriesMatchingTests(unittest.TestCase):
                 expected_weekday=4,
             ),
             [date(2026, 9, 11), date(2026, 9, 18)],
+        )
+
+    def test_expected_dates_fall_back_to_selected_series_when_line_key_is_missing(self) -> None:
+        activity_id = uuid4()
+        tuesday_series_id = uuid4()
+        friday_series_id = uuid4()
+        shared_schedule_key = f"{activity_id}:second_piano_course"
+        historical_line_key = f"{activity_id}:line:{uuid4()}"
+        quote = SimpleNamespace(
+            calendar_snapshot={
+                "sessions": [
+                    {
+                        "activity_id": str(activity_id),
+                        "recommendation_key": shared_schedule_key,
+                        "series_key": str(tuesday_series_id),
+                        "date": "2026-09-08",
+                        "start_time": "16:00",
+                        "end_time": "17:00",
+                    },
+                    {
+                        "activity_id": str(activity_id),
+                        "recommendation_key": shared_schedule_key,
+                        "series_key": str(tuesday_series_id),
+                        "date": "2026-09-15",
+                        "start_time": "16:00",
+                        "end_time": "17:00",
+                    },
+                    {
+                        "activity_id": str(activity_id),
+                        "recommendation_key": shared_schedule_key,
+                        "series_key": str(friday_series_id),
+                        "date": "2026-09-11",
+                        "start_time": "16:00",
+                        "end_time": "17:00",
+                    },
+                    {
+                        "activity_id": str(activity_id),
+                        "recommendation_key": shared_schedule_key,
+                        "series_key": str(friday_series_id),
+                        "date": "2026-09-18",
+                        "start_time": "16:00",
+                        "end_time": "17:00",
+                    },
+                ],
+                "blocks": [],
+            }
+        )
+
+        self.assertEqual(
+            _expected_activity_dates_from_snapshot(
+                quote,
+                activity_id=activity_id,
+                schedule_key=historical_line_key,
+                expected_series_key=str(friday_series_id),
+                expected_weekday=4,
+            ),
+            [date(2026, 9, 11), date(2026, 9, 18)],
+        )
+        self.assertEqual(
+            _expected_activity_time_window_from_snapshot(
+                quote,
+                activity_id=activity_id,
+                schedule_key=historical_line_key,
+                expected_series_key=str(friday_series_id),
+                expected_weekday=4,
+            ),
+            ("16:00", "17:00"),
         )
 
     def test_expected_dates_keep_selected_block_series_when_duplicate_keys_are_shared(self) -> None:

@@ -8173,10 +8173,10 @@ def _expected_activity_dates_from_snapshot(
     snapshot = _json_object(calendar_snapshot if calendar_snapshot is not None else quote.calendar_snapshot)
     normalized_expected_series_key = str(expected_series_key or "").strip()
 
-    def _row_matches(row: dict[str, object]) -> bool:
+    def _row_matches(row: dict[str, object], *, allow_series_fallback: bool = False) -> bool:
         if _parse_uuid_value(row.get("activity_id")) != activity_id:
             return False
-        if not schedule_key:
+        if allow_series_fallback or not schedule_key:
             return _row_matches_expected_series(row)
         recommendation_key = str(row.get("recommendation_key") or "").strip()
         automatic_line = str(row.get("typeform_automatic_line") or "").strip()
@@ -8199,47 +8199,59 @@ def _expected_activity_dates_from_snapshot(
             row_weekday = None
         return row_weekday is None or row_weekday == expected_weekday
 
-    session_dates: set[date] = set()
-    for raw in _json_list(snapshot.get("sessions")):
-        row = _json_object(raw)
-        if not _row_matches(row):
-            continue
-        parsed = _parse_iso_date(str(row.get("date") or ""))
-        if parsed is not None and _row_matches_expected_series(row, parsed_date=parsed):
-            session_dates.add(parsed)
+    def _collect_session_dates(*, allow_series_fallback: bool = False) -> set[date]:
+        collected: set[date] = set()
+        for raw in _json_list(snapshot.get("sessions")):
+            row = _json_object(raw)
+            if not _row_matches(row, allow_series_fallback=allow_series_fallback):
+                continue
+            parsed = _parse_iso_date(str(row.get("date") or ""))
+            if parsed is not None and _row_matches_expected_series(row, parsed_date=parsed):
+                collected.add(parsed)
+        return collected
+
+    session_dates = _collect_session_dates()
+    if not session_dates and schedule_key and normalized_expected_series_key:
+        session_dates = _collect_session_dates(allow_series_fallback=True)
     if session_dates:
         return sorted(session_dates)
 
-    out: set[date] = set()
-    for raw in _json_list(snapshot.get("blocks")):
-        row = _json_object(raw)
-        if not _row_matches(row):
-            continue
-        parsed_start = _parse_iso_date(str(row.get("start_date") or ""))
-        parsed_end = _parse_iso_date(str(row.get("end_date") or ""))
-        if parsed_start is None:
-            continue
-        if not _row_matches_expected_series(row, parsed_date=parsed_start):
-            continue
-        try:
-            weekday = int(row.get("weekday"))
-        except (TypeError, ValueError):
-            weekday = parsed_start.weekday()
-        excluded_dates = {
-            parsed
-            for source in (row.get("holiday_dates"), row.get("closure_dates"))
-            for item in _json_list(source)
-            if (parsed := _parse_iso_date(str(item or ""))) is not None
-        }
-        if parsed_end is None:
-            if parsed_start not in excluded_dates:
-                out.add(parsed_start)
-            continue
-        cursor = parsed_start
-        while cursor <= parsed_end:
-            if cursor.weekday() == weekday and cursor not in excluded_dates:
-                out.add(cursor)
-            cursor += timedelta(days=1)
+    def _collect_block_dates(*, allow_series_fallback: bool = False) -> set[date]:
+        collected: set[date] = set()
+        for raw in _json_list(snapshot.get("blocks")):
+            row = _json_object(raw)
+            if not _row_matches(row, allow_series_fallback=allow_series_fallback):
+                continue
+            parsed_start = _parse_iso_date(str(row.get("start_date") or ""))
+            parsed_end = _parse_iso_date(str(row.get("end_date") or ""))
+            if parsed_start is None:
+                continue
+            if not _row_matches_expected_series(row, parsed_date=parsed_start):
+                continue
+            try:
+                weekday = int(row.get("weekday"))
+            except (TypeError, ValueError):
+                weekday = parsed_start.weekday()
+            excluded_dates = {
+                parsed
+                for source in (row.get("holiday_dates"), row.get("closure_dates"))
+                for item in _json_list(source)
+                if (parsed := _parse_iso_date(str(item or ""))) is not None
+            }
+            if parsed_end is None:
+                if parsed_start not in excluded_dates:
+                    collected.add(parsed_start)
+                continue
+            cursor = parsed_start
+            while cursor <= parsed_end:
+                if cursor.weekday() == weekday and cursor not in excluded_dates:
+                    collected.add(cursor)
+                cursor += timedelta(days=1)
+        return collected
+
+    out = _collect_block_dates()
+    if not out and schedule_key and normalized_expected_series_key:
+        out = _collect_block_dates(allow_series_fallback=True)
     return sorted(out)
 
 
@@ -8255,10 +8267,10 @@ def _expected_activity_time_window_from_snapshot(
     snapshot = _json_object(calendar_snapshot if calendar_snapshot is not None else quote.calendar_snapshot)
     normalized_expected_series_key = str(expected_series_key or "").strip()
 
-    def _row_matches(row: dict[str, object]) -> bool:
+    def _row_matches(row: dict[str, object], *, allow_series_fallback: bool = False) -> bool:
         if _parse_uuid_value(row.get("activity_id")) != activity_id:
             return False
-        if not schedule_key:
+        if allow_series_fallback or not schedule_key:
             return _row_matches_expected_series(row)
         recommendation_key = str(row.get("recommendation_key") or "").strip()
         automatic_line = str(row.get("typeform_automatic_line") or "").strip()
@@ -8280,15 +8292,18 @@ def _expected_activity_time_window_from_snapshot(
             row_weekday = None
         return row_weekday is None or row_weekday == expected_weekday
 
-    for collection_name in ("blocks", "sessions"):
-        for raw in _json_list(snapshot.get(collection_name)):
-            row = _json_object(raw)
-            if not _row_matches(row):
-                continue
-            start_time = str(row.get("student_start_time") or row.get("start_time") or "").strip()
-            end_time = str(row.get("student_end_time") or row.get("end_time") or "").strip()
-            if re.match(r"^([01]\d|2[0-3]):[0-5]\d$", start_time) and re.match(r"^([01]\d|2[0-3]):[0-5]\d$", end_time):
-                return start_time, end_time
+    for allow_series_fallback in (False, True):
+        if allow_series_fallback and (not schedule_key or not normalized_expected_series_key):
+            continue
+        for collection_name in ("blocks", "sessions"):
+            for raw in _json_list(snapshot.get(collection_name)):
+                row = _json_object(raw)
+                if not _row_matches(row, allow_series_fallback=allow_series_fallback):
+                    continue
+                start_time = str(row.get("student_start_time") or row.get("start_time") or "").strip()
+                end_time = str(row.get("student_end_time") or row.get("end_time") or "").strip()
+                if re.match(r"^([01]\d|2[0-3]):[0-5]\d$", start_time) and re.match(r"^([01]\d|2[0-3]):[0-5]\d$", end_time):
+                    return start_time, end_time
     return None, None
 
 
