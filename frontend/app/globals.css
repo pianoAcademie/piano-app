@@ -11212,6 +11212,7 @@ button.danger:focus-visible {
 
 .client-list-row-main {
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .client-list-row-main strong {
@@ -11229,7 +11230,12 @@ button.danger:focus-visible {
 }
 
 .client-list-row-right {
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 64%;
+  text-align: right;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .client-drawer-filters {
@@ -12254,6 +12260,57 @@ button.danger:focus-visible {
   .client-account-mobile {
     display: grid;
     gap: 10px;
+  }
+
+  .client-account-mobile .client-mobile-list .client-list-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .client-account-mobile .client-mobile-list .client-list-row-main,
+  .client-account-mobile .client-mobile-list .client-list-row-right {
+    width: 100%;
+    max-width: 100%;
+    text-align: left;
+  }
+
+  .client-account-mobile .client-mobile-list .client-list-row-right {
+    font-size: 16px;
+    line-height: 1.25;
+  }
+
+  .client-offers-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .client-offers-actions .mode-link {
+    width: 100%;
+    min-height: 42px;
+    justify-content: center;
+  }
+
+  .client-offers-purchase-panel form.row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .client-offers-purchase-panel form.row button {
+    width: 100%;
+    min-height: 42px;
+  }
+
+  .client-plan-card {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .client-plan-card form button {
+    width: 100%;
+    min-height: 42px;
   }
 
   .client-account-desktop {

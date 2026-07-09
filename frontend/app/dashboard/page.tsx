@@ -2547,15 +2547,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const mobileTabLinks = [
     { id: "home", label: tabLabels.home, icon: "🏠", href: withUpdatedQuery(rawParams, { tab: "home" }) },
     { id: "planning", label: tabLabels.planning, icon: "📅", href: withUpdatedQuery(rawParams, { tab: "planning" }) },
-    { id: "courses", label: tabLabels.courses, icon: "📚", href: withUpdatedQuery(rawParams, { tab: "courses" }) },
     { id: "offers", label: tabLabels.offers, icon: "🧾", href: withUpdatedQuery(rawParams, { tab: "offers" }) },
+    { id: "finance", label: tabLabels.finance, icon: "💳", href: withUpdatedQuery(rawParams, { tab: "finance" }) },
     { id: "account", label: tabLabels.account, icon: "👤", href: withUpdatedQuery(rawParams, { tab: "account" }) },
   ];
-  const activeMobileTabId = mobileTabLinks.some((item) => item.id === tab)
-    ? tab
-    : tab === "messages" || tab === "finance"
-      ? "account"
-      : "home";
+  const activeMobileTabId = mobileTabLinks.some((item) => item.id === tab) ? tab : "home";
 
   const displayName = memberDisplayName({ first_name: me.first_name, last_name: me.last_name, email: me.email }, language);
   const impersonationDisplayName = impersonationNameHint || displayName;
@@ -4406,6 +4402,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 <p className="muted">{t("client.offers_help")}</p>
                 <div className="client-offers-actions">
                   <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning" })}>{t("client.go_to_schedule")}</a>
+                  <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance" })}>{t("client.finance")}</a>
                   <a className="mode-link" href="#client-offer-catalog">{t("client.show_offers")}</a>
                 </div>
 
