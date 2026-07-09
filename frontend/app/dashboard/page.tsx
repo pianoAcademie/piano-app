@@ -180,7 +180,10 @@ function parseTab(value: string): DashboardTab {
   if (value === "transactions") {
     return "finance";
   }
-  if (value === "planning" || value === "courses" || value === "reservations" || value === "offers" || value === "finance" || value === "messages" || value === "account") {
+  if (value === "reservations") {
+    return "planning";
+  }
+  if (value === "planning" || value === "courses" || value === "offers" || value === "finance" || value === "messages" || value === "account") {
     return value;
   }
   return "home";

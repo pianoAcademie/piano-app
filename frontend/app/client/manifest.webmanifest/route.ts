@@ -25,21 +25,27 @@ const clientManifest = {
   ],
   shortcuts: [
     {
-      name: "Planning",
-      short_name: "Planning",
-      url: "/client?tab=planning",
+      name: "Mes reservations",
+      short_name: "Reservations",
+      url: "/client?tab=planning&planning_mode=reservations",
+      icons: [{ src: "/app-icons/piano-academie-192.png", sizes: "192x192" }],
+    },
+    {
+      name: "Reserver un cours",
+      short_name: "Reserver",
+      url: "/client?tab=planning&planning_mode=book&planning_slot_filter=AVAILABLE",
+      icons: [{ src: "/app-icons/piano-academie-192.png", sizes: "192x192" }],
+    },
+    {
+      name: "Offres et achats",
+      short_name: "Offres",
+      url: "/client?tab=offers",
       icons: [{ src: "/app-icons/piano-academie-192.png", sizes: "192x192" }],
     },
     {
       name: "Paiements",
       short_name: "Finance",
       url: "/client?tab=finance",
-      icons: [{ src: "/app-icons/piano-academie-192.png", sizes: "192x192" }],
-    },
-    {
-      name: "Messages",
-      short_name: "Messages",
-      url: "/client?tab=messages",
       icons: [{ src: "/app-icons/piano-academie-192.png", sizes: "192x192" }],
     },
   ],
