@@ -656,115 +656,196 @@ export default async function AdminSimulationPlanningPage({
                     const bounds = calendarBounds(locationGroup.slots);
                     const ticks = calendarHourTicks(bounds);
                     const dayGroups = groupByWeekday(locationGroup.slots);
+                    const calendarMinWidth = 72 + dayGroups.length * 190;
                     return (
-                      <div className="simulation-calendar-scroll">
-                        <div
-                          className="simulation-calendar-grid"
-                          style={{
-                            gridTemplateColumns: `72px repeat(${Math.max(1, dayGroups.length)}, minmax(190px, 1fr))`,
-                          }}
-                        >
-                          <div className="simulation-calendar-corner" />
-                          {dayGroups.map((dayGroup) => (
-                            <div className="simulation-calendar-day-head" key={dayGroup.weekday}>
-                              <strong>{dayGroup.weekdayLabel}</strong>
-                              <span>
-                                {dayGroup.slots.length} {text(language, "creneau(x)", "slot(s)")}
-                              </span>
-                            </div>
-                          ))}
-
-                          <div className="simulation-calendar-hours" style={{ height: `${bounds.height}px` }}>
-                            {ticks.map((tick) => (
-                              <span
-                                key={tick}
-                                style={{
-                                  top: `${((tick - bounds.start) / Math.max(60, bounds.end - bounds.start)) * 100}%`,
-                                }}
-                              >
-                                {formatMinutes(tick)}
-                              </span>
+                      <>
+                        <div className="simulation-calendar-scroll">
+                          <div
+                            className="simulation-calendar-grid"
+                            style={{
+                              gridTemplateColumns: `72px repeat(${Math.max(1, dayGroups.length)}, minmax(190px, 1fr))`,
+                              minWidth: `max(920px, ${calendarMinWidth}px)`,
+                            }}
+                          >
+                            <div className="simulation-calendar-corner" />
+                            {dayGroups.map((dayGroup) => (
+                              <div className="simulation-calendar-day-head" key={dayGroup.weekday}>
+                                <strong>{dayGroup.weekdayLabel}</strong>
+                                <span>
+                                  {dayGroup.slots.length} {text(language, "creneau(x)", "slot(s)")}
+                                </span>
+                              </div>
                             ))}
-                          </div>
 
-                          {dayGroups.map((dayGroup) => (
-                            <div
-                              className="simulation-calendar-day"
-                              key={dayGroup.weekday}
-                              style={{ height: `${bounds.height}px` }}
-                            >
+                            <div className="simulation-calendar-hours" style={{ height: `${bounds.height}px` }}>
                               {ticks.map((tick) => (
                                 <span
-                                  className="simulation-calendar-rule"
                                   key={tick}
                                   style={{
                                     top: `${((tick - bounds.start) / Math.max(60, bounds.end - bounds.start)) * 100}%`,
                                   }}
-                                />
+                                >
+                                  {formatMinutes(tick)}
+                                </span>
                               ))}
-                              {positionedCalendarSlots(dayGroup.slots).map((positionedSlot) => {
-                                const slot = positionedSlot.slot;
-                                const tone = projectionTone(slot);
-                                const percent = fillPercent(slot.projected_fill_rate);
-                                const peopleSections = slotPeopleSections(slot, language);
-                                const detailPlacement = calendarSlotDetailPlacement(slot, bounds);
-                                return (
-                                  <article
-                                    className={`simulation-calendar-slot simulation-calendar-slot-${tone}`}
-                                    key={slot.slot_key}
-                                    style={calendarSlotStyle(positionedSlot, bounds)}
-                                    tabIndex={0}
-                                    title={slotHoverTitle(slot, language)}
-                                  >
-                                    <div className="simulation-calendar-slot-top">
-                                      <strong>
-                                        {slot.start_time}-{slot.end_time}
-                                      </strong>
-                                      <span>{projectedSlotLabel(slot)}</span>
-                                    </div>
-                                    <p>{slot.course_type_name}</p>
-                                    <div className="simulation-calendar-slot-fill" aria-hidden="true">
-                                      <span style={{ width: `${percent}%` }} />
-                                    </div>
-                                    <div
-                                      className={`simulation-calendar-slot-detail simulation-calendar-slot-detail-${detailPlacement}`}
-                                      role="tooltip"
+                            </div>
+
+                            {dayGroups.map((dayGroup) => (
+                              <div
+                                className="simulation-calendar-day"
+                                key={dayGroup.weekday}
+                                style={{ height: `${bounds.height}px` }}
+                              >
+                                {ticks.map((tick) => (
+                                  <span
+                                    className="simulation-calendar-rule"
+                                    key={tick}
+                                    style={{
+                                      top: `${((tick - bounds.start) / Math.max(60, bounds.end - bounds.start)) * 100}%`,
+                                    }}
+                                  />
+                                ))}
+                                {positionedCalendarSlots(dayGroup.slots).map((positionedSlot) => {
+                                  const slot = positionedSlot.slot;
+                                  const tone = projectionTone(slot);
+                                  const percent = fillPercent(slot.projected_fill_rate);
+                                  const peopleSections = slotPeopleSections(slot, language);
+                                  const detailPlacement = calendarSlotDetailPlacement(slot, bounds);
+                                  return (
+                                    <article
+                                      className={`simulation-calendar-slot simulation-calendar-slot-${tone}`}
+                                      key={slot.slot_key}
+                                      style={calendarSlotStyle(positionedSlot, bounds)}
+                                      tabIndex={0}
+                                      title={slotHoverTitle(slot, language)}
                                     >
-                                      <div className="simulation-calendar-slot-meta simulation-calendar-slot-detail-counts">
-                                        {slotStatusBreakdown(slot, language).map((item) => (
-                                          <span className={item.className} key={`${slot.slot_key}-${item.className}`}>
-                                            {item.label} {item.count}
-                                          </span>
+                                      <div className="simulation-calendar-slot-top">
+                                        <strong>
+                                          {slot.start_time}-{slot.end_time}
+                                        </strong>
+                                        <span>{projectedSlotLabel(slot)}</span>
+                                      </div>
+                                      <p>{slot.course_type_name}</p>
+                                      <div className="simulation-calendar-slot-fill" aria-hidden="true">
+                                        <span style={{ width: `${percent}%` }} />
+                                      </div>
+                                      <div
+                                        className={`simulation-calendar-slot-detail simulation-calendar-slot-detail-${detailPlacement}`}
+                                        role="tooltip"
+                                      >
+                                        <div className="simulation-calendar-slot-meta simulation-calendar-slot-detail-counts">
+                                          {slotStatusBreakdown(slot, language).map((item) => (
+                                            <span className={item.className} key={`${slot.slot_key}-${item.className}`}>
+                                              {item.label} {item.count}
+                                            </span>
+                                          ))}
+                                        </div>
+                                        {peopleSections.length === 0 ? (
+                                          <p>
+                                            {text(
+                                              language,
+                                              "Aucun eleve inscrit ou devis en attente.",
+                                              "No enrolled student or pending quote.",
+                                            )}
+                                          </p>
+                                        ) : (
+                                          peopleSections.map((section) => (
+                                            <div className="simulation-calendar-people-section" key={section.label}>
+                                              <strong>{section.label}</strong>
+                                              <ul>
+                                                {section.people.map((person) => (
+                                                  <li key={person}>{person}</li>
+                                                ))}
+                                              </ul>
+                                            </div>
+                                          ))
+                                        )}
+                                      </div>
+                                    </article>
+                                  );
+                                })}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="simulation-mobile-slot-list">
+                          {dayGroups.map((dayGroup) => (
+                            <section className="simulation-mobile-day" key={`mobile-${dayGroup.weekday}`}>
+                              <div className="simulation-mobile-day-head">
+                                <strong>{dayGroup.weekdayLabel}</strong>
+                                <span>
+                                  {dayGroup.slots.length} {text(language, "creneau(x)", "slot(s)")}
+                                </span>
+                              </div>
+                              <div className="simulation-mobile-day-slots">
+                                {dayGroup.slots.map((slot) => {
+                                  const tone = projectionTone(slot);
+                                  const percent = fillPercent(slot.projected_fill_rate);
+                                  const peopleSections = slotPeopleSections(slot, language);
+                                  const notes = noteList(slot, language);
+                                  return (
+                                    <details
+                                      className={`simulation-mobile-slot simulation-mobile-slot-${tone}`}
+                                      key={`mobile-${slot.slot_key}`}
+                                    >
+                                      <summary>
+                                        <span>
+                                          <strong>
+                                            {slot.start_time}-{slot.end_time}
+                                          </strong>
+                                          <small>{slot.course_type_name}</small>
+                                        </span>
+                                        <b>{projectedSlotLabel(slot)}</b>
+                                      </summary>
+                                      <div className="simulation-mobile-slot-body">
+                                        <div className="simulation-calendar-slot-meta simulation-calendar-slot-detail-counts">
+                                          {slotStatusBreakdown(slot, language).map((item) => (
+                                            <span className={item.className} key={`mobile-${slot.slot_key}-${item.className}`}>
+                                              {item.label} {item.count}
+                                            </span>
+                                          ))}
+                                        </div>
+                                        <div className="simulation-calendar-slot-fill" aria-hidden="true">
+                                          <span style={{ width: `${percent}%` }} />
+                                        </div>
+                                        <p>
+                                          <strong>{text(language, "Serie active :", "Live series:")}</strong>{" "}
+                                          {formatSeasonWindow(slot, language)}
+                                        </p>
+                                        {peopleSections.length === 0 ? (
+                                          <p className="muted">
+                                            {text(
+                                              language,
+                                              "Aucun eleve inscrit ou devis en attente.",
+                                              "No enrolled student or pending quote.",
+                                            )}
+                                          </p>
+                                        ) : (
+                                          peopleSections.map((section) => (
+                                            <div className="simulation-calendar-people-section" key={`mobile-${slot.slot_key}-${section.label}`}>
+                                              <strong>{section.label}</strong>
+                                              <ul>
+                                                {section.people.map((person) => (
+                                                  <li key={person}>{person}</li>
+                                                ))}
+                                              </ul>
+                                            </div>
+                                          ))
+                                        )}
+                                        {notes.map((note) => (
+                                          <p className={`simulation-inline-note simulation-tone-${tone}`} key={`mobile-${slot.slot_key}-${note}`}>
+                                            {note}
+                                          </p>
                                         ))}
                                       </div>
-                                      {peopleSections.length === 0 ? (
-                                        <p>
-                                          {text(
-                                            language,
-                                            "Aucun eleve inscrit ou devis en attente.",
-                                            "No enrolled student or pending quote.",
-                                          )}
-                                        </p>
-                                      ) : (
-                                        peopleSections.map((section) => (
-                                          <div className="simulation-calendar-people-section" key={section.label}>
-                                            <strong>{section.label}</strong>
-                                            <ul>
-                                              {section.people.map((person) => (
-                                                <li key={person}>{person}</li>
-                                              ))}
-                                            </ul>
-                                          </div>
-                                        ))
-                                      )}
-                                    </div>
-                                  </article>
-                                );
-                              })}
-                            </div>
+                                    </details>
+                                  );
+                                })}
+                              </div>
+                            </section>
                           ))}
                         </div>
-                      </div>
+                      </>
                     );
                   })()}
                 </section>

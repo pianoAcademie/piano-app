@@ -17572,7 +17572,9 @@ button.danger:focus-visible {
 
 .simulation-calendar-scroll {
   overflow-x: auto;
+  max-width: 100%;
   padding-bottom: 12px;
+  -webkit-overflow-scrolling: touch;
 }
 
 .simulation-calendar-grid {
@@ -17827,6 +17829,123 @@ button.danger:focus-visible {
   line-height: 1.35;
 }
 
+.simulation-mobile-slot-list {
+  display: none;
+}
+
+.simulation-mobile-day {
+  display: grid;
+  gap: 10px;
+}
+
+.simulation-mobile-day + .simulation-mobile-day {
+  padding-top: 12px;
+  border-top: 1px solid #d6e0d3;
+}
+
+.simulation-mobile-day-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.simulation-mobile-day-head strong {
+  color: #243424;
+}
+
+.simulation-mobile-day-head span {
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: #66745f;
+}
+
+.simulation-mobile-day-slots {
+  display: grid;
+  gap: 8px;
+}
+
+.simulation-mobile-slot {
+  border: 1px solid transparent;
+  border-radius: 14px;
+  box-shadow: 0 8px 18px rgba(36, 52, 36, 0.08);
+  overflow: hidden;
+}
+
+.simulation-mobile-slot-ok {
+  color: #1f5d3a;
+  border-color: #b9dfc5;
+  background: #e9f7ef;
+}
+
+.simulation-mobile-slot-warning {
+  color: #76510f;
+  border-color: #e7c77c;
+  background: #fff4dc;
+}
+
+.simulation-mobile-slot-critical {
+  color: #8f3328;
+  border-color: #e6a096;
+  background: #ffe9e5;
+}
+
+.simulation-mobile-slot summary {
+  min-height: 58px;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  cursor: pointer;
+  list-style: none;
+}
+
+.simulation-mobile-slot summary::-webkit-details-marker {
+  display: none;
+}
+
+.simulation-mobile-slot summary span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.simulation-mobile-slot summary strong,
+.simulation-mobile-slot summary small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.simulation-mobile-slot summary small {
+  color: inherit;
+  opacity: 0.78;
+}
+
+.simulation-mobile-slot summary b {
+  justify-self: end;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.66);
+  color: inherit;
+  font-size: 0.86rem;
+}
+
+.simulation-mobile-slot-body {
+  display: grid;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.simulation-mobile-slot-body p {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.42;
+  color: #302112;
+}
+
 @media (max-width: 1240px) {
   .simulation-planning-toolbar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -17871,6 +17990,35 @@ button.danger:focus-visible {
     grid-template-columns: 1fr;
   }
 
+  .simulation-planning-toolbar-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .simulation-planning-toolbar-actions > * {
+    display: inline-flex;
+    width: 100%;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .simulation-planning-overview,
+  .simulation-location-card,
+  .simulation-calendar-view,
+  .simulation-activity-block {
+    border-radius: 14px;
+  }
+
+  .simulation-location-card {
+    padding: 12px;
+  }
+
+  .simulation-calendar-view,
+  .simulation-activity-block {
+    padding: 12px;
+  }
+
   .simulation-location-header,
   .simulation-activity-heading,
   .simulation-calendar-heading {
@@ -17880,6 +18028,15 @@ button.danger:focus-visible {
 
   .simulation-calendar-scale {
     justify-content: flex-start;
+  }
+
+  .simulation-calendar-scroll {
+    display: none;
+  }
+
+  .simulation-mobile-slot-list {
+    display: grid;
+    gap: 14px;
   }
 
   .simulation-fill {
