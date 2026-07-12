@@ -340,6 +340,21 @@ class ClientSessionPurchaseCatalogOut(BaseModel):
     direct_payment_currency: str | None = None
 
 
+class ClientCatalogProductOut(BaseModel):
+    id: UUID
+    category_name: str | None = None
+    primary_location_name: str | None = None
+    title: str
+    price_incl_vat: Decimal
+    vat_rate: Decimal
+    stock_global_quantity: int
+    image_url: str | None = None
+    short_description: str | None = None
+    web_link: str | None = None
+    nature: str
+    is_virtual: bool
+
+
 class ClientPaymentConfirmOut(BaseModel):
     payment_id: str
     subscription_status: str

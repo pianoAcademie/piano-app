@@ -67,12 +67,13 @@ from app.models.ops import (
     LegalEntity,
     MessageFormat,
 )
-from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct
+from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct, ProductCategory
 from app.models.quote import QuoteLine
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.catalog import SessionCourseTypeOut, SessionLocationOut, SessionOut, SessionProfessorOut
 from app.schemas.booking import BookingCreateRequest
 from app.schemas.user import (
+    ClientCatalogProductOut,
     ClientContentCourseOut,
     ClientContentLessonOut,
     ClientContentMemberAccessOut,
@@ -1800,6 +1801,54 @@ def _plan_amount_due_and_currency(
 @router.get("/clients/me", response_model=UserOut)
 def get_client_me(current_user: User = Depends(require_roles(UserRole.CLIENT))) -> UserOut:
     return current_user
+
+
+@router.get("/clients/catalog/products", response_model=list[ClientCatalogProductOut])
+def list_client_catalog_products(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+) -> list[ClientCatalogProductOut]:
+    del current_user
+    products = db.scalars(
+        select(CatalogProduct)
+        .where(
+            CatalogProduct.active.is_(True),
+            CatalogProduct.is_public.is_(True),
+            CatalogProduct.purchasable_online.is_(True),
+        )
+        .order_by(CatalogProduct.title.asc())
+    ).all()
+
+    category_ids = {product.category_id for product in products if product.category_id}
+    location_ids = {product.primary_location_id for product in products if product.primary_location_id}
+    category_names = (
+        dict(db.execute(select(ProductCategory.id, ProductCategory.name).where(ProductCategory.id.in_(category_ids))).all())
+        if category_ids
+        else {}
+    )
+    location_names = (
+        dict(db.execute(select(Location.id, Location.name).where(Location.id.in_(location_ids))).all())
+        if location_ids
+        else {}
+    )
+
+    return [
+        ClientCatalogProductOut(
+            id=product.id,
+            category_name=category_names.get(product.category_id),
+            primary_location_name=location_names.get(product.primary_location_id),
+            title=product.title,
+            price_incl_vat=product.price_incl_vat,
+            vat_rate=product.vat_rate,
+            stock_global_quantity=product.stock_global_quantity,
+            image_url=product.image_url,
+            short_description=product.short_description,
+            web_link=product.web_link,
+            nature=product.nature.value if hasattr(product.nature, "value") else str(product.nature),
+            is_virtual=product.is_virtual,
+        )
+        for product in products
+    ]
 
 
 @router.get("/clients/me/sessions", response_model=list[SessionOut])

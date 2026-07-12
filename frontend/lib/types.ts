@@ -2018,6 +2018,21 @@ export type ClientSessionPurchaseCatalogOut = {
   direct_payment_currency: string | null;
 };
 
+export type ClientCatalogProductOut = {
+  id: string;
+  category_name: string | null;
+  primary_location_name: string | null;
+  title: string;
+  price_incl_vat: string;
+  vat_rate: string;
+  stock_global_quantity: number;
+  image_url: string | null;
+  short_description: string | null;
+  web_link: string | null;
+  nature: string;
+  is_virtual: boolean;
+};
+
 export type AdminActivityOut = {
   id: string;
   code: string;

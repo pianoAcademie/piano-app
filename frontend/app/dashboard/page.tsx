@@ -25,6 +25,7 @@ import {
 } from "../../lib/reference-data";
 import type {
   ClientBookingOut,
+  ClientCatalogProductOut,
   ClientContentCourseOut,
   ClientContentLessonOut,
   ClientFamilyOverviewOut,
@@ -1221,6 +1222,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     locationsResult,
     sessionsResult,
     plansResult,
+    catalogProductsResult,
     subscriptionsResult,
     ownBookingsResult,
     familyResult,
@@ -1233,6 +1235,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     backendRequest<LocationOut[]>("/api/v1/locations", {}, token),
     backendRequest<SessionOut[]>(`/api/v1/clients/me/sessions?${sessionQuery.toString()}`, {}, token),
     backendRequest<PlanOut[]>("/api/v1/plans", {}, token),
+    backendRequest<ClientCatalogProductOut[]>("/api/v1/clients/catalog/products", {}, token),
     backendRequest<SubscriptionOut[]>("/api/v1/clients/me/subscriptions", {}, token),
     backendRequest<ClientBookingOut[]>("/api/v1/clients/me/bookings", {}, token),
     familyResultPromise,
@@ -1283,6 +1286,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     : (() => {
         errors.push(`plans: ${plansResult.message}`);
         return [] as PlanOut[];
+      })();
+
+  const onlineProducts = catalogProductsResult.ok
+    ? catalogProductsResult.data
+    : (() => {
+        errors.push(`catalog-products: ${catalogProductsResult.message}`);
+        return [] as ClientCatalogProductOut[];
       })();
 
   const ownSubscriptions = subscriptionsResult.ok
@@ -1675,6 +1685,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const visibleSelectedOwnerSubscriptions = selectedOwnerSubscriptions.filter(
     (sub) => isSubscriptionVisibleInPortal(sub, now),
   );
+  const onlinePurchaseCount = plans.length + onlineProducts.length;
   const selectedOfferSubscription = subscriptions.find((sub) => sub.id === selectedOfferDetailId) ?? null;
   const selectedOfferInvoices = selectedOfferSubscription
     ? invoiceRows.filter((invoice) => invoice.owner_client_id === selectedOfferSubscription.owner_client_id)
@@ -2494,17 +2505,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     { value: "FAILED", label: t("client.finance_status_failed") },
   ];
 
-  const totalCreditsByMember = new Map<string, number>();
   const positivePackSubscriptions = subscriptions.filter(
     (sub) => isSubscriptionActiveNow(sub, now) && sub.plan.kind === "PACK" && (sub.credits_remaining ?? 0) > 0,
   );
-  for (const sub of positivePackSubscriptions) {
-    if (sub.credits_remaining == null || sub.credits_remaining <= 0) {
-      continue;
-    }
-    totalCreditsByMember.set(sub.owner_client_id, (totalCreditsByMember.get(sub.owner_client_id) ?? 0) + sub.credits_remaining);
-  }
-  const membersWithPositiveCredits = members.filter((member) => (totalCreditsByMember.get(member.id) ?? 0) > 0);
 
   const paidTotal = paymentRows
     .filter((row) => normalizeStatus(row.status) === "PAID")
@@ -4397,38 +4400,18 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               <Card className="client-offers-header">
                 <div className="row spread">
                   <h2>{t("client.offers_page_title")}</h2>
-                  <span className="badge">{t("client.offers_available_count", { count: plans.length })}</span>
+                  <span className="badge">{t("client.offers_available_count", { count: onlinePurchaseCount })}</span>
                 </div>
                 <p className="muted">{t("client.offers_help")}</p>
-                <div className="client-offers-actions">
-                  <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning" })}>{t("client.go_to_schedule")}</a>
-                  <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance" })}>{t("client.finance")}</a>
-                  <a className="mode-link" href="#client-offer-catalog">{t("client.show_offers")}</a>
-                </div>
-
-                <div className="client-offers-purchase-panel">
-                  <div>
-                    <h3>{t("client.offers_purchase_title")}</h3>
-                    <p className="muted">{t("client.offers_purchase_help")}</p>
-                  </div>
-                  <form method="get" className="row">
-                    <input type="hidden" name="tab" value="offers" />
-                    <label>
-                      {t("client.beneficiary")}
-                      <select name="purchase_user_id" defaultValue={selectedPurchaseOwner}>
-                        {members.map((member) => (
-                          <option key={member.id} value={member.id}>
-                            {member.display_name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      {t("client.start_date_input")}
-                      <input type="date" name="purchase_start_date" defaultValue={selectedPurchaseStartDate} />
-                    </label>
-                    <button type="submit">{t("client.show_offers")}</button>
-                  </form>
+                <div className="client-offers-summary">
+                  <a className="client-offers-summary-tile" href="#client-owned-purchases">
+                    <strong>{visibleSelectedOwnerSubscriptions.length}</strong>
+                    <span>{t("client.active_subscriptions_and_packs")}</span>
+                  </a>
+                  <a className="client-offers-summary-tile" href="#client-offer-catalog">
+                    <strong>{onlinePurchaseCount}</strong>
+                    <span>{t("client.offer_catalog")}</span>
+                  </a>
                 </div>
               </Card>
 
@@ -4500,59 +4483,61 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </Card>
               ) : null}
 
-              <Card>
-                <div className="row spread">
-                  <h3>{t("client.active_subscriptions_and_packs")}</h3>
-                  <span className="badge">{visibleSelectedOwnerSubscriptions.length}</span>
-                </div>
-                {visibleSelectedOwnerSubscriptions.length === 0 ? (
-                  <p className="muted">{t("client.no_active_subscription_preview")}</p>
-                ) : (
-                  <div className="list client-forfait-card-list">
-                    {visibleSelectedOwnerSubscriptions.map((sub) => {
-                      const isPack = normalizeStatus(sub.plan.kind) === "PACK";
-                      const initialCredits = sub.credits_initial ?? 0;
-                      const remainingCredits = sub.credits_remaining ?? 0;
-                      const consumedCredits = Math.max(0, initialCredits - remainingCredits);
-                      const ratio = initialCredits > 0 ? Math.min(100, Math.round((consumedCredits / initialCredits) * 100)) : 0;
-                      const linkedPlan = plans.find((plan) => plan.id === sub.plan.id);
-                      const planPrice = planDisplayPrice(linkedPlan);
-                      return (
-                        <article key={`forfait-card-${sub.id}`} className="item client-forfait-card">
-                          <div className="row spread">
-                            <div>
-                              <strong>{sub.plan.name}</strong>
-                              <p className="muted">{sub.owner_display_name}</p>
-                            </div>
-                            <span className="badge">{planKindLabel(sub.plan.kind, language)}</span>
-                          </div>
-                          <div className="row spread">
-                            <span className={`status-pill ${statusClass(sub.status)}`}>{statusLabel(sub.status, language)}</span>
-                            <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: sub.id })}>
-                              {t("client.view_details")}
-                            </a>
-                          </div>
-                          {isPack ? (
-                            <>
-                              <div className="client-progress">
-                                <div className="client-progress-bar" style={{ width: `${ratio}%` }} />
-                              </div>
-                              <p className="muted">{t("client.remaining_credits", { remaining: remainingCredits, initial: initialCredits || "?" })}</p>
-                            </>
-                          ) : (
-                            <p className="muted">
-                              {toMoney(sub.plan.kind === "FORFAIT" ? "0" : planPrice, me.preferred_currency, language)} {t("client.per_month_suffix")} · {paymentMethodLabel(sub.billing_method_code, language)}
-                            </p>
-                          )}
-                          <p className="muted">
-                            {sub.ends_at ? t("client.expiration", { date: formatDate(sub.ends_at, language) }) : sub.next_payment_at ? t("client.next_debit", { date: formatDate(sub.next_payment_at, language) }) : t("client.renewal_in_progress")}
-                          </p>
-                        </article>
-                      );
-                    })}
+              <section id="client-owned-purchases">
+                <Card>
+                  <div className="row spread">
+                    <h3>{t("client.active_subscriptions_and_packs")}</h3>
+                    <span className="badge">{visibleSelectedOwnerSubscriptions.length}</span>
                   </div>
-                )}
-              </Card>
+                  {visibleSelectedOwnerSubscriptions.length === 0 ? (
+                    <p className="muted">{t("client.no_active_subscription_preview")}</p>
+                  ) : (
+                    <div className="list client-forfait-card-list">
+                      {visibleSelectedOwnerSubscriptions.map((sub) => {
+                        const isPack = normalizeStatus(sub.plan.kind) === "PACK";
+                        const initialCredits = sub.credits_initial ?? 0;
+                        const remainingCredits = sub.credits_remaining ?? 0;
+                        const consumedCredits = Math.max(0, initialCredits - remainingCredits);
+                        const ratio = initialCredits > 0 ? Math.min(100, Math.round((consumedCredits / initialCredits) * 100)) : 0;
+                        const linkedPlan = plans.find((plan) => plan.id === sub.plan.id);
+                        const planPrice = planDisplayPrice(linkedPlan);
+                        return (
+                          <article key={`forfait-card-${sub.id}`} className="item client-forfait-card">
+                            <div className="row spread">
+                              <div>
+                                <strong>{sub.plan.name}</strong>
+                                <p className="muted">{sub.owner_display_name}</p>
+                              </div>
+                              <span className="badge">{planKindLabel(sub.plan.kind, language)}</span>
+                            </div>
+                            <div className="row spread">
+                              <span className={`status-pill ${statusClass(sub.status)}`}>{statusLabel(sub.status, language)}</span>
+                              <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: sub.id })}>
+                                {t("client.view_details")}
+                              </a>
+                            </div>
+                            {isPack ? (
+                              <>
+                                <div className="client-progress">
+                                  <div className="client-progress-bar" style={{ width: `${ratio}%` }} />
+                                </div>
+                                <p className="muted">{t("client.remaining_credits", { remaining: remainingCredits, initial: initialCredits || "?" })}</p>
+                              </>
+                            ) : (
+                              <p className="muted">
+                                {toMoney(sub.plan.kind === "FORFAIT" ? "0" : planPrice, me.preferred_currency, language)} {t("client.per_month_suffix")} · {paymentMethodLabel(sub.billing_method_code, language)}
+                              </p>
+                            )}
+                            <p className="muted">
+                              {sub.ends_at ? t("client.expiration", { date: formatDate(sub.ends_at, language) }) : sub.next_payment_at ? t("client.next_debit", { date: formatDate(sub.next_payment_at, language) }) : t("client.renewal_in_progress")}
+                            </p>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Card>
+              </section>
 
               {selectedOfferSubscription ? (
                 <Card>
@@ -4645,78 +4630,99 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </Card>
               ) : null}
 
-              <details className="client-offers-secondary">
-                <summary>{t("client.offers_secondary_summary")}</summary>
-                <section className="grid cols-2 client-offers-secondary-grid">
-                  <Card>
-                    <h3>{t("client.subscriptions_and_credits")}</h3>
-                    <div className="list">
-                      {visibleSelectedOwnerSubscriptions.map((sub) => (
-                        <article key={sub.id} className="item">
-                          <h3>{sub.plan.name}</h3>
-                          <small className="muted">
-                            {t("common.member")}: {sub.owner_display_name} | {t("common.status")}: {statusLabel(sub.status, language)} |{" "}
-                            {sub.plan.kind === "SUBSCRIPTION"
-                              ? t("client.subscription_fixed_billing")
-                              : sub.plan.kind === "FORFAIT"
-                                ? t("client.plan_actual_billing_label")
-                              : t("client.credit_line", { remaining: sub.credits_remaining ?? 0, initial: sub.credits_initial ?? sub.credits_remaining ?? 0 })}
-                          </small>
-                          <small className="muted">{t("client.start_date_label", { date: formatDate(sub.started_at, language) })} {sub.ends_at ? `| ${t("client.end_date_label", { date: formatDate(sub.ends_at, language) })}` : ""}</small>
-                        </article>
-                      ))}
-                      {selectedOwnerSubscriptions.length === 0 ? (
-                        <p className="muted">{t("client.no_subscription_for_member")}</p>
-                      ) : null}
-                      {selectedOwnerSubscriptions.length > 0 && visibleSelectedOwnerSubscriptions.length === 0 ? (
-                        <p className="muted">{t("client.no_positive_pack_credit_member")}</p>
-                      ) : null}
-                    </div>
-                  </Card>
-
-                  <Card>
-                    <h3>{t("client.cumulative_positive_credits")}</h3>
-                    <div className="list">
-                      {membersWithPositiveCredits.map((member) => (
-                        <article key={`credit-${member.id}`} className="item row spread">
-                          <span>{member.display_name}</span>
-                          <strong>{totalCreditsByMember.get(member.id) ?? 0}</strong>
-                        </article>
-                      ))}
-                      {membersWithPositiveCredits.length === 0 ? (
-                        <p className="muted">{t("client.no_positive_credit_display")}</p>
-                      ) : null}
-                    </div>
-                  </Card>
-                </section>
-              </details>
-
               <section id="client-offer-catalog">
                 <Card>
-                  <h3>{t("client.offer_catalog")}</h3>
-                  <div className="client-plan-grid">
-                    {plans.map((plan) => (
-                      <article key={plan.id} className="item client-plan-card">
-                        <div>
-                          <h3>{plan.name}</h3>
-                          <p className="muted">{plan.kind === "PACK" ? t("client.pack_sessions") : plan.kind === "FORFAIT" ? t("client.plan_fixed") : t("client.subscription")}</p>
-                          <p className="muted">
-                            {plan.kind === "FORFAIT"
-                              ? t("client.actual_billing_based_on_schedule")
-                              : t("client.credit_line", { remaining: plan.credits_count ?? t("client.unlimited"), initial: plan.credits_count ?? t("client.unlimited") })}{" "}
-                            | {t("client.price")}: {toMoney(planDisplayPrice(plan), plan.currency_code ?? me.preferred_currency, language)}
-                          </p>
-                        </div>
-                        <form action={purchasePlanAction}>
-                          <input type="hidden" name="plan_id" value={plan.id} />
-                          <input type="hidden" name="purchase_user_id" value={selectedPurchaseOwner} />
-                          <input type="hidden" name="start_date" value={selectedPurchaseStartDate} />
-                          <button type="submit" title={t("client.subscribe_offer_title")}>{t("common.choose")}</button>
-                        </form>
-                      </article>
-                    ))}
-                    {plans.length === 0 ? <p className="muted">{t("client.no_active_offer")}</p> : null}
+                  <div className="row spread">
+                    <h3>{t("client.offer_catalog")}</h3>
+                    <span className="badge">{t("client.offers_available_count", { count: onlinePurchaseCount })}</span>
                   </div>
+                  <div className="client-purchase-toolbar">
+                    <div>
+                      <h3>{t("client.offers_purchase_title")}</h3>
+                      <p className="muted">{t("client.offers_purchase_help")}</p>
+                    </div>
+                    <form method="get" className="row">
+                      <input type="hidden" name="tab" value="offers" />
+                      <label>
+                        {t("client.beneficiary")}
+                        <select name="purchase_user_id" defaultValue={selectedPurchaseOwner}>
+                          {members.map((member) => (
+                            <option key={member.id} value={member.id}>
+                              {member.display_name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        {t("client.start_date_input")}
+                        <input type="date" name="purchase_start_date" defaultValue={selectedPurchaseStartDate} />
+                      </label>
+                      <button type="submit">{t("client.show_offers")}</button>
+                    </form>
+                  </div>
+
+                  <section className="client-catalog-section">
+                    <div className="client-catalog-section-head">
+                      <h4>{t("client.available_plans_title")}</h4>
+                      <span className="badge">{plans.length}</span>
+                    </div>
+                    <div className="client-plan-grid">
+                      {plans.map((plan) => (
+                        <article key={plan.id} className="item client-plan-card">
+                          <div>
+                            <h3>{plan.name}</h3>
+                            <p className="muted">{plan.kind === "PACK" ? t("client.pack_sessions") : plan.kind === "FORFAIT" ? t("client.plan_fixed") : t("client.subscription")}</p>
+                            <p className="muted">
+                              {plan.kind === "FORFAIT"
+                                ? t("client.actual_billing_based_on_schedule")
+                                : t("client.credit_line", { remaining: plan.credits_count ?? t("client.unlimited"), initial: plan.credits_count ?? t("client.unlimited") })}{" "}
+                              | {t("client.price")}: {toMoney(planDisplayPrice(plan), plan.currency_code ?? me.preferred_currency, language)}
+                            </p>
+                          </div>
+                          <form action={purchasePlanAction}>
+                            <input type="hidden" name="plan_id" value={plan.id} />
+                            <input type="hidden" name="purchase_user_id" value={selectedPurchaseOwner} />
+                            <input type="hidden" name="start_date" value={selectedPurchaseStartDate} />
+                            <button type="submit" title={t("client.subscribe_offer_title")}>{t("common.choose")}</button>
+                          </form>
+                        </article>
+                      ))}
+                      {plans.length === 0 ? <p className="muted">{t("client.no_active_offer")}</p> : null}
+                    </div>
+                  </section>
+
+                  <section className="client-catalog-section">
+                    <div className="client-catalog-section-head">
+                      <h4>{t("client.available_products_title")}</h4>
+                      <span className="badge">{onlineProducts.length}</span>
+                    </div>
+                    <div className="client-plan-grid">
+                      {onlineProducts.map((product) => (
+                        <article key={product.id} className="item client-plan-card client-product-card">
+                          <div>
+                            <h3>{product.title}</h3>
+                            <p className="muted">{product.short_description || product.category_name || t("client.product")}</p>
+                            <div className="client-product-meta">
+                              {product.category_name ? <span className="badge">{product.category_name}</span> : null}
+                              {product.primary_location_name ? <span className="badge">{product.primary_location_name}</span> : null}
+                              <span className="badge">{t("client.online_product")}</span>
+                            </div>
+                            <p className="muted">
+                              {t("client.price")}: {toMoney(product.price_incl_vat, me.preferred_currency, language)}
+                            </p>
+                          </div>
+                          {product.web_link ? (
+                            <a className="mode-link" href={product.web_link} target="_blank" rel="noreferrer">
+                              {t("client.open_product_link")}
+                            </a>
+                          ) : (
+                            <span className="badge">{t("client.online_product")}</span>
+                          )}
+                        </article>
+                      ))}
+                      {onlineProducts.length === 0 ? <p className="muted">{t("client.no_online_product")}</p> : null}
+                    </div>
+                  </section>
                 </Card>
               </section>
             </>
