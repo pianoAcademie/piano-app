@@ -24,6 +24,7 @@ from app.models.client_record import ClientInvoiceLine, ClientManualTransaction,
 from app.models.family import ClientFamilyLink
 from app.models.ops import CommunicationChannel as CommunicationChannelModel, CommunicationLog, LegalEntity
 from app.models.payout import ProfessorSessionPayout
+from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct, ProductCategory, ProductLocationStock
 from app.models.quote import Prospect, Quote, QuoteLine
 from app.models.reporting import GeneratedReport
 from app.models.typeform_intake import TypeformFormConfig, TypeformIntake
@@ -67,6 +68,7 @@ REPORT_TYPE_LABELS: dict[str, str] = {
     "subscriptions": "Abonnements",
     "planning-fill": "Remplissage planning",
     "check-deposits": "Depots de cheques",
+    "material-forecast": "Approvisionnement partitions et jeux de notes",
     "referrals": "Parrainages",
     "teacher-payments": "Paiement des salaires",
 }
@@ -619,6 +621,499 @@ def _render_stored_check_deposit_report_xlsx(row: GeneratedReport) -> bytes:
         year=year,
         legal_entity=StoredLegalEntity(),
     )
+
+
+PARIS_STOCK_LOCATION_CODES = {"ASSAS", "DOMICILE", "DULONG", "POMPE", "RICHELIEU", "SCHEFFER"}
+
+
+def _material_report_school_year_bounds(school_year_label: str | None) -> tuple[date | None, date | None]:
+    raw = _text(school_year_label)
+    match = re.fullmatch(r"(\d{4})-(\d{4})", raw)
+    if match is None:
+        return None, None
+    start_year = int(match.group(1))
+    end_year = int(match.group(2))
+    return date(start_year, 9, 1), date(end_year, 8, 31)
+
+
+def _quote_calendar_location_ids(quote: Quote) -> list[UUID]:
+    location_ids: list[UUID] = []
+    if quote.location_id is not None:
+        location_ids.append(quote.location_id)
+    calendar = _json_object(quote.calendar_snapshot)
+    for section_name in ("blocks", "sessions"):
+        for raw_item in _json_list(calendar.get(section_name)):
+            item = _json_object(raw_item)
+            raw_id = _text(item.get("location_id"))
+            if not raw_id:
+                continue
+            try:
+                location_id = UUID(raw_id)
+            except ValueError:
+                continue
+            if location_id not in location_ids:
+                location_ids.append(location_id)
+    solfege_slot = _json_object(_json_object(calendar.get("solfege")).get("selected_slot"))
+    raw_solfege_location_id = _text(solfege_slot.get("location_id"))
+    if raw_solfege_location_id:
+        try:
+            solfege_location_id = UUID(raw_solfege_location_id)
+            if solfege_location_id not in location_ids:
+                location_ids.append(solfege_location_id)
+        except ValueError:
+            pass
+    return location_ids
+
+
+def _material_report_site_for_location(location: Location | None) -> str | None:
+    if location is None:
+        return None
+    code = _text(location.code).upper()
+    city = _normalize_token(location.city)
+    label = _normalize_token(f"{location.name} {location.code} {location.city}")
+    if code == "BAR_LE_DUC" or "barleduc" in label:
+        return "BAR_LE_DUC"
+    if code in PARIS_STOCK_LOCATION_CODES or city == "paris":
+        return "PARIS"
+    if bool(location.is_online):
+        return "PARIS"
+    return None
+
+
+def _material_report_stock_location_site(location: Location | None) -> str | None:
+    if location is None:
+        return None
+    code = _text(location.code).upper()
+    if code == "BAR_LE_DUC":
+        return "BAR_LE_DUC"
+    if code in PARIS_STOCK_LOCATION_CODES:
+        return "PARIS"
+    return None
+
+
+def _material_report_site_for_quote(quote: Quote, locations_by_id: dict[UUID, Location]) -> str | None:
+    fallback: str | None = None
+    for location_id in _quote_calendar_location_ids(quote):
+        location = locations_by_id.get(location_id)
+        site = _material_report_site_for_location(location)
+        if site is None:
+            continue
+        if location is not None and not bool(location.is_online):
+            return site
+        fallback = fallback or site
+    return fallback
+
+
+def _material_report_site_label(site_key: str) -> str:
+    if site_key == "BAR_LE_DUC":
+        return "Bar-le-Duc"
+    if site_key == "PARIS":
+        return "Paris"
+    return "Non classe"
+
+
+def _material_product_kind(category_name: object | None, product_title: object | None) -> str | None:
+    category_token = _normalize_token(category_name)
+    title_token = _normalize_token(product_title)
+    if "partition" in category_token or "partition" in title_token:
+        return "Partition"
+    if "jeudenotes" in title_token:
+        return "Jeu de notes"
+    return None
+
+
+def _material_quantity(value: object | None) -> float:
+    try:
+        quantity = Decimal(str(value if value is not None else "0"))
+    except Exception:
+        return 0.0
+    return float(quantity)
+
+
+def _material_report_product_json(
+    product: CatalogProduct | None,
+    category_name: str | None,
+) -> dict[str, object]:
+    return {
+        "product_id": str(product.id) if product is not None else None,
+        "product_title": product.title if product is not None else "Produit supprime",
+        "category_name": category_name or "-",
+    }
+
+
+def _build_material_forecast_report(
+    db: Session,
+    *,
+    school_year_label: str | None,
+    approved_from: date | None = None,
+    approved_to: date | None = None,
+    status_filter: str | None = None,
+    q: str | None = None,
+) -> dict[str, object]:
+    if approved_from is not None and approved_to is not None and approved_from > approved_to:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="'approved_from' must be before 'approved_to'")
+
+    normalized_status = _text(status_filter).casefold() or "approved"
+    stmt = (
+        select(Quote, Prospect, User)
+        .outerjoin(Prospect, Prospect.id == Quote.prospect_id)
+        .outerjoin(User, User.id == Quote.client_id)
+        .where(Quote.status == normalized_status)
+        .order_by(Quote.approved_at.desc().nullslast(), Quote.created_at.desc())
+        .limit(10000)
+    )
+    if school_year_label:
+        stmt = stmt.where(Quote.school_year_label == school_year_label)
+    if approved_from is not None:
+        start_local, _ = _day_bounds(approved_from)
+        stmt = stmt.where(func.coalesce(Quote.approved_at, Quote.updated_at) >= start_local)
+    if approved_to is not None:
+        _, end_local = _day_bounds(approved_to)
+        stmt = stmt.where(func.coalesce(Quote.approved_at, Quote.updated_at) < end_local)
+    if q:
+        like = f"%{q.strip()}%"
+        stmt = stmt.where(
+            or_(
+                Quote.quote_number.ilike(like),
+                Quote.school_year_label.ilike(like),
+                cast(Quote.meta, Text).ilike(like),
+                cast(Quote.calendar_snapshot, Text).ilike(like),
+                Prospect.first_name.ilike(like),
+                Prospect.last_name.ilike(like),
+                Prospect.email.ilike(like),
+                User.first_name.ilike(like),
+                User.last_name.ilike(like),
+                User.email.ilike(like),
+            )
+        )
+
+    quote_rows = db.execute(stmt).all()
+    quote_ids = [quote.id for quote, _, _ in quote_rows]
+    all_location_ids: set[UUID] = set()
+    for quote, _, _ in quote_rows:
+        all_location_ids.update(_quote_calendar_location_ids(quote))
+    locations_by_id: dict[UUID, Location] = {}
+    if all_location_ids:
+        locations_by_id = {
+            location.id: location
+            for location in db.scalars(select(Location).where(Location.id.in_(list(all_location_ids)))).all()
+        }
+    all_locations = db.scalars(select(Location)).all()
+    stock_location_ids_by_site: dict[str, set[UUID]] = {"PARIS": set(), "BAR_LE_DUC": set()}
+    for location in all_locations:
+        site = _material_report_stock_location_site(location)
+        if site in stock_location_ids_by_site:
+            stock_location_ids_by_site[site].add(location.id)
+
+    lines_by_quote_id: dict[UUID, list[QuoteLine]] = {quote_id: [] for quote_id in quote_ids}
+    direct_product_ids: set[UUID] = set()
+    kit_ids: set[UUID] = set()
+    if quote_ids:
+        quote_lines = db.scalars(
+            select(QuoteLine)
+            .where(QuoteLine.quote_id.in_(quote_ids))
+            .order_by(QuoteLine.quote_id.asc(), QuoteLine.sort_order.asc(), QuoteLine.created_at.asc())
+        ).all()
+        for line in quote_lines:
+            lines_by_quote_id.setdefault(line.quote_id, []).append(line)
+            if line.product_id is not None:
+                direct_product_ids.add(line.product_id)
+            if line.kit_id is not None:
+                kit_ids.add(line.kit_id)
+
+    kit_items_by_kit_id: dict[UUID, list[CatalogKitItem]] = {kit_id: [] for kit_id in kit_ids}
+    kits_by_id: dict[UUID, CatalogKit] = {}
+    kit_product_ids: set[UUID] = set()
+    if kit_ids:
+        kits_by_id = {kit.id: kit for kit in db.scalars(select(CatalogKit).where(CatalogKit.id.in_(list(kit_ids)))).all()}
+        for item in db.scalars(
+            select(CatalogKitItem)
+            .where(CatalogKitItem.kit_id.in_(list(kit_ids)))
+            .order_by(CatalogKitItem.kit_id.asc(), CatalogKitItem.display_order.asc(), CatalogKitItem.created_at.asc())
+        ).all():
+            kit_items_by_kit_id.setdefault(item.kit_id, []).append(item)
+            kit_product_ids.add(item.product_id)
+
+    product_ids = direct_product_ids | kit_product_ids
+    products_by_id: dict[UUID, CatalogProduct] = {}
+    category_by_product_id: dict[UUID, str | None] = {}
+    if product_ids:
+        product_rows = db.execute(
+            select(CatalogProduct, ProductCategory.name)
+            .outerjoin(ProductCategory, ProductCategory.id == CatalogProduct.category_id)
+            .where(CatalogProduct.id.in_(list(product_ids)))
+        ).all()
+        for product, category_name in product_rows:
+            products_by_id[product.id] = product
+            category_by_product_id[product.id] = category_name
+
+    stock_by_site_product: dict[tuple[str, UUID], int] = {}
+    if product_ids:
+        stock_rows = db.execute(
+            select(
+                ProductLocationStock.product_id,
+                ProductLocationStock.location_id,
+                ProductLocationStock.real_quantity,
+            ).where(ProductLocationStock.product_id.in_(list(product_ids)))
+        ).all()
+        for product_id, location_id, quantity in stock_rows:
+            for site, site_location_ids in stock_location_ids_by_site.items():
+                if location_id in site_location_ids:
+                    key = (site, product_id)
+                    stock_by_site_product[key] = stock_by_site_product.get(key, 0) + int(quantity or 0)
+
+    summary_by_key: dict[tuple[str, str], dict[str, object]] = {}
+    details: list[dict[str, object]] = []
+
+    def add_quantity(
+        *,
+        site: str,
+        quote: Quote,
+        prospect: Prospect | None,
+        client: User | None,
+        source: str,
+        product: CatalogProduct | None,
+        category_name: str | None,
+        product_title: str,
+        kind: str,
+        quantity: float,
+        kit: CatalogKit | None = None,
+        quote_line_title: str | None = None,
+    ) -> None:
+        if quantity <= 0:
+            return
+        product_key = str(product.id) if product is not None else f"missing:{product_title}"
+        key = (site, product_key)
+        stock_quantity = stock_by_site_product.get((site, product.id), 0) if product is not None else 0
+        if key not in summary_by_key:
+            summary_by_key[key] = {
+                **_material_report_product_json(product, category_name),
+                "site": site,
+                "site_label": _material_report_site_label(site),
+                "kind": kind,
+                "expected_direct": 0.0,
+                "expected_from_kits": 0.0,
+                "expected_total": 0.0,
+                "stock_quantity": stock_quantity,
+                "to_order": 0.0,
+            }
+        summary = summary_by_key[key]
+        if source == "kit":
+            summary["expected_from_kits"] = float(summary.get("expected_from_kits") or 0) + quantity
+        else:
+            summary["expected_direct"] = float(summary.get("expected_direct") or 0) + quantity
+        expected_total = float(summary.get("expected_direct") or 0) + float(summary.get("expected_from_kits") or 0)
+        summary["expected_total"] = expected_total
+        summary["to_order"] = max(expected_total - float(summary.get("stock_quantity") or 0), 0)
+        details.append(
+            {
+                "site": site,
+                "site_label": _material_report_site_label(site),
+                "quote_id": str(quote.id),
+                "quote_number": quote.quote_number,
+                "approved_at": quote.approved_at.isoformat() if quote.approved_at else None,
+                "student_name": _quote_student_name(quote, prospect, client),
+                "source": "Kit inscription" if source == "kit" else "Ligne devis",
+                "kit_title": kit.title if kit is not None else "",
+                "quote_line_title": quote_line_title or "",
+                "kind": kind,
+                "category_name": category_name or "-",
+                "product_id": str(product.id) if product is not None else None,
+                "product_title": product_title,
+                "quantity": quantity,
+            }
+        )
+
+    for quote, prospect, client in quote_rows:
+        site = _material_report_site_for_quote(quote, locations_by_id)
+        if site not in {"PARIS", "BAR_LE_DUC"}:
+            continue
+        for line in lines_by_quote_id.get(quote.id, []):
+            line_quantity = _material_quantity(line.quantity)
+            if line.product_id is not None and line.kit_id is None:
+                product = products_by_id.get(line.product_id)
+                category_name = category_by_product_id.get(line.product_id)
+                product_title = product.title if product is not None else line.title
+                kind = _material_product_kind(category_name, product_title)
+                if kind is not None:
+                    add_quantity(
+                        site=site,
+                        quote=quote,
+                        prospect=prospect,
+                        client=client,
+                        source="direct",
+                        product=product,
+                        category_name=category_name,
+                        product_title=product_title,
+                        kind=kind,
+                        quantity=line_quantity,
+                        quote_line_title=line.title,
+                    )
+            if line.kit_id is None:
+                continue
+            kit = kits_by_id.get(line.kit_id)
+            for item in kit_items_by_kit_id.get(line.kit_id, []):
+                product = products_by_id.get(item.product_id)
+                category_name = category_by_product_id.get(item.product_id)
+                product_title = product.title if product is not None else "Produit supprime"
+                kind = _material_product_kind(category_name, product_title)
+                if kind is None:
+                    continue
+                add_quantity(
+                    site=site,
+                    quote=quote,
+                    prospect=prospect,
+                    client=client,
+                    source="kit",
+                    product=product,
+                    category_name=category_name,
+                    product_title=product_title,
+                    kind=kind,
+                    quantity=line_quantity * float(item.quantity or 0),
+                    kit=kit,
+                    quote_line_title=line.title,
+                )
+
+    summary_rows = sorted(
+        summary_by_key.values(),
+        key=lambda row: (
+            _text(row.get("site_label")),
+            _text(row.get("kind")),
+            _text(row.get("category_name")),
+            _text(row.get("product_title")).casefold(),
+        ),
+    )
+    details.sort(
+        key=lambda row: (
+            _text(row.get("site_label")),
+            _text(row.get("product_title")).casefold(),
+            _text(row.get("quote_number")),
+        )
+    )
+    return {
+        "school_year_label": school_year_label,
+        "status": normalized_status,
+        "summary_rows": summary_rows,
+        "details": details,
+        "quote_count": len(quote_rows),
+    }
+
+
+def _quantity_cell_value(value: object | None) -> int | float:
+    quantity = _material_quantity(value)
+    if quantity.is_integer():
+        return int(quantity)
+    return quantity
+
+
+def _append_material_summary_sheet(workbook: Workbook, *, title: str, site: str, rows: list[dict[str, object]]) -> None:
+    worksheet = workbook.create_sheet(title=title)
+    worksheet.append([f"Approvisionnement partitions et jeux de notes - {_material_report_site_label(site)}"])
+    worksheet.append(["Le stock peut etre complete dans la colonne H ; la colonne I calcule le reste a commander."])
+    worksheet.append([])
+    headers = [
+        "Site",
+        "Nature",
+        "Categorie catalogue",
+        "Nom partition / produit",
+        "Nombre attendu",
+        "Dont lignes devis",
+        "Dont kits inscription",
+        "Nombre en stock",
+        "Nombre a commander",
+        "Produit ID",
+    ]
+    worksheet.append(headers)
+    for cell in worksheet[4]:
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill("solid", fgColor="EEF2F7")
+    filtered_rows = [row for row in rows if _text(row.get("site")) == site]
+    for row in filtered_rows:
+        excel_row = worksheet.max_row + 1
+        worksheet.append(
+            [
+                _text(row.get("site_label")),
+                _text(row.get("kind")),
+                _text(row.get("category_name")),
+                _text(row.get("product_title")),
+                _quantity_cell_value(row.get("expected_total")),
+                _quantity_cell_value(row.get("expected_direct")),
+                _quantity_cell_value(row.get("expected_from_kits")),
+                _quantity_cell_value(row.get("stock_quantity")),
+                f"=MAX(E{excel_row}-H{excel_row},0)",
+                _text(row.get("product_id")),
+            ]
+        )
+    if not filtered_rows:
+        worksheet.append([_material_report_site_label(site), "-", "-", "Aucune partition ou jeu de notes attendu", 0, 0, 0, 0, 0, ""])
+    worksheet.freeze_panes = "A5"
+    widths = [16, 16, 22, 42, 18, 18, 20, 18, 20, 38]
+    for index, width in enumerate(widths, start=1):
+        worksheet.column_dimensions[chr(64 + index)].width = width
+
+
+def _append_material_detail_sheet(workbook: Workbook, *, title: str, site: str, rows: list[dict[str, object]]) -> None:
+    worksheet = workbook.create_sheet(title=title)
+    worksheet.append([f"Detail par devis - {_material_report_site_label(site)}"])
+    worksheet.append([])
+    headers = [
+        "Site",
+        "Devis",
+        "Date validation",
+        "Eleve",
+        "Origine",
+        "Kit",
+        "Ligne devis",
+        "Nature",
+        "Categorie catalogue",
+        "Nom partition / produit",
+        "Quantite",
+        "Produit ID",
+    ]
+    worksheet.append(headers)
+    for cell in worksheet[3]:
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill("solid", fgColor="EEF2F7")
+    filtered_rows = [row for row in rows if _text(row.get("site")) == site]
+    for row in filtered_rows:
+        worksheet.append(
+            [
+                _text(row.get("site_label")),
+                _text(row.get("quote_number")),
+                _text(row.get("approved_at"))[:10],
+                _text(row.get("student_name")),
+                _text(row.get("source")),
+                _text(row.get("kit_title")),
+                _text(row.get("quote_line_title")),
+                _text(row.get("kind")),
+                _text(row.get("category_name")),
+                _text(row.get("product_title")),
+                _quantity_cell_value(row.get("quantity")),
+                _text(row.get("product_id")),
+            ]
+        )
+    if not filtered_rows:
+        worksheet.append([_material_report_site_label(site), "-", "-", "-", "-", "-", "-", "-", "-", "Aucune ligne", 0, ""])
+    worksheet.freeze_panes = "A4"
+    widths = [16, 24, 16, 28, 18, 34, 34, 16, 22, 42, 12, 38]
+    for index, width in enumerate(widths, start=1):
+        worksheet.column_dimensions[chr(64 + index)].width = width
+
+
+def _render_material_forecast_report_xlsx(row: GeneratedReport) -> bytes:
+    content = _json_object(row.content_json)
+    summary_rows = [_json_object(item) for item in _json_list(content.get("summary_rows"))]
+    detail_rows = [_json_object(item) for item in _json_list(content.get("details"))]
+    workbook = Workbook()
+    default_sheet = workbook.active
+    workbook.remove(default_sheet)
+    _append_material_summary_sheet(workbook, title="Paris", site="PARIS", rows=summary_rows)
+    _append_material_summary_sheet(workbook, title="Bar-le-Duc", site="BAR_LE_DUC", rows=summary_rows)
+    _append_material_detail_sheet(workbook, title="Detail Paris", site="PARIS", rows=detail_rows)
+    _append_material_detail_sheet(workbook, title="Detail Bar-le-Duc", site="BAR_LE_DUC", rows=detail_rows)
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
 
 
 def _generated_report_out(row: GeneratedReport) -> GeneratedReportOut:
@@ -2344,13 +2839,20 @@ def _generated_report_filename(row: GeneratedReport, extension: str) -> str:
 
 def _render_generated_report_download(row: GeneratedReport) -> tuple[bytes, str, str]:
     if row.file_format.upper() == "XLSX":
-        if row.report_type != "check-deposits":
+        if row.report_type == "check-deposits":
+            return (
+                _render_stored_check_deposit_report_xlsx(row),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                _generated_report_filename(row, "xlsx"),
+            )
+        if row.report_type == "material-forecast":
+            return (
+                _render_material_forecast_report_xlsx(row),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                _generated_report_filename(row, "xlsx"),
+            )
+        else:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Export Excel indisponible pour ce rapport")
-        return (
-            _render_stored_check_deposit_report_xlsx(row),
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            _generated_report_filename(row, "xlsx"),
-        )
     return _render_generated_report_pdf(row), "application/pdf", _generated_report_filename(row, "pdf")
 
 
@@ -2380,6 +2882,8 @@ def create_generated_report(
     file_format = _text(criteria.get("file_format")).upper() or "PDF"
     if file_format not in {"PDF", "XLSX"}:
         file_format = "PDF"
+    if report_type == "material-forecast":
+        file_format = "XLSX"
     content: dict[str, object] = {"items": []}
     row_count = 0
     if report_type == "intake-families":
@@ -2473,6 +2977,21 @@ def create_generated_report(
             "legal_entity_name": legal_entity.name,
         }
         row_count = len(rows)
+    elif report_type == "material-forecast":
+        school_year_label = _text(criteria.get("school_year_label")) or None
+        if school_year_label and period_start is None and period_end is None:
+            period_start, period_end = _material_report_school_year_bounds(school_year_label)
+        content = _build_material_forecast_report(
+            db,
+            school_year_label=school_year_label,
+            approved_from=_parse_report_date(criteria.get("received_from")),
+            approved_to=_parse_report_date(criteria.get("received_to")),
+            status_filter=_text(criteria.get("status")) or "approved",
+            q=_text(criteria.get("q")) or None,
+        )
+        row_count = len(_json_list(content.get("summary_rows")))
+        if school_year_label:
+            report_label = f"{report_label} - {school_year_label}"
 
     row = GeneratedReport(
         report_type=report_type,

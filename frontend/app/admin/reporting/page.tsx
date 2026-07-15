@@ -28,6 +28,7 @@ type ReportType =
   | "subscriptions"
   | "planning-fill"
   | "check-deposits"
+  | "material-forecast"
   | "referrals"
   | "teacher-payments";
 
@@ -118,6 +119,12 @@ const REPORT_DEFINITIONS: ReportDefinition[] = [
     filterHint: "Periode, statut, lot, client.",
   },
   {
+    type: "material-forecast",
+    label: "Approvisionnement partitions et jeux de notes",
+    description: "Partitions et jeux de notes attendus a partir des devis approuves, separes Paris et Bar-le-Duc.",
+    filterHint: "Annee scolaire, validations de devis, eleve ou famille. Export Excel avec attendu, stock et a commander.",
+  },
+  {
     type: "referrals",
     label: "Parrainages",
     description: "Demandes recommandees, parrains et avantages associes.",
@@ -179,7 +186,7 @@ function schoolYearOptions(selectedValue: string): string[] {
 }
 
 function requiresSchoolYear(reportType: ReportType): boolean {
-  return ["intake-families", "quote-families", "expired-quotes", "quotes", "subscriptions", "planning-fill"].includes(reportType);
+  return ["intake-families", "quote-families", "expired-quotes", "quotes", "subscriptions", "planning-fill", "material-forecast"].includes(reportType);
 }
 
 function requiresStatus(reportType: ReportType): boolean {
@@ -410,6 +417,48 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
                     <button type="submit" disabled={!selectedLegalEntityId}>
                       Generer
                     </button>
+                  </div>
+                </form>
+              ) : reportDefinition.type === "material-forecast" ? (
+                <form className="grid cols-2 config-form-grid" action={createGeneratedReportAction}>
+                  <input type="hidden" name="report_type" value={reportDefinition.type} />
+                  <input type="hidden" name="return_to" value="/admin/reporting" />
+                  <input type="hidden" name="status" value="approved" />
+                  <input type="hidden" name="file_format" value="xlsx" />
+                  <label>
+                    {t("admin.reporting.school_year")}
+                    <select name="school_year_label" defaultValue={selectedSchoolYear}>
+                      {availableSchoolYears.map((schoolYear) => (
+                        <option key={schoolYear} value={schoolYear}>
+                          {schoolYear}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    {t("admin.reporting.student_or_prospect")}
+                    <input name="q" placeholder="Nom, email, numero de devis..." defaultValue={reportFilterValue(searchParams, "q")} />
+                  </label>
+                  <label>
+                    Validations depuis
+                    <input type="date" name="received_from" defaultValue={reportFilterValue(searchParams, "received_from")} />
+                  </label>
+                  <label>
+                    Validations jusqu au
+                    <input type="date" name="received_to" defaultValue={reportFilterValue(searchParams, "received_to")} />
+                  </label>
+                  <label className="span-2">
+                    Note
+                    <input name="note" placeholder="Note interne facultative" />
+                  </label>
+                  <p className="muted span-2">
+                    Le fichier Excel contient une synthese Paris, une synthese Bar-le-Duc, puis le detail par devis. Les colonnes stock et a commander sont deja prevues.
+                  </p>
+                  <div className="form-actions span-2">
+                    <Link className="button-link" href={withParams({ create: "1" })}>
+                      Retour
+                    </Link>
+                    <button type="submit">{t("admin.reporting.generate")}</button>
                   </div>
                 </form>
               ) : (
