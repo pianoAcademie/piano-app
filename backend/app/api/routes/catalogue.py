@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -80,6 +81,13 @@ def _serialize_public_session(
     )
     booked = int(booked_count or 0)
     seats_remaining = max(session.capacity_max - booked, 0)
+    external_booking_price_ttc = None
+    if session.external_booking_price_ttc is not None:
+        duration_seconds = int(max((session.end_at_utc - session.start_at_utc).total_seconds(), 0))
+        if duration_seconds <= 0:
+            duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
+        duration_hours = Decimal(duration_seconds) / Decimal("3600")
+        external_booking_price_ttc = (Decimal(session.external_booking_price_ttc) * duration_hours).quantize(Decimal("0.01"))
 
     return SessionOut(
         id=session.id,
@@ -100,7 +108,7 @@ def _serialize_public_session(
         visibility_scope=visibility_scope,
         booking_scope=booking_scope,
         online_booking_enabled=SessionAudienceScope.EXTERNAL in booking_scopes,
-        external_booking_price_ttc=session.external_booking_price_ttc,
+        external_booking_price_ttc=external_booking_price_ttc,
         external_booking_currency=external_booking_currency if session.external_booking_price_ttc is not None else None,
         show_external_remaining_seats=bool(session.show_external_remaining_seats),
         zoom_link=session.zoom_link,

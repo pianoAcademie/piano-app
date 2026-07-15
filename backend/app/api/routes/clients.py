@@ -1461,11 +1461,13 @@ def _session_purchase_catalog(
         credit_type_id=course_type.credit_type_id,
         allowed_plan_kinds=allowed_plan_kinds,
     )
-    direct_payment_amount = (
-        Decimal(session_obj.external_booking_price_ttc).quantize(Decimal("0.01"))
-        if allows_planless_booking and session_obj.external_booking_price_ttc is not None
-        else None
-    )
+    direct_payment_amount = None
+    if allows_planless_booking and session_obj.external_booking_price_ttc is not None:
+        duration_seconds = int(max((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds(), 0))
+        if duration_seconds <= 0:
+            duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
+        duration_hours = Decimal(duration_seconds) / Decimal("3600")
+        direct_payment_amount = (Decimal(session_obj.external_booking_price_ttc) * duration_hours).quantize(Decimal("0.01"))
     direct_payment_currency = (
         (getattr(session_obj, "external_booking_currency", None) or _account_default_currency(db)).upper()
         if direct_payment_amount is not None
@@ -2005,6 +2007,13 @@ def list_client_visible_sessions(
         )
         booked = int(booked_count or 0)
         seats_remaining = max(session.capacity_max - booked, 0)
+        external_booking_price_ttc = None
+        if session.external_booking_price_ttc is not None:
+            duration_seconds = int(max((session.end_at_utc - session.start_at_utc).total_seconds(), 0))
+            if duration_seconds <= 0:
+                duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
+            duration_hours = Decimal(duration_seconds) / Decimal("3600")
+            external_booking_price_ttc = (Decimal(session.external_booking_price_ttc) * duration_hours).quantize(Decimal("0.01"))
         payload.append(
             SessionOut(
                 id=session.id,
@@ -2025,7 +2034,7 @@ def list_client_visible_sessions(
                 visibility_scope=visibility_scope,
                 booking_scope=booking_scope,
                 online_booking_enabled=booking_scopes != [SessionAudienceScope.PRIVATE],
-                external_booking_price_ttc=session.external_booking_price_ttc,
+                external_booking_price_ttc=external_booking_price_ttc,
                 external_booking_currency=external_booking_currency if session.external_booking_price_ttc is not None else None,
                 show_external_remaining_seats=bool(session.show_external_remaining_seats),
                 zoom_link=session.zoom_link,

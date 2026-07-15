@@ -916,8 +916,13 @@ def _resolve_booking_snapshot(
         service_code=course_type.service_code,
         on_date=now.date(),
     )
+    duration_seconds = int(max((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds(), 0))
+    if duration_seconds <= 0:
+        duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
+    duration_hours = Decimal(duration_seconds) / Decimal("3600")
+
     if subscription is None and plan is None and session_obj.external_booking_price_ttc is not None:
-        total_incl_vat = Decimal(session_obj.external_booking_price_ttc).quantize(Decimal("0.01"))
+        total_incl_vat = (Decimal(session_obj.external_booking_price_ttc) * duration_hours).quantize(Decimal("0.01"))
         currency = _account_default_currency(db, fallback=currency)
         if vat_rate <= Decimal("0.00"):
             amount_excl_vat = total_incl_vat
@@ -928,10 +933,6 @@ def _resolve_booking_snapshot(
             vat_amount = (total_incl_vat - amount_excl_vat).quantize(Decimal("0.01"))
         return amount_excl_vat, vat_rate.quantize(Decimal("0.01")), vat_amount, total_incl_vat, currency
 
-    duration_seconds = int(max((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds(), 0))
-    if duration_seconds <= 0:
-        duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
-    duration_hours = Decimal(duration_seconds) / Decimal("3600")
     hourly_ttc_decimal = _resolve_activity_base_hourly_ttc(course_type)
     if plan is not None and plan.kind == PlanKind.FORFAIT:
         hourly_ttc_decimal = _forfait_hourly_ttc_with_overrides(

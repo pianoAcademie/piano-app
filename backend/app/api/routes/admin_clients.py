@@ -4341,17 +4341,18 @@ def _forfait_booking_amounts_from_activity(
         on_date=session_obj.start_at_utc.date(),
     ).quantize(Decimal("0.01"))
 
+    duration_seconds = int(max((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds(), 0))
+    if duration_seconds <= 0:
+        duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
+    duration_hours = Decimal(duration_seconds) / Decimal("3600")
+
     if forfait_subscription is None and session_obj.external_booking_price_ttc is not None:
-        total_incl_vat = _quantize_money(Decimal(session_obj.external_booking_price_ttc))
+        total_incl_vat = _quantize_money(Decimal(session_obj.external_booking_price_ttc) * duration_hours)
     else:
         base_hourly_ttc = _resolve_activity_base_hourly_ttc(course_type)
         if base_hourly_ttc is None:
             return None
 
-        duration_seconds = int(max((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds(), 0))
-        if duration_seconds <= 0:
-            duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
-        duration_hours = Decimal(duration_seconds) / Decimal("3600")
         hourly_ttc = _forfait_hourly_ttc_with_overrides(
             base_hourly_ttc=base_hourly_ttc,
             subscription=forfait_subscription,
