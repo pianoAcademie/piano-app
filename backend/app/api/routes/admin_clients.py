@@ -4328,26 +4328,6 @@ def _forfait_booking_amounts_from_activity(
     db: Session,
     pricing_map: dict[tuple[UUID, UUID], tuple[Decimal, Decimal, Decimal, Decimal]] | None = None,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal, str] | None:
-    base_hourly_ttc = _resolve_activity_base_hourly_ttc(course_type)
-    if base_hourly_ttc is None:
-        return None
-
-    duration_seconds = int(max((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds(), 0))
-    if duration_seconds <= 0:
-        duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
-    duration_hours = Decimal(duration_seconds) / Decimal("3600")
-    hourly_ttc = _forfait_hourly_ttc_with_overrides(
-        base_hourly_ttc=base_hourly_ttc,
-        subscription=forfait_subscription,
-        session_start_at=session_obj.start_at_utc,
-        course_type_id=course_type.id,
-        session_timezone=session_obj.timezone,
-        booking_id=booking.id,
-        db=db,
-        pricing_map=pricing_map,
-    )
-    total_incl_vat = _quantize_money(hourly_ttc * duration_hours)
-
     country_code = _booking_vat_country(
         session_obj=session_obj,
         course_type=course_type,
@@ -4360,6 +4340,29 @@ def _forfait_booking_amounts_from_activity(
         service_code=course_type.service_code,
         on_date=session_obj.start_at_utc.date(),
     ).quantize(Decimal("0.01"))
+
+    if forfait_subscription is None and session_obj.external_booking_price_ttc is not None:
+        total_incl_vat = _quantize_money(Decimal(session_obj.external_booking_price_ttc))
+    else:
+        base_hourly_ttc = _resolve_activity_base_hourly_ttc(course_type)
+        if base_hourly_ttc is None:
+            return None
+
+        duration_seconds = int(max((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds(), 0))
+        if duration_seconds <= 0:
+            duration_seconds = int(max(course_type.duration_minutes, 0) * 60)
+        duration_hours = Decimal(duration_seconds) / Decimal("3600")
+        hourly_ttc = _forfait_hourly_ttc_with_overrides(
+            base_hourly_ttc=base_hourly_ttc,
+            subscription=forfait_subscription,
+            session_start_at=session_obj.start_at_utc,
+            course_type_id=course_type.id,
+            session_timezone=session_obj.timezone,
+            booking_id=booking.id,
+            db=db,
+            pricing_map=pricing_map,
+        )
+        total_incl_vat = _quantize_money(hourly_ttc * duration_hours)
 
     if vat_rate <= Decimal("0.00"):
         amount_excl_vat = total_incl_vat

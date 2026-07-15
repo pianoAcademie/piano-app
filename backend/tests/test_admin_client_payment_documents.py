@@ -14,6 +14,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.api.routes.admin_clients import (
     _apply_invoice_presentation_to_payment_item,
     _build_range_invoice_email_defaults,
+    _forfait_booking_amounts_from_activity,
     _normalize_invoice_range_metadata,
     _send_invoice_range_payment_admin_emails,
     _send_invoice_range_payment_success_emails,
@@ -63,6 +64,42 @@ class _FakeQueryParams:
 
 
 class AdminClientPaymentDocumentTests(unittest.TestCase):
+    def test_planless_booking_amount_uses_session_external_price_before_activity_default(self) -> None:
+        booking = SimpleNamespace(id=uuid4(), currency_snapshot="EUR")
+        session = SimpleNamespace(
+            start_at_utc=datetime(2026, 7, 16, 15, 30, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 7, 16, 17, 0, tzinfo=timezone.utc),
+            timezone="Europe/Paris",
+            external_booking_price_ttc=Decimal("105.00"),
+        )
+        course_type = SimpleNamespace(
+            id=uuid4(),
+            default_course_rate_ttc=None,
+            default_hourly_rate=Decimal("80.00"),
+            duration_minutes=90,
+            mode=None,
+            service_code="MUSIC_LESSON",
+        )
+        location = SimpleNamespace(is_online=False, country_code="FR")
+        billing_profile = SimpleNamespace(residence_country="FR", preferred_currency="EUR")
+
+        with patch("app.api.routes.admin_clients.resolve_vat_rate", return_value=Decimal("20.00")):
+            amount_excl_vat, vat_rate, vat_amount, total_incl_vat, currency = _forfait_booking_amounts_from_activity(
+                booking=booking,
+                session_obj=session,
+                course_type=course_type,
+                location=location,
+                billing_profile=billing_profile,
+                forfait_subscription=None,
+                db=SimpleNamespace(),
+            )
+
+        self.assertEqual(total_incl_vat, Decimal("105.00"))
+        self.assertEqual(amount_excl_vat, Decimal("87.50"))
+        self.assertEqual(vat_rate, Decimal("20.00"))
+        self.assertEqual(vat_amount, Decimal("17.50"))
+        self.assertEqual(currency, "EUR")
+
     def test_select_reusable_pre_registration_deposit_reconciliation_returns_charge_and_payment_ids(self) -> None:
         deposit_charge_id = uuid4()
         deposit_payment_id = uuid4()
