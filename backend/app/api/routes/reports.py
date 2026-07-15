@@ -68,7 +68,7 @@ REPORT_TYPE_LABELS: dict[str, str] = {
     "subscriptions": "Abonnements",
     "planning-fill": "Remplissage planning",
     "check-deposits": "Depots de cheques",
-    "material-forecast": "Approvisionnement partitions et jeux de notes",
+    "material-forecast": "Approvisionnement partitions, cahiers et jeux de notes",
     "referrals": "Parrainages",
     "teacher-payments": "Paiement des salaires",
 }
@@ -717,6 +717,8 @@ def _material_product_kind(category_name: object | None, product_title: object |
     title_token = _normalize_token(product_title)
     if "partition" in category_token or "partition" in title_token:
         return "Partition"
+    if "cahier" in title_token and "solfege" in title_token:
+        return "Cahier de solfege"
     if "jeudenotes" in title_token:
         return "Jeu de notes"
     return None
@@ -1032,7 +1034,7 @@ def _append_material_summary_sheet(
     generated_at: datetime,
 ) -> None:
     worksheet = workbook.create_sheet(title=title)
-    worksheet.append([f"Approvisionnement partitions et jeux de notes - {_material_report_site_label(site)}"])
+    worksheet.append([f"Approvisionnement partitions, cahiers et jeux de notes - {_material_report_site_label(site)}"])
     worksheet.append([f"Rapport genere le {_material_generated_at_label(generated_at)}"])
     worksheet.append(["Le stock peut etre complete dans la colonne H ; la colonne I calcule le reste a commander."])
     worksheet.append([])
@@ -1040,7 +1042,7 @@ def _append_material_summary_sheet(
         "Site",
         "Nature",
         "Categorie catalogue",
-        "Nom partition / produit",
+        "Nom partition / cahier / produit",
         "Nombre attendu",
         "Dont lignes devis",
         "Dont kits inscription",
@@ -1091,7 +1093,7 @@ def _append_material_detail_sheet(workbook: Workbook, *, title: str, site: str, 
         "Ligne devis",
         "Nature",
         "Categorie catalogue",
-        "Nom partition / produit",
+        "Nom partition / cahier / produit",
         "Quantite",
         "Produit ID",
     ]

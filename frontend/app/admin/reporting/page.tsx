@@ -120,8 +120,8 @@ const REPORT_DEFINITIONS: ReportDefinition[] = [
   },
   {
     type: "material-forecast",
-    label: "Approvisionnement partitions et jeux de notes",
-    description: "Partitions et jeux de notes attendus a partir des devis approuves, separes Paris et Bar-le-Duc.",
+    label: "Approvisionnement partitions, cahiers et jeux de notes",
+    description: "Partitions, cahiers de solfege et jeux de notes attendus a partir des devis approuves, separes Paris et Bar-le-Duc.",
     filterHint: "Annee scolaire, validations de devis, eleve ou famille. Export Excel avec attendu, stock et a commander.",
   },
   {
@@ -452,7 +452,7 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
                     <input name="note" placeholder="Note interne facultative" />
                   </label>
                   <p className="muted span-2">
-                    Le fichier Excel contient une synthese Paris, une synthese Bar-le-Duc, puis le detail par devis. Les colonnes stock et a commander sont deja prevues.
+                    Le fichier Excel contient partitions, cahiers de solfege et jeux de notes : synthese Paris, synthese Bar-le-Duc, puis detail par devis.
                   </p>
                   <div className="form-actions span-2">
                     <Link className="button-link" href={withParams({ create: "1" })}>
