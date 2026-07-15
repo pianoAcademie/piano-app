@@ -1006,9 +1006,34 @@ def _quantity_cell_value(value: object | None) -> int | float:
     return quantity
 
 
-def _append_material_summary_sheet(workbook: Workbook, *, title: str, site: str, rows: list[dict[str, object]]) -> None:
+def _gmt_offset_label(value: datetime) -> str:
+    local_value = value.astimezone(ADMIN_COMMUNICATION_TIMEZONE)
+    offset = local_value.utcoffset() or timedelta(0)
+    total_minutes = int(offset.total_seconds() // 60)
+    sign = "+" if total_minutes >= 0 else "-"
+    absolute_minutes = abs(total_minutes)
+    hours, minutes = divmod(absolute_minutes, 60)
+    if minutes:
+        return f"GMT{sign}{hours}:{minutes:02d}"
+    return f"GMT{sign}{hours}"
+
+
+def _material_generated_at_label(value: datetime) -> str:
+    local_value = value.astimezone(ADMIN_COMMUNICATION_TIMEZONE)
+    return f"{local_value.strftime('%d/%m/%Y %H:%M')} ({_gmt_offset_label(value)}, Europe/Paris)"
+
+
+def _append_material_summary_sheet(
+    workbook: Workbook,
+    *,
+    title: str,
+    site: str,
+    rows: list[dict[str, object]],
+    generated_at: datetime,
+) -> None:
     worksheet = workbook.create_sheet(title=title)
     worksheet.append([f"Approvisionnement partitions et jeux de notes - {_material_report_site_label(site)}"])
+    worksheet.append([f"Rapport genere le {_material_generated_at_label(generated_at)}"])
     worksheet.append(["Le stock peut etre complete dans la colonne H ; la colonne I calcule le reste a commander."])
     worksheet.append([])
     headers = [
@@ -1024,7 +1049,7 @@ def _append_material_summary_sheet(workbook: Workbook, *, title: str, site: str,
         "Produit ID",
     ]
     worksheet.append(headers)
-    for cell in worksheet[4]:
+    for cell in worksheet[5]:
         cell.font = Font(bold=True)
         cell.fill = PatternFill("solid", fgColor="EEF2F7")
     filtered_rows = [row for row in rows if _text(row.get("site")) == site]
@@ -1046,7 +1071,7 @@ def _append_material_summary_sheet(workbook: Workbook, *, title: str, site: str,
         )
     if not filtered_rows:
         worksheet.append([_material_report_site_label(site), "-", "-", "Aucune partition ou jeu de notes attendu", 0, 0, 0, 0, 0, ""])
-    worksheet.freeze_panes = "A5"
+    worksheet.freeze_panes = "A6"
     widths = [16, 16, 22, 42, 18, 18, 20, 18, 20, 38]
     for index, width in enumerate(widths, start=1):
         worksheet.column_dimensions[chr(64 + index)].width = width
@@ -1107,8 +1132,8 @@ def _render_material_forecast_report_xlsx(row: GeneratedReport) -> bytes:
     workbook = Workbook()
     default_sheet = workbook.active
     workbook.remove(default_sheet)
-    _append_material_summary_sheet(workbook, title="Paris", site="PARIS", rows=summary_rows)
-    _append_material_summary_sheet(workbook, title="Bar-le-Duc", site="BAR_LE_DUC", rows=summary_rows)
+    _append_material_summary_sheet(workbook, title="Paris", site="PARIS", rows=summary_rows, generated_at=row.created_at)
+    _append_material_summary_sheet(workbook, title="Bar-le-Duc", site="BAR_LE_DUC", rows=summary_rows, generated_at=row.created_at)
     _append_material_detail_sheet(workbook, title="Detail Paris", site="PARIS", rows=detail_rows)
     _append_material_detail_sheet(workbook, title="Detail Bar-le-Duc", site="BAR_LE_DUC", rows=detail_rows)
     output = io.BytesIO()

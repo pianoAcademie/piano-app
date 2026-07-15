@@ -25,10 +25,20 @@ type GeneratedReportsTableProps = {
 const REPORTS_PER_PAGE = 50;
 
 function formatDate(value: string, language: UiLanguage): string {
-  return new Date(value).toLocaleString(localeForUiLanguage(language), {
+  const date = new Date(value);
+  const timezonePart = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Paris",
+    timeZoneName: "shortOffset",
+  })
+    .formatToParts(date)
+    .find((part) => part.type === "timeZoneName")?.value
+    .replace("UTC", "GMT");
+  const formatted = date.toLocaleString(localeForUiLanguage(language), {
     dateStyle: "short",
     timeStyle: "short",
+    timeZone: "Europe/Paris",
   });
+  return timezonePart ? `${formatted} (${timezonePart})` : formatted;
 }
 
 function formatDateOnly(value: string | null, language: UiLanguage): string {
