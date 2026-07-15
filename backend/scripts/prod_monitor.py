@@ -18,6 +18,7 @@ from pathlib import Path
 
 ROOT = Path(os.getenv("PIANO_APP_ROOT", "/home/ubuntu/piano-app"))
 ENV_PATH = ROOT / ".env"
+MONITOR_ENV_PATH = Path(os.getenv("PROD_MONITOR_ENV_PATH", "/etc/piano-prod-monitor.env"))
 STATE_PATH = Path(os.getenv("PROD_MONITOR_STATE_PATH", "/var/tmp/piano_prod_monitor_state.json"))
 PUBLIC_LOGIN_URL = os.getenv("PROD_MONITOR_PUBLIC_LOGIN_URL", "https://app.piano-academie.com/login")
 EXPECTED_TEXT = os.getenv("PROD_MONITOR_EXPECTED_TEXT", "Piano Academie")
@@ -193,7 +194,7 @@ def _send_email(*, subject: str, body: str, env: dict[str, str]) -> None:
 
 
 def main() -> int:
-    env = _load_env(ENV_PATH)
+    env = {**_load_env(ENV_PATH), **_load_env(MONITOR_ENV_PATH)}
     checks = [_public_check(), _vps_check()]
     ok = all(check.ok for check in checks)
     now = _now()
