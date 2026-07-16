@@ -106,6 +106,8 @@ class FamilyPlanMiniOut(BaseModel):
     code: str
     name: str
     kind: PlanKind
+    price_ttc: Decimal | None = None
+    currency_code: str | None = None
 
 
 class FamilySessionMiniOut(BaseModel):

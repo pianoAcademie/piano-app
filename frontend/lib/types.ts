@@ -178,6 +178,8 @@ export type SubscriptionOut = {
     code: string;
     name: string;
     kind: "PACK" | "SUBSCRIPTION" | "FORFAIT";
+    price_ttc: string | null;
+    currency_code: string | null;
   };
 };
 
@@ -744,6 +746,8 @@ export type ClientFamilyOverviewOut = {
       code: string;
       name: string;
       kind: "PACK" | "SUBSCRIPTION" | string;
+      price_ttc: string | null;
+      currency_code: string | null;
     };
   }>;
   bookings: Array<{

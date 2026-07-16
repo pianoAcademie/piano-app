@@ -2917,9 +2917,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           const consumedCredits = Math.max(0, initialCredits - remainingCredits);
                           const ratio = initialCredits > 0 ? Math.min(100, Math.round((consumedCredits / initialCredits) * 100)) : 0;
                           const linkedPlan = plans.find((plan) => plan.id === sub.plan.id);
+                          const subscriptionPrice = planDisplayPrice(linkedPlan) ?? sub.plan.price_ttc;
+                          const subscriptionCurrency = linkedPlan?.currency_code ?? sub.plan.currency_code ?? me.preferred_currency;
                           const detailLine = isPack
                             ? t("client.remaining_credits", { remaining: remainingCredits, initial: initialCredits || "?" })
-                            : `${toMoney(sub.plan.kind === "FORFAIT" ? "0" : planDisplayPrice(linkedPlan), me.preferred_currency, language)} ${language === "en" ? "/ period" : "/ periode"} · ${paymentMethodLabel(sub.billing_method_code, language)}`;
+                            : `${toMoney(sub.plan.kind === "FORFAIT" ? "0" : subscriptionPrice, subscriptionCurrency, language)} ${language === "en" ? "/ period" : "/ periode"} · ${paymentMethodLabel(sub.billing_method_code, language)}`;
                           const expiryLine = sub.ends_at
                             ? t("client.expiration", { date: formatDate(sub.ends_at, language) })
                             : sub.next_payment_at
@@ -4534,7 +4536,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         const consumedCredits = Math.max(0, initialCredits - remainingCredits);
                         const ratio = initialCredits > 0 ? Math.min(100, Math.round((consumedCredits / initialCredits) * 100)) : 0;
                         const linkedPlan = plans.find((plan) => plan.id === sub.plan.id);
-                        const planPrice = planDisplayPrice(linkedPlan);
+                        const planPrice = planDisplayPrice(linkedPlan) ?? sub.plan.price_ttc;
+                        const planCurrency = linkedPlan?.currency_code ?? sub.plan.currency_code ?? me.preferred_currency;
                         return (
                           <article key={`forfait-card-${sub.id}`} className="item client-forfait-card">
                             <div className="row spread">
@@ -4559,7 +4562,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               </>
                             ) : (
                               <p className="muted">
-                                {toMoney(sub.plan.kind === "FORFAIT" ? "0" : planPrice, me.preferred_currency, language)} {t("client.per_month_suffix")} · {paymentMethodLabel(sub.billing_method_code, language)}
+                                {toMoney(sub.plan.kind === "FORFAIT" ? "0" : planPrice, planCurrency, language)} {t("client.per_month_suffix")} · {paymentMethodLabel(sub.billing_method_code, language)}
                               </p>
                             )}
                             <p className="muted">
@@ -4599,8 +4602,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         {toMoney(
                           selectedOfferSubscription.plan.kind === "FORFAIT"
                             ? "0"
-                            : planDisplayPrice(plans.find((plan) => plan.id === selectedOfferSubscription.plan.id)),
-                          me.preferred_currency,
+                            : planDisplayPrice(plans.find((plan) => plan.id === selectedOfferSubscription.plan.id)) ?? selectedOfferSubscription.plan.price_ttc,
+                          plans.find((plan) => plan.id === selectedOfferSubscription.plan.id)?.currency_code ?? selectedOfferSubscription.plan.currency_code ?? me.preferred_currency,
                          language)}{" "}
                         {language === "en" ? "/ period" : "/ periode"}
                       </p>

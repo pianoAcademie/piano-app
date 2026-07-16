@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 import sys
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.bookings import _plan_supports_course_access, _select_eligible_subscription
-from app.api.routes.clients import _active_formula_options_for_course_type, _session_purchase_catalog
+from app.api.routes.clients import _active_formula_options_for_course_type, _family_plan_mini_out, _session_purchase_catalog
 from app.models.plan import PlanKind, SubscriptionStatus
 
 
@@ -63,6 +65,30 @@ class _FakeSession:
 
 
 class FormulaCompatibilityTests(unittest.TestCase):
+    def test_family_subscription_plan_includes_private_formula_price(self) -> None:
+        plan = SimpleNamespace(
+            id=uuid4(),
+            code="FORM_TEST_PAYPLUG",
+            name="Test Payplug 1 euro",
+            kind=PlanKind.SUBSCRIPTION,
+        )
+        owner = SimpleNamespace(residence_country="FR", preferred_currency="EUR")
+        now = datetime(2026, 7, 16, tzinfo=timezone.utc)
+
+        with patch(
+            "app.api.routes.clients._plan_amount_due_and_currency",
+            return_value=(Decimal("1.00"), "EUR"),
+        ):
+            result = _family_plan_mini_out(
+                _FakeSession(),
+                plan=plan,
+                owner=owner,
+                on_date=now,
+            )
+
+        self.assertEqual(result.price_ttc, Decimal("1.00"))
+        self.assertEqual(result.currency_code, "EUR")
+
     def test_pack_matches_course_access_via_credit_type(self) -> None:
         plan_id = uuid4()
         course_type_id = uuid4()
@@ -238,6 +264,8 @@ class FormulaCompatibilityTests(unittest.TestCase):
             is_private=False,
             allow_online_booking=True,
             external_booking_price_ttc=15,
+            start_at_utc=datetime(2026, 7, 16, 10, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 7, 16, 11, 0, tzinfo=timezone.utc),
         )
         course_type = SimpleNamespace(
             id=uuid4(),

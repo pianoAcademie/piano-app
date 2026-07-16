@@ -83,6 +83,8 @@ class PlanMiniOut(BaseModel):
     code: str
     name: str
     kind: PlanKind
+    price_ttc: Decimal | None = None
+    currency_code: str | None = None
 
 
 class ClientSubscriptionOut(BaseModel):

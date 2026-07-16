@@ -1808,6 +1808,30 @@ def _plan_amount_due_and_currency(
     return total_incl_vat.quantize(Decimal("0.01")), currency_code
 
 
+def _family_plan_mini_out(
+    db: Session,
+    *,
+    plan: Plan,
+    owner: User,
+    on_date: datetime,
+) -> FamilyPlanMiniOut:
+    price_ttc, currency_code = _plan_amount_due_and_currency(
+        db,
+        plan=plan,
+        country=(owner.residence_country or "FR").upper(),
+        currency=(owner.preferred_currency or "EUR").upper(),
+        on_date=on_date,
+    )
+    return FamilyPlanMiniOut(
+        id=plan.id,
+        code=plan.code,
+        name=plan.name,
+        kind=plan.kind,
+        price_ttc=price_ttc,
+        currency_code=currency_code,
+    )
+
+
 @router.get("/clients/me", response_model=UserOut)
 def get_client_me(current_user: User = Depends(require_roles(UserRole.CLIENT))) -> UserOut:
     return current_user
@@ -2300,11 +2324,11 @@ def get_client_family_overview(
                 suspension_ends_at=sub.suspension_ends_at,
                 cancellation_requested_at=sub.cancellation_requested_at,
                 cancellation_effective_at=sub.cancellation_effective_at,
-                plan=FamilyPlanMiniOut(
-                    id=plan.id,
-                    code=plan.code,
-                    name=plan.name,
-                    kind=plan.kind,
+                plan=_family_plan_mini_out(
+                    db,
+                    plan=plan,
+                    owner=owner,
+                    on_date=now,
                 ),
                 entitlement_course_type_ids=entitlement_course_type_ids_by_plan.get(plan.id, []),
                 entitlement_course_type_names=entitlement_course_type_names_by_plan.get(plan.id, []),

@@ -803,6 +803,8 @@ def purchase_plan(
             code=plan.code,
             name=plan.name,
             kind=plan.kind,
+            price_ttc=amount_due,
+            currency_code=currency_code,
         ),
         entitlement_course_type_ids=entitlement_ids_map.get(plan.id, []),
         entitlement_course_type_names=entitlement_names_map.get(plan.id, []),
@@ -830,6 +832,13 @@ def list_my_subscriptions(
     for sub, plan in rows:
         if reconcile_subscription_status(sub, now=now, plan_kind=plan.kind):
             changed = True
+        price_ttc, currency_code = _plan_amount_due_and_currency(
+            db,
+            plan=plan,
+            country=(current_user.residence_country or "FR").upper(),
+            currency=(current_user.preferred_currency or "EUR").upper(),
+            on_date=now.date(),
+        )
         payload.append(
             ClientSubscriptionOut(
                 id=sub.id,
@@ -859,6 +868,8 @@ def list_my_subscriptions(
                     code=plan.code,
                     name=plan.name,
                     kind=plan.kind,
+                    price_ttc=price_ttc,
+                    currency_code=currency_code,
                 ),
                 entitlement_course_type_ids=entitlement_ids_map.get(plan.id, []),
                 entitlement_course_type_names=entitlement_names_map.get(plan.id, []),
