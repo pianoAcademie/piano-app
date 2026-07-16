@@ -23,6 +23,13 @@ class CheckoutCreateRequest:
     cancel_return_url: str
     webhook_url: str
     metadata: dict[str, str]
+    customer_first_name: str | None = None
+    customer_last_name: str | None = None
+    customer_address_line: str | None = None
+    customer_postal_code: str | None = None
+    customer_city: str | None = None
+    customer_country: str | None = None
+    save_payment_method: bool = False
 
 
 @dataclass(frozen=True)
@@ -47,6 +54,9 @@ class PaymentLookupResult:
     failed: bool
     metadata: dict[str, str]
     message: str
+    payment_method_reference: str | None = None
+    payment_method_exp_month: int | None = None
+    payment_method_exp_year: int | None = None
 
 
 def _request_json(
@@ -240,18 +250,32 @@ def _mollie_create_checkout(secret: str, payload: CheckoutCreateRequest) -> Chec
 
 def _payplug_create_checkout(secret: str, payload: CheckoutCreateRequest) -> CheckoutCreateResult:
     amount_cents = int((payload.amount.quantize(Decimal("0.01")) * Decimal("100")).to_integral_value())
+    customer: dict[str, object] = {"email": payload.customer_email}
+    if payload.customer_first_name:
+        customer["first_name"] = payload.customer_first_name
+    if payload.customer_last_name:
+        customer["last_name"] = payload.customer_last_name
+    if payload.customer_address_line:
+        customer["address1"] = payload.customer_address_line
+    if payload.customer_postal_code:
+        customer["postcode"] = payload.customer_postal_code
+    if payload.customer_city:
+        customer["city"] = payload.customer_city
+    if payload.customer_country:
+        customer["country"] = payload.customer_country.upper()
+
     body: dict[str, object] = {
         "amount": amount_cents,
         "currency": payload.currency.upper(),
-        "customer": {
-            "email": payload.customer_email,
-        },
+        "customer": customer,
         "hosted_payment": {
             "return_url": payload.success_return_url,
             "cancel_url": payload.cancel_return_url,
         },
         "metadata": payload.metadata,
     }
+    if payload.save_payment_method:
+        body["save_card"] = True
     if payload.webhook_url and not _looks_like_local_callback_url(payload.webhook_url):
         body["notification_url"] = payload.webhook_url
     status_code, parsed, message = _request_json(
@@ -260,6 +284,7 @@ def _payplug_create_checkout(secret: str, payload: CheckoutCreateRequest) -> Che
         headers={
             "Authorization": _payplug_auth_header(secret),
             "Content-Type": "application/json",
+            "PayPlug-Version": "2019-08-06",
         },
         body=body,
     )
@@ -439,6 +464,7 @@ def _payplug_lookup_payment(secret: str, payment_reference: str) -> PaymentLooku
         headers={
             "Authorization": _payplug_auth_header(secret),
             "Content-Type": "application/json",
+            "PayPlug-Version": "2019-08-06",
         },
     )
     if status_code == 0 or not isinstance(parsed, dict):
@@ -467,6 +493,26 @@ def _payplug_lookup_payment(secret: str, payment_reference: str) -> PaymentLooku
         is_canceled=is_canceled,
         is_failed=is_failed,
     )
+    card = parsed.get("card")
+    card_reference: str | None = None
+    card_exp_month: int | None = None
+    card_exp_year: int | None = None
+    if isinstance(card, dict):
+        raw_reference = str(card.get("id") or "").strip()
+        if raw_reference.startswith("card_"):
+            card_reference = raw_reference
+        try:
+            parsed_month = int(card.get("exp_month"))
+            if 1 <= parsed_month <= 12:
+                card_exp_month = parsed_month
+        except (TypeError, ValueError):
+            pass
+        try:
+            parsed_year = int(card.get("exp_year"))
+            if 2000 <= parsed_year <= 9999:
+                card_exp_year = parsed_year
+        except (TypeError, ValueError):
+            pass
 
     return PaymentLookupResult(
         success=200 <= status_code < 300,
@@ -478,6 +524,9 @@ def _payplug_lookup_payment(secret: str, payment_reference: str) -> PaymentLooku
         failed=is_failed and not is_paid,
         metadata=_normalize_metadata(parsed.get("metadata")),
         message=message or "ok",
+        payment_method_reference=card_reference,
+        payment_method_exp_month=card_exp_month,
+        payment_method_exp_year=card_exp_year,
     )
 
 

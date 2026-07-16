@@ -1145,6 +1145,9 @@ class AdminClientSubscriptionOut(BaseModel):
     payment_provider_subscription_ref: str | None = None
     payment_provider_customer_ref: str | None = None
     payment_provider_mandate_ref: str | None = None
+    payment_provider_code: str | None = None
+    payment_method_setup_required: bool = False
+    payment_method_setup_completed_at: datetime | None = None
     forfait_loyalty_discount_per_hour_ttc: Decimal | None = None
     forfait_family_discount_per_hour_ttc: Decimal | None = None
     forfait_short_commitment_supplement_per_hour_ttc: Decimal | None = None

@@ -24,10 +24,12 @@ from app.api.routes.admin_clients import (
     start_admin_client_range_invoice_public_payment,
 )
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind, SubscriptionStatus
+from app.models.subscription_engine import SubscriptionBillingCycle
 from app.models.user import User
 from app.services.client_purchase_notifications import send_client_payment_success_notifications
 from app.services.payment_checkout import lookup_payment
 from app.services.payment_provider import detect_provider_from_reference, resolve_provider, resolve_webhook_secret
+from app.services.subscriptions import add_months_utc
 
 router = APIRouter(prefix="/public/payments")
 logger = logging.getLogger(__name__)
@@ -76,6 +78,7 @@ async def payment_webhook(
     request: Request,
     client_id: UUID | None = Query(default=None),
     subscription_id: UUID | None = Query(default=None),
+    cycle_id: UUID | None = Query(default=None),
     token: str | None = Query(default=None),
 ) -> dict[str, object]:
     db: Session = SessionLocal()
@@ -116,18 +119,35 @@ async def payment_webhook(
         if client_id is not None and sub.user_id != client_id:
             return {"ok": True, "processed": False, "reason": "client_mismatch"}
         was_paid_before = sub.last_payment_at is not None
+        status_before = sub.status
+        was_setup_required = bool(sub.payment_method_setup_required)
+
+        cycle: SubscriptionBillingCycle | None = None
+        if cycle_id is not None:
+            cycle = db.scalar(
+                select(SubscriptionBillingCycle).where(
+                    SubscriptionBillingCycle.id == cycle_id,
+                    SubscriptionBillingCycle.subscription_id == sub.id,
+                )
+            )
+            if cycle is None:
+                return {"ok": True, "processed": False, "reason": "cycle_mismatch"}
 
         plan = db.scalar(select(Plan).where(Plan.id == sub.plan_id))
         if plan is None:
             return {"ok": True, "processed": False, "reason": "plan_not_found"}
 
-        current_reference = (sub.payment_provider_subscription_ref or "").strip()
+        current_reference = (
+            (cycle.payment_recovery_provider_ref or "").strip()
+            if cycle is not None
+            else (sub.payment_provider_subscription_ref or "").strip()
+        )
         if current_reference and payment_reference and payment_reference != current_reference:
             return {"ok": True, "processed": False, "reason": "reference_mismatch"}
-        if not current_reference and payment_reference:
+        if not current_reference and payment_reference and cycle is None:
             sub.payment_provider_subscription_ref = payment_reference
 
-        reference = (sub.payment_provider_subscription_ref or "").strip()
+        reference = current_reference or (payment_reference or "").strip()
         if not reference:
             db.add(sub)
             db.commit()
@@ -144,7 +164,16 @@ async def payment_webhook(
                 sub.payment_provider_customer_ref = customer_reference
             if mandate_reference:
                 sub.payment_provider_mandate_ref = mandate_reference
-            sub.last_payment_at = _utcnow()
+            paid_at = _utcnow()
+            if provider.value == "PAYPLUG" and lookup.payment_method_reference:
+                sub.payment_provider_code = provider.value
+                sub.payment_provider_payment_method_ref = lookup.payment_method_reference
+                sub.payment_method_exp_month = lookup.payment_method_exp_month
+                sub.payment_method_exp_year = lookup.payment_method_exp_year
+                sub.payment_method_setup_required = False
+                sub.payment_method_setup_completed_at = paid_at
+                sub.billing_method_code = "CARD_ONLINE"
+            sub.last_payment_at = paid_at
             sub.last_successful_charge_at = sub.last_payment_at
             if sub.status in {
                 SubscriptionStatus.PENDING,
@@ -154,20 +183,40 @@ async def payment_webhook(
                 SubscriptionStatus.PRE_TERMINATION,
                 SubscriptionStatus.TERMINATED,
             }:
-                sub.status = SubscriptionStatus.ACTIVE
+                if status_before != SubscriptionStatus.PAUSED:
+                    sub.status = SubscriptionStatus.ACTIVE
             sub.bookings_blocked = False
             sub.payment_alert_started_at = None
             sub.pre_termination_at = None
             sub.direct_payment_recovery_url = None
             if plan.kind == PlanKind.SUBSCRIPTION:
                 billing_method_code = (sub.billing_method_code or "").strip().upper()
-                has_customer_ref = bool((sub.payment_provider_customer_ref or "").strip())
-                has_mandate_ref = bool((sub.payment_provider_mandate_ref or "").strip())
-                if billing_method_code == "CARD_ONLINE" and (not has_customer_ref or not has_mandate_ref):
+                if provider.value == "PAYPLUG":
+                    payment_method_ready = bool((sub.payment_provider_payment_method_ref or "").strip())
+                else:
+                    payment_method_ready = bool((sub.payment_provider_customer_ref or "").strip()) and bool(
+                        (sub.payment_provider_mandate_ref or "").strip()
+                    )
+                if billing_method_code == "CARD_ONLINE" and not payment_method_ready:
                     sub.auto_renew = False
-                    sub.last_payment_status = "PAID_MANDATE_MISSING"
+                    sub.payment_method_setup_required = True
+                    sub.last_payment_status = "PAID_PAYMENT_METHOD_MISSING"
                 else:
                     sub.auto_renew = True
+                due_at = sub.next_payment_at or sub.current_period_end
+                if (
+                    cycle is None
+                    and was_setup_required
+                    and status_before in {SubscriptionStatus.ACTIVE, SubscriptionStatus.PAYMENT_ALERT}
+                    and due_at is not None
+                    and due_at <= paid_at
+                ):
+                    next_start = due_at
+                    next_end = add_months_utc(due_at, 1)
+                    sub.current_period_start = next_start
+                    sub.current_period_end = next_end
+                    sub.next_payment_at = next_end
+                    sub.ends_at = next_end
         elif lookup.cancelled:
             if sub.status == SubscriptionStatus.PENDING:
                 sub.status = SubscriptionStatus.CANCELLED

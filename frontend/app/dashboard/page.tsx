@@ -1701,6 +1701,20 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       return normalized === "PAYMENT_ALERT" || normalized === "PRE_TERMINATION";
     })
     .sort((a, b) => b.started_at.localeCompare(a.started_at));
+  const paymentMethodSetupSubscriptions = subscriptions
+    .filter((sub) => selectedMemberFilter === "ALL" || sub.owner_client_id === selectedMemberFilter)
+    .filter((sub) => {
+      if (!sub.payment_method_setup_required || normalizeStatus(sub.plan.kind) !== "SUBSCRIPTION") {
+        return false;
+      }
+      const normalized = normalizeStatus(sub.status);
+      if (normalized !== "ACTIVE" && normalized !== "PAYMENT_ALERT") {
+        return false;
+      }
+      const dueAt = safeDate(sub.next_payment_at || sub.current_period_end);
+      return dueAt !== null && dueAt <= now;
+    })
+    .sort((a, b) => (a.next_payment_at || "").localeCompare(b.next_payment_at || ""));
   const hasPreTerminationAlert = subscriptionAlerts.some((sub) => normalizeStatus(sub.status) === "PRE_TERMINATION");
   const primaryRecoveryUrl = subscriptionAlerts.find((sub) => Boolean(sub.direct_payment_recovery_url))?.direct_payment_recovery_url ?? null;
   const homeSubscriptionsPreview = homeSubscriptions.slice(0, 2);
@@ -2744,6 +2758,26 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   </a>
                 </>
               ) : null}
+            </section>
+          ) : null}
+          {paymentMethodSetupSubscriptions.length > 0 ? (
+            <section className="flash-warn">
+              <p>{t("client.payment_method_required_at_renewal")}</p>
+              <div className="row">
+                {paymentMethodSetupSubscriptions.map((sub) => (
+                  <form action={openClientPaymentCheckoutAction} key={`payment-method-setup-${sub.id}`}>
+                    {sub.direct_payment_recovery_url ? (
+                      <input type="hidden" name="payment_url" value={sub.direct_payment_recovery_url} />
+                    ) : (
+                      <input type="hidden" name="payment_id" value={`plan:${sub.id}`} />
+                    )}
+                    <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: sub.id })} />
+                    <button type="submit" className="client-pay-cta">
+                      {t("client.enter_payment_method")} · {sub.owner_display_name}
+                    </button>
+                  </form>
+                ))}
+              </div>
             </section>
           ) : null}
 
@@ -4574,6 +4608,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <article className="item">
                       <h4>{t("client.payment_method")}</h4>
                       <p className="muted">{paymentMethodLabel(selectedOfferSubscription.billing_method_code, language)}</p>
+                      {selectedOfferSubscription.payment_method_setup_required ? (
+                        <p className="muted">{t("client.payment_method_will_be_requested")}</p>
+                      ) : null}
                     </article>
                     <article className="item">
                       <h4>{t("client.access_restrictions")}</h4>

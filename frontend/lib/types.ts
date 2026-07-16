@@ -161,6 +161,8 @@ export type SubscriptionOut = {
   auto_renew: boolean;
   bookings_blocked: boolean;
   billing_method_code: string | null;
+  payment_method_setup_required: boolean;
+  payment_method_setup_completed_at: string | null;
   last_successful_charge_at: string | null;
   payment_alert_started_at: string | null;
   pre_termination_at: string | null;
@@ -273,6 +275,9 @@ export type AdminClientSubscriptionOut = {
   payment_provider_subscription_ref: string | null;
   payment_provider_customer_ref: string | null;
   payment_provider_mandate_ref: string | null;
+  payment_provider_code: string | null;
+  payment_method_setup_required: boolean;
+  payment_method_setup_completed_at: string | null;
   forfait_loyalty_discount_per_hour_ttc: string | null;
   forfait_family_discount_per_hour_ttc: string | null;
   forfait_short_commitment_supplement_per_hour_ttc: string | null;
@@ -722,6 +727,8 @@ export type ClientFamilyOverviewOut = {
     auto_renew: boolean;
     bookings_blocked: boolean;
     billing_method_code: string | null;
+    payment_method_setup_required: boolean;
+    payment_method_setup_completed_at: string | null;
     last_successful_charge_at: string | null;
     payment_alert_started_at: string | null;
     pre_termination_at: string | null;

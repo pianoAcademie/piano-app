@@ -50,8 +50,14 @@ from app.services.notifications.infrastructure.repository import (
     start_job_run,
 )
 from app.services.messaging_templates import resolve_frontend_base_url
-from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment
-from app.services.payment_provider import PaymentProvider, detect_provider_from_reference, resolve_mode, resolve_provider
+from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
+from app.services.payment_provider import (
+    PaymentProvider,
+    detect_provider_from_reference,
+    resolve_mode,
+    resolve_provider,
+    resolve_webhook_secret,
+)
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.psp_gateway import MollieGateway, PayplugGateway, RecurringChargeRequest
 from app.services.shared.locks.redis_lock import redis_lock
@@ -545,9 +551,13 @@ def _ensure_recovery_checkout(
             currency=(cycle.currency or "EUR").upper(),
             description=f"Regularisation abonnement {plan.name}",
             customer_email=owner.email,
+            customer_first_name=owner.first_name,
+            customer_last_name=owner.last_name,
+            customer_country=(owner.residence_country or "FR"),
             success_return_url=success_url,
             cancel_return_url=cancel_url,
-            webhook_url=webhook_url,
+            webhook_url=with_webhook_secret(webhook_url, resolve_webhook_secret(db)),
+            save_payment_method=True,
             metadata={
                 "source": "SUBSCRIPTION_RECOVERY",
                 "subscription_id": str(subscription.id),
@@ -610,7 +620,7 @@ def _gateway_for_provider(db: Session) -> tuple[PaymentProvider, object]:
     provider = resolve_provider(db)
     if provider == PaymentProvider.MOLLIE:
         return provider, MollieGateway(api_key=resolve_provider_secret(db, provider=provider), mode=resolve_mode(db))
-    return provider, PayplugGateway()
+    return provider, PayplugGateway(api_key=resolve_provider_secret(db, provider=provider))
 
 
 def resolve_provider_secret(db: Session, *, provider: PaymentProvider) -> str:
@@ -983,12 +993,13 @@ def _charge_cycle(
         provider_status = "FAILED_INVALID_BILLING_METHOD"
         result_success = False
         provider_reference = None
-    elif provider != PaymentProvider.MOLLIE:
+    elif provider not in {PaymentProvider.MOLLIE, PaymentProvider.PAYPLUG}:
         failure_reason = "Le PSP actif ne supporte pas le prelevement recurrent automatique"
         provider_status = "FAILED_PROVIDER_NOT_SUPPORTED"
         result_success = False
         provider_reference = None
     else:
+        success_url, cancel_url, webhook_url = _resolve_recovery_urls(subscription.id, cycle.id)
         result = gateway.create_recurring_charge(
             RecurringChargeRequest(
                 amount=Decimal(cycle.amount),
@@ -997,12 +1008,25 @@ def _charge_cycle(
                 customer_reference=subscription.payment_provider_customer_ref,
                 mandate_reference=subscription.payment_provider_mandate_ref,
                 idempotency_key=idempotency_key,
+                payment_method_reference=subscription.payment_provider_payment_method_ref,
+                payment_method_exp_month=subscription.payment_method_exp_month,
+                payment_method_exp_year=subscription.payment_method_exp_year,
+                customer_email=owner.email,
+                customer_first_name=owner.first_name,
+                customer_last_name=owner.last_name,
+                success_return_url=success_url,
+                cancel_return_url=cancel_url,
+                notification_url=with_webhook_secret(webhook_url, resolve_webhook_secret(db)),
             )
         )
         provider_status = result.status
         failure_reason = result.message or "Echec du prelevement"
         result_success = bool(result.success)
         provider_reference = result.provider_reference
+        if result.checkout_url:
+            cycle.payment_recovery_url = result.checkout_url
+            cycle.payment_recovery_provider_ref = result.provider_reference
+            subscription.direct_payment_recovery_url = result.checkout_url
 
     amount = Decimal(cycle.amount)
     currency = (cycle.currency or "EUR").upper()
@@ -1038,8 +1062,46 @@ def _charge_cycle(
     attempt.failure_reason = failure_reason
     cycle.attempt_count = attempt_number
 
+    payment_method_action_required = provider_status in {
+        "AUTHENTICATION_REQUIRED",
+        "CARD_EXPIRED",
+        "MISSING_PAYMENT_METHOD",
+        "PAYMENT_METHOD_REVOKED",
+    }
+    if payment_method_action_required:
+        subscription.payment_method_setup_required = True
+        subscription.auto_renew = False
+        if provider_status in {"CARD_EXPIRED", "MISSING_PAYMENT_METHOD", "PAYMENT_METHOD_REVOKED"}:
+            subscription.payment_provider_payment_method_ref = None
+            subscription.payment_method_exp_month = None
+            subscription.payment_method_exp_year = None
+
     allow_booking_during_alert = _get_setting_bool(db, "config_subscription_allow_booking_during_payment_alert", True)
     _ensure_recovery_checkout(db, subscription=subscription, owner=owner, plan=plan, cycle=cycle)
+
+    if payment_method_action_required:
+        cycle.status = CYCLE_STATUS_FAILED_FIRST
+        cycle.next_retry_at = None
+        _mark_subscription_first_failure(
+            subscription,
+            cycle,
+            now=now,
+            provider_status=provider_status,
+            allow_booking_during_payment_alert=allow_booking_during_alert,
+        )
+        _send_first_failure_notifications(
+            db,
+            policy=notification_policy,
+            subscription=subscription,
+            owner=owner,
+            plan=plan,
+            cycle=cycle,
+            amount=amount,
+            currency=currency,
+            now=now,
+            failure_reason=failure_reason,
+        )
+        return "first_failure", provider_status
 
     failure_threshold = max(
         retry_policy.max_auto_attempts,
@@ -1405,6 +1467,22 @@ def run_subscription_recovery_reconciliation_job(
                 if not lookup.paid:
                     skipped += 1
                     continue
+
+                if provider == PaymentProvider.PAYPLUG and lookup.payment_method_reference:
+                    subscription.payment_provider_code = PaymentProvider.PAYPLUG.value
+                    subscription.payment_provider_payment_method_ref = lookup.payment_method_reference
+                    subscription.payment_method_exp_month = lookup.payment_method_exp_month
+                    subscription.payment_method_exp_year = lookup.payment_method_exp_year
+                    subscription.payment_method_setup_required = False
+                    subscription.payment_method_setup_completed_at = now
+                    subscription.billing_method_code = "CARD_ONLINE"
+                elif provider == PaymentProvider.MOLLIE:
+                    customer_reference = (lookup.metadata.get("customer_reference") or "").strip()
+                    mandate_reference = (lookup.metadata.get("mandate_reference") or "").strip()
+                    if customer_reference:
+                        subscription.payment_provider_customer_ref = customer_reference
+                    if mandate_reference:
+                        subscription.payment_provider_mandate_ref = mandate_reference
 
                 amount = Decimal(cycle.amount)
                 currency = (cycle.currency or "EUR").upper()

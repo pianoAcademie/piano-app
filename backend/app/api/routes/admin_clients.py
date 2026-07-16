@@ -4546,9 +4546,13 @@ def _create_checkout_for_subscription(
             currency=(currency_code or "EUR").upper(),
             description=f"{plan.name} ({client.email})",
             customer_email=client.email,
+            customer_first_name=client.first_name,
+            customer_last_name=client.last_name,
+            customer_country=(client.residence_country or "FR"),
             success_return_url=success_url,
             cancel_return_url=cancel_url,
             webhook_url=with_webhook_secret(webhook_url, resolve_webhook_secret(db)),
+            save_payment_method=(plan.kind == PlanKind.SUBSCRIPTION),
             metadata={
                 "client_id": str(client.id),
                 "subscription_id": str(subscription.id),
@@ -4565,6 +4569,9 @@ def _create_checkout_for_subscription(
 
     subscription.billing_method_code = normalized_method
     subscription.payment_provider_subscription_ref = checkout.provider_reference or subscription.payment_provider_subscription_ref
+    subscription.payment_provider_code = checkout.provider.value
+    if plan.kind == PlanKind.SUBSCRIPTION:
+        subscription.payment_method_setup_required = True
     subscription.last_payment_status = (checkout.status or "WAITING_PAYMENT").strip().upper() or "WAITING_PAYMENT"
     if force_pending and subscription.status != SubscriptionStatus.CANCELLED:
         subscription.status = SubscriptionStatus.PENDING
@@ -7104,6 +7111,9 @@ def _admin_subscription_out(
         payment_provider_subscription_ref=sub.payment_provider_subscription_ref,
         payment_provider_customer_ref=sub.payment_provider_customer_ref,
         payment_provider_mandate_ref=sub.payment_provider_mandate_ref,
+        payment_provider_code=sub.payment_provider_code,
+        payment_method_setup_required=bool(sub.payment_method_setup_required),
+        payment_method_setup_completed_at=sub.payment_method_setup_completed_at,
         forfait_loyalty_discount_per_hour_ttc=_non_negative_money(sub.forfait_loyalty_discount_per_hour_ttc),
         forfait_family_discount_per_hour_ttc=_non_negative_money(sub.forfait_family_discount_per_hour_ttc),
         forfait_short_commitment_supplement_per_hour_ttc=_non_negative_money(

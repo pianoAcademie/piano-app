@@ -743,9 +743,13 @@ def purchase_plan(
                 currency=currency_code,
                 description=f"{plan.name} ({owner.email})",
                 customer_email=owner.email,
+                customer_first_name=owner.first_name,
+                customer_last_name=owner.last_name,
+                customer_country=(owner.residence_country or "FR"),
                 success_return_url=success_url,
                 cancel_return_url=cancel_url,
                 webhook_url=with_webhook_secret(webhook_url, resolve_webhook_secret(db)),
+                save_payment_method=(plan.kind == PlanKind.SUBSCRIPTION),
                 metadata={
                     "client_id": str(owner.id),
                     "subscription_id": str(subscription.id),
@@ -760,6 +764,9 @@ def purchase_plan(
                 detail=f"Impossible de creer la session de paiement ({checkout.message})",
             )
         subscription.payment_provider_subscription_ref = checkout.provider_reference
+        subscription.payment_provider_code = checkout.provider.value
+        if plan.kind == PlanKind.SUBSCRIPTION:
+            subscription.payment_method_setup_required = True
         subscription.last_payment_status = (checkout.status or "WAITING_PAYMENT").strip().upper() or "WAITING_PAYMENT"
         checkout_url = checkout.checkout_url
 
@@ -781,6 +788,8 @@ def purchase_plan(
         auto_renew=subscription.auto_renew,
         bookings_blocked=bool(subscription.bookings_blocked),
         billing_method_code=subscription.billing_method_code,
+        payment_method_setup_required=bool(subscription.payment_method_setup_required),
+        payment_method_setup_completed_at=subscription.payment_method_setup_completed_at,
         last_successful_charge_at=subscription.last_successful_charge_at,
         payment_alert_started_at=subscription.payment_alert_started_at,
         pre_termination_at=subscription.pre_termination_at,
@@ -835,6 +844,8 @@ def list_my_subscriptions(
                 auto_renew=sub.auto_renew,
                 bookings_blocked=bool(sub.bookings_blocked),
                 billing_method_code=sub.billing_method_code,
+                payment_method_setup_required=bool(sub.payment_method_setup_required),
+                payment_method_setup_completed_at=sub.payment_method_setup_completed_at,
                 last_successful_charge_at=sub.last_successful_charge_at,
                 payment_alert_started_at=sub.payment_alert_started_at,
                 pre_termination_at=sub.pre_termination_at,

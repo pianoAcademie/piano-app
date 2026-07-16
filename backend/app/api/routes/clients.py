@@ -122,7 +122,7 @@ from app.services.payment_receipts import (
     remaining_booking_amount_due,
     should_defer_booking_invoice,
 )
-from app.services.payment_provider import detect_provider_from_reference, resolve_provider, resolve_webhook_secret
+from app.services.payment_provider import PaymentProvider, detect_provider_from_reference, resolve_provider, resolve_webhook_secret
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.session_audience import (
     allowed_plan_kinds_for_scopes,
@@ -133,7 +133,7 @@ from app.services.session_audience import (
     scopes_allow_plan_kind,
     scopes_allow_planless_booking,
 )
-from app.services.subscriptions import reconcile_subscription_status
+from app.services.subscriptions import add_months_utc, reconcile_subscription_status
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -432,6 +432,14 @@ def _subscription_payment_status(subscription: ClientPlanSubscription) -> str:
     if subscription_status in CANCELLED_PAYMENT_STATUSES:
         return "CANCELLED"
     if subscription_status == "PENDING":
+        return "PENDING"
+    due_at = getattr(subscription, "next_payment_at", None) or getattr(subscription, "current_period_end", None)
+    if (
+        bool(getattr(subscription, "payment_method_setup_required", False))
+        and subscription_status in {"ACTIVE", "PAYMENT_ALERT"}
+        and due_at is not None
+        and due_at <= datetime.now(timezone.utc)
+    ):
         return "PENDING"
 
     last_payment_status = (subscription.last_payment_status or "").strip().upper()
@@ -2282,6 +2290,8 @@ def get_client_family_overview(
                 auto_renew=sub.auto_renew,
                 bookings_blocked=bool(sub.bookings_blocked),
                 billing_method_code=sub.billing_method_code,
+                payment_method_setup_required=bool(sub.payment_method_setup_required),
+                payment_method_setup_completed_at=sub.payment_method_setup_completed_at,
                 last_successful_charge_at=sub.last_successful_charge_at,
                 payment_alert_started_at=sub.payment_alert_started_at,
                 pre_termination_at=sub.pre_termination_at,
@@ -2781,6 +2791,18 @@ def create_client_payment_checkout(
     method_code = (subscription.billing_method_code or "").strip().upper()
     if method_code not in ONLINE_COLLECTION_METHOD_CODES:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Ce paiement n'utilise pas un moyen en ligne")
+    now = _utcnow()
+    if (
+        plan.kind == PlanKind.SUBSCRIPTION
+        and subscription.payment_method_setup_required
+        and subscription.status == SubscriptionStatus.ACTIVE
+        and subscription.next_payment_at is not None
+        and subscription.next_payment_at > now
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Le moyen de paiement sera demande a la prochaine echeance",
+        )
 
     amount_due, currency_code = _plan_amount_due_and_currency(
         db,
@@ -2800,9 +2822,13 @@ def create_client_payment_checkout(
             currency=currency_code,
             description=f"{plan.name} ({owner.email})",
             customer_email=owner.email,
+            customer_first_name=owner.first_name,
+            customer_last_name=owner.last_name,
+            customer_country=(owner.residence_country or "FR"),
             success_return_url=success_url,
             cancel_return_url=cancel_url,
             webhook_url=with_webhook_secret(webhook_url, resolve_webhook_secret(db)),
+            save_payment_method=(plan.kind == PlanKind.SUBSCRIPTION),
             metadata={
                 "client_id": str(owner.id),
                 "subscription_id": str(subscription.id),
@@ -2818,8 +2844,11 @@ def create_client_payment_checkout(
         )
 
     subscription.payment_provider_subscription_ref = checkout.provider_reference or subscription.payment_provider_subscription_ref
+    subscription.payment_provider_code = checkout.provider.value
     subscription.last_payment_status = (checkout.status or "WAITING_PAYMENT").strip().upper() or "WAITING_PAYMENT"
-    if subscription.status != SubscriptionStatus.ACTIVE:
+    if plan.kind == PlanKind.SUBSCRIPTION:
+        subscription.payment_method_setup_required = True
+    if subscription.status not in {SubscriptionStatus.ACTIVE, SubscriptionStatus.PAUSED}:
         subscription.status = SubscriptionStatus.PENDING
         subscription.auto_renew = False
         subscription.bookings_blocked = False
@@ -3431,6 +3460,8 @@ def confirm_client_payment(
 
     subscription, plan = row
     was_paid_before = subscription.last_payment_at is not None
+    status_before = subscription.status
+    was_setup_required = bool(subscription.payment_method_setup_required)
     payment_reference = (subscription.payment_provider_subscription_ref or "").strip()
     if not payment_reference:
         return ClientPaymentConfirmOut(
@@ -3463,6 +3494,15 @@ def confirm_client_payment(
         if mandate_reference and subscription.payment_provider_mandate_ref != mandate_reference:
             subscription.payment_provider_mandate_ref = mandate_reference
             changed = True
+        if provider == PaymentProvider.PAYPLUG and lookup.payment_method_reference:
+            subscription.payment_provider_code = provider.value
+            subscription.payment_provider_payment_method_ref = lookup.payment_method_reference
+            subscription.payment_method_exp_month = lookup.payment_method_exp_month
+            subscription.payment_method_exp_year = lookup.payment_method_exp_year
+            subscription.payment_method_setup_required = False
+            subscription.payment_method_setup_completed_at = _utcnow()
+            subscription.billing_method_code = "CARD_ONLINE"
+            changed = True
         if subscription.last_payment_at is None:
             subscription.last_payment_at = _utcnow()
             changed = True
@@ -3475,7 +3515,7 @@ def confirm_client_payment(
             SubscriptionStatus.PRE_TERMINATION,
             SubscriptionStatus.TERMINATED,
         }:
-            if subscription.status != SubscriptionStatus.ACTIVE:
+            if subscription.status != SubscriptionStatus.ACTIVE and status_before != SubscriptionStatus.PAUSED:
                 subscription.status = SubscriptionStatus.ACTIVE
                 changed = True
         if subscription.bookings_blocked:
@@ -3492,19 +3532,38 @@ def confirm_client_payment(
             changed = True
         if plan.kind == PlanKind.SUBSCRIPTION:
             billing_method_code = (subscription.billing_method_code or "").strip().upper()
-            has_customer_ref = bool((subscription.payment_provider_customer_ref or "").strip())
-            has_mandate_ref = bool((subscription.payment_provider_mandate_ref or "").strip())
             requires_stored_card = billing_method_code == "CARD_ONLINE"
-            mandate_missing_for_recurring = requires_stored_card and (not has_customer_ref or not has_mandate_ref)
+            if provider == PaymentProvider.PAYPLUG:
+                payment_method_ready = bool((subscription.payment_provider_payment_method_ref or "").strip())
+            else:
+                payment_method_ready = bool((subscription.payment_provider_customer_ref or "").strip()) and bool(
+                    (subscription.payment_provider_mandate_ref or "").strip()
+                )
+            mandate_missing_for_recurring = requires_stored_card and not payment_method_ready
             if mandate_missing_for_recurring:
                 if subscription.auto_renew:
                     subscription.auto_renew = False
                     changed = True
-                if (subscription.last_payment_status or "") != "PAID_MANDATE_MISSING":
-                    subscription.last_payment_status = "PAID_MANDATE_MISSING"
+                subscription.payment_method_setup_required = True
+                if (subscription.last_payment_status or "") != "PAID_PAYMENT_METHOD_MISSING":
+                    subscription.last_payment_status = "PAID_PAYMENT_METHOD_MISSING"
                     changed = True
             elif not subscription.auto_renew:
                 subscription.auto_renew = True
+                changed = True
+            paid_at = subscription.last_payment_at or _utcnow()
+            due_at = subscription.next_payment_at or subscription.current_period_end
+            if (
+                was_setup_required
+                and status_before in {SubscriptionStatus.ACTIVE, SubscriptionStatus.PAYMENT_ALERT}
+                and due_at is not None
+                and due_at <= paid_at
+            ):
+                next_end = add_months_utc(due_at, 1)
+                subscription.current_period_start = due_at
+                subscription.current_period_end = next_end
+                subscription.next_payment_at = next_end
+                subscription.ends_at = next_end
                 changed = True
     elif lookup.cancelled:
         if subscription.status == SubscriptionStatus.PENDING:

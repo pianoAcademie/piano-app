@@ -101,6 +101,8 @@ def detect_provider_from_reference(payment_reference: str | None) -> PaymentProv
         return PaymentProvider.STRIPE
     if normalized.startswith("tr_"):
         return PaymentProvider.MOLLIE
+    if normalized.startswith("pay_"):
+        return PaymentProvider.PAYPLUG
     return None
 
 

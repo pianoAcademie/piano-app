@@ -132,6 +132,8 @@ class FamilySubscriptionOut(BaseModel):
     auto_renew: bool
     bookings_blocked: bool = False
     billing_method_code: str | None = None
+    payment_method_setup_required: bool = False
+    payment_method_setup_completed_at: datetime | None = None
     last_successful_charge_at: datetime | None = None
     payment_alert_started_at: datetime | None = None
     pre_termination_at: datetime | None = None
