@@ -87,17 +87,21 @@ class PayplugGateway(PaymentGateway):
         if self._card_is_expired(payload.payment_method_exp_month, payload.payment_method_exp_year):
             return RecurringChargeResult(False, None, "CARD_EXPIRED", "The saved card has expired", False)
 
-        customer: dict[str, object] = {"email": payload.customer_email or ""}
+        billing: dict[str, object] = {"email": payload.customer_email or ""}
         if payload.customer_first_name:
-            customer["first_name"] = payload.customer_first_name
+            billing["first_name"] = payload.customer_first_name
         if payload.customer_last_name:
-            customer["last_name"] = payload.customer_last_name
+            billing["last_name"] = payload.customer_last_name
+        shipping = dict(billing)
+        shipping["delivery_type"] = "BILLING"
         body: dict[str, object] = {
             "amount": int((payload.amount.quantize(Decimal("0.01")) * Decimal("100")).to_integral_value()),
             "currency": payload.currency.upper(),
             "payment_method": card_reference,
             "initiator": "MERCHANT",
-            "customer": customer,
+            "billing": billing,
+            "shipping": shipping,
+            "description": payload.description[:80],
             "metadata": {
                 "source": "SUBSCRIPTION_RENEWAL",
                 **({"idempotency_key": payload.idempotency_key} if payload.idempotency_key else {}),

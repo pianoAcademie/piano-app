@@ -82,11 +82,18 @@ def test_payplug_checkout_requests_card_saving(monkeypatch) -> None:
     body = captured["body"]
     assert isinstance(body, dict)
     assert body["save_card"] is True
-    assert body["customer"] == {
+    assert body["billing"] == {
         "email": "client@example.test",
         "first_name": "Ada",
         "last_name": "Lovelace",
         "country": "FR",
+    }
+    assert body["shipping"] == {
+        "email": "client@example.test",
+        "first_name": "Ada",
+        "last_name": "Lovelace",
+        "country": "FR",
+        "delivery_type": "BILLING",
     }
 
 
@@ -131,6 +138,17 @@ def test_payplug_recurring_charge_uses_merchant_initiator_and_idempotency(monkey
     assert isinstance(body, dict)
     assert body["payment_method"] == "card_test_123"
     assert body["initiator"] == "MERCHANT"
+    assert body["billing"] == {
+        "email": "client@example.test",
+        "first_name": "Ada",
+        "last_name": "Lovelace",
+    }
+    assert body["shipping"] == {
+        "email": "client@example.test",
+        "first_name": "Ada",
+        "last_name": "Lovelace",
+        "delivery_type": "BILLING",
+    }
     assert body["metadata"] == {
         "source": "SUBSCRIPTION_RENEWAL",
         "idempotency_key": "subscription_charge:cycle-1:1",

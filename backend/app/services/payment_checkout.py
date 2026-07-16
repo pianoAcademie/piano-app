@@ -250,24 +250,29 @@ def _mollie_create_checkout(secret: str, payload: CheckoutCreateRequest) -> Chec
 
 def _payplug_create_checkout(secret: str, payload: CheckoutCreateRequest) -> CheckoutCreateResult:
     amount_cents = int((payload.amount.quantize(Decimal("0.01")) * Decimal("100")).to_integral_value())
-    customer: dict[str, object] = {"email": payload.customer_email}
+    billing: dict[str, object] = {"email": payload.customer_email}
     if payload.customer_first_name:
-        customer["first_name"] = payload.customer_first_name
+        billing["first_name"] = payload.customer_first_name
     if payload.customer_last_name:
-        customer["last_name"] = payload.customer_last_name
+        billing["last_name"] = payload.customer_last_name
     if payload.customer_address_line:
-        customer["address1"] = payload.customer_address_line
+        billing["address1"] = payload.customer_address_line
     if payload.customer_postal_code:
-        customer["postcode"] = payload.customer_postal_code
+        billing["postcode"] = payload.customer_postal_code
     if payload.customer_city:
-        customer["city"] = payload.customer_city
+        billing["city"] = payload.customer_city
     if payload.customer_country:
-        customer["country"] = payload.customer_country.upper()
+        billing["country"] = payload.customer_country.upper()
+
+    shipping = dict(billing)
+    shipping["delivery_type"] = "BILLING"
 
     body: dict[str, object] = {
         "amount": amount_cents,
         "currency": payload.currency.upper(),
-        "customer": customer,
+        "billing": billing,
+        "shipping": shipping,
+        "description": payload.description[:80],
         "hosted_payment": {
             "return_url": payload.success_return_url,
             "cancel_url": payload.cancel_return_url,
