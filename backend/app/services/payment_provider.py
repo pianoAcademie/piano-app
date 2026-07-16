@@ -32,6 +32,7 @@ MOLLIE_TEST_API_KEY_SETTING_KEY = "config_mollie_test_api_key"
 MOLLIE_LIVE_API_KEY_SETTING_KEY = "config_mollie_live_api_key"
 STRIPE_TEST_SECRET_SETTING_KEY = "config_stripe_test_secret"
 STRIPE_LIVE_SECRET_SETTING_KEY = "config_stripe_live_secret"
+STRIPE_WEBHOOK_SECRET_SETTING_KEY = "config_stripe_webhook_secret"
 PAYMENT_WEBHOOK_SECRET_SETTING_KEY = "config_payment_webhook_secret"
 
 
@@ -54,9 +55,9 @@ CAPABILITIES_BY_PROVIDER: dict[PaymentProvider, PaymentProviderCapabilities] = {
         recommendation="Mollie fournit une API Subscription native (mandats, retries, cycle recurrent gere par le PSP).",
     ),
     PaymentProvider.STRIPE: PaymentProviderCapabilities(
-        subscriptions_supported=False,
-        subscriptions_managed_by_psp=True,
-        recommendation="Stripe est disponible pour les paiements one-shot checkout. Le recurrent n'est pas encore active dans ce module.",
+        subscriptions_supported=True,
+        subscriptions_managed_by_psp=False,
+        recommendation="Stripe est reserve aux abonnements (carte et SEPA); Payplug reste utilise pour les autres encaissements.",
     ),
 }
 
@@ -97,7 +98,7 @@ def detect_provider_from_reference(payment_reference: str | None) -> PaymentProv
     normalized = (payment_reference or "").strip().lower()
     if not normalized:
         return None
-    if normalized.startswith("cs_"):
+    if normalized.startswith(("cs_", "pi_", "seti_")):
         return PaymentProvider.STRIPE
     if normalized.startswith("tr_"):
         return PaymentProvider.MOLLIE
@@ -147,6 +148,7 @@ def resolve_secret_values(db: Session) -> dict[str, str]:
     mollie_live_api_key = _db_or_env(get_setting_value(db, MOLLIE_LIVE_API_KEY_SETTING_KEY), settings.mollie_live_api_key)
     stripe_test_secret = _db_or_env(get_setting_value(db, STRIPE_TEST_SECRET_SETTING_KEY), settings.stripe_test_secret_key)
     stripe_live_secret = _db_or_env(get_setting_value(db, STRIPE_LIVE_SECRET_SETTING_KEY), settings.stripe_live_secret_key)
+    stripe_webhook_secret = (get_setting_value(db, STRIPE_WEBHOOK_SECRET_SETTING_KEY) or "").strip()
     webhook_secret = _db_or_env(get_setting_value(db, PAYMENT_WEBHOOK_SECRET_SETTING_KEY), settings.payment_webhook_secret)
     return {
         "payplug_test_secret": payplug_test_secret,
@@ -155,6 +157,7 @@ def resolve_secret_values(db: Session) -> dict[str, str]:
         "mollie_live_api_key": mollie_live_api_key,
         "stripe_test_secret": stripe_test_secret,
         "stripe_live_secret": stripe_live_secret,
+        "stripe_webhook_secret": stripe_webhook_secret,
         "webhook_secret": webhook_secret,
     }
 
@@ -169,6 +172,19 @@ def resolve_webhook_secret(db: Session | None = None) -> str:
 
     seed = f"{settings.jwt_secret_key}|payment-webhook|{settings.frontend_base_url}".encode("utf-8")
     return hashlib.sha256(seed).hexdigest()
+
+
+def resolve_stripe_webhook_secret(db: Session) -> str:
+    values = resolve_secret_values(db)
+    dedicated_secret = values["stripe_webhook_secret"].strip()
+    if dedicated_secret:
+        return dedicated_secret
+
+    # Temporary compatibility for installations that stored Stripe's signing
+    # secret in the pre-existing generic webhook field before a dedicated
+    # Stripe setting was available.
+    legacy_secret = values["webhook_secret"].strip()
+    return legacy_secret if legacy_secret.startswith("whsec_") else ""
 
 
 def resolve_active_secret(db: Session, *, provider: PaymentProvider | None = None) -> str:

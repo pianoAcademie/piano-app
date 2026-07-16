@@ -186,12 +186,14 @@ class AdminPaymentProviderOut(BaseModel):
     mollie_live_api_key_configured: bool
     stripe_test_secret_configured: bool
     stripe_live_secret_configured: bool
+    stripe_webhook_secret_configured: bool
     payplug_test_secret_masked: str
     payplug_live_secret_masked: str
     mollie_test_api_key_masked: str
     mollie_live_api_key_masked: str
     stripe_test_secret_masked: str
     stripe_live_secret_masked: str
+    stripe_webhook_secret_masked: str
     webhook_secret_masked: str
 
 
@@ -204,6 +206,7 @@ class AdminPaymentProviderUpdateRequest(BaseModel):
     mollie_live_api_key: str | None = Field(default=None, max_length=255)
     stripe_test_secret: str | None = Field(default=None, max_length=255)
     stripe_live_secret: str | None = Field(default=None, max_length=255)
+    stripe_webhook_secret: str | None = Field(default=None, max_length=255)
     webhook_secret: str | None = Field(default=None, max_length=255)
 
 

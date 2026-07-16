@@ -1644,6 +1644,22 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     </label>
 
                     <label className="span-2">
+                      {t("admin.payments.stripe_webhook_secret")}
+                      <input
+                        type="password"
+                        name="stripe_webhook_secret"
+                        placeholder={t("admin.payments.keep_existing_m")}
+                        autoComplete="new-password"
+                      />
+                      <small className="muted">
+                        {t("admin.payments.current_m", {
+                          value: paymentProvider.stripe_webhook_secret_masked || t("admin.payments.not_configured_m"),
+                        })}
+                      </small>
+                      <small className="muted">{t("admin.payments.stripe_webhook_endpoint")}: /api/v1/public/payments/stripe-webhook</small>
+                    </label>
+
+                    <label className="span-2">
                       {t("admin.payments.webhook_secret")}
                       <input
                         type="password"

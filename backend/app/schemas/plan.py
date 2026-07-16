@@ -21,6 +21,7 @@ class PlanOut(BaseModel):
     monthly_price_excl_vat: Decimal | None
     currency_code: str | None
     active: bool
+    payment_methods: list[str] = Field(default_factory=list)
 
 
 class PublicFormulaPurchaseSummaryOut(BaseModel):
@@ -122,6 +123,7 @@ class PlanPurchaseRequest(BaseModel):
     start_date: date | None = None
     purchase_context: str | None = None
     confirm_existing_pack_purchase: bool = False
+    billing_method_code: str | None = Field(default=None, max_length=40)
 
 
 class PlanPricePreviewQuery(BaseModel):

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from app.services.payment_provider import PaymentMode
@@ -37,6 +38,7 @@ class RecurringChargeResult:
     message: str
     retryable: bool
     checkout_url: str | None = None
+    pending: bool = False
 
 
 @dataclass(frozen=True)
@@ -341,3 +343,84 @@ class MollieGateway(PaymentGateway):
                 message=str(exc),
                 retryable=True,
             )
+
+
+class StripeGateway(PaymentGateway):
+    def __init__(self, *, api_key: str) -> None:
+        self.api_key = api_key.strip()
+
+    def create_recurring_charge(self, payload: RecurringChargeRequest) -> RecurringChargeResult:
+        if not self.api_key:
+            return RecurringChargeResult(False, None, "MISSING_KEY", "Stripe API key is not configured", False)
+        customer_reference = (payload.customer_reference or "").strip()
+        payment_method_reference = (payload.payment_method_reference or "").strip()
+        if not customer_reference.startswith("cus_"):
+            return RecurringChargeResult(False, None, "MISSING_CUSTOMER_REF", "Missing Stripe customer", False)
+        if not payment_method_reference.startswith("pm_"):
+            return RecurringChargeResult(False, None, "MISSING_PAYMENT_METHOD", "Missing Stripe payment method", False)
+
+        body: dict[str, str] = {
+            "amount": str(int((payload.amount.quantize(Decimal("0.01")) * Decimal("100")).to_integral_value())),
+            "currency": payload.currency.lower(),
+            "customer": customer_reference,
+            "payment_method": payment_method_reference,
+            "confirm": "true",
+            "off_session": "true",
+            "description": payload.description,
+            "metadata[source]": "SUBSCRIPTION_RENEWAL",
+        }
+        if payload.idempotency_key:
+            body["metadata[idempotency_key]"] = payload.idempotency_key
+        if payload.mandate_reference:
+            body["mandate"] = payload.mandate_reference
+        if payload.customer_email:
+            body["receipt_email"] = payload.customer_email
+
+        request = Request(
+            "https://api.stripe.com/v1/payment_intents",
+            method="POST",
+            data=urlencode(body).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/x-www-form-urlencoded",
+                **({"Idempotency-Key": payload.idempotency_key} if payload.idempotency_key else {}),
+            },
+        )
+        try:
+            with urlopen(request, timeout=20) as response:
+                raw = response.read().decode("utf-8")
+            parsed = json.loads(raw) if raw else {}
+        except HTTPError as exc:
+            raw = exc.read().decode("utf-8")
+            try:
+                parsed = json.loads(raw) if raw else {}
+            except Exception:
+                parsed = {}
+            error = parsed.get("error") if isinstance(parsed, dict) else None
+            code = str((error or {}).get("code") or f"HTTP_{exc.code}").strip().upper() if isinstance(error, dict) else f"HTTP_{exc.code}"
+            payment_intent = (error or {}).get("payment_intent") if isinstance(error, dict) else None
+            provider_reference = str((payment_intent or {}).get("id") or "").strip() or None if isinstance(payment_intent, dict) else None
+            return RecurringChargeResult(False, provider_reference, code, raw or str(exc), 500 <= exc.code < 600)
+        except URLError as exc:
+            return RecurringChargeResult(False, None, "NETWORK_ERROR", str(exc.reason), True)
+        except Exception as exc:  # pragma: no cover
+            return RecurringChargeResult(False, None, "UNEXPECTED_ERROR", str(exc), True)
+
+        if not isinstance(parsed, dict):
+            return RecurringChargeResult(False, None, "INVALID_RESPONSE", raw, False)
+        provider_reference = str(parsed.get("id") or "").strip() or None
+        state = str(parsed.get("status") or "").strip().lower()
+        if state == "succeeded":
+            return RecurringChargeResult(True, provider_reference, "SUCCEEDED", "Stripe recurring payment paid", False)
+        if state == "processing":
+            return RecurringChargeResult(
+                False,
+                provider_reference,
+                "PROCESSING",
+                "Stripe SEPA payment is processing",
+                False,
+                pending=True,
+            )
+        if state in {"requires_action", "requires_confirmation"}:
+            return RecurringChargeResult(False, provider_reference, "AUTHENTICATION_REQUIRED", "Stripe authentication required", False)
+        return RecurringChargeResult(False, provider_reference, state.upper() or "PAYMENT_FAILED", "Stripe recurring payment failed", False)

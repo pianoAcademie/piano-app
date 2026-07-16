@@ -30,6 +30,7 @@ class CheckoutCreateRequest:
     customer_city: str | None = None
     customer_country: str | None = None
     save_payment_method: bool = False
+    customer_reference: str | None = None
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,82 @@ class PaymentLookupResult:
     payment_method_reference: str | None = None
     payment_method_exp_month: int | None = None
     payment_method_exp_year: int | None = None
+    payment_method_type: str | None = None
+    setup_complete: bool = False
+
+
+def create_stripe_payment_method_setup_session(
+    db: Session,
+    *,
+    customer_reference: str,
+    success_return_url: str,
+    cancel_return_url: str,
+    metadata: dict[str, str],
+) -> CheckoutCreateResult:
+    secret = resolve_active_secret(db, provider=PaymentProvider.STRIPE).strip()
+    if not secret:
+        return CheckoutCreateResult(
+            success=False,
+            provider=PaymentProvider.STRIPE,
+            checkout_url=None,
+            provider_reference=None,
+            status="MISSING_SECRET",
+            message="Stripe secret is not configured",
+            retryable=False,
+        )
+    body: dict[str, str] = {
+        "mode": "setup",
+        "customer": customer_reference,
+        "payment_method_types[0]": "sepa_debit",
+        "success_url": success_return_url,
+        "cancel_url": cancel_return_url,
+    }
+    for key, value in metadata.items():
+        normalized_key = str(key).strip()
+        if not normalized_key:
+            continue
+        body[f"metadata[{normalized_key}]"] = str(value or "")
+        body[f"setup_intent_data[metadata][{normalized_key}]"] = str(value or "")
+    status_code, parsed, message = _request_form(
+        method="POST",
+        url="https://api.stripe.com/v1/checkout/sessions",
+        headers={
+            "Authorization": f"Bearer {secret}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body=body,
+    )
+    if status_code == 0 or not isinstance(parsed, dict):
+        return CheckoutCreateResult(
+            success=False,
+            provider=PaymentProvider.STRIPE,
+            checkout_url=None,
+            provider_reference=None,
+            status="NETWORK_ERROR",
+            message=message,
+            retryable=True,
+        )
+    checkout_url = str(parsed.get("url") or "").strip()
+    provider_ref = str(parsed.get("id") or "").strip()
+    if 200 <= status_code < 300 and checkout_url:
+        return CheckoutCreateResult(
+            success=True,
+            provider=PaymentProvider.STRIPE,
+            checkout_url=checkout_url,
+            provider_reference=provider_ref or None,
+            status=str(parsed.get("status") or "open"),
+            message="Stripe SEPA setup checkout created",
+            retryable=False,
+        )
+    return CheckoutCreateResult(
+        success=False,
+        provider=PaymentProvider.STRIPE,
+        checkout_url=None,
+        provider_reference=provider_ref or None,
+        status=f"HTTP_{status_code}",
+        message=message or "Stripe SEPA setup checkout creation failed",
+        retryable=500 <= status_code < 600,
+    )
 
 
 def _request_json(
@@ -335,17 +412,26 @@ def _stripe_create_checkout(secret: str, payload: CheckoutCreateRequest) -> Chec
         "mode": "payment",
         "success_url": payload.success_return_url,
         "cancel_url": payload.cancel_return_url,
-        "customer_email": payload.customer_email,
+        "payment_method_types[0]": "card",
         "line_items[0][quantity]": "1",
         "line_items[0][price_data][currency]": payload.currency.lower(),
         "line_items[0][price_data][unit_amount]": str(max(amount_cents, 0)),
         "line_items[0][price_data][product_data][name]": payload.description,
     }
+    if payload.customer_reference:
+        body["customer"] = payload.customer_reference
+    else:
+        body["customer_email"] = payload.customer_email
+        if payload.save_payment_method:
+            body["customer_creation"] = "always"
+    if payload.save_payment_method:
+        body["payment_intent_data[setup_future_usage]"] = "off_session"
     for key, value in payload.metadata.items():
         normalized_key = str(key).strip()
         if not normalized_key:
             continue
         body[f"metadata[{normalized_key}]"] = str(value or "")
+        body[f"payment_intent_data[metadata][{normalized_key}]"] = str(value or "")
 
     status_code, parsed, message = _request_form(
         method="POST",
@@ -396,8 +482,9 @@ def create_checkout_session(
     payload: CheckoutCreateRequest,
     *,
     legal_entity_id: UUID | None = None,
+    provider_override: PaymentProvider | None = None,
 ) -> CheckoutCreateResult:
-    provider = resolve_provider(db, legal_entity_id=legal_entity_id)
+    provider = provider_override or resolve_provider(db, legal_entity_id=legal_entity_id)
     secret = resolve_active_secret(db, provider=provider).strip()
     if not secret:
         return CheckoutCreateResult(
@@ -536,9 +623,63 @@ def _payplug_lookup_payment(secret: str, payment_reference: str) -> PaymentLooku
 
 
 def _stripe_lookup_payment(secret: str, payment_reference: str) -> PaymentLookupResult:
+    if payment_reference.startswith("pi_"):
+        status_code, parsed, message = _request_form(
+            method="GET",
+            url=f"https://api.stripe.com/v1/payment_intents/{payment_reference}?expand%5B%5D=payment_method",
+            headers={
+                "Authorization": f"Bearer {secret}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body=None,
+        )
+        if status_code == 0 or not isinstance(parsed, dict):
+            return PaymentLookupResult(
+                success=False,
+                provider=PaymentProvider.STRIPE,
+                provider_reference=payment_reference,
+                status="NETWORK_ERROR",
+                paid=False,
+                cancelled=False,
+                failed=True,
+                metadata={},
+                message=message,
+            )
+        intent_status = str(parsed.get("status") or "").strip().lower()
+        payment_method = parsed.get("payment_method")
+        payment_method_reference = ""
+        payment_method_type = ""
+        mandate_reference = str(parsed.get("mandate") or "").strip()
+        if isinstance(payment_method, dict):
+            payment_method_reference = str(payment_method.get("id") or "").strip()
+            payment_method_type = str(payment_method.get("type") or "").strip().lower()
+        else:
+            payment_method_reference = str(payment_method or "").strip()
+        metadata = _normalize_metadata(parsed.get("metadata"))
+        customer_reference = str(parsed.get("customer") or "").strip()
+        if customer_reference:
+            metadata["customer_reference"] = customer_reference
+        if mandate_reference:
+            metadata["mandate_reference"] = mandate_reference
+        return PaymentLookupResult(
+            success=200 <= status_code < 300,
+            provider=PaymentProvider.STRIPE,
+            provider_reference=str(parsed.get("id") or payment_reference),
+            status=intent_status or f"http_{status_code}",
+            paid=intent_status == "succeeded",
+            cancelled=intent_status == "canceled",
+            failed=intent_status in {"canceled", "requires_payment_method"},
+            metadata=metadata,
+            message=message or "ok",
+            payment_method_reference=payment_method_reference or None,
+            payment_method_type=payment_method_type or None,
+        )
     status_code, parsed, message = _request_form(
         method="GET",
-        url=f"https://api.stripe.com/v1/checkout/sessions/{payment_reference}",
+        url=(
+            f"https://api.stripe.com/v1/checkout/sessions/{payment_reference}"
+            "?expand%5B%5D=payment_intent.payment_method&expand%5B%5D=setup_intent.payment_method"
+        ),
         headers={
             "Authorization": f"Bearer {secret}",
             "Content-Type": "application/x-www-form-urlencoded",
@@ -560,13 +701,40 @@ def _stripe_lookup_payment(secret: str, payment_reference: str) -> PaymentLookup
 
     checkout_status = str(parsed.get("status") or "").strip().lower()
     payment_status = str(parsed.get("payment_status") or "").strip().lower()
-    paid = payment_status in {"paid", "no_payment_required"}
+    mode = str(parsed.get("mode") or "").strip().lower()
+    setup_complete = mode == "setup" and checkout_status == "complete"
+    paid = mode != "setup" and payment_status in {"paid", "no_payment_required"}
     cancelled = checkout_status in {"expired"}
     failed = (not paid) and cancelled
     metadata = _normalize_metadata(parsed.get("metadata"))
     customer_reference = str(parsed.get("customer") or "").strip()
     if customer_reference:
         metadata["customer_reference"] = customer_reference
+    intent = parsed.get("setup_intent") if mode == "setup" else parsed.get("payment_intent")
+    payment_method: object = None
+    mandate_reference = ""
+    if isinstance(intent, dict):
+        payment_method = intent.get("payment_method")
+        mandate_reference = str(intent.get("mandate") or "").strip()
+    payment_method_reference = ""
+    payment_method_type = ""
+    exp_month: int | None = None
+    exp_year: int | None = None
+    if isinstance(payment_method, dict):
+        payment_method_reference = str(payment_method.get("id") or "").strip()
+        payment_method_type = str(payment_method.get("type") or "").strip().lower()
+        card = payment_method.get("card")
+        if isinstance(card, dict):
+            try:
+                exp_month = int(card.get("exp_month"))
+                exp_year = int(card.get("exp_year"))
+            except (TypeError, ValueError):
+                exp_month = None
+                exp_year = None
+    else:
+        payment_method_reference = str(payment_method or "").strip()
+    if mandate_reference:
+        metadata["mandate_reference"] = mandate_reference
 
     return PaymentLookupResult(
         success=200 <= status_code < 300,
@@ -578,6 +746,11 @@ def _stripe_lookup_payment(secret: str, payment_reference: str) -> PaymentLookup
         failed=failed,
         metadata=metadata,
         message=message or "ok",
+        payment_method_reference=payment_method_reference or None,
+        payment_method_exp_month=exp_month,
+        payment_method_exp_year=exp_year,
+        payment_method_type=payment_method_type or None,
+        setup_complete=setup_complete,
     )
 
 

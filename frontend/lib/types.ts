@@ -146,6 +146,7 @@ export type PlanOut = {
   price_ttc: string | null;
   currency_code: string | null;
   active: boolean;
+  payment_methods: string[];
 };
 
 export type SubscriptionOut = {
@@ -1734,12 +1735,14 @@ export type AdminPaymentProviderOut = {
   mollie_live_api_key_configured: boolean;
   stripe_test_secret_configured: boolean;
   stripe_live_secret_configured: boolean;
+  stripe_webhook_secret_configured: boolean;
   payplug_test_secret_masked: string;
   payplug_live_secret_masked: string;
   mollie_test_api_key_masked: string;
   mollie_live_api_key_masked: string;
   stripe_test_secret_masked: string;
   stripe_live_secret_masked: string;
+  stripe_webhook_secret_masked: string;
   webhook_secret_masked: string;
 };
 

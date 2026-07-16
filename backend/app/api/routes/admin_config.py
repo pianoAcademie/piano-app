@@ -130,6 +130,7 @@ from app.services.payment_provider import (
     PAYPLUG_TEST_SECRET_SETTING_KEY,
     STRIPE_LIVE_SECRET_SETTING_KEY,
     STRIPE_TEST_SECRET_SETTING_KEY,
+    STRIPE_WEBHOOK_SECRET_SETTING_KEY,
     PaymentMode,
     PaymentProvider,
     mask_secret as mask_payment_secret,
@@ -163,7 +164,7 @@ from app.services.invoice_documents import (
 router = APIRouter(prefix="/admin")
 
 PAYMENT_METHOD_CATALOG: list[tuple[str, str]] = [
-    ("CARD_ONLINE", "CB en ligne (Mollie / Payplug / Stripe)"),
+    ("CARD_ONLINE", "CB en ligne (Stripe pour les abonnements, Payplug sinon)"),
     ("CARD_TERMINAL", "CB sur place (TPE)"),
     ("CHECK", "Cheque"),
     ("CASH", "Especes"),
@@ -959,6 +960,7 @@ def _validate_provider_keys(
     mollie_live_api_key: str,
     stripe_test_secret: str,
     stripe_live_secret: str,
+    stripe_webhook_secret: str,
 ) -> None:
     if payplug_test_secret and not payplug_test_secret.startswith("sk_test_"):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Payplug test key must start with sk_test_")
@@ -972,6 +974,8 @@ def _validate_provider_keys(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Stripe test key must start with sk_test_")
     if stripe_live_secret and not stripe_live_secret.startswith("sk_live_"):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Stripe live key must start with sk_live_")
+    if stripe_webhook_secret and not stripe_webhook_secret.startswith("whsec_"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Stripe webhook secret must start with whsec_")
 
 
 def _normalize_currency_codes(codes: list[str]) -> list[str]:
@@ -2499,12 +2503,14 @@ def get_admin_payment_provider(
         mollie_live_api_key_configured=bool(values["mollie_live_api_key"]),
         stripe_test_secret_configured=bool(values["stripe_test_secret"]),
         stripe_live_secret_configured=bool(values["stripe_live_secret"]),
+        stripe_webhook_secret_configured=bool(values["stripe_webhook_secret"]),
         payplug_test_secret_masked=mask_payment_secret(values["payplug_test_secret"]),
         payplug_live_secret_masked=mask_payment_secret(values["payplug_live_secret"]),
         mollie_test_api_key_masked=mask_payment_secret(values["mollie_test_api_key"]),
         mollie_live_api_key_masked=mask_payment_secret(values["mollie_live_api_key"]),
         stripe_test_secret_masked=mask_payment_secret(values["stripe_test_secret"]),
         stripe_live_secret_masked=mask_payment_secret(values["stripe_live_secret"]),
+        stripe_webhook_secret_masked=mask_payment_secret(values["stripe_webhook_secret"]),
         webhook_secret_masked=mask_payment_secret(values["webhook_secret"]),
     )
 
@@ -2525,6 +2531,7 @@ def update_admin_payment_provider(
     mollie_live_api_key = _normalized_secret(payload.mollie_live_api_key) or current_values["mollie_live_api_key"]
     stripe_test_secret = _normalized_secret(payload.stripe_test_secret) or current_values["stripe_test_secret"]
     stripe_live_secret = _normalized_secret(payload.stripe_live_secret) or current_values["stripe_live_secret"]
+    stripe_webhook_secret = _normalized_secret(payload.stripe_webhook_secret) or current_values["stripe_webhook_secret"]
     webhook_secret = _normalized_secret(payload.webhook_secret) or current_values["webhook_secret"]
 
     _validate_provider_keys(
@@ -2534,6 +2541,7 @@ def update_admin_payment_provider(
         mollie_live_api_key=mollie_live_api_key,
         stripe_test_secret=stripe_test_secret,
         stripe_live_secret=stripe_live_secret,
+        stripe_webhook_secret=stripe_webhook_secret,
     )
     active_secret = ""
     if provider == PaymentProvider.PAYPLUG:
@@ -2556,6 +2564,7 @@ def update_admin_payment_provider(
     set_payment_setting_value(db, MOLLIE_LIVE_API_KEY_SETTING_KEY, mollie_live_api_key)
     set_payment_setting_value(db, STRIPE_TEST_SECRET_SETTING_KEY, stripe_test_secret)
     set_payment_setting_value(db, STRIPE_LIVE_SECRET_SETTING_KEY, stripe_live_secret)
+    set_payment_setting_value(db, STRIPE_WEBHOOK_SECRET_SETTING_KEY, stripe_webhook_secret)
     set_payment_setting_value(db, PAYMENT_WEBHOOK_SECRET_SETTING_KEY, webhook_secret)
     db.commit()
     return get_admin_payment_provider(db=db)

@@ -113,7 +113,13 @@ from app.services.invoice_documents import (
 )
 from app.services.invoice_number_service import InvoiceNumberService
 from app.services.messaging_templates import resolve_frontend_base_url
-from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
+from app.services.payment_checkout import (
+    CheckoutCreateRequest,
+    create_checkout_session,
+    create_stripe_payment_method_setup_session,
+    lookup_payment,
+    with_webhook_secret,
+)
 from app.services.payment_receipts import (
     build_booking_receipt_snapshot,
     get_or_create_pending_booking_payment_receipt,
@@ -2816,6 +2822,45 @@ def create_client_payment_checkout(
     if method_code not in ONLINE_COLLECTION_METHOD_CODES:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Ce paiement n'utilise pas un moyen en ligne")
     now = _utcnow()
+    is_sepa_setup = (
+        plan.kind == PlanKind.SUBSCRIPTION
+        and subscription.payment_method_setup_required
+        and subscription.status == SubscriptionStatus.ACTIVE
+        and method_code == "SEPA_DEBIT"
+    )
+    if is_sepa_setup:
+        customer_reference = (subscription.payment_provider_customer_ref or "").strip()
+        if not customer_reference.startswith("cus_"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Le premier paiement Stripe doit etre confirme avant la creation du mandat SEPA",
+            )
+        setup_query = f"tab=offers&offer_detail_id={subscription.id}&source=SEPA_SETUP&payment_id={subscription.id}"
+        setup = create_stripe_payment_method_setup_session(
+            db,
+            customer_reference=customer_reference,
+            success_return_url=_frontend_url(
+                path=f"/client?{setup_query}&payment_return=success&setup_session_id={{CHECKOUT_SESSION_ID}}"
+            ),
+            cancel_return_url=_frontend_url(path=f"/client?{setup_query}&payment_return=cancel"),
+            metadata={
+                "source": "SEPA_SETUP",
+                "client_id": str(owner.id),
+                "subscription_id": str(subscription.id),
+                "plan_id": str(plan.id),
+            },
+        )
+        if not setup.success or not setup.checkout_url:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Impossible de creer le mandat SEPA ({setup.message})",
+            )
+        return ClientPaymentCheckoutOut(
+            payment_id=f"plan:{subscription.id}",
+            checkout_url=setup.checkout_url,
+            provider_reference=setup.provider_reference,
+        )
+
     if (
         plan.kind == PlanKind.SUBSCRIPTION
         and subscription.payment_method_setup_required
@@ -2860,6 +2905,7 @@ def create_client_payment_checkout(
                 "plan_code": plan.code,
             },
         ),
+        provider_override=(PaymentProvider.STRIPE if plan.kind == PlanKind.SUBSCRIPTION else None),
     )
     if not checkout.success or not checkout.checkout_url:
         raise HTTPException(
@@ -2883,6 +2929,65 @@ def create_client_payment_checkout(
         payment_id=f"plan:{subscription.id}",
         checkout_url=checkout.checkout_url,
         provider_reference=subscription.payment_provider_subscription_ref,
+    )
+
+
+@router.post("/clients/me/subscriptions/{subscription_id}/payment-method-setup/confirm", response_model=ClientPaymentConfirmOut)
+def confirm_client_subscription_payment_method_setup(
+    subscription_id: UUID,
+    checkout_session_id: str = Query(min_length=4, max_length=255),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+) -> ClientPaymentConfirmOut:
+    managed_ids = _managed_client_ids_for_sessions(db, current_user)
+    subscription = db.scalar(
+        select(ClientPlanSubscription)
+        .where(
+            ClientPlanSubscription.id == subscription_id,
+            ClientPlanSubscription.user_id.in_(managed_ids),
+        )
+        .with_for_update()
+    )
+    if subscription is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Abonnement introuvable")
+    if (subscription.billing_method_code or "").strip().upper() != "SEPA_DEBIT":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cet abonnement ne demande pas de mandat SEPA")
+    if not checkout_session_id.startswith("cs_"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Session Stripe invalide")
+
+    lookup = lookup_payment(db, provider=PaymentProvider.STRIPE, payment_reference=checkout_session_id)
+    metadata_subscription_id = (lookup.metadata.get("subscription_id") or "").strip()
+    if metadata_subscription_id != str(subscription.id):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session Stripe non rattachee a cet abonnement")
+    lookup_customer_reference = (lookup.metadata.get("customer_reference") or "").strip()
+    if lookup_customer_reference != (subscription.payment_provider_customer_ref or "").strip():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Client Stripe non rattache a cet abonnement")
+    setup_complete = bool(
+        lookup.setup_complete
+        and lookup.payment_method_type == "sepa_debit"
+        and lookup.payment_method_reference
+    )
+    if setup_complete:
+        now = _utcnow()
+        subscription.payment_provider_code = PaymentProvider.STRIPE.value
+        subscription.payment_provider_payment_method_ref = lookup.payment_method_reference
+        subscription.payment_provider_mandate_ref = (lookup.metadata.get("mandate_reference") or "").strip() or None
+        subscription.payment_method_setup_required = False
+        subscription.payment_method_setup_completed_at = now
+        subscription.last_payment_status = "SEPA_MANDATE_ACTIVE"
+        subscription.auto_renew = True
+        db.add(subscription)
+        db.commit()
+
+    return ClientPaymentConfirmOut(
+        payment_id=f"plan:{subscription.id}",
+        subscription_status=(subscription.status.value if hasattr(subscription.status, "value") else str(subscription.status)),
+        last_payment_status=subscription.last_payment_status,
+        paid=setup_complete,
+        cancelled=lookup.cancelled,
+        failed=lookup.failed,
+        processed=setup_complete,
+        message="Mandat SEPA active" if setup_complete else "Mandat SEPA en attente",
     )
 
 
@@ -3527,6 +3632,17 @@ def confirm_client_payment(
             subscription.payment_method_setup_completed_at = _utcnow()
             subscription.billing_method_code = "CARD_ONLINE"
             changed = True
+        elif provider == PaymentProvider.STRIPE and lookup.payment_method_reference:
+            subscription.payment_provider_code = provider.value
+            subscription.payment_provider_payment_method_ref = lookup.payment_method_reference
+            subscription.payment_method_exp_month = lookup.payment_method_exp_month
+            subscription.payment_method_exp_year = lookup.payment_method_exp_year
+            if (subscription.billing_method_code or "").strip().upper() == "CARD_ONLINE":
+                subscription.payment_method_setup_required = False
+                subscription.payment_method_setup_completed_at = _utcnow()
+            else:
+                subscription.payment_method_setup_required = True
+            changed = True
         if subscription.last_payment_at is None:
             subscription.last_payment_at = _utcnow()
             changed = True
@@ -3559,6 +3675,10 @@ def confirm_client_payment(
             requires_stored_card = billing_method_code == "CARD_ONLINE"
             if provider == PaymentProvider.PAYPLUG:
                 payment_method_ready = bool((subscription.payment_provider_payment_method_ref or "").strip())
+            elif provider == PaymentProvider.STRIPE:
+                payment_method_ready = bool((subscription.payment_provider_customer_ref or "").strip()) and bool(
+                    (subscription.payment_provider_payment_method_ref or "").strip()
+                )
             else:
                 payment_method_ready = bool((subscription.payment_provider_customer_ref or "").strip()) and bool(
                     (subscription.payment_provider_mandate_ref or "").strip()
@@ -3571,6 +3691,10 @@ def confirm_client_payment(
                 subscription.payment_method_setup_required = True
                 if (subscription.last_payment_status or "") != "PAID_PAYMENT_METHOD_MISSING":
                     subscription.last_payment_status = "PAID_PAYMENT_METHOD_MISSING"
+                    changed = True
+            elif billing_method_code == "SEPA_DEBIT" and subscription.payment_method_setup_required:
+                if subscription.auto_renew:
+                    subscription.auto_renew = False
                     changed = True
             elif not subscription.auto_renew:
                 subscription.auto_renew = True

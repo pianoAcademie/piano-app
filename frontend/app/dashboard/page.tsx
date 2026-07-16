@@ -1145,6 +1145,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedInvoiceId = readParam(searchParams, "invoice_id").trim();
   const paymentSourceParam = normalizeStatus(readParam(searchParams, "source"));
   const paymentIdParam = readParam(searchParams, "payment_id").trim();
+  const setupSessionIdParam = readParam(searchParams, "setup_session_id").trim();
   const paymentReturnParam = readParam(searchParams, "payment_return").trim().toLowerCase();
   const purchaseContextParam = readParam(searchParams, "purchase_context").trim();
   const warningMessage = resolvePortalWarningMessage(
@@ -1171,7 +1172,22 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     sessionQuery.set("location_id", selectedLocation);
   }
 
-  if (paymentSourceParam === "PLAN_PURCHASE" && paymentIdParam && paymentReturnParam === "success") {
+  if (paymentSourceParam === "SEPA_SETUP" && paymentIdParam && setupSessionIdParam && paymentReturnParam === "success") {
+    const normalizedPaymentId = paymentIdParam.startsWith("plan:") ? paymentIdParam.slice("plan:".length) : paymentIdParam;
+    const confirm = await backendRequest<ClientPaymentConfirmOut>(
+      `/api/v1/clients/me/subscriptions/${normalizedPaymentId}/payment-method-setup/confirm?checkout_session_id=${encodeURIComponent(setupSessionIdParam)}`,
+      { method: "POST" },
+      token,
+    );
+    if (!confirm.ok || !confirm.data.paid) {
+      preFetchErrors.push(`confirm-sepa-setup: ${confirm.ok ? confirm.data.message : confirm.message}`);
+      paymentResultError = t("client.sepa_mandate_pending");
+    } else {
+      paymentResultMessage = t("client.sepa_mandate_activated");
+    }
+  } else if (paymentSourceParam === "SEPA_SETUP" && paymentIdParam && paymentReturnParam === "cancel") {
+    paymentResultError = t("client.sepa_mandate_cancelled");
+  } else if (paymentSourceParam === "PLAN_PURCHASE" && paymentIdParam && paymentReturnParam === "success") {
     const normalizedPaymentId = paymentIdParam.startsWith("plan:") ? paymentIdParam.slice("plan:".length) : paymentIdParam;
     const confirm = await backendRequest<ClientPaymentConfirmOut>(
       `/api/v1/clients/me/payments/${normalizedPaymentId}/confirm`,
@@ -1710,6 +1726,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       const normalized = normalizeStatus(sub.status);
       if (normalized !== "ACTIVE" && normalized !== "PAYMENT_ALERT") {
         return false;
+      }
+      if (normalizeStatus(sub.billing_method_code || "") === "SEPA_DEBIT") {
+        return true;
       }
       const dueAt = safeDate(sub.next_payment_at || sub.current_period_end);
       return dueAt !== null && dueAt <= now;
@@ -4723,6 +4742,23 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             <input type="hidden" name="plan_id" value={plan.id} />
                             <input type="hidden" name="purchase_user_id" value={selectedPurchaseOwner} />
                             <input type="hidden" name="start_date" value={selectedPurchaseStartDate} />
+                            {plan.kind === "SUBSCRIPTION" && (plan.payment_methods ?? []).filter((method) => method === "CARD_ONLINE" || method === "SEPA_DEBIT").length > 1 ? (
+                              <label>
+                                {t("client.renewal_payment_method")}
+                                <select name="billing_method_code" defaultValue="CARD_ONLINE">
+                                  {(plan.payment_methods ?? []).filter((method) => method === "CARD_ONLINE" || method === "SEPA_DEBIT").map((method) => (
+                                    <option key={method} value={method}>{paymentMethodLabel(method, language)}</option>
+                                  ))}
+                                </select>
+                                <small className="muted">{t("client.sepa_first_card_notice")}</small>
+                              </label>
+                            ) : plan.kind === "SUBSCRIPTION" && (plan.payment_methods ?? []).filter((method) => method === "CARD_ONLINE" || method === "SEPA_DEBIT").length === 1 ? (
+                              <input
+                                type="hidden"
+                                name="billing_method_code"
+                                value={(plan.payment_methods ?? []).filter((method) => method === "CARD_ONLINE" || method === "SEPA_DEBIT")[0]}
+                              />
+                            ) : null}
                             <button type="submit" title={t("client.subscribe_offer_title")}>{t("common.choose")}</button>
                           </form>
                         </article>

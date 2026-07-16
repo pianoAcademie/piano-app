@@ -59,7 +59,7 @@ from app.services.payment_provider import (
     resolve_webhook_secret,
 )
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
-from app.services.psp_gateway import MollieGateway, PayplugGateway, RecurringChargeRequest
+from app.services.psp_gateway import MollieGateway, PayplugGateway, RecurringChargeRequest, StripeGateway
 from app.services.shared.locks.redis_lock import redis_lock
 from app.services.shared.queue.redis_queue import queue_push
 from app.services.subscriptions import add_months_utc
@@ -573,6 +573,7 @@ def _ensure_recovery_checkout(
                 "billing_cycle_id": str(cycle.id),
             },
         ),
+        provider_override=_provider_for_subscription(db, subscription),
     )
     if checkout.success and checkout.checkout_url:
         cycle.payment_recovery_url = checkout.checkout_url
@@ -625,11 +626,20 @@ def _mark_subscription_final_failure(subscription: ClientPlanSubscription, cycle
     subscription.direct_payment_recovery_url = cycle.payment_recovery_url
 
 
-def _gateway_for_provider(db: Session) -> tuple[PaymentProvider, object]:
-    provider = resolve_provider(db)
+def _gateway_for_provider(db: Session, *, provider_override: PaymentProvider | None = None) -> tuple[PaymentProvider, object]:
+    provider = provider_override or resolve_provider(db)
     if provider == PaymentProvider.MOLLIE:
         return provider, MollieGateway(api_key=resolve_provider_secret(db, provider=provider), mode=resolve_mode(db))
+    if provider == PaymentProvider.STRIPE:
+        return provider, StripeGateway(api_key=resolve_provider_secret(db, provider=provider))
     return provider, PayplugGateway(api_key=resolve_provider_secret(db, provider=provider))
+
+
+def _provider_for_subscription(db: Session, subscription: ClientPlanSubscription) -> PaymentProvider:
+    configured = (subscription.payment_provider_code or "").strip().upper()
+    if configured in {provider.value for provider in PaymentProvider}:
+        return PaymentProvider(configured)
+    return resolve_provider(db)
 
 
 def resolve_provider_secret(db: Session, *, provider: PaymentProvider) -> str:
@@ -996,13 +1006,15 @@ def _charge_cycle(
 
     failure_reason = ""
     provider_status = "FAILED_UNKNOWN"
+    result_pending = False
 
-    if subscription.billing_method_code != "CARD_ONLINE":
+    billing_method_code = (subscription.billing_method_code or "").strip().upper()
+    if billing_method_code not in {"CARD_ONLINE", "SEPA_DEBIT"}:
         failure_reason = "Moyen de paiement non compatible avec le renouvellement automatique"
         provider_status = "FAILED_INVALID_BILLING_METHOD"
         result_success = False
         provider_reference = None
-    elif provider not in {PaymentProvider.MOLLIE, PaymentProvider.PAYPLUG}:
+    elif provider not in {PaymentProvider.MOLLIE, PaymentProvider.PAYPLUG, PaymentProvider.STRIPE}:
         failure_reason = "Le PSP actif ne supporte pas le prelevement recurrent automatique"
         provider_status = "FAILED_PROVIDER_NOT_SUPPORTED"
         result_success = False
@@ -1031,6 +1043,7 @@ def _charge_cycle(
         provider_status = result.status
         failure_reason = result.message or "Echec du prelevement"
         result_success = bool(result.success)
+        result_pending = bool(result.pending)
         provider_reference = result.provider_reference
         if result.checkout_url:
             cycle.payment_recovery_url = result.checkout_url
@@ -1043,6 +1056,15 @@ def _charge_cycle(
     attempt.provider_name = provider.value
     attempt.provider_payment_id = provider_reference
     attempt.provider_status = provider_status
+
+    if result_pending:
+        attempt.status = ATTEMPT_STATUS_PENDING
+        cycle.attempt_count = attempt_number
+        cycle.status = CYCLE_STATUS_PROCESSING
+        cycle.payment_recovery_provider_ref = provider_reference
+        cycle.next_retry_at = None
+        subscription.last_payment_status = provider_status
+        return "pending", provider_status
 
     if result_success:
         attempt.status = ATTEMPT_STATUS_SUCCESS
@@ -1222,7 +1244,10 @@ def run_subscription_charge_now(
             raise RuntimeError("Unable to create subscription billing cycle")
         cycle.billing_date = now
 
-        provider, gateway = _gateway_for_provider(db)
+        provider, gateway = _gateway_for_provider(
+            db,
+            provider_override=_provider_for_subscription(db, subscription),
+        )
         outcome, provider_status = _charge_cycle(
             db,
             cycle=cycle,
@@ -1285,8 +1310,6 @@ def run_subscription_billing_job(
                     context_json={},
                 )
 
-            provider, gateway = _gateway_for_provider(db)
-
             rows = db.execute(
                 select(SubscriptionBillingCycle, ClientPlanSubscription, Plan, User)
                 .join(ClientPlanSubscription, ClientPlanSubscription.id == SubscriptionBillingCycle.subscription_id)
@@ -1305,6 +1328,10 @@ def run_subscription_billing_job(
             checked = len(rows)
             for cycle, subscription, plan, owner in rows:
                 processed += 1
+                provider, gateway = _gateway_for_provider(
+                    db,
+                    provider_override=_provider_for_subscription(db, subscription),
+                )
                 retry_policy = _resolve_retry_policy(db, plan=plan)
                 notification_policy = _resolve_notification_policy(db, plan=plan)
 
@@ -1412,8 +1439,6 @@ def run_subscription_retry_job(
         final_failures = 0
 
         try:
-            provider, gateway = _gateway_for_provider(db)
-
             rows = db.execute(
                 select(SubscriptionBillingCycle, ClientPlanSubscription, Plan, User)
                 .join(ClientPlanSubscription, ClientPlanSubscription.id == SubscriptionBillingCycle.subscription_id)
@@ -1433,6 +1458,10 @@ def run_subscription_retry_job(
             checked = len(rows)
             for cycle, subscription, plan, owner in rows:
                 processed += 1
+                provider, gateway = _gateway_for_provider(
+                    db,
+                    provider_override=_provider_for_subscription(db, subscription),
+                )
                 retry_policy = _resolve_retry_policy(db, plan=plan)
                 notification_policy = _resolve_notification_policy(db, plan=plan)
                 outcome, provider_status = _charge_cycle(
@@ -1541,7 +1570,7 @@ def run_subscription_recovery_reconciliation_job(
                 .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
                 .join(User, User.id == ClientPlanSubscription.user_id)
                 .where(
-                    SubscriptionBillingCycle.status.in_([CYCLE_STATUS_FAILED_FIRST, CYCLE_STATUS_FAILED_FINAL]),
+                    SubscriptionBillingCycle.status.in_([CYCLE_STATUS_PROCESSING, CYCLE_STATUS_FAILED_FIRST, CYCLE_STATUS_FAILED_FINAL]),
                     SubscriptionBillingCycle.payment_recovery_provider_ref.is_not(None),
                     Plan.kind == PlanKind.SUBSCRIPTION,
                 )
@@ -1559,6 +1588,55 @@ def run_subscription_recovery_reconciliation_job(
 
                 provider = detect_provider_from_reference(provider_ref) or resolve_provider(db)
                 lookup = lookup_payment(db, provider=provider, payment_reference=provider_ref)
+                pending_attempt = db.scalar(
+                    select(SubscriptionPaymentAttempt)
+                    .where(
+                        SubscriptionPaymentAttempt.billing_cycle_id == cycle.id,
+                        SubscriptionPaymentAttempt.provider_payment_id == provider_ref,
+                        SubscriptionPaymentAttempt.status == ATTEMPT_STATUS_PENDING,
+                    )
+                    .order_by(SubscriptionPaymentAttempt.attempted_at.desc())
+                )
+                if lookup.failed and cycle.status == CYCLE_STATUS_PROCESSING:
+                    provider_status = (lookup.status or "PAYMENT_FAILED").strip().upper()
+                    failure_reason = lookup.message or "Echec du prelevement Stripe"
+                    if pending_attempt is not None:
+                        pending_attempt.status = ATTEMPT_STATUS_FAILED
+                        pending_attempt.provider_status = provider_status
+                        pending_attempt.failure_code = provider_status
+                        pending_attempt.failure_reason = failure_reason
+                        db.add(pending_attempt)
+                    retry_policy = _resolve_retry_policy(db, plan=plan)
+                    notification_policy = _resolve_notification_policy(db, plan=plan)
+                    cycle.status = CYCLE_STATUS_FAILED_FIRST
+                    cycle.next_retry_at = now + timedelta(days=retry_policy.first_retry_delay_days)
+                    cycle.payment_recovery_provider_ref = None
+                    allow_booking_during_alert = _get_setting_bool(
+                        db,
+                        "config_subscription_allow_booking_during_payment_alert",
+                        True,
+                    )
+                    _mark_subscription_first_failure(
+                        subscription,
+                        cycle,
+                        now=now,
+                        provider_status=provider_status,
+                        allow_booking_during_alert=allow_booking_during_alert,
+                    )
+                    _send_first_failure_notifications(
+                        db,
+                        policy=notification_policy,
+                        subscription=subscription,
+                        owner=owner,
+                        plan=plan,
+                        cycle=cycle,
+                        amount=Decimal(cycle.amount),
+                        currency=(cycle.currency or "EUR").upper(),
+                        now=now,
+                        failure_reason=failure_reason,
+                    )
+                    failed += 1
+                    continue
                 if not lookup.paid:
                     skipped += 1
                     continue
@@ -1584,7 +1662,12 @@ def run_subscription_recovery_reconciliation_job(
                 cycle.status = CYCLE_STATUS_PAID
                 cycle.paid_at = now
                 cycle.next_retry_at = None
-                cycle.attempt_count = int(cycle.attempt_count or 0) + 1
+                if pending_attempt is not None:
+                    pending_attempt.status = ATTEMPT_STATUS_SUCCESS
+                    pending_attempt.provider_status = lookup.status or "paid"
+                    db.add(pending_attempt)
+                else:
+                    cycle.attempt_count = int(cycle.attempt_count or 0) + 1
                 cycle.payment_recovery_url = None
                 cycle.payment_recovery_provider_ref = None
 
@@ -1595,7 +1678,7 @@ def run_subscription_recovery_reconciliation_job(
                 attempt_existing = db.scalar(
                     select(SubscriptionPaymentAttempt).where(SubscriptionPaymentAttempt.idempotency_key == attempt_key)
                 )
-                if attempt_existing is None:
+                if attempt_existing is None and pending_attempt is None:
                     db.add(
                         SubscriptionPaymentAttempt(
                             billing_cycle_id=cycle.id,

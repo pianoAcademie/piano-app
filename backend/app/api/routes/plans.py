@@ -38,7 +38,7 @@ from app.schemas.plan import (
 )
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, with_webhook_secret
 from app.services.messaging_templates import resolve_frontend_base_url
-from app.services.payment_provider import resolve_webhook_secret
+from app.services.payment_provider import PaymentProvider, resolve_webhook_secret
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.client_status import promote_client_to_active_student
 from app.services.subscriptions import add_months_utc, reconcile_subscription_status
@@ -478,6 +478,7 @@ def list_plans(
             monthly_price_excl_vat=plan.monthly_price_excl_vat,
             currency_code=plan.currency_code,
             active=plan.active,
+            payment_methods=_plan_payment_methods(plan),
         )
         for plan in plans
     ]
@@ -684,7 +685,14 @@ def purchase_plan(
     credits_initial: int | None = None
     credits_remaining: int | None = None
     ends_at = None
-    method_code = (_default_subscription_billing_method(plan) or "").strip().upper() or None
+    configured_methods = _plan_payment_methods(plan)
+    requested_method = (payload.billing_method_code or "").strip().upper()
+    if requested_method and requested_method not in configured_methods:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Moyen de paiement non autorise pour cette formule",
+        )
+    method_code = (requested_method or _default_subscription_billing_method(plan) or "").strip().upper() or None
     amount_due, currency_code = _plan_amount_due_and_currency(
         db,
         plan=plan,
@@ -693,6 +701,11 @@ def purchase_plan(
         on_date=subscription_started_at.date(),
     )
     requires_online_checkout = amount_due > Decimal("0.00")
+    if plan.kind == PlanKind.SUBSCRIPTION and requires_online_checkout and method_code not in {"CARD_ONLINE", "SEPA_DEBIT"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Un abonnement payant doit utiliser la carte ou le prelevement SEPA",
+        )
     should_start_pending = requires_online_checkout and _is_online_collection_method(method_code)
 
     if plan.kind == PlanKind.PACK:
@@ -755,8 +768,10 @@ def purchase_plan(
                     "subscription_id": str(subscription.id),
                     "plan_id": str(plan.id),
                     "plan_code": plan.code,
+                    "requested_billing_method": method_code,
                 },
             ),
+            provider_override=(PaymentProvider.STRIPE if plan.kind == PlanKind.SUBSCRIPTION else None),
         )
         if not checkout.success or not checkout.checkout_url:
             raise HTTPException(

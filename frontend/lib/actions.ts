@@ -1701,6 +1701,7 @@ export async function purchasePlanAction(formData: FormData): Promise<void> {
   const planId = String(formData.get("plan_id") ?? "");
   const purchaseUserId = String(formData.get("purchase_user_id") ?? "").trim();
   const startDateRaw = String(formData.get("start_date") ?? "").trim();
+  const billingMethodCode = String(formData.get("billing_method_code") ?? "").trim().toUpperCase();
   const confirmExistingPackPurchase = String(formData.get("confirm_existing_pack_purchase") ?? "").trim() === "1";
   const payload: Record<string, string> = {};
   if (purchaseUserId) {
@@ -1714,6 +1715,9 @@ export async function purchasePlanAction(formData: FormData): Promise<void> {
   }
   if (confirmExistingPackPurchase) {
     payload.confirm_existing_pack_purchase = "true";
+  }
+  if (billingMethodCode) {
+    payload.billing_method_code = billingMethodCode;
   }
 
   const result = await backendRequest<{ id: string; checkout_url?: string | null }>(
@@ -1802,6 +1806,7 @@ export async function submitFormulaCheckoutAction(formData: FormData): Promise<v
   const returnTo = safePublicBuyPath(String(formData.get("return_to") ?? ""), "/buy/checkout");
   const language = publicActionLanguage(returnTo);
   const confirmExistingPackPurchase = String(formData.get("confirm_existing_pack_purchase") ?? "").trim() === "1";
+  const billingMethodCode = String(formData.get("billing_method_code") ?? "").trim().toUpperCase();
 
   if (!purchaseContext) {
     redirect(appendQueryMessage(returnTo, "error", uiText(language, "public_formula_checkout.invalid_context_error")));
@@ -1832,6 +1837,7 @@ export async function submitFormulaCheckoutAction(formData: FormData): Promise<v
       body: JSON.stringify({
         purchase_context: purchaseContext,
         confirm_existing_pack_purchase: confirmExistingPackPurchase,
+        billing_method_code: billingMethodCode || null,
       }),
     },
     token,
@@ -10441,6 +10447,7 @@ export async function updateAdminConfigPaymentProviderAction(formData: FormData)
     mollie_live_api_key: optionalField(formData, "mollie_live_api_key"),
     stripe_test_secret: optionalField(formData, "stripe_test_secret"),
     stripe_live_secret: optionalField(formData, "stripe_live_secret"),
+    stripe_webhook_secret: optionalField(formData, "stripe_webhook_secret"),
     webhook_secret: optionalField(formData, "webhook_secret"),
   };
 

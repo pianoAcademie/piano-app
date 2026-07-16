@@ -212,7 +212,7 @@ from app.services.payment_receipts import (
 )
 from app.services.session_teachers import effective_teacher_id_for_session, professor_display_name
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, lookup_payment, with_webhook_secret
-from app.services.payment_provider import detect_provider_from_reference, parse_provider, resolve_provider, resolve_webhook_secret
+from app.services.payment_provider import PaymentProvider, detect_provider_from_reference, parse_provider, resolve_provider, resolve_webhook_secret
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.providers.sms import send_provider_sms
 from app.services.referrals import (
@@ -4558,8 +4558,10 @@ def _create_checkout_for_subscription(
                 "subscription_id": str(subscription.id),
                 "plan_id": str(plan.id),
                 "plan_code": plan.code,
+                "requested_billing_method": normalized_method,
             },
         ),
+        provider_override=(PaymentProvider.STRIPE if plan.kind == PlanKind.SUBSCRIPTION else None),
     )
     if not checkout.success or not checkout.checkout_url:
         raise HTTPException(
@@ -7642,10 +7644,10 @@ def send_admin_client_subscription_payment_email(
     if method_code is None:
         method_code = sub.billing_method_code or _default_subscription_billing_method(plan)
     method_code = (method_code or "").strip().upper() or "CARD_ONLINE"
-    if method_code != "CARD_ONLINE":
+    if method_code not in {"CARD_ONLINE", "SEPA_DEBIT"}:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Le lien de paiement est reserve au reglement CB en ligne",
+            detail="Le lien d'abonnement est reserve a la carte ou au prelevement SEPA",
         )
 
     website = _get_setting_value(db, "config_account_website", "")
@@ -7675,7 +7677,11 @@ def send_admin_client_subscription_payment_email(
         plan_name=plan.name,
         amount_due=f"{amount_due:.2f}",
         currency=currency_code,
-        payment_method=_payment_method_label_client(method_code),
+        payment_method=(
+            "Carte bancaire (premier paiement), puis prelevement SEPA"
+            if method_code == "SEPA_DEBIT"
+            else _payment_method_label_client(method_code)
+        ),
         payment_url=payment_url,
         subscription_reference=str(sub.id),
         legal_terms_url=resolved_legal_terms_url,
@@ -13236,6 +13242,11 @@ def admin_purchase_plan_for_client(
     ends_at = None
     requested_method = _normalize_optional(payload.payment_method_code)
     method_code = (requested_method or _default_subscription_billing_method(plan) or "").strip().upper() or None
+    if plan.kind == PlanKind.SUBSCRIPTION and method_code not in {"CARD_ONLINE", "SEPA_DEBIT"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Un abonnement doit utiliser la carte ou le prelevement SEPA",
+        )
 
     if plan.kind == PlanKind.PACK:
         credits_initial = _effective_pack_credits_for_plan(db, plan=plan)

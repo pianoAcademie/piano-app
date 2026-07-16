@@ -110,6 +110,9 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
   const summary = contextResult.data.summary;
   const returnTo = `/buy/checkout?purchase_context=${encodeURIComponent(purchaseContext)}${language === "en" ? "&lang=en" : ""}`;
   const isSessionReservationFlow = Boolean(contextResult.data.session_id);
+  const subscriptionPaymentMethods = summary.formula_type === "SUBSCRIPTION"
+    ? summary.payment_methods.filter((method) => method === "CARD_ONLINE" || method === "SEPA_DEBIT")
+    : [];
   const backHref =
     contextResult.data.session_id != null
       ? buildSessionCheckoutHref(
@@ -174,6 +177,22 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
             <input type="hidden" name="purchase_context" value={purchaseContext} />
             <input type="hidden" name="return_to" value={returnTo} />
             {confirmExistingPackPurchase ? <input type="hidden" name="confirm_existing_pack_purchase" value="1" /> : null}
+            {subscriptionPaymentMethods.length > 1 ? (
+              <fieldset>
+                <legend>{t("public_formula_checkout.choose_payment_method")}</legend>
+                {subscriptionPaymentMethods.map((method) => (
+                  <label key={method} className="row">
+                    <input type="radio" name="billing_method_code" value={method} defaultChecked={method === "CARD_ONLINE"} />
+                    <span>
+                      <strong>{method === "SEPA_DEBIT" ? t("public_formula_checkout.sepa_debit") : t("public_formula_checkout.card")}</strong>
+                      {method === "SEPA_DEBIT" ? <small className="muted">{t("public_formula_checkout.sepa_first_card_notice")}</small> : null}
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
+            ) : subscriptionPaymentMethods.length === 1 ? (
+              <input type="hidden" name="billing_method_code" value={subscriptionPaymentMethods[0]} />
+            ) : null}
             <button type="submit">{t("public_formula_checkout.pay_formula")}</button>
           </form>
 
