@@ -41,20 +41,24 @@ def _utcnow() -> datetime:
 
 def _extract_reference(request: Request, payload: object) -> str | None:
     if isinstance(payload, dict):
-        for key in ("id", "payment_id", "paymentId"):
+        # Refund notifications contain both the refund id (``id``) and the
+        # original payment id. Reconciliation must always use the payment id.
+        for key in ("payment_id", "paymentId", "id"):
             value = payload.get(key)
             if value:
                 return str(value).strip()
         data_node = payload.get("data")
         if isinstance(data_node, dict):
-            value = data_node.get("id")
-            if value:
-                return str(value).strip()
+            for key in ("payment_id", "paymentId", "id"):
+                value = data_node.get(key)
+                if value:
+                    return str(value).strip()
             object_node = data_node.get("object")
             if isinstance(object_node, dict):
-                object_id = object_node.get("id")
-                if object_id:
-                    return str(object_id).strip()
+                for key in ("payment_id", "paymentId", "id"):
+                    value = object_node.get(key)
+                    if value:
+                        return str(value).strip()
     if request.query_params.get("id"):
         return str(request.query_params.get("id")).strip()
     form_id = request.query_params.get("payment_id")

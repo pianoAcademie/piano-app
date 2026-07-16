@@ -6,6 +6,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 from app.services import payment_checkout, psp_gateway
+from app.api.routes.payments_public import _extract_reference
 from app.services.payment_checkout import CheckoutCreateRequest
 from app.services.payment_provider import PaymentProvider, detect_provider_from_reference
 from app.services.psp_gateway import PayplugGateway, RecurringChargeRequest
@@ -248,6 +249,17 @@ def test_payplug_refund_is_idempotent_for_fully_refunded_payment(monkeypatch) ->
     assert result.success is True
     assert result.already_refunded is True
     assert result.status == "ALREADY_REFUNDED"
+
+
+def test_payplug_refund_webhook_extracts_original_payment_reference() -> None:
+    request = SimpleNamespace(query_params={})
+
+    reference = _extract_reference(
+        request,  # type: ignore[arg-type]
+        {"id": "re_refund_1", "payment_id": "pay_paid_1", "object": "refund"},
+    )
+
+    assert reference == "pay_paid_1"
 
 
 def test_payplug_reference_detection() -> None:
