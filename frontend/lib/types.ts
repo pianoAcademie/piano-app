@@ -2555,4 +2555,6 @@ export type AdminSubscriptionEngineDetailOut = {
   cycles: AdminSubscriptionCycleOut[];
   attempts: AdminSubscriptionAttemptOut[];
   notifications: AdminSubscriptionNotificationOut[];
+  initial_payment_refundable: boolean;
+  initial_payment_refunded: boolean;
 };

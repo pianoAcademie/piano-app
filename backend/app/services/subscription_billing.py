@@ -116,6 +116,15 @@ class SubscriptionRetryJobResult:
 
 
 @dataclass(frozen=True)
+class SubscriptionChargeNowResult:
+    cycle_id: UUID
+    outcome: str
+    provider_status: str
+    amount: Decimal
+    currency: str
+
+
+@dataclass(frozen=True)
 class SubscriptionRecoveryReconciliationJobResult:
     checked: int
     reconciled: int
@@ -1148,6 +1157,92 @@ def _charge_cycle(
         failure_reason=failure_reason,
     )
     return "first_failure", provider_status
+
+
+def run_subscription_charge_now(
+    db: Session,
+    *,
+    subscription: ClientPlanSubscription,
+    plan: Plan,
+    owner: User,
+    now: datetime,
+    expected_amount: Decimal,
+    expected_currency: str,
+) -> SubscriptionChargeNowResult:
+    """Charge exactly one subscription cycle early after an explicit amount check."""
+    with redis_lock("lock:job:subscription_billing", ttl_seconds=240) as acquired:
+        if not acquired:
+            raise RuntimeError("subscription_billing_job lock already held")
+        if plan.kind != PlanKind.SUBSCRIPTION:
+            raise ValueError("Only monthly subscriptions can be charged now")
+        if subscription.status not in {SubscriptionStatus.ACTIVE, SubscriptionStatus.PAYMENT_ALERT}:
+            raise ValueError("Subscription is not active")
+        if not subscription.auto_renew:
+            raise ValueError("Automatic renewal is disabled")
+
+        period_start = subscription.current_period_start or subscription.started_at
+        period_end = subscription.current_period_end or subscription.next_payment_at
+        if period_end is None or period_end <= period_start:
+            raise ValueError("Subscription billing period is invalid")
+
+        amount = _subscription_amount(db, subscription=subscription, plan=plan, owner=owner, now=now)
+        normalized_expected = Decimal(expected_amount).quantize(Decimal("0.01"))
+        actual_amount = Decimal(amount.total_incl_vat).quantize(Decimal("0.01"))
+        currency = amount.currency.upper()
+        if normalized_expected != actual_amount or expected_currency.strip().upper() != currency:
+            raise ValueError(f"Expected amount mismatch: actual charge is {actual_amount:.2f} {currency}")
+
+        existing = db.scalar(
+            select(SubscriptionBillingCycle).where(
+                SubscriptionBillingCycle.subscription_id == subscription.id,
+                SubscriptionBillingCycle.period_start == period_start,
+                SubscriptionBillingCycle.period_end == period_end,
+            )
+        )
+        if existing is not None:
+            raise ValueError("A billing cycle already exists for the current period")
+
+        if not _create_cycle_if_missing(
+            db,
+            subscription=subscription,
+            plan=plan,
+            owner=owner,
+            due_at=period_end,
+            now=now,
+        ):
+            raise ValueError("A billing cycle already exists for the current period")
+        cycle = db.scalar(
+            select(SubscriptionBillingCycle).where(
+                SubscriptionBillingCycle.subscription_id == subscription.id,
+                SubscriptionBillingCycle.period_start == period_start,
+                SubscriptionBillingCycle.period_end == period_end,
+            )
+        )
+        if cycle is None:  # pragma: no cover
+            raise RuntimeError("Unable to create subscription billing cycle")
+        cycle.billing_date = now
+
+        provider, gateway = _gateway_for_provider(db)
+        outcome, provider_status = _charge_cycle(
+            db,
+            cycle=cycle,
+            subscription=subscription,
+            plan=plan,
+            owner=owner,
+            now=now,
+            retry_policy=_resolve_retry_policy(db, plan=plan),
+            notification_policy=_resolve_notification_policy(db, plan=plan),
+            provider=provider,
+            gateway=gateway,
+            is_retry=False,
+        )
+        return SubscriptionChargeNowResult(
+            cycle_id=cycle.id,
+            outcome=outcome,
+            provider_status=provider_status,
+            amount=actual_amount,
+            currency=currency,
+        )
 
 
 def run_subscription_billing_job(

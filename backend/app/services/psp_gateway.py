@@ -39,6 +39,16 @@ class RecurringChargeResult:
     checkout_url: str | None = None
 
 
+@dataclass(frozen=True)
+class PaymentRefundResult:
+    success: bool
+    provider_reference: str | None
+    payment_reference: str
+    status: str
+    message: str
+    already_refunded: bool = False
+
+
 class PaymentGateway:
     def create_recurring_charge(self, payload: RecurringChargeRequest) -> RecurringChargeResult:
         raise NotImplementedError
@@ -176,6 +186,71 @@ class PayplugGateway(PaymentGateway):
             str(parsed.get("failure") or "Payplug recurring payment failed"),
             status_code >= 500,
         )
+
+    def refund_payment(self, payment_reference: str) -> PaymentRefundResult:
+        payment_id = payment_reference.strip()
+        if not self.api_key:
+            return PaymentRefundResult(False, None, payment_id, "MISSING_KEY", "Payplug API key is not configured")
+        if not payment_id.startswith("pay_"):
+            return PaymentRefundResult(False, None, payment_id, "INVALID_PAYMENT", "Invalid Payplug payment reference")
+
+        headers = {
+            "Authorization": self._authorization(self.api_key),
+            "Content-Type": "application/json",
+            "PayPlug-Version": "2019-08-06",
+        }
+        retrieve = Request(f"https://api.payplug.com/v1/payments/{payment_id}", method="GET", headers=headers)
+        try:
+            with urlopen(retrieve, timeout=20) as response:
+                raw_payment = response.read().decode("utf-8")
+            payment = json.loads(raw_payment) if raw_payment else {}
+        except HTTPError as exc:
+            raw = exc.read().decode("utf-8")
+            return PaymentRefundResult(False, None, payment_id, f"HTTP_{exc.code}", raw or str(exc))
+        except URLError as exc:
+            return PaymentRefundResult(False, None, payment_id, "NETWORK_ERROR", str(exc.reason))
+        except Exception as exc:  # pragma: no cover
+            return PaymentRefundResult(False, None, payment_id, "UNEXPECTED_ERROR", str(exc))
+
+        if not isinstance(payment, dict):
+            return PaymentRefundResult(False, None, payment_id, "INVALID_RESPONSE", "Invalid Payplug payment response")
+        amount = int(payment.get("amount") or 0)
+        amount_refunded = int(payment.get("amount_refunded") or 0)
+        if bool(payment.get("is_refunded")) or (amount > 0 and amount_refunded >= amount):
+            return PaymentRefundResult(
+                True,
+                None,
+                payment_id,
+                "ALREADY_REFUNDED",
+                "Payplug payment is already fully refunded",
+                already_refunded=True,
+            )
+        if not bool(payment.get("is_paid")):
+            return PaymentRefundResult(False, None, payment_id, "NOT_PAID", "Only a paid Payplug payment can be refunded")
+
+        request = Request(
+            f"https://api.payplug.com/v1/payments/{payment_id}/refunds",
+            method="POST",
+            data=json.dumps({"metadata": {"source": "ADMIN_SUBSCRIPTION"}}).encode("utf-8"),
+            headers=headers,
+        )
+        try:
+            with urlopen(request, timeout=20) as response:
+                raw = response.read().decode("utf-8")
+                status_code = int(response.status)
+            parsed = json.loads(raw) if raw else {}
+        except HTTPError as exc:
+            raw = exc.read().decode("utf-8")
+            return PaymentRefundResult(False, None, payment_id, f"HTTP_{exc.code}", raw or str(exc))
+        except URLError as exc:
+            return PaymentRefundResult(False, None, payment_id, "NETWORK_ERROR", str(exc.reason))
+        except Exception as exc:  # pragma: no cover
+            return PaymentRefundResult(False, None, payment_id, "UNEXPECTED_ERROR", str(exc))
+
+        refund_id = str(parsed.get("id") or "").strip() or None if isinstance(parsed, dict) else None
+        if status_code in {200, 201, 202} and refund_id:
+            return PaymentRefundResult(True, refund_id, payment_id, "REFUNDED", "Payplug refund created")
+        return PaymentRefundResult(False, refund_id, payment_id, f"HTTP_{status_code}", raw or "Payplug refund failed")
 
 
 class MollieGateway(PaymentGateway):

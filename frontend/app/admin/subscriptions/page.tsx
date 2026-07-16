@@ -53,6 +53,9 @@ function statusClass(status: string): string {
   if (normalized === "ACTIVE" || normalized === "PAID") {
     return "status-ok";
   }
+  if (normalized === "REFUNDED") {
+    return "status-off";
+  }
   if (normalized === "PAYMENT_ALERT" || normalized === "FAILED_FIRST_ATTEMPT") {
     return "status-warn";
   }
@@ -73,6 +76,7 @@ function subscriptionStatusLabel(status: string, language: UiLanguage): string {
   if (normalized === "PAID") return uiText(language, "admin.subscriptions.status_paid");
   if (normalized === "FAILED_FIRST_ATTEMPT") return uiText(language, "admin.subscriptions.status_failed_first_attempt");
   if (normalized === "FAILED_FINAL") return uiText(language, "admin.subscriptions.status_failed_final");
+  if (normalized === "REFUNDED") return uiText(language, "admin.subscriptions.status_refunded");
   return status;
 }
 
@@ -117,6 +121,71 @@ async function retryNowAction(formData: FormData): Promise<void> {
       uiText(language, "admin.subscriptions.retry_started"),
     )}`,
   );
+}
+
+async function chargeNowAction(formData: FormData): Promise<void> {
+  "use server";
+  const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
+  const language = readLanguageFromFormData(formData);
+  const subscriptionId = String(formData.get("subscription_id") ?? "").trim();
+  const expectedAmount = String(formData.get("expected_amount") ?? "").trim();
+  if (!token) redirect("/login?error_code=session_expired");
+  const response = await fetch(`${backendUrl()}/api/v1/admin/subscriptions/${subscriptionId}/charge-now`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ expected_amount: expectedAmount, expected_currency: "EUR", confirm_charge: true }),
+    cache: "no-store",
+  });
+  const payload = await response.json().catch(() => ({}));
+  revalidatePath("/admin/subscriptions");
+  if (!response.ok) {
+    const detail = payload && typeof payload === "object" && "detail" in payload ? String((payload as { detail?: unknown }).detail ?? "") : `HTTP_${response.status}`;
+    redirect(`/admin/subscriptions?subscription_id=${encodeURIComponent(subscriptionId)}&error=${encodeURIComponent(detail)}`);
+  }
+  redirect(`/admin/subscriptions?subscription_id=${encodeURIComponent(subscriptionId)}&ok=${encodeURIComponent(uiText(language, "admin.subscriptions.charge_completed"))}`);
+}
+
+async function refundInitialAction(formData: FormData): Promise<void> {
+  "use server";
+  const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
+  const language = readLanguageFromFormData(formData);
+  const subscriptionId = String(formData.get("subscription_id") ?? "").trim();
+  if (!token) redirect("/login?error_code=session_expired");
+  const response = await fetch(`${backendUrl()}/api/v1/admin/subscriptions/${subscriptionId}/refund-initial`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ confirm_refund: true }),
+    cache: "no-store",
+  });
+  const payload = await response.json().catch(() => ({}));
+  revalidatePath("/admin/subscriptions");
+  if (!response.ok) {
+    const detail = payload && typeof payload === "object" && "detail" in payload ? String((payload as { detail?: unknown }).detail ?? "") : `HTTP_${response.status}`;
+    redirect(`/admin/subscriptions?subscription_id=${encodeURIComponent(subscriptionId)}&error=${encodeURIComponent(detail)}`);
+  }
+  redirect(`/admin/subscriptions?subscription_id=${encodeURIComponent(subscriptionId)}&ok=${encodeURIComponent(uiText(language, "admin.subscriptions.refund_completed"))}`);
+}
+
+async function refundAttemptAction(formData: FormData): Promise<void> {
+  "use server";
+  const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
+  const language = readLanguageFromFormData(formData);
+  const subscriptionId = String(formData.get("subscription_id") ?? "").trim();
+  const attemptId = String(formData.get("attempt_id") ?? "").trim();
+  if (!token) redirect("/login?error_code=session_expired");
+  const response = await fetch(`${backendUrl()}/api/v1/admin/subscriptions/${subscriptionId}/attempts/${attemptId}/refund`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ confirm_refund: true }),
+    cache: "no-store",
+  });
+  const payload = await response.json().catch(() => ({}));
+  revalidatePath("/admin/subscriptions");
+  if (!response.ok) {
+    const detail = payload && typeof payload === "object" && "detail" in payload ? String((payload as { detail?: unknown }).detail ?? "") : `HTTP_${response.status}`;
+    redirect(`/admin/subscriptions?subscription_id=${encodeURIComponent(subscriptionId)}&error=${encodeURIComponent(detail)}`);
+  }
+  redirect(`/admin/subscriptions?subscription_id=${encodeURIComponent(subscriptionId)}&ok=${encodeURIComponent(uiText(language, "admin.subscriptions.refund_completed"))}`);
 }
 
 export default async function AdminSubscriptionsPage({ searchParams }: { searchParams: SearchParams }): Promise<JSX.Element> {
@@ -289,12 +358,33 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
                 <article className="item row spread"><span>{t("admin.subscriptions.column_next_due")}</span><strong>{formatDate(detailData.subscription.next_billing_date, language)}</strong></article>
                 <article className="item row spread"><span>{t("admin.subscriptions.bookings_blocked")}</span><strong>{detailData.subscription.bookings_blocked ? uiText(language, "common.yes") : uiText(language, "common.no")}</strong></article>
                 <article className="item row spread"><span>{t("admin.subscriptions.recovery_link")}</span><strong>{detailData.subscription.recovery_url ? t("admin.subscriptions.recovery_available") : uiText(language, "common.no")}</strong></article>
+                <article className="item row spread"><span>{t("admin.subscriptions.initial_payment")}</span><strong>{detailData.initial_payment_refunded ? t("admin.subscriptions.status_refunded") : detailData.initial_payment_refundable ? t("admin.subscriptions.refundable") : "-"}</strong></article>
               </div>
-              <form action={retryNowAction} className="top-gap-sm">
-                <input type="hidden" name="subscription_id" value={detailData.subscription.id} />
-                <input type="hidden" name="ui_language" value={language} />
-                <button type="submit">{t("admin.subscriptions.retry_now")}</button>
-              </form>
+              <div className="row top-gap-sm">
+                <form action={retryNowAction}>
+                  <input type="hidden" name="subscription_id" value={detailData.subscription.id} />
+                  <input type="hidden" name="ui_language" value={language} />
+                  <button type="submit">{t("admin.subscriptions.retry_now")}</button>
+                </form>
+                {detailData.attempts.length === 0 && detailData.subscription.status.toUpperCase() === "ACTIVE" ? (
+                  <form action={chargeNowAction} className="row">
+                    <input type="hidden" name="subscription_id" value={detailData.subscription.id} />
+                    <input type="hidden" name="ui_language" value={language} />
+                    <label>
+                      {t("admin.subscriptions.expected_amount")}
+                      <input type="number" name="expected_amount" min="0.01" step="0.01" required className="input-compact" />
+                    </label>
+                    <button type="submit" className="danger">{t("admin.subscriptions.charge_now")}</button>
+                  </form>
+                ) : null}
+                {detailData.initial_payment_refundable ? (
+                  <form action={refundInitialAction}>
+                    <input type="hidden" name="subscription_id" value={detailData.subscription.id} />
+                    <input type="hidden" name="ui_language" value={language} />
+                    <button type="submit" className="danger">{t("admin.subscriptions.refund_initial")}</button>
+                  </form>
+                ) : null}
+              </div>
             </section>
 
             <section className="card modal-card">
@@ -343,11 +433,12 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
                       <th>{t("admin.subscriptions.column_provider")}</th>
                       <th>{t("admin.subscriptions.column_code")}</th>
                       <th>{t("admin.subscriptions.column_reason")}</th>
+                      <th>{uiText(language, "client.action")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {detailData.attempts.length === 0 ? (
-                      <tr><td colSpan={6}>{t("admin.subscriptions.no_attempts")}</td></tr>
+                      <tr><td colSpan={7}>{t("admin.subscriptions.no_attempts")}</td></tr>
                     ) : (
                       detailData.attempts.map((row) => (
                         <tr key={row.id}>
@@ -357,6 +448,16 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
                           <td>{row.provider_name ?? "-"}</td>
                           <td>{row.failure_code ?? row.provider_status ?? "-"}</td>
                           <td>{row.failure_reason ?? "-"}</td>
+                          <td>
+                            {row.status.toLowerCase() === "success" && row.provider_name?.toUpperCase() === "PAYPLUG" && row.provider_payment_id ? (
+                              <form action={refundAttemptAction}>
+                                <input type="hidden" name="subscription_id" value={detailData.subscription.id} />
+                                <input type="hidden" name="attempt_id" value={row.id} />
+                                <input type="hidden" name="ui_language" value={language} />
+                                <button type="submit" className="danger">{t("admin.subscriptions.refund_attempt")}</button>
+                              </form>
+                            ) : null}
+                          </td>
                         </tr>
                       ))
                     )}

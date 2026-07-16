@@ -4,7 +4,17 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class AdminSubscriptionChargeNowRequest(BaseModel):
+    expected_amount: Decimal = Field(gt=0)
+    expected_currency: str = Field(min_length=3, max_length=3)
+    confirm_charge: bool = False
+
+
+class AdminSubscriptionRefundRequest(BaseModel):
+    confirm_refund: bool = False
 
 
 class AdminSubscriptionEngineRowOut(BaseModel):
@@ -79,3 +89,5 @@ class AdminSubscriptionEngineDetailOut(BaseModel):
     cycles: list[AdminSubscriptionCycleOut]
     attempts: list[AdminSubscriptionAttemptOut]
     notifications: list[AdminSubscriptionNotificationOut]
+    initial_payment_refundable: bool = False
+    initial_payment_refunded: bool = False

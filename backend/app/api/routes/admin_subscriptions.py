@@ -9,19 +9,28 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
+from app.models.client_record import ClientPaymentRefund
 from app.models.notification_engine import Notification
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind
 from app.models.subscription_engine import SubscriptionBillingCycle, SubscriptionPaymentAttempt
 from app.models.user import User, UserRole
 from app.schemas.subscription_engine import (
+    AdminSubscriptionChargeNowRequest,
     AdminSubscriptionAttemptOut,
     AdminSubscriptionCycleOut,
     AdminSubscriptionEngineDetailOut,
     AdminSubscriptionEngineListOut,
     AdminSubscriptionEngineRowOut,
     AdminSubscriptionNotificationOut,
+    AdminSubscriptionRefundRequest,
 )
-from app.services.subscription_billing import run_subscription_retry_job
+from app.services.payment_provider import PaymentProvider
+from app.services.psp_gateway import PayplugGateway
+from app.services.subscription_billing import (
+    resolve_provider_secret,
+    run_subscription_charge_now,
+    run_subscription_retry_job,
+)
 
 router = APIRouter(prefix="/admin/subscriptions")
 
@@ -123,6 +132,15 @@ def _detail_out(db: Session, *, sub: ClientPlanSubscription, plan: Plan, owner: 
         .limit(500)
     ).all() if cycle_ids else []
 
+    initial_refund = db.scalar(
+        select(ClientPaymentRefund.id).where(
+            ClientPaymentRefund.user_id == owner.id,
+            ClientPaymentRefund.source == "PLAN_PURCHASE",
+            ClientPaymentRefund.source_payment_id == sub.id,
+        )
+    )
+    initial_reference = (sub.payment_provider_subscription_ref or "").strip()
+
     return AdminSubscriptionEngineDetailOut(
         subscription=subscription_out,
         cycles=[
@@ -173,6 +191,8 @@ def _detail_out(db: Session, *, sub: ClientPlanSubscription, plan: Plan, owner: 
             )
             for row in notifications
         ],
+        initial_payment_refundable=initial_reference.startswith("pay_") and initial_refund is None,
+        initial_payment_refunded=initial_refund is not None,
     )
 
 
@@ -268,5 +288,142 @@ def retry_admin_subscription_now(
         run_subscription_retry_job(db, now=now, limit=500)
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    db.commit()
+    return _detail_out(db, sub=sub, plan=plan, owner=owner)
+
+
+@router.post("/{subscription_id}/charge-now", response_model=AdminSubscriptionEngineDetailOut)
+def charge_admin_subscription_now(
+    subscription_id: UUID,
+    payload: AdminSubscriptionChargeNowRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminSubscriptionEngineDetailOut:
+    if not payload.confirm_charge:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Explicit charge confirmation is required")
+    sub, plan, owner = _load_subscription(db, subscription_id)
+    now = _utcnow()
+    try:
+        run_subscription_charge_now(
+            db,
+            subscription=sub,
+            plan=plan,
+            owner=owner,
+            now=now,
+            expected_amount=payload.expected_amount,
+            expected_currency=payload.expected_currency,
+        )
+    except (RuntimeError, ValueError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    db.commit()
+    return _detail_out(db, sub=sub, plan=plan, owner=owner)
+
+
+def _refund_payplug_payment(db: Session, *, payment_reference: str) -> None:
+    gateway = PayplugGateway(api_key=resolve_provider_secret(db, provider=PaymentProvider.PAYPLUG))
+    result = gateway.refund_payment(payment_reference)
+    if not result.success:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Payplug refund failed: {result.status}")
+
+
+@router.post("/{subscription_id}/refund-initial", response_model=AdminSubscriptionEngineDetailOut)
+def refund_admin_subscription_initial_payment(
+    subscription_id: UUID,
+    payload: AdminSubscriptionRefundRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminSubscriptionEngineDetailOut:
+    if not payload.confirm_refund:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Explicit refund confirmation is required")
+    sub, plan, owner = _load_subscription(db, subscription_id)
+    payment_reference = (sub.payment_provider_subscription_ref or "").strip()
+    if not payment_reference.startswith("pay_"):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No refundable initial Payplug payment found")
+    _refund_payplug_payment(db, payment_reference=payment_reference)
+
+    refund = db.scalar(
+        select(ClientPaymentRefund).where(
+            ClientPaymentRefund.user_id == owner.id,
+            ClientPaymentRefund.source == "PLAN_PURCHASE",
+            ClientPaymentRefund.source_payment_id == sub.id,
+        )
+    )
+    now = _utcnow()
+    if refund is None:
+        refund = ClientPaymentRefund(
+            user_id=owner.id,
+            source="PLAN_PURCHASE",
+            source_payment_id=sub.id,
+            actor_user_id=actor.id,
+            refunded_at=now,
+            updated_at=now,
+            reason="Remboursement Payplug administrateur",
+        )
+    else:
+        refund.actor_user_id = actor.id
+        refund.refunded_at = now
+        refund.updated_at = now
+    db.add(refund)
+    db.commit()
+    return _detail_out(db, sub=sub, plan=plan, owner=owner)
+
+
+@router.post("/{subscription_id}/attempts/{attempt_id}/refund", response_model=AdminSubscriptionEngineDetailOut)
+def refund_admin_subscription_attempt(
+    subscription_id: UUID,
+    attempt_id: UUID,
+    payload: AdminSubscriptionRefundRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminSubscriptionEngineDetailOut:
+    if not payload.confirm_refund:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Explicit refund confirmation is required")
+    sub, plan, owner = _load_subscription(db, subscription_id)
+    attempt = db.scalar(
+        select(SubscriptionPaymentAttempt).where(
+            SubscriptionPaymentAttempt.id == attempt_id,
+            SubscriptionPaymentAttempt.subscription_id == sub.id,
+        )
+    )
+    if attempt is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment attempt not found")
+    payment_reference = (attempt.provider_payment_id or "").strip()
+    if not payment_reference.startswith("pay_"):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No refundable Payplug payment found")
+    if attempt.status.strip().lower() not in {"success", "refunded"}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only a successful payment can be refunded")
+    _refund_payplug_payment(db, payment_reference=payment_reference)
+
+    now = _utcnow()
+    attempt.status = "refunded"
+    attempt.provider_status = "REFUNDED"
+    db.add(attempt)
+    cycle = db.get(SubscriptionBillingCycle, attempt.billing_cycle_id)
+    if cycle is not None:
+        cycle.status = "refunded"
+        db.add(cycle)
+    refund = db.scalar(
+        select(ClientPaymentRefund).where(
+            ClientPaymentRefund.user_id == owner.id,
+            ClientPaymentRefund.source == "SUBSCRIPTION_RENEWAL",
+            ClientPaymentRefund.source_payment_id == attempt.id,
+        )
+    )
+    if refund is None:
+        refund = ClientPaymentRefund(
+            user_id=owner.id,
+            source="SUBSCRIPTION_RENEWAL",
+            source_payment_id=attempt.id,
+            actor_user_id=actor.id,
+            refunded_at=now,
+            updated_at=now,
+            reason="Remboursement Payplug administrateur",
+        )
+    else:
+        refund.actor_user_id = actor.id
+        refund.refunded_at = now
+        refund.updated_at = now
+    db.add(refund)
     db.commit()
     return _detail_out(db, sub=sub, plan=plan, owner=owner)

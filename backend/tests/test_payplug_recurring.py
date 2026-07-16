@@ -209,6 +209,47 @@ def test_payplug_new_authentication_returns_recovery_url(monkeypatch) -> None:
     assert result.checkout_url == "https://secure.payplug.test/3ds"
 
 
+def test_payplug_refund_checks_payment_then_creates_full_refund(monkeypatch) -> None:
+    requests: list[tuple[str, str, object | None]] = []
+
+    def fake_urlopen(request, timeout: int):  # type: ignore[no-untyped-def]
+        requests.append((request.get_method(), request.full_url, json.loads(request.data) if request.data else None))
+        if request.get_method() == "GET":
+            return _Response({"id": "pay_paid_1", "is_paid": True, "amount": 100, "amount_refunded": 0}, status=200)
+        return _Response({"id": "re_refund_1", "payment_id": "pay_paid_1", "amount": 100}, status=201)
+
+    monkeypatch.setattr(psp_gateway, "urlopen", fake_urlopen)
+    result = PayplugGateway(api_key="sk_test").refund_payment("pay_paid_1")
+
+    assert result.success is True
+    assert result.provider_reference == "re_refund_1"
+    assert requests == [
+        ("GET", "https://api.payplug.com/v1/payments/pay_paid_1", None),
+        (
+            "POST",
+            "https://api.payplug.com/v1/payments/pay_paid_1/refunds",
+            {"metadata": {"source": "ADMIN_SUBSCRIPTION"}},
+        ),
+    ]
+
+
+def test_payplug_refund_is_idempotent_for_fully_refunded_payment(monkeypatch) -> None:
+    monkeypatch.setattr(
+        psp_gateway,
+        "urlopen",
+        lambda *_args, **_kwargs: _Response(
+            {"id": "pay_paid_1", "is_paid": True, "is_refunded": True, "amount": 100, "amount_refunded": 100},
+            status=200,
+        ),
+    )
+
+    result = PayplugGateway(api_key="sk_test").refund_payment("pay_paid_1")
+
+    assert result.success is True
+    assert result.already_refunded is True
+    assert result.status == "ALREADY_REFUNDED"
+
+
 def test_payplug_reference_detection() -> None:
     assert detect_provider_from_reference("pay_123") == PaymentProvider.PAYPLUG
 
