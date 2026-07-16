@@ -10,6 +10,10 @@ function passthroughHeaders(request: Request, includeContentType: boolean): Head
   if (userAgent) {
     headers["user-agent"] = userAgent;
   }
+  const stripeSignature = request.headers.get("stripe-signature");
+  if (stripeSignature) {
+    headers["stripe-signature"] = stripeSignature;
+  }
   return headers;
 }
 
