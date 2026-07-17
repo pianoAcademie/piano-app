@@ -23,6 +23,7 @@ class PlanKind(str, enum.Enum):
 
 
 class PlanRestrictionPeriod(str, enum.Enum):
+    ACTIVE_BOOKINGS = "ACTIVE_BOOKINGS"
     DAY = "DAY"
     WEEK = "WEEK"
     MONTH = "MONTH"

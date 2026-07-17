@@ -1897,7 +1897,7 @@ export type AdminProfessorPayGridPeriodDetailOut = {
   lines: AdminProfessorDefaultGridLineOut[];
 };
 
-export type AdminFormulaRestrictionPeriod = "DAY" | "WEEK" | "MONTH" | "ROLLING_MONTH" | "SEMESTER";
+export type AdminFormulaRestrictionPeriod = "ACTIVE_BOOKINGS" | "DAY" | "WEEK" | "MONTH" | "ROLLING_MONTH" | "SEMESTER";
 
 export type AdminFormulaPriceTaxMode = "HT" | "TTC";
 export type AdminFormulaCreditGrantsRelation = "AND" | "OR";

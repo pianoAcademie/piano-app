@@ -46,6 +46,7 @@ type RestrictionRow = {
 };
 
 const RESTRICTION_PERIOD_OPTIONS: Array<{ value: AdminFormulaRestrictionPeriod; labelKey: string }> = [
+  { value: "ACTIVE_BOOKINGS", labelKey: "admin.formulas.restriction_active_bookings" },
   { value: "DAY", labelKey: "admin.formulas.restriction_day" },
   { value: "WEEK", labelKey: "admin.formulas.restriction_week" },
   { value: "MONTH", labelKey: "admin.formulas.restriction_month" },

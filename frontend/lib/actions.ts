@@ -7854,11 +7854,18 @@ export async function upsertAdminCollaboratorContractGridAction(formData: FormDa
   redirect(appendQueryMessage(`/admin/professors/${professorId}?tab=tarifs`, "ok", message));
 }
 
-type FormulaRestrictionPeriod = "DAY" | "WEEK" | "MONTH" | "ROLLING_MONTH" | "SEMESTER";
+type FormulaRestrictionPeriod = "ACTIVE_BOOKINGS" | "DAY" | "WEEK" | "MONTH" | "ROLLING_MONTH" | "SEMESTER";
 
 function parseFormulaRestrictionPeriod(raw: string): FormulaRestrictionPeriod | null {
   const normalized = raw.trim().toUpperCase();
-  if (normalized === "DAY" || normalized === "WEEK" || normalized === "MONTH" || normalized === "ROLLING_MONTH" || normalized === "SEMESTER") {
+  if (
+    normalized === "ACTIVE_BOOKINGS" ||
+    normalized === "DAY" ||
+    normalized === "WEEK" ||
+    normalized === "MONTH" ||
+    normalized === "ROLLING_MONTH" ||
+    normalized === "SEMESTER"
+  ) {
     return normalized;
   }
   return null;

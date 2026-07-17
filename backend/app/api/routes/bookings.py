@@ -723,6 +723,7 @@ def _restriction_violation_message(
     subscription: ClientPlanSubscription,
     plan: Plan,
     session_obj: CourseSession,
+    now: datetime | None = None,
 ) -> str | None:
     restrictions = _normalize_plan_restrictions(plan)
     if not restrictions:
@@ -743,6 +744,25 @@ def _restriction_violation_message(
 
         scope_course_type_ids = _restriction_course_type_ids(restriction.get("course_type_ids"))
         if scope_course_type_ids and session_obj.course_type_id not in scope_course_type_ids:
+            continue
+
+        if period == PlanRestrictionPeriod.ACTIVE_BOOKINGS:
+            active_stmt = (
+                select(func.count(Booking.id))
+                .join(CourseSession, CourseSession.id == Booking.session_id)
+                .where(
+                    Booking.user_id == subscription.user_id,
+                    Booking.client_plan_subscription_id == subscription.id,
+                    Booking.status == BookingStatus.BOOKED,
+                    CourseSession.start_at_utc > (now or _utcnow()),
+                )
+            )
+            if scope_course_type_ids:
+                active_stmt = active_stmt.where(CourseSession.course_type_id.in_(scope_course_type_ids))
+
+            active_booking_count = int(db.scalar(active_stmt) or 0)
+            if active_booking_count >= max_bookings:
+                return f"Restriction formule depassee: {max_bookings} reservations actives maximum"
             continue
 
         window_start = _restriction_window_start(session_obj.start_at_utc, period)
@@ -782,12 +802,14 @@ def _enforce_plan_restrictions(
     subscription: ClientPlanSubscription,
     plan: Plan,
     session_obj: CourseSession,
+    now: datetime | None = None,
 ) -> None:
     violation = _restriction_violation_message(
         db,
         subscription=subscription,
         plan=plan,
         session_obj=session_obj,
+        now=now,
     )
     if violation is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=violation)
@@ -1283,6 +1305,7 @@ def _book_session_internal(
             subscription=subscription,
             plan=plan,
             session_obj=session_obj,
+            now=now,
         )
 
     if reusable_existing is not None:

@@ -88,6 +88,8 @@ def _formula_price_snapshot(plan: Plan) -> tuple[Decimal | None, str]:
 
 def _restriction_period_label(raw: str) -> str:
     value = raw.strip().upper()
+    if value == "ACTIVE_BOOKINGS":
+        return "reservations actives"
     if value == "DAY":
         return "jour"
     if value == "WEEK":
@@ -119,7 +121,10 @@ def _formula_restriction_labels(plan: Plan, *, course_name_by_id: dict[UUID, str
                     continue
                 course_names.append(course_name_by_id.get(parsed_course_id, str(parsed_course_id)))
         scope = ", ".join(course_names) if course_names else "toutes activites"
-        labels.append(f"{max_bookings} / {period} ({scope})")
+        if str(raw.get("period") or "").strip().upper() == "ACTIVE_BOOKINGS":
+            labels.append(f"{max_bookings} reservations actives maximum ({scope})")
+        else:
+            labels.append(f"{max_bookings} / {period} ({scope})")
     return labels
 
 
