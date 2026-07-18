@@ -6,7 +6,7 @@ import {
   rejectPublicQuoteAction,
 } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
-import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
+import { localeForUiLanguage, normalizeUiLanguage, translateBackendMessage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -109,7 +109,7 @@ function resolveQuotePublicOkMessage(rawOk: string, okCode: string, language: Ui
 
 function resolveQuotePublicErrorMessage(rawError: string, errorCode: string, errorStatus: string, language: UiLanguage): string {
   if (rawError) {
-    return rawError;
+    return translateBackendMessage(language, rawError);
   }
   const normalized = errorCode.trim().toLowerCase();
   if (normalized === "quote_public_invalid_link") {

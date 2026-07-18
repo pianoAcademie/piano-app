@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 
 import { backendRequest, backendUrl } from "../../../lib/backend";
 import type { AdminSubscriptionEngineDetailOut, AdminSubscriptionEngineListOut, UserOut } from "../../../lib/types";
-import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
+import { localeForUiLanguage, normalizeUiLanguage, translateBackendMessage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -247,9 +247,9 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
       </section>
 
       <section className="card">
-        {!listResult.ok ? <p className="flash-err">{t("admin.subscriptions.backend_error")}: {listResult.message}</p> : null}
+        {!listResult.ok ? <p className="flash-err">{t("admin.subscriptions.backend_error")}: {translateBackendMessage(language, listResult.message)}</p> : null}
         {ok ? <p className="flash-ok">{ok}</p> : null}
-        {error ? <p className="flash-err">{error}</p> : null}
+        {error ? <p className="flash-err">{translateBackendMessage(language, error)}</p> : null}
         <form method="get" className="grid cols-4 sticky-filters">
           <label>
             {t("admin.subscriptions.filter_status")}

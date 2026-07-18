@@ -1,3 +1,5 @@
+import { translateBackendMessage } from "./ui-i18n";
+
 export type UiLanguage = "fr" | "en";
 
 type FlashKind = "ok" | "error";
@@ -1093,7 +1095,7 @@ export function resolveUiFlashMessage(
 ): string {
   const directMessage = readSearchParam(params, kind).trim();
   if (directMessage) {
-    return directMessage;
+    return translateBackendMessage(language, directMessage);
   }
 
   const code = readSearchParam(params, `${kind}_code`).trim();

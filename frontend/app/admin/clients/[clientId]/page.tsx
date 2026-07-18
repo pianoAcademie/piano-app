@@ -84,7 +84,7 @@ import type {
   PlanOut,
   UserOut,
 } from "../../../../lib/types";
-import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
+import { localeForUiLanguage, normalizeUiLanguage, translateBackendMessage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -2729,7 +2729,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   }
 
   const okMessage = readParam(searchParams, "ok");
-  const errorMessage = readParam(searchParams, "error");
+  const errorMessage = translateBackendMessage(language, readParam(searchParams, "error"));
   const invoiceErrorGlobal = readParam(searchParams, "invoice_error_global");
   const invoiceErrorFieldPayload = readParam(searchParams, "invoice_error_fields");
   const invoiceQueryFieldErrors = parseInvoiceFieldErrors(invoiceErrorFieldPayload);

@@ -1025,6 +1025,100 @@ def _material_generated_at_label(value: datetime) -> str:
     return f"{local_value.strftime('%d/%m/%Y %H:%M')} ({_gmt_offset_label(value)}, Europe/Paris)"
 
 
+MATERIAL_REPORT_TEXT: dict[str, dict[str, str]] = {
+    "fr": {
+        "report_title": "Approvisionnement partitions, cahiers et jeux de notes",
+        "generated_at": "Rapport genere le {date}",
+        "stock_help": "Le stock peut etre complete dans la colonne H ; la colonne I calcule le reste a commander.",
+        "site": "Site",
+        "kind": "Nature",
+        "category": "Categorie catalogue",
+        "product": "Nom partition / cahier / produit",
+        "expected": "Nombre attendu",
+        "direct": "Dont lignes devis",
+        "kits": "Dont kits inscription",
+        "stock": "Nombre en stock",
+        "to_order": "Nombre a commander",
+        "product_id": "Produit ID",
+        "none_expected": "Aucune partition ou jeu de notes attendu",
+        "quote_detail": "Detail par devis",
+        "quote": "Devis",
+        "approval_date": "Date validation",
+        "student": "Eleve",
+        "source": "Origine",
+        "kit": "Kit",
+        "quote_line": "Ligne devis",
+        "quantity": "Quantite",
+        "none_line": "Aucune ligne",
+        "unclassified": "Non classe",
+        "deleted_product": "Produit supprime",
+        "sheet_detail": "Detail {site}",
+        "source_kit": "Kit inscription",
+        "source_direct": "Ligne devis",
+        "kind_sheet_music": "Partition",
+        "kind_workbook": "Cahier de solfege",
+        "kind_note_cards": "Jeu de notes",
+    },
+    "en": {
+        "report_title": "Sheet music, workbooks, and note-card supplies",
+        "generated_at": "Report generated on {date}",
+        "stock_help": "Stock can be entered in column H; column I calculates the remaining quantity to order.",
+        "site": "Site",
+        "kind": "Type",
+        "category": "Catalogue category",
+        "product": "Sheet music / workbook / product name",
+        "expected": "Expected quantity",
+        "direct": "From quote lines",
+        "kits": "From enrolment kits",
+        "stock": "Quantity in stock",
+        "to_order": "Quantity to order",
+        "product_id": "Product ID",
+        "none_expected": "No sheet music or note-card sets expected",
+        "quote_detail": "Quote details",
+        "quote": "Quote",
+        "approval_date": "Approval date",
+        "student": "Student",
+        "source": "Source",
+        "kit": "Kit",
+        "quote_line": "Quote line",
+        "quantity": "Quantity",
+        "none_line": "No rows",
+        "unclassified": "Unclassified",
+        "deleted_product": "Deleted product",
+        "sheet_detail": "{site} details",
+        "source_kit": "Enrolment kit",
+        "source_direct": "Quote line",
+        "kind_sheet_music": "Sheet music",
+        "kind_workbook": "Solfeggio workbook",
+        "kind_note_cards": "Note-card set",
+    },
+}
+
+
+def _material_report_language(value: object | None) -> str:
+    return "en" if _text(value).casefold() == "en" else "fr"
+
+
+def _material_report_text(language: str, key: str, **values: object) -> str:
+    template = MATERIAL_REPORT_TEXT[_material_report_language(language)].get(key, key)
+    return template.format(**values)
+
+
+def _material_report_value(language: str, value: object | None) -> str:
+    raw = _text(value)
+    key_by_value = {
+        "Non classe": "unclassified",
+        "Produit supprime": "deleted_product",
+        "Kit inscription": "source_kit",
+        "Ligne devis": "source_direct",
+        "Partition": "kind_sheet_music",
+        "Cahier de solfege": "kind_workbook",
+        "Jeu de notes": "kind_note_cards",
+    }
+    key = key_by_value.get(raw)
+    return _material_report_text(language, key) if key else raw
+
+
 def _append_material_summary_sheet(
     workbook: Workbook,
     *,
@@ -1032,23 +1126,24 @@ def _append_material_summary_sheet(
     site: str,
     rows: list[dict[str, object]],
     generated_at: datetime,
+    language: str,
 ) -> None:
     worksheet = workbook.create_sheet(title=title)
-    worksheet.append([f"Approvisionnement partitions, cahiers et jeux de notes - {_material_report_site_label(site)}"])
-    worksheet.append([f"Rapport genere le {_material_generated_at_label(generated_at)}"])
-    worksheet.append(["Le stock peut etre complete dans la colonne H ; la colonne I calcule le reste a commander."])
+    worksheet.append([f"{_material_report_text(language, 'report_title')} - {_material_report_site_label(site)}"])
+    worksheet.append([_material_report_text(language, "generated_at", date=_material_generated_at_label(generated_at))])
+    worksheet.append([_material_report_text(language, "stock_help")])
     worksheet.append([])
     headers = [
-        "Site",
-        "Nature",
-        "Categorie catalogue",
-        "Nom partition / cahier / produit",
-        "Nombre attendu",
-        "Dont lignes devis",
-        "Dont kits inscription",
-        "Nombre en stock",
-        "Nombre a commander",
-        "Produit ID",
+        _material_report_text(language, "site"),
+        _material_report_text(language, "kind"),
+        _material_report_text(language, "category"),
+        _material_report_text(language, "product"),
+        _material_report_text(language, "expected"),
+        _material_report_text(language, "direct"),
+        _material_report_text(language, "kits"),
+        _material_report_text(language, "stock"),
+        _material_report_text(language, "to_order"),
+        _material_report_text(language, "product_id"),
     ]
     worksheet.append(headers)
     for cell in worksheet[5]:
@@ -1060,7 +1155,7 @@ def _append_material_summary_sheet(
         worksheet.append(
             [
                 _text(row.get("site_label")),
-                _text(row.get("kind")),
+                _material_report_value(language, row.get("kind")),
                 _text(row.get("category_name")),
                 _text(row.get("product_title")),
                 _quantity_cell_value(row.get("expected_total")),
@@ -1072,30 +1167,30 @@ def _append_material_summary_sheet(
             ]
         )
     if not filtered_rows:
-        worksheet.append([_material_report_site_label(site), "-", "-", "Aucune partition ou jeu de notes attendu", 0, 0, 0, 0, 0, ""])
+        worksheet.append([_material_report_site_label(site), "-", "-", _material_report_text(language, "none_expected"), 0, 0, 0, 0, 0, ""])
     worksheet.freeze_panes = "A6"
     widths = [16, 16, 22, 42, 18, 18, 20, 18, 20, 38]
     for index, width in enumerate(widths, start=1):
         worksheet.column_dimensions[chr(64 + index)].width = width
 
 
-def _append_material_detail_sheet(workbook: Workbook, *, title: str, site: str, rows: list[dict[str, object]]) -> None:
+def _append_material_detail_sheet(workbook: Workbook, *, title: str, site: str, rows: list[dict[str, object]], language: str) -> None:
     worksheet = workbook.create_sheet(title=title)
-    worksheet.append([f"Detail par devis - {_material_report_site_label(site)}"])
+    worksheet.append([f"{_material_report_text(language, 'quote_detail')} - {_material_report_site_label(site)}"])
     worksheet.append([])
     headers = [
-        "Site",
-        "Devis",
-        "Date validation",
-        "Eleve",
-        "Origine",
-        "Kit",
-        "Ligne devis",
-        "Nature",
-        "Categorie catalogue",
-        "Nom partition / cahier / produit",
-        "Quantite",
-        "Produit ID",
+        _material_report_text(language, "site"),
+        _material_report_text(language, "quote"),
+        _material_report_text(language, "approval_date"),
+        _material_report_text(language, "student"),
+        _material_report_text(language, "source"),
+        _material_report_text(language, "kit"),
+        _material_report_text(language, "quote_line"),
+        _material_report_text(language, "kind"),
+        _material_report_text(language, "category"),
+        _material_report_text(language, "product"),
+        _material_report_text(language, "quantity"),
+        _material_report_text(language, "product_id"),
     ]
     worksheet.append(headers)
     for cell in worksheet[3]:
@@ -1109,18 +1204,18 @@ def _append_material_detail_sheet(workbook: Workbook, *, title: str, site: str, 
                 _text(row.get("quote_number")),
                 _text(row.get("approved_at"))[:10],
                 _text(row.get("student_name")),
-                _text(row.get("source")),
+                _material_report_value(language, row.get("source")),
                 _text(row.get("kit_title")),
                 _text(row.get("quote_line_title")),
-                _text(row.get("kind")),
+                _material_report_value(language, row.get("kind")),
                 _text(row.get("category_name")),
-                _text(row.get("product_title")),
+                _material_report_value(language, row.get("product_title")),
                 _quantity_cell_value(row.get("quantity")),
                 _text(row.get("product_id")),
             ]
         )
     if not filtered_rows:
-        worksheet.append([_material_report_site_label(site), "-", "-", "-", "-", "-", "-", "-", "-", "Aucune ligne", 0, ""])
+        worksheet.append([_material_report_site_label(site), "-", "-", "-", "-", "-", "-", "-", "-", _material_report_text(language, "none_line"), 0, ""])
     worksheet.freeze_panes = "A4"
     widths = [16, 24, 16, 28, 18, 34, 34, 16, 22, 42, 12, 38]
     for index, width in enumerate(widths, start=1):
@@ -1131,13 +1226,15 @@ def _render_material_forecast_report_xlsx(row: GeneratedReport) -> bytes:
     content = _json_object(row.content_json)
     summary_rows = [_json_object(item) for item in _json_list(content.get("summary_rows"))]
     detail_rows = [_json_object(item) for item in _json_list(content.get("details"))]
+    criteria = _json_object(row.criteria_json)
+    language = _material_report_language(criteria.get("ui_language"))
     workbook = Workbook()
     default_sheet = workbook.active
     workbook.remove(default_sheet)
-    _append_material_summary_sheet(workbook, title="Paris", site="PARIS", rows=summary_rows, generated_at=row.created_at)
-    _append_material_summary_sheet(workbook, title="Bar-le-Duc", site="BAR_LE_DUC", rows=summary_rows, generated_at=row.created_at)
-    _append_material_detail_sheet(workbook, title="Detail Paris", site="PARIS", rows=detail_rows)
-    _append_material_detail_sheet(workbook, title="Detail Bar-le-Duc", site="BAR_LE_DUC", rows=detail_rows)
+    _append_material_summary_sheet(workbook, title="Paris", site="PARIS", rows=summary_rows, generated_at=row.created_at, language=language)
+    _append_material_summary_sheet(workbook, title="Bar-le-Duc", site="BAR_LE_DUC", rows=summary_rows, generated_at=row.created_at, language=language)
+    _append_material_detail_sheet(workbook, title=_material_report_text(language, "sheet_detail", site="Paris"), site="PARIS", rows=detail_rows, language=language)
+    _append_material_detail_sheet(workbook, title=_material_report_text(language, "sheet_detail", site="Bar-le-Duc"), site="BAR_LE_DUC", rows=detail_rows, language=language)
     output = io.BytesIO()
     workbook.save(output)
     return output.getvalue()
@@ -2901,6 +2998,8 @@ def create_generated_report(
     report_type = payload.report_type.strip()
     report_label = REPORT_TYPE_LABELS.get(report_type, report_type)
     criteria = dict(payload.criteria or {})
+    if report_type == "material-forecast":
+        report_label = _material_report_text(criteria.get("ui_language"), "report_title")
     period_start = payload.period_start or _parse_report_date(criteria.get("received_from"))
     period_end = payload.period_end or _parse_report_date(criteria.get("received_to"))
     if period_start is not None and period_end is not None and period_start > period_end:

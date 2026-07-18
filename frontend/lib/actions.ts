@@ -16637,6 +16637,7 @@ function safeAdminReportingPath(formData: FormData, fallback = "/admin/reporting
 export async function createGeneratedReportAction(formData: FormData): Promise<void> {
   const token = currentToken();
   const returnTo = safeAdminReportingPath(formData);
+  const language = normalizeUiLanguage(String(formData.get("ui_language") ?? "fr"));
   if (!token) {
     redirect("/login?error_code=session_expired");
   }
@@ -16652,6 +16653,7 @@ export async function createGeneratedReportAction(formData: FormData): Promise<v
     year: String(formData.get("year") ?? "").trim(),
     legal_entity_id: String(formData.get("legal_entity_id") ?? "").trim(),
     file_format: String(formData.get("file_format") ?? "").trim(),
+    ui_language: language,
   };
   const result = await backendRequest<{ id: string }>(
     "/api/v1/admin/reports/generated",
@@ -16671,7 +16673,7 @@ export async function createGeneratedReportAction(formData: FormData): Promise<v
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
   revalidatePath("/admin/reporting");
-  redirect(appendQueryMessage(returnTo, "ok", "Rapport genere"));
+  redirect(appendQueryMessage(returnTo, "ok", uiText(language, "admin.reporting.generated_success")));
 }
 
 export async function deleteGeneratedReportAction(formData: FormData): Promise<void> {

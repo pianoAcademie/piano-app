@@ -5,7 +5,7 @@ import PortalBrandLockup from "../../../../components/portal-brand-lockup";
 import { startFormulaPurchaseLinkAction, submitPublicSessionCheckoutAction } from "../../../../lib/actions";
 import { getPortalToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
-import { localeForUiLanguage, normalizeUiLanguage, resolveAuthErrorMessage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
+import { localeForUiLanguage, normalizeUiLanguage, resolveAuthErrorMessage, resolveAuthOkMessage, translateBackendMessage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 import type {
   ClientSessionPurchaseCatalogOut,
   ClientSessionReservationMemberOptionOut,
@@ -361,7 +361,10 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                           <strong>{formula.name}</strong>
                           {formula.description ? <p className="muted">{formula.description}</p> : null}
                           <small className="muted">
-                            {[formula.formula_type, formula.frequency_label, ...formula.restriction_labels].filter(Boolean).join(" · ")}
+                            {[formula.formula_type, formula.frequency_label, ...formula.restriction_labels]
+                              .filter(Boolean)
+                              .map((item) => translateBackendMessage(queryLanguage, item))
+                              .join(" · ")}
                           </small>
                         </div>
                         <form action={startFormulaPurchaseLinkAction} className="client-session-formula-action">

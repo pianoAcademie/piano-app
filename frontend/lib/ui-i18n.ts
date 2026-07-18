@@ -50,6 +50,141 @@ const AUTH_OK_MESSAGE_KEYS: Record<string, string> = {
   offer_subscribed: "client.offer_subscribed",
 };
 
+const BACKEND_MESSAGE_TEXT: Record<string, Record<UiLanguage, string>> = {
+  "Le lien d'abonnement est reserve a la carte ou au prelevement SEPA": {
+    fr: "Le lien d'abonnement est reserve a la carte ou au prelevement SEPA",
+    en: "Subscription links are restricted to card or SEPA Direct Debit payments",
+  },
+  "Un abonnement doit utiliser la carte ou le prelevement SEPA": {
+    fr: "Un abonnement doit utiliser la carte ou le prelevement SEPA",
+    en: "A subscription must use card or SEPA Direct Debit",
+  },
+  "Stripe webhook secret must start with whsec_": {
+    fr: "Le secret du webhook Stripe doit commencer par whsec_",
+    en: "The Stripe webhook secret must start with whsec_",
+  },
+  "Explicit charge confirmation is required": {
+    fr: "La confirmation explicite de la facturation est requise",
+    en: "Explicit charge confirmation is required",
+  },
+  "Only monthly subscriptions can be charged now": {
+    fr: "Seuls les abonnements mensuels peuvent etre factures maintenant",
+    en: "Only monthly subscriptions can be charged now",
+  },
+  "Subscription is not active": {
+    fr: "L abonnement n est pas actif",
+    en: "The subscription is not active",
+  },
+  "Automatic renewal is disabled": {
+    fr: "Le renouvellement automatique est desactive",
+    en: "Automatic renewal is disabled",
+  },
+  "Subscription billing period is invalid": {
+    fr: "La periode de facturation de l abonnement est invalide",
+    en: "The subscription billing period is invalid",
+  },
+  "A billing cycle already exists for the current period": {
+    fr: "Un cycle de facturation existe deja pour la periode en cours",
+    en: "A billing cycle already exists for the current period",
+  },
+  "Unable to create subscription billing cycle": {
+    fr: "Impossible de creer le cycle de facturation de l abonnement",
+    en: "Unable to create the subscription billing cycle",
+  },
+  "Explicit refund confirmation is required": {
+    fr: "La confirmation explicite du remboursement est requise",
+    en: "Explicit refund confirmation is required",
+  },
+  "No refundable initial Payplug payment found": {
+    fr: "Aucun paiement initial Payplug remboursable n a ete trouve",
+    en: "No refundable initial Payplug payment was found",
+  },
+  "Payment attempt not found": {
+    fr: "Tentative de paiement introuvable",
+    en: "Payment attempt not found",
+  },
+  "No refundable Payplug payment found": {
+    fr: "Aucun paiement Payplug remboursable n a ete trouve",
+    en: "No refundable Payplug payment was found",
+  },
+  "Only a successful payment can be refunded": {
+    fr: "Seul un paiement reussi peut etre rembourse",
+    en: "Only a successful payment can be refunded",
+  },
+  "Le premier paiement Stripe doit etre confirme avant la creation du mandat SEPA": {
+    fr: "Le premier paiement Stripe doit etre confirme avant la creation du mandat SEPA",
+    en: "The first Stripe payment must be confirmed before creating the SEPA mandate",
+  },
+  "Le moyen de paiement sera demande a la prochaine echeance": {
+    fr: "Le moyen de paiement sera demande a la prochaine echeance",
+    en: "A payment method will be requested at the next renewal date",
+  },
+  "Abonnement introuvable": {
+    fr: "Abonnement introuvable",
+    en: "Subscription not found",
+  },
+  "Cet abonnement ne demande pas de mandat SEPA": {
+    fr: "Cet abonnement ne demande pas de mandat SEPA",
+    en: "This subscription does not require a SEPA mandate",
+  },
+  "Session Stripe invalide": {
+    fr: "Session Stripe invalide",
+    en: "Invalid Stripe session",
+  },
+  "Session Stripe non rattachee a cet abonnement": {
+    fr: "Session Stripe non rattachee a cet abonnement",
+    en: "The Stripe session is not linked to this subscription",
+  },
+  "Client Stripe non rattache a cet abonnement": {
+    fr: "Client Stripe non rattache a cet abonnement",
+    en: "The Stripe customer is not linked to this subscription",
+  },
+  "Mandat SEPA active": {
+    fr: "Mandat SEPA active",
+    en: "SEPA mandate activated",
+  },
+  "Mandat SEPA en attente": {
+    fr: "Mandat SEPA en attente",
+    en: "SEPA mandate pending",
+  },
+  "Invalid Stripe webhook signature": {
+    fr: "Signature du webhook Stripe invalide",
+    en: "Invalid Stripe webhook signature",
+  },
+  "Insufficient permissions": {
+    fr: "Autorisations insuffisantes",
+    en: "Insufficient permissions",
+  },
+  "Moyen de paiement non autorise pour cette formule": {
+    fr: "Moyen de paiement non autorise pour cette formule",
+    en: "This payment method is not allowed for this plan",
+  },
+  "Un abonnement payant doit utiliser la carte ou le prelevement SEPA": {
+    fr: "Un abonnement payant doit utiliser la carte ou le prelevement SEPA",
+    en: "A paid subscription must use card or SEPA Direct Debit",
+  },
+  "Zero-total bookings do not require a final invoice": {
+    fr: "Les reservations a montant nul ne necessitent pas de facture finale",
+    en: "Zero-total bookings do not require a final invoice",
+  },
+  "Stripe secret is not configured": {
+    fr: "Le secret Stripe n est pas configure",
+    en: "The Stripe secret is not configured",
+  },
+  "Stripe SEPA setup checkout created": {
+    fr: "La session de creation du mandat SEPA Stripe a ete creee",
+    en: "Stripe SEPA setup checkout created",
+  },
+  "Stripe SEPA setup checkout creation failed": {
+    fr: "La creation de la session de mandat SEPA Stripe a echoue",
+    en: "Stripe SEPA setup checkout creation failed",
+  },
+  "'approved_from' must be before 'approved_to'": {
+    fr: "La date de debut des validations doit preceder la date de fin",
+    en: "The approval start date must be before the end date",
+  },
+};
+
 const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
   fr: {
     "common.app_name": "Piano Academie",
@@ -96,6 +231,7 @@ const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
     "common.filters": "Filtres",
     "common.apply": "Appliquer",
     "common.reset": "Reinitialiser",
+    "common.back": "Retour",
     "common.previous": "Precedent",
     "common.next": "Suivant",
     "common.type": "Type",
@@ -2851,6 +2987,7 @@ const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
     "admin.reporting.min_children": "Nombre minimum d enfants",
     "admin.reporting.all": "Tous",
     "admin.reporting.generate": "Generer le reporting",
+    "admin.reporting.generated_success": "Rapport genere",
     "admin.reporting.download_pdf": "Telecharger PDF",
     "admin.reporting.generated_at": "Genere le {date}",
     "admin.reporting.report_not_available": "Ce type de reporting est pret dans le catalogue, mais son rendu detaille n est pas encore active.",
@@ -2877,6 +3014,15 @@ const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
     "admin.reporting.no_statement": "Aucun releve.",
     "admin.reporting.unable_to_load": "Impossible de charger.",
     "admin.reporting.session_status": "Statut session: {status}",
+    "admin.reporting.material_forecast_label": "Approvisionnement partitions, cahiers et jeux de notes",
+    "admin.reporting.material_forecast_description": "Partitions, cahiers de solfege et jeux de notes attendus a partir des devis approuves, separes Paris et Bar-le-Duc.",
+    "admin.reporting.material_forecast_filter_hint": "Annee scolaire, validations de devis, eleve ou famille. Export Excel avec attendu, stock et a commander.",
+    "admin.reporting.material_forecast_search_placeholder": "Nom, email, numero de devis...",
+    "admin.reporting.material_forecast_approved_from": "Validations depuis",
+    "admin.reporting.material_forecast_approved_to": "Validations jusqu au",
+    "admin.reporting.material_forecast_note": "Note",
+    "admin.reporting.material_forecast_note_placeholder": "Note interne facultative",
+    "admin.reporting.material_forecast_export_help": "Le fichier Excel contient les partitions, cahiers de solfege et jeux de notes : synthese Paris, synthese Bar-le-Duc, puis detail par devis.",
     "admin.jobs.title": "Monitoring des jobs",
     "admin.jobs.subtitle": "Supervision des executions, erreurs et notifications traitees.",
     "admin.jobs.backend_error": "Erreur backend",
@@ -6268,6 +6414,7 @@ const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
     "common.filters": "Filters",
     "common.apply": "Apply",
     "common.reset": "Reset",
+    "common.back": "Back",
     "common.previous": "Previous",
     "common.next": "Next",
     "common.type": "Type",
@@ -9023,6 +9170,7 @@ const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
     "admin.reporting.min_children": "Minimum children",
     "admin.reporting.all": "All",
     "admin.reporting.generate": "Generate report",
+    "admin.reporting.generated_success": "Report generated",
     "admin.reporting.download_pdf": "Download PDF",
     "admin.reporting.generated_at": "Generated on {date}",
     "admin.reporting.report_not_available": "This report type is listed in the catalog, but its detailed rendering is not active yet.",
@@ -9049,6 +9197,15 @@ const UI_TEXT: Record<UiLanguage, Record<string, string>> = {
     "admin.reporting.no_statement": "No statement.",
     "admin.reporting.unable_to_load": "Unable to load.",
     "admin.reporting.session_status": "Session status: {status}",
+    "admin.reporting.material_forecast_label": "Sheet music, workbooks, and note-card supplies",
+    "admin.reporting.material_forecast_description": "Sheet music, solfeggio workbooks, and note-card sets expected from approved quotes, split between Paris and Bar-le-Duc.",
+    "admin.reporting.material_forecast_filter_hint": "School year, quote approval dates, student, or family. Excel export with expected quantity, stock, and quantity to order.",
+    "admin.reporting.material_forecast_search_placeholder": "Name, email, quote number...",
+    "admin.reporting.material_forecast_approved_from": "Approved from",
+    "admin.reporting.material_forecast_approved_to": "Approved through",
+    "admin.reporting.material_forecast_note": "Note",
+    "admin.reporting.material_forecast_note_placeholder": "Optional internal note",
+    "admin.reporting.material_forecast_export_help": "The Excel file contains sheet music, solfeggio workbooks, and note-card sets: a Paris summary, a Bar-le-Duc summary, then quote-level details.",
     "admin.jobs.title": "Job monitoring",
     "admin.jobs.subtitle": "Monitor runs, errors, and processed notifications.",
     "admin.jobs.backend_error": "Backend error",
@@ -12414,9 +12571,90 @@ export function uiText(language: UiLanguage, key: string, values?: TranslationVa
   return template.replace(/\{(\w+)\}/g, (_match, token) => String(values[token] ?? ""));
 }
 
+export function translateBackendMessage(language: UiLanguage, value: string | null | undefined): string {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return raw;
+  }
+
+  const exact = BACKEND_MESSAGE_TEXT[raw];
+  if (exact) {
+    return exact[language];
+  }
+
+  let match = raw.match(/^Restriction formule depassee: (\d+) reservations actives maximum$/);
+  if (match) {
+    return language === "en"
+      ? `Plan restriction exceeded: ${match[1]} active bookings maximum`
+      : `Restriction formule depassee : ${match[1]} reservations actives maximum`;
+  }
+  match = raw.match(/^Restriction formule depassee: (\d+) cours max par (.+)$/);
+  if (match) {
+    const periodByFrenchLabel: Record<string, string> = {
+      jour: "day",
+      semaine: "week",
+      mois: "month",
+      "mois glissant": "rolling month",
+      semestre: "semester",
+      periode: "period",
+    };
+    return language === "en"
+      ? `Plan restriction exceeded: ${match[1]} lessons maximum per ${periodByFrenchLabel[match[2]] || match[2]}`
+      : `Restriction formule depassee : ${match[1]} cours maximum par ${match[2]}`;
+  }
+  match = raw.match(/^(\d+) reservations actives maximum \((.+)\)$/);
+  if (match) {
+    const scope = match[2] === "toutes activites" && language === "en" ? "all activities" : match[2];
+    return language === "en"
+      ? `${match[1]} active bookings maximum (${scope})`
+      : `${match[1]} reservations actives maximum (${scope})`;
+  }
+  match = raw.match(/^(\d+) \/ (reservations actives|jour|semaine|mois|mois glissant|semestre) \((.+)\)$/);
+  if (match) {
+    const periodByFrenchLabel: Record<string, string> = {
+      "reservations actives": "active bookings",
+      jour: "day",
+      semaine: "week",
+      mois: "month",
+      "mois glissant": "rolling month",
+      semestre: "semester",
+    };
+    const scope = match[3] === "toutes activites" && language === "en" ? "all activities" : match[3];
+    return language === "en"
+      ? `${match[1]} per ${periodByFrenchLabel[match[2]] || match[2]} (${scope})`
+      : raw;
+  }
+  match = raw.match(/^Expected amount mismatch: actual charge is (.+)$/);
+  if (match) {
+    return language === "en"
+      ? raw
+      : `Le montant attendu ne correspond pas : le montant facture est de ${match[1]}`;
+  }
+  match = raw.match(/^Payplug refund failed: (.+)$/);
+  if (match) {
+    return language === "en"
+      ? `Payplug refund failed: ${match[1]}`
+      : `Le remboursement Payplug a echoue : ${match[1]}`;
+  }
+  match = raw.match(/^Impossible de creer le mandat SEPA \((.+)\)$/);
+  if (match) {
+    return language === "en"
+      ? `Unable to create the SEPA mandate (${match[1]})`
+      : raw;
+  }
+  match = raw.match(/^Transformation bloquee : (.+) est complet \((\d+)\/(\d+)\)\.$/);
+  if (match) {
+    return language === "en"
+      ? `Transformation blocked: ${match[1]} is full (${match[2]}/${match[3]}).`
+      : raw;
+  }
+
+  return raw;
+}
+
 export function resolveAuthErrorMessage(rawError: string, errorCode: string, language: UiLanguage): string {
   if (rawError) {
-    return rawError;
+    return translateBackendMessage(language, rawError);
   }
   const messageKey = AUTH_ERROR_MESSAGE_KEYS[errorCode.trim().toLowerCase()];
   return messageKey ? uiText(language, messageKey) : "";

@@ -223,6 +223,16 @@ function normalizeName(value: string): string {
 }
 
 function reportSearchToken(definition: ReportDefinition): string {
+  if (definition.type === "material-forecast") {
+    return normalizeName([
+      definition.label,
+      definition.description,
+      definition.filterHint,
+      uiText("en", "admin.reporting.material_forecast_label"),
+      uiText("en", "admin.reporting.material_forecast_description"),
+      uiText("en", "admin.reporting.material_forecast_filter_hint"),
+    ].join(" "));
+  }
   return normalizeName(`${definition.label} ${definition.description} ${definition.filterHint}`);
 }
 
@@ -246,6 +256,12 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
   }
   const language = normalizeUiLanguage(meResult.data.preferred_language);
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const reportLabel = (definition: ReportDefinition) => definition.type === "material-forecast"
+    ? t("admin.reporting.material_forecast_label")
+    : definition.label;
+  const reportFilterHint = (definition: ReportDefinition) => definition.type === "material-forecast"
+    ? t("admin.reporting.material_forecast_filter_hint")
+    : definition.filterHint;
   const createMode = firstParam(searchParams, "create") === "1";
   const reportType = selectedReportType(searchParams);
   const reportDefinition = reportType ? REPORT_DEFINITIONS.find((item) => item.type === reportType) || null : null;
@@ -320,7 +336,7 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
               <div>
                 <h2 className="modal-title">Creer un rapport</h2>
                 <p className="muted">
-                  {reportDefinition ? reportDefinition.filterHint : "Selectionnez le type de rapport a generer."}
+                  {reportDefinition ? reportFilterHint(reportDefinition) : "Selectionnez le type de rapport a generer."}
                 </p>
               </div>
             </header>
@@ -339,7 +355,7 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
                       <option value="">Selectionner...</option>
                       {reportSelectionOptions.map((definition) => (
                         <option key={definition.type} value={definition.type}>
-                          {definition.label}
+                          {reportLabel(definition)}
                         </option>
                       ))}
                     </select>
@@ -423,6 +439,7 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
                 <form className="grid cols-2 config-form-grid" action={createGeneratedReportAction}>
                   <input type="hidden" name="report_type" value={reportDefinition.type} />
                   <input type="hidden" name="return_to" value="/admin/reporting" />
+                  <input type="hidden" name="ui_language" value={language} />
                   <input type="hidden" name="status" value="approved" />
                   <input type="hidden" name="file_format" value="xlsx" />
                   <label>
@@ -437,26 +454,26 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
                   </label>
                   <label>
                     {t("admin.reporting.student_or_prospect")}
-                    <input name="q" placeholder="Nom, email, numero de devis..." defaultValue={reportFilterValue(searchParams, "q")} />
+                    <input name="q" placeholder={t("admin.reporting.material_forecast_search_placeholder")} defaultValue={reportFilterValue(searchParams, "q")} />
                   </label>
                   <label>
-                    Validations depuis
+                    {t("admin.reporting.material_forecast_approved_from")}
                     <input type="date" name="received_from" defaultValue={reportFilterValue(searchParams, "received_from")} />
                   </label>
                   <label>
-                    Validations jusqu au
+                    {t("admin.reporting.material_forecast_approved_to")}
                     <input type="date" name="received_to" defaultValue={reportFilterValue(searchParams, "received_to")} />
                   </label>
                   <label className="span-2">
-                    Note
-                    <input name="note" placeholder="Note interne facultative" />
+                    {t("admin.reporting.material_forecast_note")}
+                    <input name="note" placeholder={t("admin.reporting.material_forecast_note_placeholder")} />
                   </label>
                   <p className="muted span-2">
-                    Le fichier Excel contient partitions, cahiers de solfege et jeux de notes : synthese Paris, synthese Bar-le-Duc, puis detail par devis.
+                    {t("admin.reporting.material_forecast_export_help")}
                   </p>
                   <div className="form-actions span-2">
                     <Link className="button-link" href={withParams({ create: "1" })}>
-                      Retour
+                      {t("common.back")}
                     </Link>
                     <button type="submit">{t("admin.reporting.generate")}</button>
                   </div>

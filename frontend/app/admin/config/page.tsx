@@ -67,7 +67,7 @@ import type {
   UserOut,
   QuoteTemplateVariableOut,
 } from "../../../lib/types";
-import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
+import { localeForUiLanguage, normalizeUiLanguage, translateBackendMessage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -1146,14 +1146,14 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
       </section>
 
       {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
-      {errorMessage ? <section className="flash-err">{errorMessage}</section> : null}
+      {errorMessage ? <section className="flash-err">{translateBackendMessage(language, errorMessage)}</section> : null}
       {loadErrors.length > 0 ? (
         <section className="card">
           <h3>{t("admin.config.loading_errors")}</h3>
           <ul className="config-error-list">
             {loadErrors.map((message) => (
               <li key={message} className="flash-err">
-                {message}
+                {translateBackendMessage(language, message)}
               </li>
             ))}
           </ul>

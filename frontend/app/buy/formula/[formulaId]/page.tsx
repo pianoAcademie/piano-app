@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { startFormulaPurchaseLinkAction } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
-import { localeForUiLanguage, normalizeUiLanguage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
+import { localeForUiLanguage, normalizeUiLanguage, resolveAuthOkMessage, translateBackendMessage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
 import type { PublicFormulaPurchaseSummaryOut } from "../../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -101,7 +101,7 @@ export default async function FormulaPurchaseLandingPage({
                     <h3>{t("public_formula_checkout.restrictions_title")}</h3>
                     <ul className="public-buy-list">
                       {summaryResult.data.restriction_labels.map((item) => (
-                        <li key={item}>{item}</li>
+                        <li key={item}>{translateBackendMessage(language, item)}</li>
                       ))}
                     </ul>
                   </section>

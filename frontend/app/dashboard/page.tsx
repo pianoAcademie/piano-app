@@ -64,7 +64,7 @@ import SectionCard from "../../components/ui-client/section-card";
 import TransactionRow from "../../components/ui-client/transaction-row";
 import UpcomingLessonRow from "../../components/ui-client/upcoming-lesson-row";
 import UrgentPayCard from "../../components/ui-client/urgent-pay-card";
-import { localeForUiLanguage, normalizeUiLanguage, resolveAuthErrorMessage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
+import { localeForUiLanguage, normalizeUiLanguage, resolveAuthErrorMessage, resolveAuthOkMessage, translateBackendMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type AgendaView = "agenda" | "week" | "day";
@@ -1018,7 +1018,7 @@ function resolvePortalErrorMessage(
   t: (key: string, values?: Record<string, string | number>) => string,
 ): string {
   if (rawError) {
-    return rawError;
+    return translateBackendMessage(language, rawError);
   }
   const commonMessage = resolveAuthErrorMessage("", errorCode, language);
   if (commonMessage) {
@@ -3883,7 +3883,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 </div>
                                 {formula.description ? <p className="muted">{formula.description}</p> : null}
                                 <small className="muted">
-                                  {[formula.formula_type, formula.frequency_label, ...formula.restriction_labels].filter(Boolean).join(" · ")}
+                                  {[formula.formula_type, formula.frequency_label, ...formula.restriction_labels]
+                                    .filter(Boolean)
+                                    .map((item) => translateBackendMessage(language, item))
+                                    .join(" · ")}
                                 </small>
                               </div>
                               <form action={startFormulaPurchaseLinkAction} className="client-session-formula-action">
@@ -3965,7 +3968,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     </div>
                                     {formula.description ? <p className="muted">{formula.description}</p> : null}
                                     <small className="muted">
-                                      {[formula.formula_type, formula.frequency_label, ...formula.restriction_labels].filter(Boolean).join(" · ")}
+                                      {[formula.formula_type, formula.frequency_label, ...formula.restriction_labels]
+                                        .filter(Boolean)
+                                        .map((item) => translateBackendMessage(language, item))
+                                        .join(" · ")}
                                     </small>
                                   </div>
                                   <form action={startFormulaPurchaseLinkAction} className="client-session-formula-action">
