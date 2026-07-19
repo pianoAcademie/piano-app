@@ -117,6 +117,7 @@ type FamilyBookingRow = {
     start_at_utc: string;
     end_at_utc: string;
     status: string;
+    location_name?: string | null;
   };
 };
 
@@ -1484,6 +1485,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           start_at_utc: row.session.start_at_utc,
           end_at_utc: row.session.end_at_utc,
           status: row.session.status,
+          location_name: null,
         },
       }));
 
@@ -1698,14 +1700,67 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedOwnerSubscriptions = subscriptionsByOwner.get(selectedPurchaseOwner) ?? [];
   const confirmPlan = confirmPlanId ? plans.find((plan) => plan.id === confirmPlanId) ?? null : null;
   const selectedPurchaseOwnerProfile = members.find((member) => member.id === selectedPurchaseOwner) ?? null;
-  const visibleSelectedOwnerSubscriptions = selectedOwnerSubscriptions.filter(
-    (sub) => isSubscriptionVisibleInPortal(sub, now),
-  );
+  const visibleOfferSubscriptions = subscriptions
+    .filter((sub) => selectedMemberFilter === "ALL" || sub.owner_client_id === selectedMemberFilter)
+    .filter((sub) => isSubscriptionVisibleInPortal(sub, now));
   const onlinePurchaseCount = plans.length + onlineProducts.length;
   const selectedOfferSubscription = subscriptions.find((sub) => sub.id === selectedOfferDetailId) ?? null;
   const selectedOfferInvoices = selectedOfferSubscription
-    ? invoiceRows.filter((invoice) => invoice.owner_client_id === selectedOfferSubscription.owner_client_id)
+    ? baseInvoiceRows.filter(
+        (invoice) => Boolean(selectedOfferSubscription.offer_quote_id) && invoice.source_quote_id === selectedOfferSubscription.offer_quote_id,
+      )
     : [];
+  const selectedOfferBookings = selectedOfferSubscription
+    ? allBookings
+        .filter((booking) => booking.client_plan_subscription_id === selectedOfferSubscription.id)
+        .filter((booking) => normalizeStatus(booking.status) !== "CANCELLED")
+        .sort((a, b) => a.session.start_at_utc.localeCompare(b.session.start_at_utc))
+    : [];
+  const selectedOfferActivityGroups = (() => {
+    const groups = new Map<string, {
+      title: string;
+      locationName: string | null;
+      firstAt: string;
+      lastAt: string;
+      startAt: string;
+      endAt: string;
+      count: number;
+    }>();
+    for (const booking of selectedOfferBookings) {
+      const start = safeDate(booking.session.start_at_utc);
+      const end = safeDate(booking.session.end_at_utc);
+      if (!start || !end) {
+        continue;
+      }
+      const localScheduleKey = new Intl.DateTimeFormat("en-GB", {
+        timeZone: timezone,
+        weekday: "long",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).format(start);
+      const key = `${booking.session.title}|${localScheduleKey}|${booking.session.location_name || ""}`;
+      const existing = groups.get(key);
+      if (existing) {
+        existing.lastAt = booking.session.start_at_utc;
+        existing.count += 1;
+      } else {
+        groups.set(key, {
+          title: booking.session.title,
+          locationName: booking.session.location_name || null,
+          firstAt: booking.session.start_at_utc,
+          lastAt: booking.session.start_at_utc,
+          startAt: booking.session.start_at_utc,
+          endAt: booking.session.end_at_utc,
+          count: 1,
+        });
+      }
+    }
+    return Array.from(groups.values());
+  })();
+  const paidOfferDeposits = subscriptions
+    .filter((sub) => selectedMemberFilter === "ALL" || sub.owner_client_id === selectedMemberFilter)
+    .filter((sub) => normalizeStatus(sub.offer_deposit_status || "") === "PAID" && Number(sub.offer_deposit_amount_ttc || 0) > 0);
   const homeSubscriptions = subscriptions
     .filter((sub) => selectedMemberFilter === "ALL" || sub.owner_client_id === selectedMemberFilter)
     .filter((sub) => isSubscriptionVisibleInPortal(sub, now))
@@ -2938,10 +2993,18 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           const linkedPlan = plans.find((plan) => plan.id === sub.plan.id);
                           const subscriptionPrice = planDisplayPrice(linkedPlan) ?? sub.plan.price_ttc;
                           const subscriptionCurrency = linkedPlan?.currency_code ?? sub.plan.currency_code ?? me.preferred_currency;
+                          const offerBookings = allBookings.filter(
+                            (booking) => booking.client_plan_subscription_id === sub.id && normalizeStatus(booking.status) !== "CANCELLED",
+                          );
+                          const offerActivityCount = new Set(offerBookings.map((booking) => booking.session.title)).size;
                           const detailLine = isPack
                             ? t("client.remaining_credits", { remaining: remainingCredits, initial: initialCredits || "?" })
-                            : `${toMoney(sub.plan.kind === "FORFAIT" ? "0" : subscriptionPrice, subscriptionCurrency, language)} ${language === "en" ? "/ period" : "/ periode"} · ${paymentMethodLabel(sub.billing_method_code, language)}`;
-                          const expiryLine = sub.ends_at
+                            : offerActivityCount > 0
+                              ? t("client.offer_program_summary", { activities: offerActivityCount, sessions: offerBookings.length })
+                              : `${toMoney(sub.plan.kind === "FORFAIT" ? "0" : subscriptionPrice, subscriptionCurrency, language)} ${language === "en" ? "/ period" : "/ periode"} · ${paymentMethodLabel(sub.billing_method_code, language)}`;
+                          const expiryLine = sub.offer_deposit_amount_ttc && normalizeStatus(sub.offer_deposit_status || "") === "PAID"
+                            ? t("client.deposit_paid_amount", { amount: toMoney(sub.offer_deposit_amount_ttc, sub.offer_currency || subscriptionCurrency, language) })
+                            : sub.ends_at
                             ? t("client.expiration", { date: formatDate(sub.ends_at, language) })
                             : sub.next_payment_at
                               ? t("client.next_debit", { date: formatDate(sub.next_payment_at, language) })
@@ -4466,7 +4529,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 <p className="muted">{t("client.offers_help")}</p>
                 <div className="client-offers-summary">
                   <a className="client-offers-summary-tile" href="#client-owned-purchases">
-                    <strong>{visibleSelectedOwnerSubscriptions.length}</strong>
+                    <strong>{visibleOfferSubscriptions.length}</strong>
                     <span>{t("client.active_subscriptions_and_packs")}</span>
                   </a>
                   <a className="client-offers-summary-tile" href="#client-offer-catalog">
@@ -4548,13 +4611,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 <Card>
                   <div className="row spread">
                     <h3>{t("client.active_subscriptions_and_packs")}</h3>
-                    <span className="badge">{visibleSelectedOwnerSubscriptions.length}</span>
+                    <span className="badge">{visibleOfferSubscriptions.length}</span>
                   </div>
-                  {visibleSelectedOwnerSubscriptions.length === 0 ? (
+                  {visibleOfferSubscriptions.length === 0 ? (
                     <p className="muted">{t("client.no_active_subscription_preview")}</p>
                   ) : (
                     <div className="list client-forfait-card-list">
-                      {visibleSelectedOwnerSubscriptions.map((sub) => {
+                      {visibleOfferSubscriptions.map((sub) => {
                         const isPack = normalizeStatus(sub.plan.kind) === "PACK";
                         const initialCredits = sub.credits_initial ?? 0;
                         const remainingCredits = sub.credits_remaining ?? 0;
@@ -4563,6 +4626,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         const linkedPlan = plans.find((plan) => plan.id === sub.plan.id);
                         const planPrice = planDisplayPrice(linkedPlan) ?? sub.plan.price_ttc;
                         const planCurrency = linkedPlan?.currency_code ?? sub.plan.currency_code ?? me.preferred_currency;
+                        const offerBookings = allBookings.filter(
+                          (booking) => booking.client_plan_subscription_id === sub.id && normalizeStatus(booking.status) !== "CANCELLED",
+                        );
+                        const activityCount = new Set(offerBookings.map((booking) => booking.session.title)).size;
                         return (
                           <article key={`forfait-card-${sub.id}`} className="item client-forfait-card">
                             <div className="row spread">
@@ -4572,6 +4639,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               </div>
                               <span className="badge">{planKindLabel(sub.plan.kind, language)}</span>
                             </div>
+                            {activityCount > 0 ? (
+                              <p className="client-offer-program-preview">
+                                {t("client.offer_program_summary", { activities: activityCount, sessions: offerBookings.length })}
+                              </p>
+                            ) : null}
+                            {sub.offer_deposit_amount_ttc && normalizeStatus(sub.offer_deposit_status || "") === "PAID" ? (
+                              <p className="client-offer-deposit-preview">
+                                <span aria-hidden="true">✓</span>
+                                {t("client.deposit_paid_amount", {
+                                  amount: toMoney(sub.offer_deposit_amount_ttc, sub.offer_currency || planCurrency, language),
+                                })}
+                              </p>
+                            ) : null}
                             <div className="row spread">
                               <span className={`status-pill ${statusClass(sub.status)}`}>{statusLabel(sub.status, language)}</span>
                               <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: sub.id })}>
@@ -4587,7 +4667,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               </>
                             ) : (
                               <p className="muted">
-                                {toMoney(sub.plan.kind === "FORFAIT" ? "0" : planPrice, planCurrency, language)} {t("client.per_month_suffix")} · {paymentMethodLabel(sub.billing_method_code, language)}
+                                {sub.offer_total_ttc
+                                  ? t("client.offer_total_amount", { amount: toMoney(sub.offer_total_ttc, sub.offer_currency || planCurrency, language) })
+                                  : `${toMoney(sub.plan.kind === "FORFAIT" ? "0" : planPrice, planCurrency, language)} ${t("client.per_month_suffix")}`} · {paymentMethodLabel(sub.billing_method_code, language)}
                               </p>
                             )}
                             <p className="muted">
@@ -4602,96 +4684,128 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               </section>
 
               {selectedOfferSubscription ? (
-                <Card>
-                  <div className="row spread">
-                    <h3>{t("client.offer_detail_title")}</h3>
-                    <a className="reset-link" href={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: null })}>
-                      {t("common.close")}
-                    </a>
-                  </div>
-                  <div className="list">
-                    <article className="item">
-                      <h4>{t("client.contract")}</h4>
-                      <p className="muted">
-                        {t("client.identifier")}: {compactId(selectedOfferSubscription.id)}{" "}
-                        <CopyIdButton value={selectedOfferSubscription.id} label={t("common.copy")} />
-                      </p>
-                    </article>
-                    <article className="item">
-                      <h4>{t("client.formula")}</h4>
-                      <p className="muted">{selectedOfferSubscription.plan.name} · {planKindLabel(selectedOfferSubscription.plan.kind, language)}</p>
-                    </article>
-                    <article className="item">
-                      <h4>{t("client.price")}</h4>
-                      <p className="muted">
-                        {toMoney(
-                          selectedOfferSubscription.plan.kind === "FORFAIT"
-                            ? "0"
-                            : planDisplayPrice(plans.find((plan) => plan.id === selectedOfferSubscription.plan.id)) ?? selectedOfferSubscription.plan.price_ttc,
-                          plans.find((plan) => plan.id === selectedOfferSubscription.plan.id)?.currency_code ?? selectedOfferSubscription.plan.currency_code ?? me.preferred_currency,
-                         language)}{" "}
-                        {language === "en" ? "/ period" : "/ periode"}
-                      </p>
-                    </article>
-                    <article className="item">
-                      <h4>{t("client.payment_method")}</h4>
-                      <p className="muted">{paymentMethodLabel(selectedOfferSubscription.billing_method_code, language)}</p>
-                      {selectedOfferSubscription.payment_method_setup_required ? (
-                        <p className="muted">{t("client.payment_method_will_be_requested")}</p>
-                      ) : null}
-                    </article>
-                    <article className="item">
-                      <h4>{t("client.access_restrictions")}</h4>
-                      <p className="muted">
-                        {selectedOfferSubscription.entitlement_course_type_names.length > 0
-                          ? t("client.allowed_activities_count", { count: selectedOfferSubscription.entitlement_course_type_names.length })
-                          : t("client.no_declarative_restriction")}
-                      </p>
-                      <div className="client-chip-row">
-                        {selectedOfferSubscription.entitlement_course_type_names.slice(0, 8).map((name) => (
-                          <span key={`restriction-${selectedOfferSubscription.id}-${name}`} className="badge">
-                            {name}
-                          </span>
-                        ))}
-                        {selectedOfferSubscription.entitlement_course_type_names.length > 8 ? (
-                          <span className="badge">+{selectedOfferSubscription.entitlement_course_type_names.length - 8}</span>
-                        ) : null}
+                <Card className="client-offer-detail">
+                  <header className="client-offer-detail-hero">
+                    <div>
+                      <p className="client-offer-detail-kicker">{t("client.your_enrollment")}</p>
+                      <h2>{selectedOfferSubscription.offer_school_year_label || selectedOfferSubscription.plan.name}</h2>
+                      <p>{selectedOfferSubscription.owner_display_name} · {selectedOfferSubscription.plan.name}</p>
+                    </div>
+                    <div className="client-offer-detail-hero-actions">
+                      <span className={`status-pill ${statusClass(selectedOfferSubscription.status)}`}>{statusLabel(selectedOfferSubscription.status, language)}</span>
+                      <a className="reset-link" href={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: null })}>
+                        {t("common.close")}
+                      </a>
+                    </div>
+                  </header>
+
+                  <section className="client-offer-detail-section">
+                    <div className="client-offer-section-heading">
+                      <div>
+                        <p className="client-offer-section-kicker">{t("client.your_program")}</p>
+                        <h3>{t("client.scheduled_activities")}</h3>
                       </div>
-                    </article>
-                    <article className="item">
-                      <h4>{t("client.linked_invoices")}</h4>
-                      {selectedOfferInvoices.length === 0 ? (
-                        <p className="muted">{t("client.no_linked_invoices")}</p>
-                      ) : (
-                        <div className="list client-mobile-list">
-                          {selectedOfferInvoices.slice(0, 6).map((invoice) => (
-                            <ListRow
-                              key={`offer-invoice-${invoice.id}`}
-                              title={invoice.invoice_number}
-                              subtitle={`${formatDate(invoice.issued_at, language)} · ${toMoney(invoice.total_incl_vat, invoice.currency, language)}`}
-                              right={
-                                <div className="row">
-                                  <a
-                                    className="mode-link"
-                                    href={clientInvoiceHref(invoice.id, { inline: true })}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                  >
-                                    {t("common.view")}
-                                  </a>
-                                  {invoice.download_url ? (
-                                    <a className="mode-link" href={invoice.download_url}>
-                                      PDF
-                                    </a>
-                                  ) : null}
-                                </div>
-                              }
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </article>
-                  </div>
+                      <span className="badge">{t("client.offer_program_summary", { activities: selectedOfferActivityGroups.length, sessions: selectedOfferBookings.length })}</span>
+                    </div>
+                    {selectedOfferActivityGroups.length === 0 ? (
+                      <p className="muted">{t("client.no_scheduled_activity")}</p>
+                    ) : (
+                      <div className="client-offer-activity-grid">
+                        {selectedOfferActivityGroups.map((activity) => (
+                          <article key={`${activity.title}-${activity.startAt}`} className="client-offer-activity-card">
+                            <h4>{activity.title}</h4>
+                            <dl>
+                              <div>
+                                <dt>{t("client.schedule")}</dt>
+                                <dd>{new Intl.DateTimeFormat(localeForUiLanguage(language), { timeZone: timezone, weekday: "long", hour: "2-digit", minute: "2-digit" }).format(new Date(activity.startAt))} – {formatTimeInTimezone(activity.endAt, timezone, language)}</dd>
+                              </div>
+                              <div>
+                                <dt>{t("common.period")}</dt>
+                                <dd>{formatDateInTimezone(activity.firstAt, timezone, language)} – {formatDateInTimezone(activity.lastAt, timezone, language)}</dd>
+                              </div>
+                              <div>
+                                <dt>{t("client.location")}</dt>
+                                <dd>{activity.locationName || t("client.location_not_specified")}</dd>
+                              </div>
+                              <div>
+                                <dt>{t("client.sessions")}</dt>
+                                <dd>{activity.count}</dd>
+                              </div>
+                            </dl>
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="client-offer-detail-section">
+                    <div className="client-offer-section-heading">
+                      <div>
+                        <p className="client-offer-section-kicker">{t("client.included_with_offer")}</p>
+                        <h3>{t("client.selected_options")}</h3>
+                      </div>
+                    </div>
+                    {(selectedOfferSubscription.offer_options ?? []).length === 0 ? (
+                      <p className="muted">{t("client.no_selected_option")}</p>
+                    ) : (
+                      <div className="client-offer-option-list">
+                        {(selectedOfferSubscription.offer_options ?? []).map((option) => (
+                          <article key={option.id} className="client-offer-option-card">
+                            <span className="client-offer-option-check" aria-hidden="true">✓</span>
+                            <div>
+                              <h4>{option.title}</h4>
+                              {option.description ? <p className="muted">{option.description}</p> : null}
+                            </div>
+                            {Number(option.amount_ttc) > 0 ? <strong>{toMoney(option.amount_ttc, selectedOfferSubscription.offer_currency || me.preferred_currency, language)}</strong> : null}
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+
+                  <section className="client-offer-detail-section client-offer-finance-section">
+                    <div className="client-offer-section-heading">
+                      <div>
+                        <p className="client-offer-section-kicker">{t("client.payment_tracking")}</p>
+                        <h3>{t("client.your_financing")}</h3>
+                      </div>
+                      <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "finance", finance_view: "invoices", member_id: selectedOfferSubscription.owner_client_id })}>{t("client.open_finance")}</a>
+                    </div>
+                    <div className="client-offer-finance-grid">
+                      <div>
+                        <span>{t("client.offer_total")}</span>
+                        <strong>{selectedOfferSubscription.offer_total_ttc ? toMoney(selectedOfferSubscription.offer_total_ttc, selectedOfferSubscription.offer_currency || me.preferred_currency, language) : "—"}</strong>
+                      </div>
+                      <div className={normalizeStatus(selectedOfferSubscription.offer_deposit_status || "") === "PAID" ? "is-paid" : ""}>
+                        <span>{t("client.deposit")}</span>
+                        <strong>{selectedOfferSubscription.offer_deposit_amount_ttc ? toMoney(selectedOfferSubscription.offer_deposit_amount_ttc, selectedOfferSubscription.offer_currency || me.preferred_currency, language) : "—"}</strong>
+                        {normalizeStatus(selectedOfferSubscription.offer_deposit_status || "") === "PAID" ? <small>✓ {t("client.paid")}</small> : null}
+                      </div>
+                      <div>
+                        <span>{t("client.remaining_amount")}</span>
+                        <strong>{selectedOfferSubscription.offer_remaining_ttc ? toMoney(selectedOfferSubscription.offer_remaining_ttc, selectedOfferSubscription.offer_currency || me.preferred_currency, language) : "—"}</strong>
+                      </div>
+                    </div>
+                    {selectedOfferInvoices.length > 0 ? (
+                      <div className="client-offer-invoices">
+                        {selectedOfferInvoices.map((invoice) => (
+                          <a key={invoice.id} href={clientInvoiceHref(invoice.id, { inline: true })} target="_blank" rel="noreferrer">
+                            <span>{invoice.invoice_kind === "DEPOSIT" ? t("client.deposit_invoice") : t("client.finance_source_invoice")} · {invoice.invoice_number}</span>
+                            <strong>{toMoney(invoice.total_incl_vat, invoice.currency, language)}</strong>
+                          </a>
+                        ))}
+                      </div>
+                    ) : null}
+                  </section>
+
+                  <details className="client-offer-technical">
+                    <summary>{t("client.technical_information")}</summary>
+                    <div>
+                      <p>{t("client.contract")}: {compactId(selectedOfferSubscription.id)} <CopyIdButton value={selectedOfferSubscription.id} label={t("common.copy")} /></p>
+                      {selectedOfferSubscription.offer_quote_number ? <p>{t("client.quote")}: {selectedOfferSubscription.offer_quote_number}</p> : null}
+                      <p>{t("client.payment_method")}: {paymentMethodLabel(selectedOfferSubscription.billing_method_code, language)}</p>
+                    </div>
+                  </details>
                 </Card>
               ) : null}
 
@@ -4843,6 +4957,30 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     helper={t("client.unsettled_movements")}
                   />
                 </section>
+                {paidOfferDeposits.length > 0 ? (
+                  <section className="client-finance-deposits" aria-label={t("client.paid_deposits")}>
+                    <div className="client-finance-deposits-heading">
+                      <div>
+                        <p className="client-offer-section-kicker">{t("client.payments_received")}</p>
+                        <h3>{t("client.paid_deposits")}</h3>
+                      </div>
+                      <span className="status-pill success">✓ {t("client.paid")}</span>
+                    </div>
+                    {paidOfferDeposits.map((sub) => (
+                      <article key={`finance-deposit-${sub.id}`}>
+                        <div>
+                          <strong>{t("client.deposit_for", { name: sub.owner_display_name })}</strong>
+                          <p>{sub.offer_quote_number ? `${t("client.quote")} ${sub.offer_quote_number} · ` : ""}{sub.plan.name}</p>
+                        </div>
+                        <div className="client-finance-deposit-amount">
+                          <strong>{toMoney(sub.offer_deposit_amount_ttc, sub.offer_currency || me.preferred_currency, language)}</strong>
+                          {sub.offer_deposit_paid_at ? <small>{t("client.paid_on", { date: formatDate(sub.offer_deposit_paid_at, language) })}</small> : null}
+                        </div>
+                        <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: sub.id })}>{t("client.view_offer")}</a>
+                      </article>
+                    ))}
+                  </section>
+                ) : null}
                 <p className="muted">{t("client.accounts_as_of", { date: formatDate(financeAsOfDateKey, language) })}</p>
 
                 <div className="client-finance-toolbar">

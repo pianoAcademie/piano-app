@@ -10,6 +10,336 @@
   --border: #e7d6bf;
 }
 
+/* Client offer detail: quote-backed, mobile-first enrollment summary. */
+.client-offer-program-preview,
+.client-offer-deposit-preview {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.client-offer-program-preview {
+  color: #263850;
+}
+
+.client-offer-deposit-preview {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #17643a;
+}
+
+.client-offer-detail {
+  display: grid;
+  gap: 16px;
+  overflow: hidden;
+}
+
+.client-offer-detail-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px;
+  border-radius: 18px;
+  color: #fff;
+  background: linear-gradient(135deg, #182333 0%, #2d241c 72%, #5a4325 100%);
+}
+
+.client-offer-detail-hero h2,
+.client-offer-detail-hero p {
+  margin: 0;
+}
+
+.client-offer-detail-hero h2 {
+  margin-top: 4px;
+  font-size: clamp(24px, 3vw, 34px);
+}
+
+.client-offer-detail-hero > div > p:last-child {
+  margin-top: 7px;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.client-offer-detail-kicker,
+.client-offer-section-kicker {
+  margin: 0;
+  color: #9a6d18;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.client-offer-detail-hero .client-offer-detail-kicker {
+  color: #f0cf8b;
+}
+
+.client-offer-detail-hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.client-offer-detail-hero .reset-link {
+  min-height: 42px;
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.client-offer-detail-section {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid #ead9b8;
+  border-radius: 18px;
+  background: #fffdfa;
+}
+
+.client-offer-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.client-offer-section-heading h3 {
+  margin: 3px 0 0;
+}
+
+.client-offer-activity-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.client-offer-activity-card {
+  padding: 16px;
+  border: 1px solid #dce3ec;
+  border-radius: 15px;
+  background: #fff;
+}
+
+.client-offer-activity-card h4 {
+  margin: 0 0 13px;
+  font-size: 17px;
+}
+
+.client-offer-activity-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.client-offer-activity-card dt,
+.client-offer-finance-grid span {
+  color: #6d7480;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.client-offer-activity-card dd {
+  margin: 3px 0 0;
+  font-weight: 750;
+}
+
+.client-offer-option-list {
+  display: grid;
+  gap: 9px;
+}
+
+.client-offer-option-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  border-radius: 14px;
+  background: #f7fbf7;
+  border: 1px solid #cfe7d6;
+}
+
+.client-offer-option-card h4,
+.client-offer-option-card p {
+  margin: 0;
+}
+
+.client-offer-option-check {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #dff4e5;
+  color: #17643a;
+  font-weight: 900;
+}
+
+.client-offer-finance-section {
+  background: #fffbf2;
+}
+
+.client-offer-finance-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.client-offer-finance-grid > div {
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+  border: 1px solid #ead9b8;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.client-offer-finance-grid strong {
+  font-size: 22px;
+}
+
+.client-offer-finance-grid .is-paid {
+  border-color: #a8d6b6;
+  background: #f3fbf5;
+}
+
+.client-offer-finance-grid small {
+  color: #17643a;
+  font-weight: 800;
+}
+
+.client-offer-invoices {
+  display: grid;
+  gap: 7px;
+}
+
+.client-offer-invoices a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 46px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #fff;
+  color: inherit;
+  text-decoration: none;
+}
+
+.client-offer-technical {
+  border-top: 1px solid #e5e7eb;
+  padding-top: 6px;
+}
+
+.client-offer-technical summary {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.client-finance-deposits {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid #a8d6b6;
+  border-radius: 16px;
+  background: #f3fbf5;
+}
+
+.client-finance-deposits-heading,
+.client-finance-deposits article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.client-finance-deposits h3,
+.client-finance-deposits p {
+  margin: 0;
+}
+
+.client-finance-deposits article {
+  padding-top: 10px;
+  border-top: 1px solid #cfe7d6;
+}
+
+.client-finance-deposit-amount {
+  display: grid;
+  text-align: right;
+}
+
+.client-finance-deposit-amount strong {
+  font-size: 20px;
+}
+
+@media (max-width: 720px) {
+  .client-offer-detail {
+    gap: 12px;
+  }
+
+  .client-offer-detail-hero,
+  .client-offer-section-heading,
+  .client-finance-deposits-heading,
+  .client-finance-deposits article {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .client-offer-detail-hero,
+  .client-offer-detail-section {
+    padding: 15px;
+    border-radius: 15px;
+  }
+
+  .client-offer-detail-hero-actions {
+    justify-content: space-between;
+  }
+
+  .client-offer-detail-hero .reset-link,
+  .client-offer-section-heading .mode-link {
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  .client-offer-activity-grid,
+  .client-offer-finance-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .client-offer-activity-card dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .client-offer-option-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .client-offer-option-card > strong {
+    grid-column: 2;
+  }
+
+  .client-offer-invoices a {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .client-finance-deposit-amount {
+    text-align: left;
+  }
+
+  .client-finance-deposits article .mode-link {
+    width: 100%;
+    min-height: 44px;
+    justify-content: center;
+  }
+}
+
 * {
   box-sizing: border-box;
 }

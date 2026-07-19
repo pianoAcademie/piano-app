@@ -68,7 +68,7 @@ from app.models.ops import (
     MessageFormat,
 )
 from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct, ProductCategory
-from app.models.quote import QuoteLine
+from app.models.quote import Quote, QuoteAcceptanceFollowup, QuoteLine
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.catalog import SessionCourseTypeOut, SessionLocationOut, SessionOut, SessionProfessorOut
 from app.schemas.booking import BookingCreateRequest
@@ -83,6 +83,7 @@ from app.schemas.user import (
     ClientPaymentConfirmOut,
     ClientMessageOut,
     ClientMessageScope,
+    ClientOfferOptionOut,
     ClientPaymentCheckoutOut,
     ClientSessionFormulaOptionOut,
     ClientSessionCheckoutOut,
@@ -2225,6 +2226,59 @@ def client_communication_optout(
     }
 
 
+def _client_offer_fields(
+    *,
+    subscription_id: UUID,
+    quote_by_subscription_id: dict[UUID, Quote],
+    option_rows_by_quote_id: dict[UUID, list[ClientOfferOptionOut]],
+    deposit_metadata_by_quote_id: dict[UUID, tuple[ClientNoteEntry, dict[str, object]]],
+) -> dict[str, object]:
+    quote = quote_by_subscription_id.get(subscription_id)
+    if quote is None:
+        return {}
+
+    quote_meta = quote.meta if isinstance(quote.meta, dict) else {}
+    raw_deposit = quote_meta.get("pre_registration_deposit")
+    deposit = raw_deposit if isinstance(raw_deposit, dict) else {}
+    deposit_enabled = str(deposit.get("enabled") or "").strip().lower() in {"1", "true", "yes", "oui"}
+    try:
+        deposit_amount = Decimal(str(deposit.get("amount_ttc") or "0")).quantize(Decimal("0.01"))
+    except (ValueError, ArithmeticError):
+        deposit_amount = Decimal("0.00")
+    if not deposit_enabled or deposit_amount <= Decimal("0.00"):
+        deposit_amount = Decimal("0.00")
+
+    invoice_entry = deposit_metadata_by_quote_id.get(quote.id)
+    invoice_note = invoice_entry[0] if invoice_entry is not None else None
+    invoice_metadata = invoice_entry[1] if invoice_entry is not None else {}
+    deposit_status = str(invoice_metadata.get("invoice_status") or "PENDING").strip().upper() if deposit_amount > 0 else None
+    paid_at: datetime | None = None
+    if deposit_status == "PAID":
+        raw_paid_at = str(invoice_metadata.get("paid_at") or "").strip()
+        if raw_paid_at:
+            try:
+                paid_at = datetime.fromisoformat(raw_paid_at.replace("Z", "+00:00"))
+            except ValueError:
+                paid_at = None
+
+    total_ttc = Decimal(quote.total_ttc or 0).quantize(Decimal("0.01"))
+    paid_deposit = deposit_amount if deposit_status == "PAID" else Decimal("0.00")
+    remaining_ttc = max(Decimal("0.00"), total_ttc - paid_deposit)
+    return {
+        "offer_quote_id": quote.id,
+        "offer_quote_number": quote.quote_number,
+        "offer_school_year_label": quote.school_year_label,
+        "offer_total_ttc": total_ttc,
+        "offer_currency": (quote.currency or "EUR").upper(),
+        "offer_options": option_rows_by_quote_id.get(quote.id, []),
+        "offer_deposit_amount_ttc": deposit_amount if deposit_amount > 0 else None,
+        "offer_deposit_status": deposit_status,
+        "offer_deposit_paid_at": paid_at,
+        "offer_deposit_invoice_id": f"invoice-range:{invoice_note.id}" if invoice_note is not None else None,
+        "offer_remaining_ttc": remaining_ttc,
+    }
+
+
 @router.get("/clients/me/family", response_model=ClientFamilyOverviewOut)
 def get_client_family_overview(
     db: Session = Depends(get_db),
@@ -2283,10 +2337,83 @@ def get_client_family_overview(
         entitlement_course_type_ids_by_plan[plan_id].append(course_type_id)
         entitlement_course_type_names_by_plan[plan_id].append(course_type_name)
 
+    subscription_ids = {sub.id for sub, _, _ in rows_subscriptions}
+    quote_by_subscription_id: dict[UUID, Quote] = {}
+    if subscription_ids:
+        followup_rows = db.execute(
+            select(QuoteAcceptanceFollowup, Quote)
+            .join(Quote, Quote.id == QuoteAcceptanceFollowup.quote_id)
+            .where(
+                or_(
+                    QuoteAcceptanceFollowup.target_client_id.in_(managed_client_ids),
+                    Quote.client_id.in_(managed_client_ids),
+                )
+            )
+            .order_by(QuoteAcceptanceFollowup.updated_at.desc(), Quote.updated_at.desc())
+        ).all()
+        for followup, quote in followup_rows:
+            payload = followup.payload if isinstance(followup.payload, dict) else {}
+            execution = payload.get("quote_to_enrollment_execution")
+            execution = execution if isinstance(execution, dict) else {}
+            raw_ids = [execution.get("subscription_id")]
+            created_ids = execution.get("created_subscription_ids")
+            if isinstance(created_ids, list):
+                raw_ids.extend(created_ids)
+            for raw_id in raw_ids:
+                try:
+                    resolved_id = UUID(str(raw_id))
+                except (TypeError, ValueError):
+                    continue
+                if resolved_id in subscription_ids and resolved_id not in quote_by_subscription_id:
+                    quote_by_subscription_id[resolved_id] = quote
+
+    option_rows_by_quote_id: dict[UUID, list[ClientOfferOptionOut]] = defaultdict(list)
+    offer_quote_ids = {quote.id for quote in quote_by_subscription_id.values()}
+    if offer_quote_ids:
+        option_rows = db.scalars(
+            select(QuoteLine)
+            .where(
+                QuoteLine.quote_id.in_(offer_quote_ids),
+                QuoteLine.line_type == "item",
+                QuoteLine.activity_id.is_(None),
+                QuoteLine.amount_ttc >= 0,
+            )
+            .order_by(QuoteLine.quote_id.asc(), QuoteLine.sort_order.asc(), QuoteLine.created_at.asc())
+        ).all()
+        for line in option_rows:
+            option_rows_by_quote_id[line.quote_id].append(
+                ClientOfferOptionOut(
+                    id=line.id,
+                    title=line.title,
+                    description=line.description,
+                    quantity=Decimal(line.quantity or 0),
+                    amount_ttc=Decimal(line.amount_ttc or 0),
+                )
+            )
+
+    deposit_metadata_by_quote_id: dict[UUID, tuple[ClientNoteEntry, dict[str, object]]] = {}
+    if offer_quote_ids:
+        offer_notes = db.scalars(
+            select(ClientNoteEntry)
+            .where(ClientNoteEntry.user_id.in_(managed_client_ids))
+            .order_by(ClientNoteEntry.created_at.desc())
+        ).all()
+        for note in offer_notes:
+            metadata = _parse_invoice_range_note_entry(note)
+            if metadata is None:
+                continue
+            try:
+                source_quote_id = UUID(str(metadata.get("source_quote_id")))
+            except (TypeError, ValueError):
+                continue
+            if source_quote_id in offer_quote_ids and source_quote_id not in deposit_metadata_by_quote_id:
+                deposit_metadata_by_quote_id[source_quote_id] = (note, metadata)
+
     rows_bookings = db.execute(
-        select(Booking, CourseSession, User)
+        select(Booking, CourseSession, User, Location)
         .join(CourseSession, CourseSession.id == Booking.session_id)
         .join(User, User.id == Booking.user_id)
+        .join(Location, Location.id == CourseSession.location_id)
         .where(Booking.user_id.in_(managed_client_ids))
         .order_by(CourseSession.start_at_utc.desc(), Booking.booked_at.desc())
     ).all()
@@ -2338,6 +2465,12 @@ def get_client_family_overview(
                 ),
                 entitlement_course_type_ids=entitlement_course_type_ids_by_plan.get(plan.id, []),
                 entitlement_course_type_names=entitlement_course_type_names_by_plan.get(plan.id, []),
+                **_client_offer_fields(
+                    subscription_id=sub.id,
+                    quote_by_subscription_id=quote_by_subscription_id,
+                    option_rows_by_quote_id=option_rows_by_quote_id,
+                    deposit_metadata_by_quote_id=deposit_metadata_by_quote_id,
+                ),
             )
             for sub, plan, owner in rows_subscriptions
         ],
@@ -2363,9 +2496,10 @@ def get_client_family_overview(
                     start_at_utc=session.start_at_utc,
                     end_at_utc=session.end_at_utc,
                     status=session.status,
+                    location_name=location.name,
                 ),
             )
-            for booking, session, owner in rows_bookings
+            for booking, session, owner, location in rows_bookings
         ],
     )
 
@@ -2652,6 +2786,26 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
         .where(Booking.user_id.in_(managed_client_ids))
     ).all()
 
+    manual_rows = db.scalars(
+        select(ClientManualTransaction)
+        .where(
+            or_(
+                ClientManualTransaction.user_id.in_(managed_client_ids),
+                ClientManualTransaction.student_user_id.in_(managed_client_ids),
+            ),
+            ClientManualTransaction.transaction_type.in_(["PAYMENT", "REFUND"]),
+        )
+        .order_by(ClientManualTransaction.occurred_at.desc())
+    ).all()
+    manual_owner_ids = {
+        row.student_user_id if row.student_user_id in managed_client_ids else row.user_id
+        for row in manual_rows
+    }
+    manual_owners = {
+        row.id: row
+        for row in db.scalars(select(User).where(User.id.in_(manual_owner_ids))).all()
+    } if manual_owner_ids else {}
+
     items: list[ClientPaymentOut] = []
     forfait_pricing_map = _forfait_activity_pricing_map(
         db,
@@ -2784,6 +2938,33 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                     legal_entities_by_id=legal_entities_by_id,
                     seller_legal_entity_id=seller_legal_entity_id,
                     fallback_text=session_obj.billing_entity_snapshot or course_type.billing_entity_code,
+                ),
+                payment_url=None,
+            )
+        )
+
+    for transaction in manual_rows:
+        owner_id = transaction.student_user_id if transaction.student_user_id in managed_client_ids else transaction.user_id
+        owner = manual_owners.get(owner_id)
+        items.append(
+            ClientPaymentOut(
+                id=f"manual:{transaction.id}",
+                owner_client_id=owner_id,
+                owner_display_name=_display_name(owner) if owner is not None else str(owner_id),
+                source="MANUAL",
+                occurred_at=transaction.occurred_at,
+                label=transaction.label,
+                status=transaction.status,
+                amount_excl_vat=abs(Decimal(transaction.amount_excl_vat or 0)),
+                vat_rate=abs(Decimal(transaction.vat_rate or 0)),
+                vat_amount=abs(Decimal(transaction.vat_amount or 0)),
+                total_incl_vat=abs(Decimal(transaction.total_incl_vat or 0)),
+                currency=(transaction.currency or "EUR").upper(),
+                reference=transaction.reference,
+                seller_legal_entity_id=transaction.legal_entity_id,
+                billing_entity=_billing_entity_from_seller_id(
+                    legal_entities_by_id=legal_entities_by_id,
+                    seller_legal_entity_id=transaction.legal_entity_id,
                 ),
                 payment_url=None,
             )
@@ -3864,10 +4045,15 @@ def list_client_invoices(
                 payment_url=_normalize_public_invoice_payment_url(str(metadata.get("payment_url") or "").strip())
                 or _invoice_range_public_payment_url(client_id=note.user_id, note_id=note.id, metadata=metadata),
                 included_payment_keys=payment_keys,
+                source_quote_id=metadata.get("source_quote_id"),
+                source_quote_number=str(metadata.get("source_quote_number") or "").strip() or None,
+                invoice_kind="DEPOSIT" if metadata.get("source_quote_id") else str(metadata.get("kind") or "").strip() or None,
             )
         )
 
     for payment in payments:
+        if (payment.source or "").strip().upper() == "MANUAL":
+            continue
         if (payment.source or "").strip().upper() == "BOOKING":
             booking_id = _booking_uuid_from_payment_id(payment.id)
             if booking_id is not None and booking_id in forfait_bookings:

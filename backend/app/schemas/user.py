@@ -110,12 +110,21 @@ class FamilyPlanMiniOut(BaseModel):
     currency_code: str | None = None
 
 
+class ClientOfferOptionOut(BaseModel):
+    id: UUID
+    title: str
+    description: str | None = None
+    quantity: Decimal
+    amount_ttc: Decimal
+
+
 class FamilySessionMiniOut(BaseModel):
     id: UUID
     title: str
     start_at_utc: datetime
     end_at_utc: datetime
     status: SessionStatus
+    location_name: str | None = None
 
 
 class FamilySubscriptionOut(BaseModel):
@@ -147,6 +156,17 @@ class FamilySubscriptionOut(BaseModel):
     plan: FamilyPlanMiniOut
     entitlement_course_type_ids: list[UUID] = Field(default_factory=list)
     entitlement_course_type_names: list[str] = Field(default_factory=list)
+    offer_quote_id: UUID | None = None
+    offer_quote_number: str | None = None
+    offer_school_year_label: str | None = None
+    offer_total_ttc: Decimal | None = None
+    offer_currency: str | None = None
+    offer_options: list[ClientOfferOptionOut] = Field(default_factory=list)
+    offer_deposit_amount_ttc: Decimal | None = None
+    offer_deposit_status: str | None = None
+    offer_deposit_paid_at: datetime | None = None
+    offer_deposit_invoice_id: str | None = None
+    offer_remaining_ttc: Decimal | None = None
 
 
 class FamilyBookingOut(BaseModel):
@@ -282,6 +302,9 @@ class ClientInvoiceOut(BaseModel):
     download_url: str | None = None
     payment_url: str | None = None
     included_payment_keys: list[str] = Field(default_factory=list)
+    source_quote_id: UUID | None = None
+    source_quote_number: str | None = None
+    invoice_kind: str | None = None
 
 
 class ClientPaymentCheckoutOut(BaseModel):

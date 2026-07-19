@@ -174,6 +174,23 @@ export type SubscriptionOut = {
   cancellation_effective_at: string | null;
   entitlement_course_type_ids: string[];
   entitlement_course_type_names: string[];
+  offer_quote_id?: string | null;
+  offer_quote_number?: string | null;
+  offer_school_year_label?: string | null;
+  offer_total_ttc?: string | null;
+  offer_currency?: string | null;
+  offer_options?: Array<{
+    id: string;
+    title: string;
+    description: string | null;
+    quantity: string;
+    amount_ttc: string;
+  }>;
+  offer_deposit_amount_ttc?: string | null;
+  offer_deposit_status?: string | null;
+  offer_deposit_paid_at?: string | null;
+  offer_deposit_invoice_id?: string | null;
+  offer_remaining_ttc?: string | null;
   plan: {
     id: string;
     code: string;
@@ -742,11 +759,28 @@ export type ClientFamilyOverviewOut = {
     cancellation_effective_at: string | null;
     entitlement_course_type_ids: string[];
     entitlement_course_type_names: string[];
+    offer_quote_id: string | null;
+    offer_quote_number: string | null;
+    offer_school_year_label: string | null;
+    offer_total_ttc: string | null;
+    offer_currency: string | null;
+    offer_options: Array<{
+      id: string;
+      title: string;
+      description: string | null;
+      quantity: string;
+      amount_ttc: string;
+    }>;
+    offer_deposit_amount_ttc: string | null;
+    offer_deposit_status: string | null;
+    offer_deposit_paid_at: string | null;
+    offer_deposit_invoice_id: string | null;
+    offer_remaining_ttc: string | null;
     plan: {
       id: string;
       code: string;
       name: string;
-      kind: "PACK" | "SUBSCRIPTION" | string;
+      kind: "PACK" | "SUBSCRIPTION" | "FORFAIT";
       price_ttc: string | null;
       currency_code: string | null;
     };
@@ -772,6 +806,7 @@ export type ClientFamilyOverviewOut = {
       start_at_utc: string;
       end_at_utc: string;
       status: string;
+      location_name: string | null;
     };
   }>;
 };
@@ -873,6 +908,9 @@ export type ClientInvoiceOut = {
   download_url: string | null;
   payment_url: string | null;
   included_payment_keys: string[];
+  source_quote_id: string | null;
+  source_quote_number: string | null;
+  invoice_kind: string | null;
 };
 
 export type ClientPaymentCheckoutOut = {
