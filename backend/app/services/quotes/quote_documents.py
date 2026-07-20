@@ -3572,9 +3572,21 @@ def _resolved_parent_address_for_quote_adult(*, db: Session, quote: Quote, adult
             city=typeform_parts["city"],
             country=typeform_parts["country"],
         )
-    address_line = typeform_parts["address_line"] or str(adult.address_line or "").strip()
-    postal_code = typeform_parts["postal_code"] or str(adult.postal_code or "").strip()
-    city = typeform_parts["city"] or str(adult.city or "").strip()
+    adult_address_line = str(adult.address_line or "").strip()
+    adult_postal_code = str(adult.postal_code or "").strip()
+    adult_city = str(adult.city or "").strip()
+    adult_country = str(getattr(adult, "address_country", None) or "").strip()
+    if adult_address_line or adult_postal_code or adult_city:
+        return _format_address_parts(
+            address_line=adult_address_line,
+            address_line_2="",
+            postal_code=adult_postal_code,
+            city=adult_city,
+            country=adult_country,
+        )
+    address_line = typeform_parts["address_line"]
+    postal_code = typeform_parts["postal_code"]
+    city = typeform_parts["city"]
     country = str(typeform_parts["country"] or "").strip()
     return _format_address_parts(address_line=address_line, postal_code=postal_code, city=city, country=country)
 
@@ -3604,11 +3616,13 @@ def _apply_child_client_family_data(*, db: Session | None, quote: Quote, values:
         values["parent_full_name"] = _name(adult.first_name, adult.last_name, fallback="") or values.get("parent_full_name") or ""
         values["parent_email"] = _public_email(adult.email) or values.get("parent_email") or ""
         values["parent_phone"] = (adult.mobile_phone_1 or adult.phone or "").strip() or values.get("parent_phone") or ""
-        values["parent_address"] = values.get("parent_address") or _resolved_parent_address_for_quote_adult(
+        resolved_parent_address = _resolved_parent_address_for_quote_adult(
             db=db,
             quote=quote,
             adult=adult,
         )
+        if resolved_parent_address:
+            values["parent_address"] = resolved_parent_address
     return values
 
 

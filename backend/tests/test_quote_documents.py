@@ -17,6 +17,7 @@ from reportlab.platypus import Paragraph
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.services.quotes.quote_documents import (
+    _apply_child_client_family_data,
     _calendar_snapshot_with_line_recommendation_keys,
     _calendar_snapshot_with_planning_sessions,
     _calendar_snapshot_with_current_solfege_block,
@@ -62,6 +63,55 @@ class _FakeExecuteSession:
 
 
 class QuoteDocumentMarkupTests(unittest.TestCase):
+    def test_child_quote_uses_current_billing_parent_address_over_typeform_address(self) -> None:
+        child_id = uuid4()
+        child = SimpleNamespace(
+            id=child_id,
+            client_kind=SimpleNamespace(value="CHILD"),
+            first_name="Augustine",
+            last_name="Cessot",
+            birth_date=None,
+        )
+        parent = SimpleNamespace(
+            first_name="Charles",
+            last_name="Cessot",
+            email="charles@example.test",
+            mobile_phone_1=None,
+            phone=None,
+            address_line="87 avenue Paul Doumer 75016 Paris",
+            postal_code=None,
+            city=None,
+            address_country="FR",
+        )
+        quote = SimpleNamespace(
+            client_id=child_id,
+            meta={
+                "typeform_intake": {
+                    "normalized_payload": {
+                        "parent_address_line_1": "8 bis avenue Vion Whitcomb",
+                        "parent_postal_code": "75016",
+                        "parent_city": "Paris",
+                        "parent_country": "FR",
+                    }
+                }
+            },
+        )
+        db = SimpleNamespace(
+            scalar=lambda _query: child,
+            execute=lambda _query: SimpleNamespace(
+                all=lambda: [(SimpleNamespace(is_billing_recipient=True), parent)],
+            ),
+        )
+
+        values = _apply_child_client_family_data(
+            db=db,  # type: ignore[arg-type]
+            quote=quote,  # type: ignore[arg-type]
+            values={"parent_address": "8 bis avenue Vion Whitcomb, 75016 Paris, France"},
+        )
+
+        self.assertEqual(values["parent_full_name"], "Charles Cessot")
+        self.assertEqual(values["parent_address"], "87 avenue Paul Doumer 75016 Paris, FR")
+
     @staticmethod
     def _pass_recup_line(title: str, code: str = "") -> SimpleNamespace:
         return SimpleNamespace(
