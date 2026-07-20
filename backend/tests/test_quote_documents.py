@@ -25,6 +25,9 @@ from app.services.quotes.quote_documents import (
     _expected_sessions_from_planning_block,
     _line_groups,
     _line_matches_end_year_concert,
+    _line_matches_online_pass_recup,
+    _line_matches_pass_recup,
+    _pass_recup_subscribed_copy,
     _pass_recup_compact_notice_markup,
     _planning_block_pdf_row,
     _planning_blocks_table_html,
@@ -59,6 +62,44 @@ class _FakeExecuteSession:
 
 
 class QuoteDocumentMarkupTests(unittest.TestCase):
+    @staticmethod
+    def _pass_recup_line(title: str, code: str = "") -> SimpleNamespace:
+        return SimpleNamespace(
+            title=title,
+            code=code,
+            line_type="product",
+            line_category="other_fee",
+            master_item_type="catalog_product",
+        )
+
+    def test_pass_recup_matching_accepts_accented_product_title(self) -> None:
+        line = self._pass_recup_line("Pass Récup Online")
+
+        self.assertTrue(_line_matches_pass_recup(line))
+        self.assertTrue(_line_matches_online_pass_recup(line))
+
+    def test_online_pass_recup_uses_online_only_copy_in_both_languages(self) -> None:
+        line = self._pass_recup_line("Pass récup online")
+
+        french_title, french_text = _pass_recup_subscribed_copy(lines=[line], language="fr")
+        english_title, english_text = _pass_recup_subscribed_copy(lines=[line], language="en")
+
+        self.assertEqual(french_title, "Option Pass Récup Online : souscrite.")
+        self.assertIn("uniquement sur un cours collectif en ligne", french_text)
+        self.assertNotIn("en présentiel", french_text)
+        self.assertEqual(english_title, "Online Catch-up Pass option: selected.")
+        self.assertIn("exclusively in a dedicated online group lesson slot", english_text)
+        self.assertNotIn("on-site", english_text)
+
+    def test_standard_pass_recup_keeps_hybrid_copy(self) -> None:
+        line = self._pass_recup_line("Pass Récup")
+
+        title, text = _pass_recup_subscribed_copy(lines=[line], language="fr")
+
+        self.assertEqual(title, "Option Pass Récup : souscrite.")
+        self.assertIn("cours collectif en présentiel", text)
+        self.assertIn("cours collectif en ligne", text)
+
     def test_exceptional_percent_discount_label_includes_quote_scope(self) -> None:
         line = SimpleNamespace(
             title="Remise exceptionnelle famille",

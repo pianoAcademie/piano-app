@@ -279,6 +279,8 @@ QUOTE_DOC_TEXT = {
         "pass_recup_option_subscribed": "Option Pass Récup : souscrite.",
         "pass_recup_option_not_subscribed": "Option Pass Récup : non souscrite.",
         "pass_recup_common_text": "Le Pass Récup’ permet de rattraper un cours collectif manqué, dans la limite de 4 rattrapages par année scolaire. Le rattrapage peut s’effectuer soit sur un cours collectif en présentiel, sous réserve de disponibilité d’un créneau, soit sur un cours collectif en ligne, sur des créneaux dédiés. Le pass est utilisable uniquement en cas d’absence signalée. Il est valable pour l’année scolaire en cours et n’est pas remboursable. Sans souscription à ce pass, aucun rattrapage ne pourra être proposé, quelle que soit la raison de l’absence.",
+        "pass_recup_online_option_subscribed": "Option Pass Récup Online : souscrite.",
+        "pass_recup_online_common_text": "Le Pass Récup’ Online permet de rattraper un cours collectif manqué, dans la limite de 4 rattrapages par année scolaire. Le rattrapage s’effectue uniquement sur un cours collectif en ligne, sur des créneaux dédiés. Le pass est utilisable uniquement en cas d’absence signalée. Il est valable pour l’année scolaire en cours et n’est pas remboursable. Sans souscription à ce pass, aucun rattrapage ne pourra être proposé, quelle que soit la raison de l’absence.",
         "pass_recup_compact_text": "Ce pass permet de rattraper un cours collectif manqué sur un créneau en présentiel (si une place est disponible), ou à défaut, sur un créneau collectif en ligne dédié.",
         "pass_recup_compact_limit": "Limité à 4 rattrapages par an",
     },
@@ -486,6 +488,8 @@ QUOTE_DOC_TEXT = {
         "pass_recup_option_subscribed": "Catch-up Pass option: selected.",
         "pass_recup_option_not_subscribed": "Catch-up Pass option: not selected.",
         "pass_recup_common_text": "The Catch-up Pass lets you make up for a missed group lesson, up to 4 catch-ups per school year. Catch-up may take place either in an on-site group lesson, subject to slot availability, or in a dedicated online group lesson. The pass can only be used when an absence has been reported. It is valid for the current school year and is non-refundable. Without this pass, no catch-up can be offered, whatever the reason for the absence.",
+        "pass_recup_online_option_subscribed": "Online Catch-up Pass option: selected.",
+        "pass_recup_online_common_text": "The Online Catch-up Pass lets you make up for a missed group lesson, up to 4 catch-ups per school year. Catch-up takes place exclusively in a dedicated online group lesson slot. The pass can only be used when an absence has been reported. It is valid for the current school year and is non-refundable. Without this pass, no catch-up can be offered, whatever the reason for the absence.",
         "pass_recup_compact_text": "This pass lets you make up a missed group lesson in an on-site slot (if a place is available), or otherwise in a dedicated online group slot.",
         "pass_recup_compact_limit": "Limited to 4 catch-ups per year",
     },
@@ -3816,8 +3820,31 @@ def _line_matches_pass_recup(line: QuoteLine) -> bool:
         str(line.line_category or ""),
         str(line.master_item_type or ""),
     ]
-    haystack = " ".join(tokens).strip().lower()
+    haystack = _searchable_text(" ".join(tokens))
     return "pass recup" in haystack or "pass_recup" in haystack or "passrecup" in haystack
+
+
+def _line_matches_online_pass_recup(line: QuoteLine) -> bool:
+    if not _line_matches_pass_recup(line):
+        return False
+    tokens = [
+        str(line.title or ""),
+        str(line.code or ""),
+        str(line.line_type or ""),
+        str(line.line_category or ""),
+        str(line.master_item_type or ""),
+    ]
+    haystack = _searchable_text(" ".join(tokens)).replace("_", " ").replace("-", " ")
+    return "online" in haystack or "en ligne" in haystack
+
+
+def _pass_recup_subscribed_copy(*, lines: list[QuoteLine], language: str | None = None) -> tuple[str, str]:
+    online_only = any(_line_matches_online_pass_recup(line) for line in lines)
+    prefix = "pass_recup_online" if online_only else "pass_recup"
+    return (
+        _quote_doc_text(f"{prefix}_option_subscribed", language=language),
+        _quote_doc_text(f"{prefix}_common_text", language=language),
+    )
 
 
 def _line_matches_masterclass(line: QuoteLine) -> bool:
@@ -5754,9 +5781,12 @@ def _build_template_values(
         if display_flags["showEndYearConcertCompactNotice"]
         else ""
     )
-    pass_recup_common_text = _quote_doc_text("pass_recup_common_text", language=language)
+    pass_recup_option_subscribed, pass_recup_common_text = _pass_recup_subscribed_copy(
+        lines=lines,
+        language=language,
+    )
     pass_recup_block_html = (
-        f"<p><strong>{escape(_quote_doc_text('pass_recup_option_subscribed', language=language))}</strong><br/>"
+        f"<p><strong>{escape(pass_recup_option_subscribed)}</strong><br/>"
         f"<i>{escape(pass_recup_common_text)}</i></p>"
         if display_flags["showPassRecupSection"]
         else ""
