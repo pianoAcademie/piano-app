@@ -138,6 +138,7 @@ export type PlanOut = {
   id: string;
   code: string;
   name: string;
+  description: string | null;
   kind: "PACK" | "SUBSCRIPTION" | "FORFAIT";
   credits_count: number | null;
   forfait_start_date: string | null;
@@ -147,6 +148,7 @@ export type PlanOut = {
   currency_code: string | null;
   active: boolean;
   payment_methods: string[];
+  entitlement_course_type_names: string[];
 };
 
 export type SubscriptionOut = {

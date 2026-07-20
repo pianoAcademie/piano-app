@@ -14,6 +14,7 @@ class PlanOut(BaseModel):
     id: UUID
     code: str
     name: str
+    description: str | None = None
     kind: PlanKind
     credits_count: int | None
     forfait_start_date: date | None = None
@@ -22,6 +23,7 @@ class PlanOut(BaseModel):
     currency_code: str | None
     active: bool
     payment_methods: list[str] = Field(default_factory=list)
+    entitlement_course_type_names: list[str] = Field(default_factory=list)
 
 
 class PublicFormulaPurchaseSummaryOut(BaseModel):

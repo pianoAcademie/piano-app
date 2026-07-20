@@ -471,11 +471,13 @@ def list_plans(
     stmt = stmt.order_by(Plan.name.asc())
 
     plans = db.scalars(stmt).all()
+    _, entitlement_names_by_plan = _entitlements_by_plan(db, plan_ids=[plan.id for plan in plans])
     return [
         PlanOut(
             id=plan.id,
             code=plan.code,
             name=plan.name,
+            description=plan.description,
             kind=plan.kind,
             credits_count=_effective_pack_credits_for_plan(db, plan=plan),
             forfait_start_date=plan.forfait_start_date,
@@ -484,6 +486,7 @@ def list_plans(
             currency_code=plan.currency_code,
             active=plan.active,
             payment_methods=_plan_payment_methods(plan),
+            entitlement_course_type_names=entitlement_names_by_plan.get(plan.id, []),
         )
         for plan in plans
     ]

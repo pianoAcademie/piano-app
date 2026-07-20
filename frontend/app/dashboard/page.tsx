@@ -88,6 +88,16 @@ type PlanningStatusCode =
 type FinanceView = "transactions" | "invoices";
 type FinanceStatusFilter = "ALL" | "TO_PAY" | "PAID" | "CANCELLED" | "FAILED";
 type FinancePeriodFilter = "ALL" | "LAST_30_DAYS" | "LAST_90_DAYS" | "LAST_365_DAYS";
+type OfferCatalogCategory =
+  | "ALL"
+  | "PIANO_ONSITE"
+  | "PIANO_ONLINE"
+  | "REHEARSAL_STUDIO"
+  | "SHEET_MUSIC"
+  | "NOTE_GAMES"
+  | "THEORY_BOOKS"
+  | "PASSES"
+  | "OTHER";
 
 type AgendaRange = {
   from: Date;
@@ -145,6 +155,74 @@ const FINANCE_FAILED_STATUSES = new Set(["FAILED", "ERROR", "DECLINED", "NETWORK
 const FAMILY_BOOKING_OWNER = "FAMILY";
 const ACTIVE_CLIENT_BOOKING_STATUSES = new Set(["BOOKED", "WAITLISTED", "PENDING_PAYMENT"]);
 const PORTAL_VISIBLE_SUBSCRIPTION_STATUSES = new Set(["ACTIVE", "PAYMENT_ALERT", "PAUSED", "PRE_TERMINATION"]);
+const OFFER_CATALOG_CATEGORIES: Array<{
+  key: Exclude<OfferCatalogCategory, "ALL">;
+  labelKey: string;
+  icon: string;
+}> = [
+  { key: "PIANO_ONSITE", labelKey: "client.offer_category_piano_onsite", icon: "♩" },
+  { key: "PIANO_ONLINE", labelKey: "client.offer_category_piano_online", icon: "⌁" },
+  { key: "REHEARSAL_STUDIO", labelKey: "client.offer_category_rehearsal_studio", icon: "♫" },
+  { key: "SHEET_MUSIC", labelKey: "client.offer_category_sheet_music", icon: "▤" },
+  { key: "NOTE_GAMES", labelKey: "client.offer_category_note_games", icon: "♬" },
+  { key: "THEORY_BOOKS", labelKey: "client.offer_category_theory_books", icon: "▦" },
+  { key: "PASSES", labelKey: "client.offer_category_passes", icon: "✓" },
+  { key: "OTHER", labelKey: "client.offer_category_other", icon: "+" },
+];
+
+function normalizeCatalogText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function offerCategoriesFromText(value: string): Exclude<OfferCatalogCategory, "ALL">[] {
+  const text = normalizeCatalogText(value);
+  const categories: Exclude<OfferCatalogCategory, "ALL">[] = [];
+  const hasOnline = /\b(online|en ligne|distanciel|visio)\b/.test(text);
+  const hasOnsite = /\b(presentiel|sur place)\b/.test(text);
+
+  if (/\b(pass|recup|rattrap)/.test(text)) categories.push("PASSES");
+  if (/\b(studio|repetition)\b/.test(text)) categories.push("REHEARSAL_STUDIO");
+  if (/\bpartition/.test(text)) categories.push("SHEET_MUSIC");
+  if (/\bjeu(x)?\b.*\bnote(s)?\b|\bnote(s)?\b.*\bjeu(x)?\b/.test(text)) categories.push("NOTE_GAMES");
+  if (/\bcahier(s)?\b.*\bsolfege\b|\bsolfege\b.*\bcahier(s)?\b/.test(text)) categories.push("THEORY_BOOKS");
+  if (hasOnline && /\b(piano|cours|solfege|musique)\b/.test(text)) categories.push("PIANO_ONLINE");
+  if ((hasOnsite || (!hasOnline && /\b(piano|cours)\b/.test(text))) && /\b(piano|cours|musique)\b/.test(text)) {
+    categories.push("PIANO_ONSITE");
+  }
+
+  const categoryOrder = new Map(OFFER_CATALOG_CATEGORIES.map((category, index) => [category.key, index]));
+  return Array.from(new Set(categories)).sort(
+    (left, right) => (categoryOrder.get(left) ?? 99) - (categoryOrder.get(right) ?? 99),
+  );
+}
+
+function planOfferCategories(plan: PlanOut): Exclude<OfferCatalogCategory, "ALL">[] {
+  const categories = offerCategoriesFromText(
+    [plan.name, plan.code, plan.description, ...(plan.entitlement_course_type_names ?? [])].filter(Boolean).join(" "),
+  );
+  return categories.length > 0 ? categories : ["OTHER"];
+}
+
+function productOfferCategories(product: ClientCatalogProductOut): Exclude<OfferCatalogCategory, "ALL">[] {
+  const categories = offerCategoriesFromText(
+    [product.category_name, product.title, product.short_description, product.primary_location_name].filter(Boolean).join(" "),
+  );
+  return categories.length > 0 ? categories : ["OTHER"];
+}
+
+function parseOfferCatalogCategory(value: string): OfferCatalogCategory {
+  const normalized = normalizeStatus(value);
+  if (normalized === "ALL" || OFFER_CATALOG_CATEGORIES.some((category) => category.key === normalized)) {
+    return normalized as OfferCatalogCategory;
+  }
+  return "ALL";
+}
 
 function readParam(params: SearchParams, key: string): string {
   const value = params[key];
@@ -1700,6 +1778,28 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedOwnerSubscriptions = subscriptionsByOwner.get(selectedPurchaseOwner) ?? [];
   const confirmPlan = confirmPlanId ? plans.find((plan) => plan.id === confirmPlanId) ?? null : null;
   const selectedPurchaseOwnerProfile = members.find((member) => member.id === selectedPurchaseOwner) ?? null;
+  const selectedOfferCategory = parseOfferCatalogCategory(readParam(searchParams, "offer_category"));
+  const offerCategoryCounts = new Map<Exclude<OfferCatalogCategory, "ALL">, number>();
+  for (const plan of plans) {
+    for (const category of planOfferCategories(plan)) {
+      offerCategoryCounts.set(category, (offerCategoryCounts.get(category) ?? 0) + 1);
+    }
+  }
+  for (const product of onlineProducts) {
+    for (const category of productOfferCategories(product)) {
+      offerCategoryCounts.set(category, (offerCategoryCounts.get(category) ?? 0) + 1);
+    }
+  }
+  const visibleOfferCategories = OFFER_CATALOG_CATEGORIES.filter(
+    (category) => (offerCategoryCounts.get(category.key) ?? 0) > 0,
+  );
+  const filteredPlans = selectedOfferCategory === "ALL"
+    ? plans
+    : plans.filter((plan) => planOfferCategories(plan).includes(selectedOfferCategory));
+  const filteredOnlineProducts = selectedOfferCategory === "ALL"
+    ? onlineProducts
+    : onlineProducts.filter((product) => productOfferCategories(product).includes(selectedOfferCategory));
+  const filteredOnlinePurchaseCount = filteredPlans.length + filteredOnlineProducts.length;
   const visibleOfferSubscriptions = subscriptions
     .filter((sub) => selectedMemberFilter === "ALL" || sub.owner_client_id === selectedMemberFilter)
     .filter((sub) => isSubscriptionVisibleInPortal(sub, now));
@@ -4822,6 +4922,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     </div>
                     <form method="get" className="row">
                       <input type="hidden" name="tab" value="offers" />
+                      <input type="hidden" name="offer_category" value={selectedOfferCategory} />
                       <label>
                         {t("client.beneficiary")}
                         <select name="purchase_user_id" defaultValue={selectedPurchaseOwner}>
@@ -4840,83 +4941,160 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     </form>
                   </div>
 
-                  <section className="client-catalog-section">
-                    <div className="client-catalog-section-head">
-                      <h4>{t("client.available_plans_title")}</h4>
-                      <span className="badge">{plans.length}</span>
+                  <section className="client-catalog-section client-catalog-browser">
+                    <div className="client-catalog-filter-heading">
+                      <div>
+                        <p className="client-offer-section-kicker">{t("client.offer_catalog_categories")}</p>
+                        <h4>{t("client.filter_offers_by_category")}</h4>
+                      </div>
+                      <span className="client-catalog-total">{t("client.catalog_result_count", { count: filteredOnlinePurchaseCount })}</span>
                     </div>
-                    <div className="client-plan-grid">
-                      {plans.map((plan) => (
-                        <article key={plan.id} className="item client-plan-card">
-                          <div>
-                            <h3>{plan.name}</h3>
-                            <p className="muted">{plan.kind === "PACK" ? t("client.pack_sessions") : plan.kind === "FORFAIT" ? t("client.plan_fixed") : t("client.subscription")}</p>
-                            <p className="muted">
-                              {plan.kind === "FORFAIT"
-                                ? t("client.actual_billing_based_on_schedule")
-                                : t("client.credit_line", { remaining: plan.credits_count ?? t("client.unlimited"), initial: plan.credits_count ?? t("client.unlimited") })}{" "}
-                              | {t("client.price")}: {toMoney(planDisplayPrice(plan), plan.currency_code ?? me.preferred_currency, language)}
-                            </p>
-                          </div>
-                          <form action={purchasePlanAction}>
-                            <input type="hidden" name="plan_id" value={plan.id} />
-                            <input type="hidden" name="purchase_user_id" value={selectedPurchaseOwner} />
-                            <input type="hidden" name="start_date" value={selectedPurchaseStartDate} />
-                            {plan.kind === "SUBSCRIPTION" && (plan.payment_methods ?? []).filter((method) => method === "CARD_ONLINE" || method === "SEPA_DEBIT").length > 1 ? (
-                              <label>
-                                {t("client.renewal_payment_method")}
-                                <select name="billing_method_code" defaultValue="CARD_ONLINE">
-                                  {(plan.payment_methods ?? []).filter((method) => method === "CARD_ONLINE" || method === "SEPA_DEBIT").map((method) => (
-                                    <option key={method} value={method}>{paymentMethodLabel(method, language)}</option>
-                                  ))}
-                                </select>
-                                <small className="muted">{t("client.sepa_first_card_notice")}</small>
-                              </label>
-                            ) : plan.kind === "SUBSCRIPTION" && (plan.payment_methods ?? []).filter((method) => method === "CARD_ONLINE" || method === "SEPA_DEBIT").length === 1 ? (
-                              <input
-                                type="hidden"
-                                name="billing_method_code"
-                                value={(plan.payment_methods ?? []).filter((method) => method === "CARD_ONLINE" || method === "SEPA_DEBIT")[0]}
-                              />
-                            ) : null}
-                            <button type="submit" title={t("client.subscribe_offer_title")}>{t("common.choose")}</button>
-                          </form>
-                        </article>
-                      ))}
-                      {plans.length === 0 ? <p className="muted">{t("client.no_active_offer")}</p> : null}
-                    </div>
-                  </section>
 
-                  <section className="client-catalog-section">
-                    <div className="client-catalog-section-head">
-                      <h4>{t("client.available_products_title")}</h4>
-                      <span className="badge">{onlineProducts.length}</span>
-                    </div>
-                    <div className="client-plan-grid">
-                      {onlineProducts.map((product) => (
-                        <article key={product.id} className="item client-plan-card client-product-card">
-                          <div>
-                            <h3>{product.title}</h3>
-                            <p className="muted">{product.short_description || product.category_name || t("client.product")}</p>
-                            <div className="client-product-meta">
-                              {product.category_name ? <span className="badge">{product.category_name}</span> : null}
-                              {product.primary_location_name ? <span className="badge">{product.primary_location_name}</span> : null}
-                              <span className="badge">{t("client.online_product")}</span>
-                            </div>
-                            <p className="muted">
-                              {t("client.price")}: {toMoney(product.price_incl_vat, me.preferred_currency, language)}
-                            </p>
-                          </div>
-                          {product.web_link ? (
-                            <a className="mode-link" href={product.web_link} target="_blank" rel="noreferrer">
-                              {t("client.open_product_link")}
-                            </a>
-                          ) : (
-                            <span className="badge">{t("client.online_product")}</span>
-                          )}
-                        </article>
+                    <nav className="client-offer-category-filter" aria-label={t("client.filter_offers_by_category")}>
+                      <a
+                        className={selectedOfferCategory === "ALL" ? "is-active" : ""}
+                        href={withUpdatedQuery(rawParams, { offer_category: "ALL", offer_detail_id: null })}
+                        aria-current={selectedOfferCategory === "ALL" ? "page" : undefined}
+                      >
+                        <span className="client-offer-category-icon" aria-hidden="true">⌂</span>
+                        <span>{t("client.offer_category_all")}</span>
+                        <strong>{onlinePurchaseCount}</strong>
+                      </a>
+                      {visibleOfferCategories.map((category) => (
+                        <a
+                          key={category.key}
+                          className={selectedOfferCategory === category.key ? "is-active" : ""}
+                          href={withUpdatedQuery(rawParams, { offer_category: category.key, offer_detail_id: null })}
+                          aria-current={selectedOfferCategory === category.key ? "page" : undefined}
+                        >
+                          <span className="client-offer-category-icon" aria-hidden="true">{category.icon}</span>
+                          <span>{t(category.labelKey)}</span>
+                          <strong>{offerCategoryCounts.get(category.key) ?? 0}</strong>
+                        </a>
                       ))}
-                      {onlineProducts.length === 0 ? <p className="muted">{t("client.no_online_product")}</p> : null}
+                    </nav>
+
+                    <div className="client-catalog-results-head">
+                      <h4>
+                        {selectedOfferCategory === "ALL"
+                          ? t("client.offer_category_all")
+                          : t(OFFER_CATALOG_CATEGORIES.find((category) => category.key === selectedOfferCategory)?.labelKey ?? "client.offer_category_other")}
+                      </h4>
+                      <p>{t("client.catalog_mixed_help")}</p>
+                    </div>
+
+                    <div className="client-offer-catalog-grid">
+                      {filteredPlans.map((plan) => {
+                        const categories = planOfferCategories(plan);
+                        const primaryCategory = OFFER_CATALOG_CATEGORIES.find((category) => category.key === categories[0]) ?? OFFER_CATALOG_CATEGORIES[7];
+                        const recurringPaymentMethods = (plan.payment_methods ?? []).filter(
+                          (method) => method === "CARD_ONLINE" || method === "SEPA_DEBIT",
+                        );
+                        const price = planDisplayPrice(plan);
+                        const planTypeLabel = plan.kind === "PACK"
+                          ? t("client.pack_sessions")
+                          : plan.kind === "FORFAIT"
+                            ? t("client.plan_fixed")
+                            : t("client.subscription");
+                        return (
+                          <article key={plan.id} className="client-catalog-offer-card">
+                            <div className="client-catalog-offer-topline">
+                              <span className="client-catalog-category-badge">
+                                <span aria-hidden="true">{primaryCategory.icon}</span>
+                                {t(primaryCategory.labelKey)}
+                              </span>
+                              <span className="client-catalog-kind">{t("client.catalog_formula")}</span>
+                            </div>
+                            <div className="client-catalog-offer-content">
+                              <h3>{plan.name}</h3>
+                              <p className="client-catalog-offer-description">
+                                {plan.description || (plan.entitlement_course_type_names ?? []).join(" · ") || planTypeLabel}
+                              </p>
+                              <div className="client-catalog-offer-meta">
+                                <span>{planTypeLabel}</span>
+                                {plan.kind === "PACK" && plan.credits_count != null ? (
+                                  <span>{t("client.catalog_sessions_included", { count: plan.credits_count })}</span>
+                                ) : null}
+                                {plan.kind === "FORFAIT" ? <span>{t("client.catalog_schedule_billing")}</span> : null}
+                              </div>
+                            </div>
+                            <div className="client-catalog-offer-footer">
+                              <div className="client-catalog-price">
+                                <span>{t("client.price")}</span>
+                                <strong>{price != null ? toMoney(price, plan.currency_code ?? me.preferred_currency, language) : "—"}</strong>
+                                {plan.kind === "SUBSCRIPTION" ? <small>{t("client.per_month_suffix")}</small> : null}
+                              </div>
+                              <form action={purchasePlanAction} className="client-catalog-purchase-form">
+                                <input type="hidden" name="plan_id" value={plan.id} />
+                                <input type="hidden" name="purchase_user_id" value={selectedPurchaseOwner} />
+                                <input type="hidden" name="start_date" value={selectedPurchaseStartDate} />
+                                {plan.kind === "SUBSCRIPTION" && recurringPaymentMethods.length > 1 ? (
+                                  <label>
+                                    <span>{t("client.catalog_renewal_method")}</span>
+                                    <select name="billing_method_code" defaultValue="CARD_ONLINE">
+                                      {recurringPaymentMethods.map((method) => (
+                                        <option key={method} value={method}>{paymentMethodLabel(method, language)}</option>
+                                      ))}
+                                    </select>
+                                    <small>{t("client.sepa_first_card_notice")}</small>
+                                  </label>
+                                ) : plan.kind === "SUBSCRIPTION" && recurringPaymentMethods.length === 1 ? (
+                                  <input type="hidden" name="billing_method_code" value={recurringPaymentMethods[0]} />
+                                ) : null}
+                                <button type="submit" title={t("client.subscribe_offer_title")}>{t("common.choose")}</button>
+                              </form>
+                            </div>
+                          </article>
+                        );
+                      })}
+
+                      {filteredOnlineProducts.map((product) => {
+                        const categories = productOfferCategories(product);
+                        const primaryCategory = OFFER_CATALOG_CATEGORIES.find((category) => category.key === categories[0]) ?? OFFER_CATALOG_CATEGORIES[7];
+                        return (
+                          <article key={product.id} className="client-catalog-offer-card client-catalog-product-card">
+                            <div className="client-catalog-offer-topline">
+                              <span className="client-catalog-category-badge">
+                                <span aria-hidden="true">{primaryCategory.icon}</span>
+                                {t(primaryCategory.labelKey)}
+                              </span>
+                              <span className="client-catalog-kind">{t("client.catalog_product")}</span>
+                            </div>
+                            <div className="client-catalog-offer-content">
+                              <h3>{product.title}</h3>
+                              <p className="client-catalog-offer-description">
+                                {product.short_description || product.category_name || t("client.product")}
+                              </p>
+                              <div className="client-catalog-offer-meta">
+                                {product.category_name ? <span>{product.category_name}</span> : null}
+                                {product.primary_location_name ? <span>{product.primary_location_name}</span> : null}
+                                <span>{t("client.online_product")}</span>
+                              </div>
+                            </div>
+                            <div className="client-catalog-offer-footer">
+                              <div className="client-catalog-price">
+                                <span>{t("client.price")}</span>
+                                <strong>{toMoney(product.price_incl_vat, me.preferred_currency, language)}</strong>
+                              </div>
+                              {product.web_link ? (
+                                <a className="client-catalog-product-link" href={product.web_link} target="_blank" rel="noreferrer">
+                                  {t("client.open_product_link")}
+                                </a>
+                              ) : (
+                                <span className="client-catalog-unavailable">{t("client.online_product")}</span>
+                              )}
+                            </div>
+                          </article>
+                        );
+                      })}
+
+                      {filteredOnlinePurchaseCount === 0 ? (
+                        <div className="client-catalog-empty">
+                          <span aria-hidden="true">⌕</span>
+                          <h4>{t("client.no_offer_in_category")}</h4>
+                          <a href={withUpdatedQuery(rawParams, { offer_category: "ALL" })}>{t("client.view_all_offers")}</a>
+                        </div>
+                      ) : null}
                     </div>
                   </section>
                 </Card>
