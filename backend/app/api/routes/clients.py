@@ -518,6 +518,46 @@ def _parse_optional_uuid(raw_value: object) -> UUID | None:
         return None
 
 
+def _quote_id_from_deposit_reference(reference: str | None) -> UUID | None:
+    match = re.fullmatch(
+        r"QUOTE:(?P<quote_id>[0-9a-fA-F-]{36}):DEPOSIT",
+        str(reference or "").strip(),
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    return _parse_optional_uuid(match.group("quote_id"))
+
+
+def _invoice_source_quote_id(
+    metadata: dict[str, object],
+    *,
+    manual_transactions_by_id: dict[UUID, ClientManualTransaction],
+) -> UUID | None:
+    explicit_quote_id = _parse_optional_uuid(metadata.get("source_quote_id"))
+    if explicit_quote_id is not None:
+        return explicit_quote_id
+
+    referenced_quote_ids: set[UUID] = set()
+    for payment_key in _normalize_invoice_range_payment_keys(metadata.get("included_payment_keys")):
+        source, raw_payment_id = payment_key.split(":", 1)
+        if source != "MANUAL":
+            continue
+        payment_id = _parse_optional_uuid(raw_payment_id)
+        if payment_id is None:
+            continue
+        transaction = manual_transactions_by_id.get(payment_id)
+        if transaction is None:
+            continue
+        quote_id = _quote_id_from_deposit_reference(transaction.reference)
+        if quote_id is not None:
+            referenced_quote_ids.add(quote_id)
+
+    if len(referenced_quote_ids) == 1:
+        return next(iter(referenced_quote_ids))
+    return None
+
+
 def _normalize_invoice_range_payment_keys(raw: object) -> list[str]:
     if not isinstance(raw, list):
         return []
@@ -2398,13 +2438,37 @@ def get_client_family_overview(
             .where(ClientNoteEntry.user_id.in_(managed_client_ids))
             .order_by(ClientNoteEntry.created_at.desc())
         ).all()
+        parsed_offer_notes: list[tuple[ClientNoteEntry, dict[str, object]]] = []
+        referenced_manual_transaction_ids: set[UUID] = set()
         for note in offer_notes:
             metadata = _parse_invoice_range_note_entry(note)
             if metadata is None:
                 continue
-            try:
-                source_quote_id = UUID(str(metadata.get("source_quote_id")))
-            except (TypeError, ValueError):
+            parsed_offer_notes.append((note, metadata))
+            for payment_key in _normalize_invoice_range_payment_keys(metadata.get("included_payment_keys")):
+                source, raw_payment_id = payment_key.split(":", 1)
+                if source != "MANUAL":
+                    continue
+                payment_id = _parse_optional_uuid(raw_payment_id)
+                if payment_id is not None:
+                    referenced_manual_transaction_ids.add(payment_id)
+
+        manual_transactions_by_id: dict[UUID, ClientManualTransaction] = {}
+        if referenced_manual_transaction_ids:
+            manual_transactions = db.scalars(
+                select(ClientManualTransaction).where(
+                    ClientManualTransaction.id.in_(referenced_manual_transaction_ids),
+                    ClientManualTransaction.user_id.in_(managed_client_ids),
+                )
+            ).all()
+            manual_transactions_by_id = {transaction.id: transaction for transaction in manual_transactions}
+
+        for note, metadata in parsed_offer_notes:
+            source_quote_id = _invoice_source_quote_id(
+                metadata,
+                manual_transactions_by_id=manual_transactions_by_id,
+            )
+            if source_quote_id is None:
                 continue
             if source_quote_id in offer_quote_ids and source_quote_id not in deposit_metadata_by_quote_id:
                 deposit_metadata_by_quote_id[source_quote_id] = (note, metadata)
