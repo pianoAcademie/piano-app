@@ -8367,6 +8367,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                 billing_entity=None,
                 payment_method_code=_normalize_optional(sub.billing_method_code.upper() if sub.billing_method_code else None),
                 payment_method_label=(_payment_method_label_client(sub.billing_method_code) if sub.billing_method_code else None),
+                student_user_id=sub.user_id,
             )
         )
 
@@ -8432,6 +8433,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                 total_incl_vat=Decimal("0.00") if not is_billable else _quantize_money(Decimal(total_incl_vat)),
                 currency=_normalize_currency(currency, fallback=(billing_profile.preferred_currency or "EUR").upper()),
                 reference=_linked_plan_label(plan),
+                student_user_id=booking.user_id,
                 seller_legal_entity_id=seller_legal_entity_id,
                 billing_entity=_billing_entity_from_seller_id(
                     legal_entities_by_id=legal_entities_by_id,
@@ -8463,6 +8465,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                     total_incl_vat=credit_total,
                     currency=_normalize_currency(currency, fallback=(billing_profile.preferred_currency or "EUR").upper()),
                     reference=f"AVOIR:{booking.id}",
+                    student_user_id=booking.user_id,
                     seller_legal_entity_id=seller_legal_entity_id,
                     billing_entity=_billing_entity_from_seller_id(
                         legal_entities_by_id=legal_entities_by_id,

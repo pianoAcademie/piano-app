@@ -4600,6 +4600,123 @@ button.danger:focus-visible {
   margin: 0;
 }
 
+.invoice-participant-selector {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #ead7b8;
+  border-radius: 12px;
+  background: #fffaf2;
+}
+
+.invoice-participant-selector-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.invoice-participant-selector-heading > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.invoice-participant-selector-heading small,
+.invoice-participant-toggle small {
+  color: #667085;
+}
+
+.invoice-participant-global-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.invoice-participant-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.invoice-participant-groups article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #d8e1ec;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.invoice-participant-groups article.is-selected {
+  border-color: #d1b168;
+  background: #fff8e8;
+}
+
+.invoice-participant-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.invoice-participant-toggle > span:last-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.invoice-participant-check {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border: 1px solid #b8c4d3;
+  border-radius: 7px;
+  background: #fff;
+  color: #6f5416;
+  font-weight: 800;
+}
+
+.invoice-selection-live-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+@media (max-width: 720px) {
+  .invoice-participant-selector-heading,
+  .invoice-participant-groups article,
+  .invoice-selection-live-summary {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .invoice-participant-global-actions {
+    justify-content: stretch;
+  }
+
+  .invoice-participant-global-actions .mode-link,
+  .invoice-participant-groups article > .mode-link {
+    flex: 1;
+    text-align: center;
+  }
+
+  .invoice-participant-groups {
+    grid-template-columns: 1fr;
+  }
+}
+
 .invoice-mode-segmented {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

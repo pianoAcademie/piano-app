@@ -62,6 +62,7 @@ import RichMessageEditor from "../../../../components/rich-message-editor";
 import ModalFirstErrorFocus from "../../../../components/modal-first-error-focus";
 import SearchMultiSelect from "../../../../components/search-multi-select";
 import ClientActionSubmitButton from "../../../../components/client-action-submit-button";
+import InvoiceLineSelection from "../../../../components/invoice-line-selection";
 import type {
   AdminClientBookingOut,
   AdminClientFamilyOut,
@@ -2503,18 +2504,40 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       ? invoiceSelectedPaymentKeysRaw
       : invoiceCandidatePayments.map((row) => invoicePaymentKey(row)),
   );
-  const invoiceSelectedCandidatePayments = invoiceCandidatePayments.filter((row) => invoiceSelectedPaymentKeys.has(invoicePaymentKey(row)));
-  const invoiceSelectedTotalsByCurrency = new Map<string, number>();
-  for (const row of invoiceSelectedCandidatePayments) {
-    const currency = row.currency || "EUR";
-    const amount = Number(row.total_incl_vat || "0");
-    if (Number.isFinite(amount)) {
-      invoiceSelectedTotalsByCurrency.set(currency, (invoiceSelectedTotalsByCurrency.get(currency) ?? 0) + amount);
+  const invoiceParticipantLabelsById = new Map<string, string>();
+  const addInvoiceParticipant = (member: { id: string; first_name: string | null; last_name: string | null; email: string | null }) => {
+    if (!member.id || invoiceParticipantLabelsById.has(member.id)) {
+      return;
     }
+    invoiceParticipantLabelsById.set(
+      member.id,
+      contactDisplayLabel(member.first_name, member.last_name, member.email || member.id),
+    );
+  };
+  addInvoiceParticipant(client);
+  for (const link of family.links_as_adult) {
+    addInvoiceParticipant(link.adult);
+    addInvoiceParticipant(link.child);
   }
-  const invoiceSelectedTotalLabel = [...invoiceSelectedTotalsByCurrency.entries()]
-    .map(([currency, amount]) => formatMoney(String(amount), currency, language))
-    .join(" | ");
+  for (const link of family.links_as_child) {
+    addInvoiceParticipant(link.adult);
+    addInvoiceParticipant(link.child);
+  }
+  const invoiceSelectionRows = invoiceCandidatePayments.map((row) => ({
+    key: invoicePaymentKey(row),
+    participantId: row.student_user_id,
+    participantLabel: row.student_user_id
+      ? invoiceParticipantLabelsById.get(row.student_user_id) ?? t("admin.client_detail.invoice_unknown_participant")
+      : t("admin.client_detail.invoice_unassigned_participant"),
+    dateLabel: formatDate(row.occurred_at, language),
+    sourceLabel: paymentSourceLabel(row.source, language),
+    label: row.label,
+    reference: row.reference,
+    statusLabel: paymentStatusDisplayLabel(row, language),
+    totalLabel: formatMoney(row.total_incl_vat, row.currency, language),
+    totalInclVat: row.total_incl_vat,
+    currency: row.currency,
+  }));
 
   const paymentInvoices: InvoiceListRow[] = payments
     .filter((row) => {
@@ -6782,60 +6805,34 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <input type="hidden" name="line_selection_enabled" value="1" />
 
                   <article className="card modal-card invoice-wizard-card span-2">
-                    <div className="row spread">
-                      <h4>Lignes a facturer</h4>
-                      <span className="muted">
-                        {invoiceSelectedCandidatePayments.length}/{invoiceCandidatePayments.length} selectionnee(s)
-                        {invoiceSelectedTotalLabel ? ` | ${invoiceSelectedTotalLabel}` : ""}
-                      </span>
-                    </div>
+                    <h4>{t("admin.client_detail.invoice_lines_to_bill")}</h4>
                     {invoiceCandidatePayments.length === 0 ? (
-                      <p className="muted">Aucune ligne disponible pour cette periode et ces filtres.</p>
+                      <p className="muted">{t("admin.client_detail.invoice_no_lines_available")}</p>
                     ) : (
-                      <div className="table-wrap invoice-line-selection">
-                        <table className="data-table">
-                          <thead>
-                            <tr>
-                              <th>Inclure</th>
-                              <th>{t("common.date")}</th>
-                              <th>{t("common.type")}</th>
-                              <th>{t("admin.client_detail.invoices_column_label")}</th>
-                              <th>{t("common.status")}</th>
-                              <th>{t("common.total")}</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {invoiceCandidatePayments.map((row) => {
-                              const key = invoicePaymentKey(row);
-                              return (
-                                <tr key={`invoice-candidate-${key}`}>
-                                  <td>
-                                    <input
-                                      type="checkbox"
-                                      name="selected_payment_keys"
-                                      value={key}
-                                      defaultChecked={invoiceSelectedPaymentKeys.has(key)}
-                                      aria-label={`Inclure ${row.label}`}
-                                    />
-                                  </td>
-                                  <td>{formatDate(row.occurred_at, language)}</td>
-                                  <td>{paymentSourceLabel(row.source, language)}</td>
-                                  <td>
-                                    <div className="stack-xs">
-                                      <span>{row.label}</span>
-                                      <small className="muted">{row.reference ?? "-"}</small>
-                                    </div>
-                                  </td>
-                                  <td>{paymentStatusDisplayLabel(row, language)}</td>
-                                  <td>{formatMoney(row.total_incl_vat, row.currency, language)}</td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
+                      <InvoiceLineSelection
+                        rows={invoiceSelectionRows}
+                        initialSelectedKeys={[...invoiceSelectedPaymentKeys]}
+                        locale={localeForUiLanguage(language)}
+                        labels={{
+                          quickSelection: t("admin.client_detail.invoice_quick_selection"),
+                          quickSelectionHelp: t("admin.client_detail.invoice_quick_selection_help"),
+                          selectAll: t("admin.client_detail.invoice_select_all"),
+                          deselectAll: t("admin.client_detail.invoice_deselect_all"),
+                          selectOnly: t("admin.client_detail.invoice_select_only"),
+                          selectedCount: t("admin.client_detail.invoice_selected_count"),
+                          lineSingular: t("admin.client_detail.invoice_line_singular"),
+                          linePlural: t("admin.client_detail.invoice_line_plural"),
+                          include: t("admin.client_detail.invoice_include_column"),
+                          participant: t("admin.client_detail.invoice_participant_column"),
+                          date: t("common.date"),
+                          type: t("common.type"),
+                          description: t("admin.client_detail.invoices_column_label"),
+                          status: t("common.status"),
+                          total: t("common.total"),
+                        }}
+                      />
                     )}
-                    <p className="muted">Decochez les lignes a exclure, par exemple les partitions ou kits, pour ne facturer que l'acompte.</p>
+                    <p className="muted">{t("admin.client_detail.invoice_line_selection_help")}</p>
                   </article>
 
                   <article className="card modal-card invoice-wizard-card span-2">
