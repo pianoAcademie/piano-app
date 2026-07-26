@@ -140,8 +140,8 @@ export default async function AdminTeacherInvoicingInvoicesPage({
         </article>
       </section>
 
-      <section className="card table-wrap">
-        <table className="data-table">
+      <section className="card table-wrap admin-table-card-wrap">
+        <table className="data-table admin-responsive-table">
           <thead>
             <tr>
               <th>{uiText(language, "admin.salary.payment_date")}</th>
@@ -164,14 +164,14 @@ export default async function AdminTeacherInvoicingInvoicesPage({
             ) : (
               rows.map((row) => (
                 <tr key={row.id}>
-                  <td>{formatDate(row.payment_date, language)}</td>
-                  <td>{row.professor_first_name} {row.professor_last_name}</td>
-                  <td>{row.professor_email}</td>
-                  <td>{row.invoice_number}</td>
-                  <td>{paymentMethodUiLabel(row.payment_method, language)}</td>
-                  <td>{formatMoney(row.amount_excl_vat, row.currency_code, language)}</td>
-                  <td>{formatMoney(row.amount_incl_vat, row.currency_code, language)}</td>
-                  <td>{row.settled_payout_count}</td>
+                  <td data-mobile-label={uiText(language, "admin.salary.payment_date")}>{formatDate(row.payment_date, language)}</td>
+                  <td data-mobile-label="" className="mobile-row-primary">{row.professor_first_name} {row.professor_last_name}</td>
+                  <td data-mobile-label={uiText(language, "common.email")}>{row.professor_email}</td>
+                  <td data-mobile-label={uiText(language, "common.invoices")}>{row.invoice_number}</td>
+                  <td data-mobile-label={uiText(language, "admin.salary.payment_method")}>{paymentMethodUiLabel(row.payment_method, language)}</td>
+                  <td data-mobile-hidden="true">{formatMoney(row.amount_excl_vat, row.currency_code, language)}</td>
+                  <td data-mobile-label={uiText(language, "common.ttc")}>{formatMoney(row.amount_incl_vat, row.currency_code, language)}</td>
+                  <td data-mobile-label={uiText(language, "admin.salary.settled_lines")}>{row.settled_payout_count}</td>
                 </tr>
               ))
             )}

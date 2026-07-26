@@ -250,39 +250,44 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
         {!listResult.ok ? <p className="flash-err">{t("admin.subscriptions.backend_error")}: {translateBackendMessage(language, listResult.message)}</p> : null}
         {ok ? <p className="flash-ok">{ok}</p> : null}
         {error ? <p className="flash-err">{translateBackendMessage(language, error)}</p> : null}
-        <form method="get" className="grid cols-4 sticky-filters">
-          <label>
-            {t("admin.subscriptions.filter_status")}
-            <select name="status" defaultValue={status}>
-              <option value="">{uiText(language, "common.all")}</option>
-              <option value="ACTIVE">{subscriptionStatusLabel("ACTIVE", language)}</option>
-              <option value="PAYMENT_ALERT">{subscriptionStatusLabel("PAYMENT_ALERT", language)}</option>
-              <option value="PRE_TERMINATION">{subscriptionStatusLabel("PRE_TERMINATION", language)}</option>
-              <option value="TERMINATED">{subscriptionStatusLabel("TERMINATED", language)}</option>
-              <option value="PAUSED">{subscriptionStatusLabel("PAUSED", language)}</option>
-              <option value="CANCELLED">{subscriptionStatusLabel("CANCELLED", language)}</option>
-            </select>
-          </label>
-          <label className="cols-span-2">
-            {t("admin.subscriptions.search_text")}
-            <input type="text" name="q" defaultValue={q} placeholder={t("admin.subscriptions.search_placeholder")} />
-          </label>
-          <label className="row align-end top-gap-sm">
-            <input type="checkbox" name="only_retry_due" value="1" defaultChecked={onlyRetryDue === "1"} />
-            {t("admin.subscriptions.retry_due_today")}
-          </label>
-          <div className="row end cols-span-4 top-gap-sm">
-            <button type="submit">{uiText(language, "common.apply")}</button>
-            <a className="ghost" href="/admin/subscriptions">
-              {t("admin.subscriptions.reset_filters")}
-            </a>
+        <form method="get" className="admin-list-filter-form">
+          <div className="admin-list-filter-primary">
+            <label>
+              {t("admin.subscriptions.search_text")}
+              <input type="search" name="q" defaultValue={q} placeholder={t("admin.subscriptions.search_placeholder")} enterKeyHint="search" />
+            </label>
+            <label>
+              {t("admin.subscriptions.filter_status")}
+              <select name="status" defaultValue={status}>
+                <option value="">{uiText(language, "common.all")}</option>
+                <option value="ACTIVE">{subscriptionStatusLabel("ACTIVE", language)}</option>
+                <option value="PAYMENT_ALERT">{subscriptionStatusLabel("PAYMENT_ALERT", language)}</option>
+                <option value="PRE_TERMINATION">{subscriptionStatusLabel("PRE_TERMINATION", language)}</option>
+                <option value="TERMINATED">{subscriptionStatusLabel("TERMINATED", language)}</option>
+                <option value="PAUSED">{subscriptionStatusLabel("PAUSED", language)}</option>
+                <option value="CANCELLED">{subscriptionStatusLabel("CANCELLED", language)}</option>
+              </select>
+            </label>
+            <div className="admin-list-filter-actions">
+              <button type="submit">{uiText(language, "common.apply")}</button>
+              <a className="ghost" href="/admin/subscriptions">{t("admin.subscriptions.reset_filters")}</a>
+            </div>
           </div>
+          <details className="admin-filter-disclosure">
+            <summary>{language === "en" ? "Advanced filters" : "Filtres avances"}</summary>
+            <div className="admin-filter-disclosure-content">
+              <label className="row align-end">
+                <input type="checkbox" name="only_retry_due" value="1" defaultChecked={onlyRetryDue === "1"} />
+                {t("admin.subscriptions.retry_due_today")}
+              </label>
+            </div>
+          </details>
         </form>
       </section>
 
       <section className="card">
-        <div className="table-wrap">
-          <table className="data-table">
+        <div className="table-wrap admin-table-card-wrap">
+          <table className="data-table admin-responsive-table">
             <thead>
               <tr>
                 <th>{t("admin.subscriptions.column_client")}</th>
@@ -309,21 +314,21 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
                   hrefParams.set("subscription_id", row.id);
                   return (
                     <tr key={row.id}>
-                      <td>
+                      <td data-mobile-label="" className="mobile-row-primary">
                         <strong>{row.customer_name}</strong>
                         <br />
                         <span className="muted">{row.customer_email}</span>
                       </td>
-                      <td>{row.plan_name}</td>
-                      <td>
+                      <td data-mobile-label={t("admin.subscriptions.column_subscription")}>{row.plan_name}</td>
+                      <td data-mobile-label={uiText(language, "common.status")}>
                         <span className={`status-pill ${statusClass(row.status)}`}>{subscriptionStatusLabel(row.status, language)}</span>
                       </td>
-                      <td>{formatAmount(row.amount, row.currency, language)}</td>
-                      <td>{formatDate(row.next_billing_date, language)}</td>
-                      <td>{formatDate(row.last_attempt_at, language)}</td>
-                      <td>{formatDate(row.last_successful_charge_at, language)}</td>
-                      <td>{row.bookings_blocked ? uiText(language, "common.yes") : uiText(language, "common.no")}</td>
-                      <td>
+                      <td data-mobile-label={uiText(language, "common.amount")}>{formatAmount(row.amount, row.currency, language)}</td>
+                      <td data-mobile-label={t("admin.subscriptions.column_next_due")}>{formatDate(row.next_billing_date, language)}</td>
+                      <td data-mobile-hidden="true">{formatDate(row.last_attempt_at, language)}</td>
+                      <td data-mobile-hidden="true">{formatDate(row.last_successful_charge_at, language)}</td>
+                      <td data-mobile-label={t("admin.subscriptions.column_booking_block")}>{row.bookings_blocked ? uiText(language, "common.yes") : uiText(language, "common.no")}</td>
+                      <td data-mobile-label={uiText(language, "client.action")}>
                         <a className="ghost" href={`/admin/subscriptions?${hrefParams.toString()}`}>
                           {t("admin.subscriptions.view_detail")}
                         </a>
@@ -389,8 +394,8 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
 
             <section className="card modal-card">
               <h3>{t("admin.subscriptions.billing_cycles")}</h3>
-              <div className="table-wrap">
-                <table className="data-table">
+              <div className="table-wrap admin-table-card-wrap">
+                <table className="data-table admin-responsive-table">
                   <thead>
                     <tr>
                       <th>{uiText(language, "common.period")}</th>
@@ -407,12 +412,12 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
                     ) : (
                       detailData.cycles.map((row) => (
                         <tr key={row.id}>
-                          <td>{`${formatDate(row.period_start, language)} -> ${formatDate(row.period_end, language)}`}</td>
-                          <td>{formatDate(row.billing_date, language)}</td>
-                          <td><span className={`status-pill ${statusClass(row.status)}`}>{subscriptionStatusLabel(row.status, language)}</span></td>
-                          <td>{row.attempt_count}</td>
-                          <td>{formatDate(row.next_retry_at, language)}</td>
-                          <td>{formatAmount(row.amount, row.currency, language)}</td>
+                          <td className="mobile-row-primary" data-mobile-label={uiText(language, "common.period")}>{`${formatDate(row.period_start, language)} -> ${formatDate(row.period_end, language)}`}</td>
+                          <td data-mobile-label={t("admin.subscriptions.column_due_date")}>{formatDate(row.billing_date, language)}</td>
+                          <td data-mobile-label={uiText(language, "common.status")}><span className={`status-pill ${statusClass(row.status)}`}>{subscriptionStatusLabel(row.status, language)}</span></td>
+                          <td data-mobile-label={t("admin.subscriptions.column_attempts")}>{row.attempt_count}</td>
+                          <td data-mobile-label={t("admin.subscriptions.column_retry")}>{formatDate(row.next_retry_at, language)}</td>
+                          <td data-mobile-label={uiText(language, "common.amount")}>{formatAmount(row.amount, row.currency, language)}</td>
                         </tr>
                       ))
                     )}
@@ -423,8 +428,8 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
 
             <section className="card modal-card">
               <h3>{t("admin.subscriptions.payment_attempts")}</h3>
-              <div className="table-wrap">
-                <table className="data-table">
+              <div className="table-wrap admin-table-card-wrap">
+                <table className="data-table admin-responsive-table">
                   <thead>
                     <tr>
                       <th>{uiText(language, "common.date")}</th>
@@ -442,13 +447,13 @@ export default async function AdminSubscriptionsPage({ searchParams }: { searchP
                     ) : (
                       detailData.attempts.map((row) => (
                         <tr key={row.id}>
-                          <td>{formatDate(row.attempted_at, language)}</td>
-                          <td>{row.attempt_number}</td>
-                          <td><span className={`status-pill ${statusClass(row.status)}`}>{subscriptionStatusLabel(row.status, language)}</span></td>
-                          <td>{row.provider_name ?? "-"}</td>
-                          <td>{row.failure_code ?? row.provider_status ?? "-"}</td>
-                          <td>{row.failure_reason ?? "-"}</td>
-                          <td>
+                          <td className="mobile-row-primary" data-mobile-label={uiText(language, "common.date")}>{formatDate(row.attempted_at, language)}</td>
+                          <td data-mobile-label="#">#{row.attempt_number}</td>
+                          <td data-mobile-label={uiText(language, "common.status")}><span className={`status-pill ${statusClass(row.status)}`}>{subscriptionStatusLabel(row.status, language)}</span></td>
+                          <td data-mobile-label={t("admin.subscriptions.column_provider")}>{row.provider_name ?? "-"}</td>
+                          <td data-mobile-label={t("admin.subscriptions.column_code")}>{row.failure_code ?? row.provider_status ?? "-"}</td>
+                          <td data-mobile-label={t("admin.subscriptions.column_reason")}>{row.failure_reason ?? "-"}</td>
+                          <td data-mobile-label={uiText(language, "client.action")}>
                             {row.status.toLowerCase() === "success" && row.provider_name?.toUpperCase() === "PAYPLUG" && row.provider_payment_id ? (
                               <form action={refundAttemptAction}>
                                 <input type="hidden" name="subscription_id" value={detailData.subscription.id} />

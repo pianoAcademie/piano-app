@@ -213,8 +213,8 @@ def list_admin_subscriptions(
     )
     if status_filter:
         stmt = stmt.where(ClientPlanSubscription.status == status_filter.strip().upper())
-    if q:
-        pattern = f"%{q.strip()}%"
+    for search_token in [token for token in (q or "").strip().split() if token]:
+        pattern = f"%{search_token}%"
         stmt = stmt.where(
             or_(
                 User.email.ilike(pattern),

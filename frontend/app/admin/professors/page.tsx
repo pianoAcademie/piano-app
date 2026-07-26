@@ -132,39 +132,40 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
 
       <section className="card">
         <h2>{t("common.filters")}</h2>
-        <form method="get" className="grid cols-3">
-          <label>
-            {t("admin.professors.search_label")}
-            <input type="text" name="search" defaultValue={search} placeholder={t("admin.professors.search_placeholder")} />
-          </label>
-
-          <label>
-            {t("admin.professors.active_only")}
-            <select name="active_only" defaultValue={activeOnly ? "1" : "0"}>
-              <option value="0">{t("common.no")}</option>
-              <option value="1">{t("common.yes")}</option>
-            </select>
-          </label>
-
+        <form method="get" className="admin-list-filter-form">
+          <div className="admin-list-filter-primary">
             <label>
-              {t("admin.professors.name_sort")}
-              <select name="name_sort" defaultValue={nameSort}>
-                <option value="asc">{t("admin.professors.sort_asc")}</option>
-                <option value="desc">{t("admin.professors.sort_desc")}</option>
+              {t("admin.professors.search_label")}
+              <input type="search" name="search" defaultValue={search} placeholder={t("admin.professors.search_placeholder")} enterKeyHint="search" />
+            </label>
+            <label>
+              {t("admin.professors.active_only")}
+              <select name="active_only" defaultValue={activeOnly ? "1" : "0"}>
+                <option value="0">{t("common.no")}</option>
+                <option value="1">{t("common.yes")}</option>
               </select>
             </label>
-
-            <label>
-              {t("admin.professors.payout_as_of")}
-              <input type="date" name="payout_as_of" defaultValue={payoutAsOf} />
-            </label>
-
-          <div className="row">
-            <button type="submit">{t("common.apply")}</button>
-            <a className="reset-link" href="/admin/professors">
-              {t("common.reset")}
-            </a>
+            <div className="admin-list-filter-actions">
+              <button type="submit">{t("common.apply")}</button>
+              <a className="reset-link" href="/admin/professors">{t("common.reset")}</a>
+            </div>
           </div>
+          <details className="admin-filter-disclosure">
+            <summary>{language === "en" ? "Advanced filters" : "Filtres avances"}</summary>
+            <div className="admin-filter-disclosure-content">
+              <label>
+                {t("admin.professors.name_sort")}
+                <select name="name_sort" defaultValue={nameSort}>
+                  <option value="asc">{t("admin.professors.sort_asc")}</option>
+                  <option value="desc">{t("admin.professors.sort_desc")}</option>
+                </select>
+              </label>
+              <label>
+                {t("admin.professors.payout_as_of")}
+                <input type="date" name="payout_as_of" defaultValue={payoutAsOf} />
+              </label>
+            </div>
+          </details>
         </form>
       </section>
 
@@ -194,8 +195,8 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
               summaryLabel={t("admin.professors.selection_summary")}
               language={language}
             />
-            <div className="table-wrap">
-              <table className="data-table">
+            <div className="table-wrap admin-table-card-wrap">
+              <table className="data-table admin-responsive-table">
                 <thead>
                   <tr>
                     <th>{t("admin.professors.select_short")}</th>
@@ -214,24 +215,24 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
                     const payoutAmount = professor.payout_balance_amount || "0.00";
                     return (
                       <tr key={professor.id}>
-                        <td>
+                        <td data-mobile-label="">
                           <input type="checkbox" name="collaborator_ids" value={professor.id} />
                         </td>
-                        <td>
+                        <td data-mobile-label="" className="mobile-row-primary">
                           <Link className="mode-link" href={`/admin/professors/${professor.id}?tab=profil`}>
                             {professor.last_name || "-"}
                           </Link>
                         </td>
-                        <td>{professor.first_name || "-"}</td>
-                        <td>{professor.phone || "-"}</td>
-                        <td>
+                        <td data-mobile-label={t("admin.professors.first_name")}>{professor.first_name || "-"}</td>
+                        <td data-mobile-label={t("admin.professors.phone_short")}>{professor.phone || "-"}</td>
+                        <td data-mobile-label={t("common.status")}>
                           <span className={`status-pill ${professor.active ? "status-ok" : "status-off"}`}>{statusLabel}</span>
                         </td>
-                        <td>
+                        <td data-mobile-label={t("admin.professors.payout_balance")}>
                           {formatAmount(payoutAmount, payoutCurrency, language)}
                         </td>
                         {canManageCollaborators ? (
-                          <td>
+                          <td data-mobile-label={t("admin.professors.portal_view")}>
                             <button
                               type="submit"
                               name="teacher_id"

@@ -126,16 +126,16 @@ export default async function AdminSalaryPaymentsPage({ searchParams }: { search
       {!paymentsResult.ok ? <section className="flash-err">{t("admin.salary.payments_error")}: {paymentsResult.message}</section> : null}
 
       <section className="card">
-        <form method="get" className="grid cols-3">
+        <form method="get" className="admin-list-filter-primary">
           <label>
             {t("admin.salary.search_collaborator")}
-            <input type="text" name="search" defaultValue={search} placeholder={t("admin.salary.search_placeholder")} />
+            <input type="search" name="search" defaultValue={search} placeholder={t("admin.salary.search_placeholder")} enterKeyHint="search" />
           </label>
           <label>
             {t("admin.salary.reference_date")}
             <input type="date" name="reference_date" defaultValue={referenceDate} />
           </label>
-          <div className="row">
+          <div className="admin-list-filter-actions">
             <button type="submit">{t("admin.salary.update")}</button>
             <a className="reset-link" href="/admin/salary-payments">
               {uiText(language, "common.reset")}
@@ -144,9 +144,9 @@ export default async function AdminSalaryPaymentsPage({ searchParams }: { search
         </form>
       </section>
 
-      <section className="card table-wrap">
+      <section className="card table-wrap admin-table-card-wrap">
         <h3>{t("admin.salary.amounts_due_title")}</h3>
-        <table className="data-table">
+        <table className="data-table admin-responsive-table">
           <thead>
             <tr>
               <th>{uiText(language, "admin.nav.professors")}</th>
@@ -174,17 +174,17 @@ export default async function AdminSalaryPaymentsPage({ searchParams }: { search
                 });
                 return (
                   <tr key={professor.id}>
-                    <td>
+                    <td data-mobile-label="" className="mobile-row-primary">
                       <Link href={`/admin/professors/${professor.id}`} className="mode-link">
                         <strong>
                           {professor.first_name} {professor.last_name}
                         </strong>
                       </Link>
                     </td>
-                    <td>{professor.email}</td>
-                    <td>{money(due, currency, language)}</td>
-                    <td>{referenceDate}</td>
-                    <td>
+                    <td data-mobile-label={uiText(language, "common.email")}>{professor.email}</td>
+                    <td data-mobile-label={t("admin.salary.amount_due")}>{money(due, currency, language)}</td>
+                    <td data-mobile-hidden="true">{referenceDate}</td>
+                    <td data-mobile-label={uiText(language, "client.action")}>
                       <a className="mode-link" href={openHref}>
                         {t("admin.salary.action_pay")}
                       </a>
@@ -197,9 +197,9 @@ export default async function AdminSalaryPaymentsPage({ searchParams }: { search
         </table>
       </section>
 
-      <section className="card table-wrap">
+      <section className="card table-wrap admin-table-card-wrap">
         <h3>{t("admin.salary.history_title")}</h3>
-        <table className="data-table">
+        <table className="data-table admin-responsive-table">
           <thead>
             <tr>
               <th>{t("admin.salary.payment_date")}</th>
@@ -221,15 +221,15 @@ export default async function AdminSalaryPaymentsPage({ searchParams }: { search
             ) : (
               paymentsResult.data.map((row) => (
                 <tr key={row.id}>
-                  <td>{formatDate(row.payment_date, language)}</td>
-                  <td>
+                  <td data-mobile-label={t("admin.salary.payment_date")}>{formatDate(row.payment_date, language)}</td>
+                  <td data-mobile-label="" className="mobile-row-primary">
                     {row.professor_first_name} {row.professor_last_name}
                   </td>
-                  <td>{row.invoice_number}</td>
-                  <td>{paymentMethodLabel(row.payment_method, language)}</td>
-                  <td>{money(row.amount_excl_vat, row.currency_code, language)}</td>
-                  <td>{money(row.amount_incl_vat, row.currency_code, language)}</td>
-                  <td>{row.settled_payout_count}</td>
+                  <td data-mobile-label={uiText(language, "common.invoices")}>{row.invoice_number}</td>
+                  <td data-mobile-label={t("admin.salary.payment_method")}>{paymentMethodLabel(row.payment_method, language)}</td>
+                  <td data-mobile-hidden="true">{money(row.amount_excl_vat, row.currency_code, language)}</td>
+                  <td data-mobile-label={uiText(language, "common.ttc")}>{money(row.amount_incl_vat, row.currency_code, language)}</td>
+                  <td data-mobile-label={t("admin.salary.settled_lines")}>{row.settled_payout_count}</td>
                 </tr>
               ))
             )}

@@ -77,43 +77,39 @@ export default async function AdminNotificationIncidentsPage({ searchParams }: {
 
       <section className="card">
         {!incidentsResult.ok ? <p className="flash-err">{t("admin.incidents.backend_error")}: {incidentsResult.message}</p> : null}
-        <form className="grid cols-5 sticky-filters" method="get">
-          <label>
-            {t("admin.incidents.date_from")}
-            <input type="datetime-local" name="from" defaultValue={from} />
-          </label>
-          <label>
-            {t("admin.incidents.date_to")}
-            <input type="datetime-local" name="to" defaultValue={to} />
-          </label>
-          <label>
-            {t("admin.incidents.channel")}
-            <select name="channel" defaultValue={channel}>
-              <option value="">{uiText(language, "common.all")}</option>
-              <option value="email">{uiText(language, "common.email")}</option>
-              <option value="sms">{uiText(language, "common.sms")}</option>
-            </select>
-          </label>
-          <label>
-            {t("admin.incidents.incident")}
-            <input type="text" name="incident_type" defaultValue={incidentType} placeholder="email_bounced" />
-          </label>
-          <label>
-            {t("admin.incidents.contact_id")}
-            <input type="text" name="contact_id" defaultValue={contactId} />
-          </label>
-          <div className="row end cols-span-5 top-gap-sm">
-            <button type="submit">{uiText(language, "common.apply")}</button>
-            <a className="ghost top-gap-sm-inline" href="/admin/notifications/incidents">
-              {t("admin.incidents.reset_filters")}
-            </a>
+        <form className="admin-list-filter-form" method="get">
+          <div className="admin-list-filter-primary">
+            <label>
+              {t("admin.incidents.incident")}
+              <input type="text" name="incident_type" defaultValue={incidentType} placeholder="email_bounced" />
+            </label>
+            <label>
+              {t("admin.incidents.channel")}
+              <select name="channel" defaultValue={channel}>
+                <option value="">{uiText(language, "common.all")}</option>
+                <option value="email">{uiText(language, "common.email")}</option>
+                <option value="sms">{uiText(language, "common.sms")}</option>
+              </select>
+            </label>
+            <div className="admin-list-filter-actions">
+              <button type="submit">{uiText(language, "common.apply")}</button>
+              <a className="ghost" href="/admin/notifications/incidents">{t("admin.incidents.reset_filters")}</a>
+            </div>
           </div>
+          <details className="admin-filter-disclosure">
+            <summary>{language === "en" ? "Advanced filters" : "Filtres avances"}</summary>
+            <div className="admin-filter-disclosure-content">
+              <label>{t("admin.incidents.date_from")}<input type="datetime-local" name="from" defaultValue={from} /></label>
+              <label>{t("admin.incidents.date_to")}<input type="datetime-local" name="to" defaultValue={to} /></label>
+              <label>{t("admin.incidents.contact_id")}<input type="text" name="contact_id" defaultValue={contactId} /></label>
+            </div>
+          </details>
         </form>
       </section>
 
       <section className="card">
-        <div className="table-wrap">
-          <table className="data-table">
+        <div className="table-wrap admin-table-card-wrap">
+          <table className="data-table admin-responsive-table">
             <thead>
               <tr>
                 <th>{uiText(language, "common.date")}</th>
@@ -137,15 +133,15 @@ export default async function AdminNotificationIncidentsPage({ searchParams }: {
               ) : (
                 incidents.map((row) => (
                   <tr key={row.id}>
-                    <td>{formatDateTime(row.detected_at, language)}</td>
-                    <td>{row.contact_id}</td>
-                    <td>{row.contact_type}</td>
-                    <td>{channelLabel(row.channel, language)}</td>
-                    <td>{row.incident_type}</td>
-                    <td>{row.severity}</td>
-                    <td>{row.detail_text ?? "-"}</td>
-                    <td>{row.notification_id ?? "-"}</td>
-                    <td>
+                    <td data-mobile-label={uiText(language, "common.date")}>{formatDateTime(row.detected_at, language)}</td>
+                    <td data-mobile-hidden="true">{row.contact_id}</td>
+                    <td data-mobile-hidden="true">{row.contact_type}</td>
+                    <td data-mobile-label={t("admin.incidents.channel")}>{channelLabel(row.channel, language)}</td>
+                    <td data-mobile-label="" className="mobile-row-primary">{row.incident_type}</td>
+                    <td data-mobile-label={t("admin.incidents.severity")}>{row.severity}</td>
+                    <td data-mobile-label={t("admin.incidents.detail")}>{row.detail_text ?? "-"}</td>
+                    <td data-mobile-hidden="true">{row.notification_id ?? "-"}</td>
+                    <td data-mobile-label={uiText(language, "client.action")}>
                       {row.contact_type === "USER" ? (
                         <a className="ghost" href={`/admin/clients/${row.contact_id}?tab=infos`}>
                           {t("admin.incidents.open_record")}

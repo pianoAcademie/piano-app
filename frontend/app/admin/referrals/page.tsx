@@ -393,8 +393,8 @@ export default async function AdminReferralsPage({ searchParams }: { searchParam
       </section>
 
       <section className="card span-2">
-        <div className="table-wrap">
-          <table className="data-table">
+        <div className="table-wrap admin-table-card-wrap">
+          <table className="data-table admin-responsive-table">
             <thead>
               <tr>
                 <th>{rt(language, "status")}</th>
@@ -410,11 +410,11 @@ export default async function AdminReferralsPage({ searchParams }: { searchParam
             <tbody>
               {referrals.map((row) => (
                 <tr key={row.id}>
-                  <td>
+                  <td data-mobile-label={rt(language, "status")}>
                     <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status, language)}</span>
                     <small className="muted">{row.match_status} {row.match_confidence ? `(${row.match_confidence}%)` : ""}</small>
                   </td>
-                  <td>
+                  <td data-mobile-label="" className="mobile-row-primary">
                     {row.referrer_user_id ? (
                       <Link className="mode-link" href={`/admin/clients/${row.referrer_user_id}?tab=paiements`}>
                         {row.referrer_name || row.declared_referrer_text}
@@ -453,7 +453,7 @@ export default async function AdminReferralsPage({ searchParams }: { searchParam
                       </form>
                     ) : null}
                   </td>
-                  <td>
+                  <td data-mobile-label={rt(language, "referred")}>
                     {row.referred_client_id ? (
                       <Link className="mode-link" href={`/admin/clients/${row.referred_client_id}`}>
                         {row.referred_client_name || rt(language, "referred_family")}
@@ -465,8 +465,8 @@ export default async function AdminReferralsPage({ searchParams }: { searchParam
                     )}
                     {row.referred_student_name ? <small className="muted">{row.referred_student_name}</small> : null}
                   </td>
-                  <td>{categoryLabel(row.category, language)}</td>
-                  <td>
+                  <td data-mobile-label={rt(language, "category")}>{categoryLabel(row.category, language)}</td>
+                  <td data-mobile-label={rt(language, "cashing")}>
                     {row.invoice_total ? (
                       <>
                         <strong>{formatMoney(row.paid_total ?? "0", row.currency, language)}</strong>
@@ -478,12 +478,12 @@ export default async function AdminReferralsPage({ searchParams }: { searchParam
                       <span className="muted">{rt(language, "no_invoice")}</span>
                     )}
                   </td>
-                  <td>{formatMoney(row.reward_amount, row.currency, language)}</td>
-                  <td>
+                  <td data-mobile-label={rt(language, "credit")}>{formatMoney(row.reward_amount, row.currency, language)}</td>
+                  <td data-mobile-hidden="true">
                     <small className="muted">{rt(language, "announcement", { date: formatDate(row.announcement_email_sent_at, language) })}</small>
                     <small className="muted">{rt(language, "credit_email", { date: formatDate(row.credit_email_sent_at, language) })}</small>
                   </td>
-                  <td>
+                  <td data-mobile-label={rt(language, "links")}>
                     <div className="row wrap gap-sm">
                       {row.typeform_intake_id ? <Link className="mode-link" href={`/admin/intakes/${row.typeform_intake_id}`}>{rt(language, "intake")}</Link> : null}
                       {row.quote_id ? <Link className="mode-link" href={`/admin/quotes/${row.quote_id}`}>{rt(language, "quote")}</Link> : null}

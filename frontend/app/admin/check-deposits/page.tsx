@@ -216,8 +216,8 @@ function CheckRowsTable({
     return <p className="muted">{tt(language, "empty_status")}</p>;
   }
   return (
-    <div className="table-wrap">
-      <table className="data-table">
+    <div className="table-wrap admin-table-card-wrap">
+      <table className="data-table admin-responsive-table">
         <thead>
           <tr>
             {selectable ? <th>{tt(language, "deposit")}</th> : null}
@@ -233,21 +233,21 @@ function CheckRowsTable({
           {rows.map((row) => (
             <tr key={row.transaction_id}>
               {selectable ? (
-                <td>
+                <td data-mobile-label="">
                   <input type="checkbox" name="transaction_ids" value={row.transaction_id} />
                 </td>
               ) : null}
-              <td>
+              <td data-mobile-label="" className="mobile-row-primary">
                 <Link className="mode-link" href={`/admin/clients/${row.client_id}?tab=paiements`}>
                   {row.client_name}
                 </Link>
                 <small className="muted">{row.label}</small>
               </td>
-              <td>{new Date(row.occurred_at).toLocaleDateString(localeForUiLanguage(language))}</td>
-              <td>{row.reference || "-"}</td>
-              <td>{row.invoice_number || "-"}</td>
-              <td>{formatMoney(row.amount_incl_vat, row.currency, language)}</td>
-              <td>
+              <td data-mobile-label={tt(language, "date")}>{new Date(row.occurred_at).toLocaleDateString(localeForUiLanguage(language))}</td>
+              <td data-mobile-hidden="true">{row.reference || "-"}</td>
+              <td data-mobile-label={tt(language, "invoice")}>{row.invoice_number || "-"}</td>
+              <td data-mobile-label={tt(language, "amount")}>{formatMoney(row.amount_incl_vat, row.currency, language)}</td>
+              <td data-mobile-label={tt(language, "status")}>
                 <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status, language)}</span>
                 {row.tracking_note ? <small className="muted">{row.tracking_note}</small> : null}
               </td>

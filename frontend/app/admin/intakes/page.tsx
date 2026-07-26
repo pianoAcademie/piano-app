@@ -373,49 +373,50 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
       </section>
 
       <section className="card">
-        <form method="get" className="grid cols-5 sticky-filters">
-          <label className="span-2">
-            {uiText(language, "common.search")}
-            <input type="search" name="q" defaultValue={q} placeholder={t("admin.intakes.search_placeholder")} />
-          </label>
-          <label>
-            {uiText(language, "common.status")}
-            <select name="status" defaultValue={status}>
-              <option value="">{uiText(language, "common.all")}</option>
-              <option value="NEW">{t("admin.intakes.status_new")}</option>
-              <option value="NORMALIZED">{t("admin.intakes.status_normalized")}</option>
-              <option value="MATCHING_REQUIRED">{t("admin.intakes.status_matching_required")}</option>
-              <option value="READY_FOR_DRAFT_QUOTE">{t("admin.intakes.status_ready_draft")}</option>
-              <option value="BLOCKED">{t("admin.intakes.status_blocked")}</option>
-              <option value="PROCESSED">{t("admin.intakes.status_processed")}</option>
-              <option value="IGNORED">{t("admin.intakes.status_ignored")}</option>
-            </select>
-          </label>
-          <label>
-            {uiText(language, "common.per_page")}
-            <select name="page_size" defaultValue={String(pageSize)}>
-              {PAGE_SIZE_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="row wrap gap-sm" style={{ alignItems: "end" }}>
-            <label className="row gap-sm">
-              <input type="checkbox" name="include_ignored" value="1" defaultChecked={includeIgnored} />
-              <span>{t("admin.intakes.include_ignored")}</span>
+        <form method="get" className="admin-list-filter-form">
+          <div className="admin-list-filter-primary">
+            <label>
+              {uiText(language, "common.search")}
+              <input type="search" name="q" defaultValue={q} placeholder={t("admin.intakes.search_placeholder")} enterKeyHint="search" />
             </label>
-            <label className="row gap-sm">
-              <input type="checkbox" name="exclude_processed" value="1" defaultChecked={excludeProcessed} />
-              <span>{t("admin.intakes.exclude_processed")}</span>
+            <label>
+              {uiText(language, "common.status")}
+              <select name="status" defaultValue={status}>
+                <option value="">{uiText(language, "common.all")}</option>
+                <option value="NEW">{t("admin.intakes.status_new")}</option>
+                <option value="NORMALIZED">{t("admin.intakes.status_normalized")}</option>
+                <option value="MATCHING_REQUIRED">{t("admin.intakes.status_matching_required")}</option>
+                <option value="READY_FOR_DRAFT_QUOTE">{t("admin.intakes.status_ready_draft")}</option>
+                <option value="BLOCKED">{t("admin.intakes.status_blocked")}</option>
+                <option value="PROCESSED">{t("admin.intakes.status_processed")}</option>
+                <option value="IGNORED">{t("admin.intakes.status_ignored")}</option>
+              </select>
             </label>
-            <input type="hidden" name="exclude_processed" value="0" />
+            <div className="admin-list-filter-actions">
+              <button type="submit">{uiText(language, "common.apply")}</button>
+              <Link className="ghost" href="/admin/intakes">{uiText(language, "common.reset")}</Link>
+            </div>
           </div>
-          <div className="row wrap gap-sm" style={{ alignItems: "end" }}>
-            <button type="submit">{uiText(language, "common.apply")}</button>
-            <Link className="ghost" href="/admin/intakes">{uiText(language, "common.reset")}</Link>
-          </div>
+          <details className="admin-filter-disclosure">
+            <summary>{language === "en" ? "Advanced filters" : "Filtres avances"}</summary>
+            <div className="admin-filter-disclosure-content">
+              <label>
+                {uiText(language, "common.per_page")}
+                <select name="page_size" defaultValue={String(pageSize)}>
+                  {PAGE_SIZE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </label>
+              <label className="row gap-sm">
+                <input type="checkbox" name="include_ignored" value="1" defaultChecked={includeIgnored} />
+                <span>{t("admin.intakes.include_ignored")}</span>
+              </label>
+              <label className="row gap-sm">
+                <input type="checkbox" name="exclude_processed" value="1" defaultChecked={excludeProcessed} />
+                <span>{t("admin.intakes.exclude_processed")}</span>
+              </label>
+              <input type="hidden" name="exclude_processed" value="0" />
+            </div>
+          </details>
         </form>
       </section>
 
@@ -446,8 +447,8 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
               excludeProcessed={excludeProcessed}
               language={language}
             />
-            <div className="table-wrap top-gap-sm">
-            <table className="data-table">
+            <div className="table-wrap top-gap-sm admin-table-card-wrap">
+            <table className="data-table admin-responsive-table">
               <thead>
                 <tr>
                   <th>{uiText(language, "common.date")}</th>
@@ -466,28 +467,28 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
               <tbody>
                 {rows.map((row) => (
                   <tr key={row.id}>
-                    <td>{formatDate(row.received_at, language)}</td>
-                    <td>
+                    <td data-mobile-label={uiText(language, "common.date")}>{formatDate(row.received_at, language)}</td>
+                    <td data-mobile-hidden="true">
                       <strong>{row.source_form_label}</strong>
                       <div className="muted">{row.source_form_id}</div>
                     </td>
-                    <td>{row.prospect_label || "-"}</td>
-                    <td>{row.child_label || "-"}</td>
-                    <td>{row.detected_location || "-"}</td>
-                    <td>{segmentLabel(row.detected_segment, language)}</td>
-                    <td>
+                    <td data-mobile-label="" className="mobile-row-primary">{row.prospect_label || "-"}</td>
+                    <td data-mobile-label={uiText(language, "client.child")}>{row.child_label || "-"}</td>
+                    <td data-mobile-label={uiText(language, "common.site")}>{row.detected_location || "-"}</td>
+                    <td data-mobile-label={t("admin.intakes.segment")}>{segmentLabel(row.detected_segment, language)}</td>
+                    <td data-mobile-label={uiText(language, "common.status")}>
                       <span className={`status-pill ${statusClass(row.intake_status)}`}>{statusLabel(row.intake_status, language)}</span>
                     </td>
-                    <td>
+                    <td data-mobile-label={language === "fr" ? "Commentaire" : "Comment"}>
                       {row.admin_comment ? (
                         <p className={styles.adminCommentPreview}>{row.admin_comment}</p>
                       ) : (
                         <span className="muted">-</span>
                       )}
                     </td>
-                    <td>{compactList(row.warnings)}</td>
-                    <td>{compactList(row.blockages)}</td>
-                    <td>
+                    <td data-mobile-hidden="true">{compactList(row.warnings)}</td>
+                    <td data-mobile-label={uiText(language, "common.blockages")}>{compactList(row.blockages)}</td>
+                    <td data-mobile-label={uiText(language, "client.action")}>
                       <div className="row wrap gap-sm">
                         <Link className="ghost" href={`/admin/intakes/${encodeURIComponent(row.id)}`}>{uiText(language, "common.open")}</Link>
                         {row.related_quote_id ? (

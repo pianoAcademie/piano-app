@@ -5,6 +5,7 @@ import { hasAdminPermission } from "../../../lib/admin-access";
 import { getAdminToken } from "../../../lib/auth-cookies";
 import { backendRequest } from "../../../lib/backend";
 import type { UserOut } from "../../../lib/types";
+import { normalizeUiLanguage } from "../../../lib/ui-messages";
 import {
   PlanningReorganizationBoard,
   type PlanningReorganizationSession,
@@ -79,6 +80,7 @@ export default async function AdminPlanningReorganizationPage({
   if (!meResult.ok || !hasAdminPermission(meResult.data, "can_edit_planning")) {
     redirect("/login?error_code=admin_access_required");
   }
+  const language = normalizeUiLanguage(meResult.data.preferred_language);
 
   const params = searchParams ?? {};
   const requestedSchoolYear = readParam(params, "school_year").trim();
@@ -184,7 +186,7 @@ export default async function AdminPlanningReorganizationPage({
         </div>
       </section>
 
-      {snapshot ? <PlanningReorganizationBoard sessions={snapshot.sessions} returnTo={returnTo} /> : null}
+      {snapshot ? <PlanningReorganizationBoard sessions={snapshot.sessions} returnTo={returnTo} language={language} /> : null}
     </main>
   );
 }

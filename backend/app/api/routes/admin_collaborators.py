@@ -926,8 +926,8 @@ def list_collaborators(
     if active_only:
         stmt = stmt.where(Professor.active.is_(True))
 
-    if search:
-        pattern = f"%{search.strip()}%"
+    for search_token in [token for token in (search or "").strip().split() if token]:
+        pattern = f"%{search_token}%"
         stmt = stmt.where(
             or_(
                 Professor.email.ilike(pattern),

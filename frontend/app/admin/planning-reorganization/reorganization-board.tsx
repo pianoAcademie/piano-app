@@ -39,6 +39,7 @@ type DraggedBooking = {
 type PlanningReorganizationBoardProps = {
   sessions: PlanningReorganizationSession[];
   returnTo: string;
+  language?: "fr" | "en";
 };
 
 function formatTime(value: string, timezone: string): string {
@@ -60,22 +61,26 @@ function sessionTimeLabel(session: PlanningReorganizationSession): string {
 export function PlanningReorganizationBoard({
   sessions,
   returnTo,
+  language = "fr",
 }: PlanningReorganizationBoardProps): JSX.Element {
   const [dragged, setDragged] = useState<DraggedBooking | null>(null);
+  const [selected, setSelected] = useState<DraggedBooking | null>(null);
   const [dragOverSessionId, setDragOverSessionId] = useState<string | null>(null);
   const [scope, setScope] = useState<"single" | "series_future">("single");
   const [isPending, startTransition] = useTransition();
 
   function moveToSession(targetSessionId: string): void {
-    if (!dragged || dragged.sourceSessionId === targetSessionId || isPending) {
+    const bookingToMove = dragged ?? selected;
+    if (!bookingToMove || bookingToMove.sourceSessionId === targetSessionId || isPending) {
       return;
     }
     const formData = new FormData();
-    formData.set("booking_id", dragged.bookingId);
+    formData.set("booking_id", bookingToMove.bookingId);
     formData.set("target_session_id", targetSessionId);
     formData.set("scope", scope);
     formData.set("return_to", returnTo);
     startTransition(() => {
+      setSelected(null);
       void movePlanningReorganizationBookingAction(formData);
     });
   }
@@ -93,18 +98,22 @@ export function PlanningReorganizationBoard({
     <section className="card reorg-workspace">
       <div className="reorg-toolbar">
         <div>
-          <h2>Atelier de placement</h2>
-          <p>Glissez un eleve vers un autre creneau du meme jour. Le changement reste controle par les capacites.</p>
+          <h2>{language === "en" ? "Placement workspace" : "Atelier de placement"}</h2>
+          <p>
+            {language === "en"
+              ? "Drag a student, or tap their name and choose another slot. Capacity rules still apply."
+              : "Glissez un eleve, ou touchez son nom puis choisissez un autre creneau. Les capacites restent controlees."}
+          </p>
         </div>
         <label className="reorg-scope">
-          Portee
+          {language === "en" ? "Scope" : "Portee"}
           <select value={scope} onChange={(event) => setScope(event.target.value as "single" | "series_future")}>
-            <option value="single">Cette seance uniquement</option>
-            <option value="series_future">Suite de la serie</option>
+            <option value="single">{language === "en" ? "This session only" : "Cette seance uniquement"}</option>
+            <option value="series_future">{language === "en" ? "Remaining series" : "Suite de la serie"}</option>
           </select>
         </label>
       </div>
-      {isPending ? <p className="form-feedback success">Deplacement en cours...</p> : null}
+      {isPending ? <p className="form-feedback success">{language === "en" ? "Moving..." : "Deplacement en cours..."}</p> : null}
       <div className="reorg-board" aria-live="polite">
         {sessions.map((session) => {
           const capacityRatio = session.capacity_max > 0 ? session.booked_count / session.capacity_max : 0;
@@ -135,6 +144,11 @@ export function PlanningReorganizationBoard({
                 </div>
                 <span className={`reorg-capacity ${tone}`}>{session.booked_count}/{session.capacity_max}</span>
               </header>
+              {selected && selected.sourceSessionId !== session.id ? (
+                <button type="button" className="button-link reorg-mobile-move-button" onClick={() => moveToSession(session.id)}>
+                  {language === "en" ? `Move ${selected.label} here` : `Deplacer ${selected.label} ici`}
+                </button>
+              ) : null}
               <dl className="reorg-slot-meta">
                 <div>
                   <dt>Professeur</dt>
@@ -150,9 +164,21 @@ export function PlanningReorganizationBoard({
                   session.bookings.map((booking) => (
                     <button
                       type="button"
-                      className="reorg-student-card"
+                      className={`reorg-student-card ${selected?.bookingId === booking.id ? "is-selected" : ""}`}
                       draggable
                       key={booking.id}
+                      aria-pressed={selected?.bookingId === booking.id}
+                      onClick={() => {
+                        setSelected((current) =>
+                          current?.bookingId === booking.id
+                            ? null
+                            : {
+                                bookingId: booking.id,
+                                sourceSessionId: session.id,
+                                label: booking.client_display_name,
+                              },
+                        );
+                      }}
                       onDragStart={(event) => {
                         event.dataTransfer.effectAllowed = "move";
                         setDragged({

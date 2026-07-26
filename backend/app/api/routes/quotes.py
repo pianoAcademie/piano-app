@@ -4828,8 +4828,8 @@ def list_prospects(
     stmt = select(Prospect)
     if status_filter:
         stmt = stmt.where(Prospect.status == status_filter.strip())
-    if q:
-        pattern = f"%{q.strip()}%"
+    for search_token in [token for token in (q or "").strip().split() if token]:
+        pattern = f"%{search_token}%"
         stmt = stmt.where(
             or_(
                 Prospect.email.ilike(pattern),

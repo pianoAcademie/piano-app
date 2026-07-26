@@ -71,8 +71,8 @@ def list_admin_to_process_messages(
         stmt = stmt.where(TeacherStatementMessage.source == source.strip())
     if message_type:
         stmt = stmt.where(TeacherStatementMessage.message_type == message_type.strip())
-    if q:
-        pattern = f"%{q.strip()}%"
+    for search_token in [token for token in (q or "").strip().split() if token]:
+        pattern = f"%{search_token}%"
         stmt = stmt.where(
             or_(
                 TeacherStatementMessage.message.ilike(pattern),

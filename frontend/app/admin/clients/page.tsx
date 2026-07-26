@@ -468,67 +468,68 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
 
           <section className="card">
             <h2>{t("admin.clients.filters_title")}</h2>
-            <form method="get" className="grid cols-4">
+            <form method="get" className="admin-list-filter-form">
               <input type="hidden" name="view" value="students" />
               <input type="hidden" name="sort_by" value={sortBy} />
               <input type="hidden" name="sort_dir" value={sortDir} />
               <input type="hidden" name="page" value="1" />
 
-              <label>
-                {t("admin.clients.search_label")}
-                <input type="text" name="search" defaultValue={search} placeholder={t("admin.clients.search_placeholder")} />
-              </label>
+              <div className="admin-list-filter-primary">
+                <label>
+                  {t("admin.clients.search_label")}
+                  <input type="search" name="search" defaultValue={search} placeholder={t("admin.clients.search_placeholder")} enterKeyHint="search" />
+                </label>
 
-              <label>
-                {t("admin.clients.client_status_label")}
-                <select name="status" defaultValue={selectedStatus}>
-                  <option value="ALL">{t("admin.clients.all_excluding_archived")}</option>
-                  {CLIENT_STATUS_OPTIONS.map((statusValue) => (
-                    <option key={statusValue} value={statusValue}>
-                      {statusLabel(statusValue, language)}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <label>
+                  {t("admin.clients.client_status_label")}
+                  <select name="status" defaultValue={selectedStatus}>
+                    <option value="ALL">{t("admin.clients.all_excluding_archived")}</option>
+                    {CLIENT_STATUS_OPTIONS.map((statusValue) => (
+                      <option key={statusValue} value={statusValue}>
+                        {statusLabel(statusValue, language)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-              <label>
-                Site
-                <select name="site" defaultValue={selectedSite}>
-                  <option value="ALL">{uiText(language, "common.all")}</option>
-                  {STUDENT_SITE_OPTIONS.map((siteValue) => (
-                    <option key={siteValue} value={siteValue}>
-                      {studentSiteLabel(siteValue)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                {t("admin.clients.group_label")}
-                <select name="group_id" defaultValue={selectedGroupId}>
-                  <option value="">{uiText(language, "common.all")}</option>
-                  {groups.filter((group) => group.active).map((group) => (
-                    <option key={group.id} value={group.id}>
-                      {group.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                {t("admin.clients.clients_per_page")}
-                <select name="per_page" defaultValue={String(perPage)}>
-                  <option value="5">5</option>
-                  <option value="50">50</option>
-                </select>
-              </label>
-
-              <div className="row">
-                <button type="submit">{uiText(language, "common.apply")}</button>
-                <a className="reset-link" href="/admin/clients">
-                  {uiText(language, "common.reset")}
-                </a>
+                <div className="admin-list-filter-actions">
+                  <button type="submit">{uiText(language, "common.apply")}</button>
+                  <a className="reset-link" href="/admin/clients">{uiText(language, "common.reset")}</a>
+                </div>
               </div>
+
+              <details className="admin-filter-disclosure">
+                <summary>{language === "en" ? "Advanced filters" : "Filtres avances"}</summary>
+                <div className="admin-filter-disclosure-content">
+                  <label>
+                    Site
+                    <select name="site" defaultValue={selectedSite}>
+                      <option value="ALL">{uiText(language, "common.all")}</option>
+                      {STUDENT_SITE_OPTIONS.map((siteValue) => (
+                        <option key={siteValue} value={siteValue}>{studentSiteLabel(siteValue)}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    {t("admin.clients.group_label")}
+                    <select name="group_id" defaultValue={selectedGroupId}>
+                      <option value="">{uiText(language, "common.all")}</option>
+                      {groups.filter((group) => group.active).map((group) => (
+                        <option key={group.id} value={group.id}>{group.name}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    {t("admin.clients.clients_per_page")}
+                    <select name="per_page" defaultValue={String(perPage)}>
+                      <option value="5">5</option>
+                      <option value="50">50</option>
+                    </select>
+                  </label>
+                </div>
+              </details>
             </form>
           </section>
 
@@ -553,8 +554,8 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
               />
             </section>
 
-            <section className="card table-wrap">
-              <table className="data-table clients-table">
+            <section className="card table-wrap admin-table-card-wrap">
+              <table className="data-table clients-table admin-responsive-table">
                 <thead>
                   <tr>
                     <th style={{ width: "52px" }}>
@@ -698,20 +699,20 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                 <tbody>
                   {listedClients.map((client) => (
                     <tr key={client.id}>
-                      <td>
+                      <td data-mobile-label="">
                         <input type="checkbox" name="client_ids" value={client.id} aria-label={`${t("admin.clients.select_page_aria")} ${client.email}`} />
                       </td>
-                      <td>
+                      <td data-mobile-label="" className="mobile-row-primary">
                         <Link className="client-name-link" href={`/admin/clients/${client.id}`}>
                           {client.last_name || "-"}
                         </Link>
                         <small className="muted row-inline">{client.email}</small>
                       </td>
-                      <td>
+                      <td data-mobile-label={t("admin.clients.sort_first_name")}>
                         <span>{client.first_name || "-"}</span>
                         {client.phone ? <small className="muted row-inline">{client.phone}</small> : null}
                       </td>
-                      <td>
+                      <td data-mobile-label={t("admin.clients.sort_family_name")}>
                         <span>{client.family_name || "-"}</span>
                         {client.linked_children_count > 0 ? (
                           <small className="muted row-inline">
@@ -726,14 +727,14 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
                         ) : null}
                         {client.group_names.length > 0 ? <small className="muted row-inline">{client.group_names.join(" | ")}</small> : null}
                       </td>
-                      <td>
+                      <td data-mobile-label={uiText(language, "common.status")}>
                         <span className={`status-pill ${statusPillClass(client.client_status)}`}>{statusLabel(client.client_status, language)}</span>
                         <small className="muted row-inline">Cree {formatDateOnly(client.created_at, language)}</small>
                         <small className="muted row-inline">Maj {formatDateOnly(client.updated_at, language)}</small>
                       </td>
-                      <td>{clientTypeLabel(client.client_kind, language)}</td>
-                      <td>{studentSiteLabel(client.student_site)}</td>
-                      <td>{client.next_session_start_at_utc ? formatDate(client.next_session_start_at_utc, language) : "-"}</td>
+                      <td data-mobile-label={uiText(language, "common.type")}>{clientTypeLabel(client.client_kind, language)}</td>
+                      <td data-mobile-label="Site">{studentSiteLabel(client.student_site)}</td>
+                      <td data-mobile-label={t("admin.clients.sort_next_session")}>{client.next_session_start_at_utc ? formatDate(client.next_session_start_at_utc, language) : "-"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -875,9 +876,9 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
             </form>
           </section>
 
-          <section className="card table-wrap">
+          <section className="card table-wrap admin-table-card-wrap">
             <h2>{t("admin.clients.existing_groups")}</h2>
-            <table className="data-table">
+            <table className="data-table admin-responsive-table">
               <thead>
                 <tr>
                   <th>{t("admin.clients.group_name")}</th>
@@ -889,12 +890,12 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
               <tbody>
                 {groups.map((group) => (
                   <tr key={group.id}>
-                    <td>{group.name}</td>
-                    <td>{group.code}</td>
-                    <td>
+                    <td className="mobile-row-primary" data-mobile-label={t("admin.clients.group_name")}>{group.name}</td>
+                    <td data-mobile-label={t("admin.clients.code_optional")}>{group.code || "-"}</td>
+                    <td data-mobile-label={uiText(language, "common.status")}>
                       <span className={`status-pill ${group.active ? "status-ok" : "status-off"}`}>{group.active ? statusLabel("ACTIVE", language) : statusLabel("INACTIVE", language)}</span>
                     </td>
-                    <td>{group.members_count}</td>
+                    <td data-mobile-label={t("admin.clients.members_count")}>{group.members_count}</td>
                   </tr>
                 ))}
               </tbody>

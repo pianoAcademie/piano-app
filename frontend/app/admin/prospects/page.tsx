@@ -294,66 +294,73 @@ export default async function AdminProspectsPage({ searchParams }: { searchParam
 
       <section className="card">
         <h3>{t("admin.prospects.list_title")}</h3>
-        <form method="get" className="grid cols-4 sticky-filters top-gap-sm">
-          <label className="cols-span-2">
-            {uiText(language, "common.search")}
-            <input type="search" name="q" defaultValue={q} placeholder={t("admin.prospects.search_placeholder")} />
-          </label>
-          <label>
-            {uiText(language, "common.status")}
-            <select name="status" defaultValue={status}>
-              <option value="">{uiText(language, "common.all")}</option>
-              <option value="active">{t("admin.prospects.status_active")}</option>
-              <option value="new">{t("admin.prospects.status_new")}</option>
-              <option value="lost">{t("admin.prospects.status_lost")}</option>
-              <option value="converted">{t("admin.prospects.status_converted")}</option>
-              <option value="archived">{t("admin.prospects.status_archived")}</option>
-            </select>
-          </label>
-          <label>
-            {uiText(language, "common.type")}
-            <select name="prospect_type" defaultValue={typeFilter}>
-              <option value="all">{uiText(language, "common.all")}</option>
-              <option value="adult">{t("admin.prospects.type_adult")}</option>
-              <option value="child">{t("admin.prospects.type_child")}</option>
-            </select>
-          </label>
-          <label>
-            {t("admin.prospects.parent_referent")}
-            <select name="has_parent" defaultValue={parentFilter}>
-              <option value="all">{uiText(language, "common.all")}</option>
-              <option value="yes">{t("admin.prospects.with_parent")}</option>
-              <option value="no">{t("admin.prospects.without_parent")}</option>
-            </select>
-          </label>
-          <label>
-            {t("admin.prospects.has_quote")}
-            <select name="has_quote" defaultValue={hasQuoteFilter}>
-              <option value="all">{uiText(language, "common.all")}</option>
-              <option value="yes">{uiText(language, "common.yes")}</option>
-              <option value="no">{uiText(language, "common.no")}</option>
-            </select>
-          </label>
-          <label>
-            {uiText(language, "common.source")}
-            <input type="text" name="source" defaultValue={sourceFilter} placeholder={t("admin.prospects.source_placeholder")} />
-          </label>
-          <label>
-            {t("admin.prospects.created_from")}
-            <input type="date" name="created_from" defaultValue={createdFromRaw} />
-          </label>
-          <label>
-            {t("admin.prospects.created_to")}
-            <input type="date" name="created_to" defaultValue={createdToRaw} />
-          </label>
-          <div className="row end cols-span-4 top-gap-sm">
-            <button type="submit">{uiText(language, "common.apply")}</button>
-            <a className="ghost" href={withUiLanguage("/admin/prospects", language)}>{uiText(language, "common.reset")}</a>
+        <form method="get" className="admin-list-filter-form top-gap-sm">
+          <div className="admin-list-filter-primary">
+            <label>
+              {uiText(language, "common.search")}
+              <input type="search" name="q" defaultValue={q} placeholder={t("admin.prospects.search_placeholder")} enterKeyHint="search" />
+            </label>
+            <label>
+              {uiText(language, "common.status")}
+              <select name="status" defaultValue={status}>
+                <option value="">{uiText(language, "common.all")}</option>
+                <option value="active">{t("admin.prospects.status_active")}</option>
+                <option value="new">{t("admin.prospects.status_new")}</option>
+                <option value="lost">{t("admin.prospects.status_lost")}</option>
+                <option value="converted">{t("admin.prospects.status_converted")}</option>
+                <option value="archived">{t("admin.prospects.status_archived")}</option>
+              </select>
+            </label>
+            <div className="admin-list-filter-actions">
+              <button type="submit">{uiText(language, "common.apply")}</button>
+              <a className="ghost" href={withUiLanguage("/admin/prospects", language)}>{uiText(language, "common.reset")}</a>
+            </div>
           </div>
+          <details className="admin-filter-disclosure">
+            <summary>{language === "en" ? "Advanced filters" : "Filtres avances"}</summary>
+            <div className="admin-filter-disclosure-content">
+              <label>
+                {uiText(language, "common.type")}
+                <select name="prospect_type" defaultValue={typeFilter}>
+                  <option value="all">{uiText(language, "common.all")}</option>
+                  <option value="adult">{t("admin.prospects.type_adult")}</option>
+                  <option value="child">{t("admin.prospects.type_child")}</option>
+                </select>
+              </label>
+              <label>
+                {t("admin.prospects.parent_referent")}
+                <select name="has_parent" defaultValue={parentFilter}>
+                  <option value="all">{uiText(language, "common.all")}</option>
+                  <option value="yes">{t("admin.prospects.with_parent")}</option>
+                  <option value="no">{t("admin.prospects.without_parent")}</option>
+                </select>
+              </label>
+              <label>
+                {t("admin.prospects.has_quote")}
+                <select name="has_quote" defaultValue={hasQuoteFilter}>
+                  <option value="all">{uiText(language, "common.all")}</option>
+                  <option value="yes">{uiText(language, "common.yes")}</option>
+                  <option value="no">{uiText(language, "common.no")}</option>
+                </select>
+              </label>
+              <label>
+                {uiText(language, "common.source")}
+                <input type="text" name="source" defaultValue={sourceFilter} placeholder={t("admin.prospects.source_placeholder")} />
+              </label>
+              <label>
+                {t("admin.prospects.created_from")}
+                <input type="date" name="created_from" defaultValue={createdFromRaw} />
+              </label>
+              <label>
+                {t("admin.prospects.created_to")}
+                <input type="date" name="created_to" defaultValue={createdToRaw} />
+              </label>
+            </div>
+          </details>
         </form>
 
-        <div className="table-wrap top-gap-sm">
-          <table className="data-table">
+        <div className="table-wrap top-gap-sm admin-table-card-wrap">
+          <table className="data-table admin-responsive-table">
             <thead>
               <tr>
                 <th>{t("admin.prospects.column_prospect_type")}</th>
@@ -385,13 +392,13 @@ export default async function AdminProspectsPage({ searchParams }: { searchParam
                     : "";
                   return (
                     <tr key={row.id}>
-                      <td>{prospectTypeLabel(type, language)}</td>
-                      <td><strong>{displayName(row.first_name, row.last_name, row.email)}</strong></td>
-                      <td>{row.email}</td>
-                      <td>{row.phone || "-"}</td>
-                      <td>{parentLabel(row.meta || {})}</td>
-                      <td>{quoteMeta.count}</td>
-                      <td>
+                      <td data-mobile-label={uiText(language, "common.type")}>{prospectTypeLabel(type, language)}</td>
+                      <td data-mobile-label="" className="mobile-row-primary"><strong>{displayName(row.first_name, row.last_name, row.email)}</strong></td>
+                      <td data-mobile-label={uiText(language, "common.email")}>{row.email}</td>
+                      <td data-mobile-label={uiText(language, "common.phone")}>{row.phone || "-"}</td>
+                      <td data-mobile-label={t("admin.prospects.parent_referent")}>{parentLabel(row.meta || {})}</td>
+                      <td data-mobile-label={t("admin.prospects.column_quote_count")}>{quoteMeta.count}</td>
+                      <td data-mobile-label={t("admin.prospects.column_last_quote")}>
                         {lastQuote ? (
                           <>
                             <strong>{lastQuote.quote_number}</strong>
@@ -402,9 +409,9 @@ export default async function AdminProspectsPage({ searchParams }: { searchParam
                           <span className="muted">{t("admin.prospects.none")}</span>
                         )}
                       </td>
-                      <td><span className="status-pill status-off">{prospectStatusLabel(row.status, language)}</span></td>
-                      <td>{formatDate(row.created_at, language)}</td>
-                      <td>
+                      <td data-mobile-label={uiText(language, "common.status")}><span className="status-pill status-off">{prospectStatusLabel(row.status, language)}</span></td>
+                      <td data-mobile-hidden="true">{formatDate(row.created_at, language)}</td>
+                      <td data-mobile-label={uiText(language, "common.actions")}>
                         <div className="row wrap gap-xs">
                           <Link className="ghost" href={detailHref}>{t("admin.prospects.view_edit")}</Link>
                           <Link className="ghost" href={newQuoteHref}>{t("admin.prospects.create_quote")}</Link>

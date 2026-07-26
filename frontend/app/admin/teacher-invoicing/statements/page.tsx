@@ -124,8 +124,8 @@ export default async function AdminTeacherInvoicingStatementsPage({
         <p className="muted">{t("admin.teacher_invoicing.statements_subtitle")}</p>
       </section>
 
-      <section className="card table-wrap">
-        <table className="data-table">
+      <section className="card table-wrap admin-table-card-wrap">
+        <table className="data-table admin-responsive-table">
           <thead>
             <tr>
               <th>{t("admin.teacher_invoicing.teacher")}</th>
@@ -147,13 +147,13 @@ export default async function AdminTeacherInvoicingStatementsPage({
             ) : (
               rows.map((row) => (
                 <tr key={row.session_id}>
-                  <td>{row.professor_name}</td>
-                  <td>{formatDate(row.start_at_utc, language)}</td>
-                  <td>{row.course_type_name}</td>
-                  <td>{row.location_name}</td>
-                  <td>{payoutStatusLabel(row.payout_status, language)}</td>
-                  <td>{statementAmountLabel(row, language)}</td>
-                  <td>
+                  <td data-mobile-label="" className="mobile-row-primary">{row.professor_name}</td>
+                  <td data-mobile-label={t("admin.teacher_invoicing.date_time")}>{formatDate(row.start_at_utc, language)}</td>
+                  <td data-mobile-label={t("admin.teacher_invoicing.activity")}>{row.course_type_name}</td>
+                  <td data-mobile-label={uiText(language, "common.location")}>{row.location_name}</td>
+                  <td data-mobile-label={t("admin.teacher_invoicing.statement_status")}>{payoutStatusLabel(row.payout_status, language)}</td>
+                  <td data-mobile-label={uiText(language, "common.amount")}>{statementAmountLabel(row, language)}</td>
+                  <td data-mobile-label={uiText(language, "client.action")}>
                     <Link className="mode-link" href={`/admin/professors/${row.professor_id}?tab=solde`}>
                       {uiText(language, "common.open")}
                     </Link>

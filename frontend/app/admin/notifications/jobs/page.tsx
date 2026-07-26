@@ -131,45 +131,41 @@ export default async function AdminNotificationJobsPage({ searchParams }: { sear
       <section className="card">
         {!jobsResult.ok ? <p className="flash-err">{t("admin.jobs.backend_error")}: {jobsResult.message}</p> : null}
         {detailResult && !detailResult.ok ? <p className="flash-err">{t("admin.jobs.detail_error")}: {detailResult.message}</p> : null}
-        <form className="grid cols-4 sticky-filters" method="get">
-          <label>
-            {t("admin.jobs.date_from")}
-            <input type="datetime-local" name="started_from" defaultValue={startedFrom} />
-          </label>
-          <label>
-            {t("admin.jobs.date_to")}
-            <input type="datetime-local" name="started_to" defaultValue={startedTo} />
-          </label>
-          <label>
-            {t("admin.jobs.job_type")}
-            <input type="text" name="job_name" defaultValue={jobName} placeholder="reminder_generation_job" />
-          </label>
-          <label>
-            {t("admin.jobs.status_filter")}
-            <select name="status" defaultValue={status}>
-              <option value="">{uiText(language, "common.all")}</option>
-              <option value="running">{statusLabel("running", language)}</option>
-              <option value="success">{statusLabel("success", language)}</option>
-              <option value="warning">{statusLabel("warning", language)}</option>
-              <option value="failed">{statusLabel("failed", language)}</option>
-            </select>
-          </label>
-          <label className="cols-span-2">
-            {t("admin.jobs.search_text")}
-            <input type="text" name="q" defaultValue={q} placeholder={t("admin.jobs.search_placeholder")} />
-          </label>
-          <div className="row end cols-span-2 top-gap-sm">
-            <button type="submit">{uiText(language, "common.apply")}</button>
-            <a className="ghost top-gap-sm-inline" href={resetHref}>
-              {t("admin.jobs.reset_filters")}
-            </a>
+        <form className="admin-list-filter-form" method="get">
+          <div className="admin-list-filter-primary">
+            <label>
+              {t("admin.jobs.search_text")}
+              <input type="search" name="q" defaultValue={q} placeholder={t("admin.jobs.search_placeholder")} enterKeyHint="search" />
+            </label>
+            <label>
+              {t("admin.jobs.status_filter")}
+              <select name="status" defaultValue={status}>
+                <option value="">{uiText(language, "common.all")}</option>
+                <option value="running">{statusLabel("running", language)}</option>
+                <option value="success">{statusLabel("success", language)}</option>
+                <option value="warning">{statusLabel("warning", language)}</option>
+                <option value="failed">{statusLabel("failed", language)}</option>
+              </select>
+            </label>
+            <div className="admin-list-filter-actions">
+              <button type="submit">{uiText(language, "common.apply")}</button>
+              <a className="ghost" href={resetHref}>{t("admin.jobs.reset_filters")}</a>
+            </div>
           </div>
+          <details className="admin-filter-disclosure">
+            <summary>{language === "en" ? "Advanced filters" : "Filtres avances"}</summary>
+            <div className="admin-filter-disclosure-content">
+              <label>{t("admin.jobs.date_from")}<input type="datetime-local" name="started_from" defaultValue={startedFrom} /></label>
+              <label>{t("admin.jobs.date_to")}<input type="datetime-local" name="started_to" defaultValue={startedTo} /></label>
+              <label>{t("admin.jobs.job_type")}<input type="text" name="job_name" defaultValue={jobName} placeholder="reminder_generation_job" /></label>
+            </div>
+          </details>
         </form>
       </section>
 
       <section className="card">
-        <div className="table-wrap">
-          <table className="data-table">
+        <div className="table-wrap admin-table-card-wrap">
+          <table className="data-table admin-responsive-table">
             <thead>
               <tr>
                 <th>{t("admin.jobs.column_start")}</th>
@@ -200,20 +196,20 @@ export default async function AdminNotificationJobsPage({ searchParams }: { sear
                   const detailHref = `/admin/notifications/jobs?${detailParams.toString()}`;
                   return (
                     <tr key={row.id}>
-                      <td>{formatDateTime(row.started_at, language)}</td>
-                      <td>{formatDateTime(row.finished_at, language)}</td>
-                      <td>{row.job_name}</td>
-                      <td>
+                      <td data-mobile-label={t("admin.jobs.column_start")}>{formatDateTime(row.started_at, language)}</td>
+                      <td data-mobile-hidden="true">{formatDateTime(row.finished_at, language)}</td>
+                      <td data-mobile-label="" className="mobile-row-primary">{row.job_name}</td>
+                      <td data-mobile-label={uiText(language, "common.status")}>
                         <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status, language)}</span>
                       </td>
-                      <td>{row.duration_seconds ?? "-"}</td>
-                      <td>{row.items_scanned}</td>
-                      <td>{row.items_processed}</td>
-                      <td>{row.items_sent}</td>
-                      <td>{row.items_skipped}</td>
-                      <td>{row.items_failed}</td>
-                      <td>{row.triggered_by}</td>
-                      <td>
+                      <td data-mobile-label={t("admin.jobs.column_duration")}>{row.duration_seconds ?? "-"}</td>
+                      <td data-mobile-hidden="true">{row.items_scanned}</td>
+                      <td data-mobile-label={t("admin.jobs.column_processed")}>{row.items_processed}</td>
+                      <td data-mobile-label={t("admin.jobs.column_sent")}>{row.items_sent}</td>
+                      <td data-mobile-hidden="true">{row.items_skipped}</td>
+                      <td data-mobile-label={t("admin.jobs.column_errors")}>{row.items_failed}</td>
+                      <td data-mobile-hidden="true">{row.triggered_by}</td>
+                      <td data-mobile-label={uiText(language, "client.action")}>
                         <a className="ghost" href={detailHref}>
                           {t("admin.jobs.view_detail")}
                         </a>
@@ -268,8 +264,8 @@ export default async function AdminNotificationJobsPage({ searchParams }: { sear
 
             <section className="card modal-card">
               <h3>{t("admin.jobs.logs")}</h3>
-              <div className="table-wrap">
-                <table className="data-table">
+              <div className="table-wrap admin-table-card-wrap">
+                <table className="data-table admin-responsive-table">
                   <thead>
                     <tr>
                       <th>{uiText(language, "common.date")}</th>
@@ -286,10 +282,10 @@ export default async function AdminNotificationJobsPage({ searchParams }: { sear
                     ) : (
                       detailResult.data.logs.map((row) => (
                         <tr key={row.id}>
-                          <td>{formatDateTime(row.created_at, language)}</td>
-                          <td>{row.level}</td>
-                          <td>{row.message}</td>
-                          <td><code>{JSON.stringify(row.context_json)}</code></td>
+                          <td data-mobile-label={uiText(language, "common.date")}>{formatDateTime(row.created_at, language)}</td>
+                          <td data-mobile-label={t("admin.jobs.log_level")}>{row.level}</td>
+                          <td className="mobile-row-primary" data-mobile-label={t("admin.jobs.log_message")}>{row.message}</td>
+                          <td data-mobile-label={t("admin.jobs.log_context")} data-mobile-hidden="true"><code>{JSON.stringify(row.context_json)}</code></td>
                         </tr>
                       ))
                     )}
@@ -300,8 +296,8 @@ export default async function AdminNotificationJobsPage({ searchParams }: { sear
 
             <section className="card modal-card">
               <h3>{t("admin.jobs.processed_entities")}</h3>
-              <div className="table-wrap">
-                <table className="data-table">
+              <div className="table-wrap admin-table-card-wrap">
+                <table className="data-table admin-responsive-table">
                   <thead>
                     <tr>
                       <th>{t("admin.jobs.entity_id")}</th>
@@ -320,12 +316,12 @@ export default async function AdminNotificationJobsPage({ searchParams }: { sear
                     ) : (
                       detailResult.data.notifications.map((row) => (
                         <tr key={row.id}>
-                          <td>{row.id}</td>
-                          <td>{row.notification_type}</td>
-                          <td>{row.channel}</td>
-                          <td>{row.status}</td>
-                          <td>{formatDateTime(row.scheduled_for, language)}</td>
-                          <td>{row.failure_reason ?? "-"}</td>
+                          <td data-mobile-label={t("admin.jobs.entity_id")} data-mobile-hidden="true">{row.id}</td>
+                          <td className="mobile-row-primary" data-mobile-label={uiText(language, "common.type")}>{row.notification_type}</td>
+                          <td data-mobile-label={uiText(language, "admin.incidents.channel")}>{row.channel}</td>
+                          <td data-mobile-label={uiText(language, "common.status")}>{row.status}</td>
+                          <td data-mobile-label={t("admin.jobs.scheduled_for")}>{formatDateTime(row.scheduled_for, language)}</td>
+                          <td data-mobile-label={t("admin.jobs.error_label")}>{row.failure_reason ?? "-"}</td>
                         </tr>
                       ))
                     )}

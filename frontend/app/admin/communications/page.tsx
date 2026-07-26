@@ -273,67 +273,64 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
       </section>
 
       <section className="card">
-        <form method="get" className="grid cols-4">
-          <label className="stack-sm">
-            {t("admin.communications.search")}
-            <input type="text" name="q" defaultValue={q} placeholder={t("admin.communications.search_placeholder")} />
-          </label>
-          <label className="stack-sm">
-            {t("admin.communications.channel")}
-            <select name="channel" defaultValue={channel}>
-              <option value="ALL">{t("common.all")}</option>
-              <option value="EMAIL">{t("admin.communications.channel_email_plural")}</option>
-              <option value="SMS">{t("common.sms")}</option>
-            </select>
-          </label>
-          <label className="stack-sm">
-            {t("admin.communications.communication_type")}
-            <select name="communication_type" defaultValue={communicationType || ""}>
-              <option value="">{t("common.all")}</option>
-              {communicationTypeOptions.map((option) => (
-                <option key={option.code} value={option.code}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="stack-sm">
-            {t("common.period")}
-            <select name="period" defaultValue={period}>
-              <option value="TODAY">{t("admin.communications.period_option_today")}</option>
-              <option value="WEEK">{t("admin.communications.period_option_week")}</option>
-              <option value="MONTH">{t("admin.communications.period_option_month")}</option>
-              <option value="SEMESTER">{t("admin.communications.period_option_semester")}</option>
-              <option value="YEAR">{t("admin.communications.period_option_year")}</option>
-              <option value="ALL">{t("admin.communications.period_option_all")}</option>
-            </select>
-          </label>
-          <label className="stack-sm">
-            {t("admin.communications.professor")}
-            <select name="professor_id" defaultValue={professorId || ""}>
-              <option value="">{t("common.all")}</option>
-              {professorOptions.map((professor) => (
-                <option key={professor.id} value={professor.id}>
-                  {professor.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="stack-sm">
-            {t("admin.communications.messages_per_page")}
-            <select name="per_page" defaultValue={String(perPage)}>
-              <option value="25">25</option>
-              <option value="50">50</option>
-              <option value="100">100</option>
-            </select>
-          </label>
+        <form method="get" className="admin-list-filter-form">
           <input type="hidden" name="page" value="1" />
-          <div className="row">
-            <button type="submit">{t("common.apply")}</button>
-            <a className="mode-link" href={resetHref}>
-              {t("common.reset")}
-            </a>
+          <div className="admin-list-filter-primary">
+            <label>
+              {t("admin.communications.search")}
+              <input type="search" name="q" defaultValue={q} placeholder={t("admin.communications.search_placeholder")} enterKeyHint="search" />
+            </label>
+            <label>
+              {t("common.period")}
+              <select name="period" defaultValue={period}>
+                <option value="TODAY">{t("admin.communications.period_option_today")}</option>
+                <option value="WEEK">{t("admin.communications.period_option_week")}</option>
+                <option value="MONTH">{t("admin.communications.period_option_month")}</option>
+                <option value="SEMESTER">{t("admin.communications.period_option_semester")}</option>
+                <option value="YEAR">{t("admin.communications.period_option_year")}</option>
+                <option value="ALL">{t("admin.communications.period_option_all")}</option>
+              </select>
+            </label>
+            <div className="admin-list-filter-actions">
+              <button type="submit">{t("common.apply")}</button>
+              <a className="mode-link" href={resetHref}>{t("common.reset")}</a>
+            </div>
           </div>
+          <details className="admin-filter-disclosure">
+            <summary>{language === "en" ? "Advanced filters" : "Filtres avances"}</summary>
+            <div className="admin-filter-disclosure-content">
+              <label>
+                {t("admin.communications.channel")}
+                <select name="channel" defaultValue={channel}>
+                  <option value="ALL">{t("common.all")}</option>
+                  <option value="EMAIL">{t("admin.communications.channel_email_plural")}</option>
+                  <option value="SMS">{t("common.sms")}</option>
+                </select>
+              </label>
+              <label>
+                {t("admin.communications.communication_type")}
+                <select name="communication_type" defaultValue={communicationType || ""}>
+                  <option value="">{t("common.all")}</option>
+                  {communicationTypeOptions.map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
+                </select>
+              </label>
+              <label>
+                {t("admin.communications.professor")}
+                <select name="professor_id" defaultValue={professorId || ""}>
+                  <option value="">{t("common.all")}</option>
+                  {professorOptions.map((professor) => <option key={professor.id} value={professor.id}>{professor.label}</option>)}
+                </select>
+              </label>
+              <label>
+                {t("admin.communications.messages_per_page")}
+                <select name="per_page" defaultValue={String(perPage)}>
+                  <option value="25">25</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </label>
+            </div>
+          </details>
         </form>
         <p className="muted">
           {t("admin.communications.default_display_note")}
@@ -360,8 +357,8 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
         </div>
       </section>
 
-      <section className="card table-wrap">
-        <table className="data-table">
+      <section className="card table-wrap admin-table-card-wrap">
+        <table className="data-table admin-responsive-table">
           <thead>
             <tr>
               <th>{t("admin.communications.column_datetime")}</th>
@@ -384,19 +381,19 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
             ) : (
               rows.map((row) => (
                 <tr key={row.id}>
-                  <td>{formatDate(row.occurred_at, language)}</td>
-                  <td>{channelLabel(row.channel, language)}</td>
-                  <td>
+                  <td data-mobile-label={t("admin.communications.column_datetime")}>{formatDate(row.occurred_at, language)}</td>
+                  <td data-mobile-label={t("admin.communications.channel")}>{channelLabel(row.channel, language)}</td>
+                  <td data-mobile-label={t("admin.communications.sender")}>
                     <strong>{row.sender_label}</strong>
                     <div className="muted">{senderCategoryLabel(row.sender_category, language)}</div>
                   </td>
-                  <td>{row.communication_type_label}</td>
-                  <td>{row.subject}</td>
-                  <td>{row.recipient}</td>
-                  <td>
+                  <td data-mobile-hidden="true">{row.communication_type_label}</td>
+                  <td data-mobile-label="" className="mobile-row-primary">{row.subject}</td>
+                  <td data-mobile-label={t("admin.communications.recipient")}>{row.recipient}</td>
+                  <td data-mobile-label={t("admin.communications.delivery_status")}>
                     <span className="badge">{deliveryLabel(row.delivery_status, language)}</span>
                   </td>
-                  <td>
+                  <td data-mobile-label={t("client.action")}>
                     <div className="row wrap gap-sm">
                       <a className="mode-link" href={buildHref(filters, { messageId: row.id })}>
                         {t("common.view")}

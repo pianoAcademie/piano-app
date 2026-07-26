@@ -5646,8 +5646,8 @@ def _filtered_clients_stmt(
     if student_site is not None:
         stmt = stmt.where(User.student_site == student_site)
 
-    if search:
-        pattern = f"%{search.strip()}%"
+    for search_token in [token for token in (search or "").strip().split() if token]:
+        pattern = f"%{search_token}%"
         stmt = stmt.where(
             or_(
                 User.email.ilike(pattern),

@@ -6429,9 +6429,8 @@ def list_typeform_intakes(
             stmt = stmt.where(TypeformIntake.intake_status != INTAKE_STATUS_IGNORED)
         if exclude_processed:
             stmt = stmt.where(TypeformIntake.intake_status != INTAKE_STATUS_PROCESSED)
-    needle = _text(q)
-    if needle:
-        like = f"%{needle}%"
+    for search_token in [token for token in _text(q).split() if token]:
+        like = f"%{search_token}%"
         stmt = stmt.where(
             or_(
                 TypeformIntake.source_form_id.ilike(like),

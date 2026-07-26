@@ -252,53 +252,50 @@ export default async function AdminToProcessPage({ searchParams }: { searchParam
       {error ? <section className="flash-err">{error}</section> : null}
 
       <section className="card">
-        <form method="get" className="grid cols-4 sticky-filters">
-          <label className="cols-span-2">
-            {uiText(language, "common.search")}
-            <input type="search" name="q" defaultValue={q} placeholder={t("admin.todo.search_placeholder")} />
-          </label>
-          <label>
-            {uiText(language, "common.status")}
-            <select name="status" defaultValue={status}>
-              <option value="">{uiText(language, "common.all")}</option>
-              <option value="a_traiter">{statusLabel("a_traiter", language)}</option>
-              <option value="en_cours">{statusLabel("en_cours", language)}</option>
-              <option value="termine">{statusLabel("termine", language)}</option>
-            </select>
-          </label>
-          <label>
-            {uiText(language, "common.source")}
-            <select name="source" defaultValue={selectedSource}>
-              <option value="">{uiText(language, "common.all")}</option>
-              {sourceOptions.map((value) => (
-                <option key={value} value={value}>
-                  {sourceLabel(value, language)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            {t("admin.todo.message_type")}
-            <select name="type" defaultValue={selectedType}>
-              <option value="">{uiText(language, "common.all")}</option>
-              {typeOptions.map((value) => (
-                <option key={value} value={value}>
-                  {typeLabel(value, language)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="row end cols-span-3 top-gap-sm">
-            <button type="submit">{uiText(language, "common.apply")}</button>
-            <a className="ghost" href="/admin/a-traiter">
-              {uiText(language, "common.reset")}
-            </a>
+        <form method="get" className="admin-list-filter-form">
+          <div className="admin-list-filter-primary">
+            <label>
+              {uiText(language, "common.search")}
+              <input type="search" name="q" defaultValue={q} placeholder={t("admin.todo.search_placeholder")} enterKeyHint="search" />
+            </label>
+            <label>
+              {uiText(language, "common.status")}
+              <select name="status" defaultValue={status}>
+                <option value="">{uiText(language, "common.all")}</option>
+                <option value="a_traiter">{statusLabel("a_traiter", language)}</option>
+                <option value="en_cours">{statusLabel("en_cours", language)}</option>
+                <option value="termine">{statusLabel("termine", language)}</option>
+              </select>
+            </label>
+            <div className="admin-list-filter-actions">
+              <button type="submit">{uiText(language, "common.apply")}</button>
+              <a className="ghost" href="/admin/a-traiter">{uiText(language, "common.reset")}</a>
+            </div>
           </div>
+          <details className="admin-filter-disclosure">
+            <summary>{language === "en" ? "Advanced filters" : "Filtres avances"}</summary>
+            <div className="admin-filter-disclosure-content">
+              <label>
+                {uiText(language, "common.source")}
+                <select name="source" defaultValue={selectedSource}>
+                  <option value="">{uiText(language, "common.all")}</option>
+                  {sourceOptions.map((value) => <option key={value} value={value}>{sourceLabel(value, language)}</option>)}
+                </select>
+              </label>
+              <label>
+                {t("admin.todo.message_type")}
+                <select name="type" defaultValue={selectedType}>
+                  <option value="">{uiText(language, "common.all")}</option>
+                  {typeOptions.map((value) => <option key={value} value={value}>{typeLabel(value, language)}</option>)}
+                </select>
+              </label>
+            </div>
+          </details>
         </form>
       </section>
 
-      <section className="card table-wrap">
-        <table className="data-table">
+      <section className="card table-wrap admin-table-card-wrap">
+        <table className="data-table admin-responsive-table">
           <thead>
             <tr>
               <th>{t("admin.todo.column_created_at")}</th>
@@ -324,15 +321,15 @@ export default async function AdminToProcessPage({ searchParams }: { searchParam
                 const detailHref = `/admin/a-traiter?${detailParams.toString()}`;
                 return (
                   <tr key={row.id}>
-                    <td>{formatDate(row.created_at, language)}</td>
-                    <td>{sourceLabel(row.source, language)}</td>
-                    <td>{typeLabel(row.message_type, language)}</td>
-                    <td>
+                    <td data-mobile-label={t("admin.todo.column_created_at")}>{formatDate(row.created_at, language)}</td>
+                    <td data-mobile-hidden="true">{sourceLabel(row.source, language)}</td>
+                    <td data-mobile-label={t("admin.todo.message_type")}>{typeLabel(row.message_type, language)}</td>
+                    <td data-mobile-label={uiText(language, "common.status")}>
                       <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status, language)}</span>
                     </td>
-                    <td>{row.teacher_name || "-"}</td>
-                    <td>{preview(row.message_body)}</td>
-                    <td>
+                    <td data-mobile-label="" className="mobile-row-primary">{row.teacher_name || "-"}</td>
+                    <td data-mobile-label={t("admin.todo.column_excerpt")}>{preview(row.message_body)}</td>
+                    <td data-mobile-label={uiText(language, "client.action")}>
                       <a className="mode-link" href={detailHref}>
                         {uiText(language, "common.view")}
                       </a>

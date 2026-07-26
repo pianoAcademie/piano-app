@@ -154,8 +154,8 @@ export default async function AdminBillingAdjustmentsPage({ searchParams }: Page
         {rows.length === 0 ? (
           <p className="muted top-gap-sm">Aucun ajustement dans ce filtre.</p>
         ) : (
-          <div className="table-wrap top-gap-sm">
-            <table className="data-table">
+          <div className="table-wrap top-gap-sm admin-table-card-wrap">
+            <table className="data-table admin-responsive-table">
               <thead>
                 <tr>
                   <th>Date</th>
@@ -169,28 +169,28 @@ export default async function AdminBillingAdjustmentsPage({ searchParams }: Page
               <tbody>
                 {rows.map((row) => (
                   <tr key={row.id}>
-                    <td>{formatDate(row.created_at, language)}</td>
-                    <td>
+                    <td data-mobile-label={language === "en" ? "Date" : "Date"}>{formatDate(row.created_at, language)}</td>
+                    <td data-mobile-label="" className="mobile-row-primary">
                       <Link href={`/admin/clients/${row.client_id}?tab=changements`} className="mode-link">
                         {row.client_display_name}
                       </Link>
                       {row.student_display_name ? <div className="muted">{row.student_display_name}</div> : null}
                     </td>
-                    <td>
+                    <td data-mobile-label={language === "en" ? "Source" : "Origine"}>
                       <strong>{row.label}</strong>
                       <div className="muted">{changeTypeLabel(row.change_type)}</div>
                       <div className="muted">{row.quote_number ?? "Sans devis rattache"}</div>
                       {row.description ? <div className="muted">{row.description}</div> : null}
                     </td>
-                    <td>
+                    <td data-mobile-label={language === "en" ? "Amount" : "Montant"}>
                       <strong>{formatMoney(row.total_incl_vat, row.currency, language)}</strong>
                       <div className="muted">{row.adjustment_type === "CREDIT_NOTE" ? "Avoir / deduction" : "Facture complementaire"}</div>
                     </td>
-                    <td>
+                    <td data-mobile-label={language === "en" ? "Status" : "Statut"}>
                       <span className={`status-pill ${statusClass(row.status)}`}>{statusLabel(row.status)}</span>
                       {row.dismissed_reason ? <div className="muted">{row.dismissed_reason}</div> : null}
                     </td>
-                    <td>
+                    <td data-mobile-label={language === "en" ? "Actions" : "Actions"}>
                       {row.status === "READY" ? (
                         <div className="row payment-row-actions">
                           <form action={approveAdminClientBillingAdjustmentAction}>
