@@ -458,7 +458,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
   const statusFilter = readParam(searchParams, "status");
   const contextFilter = readParam(searchParams, "context_type");
   const activityFilter = readParam(searchParams, "activity_id");
-  const query = readParam(searchParams, "q");
+  const query = readParam(searchParams, "q").trim();
   const prospectTypeFilter = readParam(searchParams, "prospect_type").trim().toLowerCase();
   const currencyFilter = readParam(searchParams, "currency").trim().toUpperCase();
   const quoteTypeFilter = readParam(searchParams, "quote_type").trim().toLowerCase();
@@ -681,12 +681,18 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
       >
         <form method="get" className="quote-list-filters">
           <input type="hidden" name="page_size" value={effectivePageSize} />
-          <div className="grid cols-4 sticky-filters">
-            <label className="cols-span-2">
+          <div className="quote-list-primary-filters">
+            <label className="quote-list-search-field">
               {t("admin.quotes.search_label")}
-              <input type="text" name="q" defaultValue={query} placeholder={t("admin.quotes.search_placeholder")} />
+              <input
+                type="search"
+                name="q"
+                defaultValue={query}
+                placeholder={t("admin.quotes.search_placeholder")}
+                enterKeyHint="search"
+              />
             </label>
-            <label>
+            <label className="quote-list-status-filter">
               {t("admin.quotes.commercial_status")}
               <select name="status" defaultValue={statusFilter}>
                 <option value="">{t("common.all")}</option>
@@ -695,53 +701,57 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                 ))}
               </select>
             </label>
-            <label>
-              {t("admin.quotes.context")}
-              <select name="context_type" defaultValue={contextFilter}>
-                <option value="">{t("common.all")}</option>
-                <option value="acquisition">{t("admin.quotes.context_acquisition")}</option>
-                <option value="active_client">{t("admin.quotes.context_active_client")}</option>
-              </select>
-            </label>
-            <label>
-              {t("admin.quotes.prospect_type")}
-              <select name="prospect_type" defaultValue={prospectTypeFilter}>
-                <option value="">{t("common.all")}</option>
-                <option value="adult">{t("client.adult")}</option>
-                <option value="child">{t("client.child")}</option>
-              </select>
-            </label>
-            <label>
-              {t("admin.quotes.with_solfege")}
-              <select name="has_solfege" defaultValue={hasSolfegeFilter}>
-                <option value="">{t("common.all")}</option>
-                <option value="yes">{t("common.yes")}</option>
-                <option value="no">{t("common.no")}</option>
-              </select>
-            </label>
-            <label>
-              {t("admin.quotes.specific_activity")}
-              <select name="activity_id" defaultValue={activityFilter}>
-                <option value="">{t("admin.quotes.all_activities")}</option>
-                {activities.map((row) => (
-                  <option key={row.id} value={row.id}>{row.name}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              {t("admin.quotes.next_action_filter")}
-              <select name="workflow_filter" defaultValue={workflowFilter}>
-                <option value="">{t("admin.quotes.all_next_actions")}</option>
-                <option value="preparer_integration">{t("admin.quotes.workflow_prepare_integration")}</option>
-                <option value="integrer_dans_centrale">{t("admin.quotes.workflow_ready_to_integrate")}</option>
-                <option value="erreur_integration">{t("admin.quotes.workflow_integration_errors")}</option>
-              </select>
-            </label>
+            <div className="quote-list-primary-actions">
+              <button type="submit">{t("admin.quotes.filter")}</button>
+              <a className="ghost" href={withUiLanguage("/admin/quotes", language)}>{t("common.reset")}</a>
+            </div>
           </div>
 
           <details className="quote-advanced-filters top-gap-sm">
             <summary>{t("admin.quotes.advanced_filters")}</summary>
             <div className="grid cols-4 top-gap-sm">
+              <label>
+                {t("admin.quotes.context")}
+                <select name="context_type" defaultValue={contextFilter}>
+                  <option value="">{t("common.all")}</option>
+                  <option value="acquisition">{t("admin.quotes.context_acquisition")}</option>
+                  <option value="active_client">{t("admin.quotes.context_active_client")}</option>
+                </select>
+              </label>
+              <label>
+                {t("admin.quotes.prospect_type")}
+                <select name="prospect_type" defaultValue={prospectTypeFilter}>
+                  <option value="">{t("common.all")}</option>
+                  <option value="adult">{t("client.adult")}</option>
+                  <option value="child">{t("client.child")}</option>
+                </select>
+              </label>
+              <label>
+                {t("admin.quotes.with_solfege")}
+                <select name="has_solfege" defaultValue={hasSolfegeFilter}>
+                  <option value="">{t("common.all")}</option>
+                  <option value="yes">{t("common.yes")}</option>
+                  <option value="no">{t("common.no")}</option>
+                </select>
+              </label>
+              <label>
+                {t("admin.quotes.specific_activity")}
+                <select name="activity_id" defaultValue={activityFilter}>
+                  <option value="">{t("admin.quotes.all_activities")}</option>
+                  {activities.map((row) => (
+                    <option key={row.id} value={row.id}>{row.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                {t("admin.quotes.next_action_filter")}
+                <select name="workflow_filter" defaultValue={workflowFilter}>
+                  <option value="">{t("admin.quotes.all_next_actions")}</option>
+                  <option value="preparer_integration">{t("admin.quotes.workflow_prepare_integration")}</option>
+                  <option value="integrer_dans_centrale">{t("admin.quotes.workflow_ready_to_integrate")}</option>
+                  <option value="erreur_integration">{t("admin.quotes.workflow_integration_errors")}</option>
+                </select>
+              </label>
               <label>
                 {t("admin.quotes.currency")}
                 <select name="currency" defaultValue={currencyFilter}>
@@ -801,12 +811,11 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                 <input type="date" name="expires_to" defaultValue={expiresToFilterRaw} />
               </label>
             </div>
+            <div className="row end top-gap-sm quote-advanced-filter-actions">
+              <button type="submit">{t("admin.quotes.filter")}</button>
+              <a className="ghost" href={withUiLanguage("/admin/quotes", language)}>{t("common.reset")}</a>
+            </div>
           </details>
-
-          <div className="row end cols-span-4 top-gap-sm">
-            <button type="submit">{t("admin.quotes.filter")}</button>
-            <a className="ghost" href={withUiLanguage("/admin/quotes", language)}>{t("common.reset")}</a>
-          </div>
         </form>
 
         <QuotePaginationControls
@@ -819,7 +828,7 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
           language={language}
         />
 
-        <div className="table-wrap top-gap-sm">
+        <div className="table-wrap top-gap-sm quote-list-results-wrap">
           <table className="data-table quote-list-table">
             <thead>
               <tr>
@@ -865,23 +874,23 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
 
                   return (
                     <tr key={row.id} className="quote-list-row">
-                      <td>
+                      <td className="quote-list-mobile-primary">
                         <Link className="quote-list-row-link" href={detailHref}>
                           <strong>{row.quote_number}</strong>
                         </Link>
                         <br />
                         <small className="muted">{row.quote_type}</small>
                       </td>
-                      <td>
+                      <td data-mobile-label={t("admin.quotes.owner")}>
                         <strong>{ownerName}</strong>
                         <br />
                         <small className="muted">{owner?.email ?? "-"}</small>
                         <br />
                         <small className="muted">{rowProspectType === "-" ? "-" : rowProspectType === "adult" ? t("client.adult") : t("client.child")}</small>
                       </td>
-                      <td>{labelForContext(row.context_type, language)}</td>
-                      <td>{formatAmount(row.total_ttc, row.currency, language)}</td>
-                      <td>
+                      <td data-mobile-hidden="true">{labelForContext(row.context_type, language)}</td>
+                      <td data-mobile-label={t("admin.quotes.total_ttc")}>{formatAmount(row.total_ttc, row.currency, language)}</td>
+                      <td data-mobile-label={t("admin.quotes.client_validation")}>
                         <div className="quote-list-status-cell">
                           <QuoteRowValidationState state={commercialState} language={language} />
                           {changeRequest ? (
@@ -897,8 +906,8 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                           ) : null}
                         </div>
                       </td>
-                      <td><QuoteRowIntegrationState state={integrationState} language={language} /></td>
-                      <td>
+                      <td data-mobile-label={t("admin.quotes.central_integration")}><QuoteRowIntegrationState state={integrationState} language={language} /></td>
+                      <td data-mobile-label={t("admin.quotes.next_action")}>
                         <div className="quote-list-status-cell">
                           <QuoteRowNextAction action={nextAction} language={language} />
                           {changeRequest ? (
@@ -911,10 +920,10 @@ export default async function AdminQuotesPage({ searchParams }: { searchParams: 
                           ) : null}
                         </div>
                       </td>
-                      <td>{formatDate(row.created_at, language)}</td>
-                      <td>{formatDate(row.expires_at, language)}</td>
-                      <td>{getCalendarSessionsCount(row.calendar_snapshot)}</td>
-                      <td>
+                      <td data-mobile-hidden="true">{formatDate(row.created_at, language)}</td>
+                      <td data-mobile-hidden="true">{formatDate(row.expires_at, language)}</td>
+                      <td data-mobile-hidden="true">{getCalendarSessionsCount(row.calendar_snapshot)}</td>
+                      <td data-mobile-label={t("admin.quotes.action")} className="quote-list-mobile-actions">
                         <div className="row wrap gap-xs">
                           <Link className="ghost" href={detailHref}>{row.status === "created" ? t("common.edit") : t("common.open")}</Link>
                           {row.status === "created" ? (

@@ -5267,65 +5267,67 @@ def _quote_list_stmt(
                 .limit(1)
             )
         )
-    if q:
-        pattern = f"%{q.strip()}%"
+    search_tokens = [token for token in (q or "").strip().split() if token]
+    if search_tokens:
         family_adult_search = User.__table__.alias("family_adult_search")
-        stmt = stmt.where(
-            or_(
-                Quote.quote_number.ilike(pattern),
-                exists(
-                    select(Prospect.id)
-                    .where(
-                        Prospect.id == Quote.prospect_id,
-                        or_(
-                            Prospect.email.ilike(pattern),
-                            Prospect.first_name.ilike(pattern),
-                            Prospect.last_name.ilike(pattern),
-                            Prospect.phone.ilike(pattern),
-                        ),
-                    )
-                    .limit(1)
-                ),
-                exists(
-                    select(User.id)
-                    .where(
-                        User.id == Quote.client_id,
-                        or_(
-                            User.email.ilike(pattern),
-                            User.first_name.ilike(pattern),
-                            User.last_name.ilike(pattern),
-                            User.phone.ilike(pattern),
-                            User.mobile_phone_1.ilike(pattern),
-                            User.mobile_phone_2.ilike(pattern),
-                            User.home_phone.ilike(pattern),
-                        ),
-                    )
-                    .limit(1)
-                ),
-                exists(
-                    select(ClientFamilyLink.id)
-                    .select_from(
-                        ClientFamilyLink.__table__.join(
-                            family_adult_search,
-                            family_adult_search.c.id == ClientFamilyLink.adult_user_id,
+        for search_token in search_tokens:
+            pattern = f"%{search_token}%"
+            stmt = stmt.where(
+                or_(
+                    Quote.quote_number.ilike(pattern),
+                    exists(
+                        select(Prospect.id)
+                        .where(
+                            Prospect.id == Quote.prospect_id,
+                            or_(
+                                Prospect.email.ilike(pattern),
+                                Prospect.first_name.ilike(pattern),
+                                Prospect.last_name.ilike(pattern),
+                                Prospect.phone.ilike(pattern),
+                            ),
                         )
-                    )
-                    .where(
-                        ClientFamilyLink.child_user_id == Quote.client_id,
-                        or_(
-                            family_adult_search.c.email.ilike(pattern),
-                            family_adult_search.c.first_name.ilike(pattern),
-                            family_adult_search.c.last_name.ilike(pattern),
-                            family_adult_search.c.phone.ilike(pattern),
-                            family_adult_search.c.mobile_phone_1.ilike(pattern),
-                            family_adult_search.c.mobile_phone_2.ilike(pattern),
-                            family_adult_search.c.home_phone.ilike(pattern),
-                        ),
-                    )
-                    .limit(1)
-                ),
+                        .limit(1)
+                    ),
+                    exists(
+                        select(User.id)
+                        .where(
+                            User.id == Quote.client_id,
+                            or_(
+                                User.email.ilike(pattern),
+                                User.first_name.ilike(pattern),
+                                User.last_name.ilike(pattern),
+                                User.phone.ilike(pattern),
+                                User.mobile_phone_1.ilike(pattern),
+                                User.mobile_phone_2.ilike(pattern),
+                                User.home_phone.ilike(pattern),
+                            ),
+                        )
+                        .limit(1)
+                    ),
+                    exists(
+                        select(ClientFamilyLink.id)
+                        .select_from(
+                            ClientFamilyLink.__table__.join(
+                                family_adult_search,
+                                family_adult_search.c.id == ClientFamilyLink.adult_user_id,
+                            )
+                        )
+                        .where(
+                            ClientFamilyLink.child_user_id == Quote.client_id,
+                            or_(
+                                family_adult_search.c.email.ilike(pattern),
+                                family_adult_search.c.first_name.ilike(pattern),
+                                family_adult_search.c.last_name.ilike(pattern),
+                                family_adult_search.c.phone.ilike(pattern),
+                                family_adult_search.c.mobile_phone_1.ilike(pattern),
+                                family_adult_search.c.mobile_phone_2.ilike(pattern),
+                                family_adult_search.c.home_phone.ilike(pattern),
+                            ),
+                        )
+                        .limit(1)
+                    ),
+                )
             )
-        )
     normalized_prospect_type = (prospect_type or "").strip().lower()
     if normalized_prospect_type == "child":
         stmt = stmt.where(

@@ -14,6 +14,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.api.routes.quotes import (
     _create_quote_revision_from_change_request,
     _quote_admin_stats,
+    _quote_list_stmt,
     _quote_meta_for_duplicated_child,
     duplicate_quote,
     duplicate_quote_for_child,
@@ -49,6 +50,15 @@ class _FakeSession:
 
 
 class QuoteDuplicationTests(unittest.TestCase):
+    def test_quote_search_splits_full_name_into_required_tokens(self) -> None:
+        statement = _quote_list_stmt(q="  Maxine   Lafon  ")
+        compiled = statement.compile()
+        parameter_values = set(compiled.params.values())
+
+        self.assertIn("%Maxine%", parameter_values)
+        self.assertIn("%Lafon%", parameter_values)
+        self.assertEqual(len(statement._where_criteria), 2)
+
     def test_change_requested_quotes_are_excluded_from_potential_enrollments(self) -> None:
         approved = Quote(
             quote_number="DV-APPROVED",

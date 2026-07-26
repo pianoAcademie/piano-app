@@ -958,7 +958,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
         </section>
       ) : null}
 
-      <section className="card">
+      <section className={`card ${styles.anchorTarget}`} id="intake-overview">
         <div className="row spread wrap gap-sm">
           <div>
             <div className="row wrap gap-sm">
@@ -976,6 +976,17 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
           </div>
         </div>
       </section>
+
+      <nav
+        className={styles.mobileDetailNav}
+        aria-label={language === "en" ? "Intake details navigation" : "Navigation du détail de l’intake"}
+      >
+        <a href="#intake-overview">{language === "en" ? "Overview" : "Aperçu"}</a>
+        <a href="#intake-questionnaire">{language === "en" ? "Questionnaire" : "Questionnaire"}</a>
+        <a href="#intake-matching">{language === "en" ? "Client match" : "Rapprochement"}</a>
+        <a href="#intake-resolution">{language === "en" ? "Arbitration" : "Arbitrage"}</a>
+        <a href="#intake-quote">{language === "en" ? "Quote" : "Devis"}</a>
+      </nav>
 
       {ok && !showResolutionSavedModal ? <section className="flash-ok">{ok}</section> : null}
 
@@ -1095,7 +1106,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
           </article>
         ) : null}
 
-        <article className="card span-2">
+        <article className={`card span-2 ${styles.anchorTarget}`} id="intake-questionnaire">
           <div className="row spread wrap gap-sm">
             <div>
               <h3>{language === "fr" ? "Synthese questionnaire" : "Questionnaire summary"}</h3>
@@ -1191,7 +1202,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
           </details>
         </article>
 
-        <article className="card">
+        <article className={`card ${styles.anchorTarget}`} id="intake-matching">
           <h3>{t("admin.intakes.matching_client_title")}</h3>
           <div className={`${styles.candidateStack} top-gap-sm`}>
             {detail.client_candidates.length === 0 ? <p className="muted">{t("admin.intakes.no_auto_match")}</p> : null}
@@ -1227,7 +1238,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
           </div>
         </article>
 
-        <article className="card span-2">
+        <article className={`card span-2 ${styles.anchorTarget}`} id="intake-resolution">
           <div className="row spread wrap gap-sm">
             <div>
               <h3>{t("admin.intakes.resolution_panel")}</h3>
@@ -1532,7 +1543,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
           </div>
         </article>
 
-        <article className="card span-2">
+        <article className={`card span-2 ${styles.anchorTarget}`} id="intake-quote">
           <div className="row spread wrap gap-sm">
             <div>
               <h3>{t("admin.intakes.preview_quote_title")}</h3>

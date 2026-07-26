@@ -12,6 +12,14 @@
   align-items: start;
 }
 
+.mobileDetailNav {
+  display: none;
+}
+
+.anchorTarget {
+  scroll-margin-top: 16px;
+}
+
 .kvGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -312,6 +320,51 @@
 }
 
 @media (max-width: 1080px) {
+  .mobileDetailNav {
+    position: sticky;
+    top: 56px;
+    z-index: 28;
+    min-width: 0;
+    display: flex;
+    gap: 7px;
+    padding: 8px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+    border: 1px solid #d7dee8;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+    backdrop-filter: blur(10px);
+  }
+
+  .mobileDetailNav a {
+    flex: 0 0 auto;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 9px 13px;
+    border: 1px solid #d7dee8;
+    border-radius: 10px;
+    background: #ffffff;
+    color: #33465f;
+    font-weight: 700;
+    text-decoration: none;
+    white-space: nowrap;
+    scroll-snap-align: start;
+  }
+
+  .mobileDetailNav a:focus-visible {
+    outline: 3px solid rgba(47, 111, 181, 0.28);
+    outline-offset: 2px;
+  }
+
+  .anchorTarget {
+    scroll-margin-top: 118px;
+  }
+
   .kvGrid,
   .keyFactsGrid,
   .totalRow,

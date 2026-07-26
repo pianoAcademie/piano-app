@@ -16279,6 +16279,21 @@ button.danger:focus-visible {
   gap: 6px;
 }
 
+.quote-list-primary-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.quote-list-primary-actions,
+.quote-advanced-filter-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .quote-advanced-filters {
   border: 1px solid #dce3eb;
   border-radius: 10px;
@@ -16345,6 +16360,168 @@ button.danger:focus-visible {
   background: #e8efff;
   color: #1d3f78;
   font-weight: 700;
+}
+
+@media (max-width: 760px) {
+  .quote-list-refine-card {
+    padding: 12px;
+  }
+
+  .quote-list-primary-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .quote-list-primary-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .quote-list-primary-actions button,
+  .quote-list-primary-actions .ghost {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .quote-list-search-field input,
+  .quote-list-status-filter select {
+    min-height: 46px;
+  }
+
+  .quote-advanced-filters {
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .quote-advanced-filters > summary {
+    min-height: 46px;
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+  }
+
+  .quote-advanced-filters[open] {
+    padding-bottom: 12px;
+  }
+
+  .quote-advanced-filters[open] > summary {
+    border-bottom: 1px solid #dce3eb;
+  }
+
+  .quote-advanced-filters > .grid,
+  .quote-advanced-filter-actions {
+    margin-inline: 12px;
+  }
+
+  .quote-advanced-filter-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .quote-advanced-filter-actions button,
+  .quote-advanced-filter-actions .ghost {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .quote-list-refine-card .clients-pagination {
+    gap: 10px;
+  }
+
+  .quote-list-refine-card .clients-pagination > div {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .quote-list-refine-card .clients-pagination form {
+    margin-left: auto;
+  }
+
+  .quote-list-results-wrap {
+    overflow: visible;
+  }
+
+  .quote-list-table {
+    display: block;
+    min-width: 0;
+    border-collapse: separate;
+  }
+
+  .quote-list-table thead {
+    display: none;
+  }
+
+  .quote-list-table tbody {
+    display: grid;
+    gap: 12px;
+  }
+
+  .quote-list-table .quote-list-row {
+    display: grid;
+    gap: 0;
+    padding: 14px;
+    border: 1px solid #d9e1eb;
+    border-radius: 14px;
+    background: #ffffff;
+    box-shadow: 0 5px 16px rgba(15, 23, 42, 0.05);
+  }
+
+  .quote-list-table .quote-list-row td {
+    width: 100%;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(104px, 34%) minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+    padding: 9px 0;
+    border-bottom: 1px solid #edf1f5;
+    overflow-wrap: anywhere;
+  }
+
+  .quote-list-table .quote-list-row td[data-mobile-label]::before {
+    content: attr(data-mobile-label);
+    color: #66758a;
+    font-size: 0.78rem;
+    font-weight: 800;
+    line-height: 1.35;
+  }
+
+  .quote-list-table .quote-list-row td[data-mobile-hidden="true"] {
+    display: none;
+  }
+
+  .quote-list-table .quote-list-row .quote-list-mobile-primary {
+    display: block;
+    padding-top: 0;
+    color: #123f71;
+    font-size: 1rem;
+  }
+
+  .quote-list-table .quote-list-row .quote-list-mobile-actions {
+    grid-template-columns: 1fr;
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+
+  .quote-list-mobile-actions > .row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .quote-list-mobile-actions > .row > a,
+  .quote-list-mobile-actions > .row > button,
+  .quote-list-mobile-actions > .row > form > button {
+    width: 100%;
+    min-height: 42px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
 }
 
 .quote-workspace-shell {
