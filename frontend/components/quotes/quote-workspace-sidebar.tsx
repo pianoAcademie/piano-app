@@ -20,7 +20,7 @@ export default function QuoteWorkspaceSidebar({
   language?: UiLanguage;
 }): JSX.Element {
   return (
-    <section className="card quote-workspace-sidebar-card">
+    <section className="card quote-workspace-sidebar-card" aria-label={uiText(language, "admin.quote_detail.sidebar_title")}>
       <h3>{uiText(language, "admin.quote_detail.sidebar_title")}</h3>
       <nav className="quote-workspace-sidebar-nav top-gap-sm" aria-label={uiText(language, "admin.quote_detail.sidebar_aria")}>
         {items.map((item) => (

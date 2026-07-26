@@ -73,6 +73,7 @@ type AdminNavProps = {
   language?: UiLanguage;
   isFullAdmin?: boolean;
   permissions?: Partial<Record<string, boolean | string | null>>;
+  onNavigate?: () => void;
 };
 
 function isLinkActive(pathname: string, href: string): boolean {
@@ -96,7 +97,13 @@ function hasVisiblePermission(permission: string, permissions: Partial<Record<st
   return Boolean(permissions[permission]);
 }
 
-export default function AdminNav({ collapsed, language = "fr", isFullAdmin = true, permissions = {} }: AdminNavProps): JSX.Element {
+export default function AdminNav({
+  collapsed,
+  language = "fr",
+  isFullAdmin = true,
+  permissions = {},
+  onNavigate,
+}: AdminNavProps): JSX.Element {
   const pathname = usePathname() || "";
   const visibleSections = NAV_SECTIONS.map((section) => ({
     ...section,
@@ -115,6 +122,7 @@ export default function AdminNav({ collapsed, language = "fr", isFullAdmin = tru
                 href={withUiLanguage(item.href, language)}
                 className={`admin-nav-link ${isLinkActive(pathname, item.href) ? "active" : ""}`}
                 title={item.label[language]}
+                onClick={onNavigate}
               >
                 <span className="admin-nav-icon" aria-hidden="true">
                   {item.icon}
