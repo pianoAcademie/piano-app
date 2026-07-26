@@ -402,7 +402,10 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
       {!groupsResult.ok ? <section className="flash-err">{t("admin.clients.backend_groups_error")}: {groupsResult.message}</section> : null}
 
       <section className="card">
-        <div className="row client-subtabs">
+        <nav
+          className="row client-subtabs"
+          aria-label={language === "en" ? "Client sections" : "Rubriques clients"}
+        >
           <Link
             className={`mode-link ${view === "students" ? "mode-active" : ""}`}
             href={buildClientsHref({
@@ -435,7 +438,7 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
           >
             {t("admin.clients.tab_groups")}
           </Link>
-        </div>
+        </nav>
       </section>
 
       {view === "students" ? (

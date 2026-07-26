@@ -2412,6 +2412,11 @@ button.danger:focus-visible {
 
 .client-detail-page {
   gap: 16px;
+  min-width: 0;
+}
+
+.client-detail-page > * {
+  min-width: 0;
 }
 
 .client-sheet-grid {
@@ -3135,7 +3140,38 @@ button.danger:focus-visible {
 
 @media (max-width: 980px) {
   .client-tabs {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    grid-template-columns: none;
+    gap: 7px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    margin-inline: 0;
+    padding: 8px 0 2px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+  }
+
+  .client-tab {
+    flex: 0 0 auto;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 14px;
+    border: 1px solid #d7dee7;
+    border-radius: 10px;
+    background: #ffffff;
+    white-space: nowrap;
+    scroll-snap-align: start;
+  }
+
+  .client-tab.active {
+    border-color: #222831;
+    background: #222831;
+    color: #ffffff;
   }
 
   .span-2 {
@@ -3152,6 +3188,22 @@ button.danger:focus-visible {
 
   .subscription-meta-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .client-subtabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .client-subtabs .mode-link {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
   }
 }
 

@@ -3124,7 +3124,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           </div>
         </div>
 
-        <nav className="client-tabs">
+        <nav
+          className="client-tabs"
+          aria-label={language === "en" ? "Client profile navigation" : "Navigation de la fiche client"}
+        >
           {tabs.map((tab) => (
             <Link
               key={tab.id}
