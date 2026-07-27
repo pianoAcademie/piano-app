@@ -19877,4 +19877,187 @@ button.danger:focus-visible {
     background: #fff4df;
     box-shadow: 0 0 0 2px rgba(198, 123, 43, 0.18);
   }
+
+  /* The planning keeps its dense desktop calendar, but uses a dedicated
+     contained control surface on phones. */
+  .admin-page-grid,
+  .admin-page-grid > *,
+  .planning-header-row > *,
+  .planning-agenda-header > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .planning-header-card,
+  .planning-filters-card,
+  .planning-metrics-card,
+  .planning-agenda-card {
+    padding: 12px;
+    overflow: hidden;
+  }
+
+  .planning-header-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .planning-header-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    gap: 8px;
+  }
+
+  .planning-header-actions > * {
+    min-width: 0;
+    min-height: 44px;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .planning-header-actions .icon-add-button,
+  .planning-header-actions > :nth-child(n + 4) {
+    grid-column: 1 / -1;
+  }
+
+  .planning-subtitle {
+    overflow-wrap: anywhere;
+  }
+
+  .planning-filters-card {
+    position: static;
+  }
+
+  .planning-quick-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: end;
+    gap: 10px;
+  }
+
+  .planning-quick-form > label {
+    min-width: 0;
+  }
+
+  .planning-quick-form select {
+    min-width: 0;
+    min-height: 44px;
+    padding-inline: 10px 28px;
+    text-overflow: ellipsis;
+  }
+
+  .planning-quick-course-type {
+    display: none;
+  }
+
+  .planning-quick-actions {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    gap: 8px;
+  }
+
+  .planning-quick-actions > * {
+    min-height: 44px;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .planning-active-filters {
+    margin-top: 10px;
+  }
+
+  .planning-active-filters .muted {
+    font-size: 0.82rem;
+  }
+
+  .planning-metrics-card .config-metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 0;
+  }
+
+  .planning-metrics-card .config-metric-grid article {
+    min-width: 0;
+    padding: 10px;
+  }
+
+  .planning-metrics-card .config-metric-grid article:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
+  .planning-metrics-card .config-metric-grid span {
+    overflow-wrap: anywhere;
+  }
+
+  .planning-agenda-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .planning-agenda-nav {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
+    width: 100%;
+    gap: 8px;
+  }
+
+  .planning-agenda-nav > .mode-link {
+    min-width: 0;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  .planning-jump-menu {
+    min-width: 0;
+  }
+
+  .planning-jump-trigger {
+    width: 100%;
+    min-height: 44px;
+    justify-content: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .planning-agenda-nav > .mode-link:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .planning-jump-form {
+    right: auto;
+    left: 0;
+    width: min(280px, calc(100vw - 48px));
+  }
+
+  .planning-agenda-card > .muted {
+    margin: 12px 0 4px;
+    font-size: 0.9rem;
+  }
+
+  .planning-agenda-card .agenda-grid {
+    min-width: 0;
+  }
+
+  .planning-agenda-card .month-day-card,
+  .planning-agenda-card .month-event-chip,
+  .planning-agenda-card .month-event-chip > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 420px) {
+  .planning-quick-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .planning-quick-actions {
+    grid-column: 1;
+  }
 }

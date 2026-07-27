@@ -1710,7 +1710,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
           <input type="hidden" name="timezone" value={timezone} />
           {dayDetails ? <input type="hidden" name="day_details" value={dayDetails} /> : null}
 
-          <label>
+          <label className="planning-quick-location">
             {planningText.location}
             <AutoSubmitSelect
               name="location_id"
@@ -1719,7 +1719,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             />
           </label>
 
-          <label>
+          <label className="planning-quick-view">
             {planningText.calendarView}
             <AutoSubmitSelect
               name="agenda_view"
@@ -1732,7 +1732,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             />
           </label>
 
-          <label>
+          <label className="planning-quick-course-type">
             {isEnglish ? "Course type" : "Type de cours"}
             <AutoSubmitSelect
               name="course_type_id"
@@ -1741,7 +1741,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
             />
           </label>
 
-          <div className="row">
+          <div className="row planning-quick-actions">
             <a className="planning-reset-link" href={filtersResetHref}>
               {planningText.reset}
             </a>
@@ -1874,7 +1874,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         </section>
       ) : null}
 
-      <section className="card">
+      <section className="card planning-metrics-card">
         <div className="config-metric-grid">
           <article>
             <span>{planningText.metricsSlots}</span>
@@ -2065,8 +2065,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
         </section>
       ) : null}
 
-      <section className="card">
-        <div className="row spread">
+      <section className="card planning-agenda-card">
+        <div className="row spread planning-agenda-header">
           <h2>{isEnglish ? "Calendar" : "Agenda"}</h2>
           <div className="row planning-agenda-nav">
             <a className="mode-link" href={previousHref}>
