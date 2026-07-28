@@ -24,7 +24,7 @@ from app.api.routes.quotes import (
     _split_ttc,
     create_quote_from_payload,
 )
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, SessionAudienceScope, SessionStatus
+from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, SessionStatus
 from app.models.family import ClientFamilyLink
 from app.models.ops import LegalEntity
 from app.models.product_catalog import CatalogProduct
@@ -76,7 +76,6 @@ from app.services.referrals import (
     referral_category_for_location,
     referral_summary,
 )
-from app.services.session_audience import resolve_session_visibility_scopes
 from app.services.security import hash_password
 
 router = APIRouter(prefix="/typeform")
@@ -3554,7 +3553,9 @@ def _safe_zoneinfo(value: str | None) -> ZoneInfo:
 
 
 def _session_is_typeform_candidate(session_obj: CourseSession) -> bool:
-    return resolve_session_visibility_scopes(session_obj) != [SessionAudienceScope.PRIVATE]
+    # Intake matching is an administrative quote workflow. A private session must
+    # stay hidden from public booking without being excluded from admin proposals.
+    return session_obj.status == SessionStatus.SCHEDULED
 
 
 def _requested_summary(normalized: dict[str, object]) -> str | None:

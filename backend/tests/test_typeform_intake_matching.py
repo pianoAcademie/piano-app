@@ -30,6 +30,7 @@ from app.api.routes.typeform_intakes import (
     _normalize_payload,
     _normalize_slot_preferences,
     _requires_strict_typeform_location_matching,
+    _session_is_typeform_candidate,
     _session_recommendations_have_options,
     _should_search_onsite_solfege_without_main_slot_filters,
     _should_try_future_school_year_config,
@@ -44,12 +45,29 @@ from app.api.routes.typeform_intakes import (
     _typeform_default_terms_template,
     _typeform_session_option_from_row,
 )
+from app.models.catalog import SessionAudienceScope, SessionStatus
 from app.services.referrals import referral_category_for_location
 from app.schemas.quote import QuoteLineIn
 from app.schemas.typeform_intake import TypeformQuotePreviewLineOut
 
 
 class TypeformIntakeMatchingTests(unittest.TestCase):
+    def test_private_scheduled_session_is_candidate_for_admin_quote(self) -> None:
+        session = SimpleNamespace(
+            status=SessionStatus.SCHEDULED,
+            visibility_scopes=[SessionAudienceScope.PRIVATE],
+        )
+
+        self.assertTrue(_session_is_typeform_candidate(session))
+
+    def test_cancelled_session_is_not_candidate_for_admin_quote(self) -> None:
+        session = SimpleNamespace(
+            status=SessionStatus.CANCELLED,
+            visibility_scopes=[SessionAudienceScope.PRIVATE],
+        )
+
+        self.assertFalse(_session_is_typeform_candidate(session))
+
     def test_find_pass_recup_product_prefers_paid_standard_product(self) -> None:
         rows = [
             SimpleNamespace(
