@@ -733,11 +733,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
   const normalizedEditorHref = setDetailQueryParam(setDetailQueryParam(setDetailQueryParam(intakeHref, "error", null), "ok", null), "editor", "normalized");
   const closeNormalizedEditorHref = setDetailQueryParam(setDetailQueryParam(intakeHref, "editor", null), "editor_error", null);
   const dismissErrorHref = setDetailQueryParam(intakeHref, "error", null);
-  const dismissSuccessHref = setDetailQueryParam(
-    setDetailQueryParam(intakeHref, "success_modal", null),
-    "ok",
-    null,
-  );
+  const dismissSuccessHref = `${intakeHref}#intake-resolution`;
   const showErrorModal = Boolean(error) && editor !== "normalized";
   const showResolutionSavedModal = successModal === "resolution_saved" && Boolean(ok);
   const normalizedPayload = detail.normalized_payload_json || {};
@@ -760,20 +756,20 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
     && !emptyPreviewOnlyBlockage;
 
   return (
-    <section className="admin-page-grid">
+    <section className={`admin-page-grid ${styles.detailPage}`}>
       {showResolutionSavedModal ? (
         <section className="modal-overlay" role="dialog" aria-modal="true" aria-label={t("admin.intakes.resolution_saved_title")}>
           <article className="modal-panel modal-compact">
-            <Link className="modal-close-x" href={dismissSuccessHref} aria-label={uiText(language, "common.close")}>
+            <a className="modal-close-x" href={dismissSuccessHref} aria-label={uiText(language, "common.close")}>
               ×
-            </Link>
+            </a>
             <h3 className="modal-title">{t("admin.intakes.resolution_saved_title")}</h3>
             <section className="flash-ok modal-flash" role="status">
               {ok}
             </section>
             <p className="muted">{t("admin.intakes.resolution_saved_body")}</p>
             <div className="row modal-actions-end top-gap-sm">
-              <Link href={dismissSuccessHref}>{uiText(language, "common.close")}</Link>
+              <a href={dismissSuccessHref}>{uiText(language, "common.close")}</a>
             </div>
           </article>
         </section>
@@ -987,6 +983,23 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
         <a href="#intake-resolution">{language === "en" ? "Arbitration" : "Arbitrage"}</a>
         <a href="#intake-quote">{language === "en" ? "Quote" : "Devis"}</a>
       </nav>
+
+      <div className={styles.mobileDetailActions} aria-label={language === "en" ? "Intake actions" : "Actions de l’intake"}>
+        <a className={styles.mobileArbitrationLink} href="#intake-resolution">
+          {language === "en" ? "Arbitrate" : "Arbitrer"}
+        </a>
+        {detail.related_quote_id ? (
+          <Link href={`/admin/quotes/${encodeURIComponent(detail.related_quote_id)}`}>
+            {t("admin.intakes.open_related_quote")}
+          </Link>
+        ) : (
+          <button type="submit" form="generate-intake-draft-quote" disabled={draftQuoteBlocked}>
+            {draftQuoteNeedsArbitrage
+              ? t("admin.intakes.generate_quote_with_warning")
+              : t("admin.intakes.generate_quote")}
+          </button>
+        )}
+      </div>
 
       {ok && !showResolutionSavedModal ? <section className="flash-ok">{ok}</section> : null}
 
@@ -1398,7 +1411,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                     </p>
                     {recommendation.slot_proposals.length > 0 ? (
                       <div className="table-wrap top-gap-sm">
-                        <table className="data-table">
+                        <table className={`data-table ${styles.proposalTable}`}>
                           <thead>
                             <tr>
                               <th>{t("admin.intakes.proposal_header")}</th>
@@ -1412,22 +1425,22 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                           <tbody>
                             {recommendation.slot_proposals.map((proposal, index) => (
                               <tr className={styles.selectedOptionRow} key={`${recommendationKey}-slot-proposal-${index}`}>
-                                <td>
+                                <td data-mobile-label={t("admin.intakes.proposal_header")}>
                                   <div className={styles.optionCellStack}>
                                     <strong>{proposalLabel(index, language)}</strong>
                                     <span className="badge">{t("admin.intakes.retained")}</span>
                                   </div>
                                 </td>
-                                <td>
+                                <td data-mobile-label={t("admin.intakes.occurrence")}>
                                   <div className={styles.optionCellStack}>
                                     <strong>{solfegeProposalLabel(proposal)}</strong>
                                     <span className="muted">{t("admin.intakes.solfege_typeform_source")}</span>
                                   </div>
                                 </td>
-                                <td>{typeof proposal.location_label === "string" ? proposal.location_label : ""}</td>
-                                <td>{typeof proposal.modality === "string" ? proposal.modality : ""}</td>
-                                <td>{typeof proposal.duration_minutes === "number" ? t("admin.quote_config.solfege_duration_short", { minutes: proposal.duration_minutes }) : ""}</td>
-                                <td>{t("admin.intakes.solfege_typeform_reason")}</td>
+                                <td data-mobile-label={uiText(language, "common.location")}>{typeof proposal.location_label === "string" ? proposal.location_label : ""}</td>
+                                <td data-mobile-label={t("admin.quote_config.solfege_mode")}>{typeof proposal.modality === "string" ? proposal.modality : ""}</td>
+                                <td data-mobile-label={t("admin.quote_config.solfege_duration")}>{typeof proposal.duration_minutes === "number" ? t("admin.quote_config.solfege_duration_short", { minutes: proposal.duration_minutes }) : ""}</td>
+                                <td data-mobile-label={t("admin.intakes.reasons")}>{t("admin.intakes.solfege_typeform_reason")}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -1436,7 +1449,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                     ) : null}
                     {recommendation.options.length > 0 ? (
                       <div className="table-wrap top-gap-sm">
-                        <table className="data-table">
+                        <table className={`data-table ${styles.proposalTable}`}>
                           <thead>
                             <tr>
                               <th>{t("admin.intakes.proposal_header")}</th>
@@ -1454,7 +1467,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                                 className={recommendation.selected_session_id === option.session_id ? styles.selectedOptionRow : undefined}
                                 key={option.session_id}
                               >
-                                <td>
+                                <td data-mobile-label={t("admin.intakes.proposal_header")}>
                                   <div className={styles.optionCellStack}>
                                     <strong>{proposalLabel(index, language)}</strong>
                                     {recommendation.selected_session_id === option.session_id ? (
@@ -1462,17 +1475,17 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                                     ) : null}
                                   </div>
                                 </td>
-                                <td>
+                                <td data-mobile-label={t("admin.intakes.occurrence")}>
                                   <div className={styles.optionCellStack}>
                                     <strong>{option.occurrence_label}</strong>
                                     <span className="muted">{slotOptionTitle(option)}</span>
                                   </div>
                                 </td>
-                                <td>{slotBadgeLabel(option, language)}</td>
-                                <td>{option.location_name}</td>
-                                <td>{option.seats_remaining}</td>
-                                <td>{option.score}</td>
-                                <td>{option.reasons.join(", ")}</td>
+                                <td data-mobile-label={t("admin.intakes.series")}>{slotBadgeLabel(option, language)}</td>
+                                <td data-mobile-label={uiText(language, "common.location")}>{option.location_name}</td>
+                                <td data-mobile-label={t("admin.intakes.seats")}>{option.seats_remaining}</td>
+                                <td data-mobile-label={uiText(language, "common.score")}>{option.score}</td>
+                                <td data-mobile-label={t("admin.intakes.reasons")}>{option.reasons.join(", ")}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -1481,7 +1494,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                     ) : null}
                     {recommendation.manual_options.length > 0 ? (
                       <div className="table-wrap top-gap-sm">
-                        <table className="data-table">
+                        <table className={`data-table ${styles.proposalTable}`}>
                           <thead>
                             <tr>
                               <th>{t("admin.intakes.manual_choice_header")}</th>
@@ -1500,7 +1513,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                                 className={recommendation.selected_session_id === option.session_id ? styles.selectedOptionRow : undefined}
                                 key={option.session_id}
                               >
-                                <td>
+                                <td data-mobile-label={t("admin.intakes.manual_choice_header")}>
                                   <div className={styles.optionCellStack}>
                                     <strong>{manualProposalLabel(index, language)}</strong>
                                     {recommendation.selected_session_id === option.session_id ? (
@@ -1508,18 +1521,18 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                                     ) : null}
                                   </div>
                                 </td>
-                                <td>{option.activity_name}</td>
-                                <td>
+                                <td data-mobile-label={t("admin.formulas.activities_label")}>{option.activity_name}</td>
+                                <td data-mobile-label={t("admin.intakes.occurrence")}>
                                   <div className={styles.optionCellStack}>
                                     <strong>{option.occurrence_label}</strong>
                                     <span className="muted">{slotOptionTitle(option)}</span>
                                   </div>
                                 </td>
-                                <td>{slotBadgeLabel(option, language)}</td>
-                                <td>{option.location_name}</td>
-                                <td>{option.seats_remaining}</td>
-                                <td>{option.score}</td>
-                                <td>{option.reasons.join(", ")}</td>
+                                <td data-mobile-label={t("admin.intakes.series")}>{slotBadgeLabel(option, language)}</td>
+                                <td data-mobile-label={uiText(language, "common.location")}>{option.location_name}</td>
+                                <td data-mobile-label={t("admin.intakes.seats")}>{option.seats_remaining}</td>
+                                <td data-mobile-label={uiText(language, "common.score")}>{option.score}</td>
+                                <td data-mobile-label={t("admin.intakes.reasons")}>{option.reasons.join(", ")}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -1544,12 +1557,12 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
         </article>
 
         <article className={`card span-2 ${styles.anchorTarget}`} id="intake-quote">
-          <div className="row spread wrap gap-sm">
+          <div className={`row spread wrap gap-sm ${styles.quoteHeader}`}>
             <div>
               <h3>{t("admin.intakes.preview_quote_title")}</h3>
               <p className="muted">{t("admin.intakes.preview_quote_subtitle")}</p>
             </div>
-            <form action={generateTypeformDraftQuoteAction}>
+            <form action={generateTypeformDraftQuoteAction} id="generate-intake-draft-quote" className={styles.quoteActionForm}>
               <input type="hidden" name="intake_id" value={detail.id} />
               <input type="hidden" name="return_to" value={`/admin/intakes/${encodeURIComponent(detail.id)}`} />
               <button type="submit" disabled={draftQuoteBlocked}>
@@ -1616,7 +1629,7 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
               </div>
 
               <div className="table-wrap top-gap-sm">
-                <table className="data-table">
+                <table className={`data-table ${styles.proposalTable}`}>
                   <thead>
                     <tr>
                       <th>{t("admin.intakes.line")}</th>
@@ -1629,14 +1642,14 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
                   <tbody>
                     {detail.preview_quote.lines.map((line) => (
                       <tr key={`${line.title}-${line.pricing_unit}-${line.quantity}`}>
-                        <td>
+                        <td data-mobile-label={t("admin.intakes.line")}>
                           <strong>{line.title}</strong>
                           {line.description ? <div className="muted">{line.description}</div> : null}
                         </td>
-                        <td>{line.quantity}</td>
-                        <td>{formatAmount(line.unit_price_ttc, detail.preview_quote?.currency || "EUR", language)}</td>
-                        <td>{line.vat_rate}%</td>
-                        <td>{formatAmount(line.amount_ttc, detail.preview_quote?.currency || "EUR", language)}</td>
+                        <td data-mobile-label={uiText(language, "common.quantity")}>{line.quantity}</td>
+                        <td data-mobile-label={t("admin.intakes.unit_price_ttc")}>{formatAmount(line.unit_price_ttc, detail.preview_quote?.currency || "EUR", language)}</td>
+                        <td data-mobile-label={uiText(language, "common.vat")}>{line.vat_rate}%</td>
+                        <td data-mobile-label={t("admin.intakes.total_ttc")}>{formatAmount(line.amount_ttc, detail.preview_quote?.currency || "EUR", language)}</td>
                       </tr>
                     ))}
                   </tbody>

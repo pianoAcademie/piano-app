@@ -1,3 +1,15 @@
+.detailPage,
+.detailPage > *,
+.panelGrid,
+.panelGrid > *,
+.candidateStack,
+.candidateItem,
+.resolutionForm,
+.resolutionSection {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .emptyState {
   border: 1px dashed #d6dfeb;
   border-radius: 14px;
@@ -13,6 +25,10 @@
 }
 
 .mobileDetailNav {
+  display: none;
+}
+
+.mobileDetailActions {
   display: none;
 }
 
@@ -283,6 +299,25 @@
   gap: 6px;
 }
 
+.candidateItem p,
+.candidateItem strong {
+  overflow-wrap: anywhere;
+}
+
+.candidateItem select {
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+}
+
+.proposalTable {
+  max-width: 100%;
+}
+
+.quoteActionForm {
+  flex: 0 0 auto;
+}
+
 .optionCellStack {
   display: grid;
   gap: 6px;
@@ -320,6 +355,19 @@
 }
 
 @media (max-width: 1080px) {
+  .detailPage {
+    padding-bottom: 86px;
+    overflow-x: clip;
+  }
+
+  .panelGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .panelGrid > :global(.span-2) {
+    grid-column: auto;
+  }
+
   .mobileDetailNav {
     position: sticky;
     top: 56px;
@@ -361,6 +409,43 @@
     outline-offset: 2px;
   }
 
+  .mobileDetailActions {
+    position: fixed;
+    right: 10px;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    left: 10px;
+    z-index: 45;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid #d7dee8;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.97);
+    box-shadow: 0 12px 34px rgba(15, 23, 42, 0.2);
+    backdrop-filter: blur(12px);
+  }
+
+  .mobileDetailActions a,
+  .mobileDetailActions button {
+    min-width: 0;
+    min-height: 48px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-weight: 800;
+    text-align: center;
+    text-decoration: none;
+  }
+
+  .mobileArbitrationLink {
+    border: 1px solid #d7dee8;
+    background: #ffffff;
+    color: #33465f;
+  }
+
   .anchorTarget {
     scroll-margin-top: 118px;
   }
@@ -376,5 +461,88 @@
   .editorSectionWide,
   .resolutionFieldWide {
     grid-column: auto;
+  }
+
+  .resolutionSection,
+  .candidateItem {
+    padding: 12px;
+    overflow: hidden;
+  }
+
+  .quoteHeader {
+    align-items: stretch;
+  }
+
+  .quoteHeader > *,
+  .quoteActionForm,
+  .quoteActionForm button {
+    width: 100%;
+  }
+
+  .proposalTable {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    border-collapse: separate;
+  }
+
+  .proposalTable thead {
+    display: none;
+  }
+
+  .proposalTable tbody {
+    display: grid;
+    gap: 10px;
+  }
+
+  .proposalTable tbody > tr {
+    display: grid;
+    gap: 0;
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #dce3eb;
+    border-radius: 12px;
+    background: #fff;
+  }
+
+  .proposalTable tbody > tr > td {
+    display: grid;
+    grid-template-columns: minmax(96px, 0.38fr) minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+    width: 100%;
+    min-width: 0;
+    padding: 8px 0;
+    border-bottom: 1px solid #edf0f4;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .proposalTable tbody > tr > td:last-child {
+    border-bottom: 0;
+  }
+
+  .proposalTable tbody > tr > td::before {
+    content: attr(data-mobile-label);
+    color: #6b7788;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.35;
+  }
+}
+
+@media (max-width: 420px) {
+  .mobileDetailActions {
+    grid-template-columns: minmax(88px, 0.34fr) minmax(0, 1fr);
+  }
+
+  .mobileDetailActions a,
+  .mobileDetailActions button {
+    padding: 8px;
+    font-size: 13px;
+  }
+
+  .proposalTable tbody > tr > td {
+    grid-template-columns: minmax(84px, 0.34fr) minmax(0, 1fr);
   }
 }
