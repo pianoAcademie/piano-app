@@ -18,6 +18,7 @@ type EmbedDay = {
 const PARIS_LOCATION_GROUP = "paris";
 const PARIS_LOCATION_TOKENS = ["dulong", "scheffer", "assas", "richelieu", "pompe"];
 const ACTIVE_CLIENT_BOOKING_STATUSES = new Set(["BOOKED", "WAITLISTED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"]);
+const DEFAULT_UPCOMING_SEARCH_DAYS = 400;
 
 function readParam(params: SearchParams | undefined, key: string): string {
   const value = params?.[key];
@@ -270,6 +271,22 @@ function externalAvailabilityLabel(session: SessionOut, language: UiLanguage): s
     : uiText(language, "embed_planning.availability_waitlist");
 }
 
+function isPublicPlanningSession(session: SessionOut): boolean {
+  return (
+    session.online_booking_enabled &&
+    session.booking_scopes.includes("EXTERNAL") &&
+    session.external_booking_price_ttc !== null
+  );
+}
+
+function sortPublicPlanningSessions(left: SessionOut, right: SessionOut): number {
+  const byStart = left.start_at_utc.localeCompare(right.start_at_utc);
+  if (byStart !== 0) {
+    return byStart;
+  }
+  return left.location.name.localeCompare(right.location.name, "fr");
+}
+
 export default async function EmbedPlanningPage({ searchParams }: { searchParams?: SearchParams }): Promise<JSX.Element> {
   const language = normalizeUiLanguage(readParam(searchParams, "lang"));
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
@@ -348,7 +365,40 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
     );
   }
 
-  const anchorDateKey = parseDateKey(readParam(searchParams, "date"), timezone);
+  const loadPublicPlanningSessions = async (from: string, to: string): Promise<SessionOut[]> => {
+    const results = await Promise.all(
+      effectiveLocationIds.flatMap((currentLocationId) =>
+        selectedCourseTypeIds.map((courseTypeId) =>
+          backendRequest<SessionOut[]>(
+            `/api/v1/sessions?course_type_id=${encodeURIComponent(courseTypeId)}&location_id=${encodeURIComponent(currentLocationId)}&timezone=${encodeURIComponent(timezone)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+          ),
+        ),
+      ),
+    );
+    const sessionById = new Map<string, SessionOut>();
+    for (const result of results) {
+      if (!result.ok) {
+        continue;
+      }
+      for (const session of result.data) {
+        sessionById.set(session.id, session);
+      }
+    }
+    return [...sessionById.values()].filter(isPublicPlanningSession).sort(sortPublicPlanningSessions);
+  };
+
+  const requestedDate = readParam(searchParams, "date").trim();
+  let anchorDateKey = parseDateKey(requestedDate, timezone);
+  if (!requestedDate) {
+    const now = new Date();
+    const upcomingSearchEnd = addUtcDays(now, DEFAULT_UPCOMING_SEARCH_DAYS);
+    const upcomingSessions = await loadPublicPlanningSessions(now.toISOString(), upcomingSearchEnd.toISOString());
+    const firstAvailableSession = upcomingSessions.find((session) => session.seats_remaining > 0);
+    if (firstAvailableSession) {
+      anchorDateKey = dateKeyInTimezone(firstAvailableSession.start_at_utc, timezone);
+    }
+  }
+
   const weekStart = startOfWeekUtc(keyToUtcDate(anchorDateKey));
   const weekStartKey = utcDateToKey(weekStart);
   const weekDays = Array.from({ length: 7 }, (_, index) => {
@@ -363,40 +413,10 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const queryTo = addUtcDays(weekStart, 8).toISOString();
 
   const portalToken = getPortalToken();
-  const [sessionResults, bookingsResult] = await Promise.all([
-    Promise.all(
-      effectiveLocationIds.flatMap((currentLocationId) =>
-        selectedCourseTypeIds.map((courseTypeId) =>
-          backendRequest<SessionOut[]>(
-            `/api/v1/sessions?course_type_id=${encodeURIComponent(courseTypeId)}&location_id=${encodeURIComponent(currentLocationId)}&timezone=${encodeURIComponent(timezone)}&from=${encodeURIComponent(queryFrom)}&to=${encodeURIComponent(queryTo)}`,
-          ),
-        ),
-      ),
-    ),
+  const [sessions, bookingsResult] = await Promise.all([
+    loadPublicPlanningSessions(queryFrom, queryTo),
     portalToken ? backendRequest<ClientBookingOut[]>("/api/v1/clients/me/bookings", {}, portalToken) : Promise.resolve(null),
   ]);
-
-  const sessionById = new Map<string, SessionOut>();
-  for (const result of sessionResults) {
-    if (!result.ok) {
-      continue;
-    }
-    for (const session of result.data) {
-      sessionById.set(session.id, session);
-    }
-  }
-  const sessionsRaw = [...sessionById.values()];
-  const sessions = sessionsRaw
-    .filter((session) => session.online_booking_enabled)
-    .filter((session) => session.booking_scopes.includes("EXTERNAL"))
-    .filter((session) => session.external_booking_price_ttc !== null)
-    .sort((left, right) => {
-      const byStart = left.start_at_utc.localeCompare(right.start_at_utc);
-      if (byStart !== 0) {
-        return byStart;
-      }
-      return left.location.name.localeCompare(right.location.name, "fr");
-    });
 
   const sessionIds = new Set(sessions.map((session) => session.id));
   const ownBookings = bookingsResult && bookingsResult.ok ? bookingsResult.data : [];
