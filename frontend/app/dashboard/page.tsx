@@ -2841,6 +2841,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               </Link>
             );
           })}
+          <Link className="client-nav-link" href="/events">
+            <span aria-hidden="true">🎟️</span>
+            <span>{language === "en" ? "Events" : "Événements"}</span>
+          </Link>
         </nav>
 
         <form action={logoutAction} className="client-logout">
@@ -2878,6 +2882,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               </a>
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "account" })}>
                 {tabLabels.account}
+              </a>
+              <a className="client-mobile-menu-link" href="/events">
+                {language === "en" ? "Events" : "Événements"}
               </a>
               {isImpersonating ? (
                 <form action={endPortalImpersonationAction}>

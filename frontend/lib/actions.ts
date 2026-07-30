@@ -101,6 +101,8 @@ import type {
   PlanOut,
   LocationOut,
   AdminSessionOut,
+  SchoolEventOut,
+  SchoolEventRegistrationCreateOut,
 } from "./types";
 
 type ApplyScope = "ONE" | "SERIES_FUTURE" | "SERIES_ALL";
@@ -508,6 +510,7 @@ function safePublicReturnPath(raw: string, fallback: string): string {
     value.startsWith("/buy/")
     || value.startsWith("/login")
     || value.startsWith("/embed/")
+    || value.startsWith("/events")
     || value.startsWith("/client")
     || value.startsWith("/dashboard")
   ) {
@@ -16719,4 +16722,213 @@ export async function deleteGeneratedReportsAction(formData: FormData): Promise<
   }
   revalidatePath("/admin/reporting");
   redirect(appendQueryMessage(returnTo, "ok", `${reportIds.length} rapport(s) supprime(s)`));
+}
+
+function safeEventReturnPath(formData: FormData, fallback: string): string {
+  const raw = String(formData.get("return_to") ?? "").trim();
+  if (raw.startsWith("/admin/events") || raw.startsWith("/events")) {
+    return raw;
+  }
+  return fallback;
+}
+
+function eventPayloadFromForm(formData: FormData): Record<string, unknown> {
+  const paymentMode = String(formData.get("payment_mode") ?? "FREE").trim().toUpperCase();
+  return {
+    slug: String(formData.get("slug") ?? "").trim(),
+    title_fr: String(formData.get("title_fr") ?? "").trim(),
+    title_en: optionalField(formData, "title_en"),
+    description_fr: optionalField(formData, "description_fr"),
+    description_en: optionalField(formData, "description_en"),
+    category: String(formData.get("category") ?? "AUTRE").trim().toUpperCase(),
+    image_url: optionalField(formData, "image_url"),
+    status: String(formData.get("status") ?? "DRAFT").trim().toUpperCase(),
+    audience: String(formData.get("audience") ?? "CLIENTS").trim().toUpperCase(),
+    registration_mode: String(formData.get("registration_mode") ?? "GROUP_SESSION").trim().toUpperCase(),
+    payment_mode: paymentMode,
+    location_id: optionalField(formData, "location_id"),
+    booking_opens_at: optionalField(formData, "booking_opens_at"),
+    booking_closes_at: optionalField(formData, "booking_closes_at"),
+    price_ttc: paymentMode === "FREE" ? "0" : String(formData.get("price_ttc") ?? "0").trim(),
+    currency: "EUR",
+    max_per_family: Number.parseInt(String(formData.get("max_per_family") ?? "6"), 10) || 6,
+    waitlist_enabled: checkboxField(formData, "waitlist_enabled"),
+    cancellation_deadline_hours:
+      Number.parseInt(String(formData.get("cancellation_deadline_hours") ?? "24"), 10) || 0,
+    collect_piece_info: checkboxField(formData, "collect_piece_info"),
+    collect_photo_consent: checkboxField(formData, "collect_photo_consent"),
+    confirmation_message_fr: optionalField(formData, "confirmation_message_fr"),
+    confirmation_message_en: optionalField(formData, "confirmation_message_en"),
+  };
+}
+
+export async function createSchoolEventAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const returnTo = safeEventReturnPath(formData, "/admin/events");
+  const result = await backendRequest<SchoolEventOut>(
+    "/api/v1/admin/events",
+    { method: "POST", body: JSON.stringify(eventPayloadFromForm(formData)) },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/events");
+  redirect(`/admin/events/${result.data.id}?ok=${encodeURIComponent("Événement créé")}`);
+}
+
+export async function updateSchoolEventAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const eventId = String(formData.get("event_id") ?? "").trim();
+  const returnTo = safeEventReturnPath(formData, eventId ? `/admin/events/${eventId}` : "/admin/events");
+  if (!token || !eventId) {
+    redirect(appendQueryMessage(returnTo, "error", "Événement introuvable"));
+  }
+  const result = await backendRequest<SchoolEventOut>(
+    `/api/v1/admin/events/${encodeURIComponent(eventId)}`,
+    { method: "PUT", body: JSON.stringify(eventPayloadFromForm(formData)) },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/events");
+  revalidatePath(`/admin/events/${eventId}`);
+  revalidatePath("/events");
+  redirect(appendQueryMessage(returnTo, "ok", "Événement enregistré"));
+}
+
+export async function createSchoolEventSlotAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const eventId = String(formData.get("event_id") ?? "").trim();
+  const returnTo = safeEventReturnPath(formData, eventId ? `/admin/events/${eventId}` : "/admin/events");
+  if (!token || !eventId) {
+    redirect(appendQueryMessage(returnTo, "error", "Événement introuvable"));
+  }
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/admin/events/${encodeURIComponent(eventId)}/slots`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        start_at_utc: String(formData.get("start_at") ?? "").trim(),
+        end_at_utc: String(formData.get("end_at") ?? "").trim(),
+        timezone: String(formData.get("timezone") ?? "Europe/Paris").trim(),
+        capacity_max: Number.parseInt(String(formData.get("capacity_max") ?? "1"), 10) || 1,
+        location_id: optionalField(formData, "location_id"),
+        label: optionalField(formData, "label"),
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath(`/admin/events/${eventId}`);
+  revalidatePath("/events");
+  redirect(appendQueryMessage(returnTo, "ok", "Créneau ajouté"));
+}
+
+export async function deleteSchoolEventSlotAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const eventId = String(formData.get("event_id") ?? "").trim();
+  const slotId = String(formData.get("slot_id") ?? "").trim();
+  const returnTo = safeEventReturnPath(formData, eventId ? `/admin/events/${eventId}` : "/admin/events");
+  if (!token || !eventId || !slotId) {
+    redirect(appendQueryMessage(returnTo, "error", "Créneau introuvable"));
+  }
+  const result = await backendRequest<Record<string, never>>(
+    `/api/v1/admin/events/${encodeURIComponent(eventId)}/slots/${encodeURIComponent(slotId)}`,
+    { method: "DELETE" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath(`/admin/events/${eventId}`);
+  revalidatePath("/events");
+  redirect(appendQueryMessage(returnTo, "ok", "Créneau supprimé"));
+}
+
+export async function registerSchoolEventAction(formData: FormData): Promise<void> {
+  const token = currentPortalToken();
+  const slug = String(formData.get("event_slug") ?? "").trim();
+  const returnTo = safeEventReturnPath(formData, slug ? `/events/${slug}` : "/events");
+  if (!token) {
+    setPortalReturnTo(returnTo);
+    redirect(`/login?return_to=${encodeURIComponent(returnTo)}`);
+  }
+  const guestNames = String(formData.get("guest_names") ?? "")
+    .split(/[\n,;]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const result = await backendRequest<SchoolEventRegistrationCreateOut>(
+    `/api/v1/clients/me/events/${encodeURIComponent(slug)}/register`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        slot_id: String(formData.get("slot_id") ?? "").trim(),
+        participant_user_ids: formData.getAll("participant_user_ids").map(String).filter(Boolean),
+        guest_names: guestNames,
+        piece_info: optionalField(formData, "piece_info"),
+        photo_consent: formData.get("photo_consent") === null ? null : checkboxField(formData, "photo_consent"),
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/events");
+  revalidatePath(`/events/${slug}`);
+  const language = String(formData.get("ui_language") ?? "fr").trim().toLowerCase();
+  const message = result.data.status === "WAITLISTED"
+    ? language === "en" ? "Registration added to the waiting list" : "Inscription ajoutée à la liste d’attente"
+    : language === "en" ? "Registration confirmed" : "Inscription confirmée";
+  redirect(appendQueryMessage(returnTo, "ok", message));
+}
+
+export async function cancelSchoolEventRegistrationAction(formData: FormData): Promise<void> {
+  const token = currentPortalToken();
+  const groupId = String(formData.get("group_id") ?? "").trim();
+  const returnTo = safeEventReturnPath(formData, "/events");
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const result = await backendRequest<Record<string, never>>(
+    `/api/v1/clients/me/event-registrations/${encodeURIComponent(groupId)}/cancel`,
+    { method: "POST" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/events");
+  const language = String(formData.get("ui_language") ?? "fr").trim().toLowerCase();
+  redirect(appendQueryMessage(returnTo, "ok", language === "en" ? "Registration cancelled" : "Inscription annulée"));
+}
+
+export async function updateSchoolEventRegistrationStatusAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const registrationId = String(formData.get("registration_id") ?? "").trim();
+  const eventId = String(formData.get("event_id") ?? "").trim();
+  const returnTo = safeEventReturnPath(formData, eventId ? `/admin/events/${eventId}` : "/admin/events");
+  if (!token || !registrationId) {
+    redirect(appendQueryMessage(returnTo, "error", "Inscription introuvable"));
+  }
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/admin/event-registrations/${encodeURIComponent(registrationId)}/status`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status: String(formData.get("status") ?? "").trim().toUpperCase() }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath(returnTo.split("?")[0]);
+  redirect(appendQueryMessage(returnTo, "ok", "Statut mis à jour"));
 }

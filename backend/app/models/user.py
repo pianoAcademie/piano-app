@@ -47,6 +47,7 @@ class User(Base):
         server_default=text("gen_random_uuid()"),
     )
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    contact_email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(
         Enum(

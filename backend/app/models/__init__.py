@@ -22,6 +22,17 @@ from app.models.external_content import (
     ExternalContentSection,
     ExternalContentStatus,
 )
+from app.models.event import (
+    SchoolEvent,
+    SchoolEventAudience,
+    SchoolEventPaymentMode,
+    SchoolEventRegistration,
+    SchoolEventRegistrationMode,
+    SchoolEventRegistrationStatus,
+    SchoolEventSlot,
+    SchoolEventSlotStatus,
+    SchoolEventStatus,
+)
 from app.models.catalog import (
     Booking,
     BookingStatus,
@@ -186,6 +197,15 @@ __all__ = [
     "ExternalContentProvider",
     "ExternalContentSection",
     "ExternalContentStatus",
+    "SchoolEvent",
+    "SchoolEventAudience",
+    "SchoolEventPaymentMode",
+    "SchoolEventRegistration",
+    "SchoolEventRegistrationMode",
+    "SchoolEventRegistrationStatus",
+    "SchoolEventSlot",
+    "SchoolEventSlotStatus",
+    "SchoolEventStatus",
     "Location",
     "LegalEntity",
     "PlanningConfig",

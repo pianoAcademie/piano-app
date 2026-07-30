@@ -26,6 +26,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: { fr: "Operations", en: "Operations" },
     items: [
       { href: "/admin", label: { fr: "Planning", en: "Schedule" }, icon: "📅", permission: "can_view_planning" },
+      { href: "/admin/events", label: { fr: "Événements", en: "Events" }, icon: "🎟️", permission: "can_manage_events" },
       { href: "/admin/planning-reorganization", label: { fr: "Reorganisation saison", en: "Season reorg" }, icon: "🧩", permission: "can_edit_planning" },
       { href: "/admin/simulation-planning", label: { fr: "Simulation planning", en: "Planning simulation" }, icon: "🧮", permission: "can_view_planning_simulation" },
       { href: "/admin/clients", label: { fr: "Clients", en: "Clients" }, icon: "👥", permission: "can_view_clients" },

@@ -17,6 +17,7 @@ from app.api.routes import (
     bookings,
     catalogue,
     clients,
+    events,
     internal_jobs,
     notification_webhooks,
     impersonation,
@@ -33,6 +34,7 @@ from app.api.routes import (
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(clients.router, tags=["clients"])
+api_router.include_router(events.router, tags=["events"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(admin_catalog.router, tags=["admin-catalog"])
 api_router.include_router(admin_config.router, tags=["admin-config"])

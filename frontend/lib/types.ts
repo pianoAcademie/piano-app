@@ -2601,3 +2601,105 @@ export type AdminSubscriptionEngineDetailOut = {
   initial_payment_refundable: boolean;
   initial_payment_refunded: boolean;
 };
+
+export type SchoolEventStatus = "DRAFT" | "PUBLISHED" | "CLOSED" | "CANCELLED" | "COMPLETED";
+export type SchoolEventAudience = "PUBLIC" | "CLIENTS";
+export type SchoolEventRegistrationMode = "INDIVIDUAL_SLOT" | "GROUP_SESSION";
+export type SchoolEventPaymentMode = "FREE" | "ON_SITE" | "ONLINE";
+export type SchoolEventSlotStatus = "SCHEDULED" | "CANCELLED" | "COMPLETED";
+export type SchoolEventRegistrationStatus =
+  | "PENDING_PAYMENT"
+  | "CONFIRMED"
+  | "WAITLISTED"
+  | "CANCELLED"
+  | "ATTENDED"
+  | "NO_SHOW";
+
+export type SchoolEventLocationOut = {
+  id: string;
+  name: string;
+  timezone: string;
+  is_online: boolean;
+};
+
+export type SchoolEventSlotOut = {
+  id: string;
+  event_id: string;
+  label: string | null;
+  start_at_utc: string;
+  end_at_utc: string;
+  timezone: string;
+  capacity_max: number;
+  booked_count: number;
+  seats_remaining: number;
+  waitlist_count: number;
+  status: SchoolEventSlotStatus;
+  location: SchoolEventLocationOut | null;
+};
+
+export type SchoolEventOut = {
+  id: string;
+  slug: string;
+  title_fr: string;
+  title_en: string | null;
+  description_fr: string | null;
+  description_en: string | null;
+  category: string;
+  image_url: string | null;
+  status: SchoolEventStatus;
+  audience: SchoolEventAudience;
+  registration_mode: SchoolEventRegistrationMode;
+  payment_mode: SchoolEventPaymentMode;
+  location: SchoolEventLocationOut | null;
+  booking_opens_at: string | null;
+  booking_closes_at: string | null;
+  price_ttc: string;
+  currency: string;
+  max_per_family: number;
+  waitlist_enabled: boolean;
+  cancellation_deadline_hours: number;
+  collect_piece_info: boolean;
+  collect_photo_consent: boolean;
+  confirmation_message_fr: string | null;
+  confirmation_message_en: string | null;
+  slots: SchoolEventSlotOut[];
+  registration_count: number;
+  waitlist_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SchoolEventRegistrationOut = {
+  id: string;
+  group_id: string;
+  event_id: string;
+  event_slug: string;
+  event_title_fr: string;
+  event_title_en: string | null;
+  slot_id: string;
+  slot_label: string | null;
+  start_at_utc: string;
+  end_at_utc: string;
+  timezone: string;
+  location_name: string | null;
+  booker_user_id: string;
+  participant_user_id: string | null;
+  participant_display_name: string;
+  party_size: number;
+  guest_names: string[];
+  answers: Record<string, unknown>;
+  status: SchoolEventRegistrationStatus;
+  unit_price_ttc_snapshot: string;
+  total_ttc_snapshot: string;
+  currency_snapshot: string;
+  booked_at: string;
+  cancelled_at: string | null;
+  checked_in_at: string | null;
+};
+
+export type SchoolEventRegistrationCreateOut = {
+  group_id: string;
+  status: SchoolEventRegistrationStatus;
+  registrations: SchoolEventRegistrationOut[];
+  checkout_url: string | null;
+};

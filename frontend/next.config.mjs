@@ -23,6 +23,8 @@ const defaultFrameAncestors = "'self'";
 const publicEmbedFrameAncestors = "'self' https://piano-academie.com https://www.piano-academie.com";
 const embeddedBookingSources = [
   "/embed/:path*",
+  "/events",
+  "/events/:path*",
   "/login",
   "/buy/session/checkout",
 ];

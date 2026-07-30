@@ -81,6 +81,9 @@ function labelForSegment(segment: string, previous: string, language: UiLanguage
   if (segment === "intakes") {
     return "Intakes";
   }
+  if (segment === "events") {
+    return pickText(language, "Événements", "Events");
+  }
   if (segment === "prospects") {
     return pickText(language, "Prospects", "Prospects");
   }
@@ -141,6 +144,9 @@ function labelForSegment(segment: string, previous: string, language: UiLanguage
   }
   if (previous === "intakes" && looksLikeId(segment)) {
     return pickText(language, "Detail intake", "Intake details");
+  }
+  if (previous === "events" && looksLikeId(segment)) {
+    return pickText(language, "Détail événement", "Event details");
   }
   if (previous === "prospects" && looksLikeId(segment)) {
     return pickText(language, "Detail prospect", "Prospect details");

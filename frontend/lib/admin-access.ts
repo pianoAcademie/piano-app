@@ -11,6 +11,7 @@ export const MANAGER_ADMIN_PERMISSION_KEYS: AdminPermissionKey[] = [
   "can_access_collaborators",
   "can_view_intakes",
   "can_view_quotes",
+  "can_manage_events",
 ];
 
 export function hasAdminPermission(user: UserOut, key: AdminPermissionKey): boolean {

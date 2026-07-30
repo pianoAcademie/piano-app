@@ -98,6 +98,9 @@ def register_user(email: str, password: str, *, timezone: str = "Europe/Paris") 
         "first_name": "Smoke",
         "last_name": "User",
         "address_line": "1 Rue Test",
+        "postal_code": "75016",
+        "city": "Paris",
+        "address_country": "FR",
         "phone": "+33100000000",
         "residence_country": "FR",
         "preferred_currency": "EUR",
@@ -136,15 +139,21 @@ def get_pack_plan_and_course_type() -> tuple[str, str]:
         return str(row.id), str(row.course_type_id)
 
 
-def get_subscription_plan_id() -> str:
+def get_subscription_plan_purchase() -> tuple[str, str | None]:
     with SessionLocal() as db:
-        row = db.scalar(
-            select(Plan.id)
+        plan = db.scalar(
+            select(Plan)
             .where(Plan.kind == PlanKind.SUBSCRIPTION, Plan.active.is_(True))
             .limit(1)
         )
-        ensure(row is not None, "no active SUBSCRIPTION plan found")
-        return str(row)
+        ensure(plan is not None, "no active SUBSCRIPTION plan found")
+        methods = {
+            str(value).strip().upper()
+            for value in (plan.payment_methods_json or [])
+            if str(value).strip()
+        }
+        compatible_method = "CARD_ONLINE" if "CARD_ONLINE" in methods else "SEPA_DEBIT" if "SEPA_DEBIT" in methods else None
+        return str(plan.id), compatible_method
 
 
 def get_private_plan_id() -> str | None:
@@ -273,8 +282,118 @@ def main() -> None:
     ensure(patch_client.status == 200, f"PATCH /clients/me failed: {patch_client.status} {patch_client.data}")
 
     plan_id, course_type_id = get_pack_plan_and_course_type()
-    sub_plan_id = get_subscription_plan_id()
+    sub_plan_id, sub_plan_billing_method = get_subscription_plan_purchase()
     location_id, professor_id, location_timezone = get_online_location_and_professor()
+
+    step("school event registration and waitlist")
+    event_slug = f"smoke-event-{ts}"
+    event_start = force_local_hour(now + timedelta(days=3), timezone_name=location_timezone, hour=18)
+    create_event = api.call(
+        "POST",
+        "/api/v1/admin/events",
+        {
+            "slug": event_slug,
+            "title_fr": "Concert smoke",
+            "title_en": "Smoke concert",
+            "description_fr": "Verification du parcours evenement.",
+            "description_en": "Event flow verification.",
+            "category": "CONCERT",
+            "status": "PUBLISHED",
+            "audience": "PUBLIC",
+            "registration_mode": "GROUP_SESSION",
+            "payment_mode": "FREE",
+            "location_id": location_id,
+            "booking_opens_at": (now - timedelta(hours=1)).isoformat(),
+            "booking_closes_at": (event_start - timedelta(hours=1)).isoformat(),
+            "price_ttc": "0",
+            "currency": "EUR",
+            "max_per_family": 4,
+            "waitlist_enabled": True,
+            "cancellation_deadline_hours": 24,
+            "collect_piece_info": True,
+            "collect_photo_consent": False,
+        },
+        admin_token,
+    )
+    ensure(create_event.status == 201, f"event creation failed: {create_event.status} {create_event.data}")
+    event_id = create_event.data.get("id") if isinstance(create_event.data, dict) else None
+    ensure(isinstance(event_id, str), "missing school event id")
+
+    create_event_slot = api.call(
+        "POST",
+        f"/api/v1/admin/events/{event_id}/slots",
+        {
+            "start_at_utc": event_start.isoformat(),
+            "end_at_utc": (event_start + timedelta(hours=1)).isoformat(),
+            "timezone": location_timezone,
+            "capacity_max": 1,
+            "location_id": location_id,
+            "label": "Passage smoke",
+        },
+        admin_token,
+    )
+    ensure(
+        create_event_slot.status == 201,
+        f"event slot creation failed: {create_event_slot.status} {create_event_slot.data}",
+    )
+    event_slot_id = create_event_slot.data.get("id") if isinstance(create_event_slot.data, dict) else None
+    ensure(isinstance(event_slot_id, str), "missing school event slot id")
+
+    public_events = api.call("GET", "/api/v1/events")
+    ensure(public_events.status == 200, f"public event list failed: {public_events.status} {public_events.data}")
+    ensure(
+        any(isinstance(row, dict) and row.get("slug") == event_slug for row in public_events.data),
+        "published school event missing from public list",
+    )
+
+    first_event_registration = api.call(
+        "POST",
+        f"/api/v1/clients/me/events/{event_slug}/register",
+        {"slot_id": event_slot_id, "participant_user_ids": [], "guest_names": [], "piece_info": "Smoke piece"},
+        client_token,
+    )
+    ensure(
+        first_event_registration.status == 200
+        and isinstance(first_event_registration.data, dict)
+        and first_event_registration.data.get("status") == "CONFIRMED",
+        f"event confirmation failed: {first_event_registration.status} {first_event_registration.data}",
+    )
+    first_event_group_id = first_event_registration.data.get("group_id")
+    ensure(isinstance(first_event_group_id, str), "missing first event registration group")
+
+    wait_event_registration = api.call(
+        "POST",
+        f"/api/v1/clients/me/events/{event_slug}/register",
+        {"slot_id": event_slot_id, "participant_user_ids": [], "guest_names": []},
+        wait_token,
+    )
+    ensure(
+        wait_event_registration.status == 200
+        and isinstance(wait_event_registration.data, dict)
+        and wait_event_registration.data.get("status") == "WAITLISTED",
+        f"event waitlist failed: {wait_event_registration.status} {wait_event_registration.data}",
+    )
+
+    cancel_event_registration = api.call(
+        "POST",
+        f"/api/v1/clients/me/event-registrations/{first_event_group_id}/cancel",
+        token=client_token,
+    )
+    ensure(
+        cancel_event_registration.status == 204,
+        f"event cancellation failed: {cancel_event_registration.status} {cancel_event_registration.data}",
+    )
+    wait_event_rows = api.call("GET", "/api/v1/clients/me/event-registrations", token=wait_token)
+    ensure(wait_event_rows.status == 200, f"event registrations list failed: {wait_event_rows.status} {wait_event_rows.data}")
+    ensure(
+        any(
+            isinstance(row, dict)
+            and row.get("event_slug") == event_slug
+            and row.get("status") == "CONFIRMED"
+            for row in wait_event_rows.data
+        ),
+        "event waitlist registration was not promoted after cancellation",
+    )
 
     step("waitlist scenario")
     waitlist_session_id = create_session_as_admin(
@@ -294,14 +413,27 @@ def main() -> None:
     duplicate_pack = api.call("POST", f"/api/v1/plans/{plan_id}/purchase", token=client_token)
     ensure(duplicate_pack.status == 409, f"duplicate pack purchase should fail: {duplicate_pack.status} {duplicate_pack.data}")
 
-    first_monthly = api.call("POST", f"/api/v1/plans/{sub_plan_id}/purchase", token=client_token)
-    ensure(first_monthly.status == 201, f"first monthly purchase failed: {first_monthly.status} {first_monthly.data}")
+    if sub_plan_billing_method:
+        first_monthly = api.call(
+            "POST",
+            f"/api/v1/plans/{sub_plan_id}/purchase",
+            {"billing_method_code": sub_plan_billing_method},
+            client_token,
+        )
+        ensure(first_monthly.status == 201, f"first monthly purchase failed: {first_monthly.status} {first_monthly.data}")
 
-    duplicate_monthly = api.call("POST", f"/api/v1/plans/{sub_plan_id}/purchase", token=client_token)
-    ensure(
-        duplicate_monthly.status == 409,
-        f"duplicate monthly purchase should fail: {duplicate_monthly.status} {duplicate_monthly.data}",
-    )
+        duplicate_monthly = api.call(
+            "POST",
+            f"/api/v1/plans/{sub_plan_id}/purchase",
+            {"billing_method_code": sub_plan_billing_method},
+            client_token,
+        )
+        ensure(
+            duplicate_monthly.status == 409,
+            f"duplicate monthly purchase should fail: {duplicate_monthly.status} {duplicate_monthly.data}",
+        )
+    else:
+        step("monthly purchase guard skipped: no online billing method configured")
 
     private_plan_id = get_private_plan_id()
     if private_plan_id is not None:

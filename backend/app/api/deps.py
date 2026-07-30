@@ -27,6 +27,7 @@ BACKOFFICE_PERMISSION_KEYS = {
     "can_access_collaborators",
     "can_view_intakes",
     "can_view_quotes",
+    "can_manage_events",
 }
 
 
