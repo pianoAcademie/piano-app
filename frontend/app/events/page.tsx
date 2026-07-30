@@ -143,6 +143,11 @@ export default async function EventsPage({ searchParams = {} }: { searchParams?:
                       {registrationStatus(first.status, language)}
                     </span>
                     <div className={styles.bookingActions}>
+                      {["CONFIRMED", "ATTENDED", "NO_SHOW"].includes(first.status) ? (
+                        <Link className="ghost" href={`/events/calendar/${groupId}`}>
+                          {text("Ajouter au calendrier", "Add to calendar")}
+                        </Link>
+                      ) : null}
                       {first.status === "PENDING_PAYMENT" ? (
                         <form action={startSchoolEventPaymentAction}>
                           <input type="hidden" name="group_id" value={groupId} />

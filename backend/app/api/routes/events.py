@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -8,6 +10,7 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -82,6 +85,17 @@ def _normalized_slug(value: str) -> str:
     if len(slug) < 2:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Slug invalide")
     return slug[:160]
+
+
+def _unique_copy_slug(db: Session, source_slug: str) -> str:
+    base = f"{source_slug[:150].rstrip('-')}-copie"
+    candidate = base
+    suffix = 2
+    while db.scalar(select(SchoolEvent.id).where(SchoolEvent.slug == candidate)) is not None:
+        suffix_text = f"-{suffix}"
+        candidate = f"{base[:160 - len(suffix_text)]}{suffix_text}"
+        suffix += 1
+    return candidate
 
 
 def _managed_client_ids(db: Session, current_user: User) -> set[UUID]:
@@ -362,6 +376,50 @@ def _send_payment_required(
         context="SCHOOL_EVENT_PAYMENT_REQUIRED",
         recipient_user_id=booker.id,
         communication_type="EVENT_PAYMENT_REQUIRED",
+    )
+
+
+def _send_event_cancellation(
+    *,
+    booker: User,
+    event: SchoolEvent,
+    slot: SchoolEventSlot,
+    participant_names: list[str],
+    paid: bool,
+) -> None:
+    email = deliverable_client_email(booker)
+    if not email:
+        return
+    language = (booker.preferred_language or "fr").strip().lower()
+    is_english = language.startswith("en")
+    title = event.title_en if is_english and event.title_en else event.title_fr
+    try:
+        slot_timezone = ZoneInfo(slot.timezone)
+    except (KeyError, ValueError):
+        slot_timezone = timezone.utc
+    when = slot.start_at_utc.astimezone(slot_timezone).strftime("%d/%m/%Y %H:%M")
+    payment_note = (
+        "\nThe school will contact you separately regarding the paid registration."
+        if is_english and paid
+        else "\nL’école vous contactera séparément concernant l’inscription réglée."
+        if paid
+        else ""
+    )
+    subject = f"Event cancelled - {title}" if is_english else f"Événement annulé - {title}"
+    body = (
+        f"The event {title}, scheduled for {when}, has been cancelled.\n"
+        f"Participants: {', '.join(participant_names)}{payment_note}"
+        if is_english
+        else f"L’événement {title}, prévu le {when}, est annulé.\n"
+        f"Participants : {', '.join(participant_names)}{payment_note}"
+    )
+    send_email(
+        to_email=email,
+        subject=subject,
+        body=body,
+        context="SCHOOL_EVENT_CANCELLED",
+        recipient_user_id=booker.id,
+        communication_type="EVENT_CANCELLED",
     )
 
 
@@ -1004,6 +1062,44 @@ def update_admin_event(
     event = db.get(SchoolEvent, event_id)
     if event is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Événement introuvable")
+    previous_status = event.status
+    cancellation_messages: list[tuple[User, SchoolEventSlot, list[str], bool]] = []
+    if previous_status != SchoolEventStatus.CANCELLED and payload.status == SchoolEventStatus.CANCELLED:
+        registration_rows = db.execute(
+            select(SchoolEventRegistration, SchoolEventSlot, User)
+            .join(SchoolEventSlot, SchoolEventSlot.id == SchoolEventRegistration.slot_id)
+            .join(User, User.id == SchoolEventRegistration.booker_user_id)
+            .where(
+                SchoolEventSlot.event_id == event.id,
+                SchoolEventRegistration.status.in_(ACTIVE_REGISTRATION_STATUSES),
+            )
+            .order_by(SchoolEventRegistration.booked_at.asc())
+            .with_for_update()
+        ).all()
+        rows_by_group: dict[UUID, list[tuple[SchoolEventRegistration, SchoolEventSlot, User]]] = defaultdict(list)
+        for registration, slot, booker in registration_rows:
+            rows_by_group[registration.group_id].append((registration, slot, booker))
+        now = _utcnow()
+        for group_rows in rows_by_group.values():
+            first_registration, first_slot, booker = group_rows[0]
+            cancellation_messages.append(
+                (
+                    booker,
+                    first_slot,
+                    [registration.participant_display_name for registration, _, _ in group_rows],
+                    any(
+                        Decimal(registration.total_ttc_snapshot or 0) > 0
+                        and bool(registration.payment_reference)
+                        for registration, _, _ in group_rows
+                    ),
+                )
+            )
+            for registration, _, _ in group_rows:
+                registration.status = SchoolEventRegistrationStatus.CANCELLED
+                registration.cancelled_at = now
+                registration.cancellation_reason = "EVENT_CANCELLED"
+                registration.payment_checkout_url = None
+                registration.payment_hold_expires_at = None
     values = payload.model_dump(exclude={"slug"})
     for key, value in values.items():
         setattr(event, key, value)
@@ -1017,7 +1113,78 @@ def update_admin_event(
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ce slug est déjà utilisé") from exc
     db.refresh(event)
+    for booker, slot, participant_names, paid in cancellation_messages:
+        _send_event_cancellation(
+            booker=booker,
+            event=event,
+            slot=slot,
+            participant_names=participant_names,
+            paid=paid,
+        )
     return _serialize_events(db, [event])[0]
+
+
+@router.post("/admin/events/{event_id}/duplicate", response_model=SchoolEventOut, status_code=status.HTTP_201_CREATED)
+def duplicate_admin_event(
+    event_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin_or_permissions("can_manage_events")),
+) -> SchoolEventOut:
+    source = db.get(SchoolEvent, event_id)
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Événement introuvable")
+    duplicate = SchoolEvent(
+        slug=_unique_copy_slug(db, source.slug),
+        title_fr=f"{source.title_fr} — copie",
+        title_en=f"{source.title_en} — copy" if source.title_en else None,
+        description_fr=source.description_fr,
+        description_en=source.description_en,
+        category=source.category,
+        image_url=source.image_url,
+        status=SchoolEventStatus.DRAFT,
+        audience=source.audience,
+        registration_mode=source.registration_mode,
+        payment_mode=source.payment_mode,
+        location_id=source.location_id,
+        booking_opens_at=None,
+        booking_closes_at=None,
+        price_ttc=source.price_ttc,
+        currency=source.currency,
+        max_per_family=source.max_per_family,
+        waitlist_enabled=source.waitlist_enabled,
+        cancellation_deadline_hours=source.cancellation_deadline_hours,
+        collect_piece_info=source.collect_piece_info,
+        collect_photo_consent=source.collect_photo_consent,
+        confirmation_message_fr=source.confirmation_message_fr,
+        confirmation_message_en=source.confirmation_message_en,
+        created_by_user_id=current_user.id,
+    )
+    db.add(duplicate)
+    db.flush()
+    source_slots = db.scalars(
+        select(SchoolEventSlot)
+        .where(
+            SchoolEventSlot.event_id == source.id,
+            SchoolEventSlot.status == SchoolEventSlotStatus.SCHEDULED,
+        )
+        .order_by(SchoolEventSlot.start_at_utc.asc())
+    ).all()
+    for source_slot in source_slots:
+        db.add(
+            SchoolEventSlot(
+                event_id=duplicate.id,
+                location_id=source_slot.location_id,
+                label=source_slot.label,
+                start_at_utc=source_slot.start_at_utc,
+                end_at_utc=source_slot.end_at_utc,
+                timezone=source_slot.timezone,
+                capacity_max=source_slot.capacity_max,
+                status=SchoolEventSlotStatus.SCHEDULED,
+            )
+        )
+    db.commit()
+    db.refresh(duplicate)
+    return _serialize_events(db, [duplicate])[0]
 
 
 @router.post("/admin/events/{event_id}/slots", response_model=SchoolEventSlotOut, status_code=status.HTTP_201_CREATED)
@@ -1081,6 +1248,167 @@ def list_admin_event_registrations(
     return [_registration_out(registration, event=event, slot=slot, location=location) for registration, slot, event, location in rows]
 
 
+@router.get("/admin/events/{event_id}/registrations/export")
+def export_admin_event_registrations(
+    event_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_manage_events")),
+) -> StreamingResponse:
+    event = db.get(SchoolEvent, event_id)
+    if event is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Événement introuvable")
+    rows = db.execute(
+        select(SchoolEventRegistration, SchoolEventSlot, Location, User)
+        .join(SchoolEventSlot, SchoolEventSlot.id == SchoolEventRegistration.slot_id)
+        .outerjoin(Location, Location.id == func.coalesce(SchoolEventSlot.location_id, event.location_id))
+        .join(User, User.id == SchoolEventRegistration.booker_user_id)
+        .where(SchoolEventSlot.event_id == event.id)
+        .order_by(SchoolEventSlot.start_at_utc.asc(), SchoolEventRegistration.booked_at.asc())
+    ).all()
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow(
+        [
+            "groupe",
+            "créneau",
+            "date",
+            "lieu",
+            "responsable",
+            "email",
+            "téléphone",
+            "participant",
+            "places",
+            "invités",
+            "statut",
+            "pièce_interprétée",
+            "consentement_photo",
+            "montant_ttc",
+            "devise",
+            "prestataire_paiement",
+            "référence_paiement",
+            "inscrit_le",
+        ]
+    )
+    for registration, slot, location, booker in rows:
+        answers = dict(registration.answers_json or {})
+        writer.writerow(
+            [
+                str(registration.group_id),
+                slot.label or "",
+                slot.start_at_utc.astimezone(ZoneInfo(slot.timezone)).strftime("%d/%m/%Y %H:%M"),
+                location.name if location else "",
+                _display_name(booker),
+                deliverable_client_email(booker) or booker.email,
+                booker.mobile_phone_1 or booker.phone or booker.home_phone or "",
+                registration.participant_display_name,
+                registration.party_size,
+                " | ".join(registration.guest_names_json or []),
+                registration.status.value,
+                str(answers.get("piece_info") or ""),
+                "Oui" if answers.get("photo_consent") is True else "Non" if answers.get("photo_consent") is False else "",
+                registration.total_ttc_snapshot,
+                registration.currency_snapshot,
+                registration.payment_provider or "",
+                registration.payment_reference or "",
+                registration.booked_at.astimezone(ZoneInfo("Europe/Paris")).strftime("%d/%m/%Y %H:%M"),
+            ]
+        )
+    timestamp = _utcnow().strftime("%Y%m%d_%H%M%S")
+    filename = f"inscriptions_{event.slug}_{timestamp}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.patch(
+    "/admin/event-registration-groups/{group_id}/status",
+    response_model=list[SchoolEventRegistrationOut],
+)
+def update_admin_event_registration_group_status(
+    group_id: UUID,
+    payload: SchoolEventRegistrationStatusUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_manage_events")),
+) -> list[SchoolEventRegistrationOut]:
+    joined_rows = db.execute(
+        select(SchoolEventRegistration, SchoolEventSlot, SchoolEvent, Location)
+        .join(SchoolEventSlot, SchoolEventSlot.id == SchoolEventRegistration.slot_id)
+        .join(SchoolEvent, SchoolEvent.id == SchoolEventSlot.event_id)
+        .outerjoin(Location, Location.id == func.coalesce(SchoolEventSlot.location_id, SchoolEvent.location_id))
+        .where(SchoolEventRegistration.group_id == group_id)
+        .order_by(SchoolEventRegistration.booked_at.asc())
+        .with_for_update(of=SchoolEventRegistration)
+    ).all()
+    if not joined_rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inscription introuvable")
+    registrations = [row[0] for row in joined_rows]
+    slot = joined_rows[0][1]
+    event = joined_rows[0][2]
+    location = joined_rows[0][3]
+    previous_statuses = {registration.status for registration in registrations}
+    target_uses_capacity = payload.status in EVENT_REGISTRATION_CAPACITY_STATUSES
+    group_already_uses_capacity = any(
+        registration.status in EVENT_REGISTRATION_CAPACITY_STATUSES for registration in registrations
+    )
+    if target_uses_capacity and not group_already_uses_capacity:
+        occupied = int(
+            db.scalar(
+                select(func.coalesce(func.sum(SchoolEventRegistration.party_size), 0)).where(
+                    SchoolEventRegistration.slot_id == slot.id,
+                    SchoolEventRegistration.group_id != group_id,
+                    _capacity_registration_condition(_utcnow()),
+                )
+            )
+            or 0
+        )
+        requested = sum(registration.party_size for registration in registrations)
+        if occupied + requested > slot.capacity_max:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Capacité insuffisante pour confirmer ce groupe")
+    now = _utcnow()
+    for registration in registrations:
+        registration.status = payload.status
+        registration.checked_in_at = now if payload.status == SchoolEventRegistrationStatus.ATTENDED else None
+        if payload.status == SchoolEventRegistrationStatus.CANCELLED:
+            registration.cancelled_at = now
+            registration.cancellation_reason = "ADMIN_CANCELLED"
+        elif payload.status != SchoolEventRegistrationStatus.CANCELLED:
+            registration.cancelled_at = None
+            registration.cancellation_reason = None
+        if payload.status != SchoolEventRegistrationStatus.PENDING_PAYMENT:
+            registration.payment_checkout_url = None
+            registration.payment_hold_expires_at = None
+    db.flush()
+    promoted_groups = (
+        _promote_waitlist(db, slot)
+        if group_already_uses_capacity and payload.status == SchoolEventRegistrationStatus.CANCELLED
+        else []
+    )
+    db.commit()
+    for registration in registrations:
+        db.refresh(registration)
+    if (
+        payload.status == SchoolEventRegistrationStatus.CONFIRMED
+        and SchoolEventRegistrationStatus.CONFIRMED not in previous_statuses
+    ):
+        booker = db.get(User, registrations[0].booker_user_id)
+        if booker is not None:
+            _send_registration_confirmation(
+                booker=booker,
+                event=event,
+                slot=slot,
+                status_value=SchoolEventRegistrationStatus.CONFIRMED,
+                participant_names=[registration.participant_display_name for registration in registrations],
+            )
+    _send_waitlist_promotions(db, event=event, slot=slot, promoted_groups=promoted_groups)
+    return [
+        _registration_out(registration, event=event, slot=slot, location=location)
+        for registration in registrations
+    ]
+
+
 @router.patch("/admin/event-registrations/{registration_id}/status", response_model=SchoolEventRegistrationOut)
 def update_admin_event_registration_status(
     registration_id: UUID,
@@ -1094,7 +1422,7 @@ def update_admin_event_registration_status(
         .join(SchoolEvent, SchoolEvent.id == SchoolEventSlot.event_id)
         .outerjoin(Location, Location.id == func.coalesce(SchoolEventSlot.location_id, SchoolEvent.location_id))
         .where(SchoolEventRegistration.id == registration_id)
-        .with_for_update()
+        .with_for_update(of=SchoolEventRegistration)
     ).first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inscription introuvable")

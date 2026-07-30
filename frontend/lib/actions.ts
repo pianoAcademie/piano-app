@@ -16801,6 +16801,25 @@ export async function updateSchoolEventAction(formData: FormData): Promise<void>
   redirect(appendQueryMessage(returnTo, "ok", "Événement enregistré"));
 }
 
+export async function duplicateSchoolEventAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const eventId = String(formData.get("event_id") ?? "").trim();
+  const returnTo = safeEventReturnPath(formData, "/admin/events");
+  if (!token || !eventId) {
+    redirect(appendQueryMessage(returnTo, "error", "Événement introuvable"));
+  }
+  const result = await backendRequest<SchoolEventOut>(
+    `/api/v1/admin/events/${encodeURIComponent(eventId)}/duplicate`,
+    { method: "POST" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/admin/events");
+  redirect(`/admin/events/${result.data.id}?ok=${encodeURIComponent("Événement dupliqué en brouillon")}`);
+}
+
 export async function createSchoolEventSlotAction(formData: FormData): Promise<void> {
   const token = currentToken();
   const eventId = String(formData.get("event_id") ?? "").trim();
@@ -16958,4 +16977,28 @@ export async function updateSchoolEventRegistrationStatusAction(formData: FormDa
   }
   revalidatePath(returnTo.split("?")[0]);
   redirect(appendQueryMessage(returnTo, "ok", "Statut mis à jour"));
+}
+
+export async function updateSchoolEventRegistrationGroupStatusAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const groupId = String(formData.get("group_id") ?? "").trim();
+  const eventId = String(formData.get("event_id") ?? "").trim();
+  const returnTo = safeEventReturnPath(formData, eventId ? `/admin/events/${eventId}` : "/admin/events");
+  if (!token || !groupId) {
+    redirect(appendQueryMessage(returnTo, "error", "Inscription introuvable"));
+  }
+  const result = await backendRequest<Record<string, unknown>[]>(
+    `/api/v1/admin/event-registration-groups/${encodeURIComponent(groupId)}/status`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status: String(formData.get("status") ?? "").trim().toUpperCase() }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath(returnTo.split("?")[0]);
+  revalidatePath("/events");
+  redirect(appendQueryMessage(returnTo, "ok", "Statut du groupe mis à jour"));
 }

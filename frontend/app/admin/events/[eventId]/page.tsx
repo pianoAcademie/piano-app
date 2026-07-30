@@ -4,8 +4,9 @@ import { notFound, redirect } from "next/navigation";
 import {
   createSchoolEventSlotAction,
   deleteSchoolEventSlotAction,
+  duplicateSchoolEventAction,
   updateSchoolEventAction,
-  updateSchoolEventRegistrationStatusAction,
+  updateSchoolEventRegistrationGroupStatusAction,
 } from "../../../../lib/actions";
 import { hasAdminPermission } from "../../../../lib/admin-access";
 import { getAdminToken } from "../../../../lib/auth-cookies";
@@ -89,6 +90,14 @@ export default async function AdminEventDetailPage({
   }
   const event = eventResult.data;
   const registrations = registrationResult.ok ? registrationResult.data : [];
+  const registrationGroups = Array.from(
+    registrations.reduce((groups, registration) => {
+      const group = groups.get(registration.group_id) ?? [];
+      group.push(registration);
+      groups.set(registration.group_id, group);
+      return groups;
+    }, new Map<string, SchoolEventRegistrationOut[]>()),
+  );
   const locations = locationsResult.ok ? locationsResult.data : [];
   const ok = param(searchParams, "ok");
   const error = param(searchParams, "error") || (!registrationResult.ok ? registrationResult.message : "");
@@ -111,9 +120,16 @@ export default async function AdminEventDetailPage({
             <span className={styles.badge}>{event.registration_count} inscrit(s)</span>
           </div>
         </div>
-        {event.status === "PUBLISHED" ? (
-          <Link className="ghost" href={`/events/${event.slug}`} target="_blank">Voir côté client</Link>
-        ) : null}
+        <div className={styles.heroActions}>
+          <form action={duplicateSchoolEventAction}>
+            <input type="hidden" name="event_id" value={event.id} />
+            <input type="hidden" name="return_to" value="/admin/events" />
+            <button className="ghost" type="submit">Dupliquer</button>
+          </form>
+          {event.status === "PUBLISHED" ? (
+            <Link className="ghost" href={`/events/${event.slug}`} target="_blank">Voir côté client</Link>
+          ) : null}
+        </div>
       </section>
 
       {ok ? <p className="notice success">{ok}</p> : null}
@@ -299,41 +315,56 @@ export default async function AdminEventDetailPage({
       </section>
 
       <section className={styles.panel}>
-        <h2>Inscriptions</h2>
-        <p className="muted">{registrations.length} ligne(s), participants et invités compris.</p>
+        <div className={styles.sectionHeading}>
+          <div>
+            <h2>Inscriptions</h2>
+            <p className="muted">
+              {registrationGroups.length} réservation(s) · {registrations.length} participant(s), invités compris.
+            </p>
+          </div>
+          <Link className="ghost" href={`/admin/events/${event.id}/registrations/export`}>
+            Exporter en CSV
+          </Link>
+        </div>
         <div className={styles.registrationList}>
-          {registrations.map((registration) => (
-            <article className={styles.registration} key={registration.id}>
-              <div className={styles.registrationGrid}>
-                <div>
-                  <strong>{registration.participant_display_name}</strong>
-                  <p className="muted">{formatDate(registration.start_at_utc, registration.timezone)} · {registration.location_name ?? "Lieu à préciser"}</p>
-                  {registration.payment_reference ? (
-                    <small className="muted">
-                      Paiement {registration.payment_provider ?? "PSP"} · {registration.payment_reference}
-                    </small>
-                  ) : null}
+          {registrationGroups.map(([groupId, group]) => {
+            const registration = group[0];
+            const participantNames = group.map((item) => item.participant_display_name);
+            const totalPlaces = group.reduce((sum, item) => sum + item.party_size, 0);
+            const totalAmount = group.reduce((sum, item) => sum + Number(item.total_ttc_snapshot), 0);
+            return (
+              <article className={styles.registration} key={groupId}>
+                <div className={styles.registrationGrid}>
+                  <div>
+                    <strong>{participantNames.join(", ")}</strong>
+                    <p className="muted">{formatDate(registration.start_at_utc, registration.timezone)} · {registration.location_name ?? "Lieu à préciser"}</p>
+                    {registration.payment_reference ? (
+                      <small className="muted">
+                        Paiement {registration.payment_provider ?? "PSP"} · {registration.payment_reference} · {totalAmount.toFixed(2)} €
+                      </small>
+                    ) : null}
+                  </div>
+                  <span className={styles.badge}>{registrationLabel(registration.status)}</span>
+                  <span>{totalPlaces} place(s)</span>
+                  <form action={updateSchoolEventRegistrationGroupStatusAction} className={styles.actions}>
+                    <input type="hidden" name="event_id" value={event.id} />
+                    <input type="hidden" name="group_id" value={groupId} />
+                    <input type="hidden" name="return_to" value={returnTo} />
+                    <select name="status" defaultValue={registration.status}>
+                      <option value="PENDING_PAYMENT">Paiement requis</option>
+                      <option value="CONFIRMED">Confirmée</option>
+                      <option value="WAITLISTED">Liste d’attente</option>
+                      <option value="ATTENDED">Présent</option>
+                      <option value="NO_SHOW">Absent</option>
+                      <option value="CANCELLED">Annulée</option>
+                    </select>
+                    <button type="submit">Appliquer</button>
+                  </form>
                 </div>
-                <span className={styles.badge}>{registrationLabel(registration.status)}</span>
-                <span>{registration.party_size} place(s)</span>
-                <form action={updateSchoolEventRegistrationStatusAction} className={styles.actions}>
-                  <input type="hidden" name="event_id" value={event.id} />
-                  <input type="hidden" name="registration_id" value={registration.id} />
-                  <input type="hidden" name="return_to" value={returnTo} />
-                  <select name="status" defaultValue={registration.status}>
-                    <option value="PENDING_PAYMENT">Paiement requis</option>
-                    <option value="CONFIRMED">Confirmée</option>
-                    <option value="WAITLISTED">Liste d’attente</option>
-                    <option value="ATTENDED">Présent</option>
-                    <option value="NO_SHOW">Absent</option>
-                    <option value="CANCELLED">Annulée</option>
-                  </select>
-                  <button type="submit">Appliquer</button>
-                </form>
-              </div>
-            </article>
-          ))}
-          {registrations.length === 0 ? <div className={styles.empty}>Aucune inscription pour le moment.</div> : null}
+              </article>
+            );
+          })}
+          {registrationGroups.length === 0 ? <div className={styles.empty}>Aucune inscription pour le moment.</div> : null}
         </div>
       </section>
     </main>

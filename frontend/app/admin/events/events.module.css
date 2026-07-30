@@ -19,6 +19,19 @@
   gap: 1rem;
 }
 
+.heroActions,
+.sectionHeading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem;
+}
+
+.heroActions form {
+  margin: 0;
+}
+
 .hero h1,
 .panel h2,
 .panel h3 {
@@ -199,6 +212,20 @@
 @media (max-width: 800px) {
   .hero {
     display: grid;
+  }
+
+  .heroActions,
+  .sectionHeading {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .heroActions > *,
+  .sectionHeading > a {
+    width: 100%;
+    box-sizing: border-box;
+    justify-content: center;
+    text-align: center;
   }
 
   .metrics,
