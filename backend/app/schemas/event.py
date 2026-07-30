@@ -168,6 +168,9 @@ class SchoolEventRegistrationOut(BaseModel):
     unit_price_ttc_snapshot: Decimal
     total_ttc_snapshot: Decimal
     currency_snapshot: str
+    payment_provider: str | None
+    payment_reference: str | None
+    payment_hold_expires_at: datetime | None
     booked_at: datetime
     cancelled_at: datetime | None
     checked_in_at: datetime | None

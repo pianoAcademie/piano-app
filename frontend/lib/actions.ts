@@ -16883,11 +16883,38 @@ export async function registerSchoolEventAction(formData: FormData): Promise<voi
   }
   revalidatePath("/events");
   revalidatePath(`/events/${slug}`);
+  if (result.data.checkout_url) {
+    redirect(result.data.checkout_url);
+  }
   const language = String(formData.get("ui_language") ?? "fr").trim().toLowerCase();
   const message = result.data.status === "WAITLISTED"
     ? language === "en" ? "Registration added to the waiting list" : "Inscription ajoutée à la liste d’attente"
     : language === "en" ? "Registration confirmed" : "Inscription confirmée";
   redirect(appendQueryMessage(returnTo, "ok", message));
+}
+
+export async function startSchoolEventPaymentAction(formData: FormData): Promise<void> {
+  const token = currentPortalToken();
+  const groupId = String(formData.get("group_id") ?? "").trim();
+  const slug = String(formData.get("event_slug") ?? "").trim();
+  const returnTo = safeEventReturnPath(formData, slug ? `/events/${slug}` : "/events");
+  if (!token) {
+    setPortalReturnTo(returnTo);
+    redirect(`/login?return_to=${encodeURIComponent(returnTo)}`);
+  }
+  if (!groupId) {
+    redirect(appendQueryMessage(returnTo, "error", "Paiement d’inscription introuvable"));
+  }
+  const result = await backendRequest<SchoolEventRegistrationCreateOut>(
+    `/api/v1/clients/me/event-registrations/${encodeURIComponent(groupId)}/checkout`,
+    { method: "POST" },
+    token,
+  );
+  if (!result.ok || !result.data.checkout_url) {
+    redirect(appendQueryMessage(returnTo, "error", result.ok ? "Lien de paiement indisponible" : result.message));
+  }
+  revalidatePath("/events");
+  redirect(result.data.checkout_url);
 }
 
 export async function cancelSchoolEventRegistrationAction(formData: FormData): Promise<void> {

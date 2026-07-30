@@ -254,6 +254,7 @@ class SchoolEventRegistration(Base):
     currency_snapshot: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'EUR'"))
     payment_provider: Mapped[str | None] = mapped_column(String(30), nullable=True)
     payment_reference: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    payment_checkout_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     payment_hold_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     booked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

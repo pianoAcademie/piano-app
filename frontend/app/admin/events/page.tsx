@@ -186,6 +186,7 @@ export default async function AdminEventsPage({ searchParams = {} }: { searchPar
             <select name="payment_mode" defaultValue="FREE">
               <option value="FREE">Gratuit</option>
               <option value="ON_SITE">Paiement sur place</option>
+              <option value="ONLINE">Paiement en ligne</option>
             </select>
           </label>
           <label className={styles.field}>

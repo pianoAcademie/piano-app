@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { headers } from "next/headers";
 
-import { cancelSchoolEventRegistrationAction } from "../../lib/actions";
+import {
+  cancelSchoolEventRegistrationAction,
+  startSchoolEventPaymentAction,
+} from "../../lib/actions";
 import { getPortalToken } from "../../lib/auth-cookies";
 import { backendRequest } from "../../lib/backend";
 import type {
@@ -29,6 +32,7 @@ function eventDate(event: SchoolEventOut, language: Language): string {
 }
 
 function registrationStatus(value: string, language: Language): string {
+  if (value === "PENDING_PAYMENT") return language === "en" ? "Payment required" : "Paiement requis";
   if (value === "WAITLISTED") return language === "en" ? "Waiting list" : "Liste d’attente";
   if (value === "CONFIRMED") return language === "en" ? "Confirmed" : "Confirmée";
   if (value === "ATTENDED") return language === "en" ? "Attendance recorded" : "Participation enregistrée";
@@ -69,7 +73,14 @@ export default async function EventsPage({ searchParams = {} }: { searchParams?:
   const categories = Array.from(new Set(events.map((event) => event.category))).sort();
   const visibleEvents = category ? events.filter((event) => event.category === category) : events;
   const activeRegistrations = registrations.filter((registration) =>
-    ["CONFIRMED", "WAITLISTED", "ATTENDED", "NO_SHOW"].includes(registration.status),
+    ["CONFIRMED", "WAITLISTED", "ATTENDED", "NO_SHOW"].includes(registration.status)
+    || (
+      registration.status === "PENDING_PAYMENT"
+      && (
+        !registration.payment_hold_expires_at
+        || new Date(registration.payment_hold_expires_at).getTime() > Date.now()
+      )
+    ),
   );
   const groupedRegistrations = Array.from(
     activeRegistrations.reduce((groups, registration) => {
@@ -131,14 +142,24 @@ export default async function EventsPage({ searchParams = {} }: { searchParams?:
                     <span className={`${styles.badge} ${first.status === "WAITLISTED" ? styles.waitlist : ""}`}>
                       {registrationStatus(first.status, language)}
                     </span>
-                    {["CONFIRMED", "WAITLISTED"].includes(first.status) ? (
-                      <form action={cancelSchoolEventRegistrationAction}>
-                        <input type="hidden" name="group_id" value={groupId} />
-                        <input type="hidden" name="return_to" value={withLanguage("/events")} />
-                        <input type="hidden" name="ui_language" value={language} />
-                        <button className="ghost" type="submit">{text("Annuler", "Cancel")}</button>
-                      </form>
-                    ) : null}
+                    <div className={styles.bookingActions}>
+                      {first.status === "PENDING_PAYMENT" ? (
+                        <form action={startSchoolEventPaymentAction}>
+                          <input type="hidden" name="group_id" value={groupId} />
+                          <input type="hidden" name="event_slug" value={first.event_slug} />
+                          <input type="hidden" name="return_to" value={withLanguage("/events")} />
+                          <button className="primary" type="submit">{text("Payer", "Pay now")}</button>
+                        </form>
+                      ) : null}
+                      {["PENDING_PAYMENT", "CONFIRMED", "WAITLISTED"].includes(first.status) ? (
+                        <form action={cancelSchoolEventRegistrationAction}>
+                          <input type="hidden" name="group_id" value={groupId} />
+                          <input type="hidden" name="return_to" value={withLanguage("/events")} />
+                          <input type="hidden" name="ui_language" value={language} />
+                          <button className="ghost" type="submit">{text("Annuler", "Cancel")}</button>
+                        </form>
+                      ) : null}
+                    </div>
                   </article>
                 );
               })}

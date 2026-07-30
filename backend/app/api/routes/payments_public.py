@@ -25,6 +25,7 @@ from app.api.routes.admin_clients import (
     start_admin_client_range_invoice_public_card_payment,
     start_admin_client_range_invoice_public_payment,
 )
+from app.api.routes.events import reconcile_event_payment_by_provider_reference
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind, SubscriptionStatus
 from app.models.subscription_engine import SubscriptionBillingCycle
 from app.models.user import User
@@ -159,6 +160,14 @@ async def payment_webhook(
             provider = detect_provider_from_reference(payment_reference) or resolve_provider(db)
             lookup = lookup_payment(db, provider=provider, payment_reference=payment_reference)
             preloaded_lookup = lookup
+            event_group_id = _metadata_uuid(lookup.metadata, "event_registration_group_id")
+            if event_group_id is not None:
+                return reconcile_event_payment_by_provider_reference(
+                    db,
+                    group_id=event_group_id,
+                    payment_reference=lookup.provider_reference or payment_reference,
+                    preloaded_lookup=lookup,
+                )
             invoice_client_id = _metadata_uuid(lookup.metadata, "client_id")
             invoice_note_id = _metadata_uuid(lookup.metadata, "note_id")
             if invoice_client_id is not None and invoice_note_id is not None:

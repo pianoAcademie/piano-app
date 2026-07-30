@@ -2692,6 +2692,9 @@ export type SchoolEventRegistrationOut = {
   unit_price_ttc_snapshot: string;
   total_ttc_snapshot: string;
   currency_snapshot: string;
+  payment_provider: string | null;
+  payment_reference: string | null;
+  payment_hold_expires_at: string | null;
   booked_at: string;
   cancelled_at: string | null;
   checked_in_at: string | null;

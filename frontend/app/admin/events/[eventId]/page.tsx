@@ -203,9 +203,10 @@ export default async function AdminEventDetailPage({
           </label>
           <label className={styles.field}>
             <span>Paiement</span>
-            <select name="payment_mode" defaultValue={event.payment_mode === "ONLINE" ? "ON_SITE" : event.payment_mode}>
+            <select name="payment_mode" defaultValue={event.payment_mode}>
               <option value="FREE">Gratuit</option>
               <option value="ON_SITE">Paiement sur place</option>
+              <option value="ONLINE">Paiement en ligne</option>
             </select>
           </label>
           <label className={styles.field}>
@@ -307,6 +308,11 @@ export default async function AdminEventDetailPage({
                 <div>
                   <strong>{registration.participant_display_name}</strong>
                   <p className="muted">{formatDate(registration.start_at_utc, registration.timezone)} · {registration.location_name ?? "Lieu à préciser"}</p>
+                  {registration.payment_reference ? (
+                    <small className="muted">
+                      Paiement {registration.payment_provider ?? "PSP"} · {registration.payment_reference}
+                    </small>
+                  ) : null}
                 </div>
                 <span className={styles.badge}>{registrationLabel(registration.status)}</span>
                 <span>{registration.party_size} place(s)</span>
@@ -315,6 +321,7 @@ export default async function AdminEventDetailPage({
                   <input type="hidden" name="registration_id" value={registration.id} />
                   <input type="hidden" name="return_to" value={returnTo} />
                   <select name="status" defaultValue={registration.status}>
+                    <option value="PENDING_PAYMENT">Paiement requis</option>
                     <option value="CONFIRMED">Confirmée</option>
                     <option value="WAITLISTED">Liste d’attente</option>
                     <option value="ATTENDED">Présent</option>

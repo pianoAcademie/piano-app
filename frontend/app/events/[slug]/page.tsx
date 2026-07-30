@@ -2,7 +2,10 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 
-import { registerSchoolEventAction } from "../../../lib/actions";
+import {
+  registerSchoolEventAction,
+  startSchoolEventPaymentAction,
+} from "../../../lib/actions";
 import { getPortalToken } from "../../../lib/auth-cookies";
 import { backendRequest } from "../../../lib/backend";
 import type {
@@ -79,12 +82,51 @@ export default async function EventDetailPage({
     : [];
   const existingSlotIds = new Set(
     registrations
-      .filter((registration) => registration.event_id === event.id && ["CONFIRMED", "WAITLISTED"].includes(registration.status))
+      .filter((registration) =>
+        registration.event_id === event.id
+        && (
+          ["CONFIRMED", "WAITLISTED"].includes(registration.status)
+          || (
+            registration.status === "PENDING_PAYMENT"
+            && (
+              !registration.payment_hold_expires_at
+              || new Date(registration.payment_hold_expires_at).getTime() > Date.now()
+            )
+          )
+        )
+      )
       .map((registration) => registration.slot_id),
   );
+  const pendingBySlot = new Map(
+    registrations
+      .filter((registration) =>
+        registration.event_id === event.id
+        && registration.status === "PENDING_PAYMENT"
+        && (
+          !registration.payment_hold_expires_at
+          || new Date(registration.payment_hold_expires_at).getTime() > Date.now()
+        )
+      )
+      .map((registration) => [registration.slot_id, registration]),
+  );
   const slots = event.slots.filter((slot) => slot.status === "SCHEDULED" && new Date(slot.start_at_utc).getTime() > Date.now());
-  const ok = param(searchParams, "ok");
-  const error = param(searchParams, "error");
+  const paymentReturn = param(searchParams, "payment_return");
+  const ok = param(searchParams, "ok") || (
+    paymentReturn === "success"
+      ? text(
+          "Paiement reçu. Votre confirmation apparaîtra dès sa validation.",
+          "Payment received. Your confirmation will appear as soon as it is validated.",
+        )
+      : ""
+  );
+  const error = param(searchParams, "error") || (
+    paymentReturn === "cancel"
+      ? text(
+          "Paiement interrompu. Votre place reste réservée temporairement et vous pouvez réessayer.",
+          "Payment interrupted. Your place remains temporarily reserved and you can try again.",
+        )
+      : ""
+  );
 
   return (
     <main className={styles.page}>
@@ -128,6 +170,7 @@ export default async function EventDetailPage({
             {slots.map((slot) => {
               const isFull = slot.seats_remaining <= 0;
               const alreadyRegistered = existingSlotIds.has(slot.id);
+              const hasPendingPayment = pendingBySlot.has(slot.id);
               return (
                 <article className={styles.slot} key={slot.id}>
                   <div className={styles.slotHeader}>
@@ -136,18 +179,35 @@ export default async function EventDetailPage({
                       {slot.label ? <p>{formatDate(slot.start_at_utc, slot.timezone, language)}</p> : null}
                       <p className="muted">{slot.location?.name ?? event.location?.name ?? text("Lieu communiqué prochainement", "Location to be confirmed")}</p>
                     </div>
-                    <span className={`${styles.badge} ${isFull ? styles.waitlist : ""}`}>
-                      {isFull
+                    <span className={`${styles.badge} ${isFull && !hasPendingPayment ? styles.waitlist : ""}`}>
+                      {hasPendingPayment
+                        ? text("Place réservée", "Place reserved")
+                        : isFull
                         ? event.waitlist_enabled ? text("Liste d’attente ouverte", "Waiting list open") : text("Complet", "Full")
                         : `${slot.seats_remaining} ${text("place(s)", "place(s)")}`}
                     </span>
                   </div>
 
                   {alreadyRegistered ? (
-                    <p className="notice success">{text(
-                      "Votre famille possède déjà une inscription sur ce créneau.",
-                      "Your family already has a registration for this time.",
-                    )}</p>
+                    hasPendingPayment ? (
+                      <div className={styles.pendingPayment}>
+                        <p className="notice">{text(
+                          "Votre place est réservée temporairement. Finalisez le paiement pour confirmer l’inscription.",
+                          "Your place is temporarily reserved. Complete payment to confirm the registration.",
+                        )}</p>
+                        <form action={startSchoolEventPaymentAction}>
+                          <input type="hidden" name="group_id" value={pendingBySlot.get(slot.id)?.group_id} />
+                          <input type="hidden" name="event_slug" value={event.slug} />
+                          <input type="hidden" name="return_to" value={withLanguage(`/events/${event.slug}`)} />
+                          <button className="primary" type="submit">{text("Finaliser le paiement", "Complete payment")}</button>
+                        </form>
+                      </div>
+                    ) : (
+                      <p className="notice success">{text(
+                        "Votre famille possède déjà une inscription sur ce créneau.",
+                        "Your family already has a registration for this time.",
+                      )}</p>
+                    )
                   ) : token && family ? (
                     <form action={registerSchoolEventAction} className={styles.registerForm}>
                       <input type="hidden" name="event_slug" value={event.slug} />
@@ -196,6 +256,8 @@ export default async function EventDetailPage({
                           ? text("Rejoindre la liste d’attente", "Join the waiting list")
                           : event.payment_mode === "ON_SITE" && Number(event.price_ttc) > 0
                             ? text("Réserver — paiement sur place", "Book — pay on site")
+                            : event.payment_mode === "ONLINE" && Number(event.price_ttc) > 0
+                              ? text("Réserver et payer en ligne", "Book and pay online")
                             : text("Confirmer l’inscription", "Confirm registration")}
                       </button>
                     </form>
