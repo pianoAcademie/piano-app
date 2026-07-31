@@ -21,6 +21,7 @@ from app.schemas.jobs import (
     SubscriptionRetryJobResponse,
 )
 from app.services.auto_invoice_billing import run_auto_invoice_billing_job
+from app.services.event_reminders import run_school_event_reminders_job
 from app.services.invoice_reminders import run_invoice_due_reminder_job
 from app.services.jobs.application.notification_jobs import (
     run_delivery_feedback_job,
@@ -50,12 +51,13 @@ def send_reminders(
     now = datetime.now(timezone.utc)
     generation = run_reminder_generation_job(db, now=now, limit=limit)
     dispatch = run_scheduled_notification_dispatch_job(db, now=now, limit=limit)
+    event_reminders = run_school_event_reminders_job(db, now=now, limit=limit)
     db.commit()
     return ReminderJobResponse(
         created=generation.sent,
-        sent=dispatch.sent,
-        skipped=generation.skipped + dispatch.skipped,
-        failed=generation.failed + dispatch.failed,
+        sent=dispatch.sent + event_reminders.sent,
+        skipped=generation.skipped + dispatch.skipped + event_reminders.skipped,
+        failed=generation.failed + dispatch.failed + event_reminders.failed,
     )
 
 

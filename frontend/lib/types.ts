@@ -2662,6 +2662,8 @@ export type SchoolEventOut = {
   collect_photo_consent: boolean;
   confirmation_message_fr: string | null;
   confirmation_message_en: string | null;
+  reminder_hours_before_start: number;
+  reminder_sent_count: number;
   slots: SchoolEventSlotOut[];
   registration_count: number;
   waitlist_count: number;

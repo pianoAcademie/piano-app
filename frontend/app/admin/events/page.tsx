@@ -118,6 +118,9 @@ export default async function AdminEventsPage({ searchParams = {} }: { searchPar
               <span className={styles.badge}>{event.slots.length} créneau(x)</span>
               <span className={styles.badge}>{event.registration_count} inscrit(s)</span>
               {event.waitlist_count ? <span className={styles.badge}>{event.waitlist_count} en attente</span> : null}
+              {event.reminder_sent_count ? (
+                <span className={styles.badge}>{event.reminder_sent_count} rappel(s) envoyé(s)</span>
+              ) : null}
             </div>
             <p><strong>Prochain :</strong> {nextSlot(event)}</p>
           </Link>

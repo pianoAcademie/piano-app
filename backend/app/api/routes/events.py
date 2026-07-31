@@ -30,6 +30,7 @@ from app.models.event import (
     SchoolEventStatus,
 )
 from app.models.family import ClientFamilyLink
+from app.models.ops import CommunicationDeliveryStatus, CommunicationLog
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.event import (
     SchoolEventCreateRequest,
@@ -45,6 +46,7 @@ from app.schemas.event import (
 )
 from app.services.client_email import deliverable_client_email
 from app.services.email_delivery import send_email
+from app.services.event_reminders import school_event_reminder_hours
 from app.services.messaging_templates import resolve_frontend_base_url
 from app.services.payment_checkout import (
     CheckoutCreateRequest,
@@ -186,6 +188,33 @@ def _serialize_events(db: Session, events: list[SchoolEvent]) -> list[SchoolEven
     for slot in slots:
         slots_by_event[slot.event_id].append(slot)
     booked_by_slot, waitlisted_by_slot = _registration_counts(db, [slot.id for slot in slots])
+    reminder_groups_by_event: dict[UUID, set[str]] = defaultdict(set)
+    if event_ids:
+        reminder_sources = db.scalars(
+            select(CommunicationLog.source).where(
+                or_(
+                    *[
+                        CommunicationLog.source.like(f"SCHOOL_EVENT_REMINDER:{event_id}:%")
+                        for event_id in event_ids
+                    ]
+                ),
+                CommunicationLog.delivery_status.in_(
+                    [CommunicationDeliveryStatus.SENT, CommunicationDeliveryStatus.DELIVERED]
+                ),
+            )
+        ).all()
+        event_ids_set = set(event_ids)
+        for source in reminder_sources:
+            parts = source.split(":")
+            if len(parts) < 4:
+                continue
+            try:
+                source_event_id = UUID(parts[1])
+            except ValueError:
+                continue
+            if source_event_id in event_ids_set:
+                reminder_groups_by_event[source_event_id].add(parts[2])
+    reminder_hours = school_event_reminder_hours(db)
     payload: list[SchoolEventOut] = []
     for event in events:
         event_slots: list[SchoolEventSlotOut] = []
@@ -233,6 +262,8 @@ def _serialize_events(db: Session, events: list[SchoolEvent]) -> list[SchoolEven
                 collect_photo_consent=bool(event.collect_photo_consent),
                 confirmation_message_fr=event.confirmation_message_fr,
                 confirmation_message_en=event.confirmation_message_en,
+                reminder_hours_before_start=reminder_hours,
+                reminder_sent_count=len(reminder_groups_by_event.get(event.id, set())),
                 slots=event_slots,
                 registration_count=sum(slot.booked_count for slot in event_slots),
                 waitlist_count=sum(slot.waitlist_count for slot in event_slots),

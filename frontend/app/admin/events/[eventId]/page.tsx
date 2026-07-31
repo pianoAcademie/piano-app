@@ -118,6 +118,12 @@ export default async function AdminEventDetailPage({
               {event.status}
             </span>
             <span className={styles.badge}>{event.registration_count} inscrit(s)</span>
+            <span className={styles.badge}>
+              Rappel automatique {event.reminder_hours_before_start} h avant
+            </span>
+            {event.reminder_sent_count ? (
+              <span className={styles.badge}>{event.reminder_sent_count} envoyé(s)</span>
+            ) : null}
           </div>
         </div>
         <div className={styles.heroActions}>

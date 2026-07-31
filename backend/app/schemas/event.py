@@ -130,6 +130,8 @@ class SchoolEventOut(BaseModel):
     collect_photo_consent: bool
     confirmation_message_fr: str | None
     confirmation_message_en: str | None
+    reminder_hours_before_start: int
+    reminder_sent_count: int
     slots: list[SchoolEventSlotOut]
     registration_count: int
     waitlist_count: int
