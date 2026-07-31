@@ -44,7 +44,6 @@ from app.models.client_record import ClientAutoInvoiceRule, ClientInvoiceLine, C
 from app.models.family import ClientFamilyLink
 from app.models.ops import AppSetting, CommunicationSenderCategory, LegalEntity
 from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, SubscriptionStatus
-from app.models.pricing import VatRule
 from app.models.product_catalog import CatalogKit, CatalogProduct, ProductCategory
 from app.models.quote import (
     PaymentPlan,
@@ -141,6 +140,7 @@ from app.schemas.quote import (
 from app.services.email_delivery import email_delivery_disabled_reason, send_email
 from app.services.invoice_documents import normalize_billing_entity
 from app.services.messaging_templates import resolve_frontend_base_url
+from app.services.pricing import resolve_vat_rate
 from app.services.notifications.application.orchestrator import enqueue_notifications, schedule_booking_created_notifications
 from app.services.notifications.application.recipients import resolve_admin_booking_notification_recipients
 from app.services.client_status import (
@@ -4076,7 +4076,7 @@ def _country_vat_rate_for_quote(
     lines: list[QuoteLineIn],
     on_date: date,
 ) -> Decimal | None:
-    """Return a country-specific VAT rate without silently falling back to France."""
+    """Resolve VAT for a foreign recipient using the shared place-of-supply rules."""
     normalized_country = str(country or "").strip().upper()
     if not normalized_country or normalized_country == "FR":
         return None
@@ -4088,19 +4088,14 @@ def _country_vat_rate_for_quote(
         if activity is not None and str(activity.service_code or "").strip():
             service_code = str(activity.service_code).strip().upper()
 
-    rule = db.scalars(
-        select(VatRule)
-        .where(
-            VatRule.country_code == normalized_country,
-            VatRule.service_code == service_code,
-            VatRule.valid_from <= on_date,
-            (VatRule.valid_to.is_(None) | (VatRule.valid_to >= on_date)),
+    return _q3(
+        resolve_vat_rate(
+            db,
+            country=normalized_country,
+            service_code=service_code,
+            on_date=on_date,
         )
-        .order_by(VatRule.valid_from.desc())
-    ).first()
-    if rule is None:
-        return None
-    return _q3(Decimal(rule.vat_rate))
+    )
 
 
 def _freeze_quote_document_snapshot(

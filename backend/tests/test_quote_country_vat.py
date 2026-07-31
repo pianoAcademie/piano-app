@@ -22,10 +22,14 @@ class QuoteCountryVatTests(unittest.TestCase):
 
         self.assertEqual(_quote_recipient_country(client=None, prospect=prospect), "SA")
 
-    def test_country_rate_uses_activity_service_code(self) -> None:
+    def test_country_rate_uses_french_fallback_for_live_service(self) -> None:
         db = MagicMock()
         db.scalar.return_value = SimpleNamespace(service_code="PIANO_CLASS")
-        db.scalars.return_value.first.return_value = SimpleNamespace(vat_rate=Decimal("15.00"))
+        exact_result = MagicMock()
+        exact_result.first.return_value = None
+        french_result = MagicMock()
+        french_result.first.return_value = SimpleNamespace(vat_rate=Decimal("20.00"))
+        db.scalars.side_effect = [exact_result, french_result]
         line = QuoteLineIn(
             line_category="service",
             activity_id=uuid4(),
@@ -40,7 +44,7 @@ class QuoteCountryVatTests(unittest.TestCase):
             on_date=date(2026, 7, 31),
         )
 
-        self.assertEqual(rate, Decimal("15.000"))
+        self.assertEqual(rate, Decimal("20.000"))
 
     def test_country_rate_does_not_override_french_quotes(self) -> None:
         db = MagicMock()
