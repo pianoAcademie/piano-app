@@ -112,6 +112,7 @@ const PLANNING_TIMEZONES: Array<{ value: string; labelKey: string }> = [
   { value: "Europe/Madrid", labelKey: "admin.planning.timezone.europe_madrid" },
   { value: "America/New_York", labelKey: "admin.planning.timezone.america_new_york" },
   { value: "America/Los_Angeles", labelKey: "admin.planning.timezone.america_los_angeles" },
+  { value: "Asia/Riyadh", labelKey: "admin.planning.timezone.asia_riyadh" },
 ];
 
 const SESSION_AUDIENCE_SCOPE_LABELS: Record<SessionAudienceScope, string> = {

@@ -5,11 +5,13 @@ export default function QuoteWorkspaceHeader({
   subtitle,
   backLink,
   statuses,
+  notice,
 }: {
   title: string;
   subtitle: string;
   backLink: React.ReactNode;
   statuses: Array<{ label: string; value: string; className?: string }>;
+  notice?: React.ReactNode;
 }): JSX.Element {
   return (
     <section className="card quote-workspace-header-card">
@@ -27,6 +29,7 @@ export default function QuoteWorkspaceHeader({
           </span>
         ))}
       </div>
+      {notice}
     </section>
   );
 }

@@ -12564,6 +12564,46 @@ export async function updateQuoteSettingsAction(formData: FormData): Promise<voi
   redirect(withUiMessageCode(successReturnTo, "ok", "quote_settings_updated", { lang: language }));
 }
 
+export async function updateQuoteAdminHoldNoteAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? "/admin/quotes"));
+  const successReturnTo = withUiLanguage(returnTo, language);
+  if (!quoteId) {
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_not_found", { lang: language }));
+  }
+
+  const resolveNote = String(formData.get("intent") ?? "").trim().toLowerCase() === "resolve";
+  const note = resolveNote
+    ? null
+    : String(formData.get("admin_hold_note") ?? "").trim().slice(0, 4000) || null;
+  const result = await backendRequest<{ quote: { id: string } }>(
+    `/api/v1/quotes/${encodeURIComponent(quoteId)}/admin-hold-note`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ admin_hold_note: note }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(successReturnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/quotes");
+  revalidatePath(`/admin/quotes/${quoteId}`);
+  redirect(withUiMessageCode(
+    successReturnTo,
+    "ok",
+    resolveNote ? "quote_admin_hold_note_resolved" : "quote_admin_hold_note_updated",
+    { lang: language },
+  ));
+}
+
 export async function updateQuoteLinesAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

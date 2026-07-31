@@ -14,6 +14,7 @@ export const COUNTRY_OPTIONS: Option<string>[] = [
   { value: "US", label: "Etats-Unis" },
   { value: "CA", label: "Canada" },
   { value: "DE", label: "Allemagne" },
+  { value: "SA", label: "Arabie saoudite" },
 ];
 
 export const TIMEZONE_OPTIONS: Option<string>[] = [
@@ -24,6 +25,7 @@ export const TIMEZONE_OPTIONS: Option<string>[] = [
   { value: "Europe/Madrid", label: "Espagne (Europe/Madrid)" },
   { value: "America/New_York", label: "Etats-Unis Est (America/New_York)" },
   { value: "America/Los_Angeles", label: "Etats-Unis Ouest (America/Los_Angeles)" },
+  { value: "Asia/Riyadh", label: "Arabie saoudite (Asia/Riyadh)" },
 ];
 
 export const CURRENCY_OPTIONS: Option<string>[] = [

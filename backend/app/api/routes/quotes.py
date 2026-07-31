@@ -44,6 +44,7 @@ from app.models.client_record import ClientAutoInvoiceRule, ClientInvoiceLine, C
 from app.models.family import ClientFamilyLink
 from app.models.ops import AppSetting, CommunicationSenderCategory, LegalEntity
 from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, SubscriptionStatus
+from app.models.pricing import VatRule
 from app.models.product_catalog import CatalogKit, CatalogProduct, ProductCategory
 from app.models.quote import (
     PaymentPlan,
@@ -85,6 +86,7 @@ from app.schemas.quote import (
     ProspectOut,
     ProspectUpdateRequest,
     QuoteCalendarPreviewRequest,
+    QuoteAdminHoldNoteRequest,
     QuoteChangeRequestIn,
     QuoteCancelRequest,
     QuoteCreateRequest,
@@ -191,6 +193,7 @@ QUOTE_FINANCIAL_ADJUSTMENT_NONE = "none"
 QUOTE_FINANCIAL_ADJUSTMENT_CREDIT = "credit"
 QUOTE_FINANCIAL_ADJUSTMENT_DEBT = "debt"
 QUOTE_PRE_REGISTRATION_DEPOSIT_META_KEY = "pre_registration_deposit"
+QUOTE_ADMIN_HOLD_NOTE_META_KEY = "admin_hold_note"
 QUOTE_PRE_REGISTRATION_DEPOSIT_DEFAULT_AMOUNT = Decimal("200.00")
 QUOTE_PUBLIC_RESPONSE_PREVIOUS_STATUS_META_KEY = "public_response_previous_status"
 QUOTE_PUBLIC_RESPONSE_LAST_ACTION_META_KEY = "public_response_last_action"
@@ -240,6 +243,30 @@ def _normalize_quote_meta(value: object | None) -> dict[str, object]:
     if not isinstance(value, dict):
         return {}
     return dict(value)
+
+
+def _quote_admin_hold_note(meta: object | None) -> str | None:
+    source = meta if isinstance(meta, dict) else {}
+    note = str(source.get(QUOTE_ADMIN_HOLD_NOTE_META_KEY) or "").strip()
+    return note[:4000] or None
+
+
+def _set_quote_admin_hold_note(quote: Quote, value: object | None) -> bool:
+    previous = _quote_admin_hold_note(quote.meta)
+    next_note = str(value or "").strip()[:4000] or None
+    next_meta = _normalize_quote_meta(quote.meta)
+    if next_note:
+        next_meta[QUOTE_ADMIN_HOLD_NOTE_META_KEY] = next_note
+    else:
+        next_meta.pop(QUOTE_ADMIN_HOLD_NOTE_META_KEY, None)
+    quote.meta = next_meta
+    return previous != next_note
+
+
+def _quote_meta_without_admin_hold_note(meta: object | None) -> dict[str, object]:
+    next_meta = _normalize_quote_meta(meta)
+    next_meta.pop(QUOTE_ADMIN_HOLD_NOTE_META_KEY, None)
+    return next_meta
 
 
 def _normalize_quote_adjustment(meta: dict[str, object] | None) -> dict[str, object]:
@@ -1902,8 +1929,9 @@ def _quote_out(
     *,
     calendar_snapshot: dict[str, object] | None = None,
     timezone_name: str | None = None,
+    public_safe: bool = False,
 ) -> QuoteOut:
-    meta = row.meta or {}
+    meta = _quote_meta_without_admin_hold_note(row.meta) if public_safe else (row.meta or {})
     fallback_language = str(meta.get("language") or "").strip().lower() or None
     fallback_vat = _extract_vat_rate(meta)
     frontend_base = resolve_frontend_base_url().rstrip("/")
@@ -1953,6 +1981,7 @@ def _quote_out(
         cgv_snapshot=row.cgv_snapshot or {},
         price_snapshot=row.price_snapshot or {},
         meta=meta,
+        admin_hold_note=None if public_safe else _quote_admin_hold_note(meta),
         document_status=row.document_status,
         document_snapshot_id=row.document_snapshot_id,
         document_hash=row.document_hash,
@@ -3615,7 +3644,7 @@ def _resolve_public_selected_solfege_slot(
 
 def _quote_public_out(db: Session, quote: Quote, lines: list[QuoteLine], payment_schedule: list[dict[str, object]]) -> QuotePublicOut:
     return QuotePublicOut(
-        quote=_quote_out(quote, timezone_name=_quote_display_timezone(db, quote)),
+        quote=_quote_out(quote, timezone_name=_quote_display_timezone(db, quote), public_safe=True),
         lines=[_line_out(row) for row in lines],
         payment_schedule=payment_schedule,
         solfege_selection=_public_quote_solfege_selection(db, quote),
@@ -4009,6 +4038,69 @@ def _extract_vat_rate(meta: dict[str, object] | None) -> Decimal | None:
     if value < Decimal("0") or value > Decimal("100"):
         return None
     return value.quantize(Decimal("0.01"))
+
+
+def _quote_recipient_country(*, client: User | None, prospect: Prospect | None) -> str:
+    if client is not None:
+        country = str(client.residence_country or client.address_country or "FR").strip().upper()
+        return country if len(country) == 2 and country.isalpha() else "FR"
+
+    meta = _json_object(prospect.meta if prospect is not None else {})
+    for key in (
+        "residence_country",
+        "residence_country_code",
+        "address_country",
+        "address_country_code",
+        "parent_country_code",
+        "parent_country",
+        "adult_country_code",
+        "adult_country",
+        "country_code",
+        "country",
+    ):
+        raw = str(meta.get(key) or "").strip()
+        if not raw:
+            continue
+        country = raw.upper()
+        if len(country) == 2 and country.isalpha():
+            return country
+        if raw.casefold() in {"arabie saoudite", "saudi arabia", "saudi arabia (ksa)"}:
+            return "SA"
+    return "FR"
+
+
+def _country_vat_rate_for_quote(
+    db: Session,
+    *,
+    country: str,
+    lines: list[QuoteLineIn],
+    on_date: date,
+) -> Decimal | None:
+    """Return a country-specific VAT rate without silently falling back to France."""
+    normalized_country = str(country or "").strip().upper()
+    if not normalized_country or normalized_country == "FR":
+        return None
+
+    service_code = "COURSE_PACKAGE"
+    activity_id = next((line.activity_id for line in lines if line.activity_id is not None), None)
+    if activity_id is not None:
+        activity = db.scalar(select(CourseType).where(CourseType.id == activity_id))
+        if activity is not None and str(activity.service_code or "").strip():
+            service_code = str(activity.service_code).strip().upper()
+
+    rule = db.scalars(
+        select(VatRule)
+        .where(
+            VatRule.country_code == normalized_country,
+            VatRule.service_code == service_code,
+            VatRule.valid_from <= on_date,
+            (VatRule.valid_to.is_(None) | (VatRule.valid_to >= on_date)),
+        )
+        .order_by(VatRule.valid_from.desc())
+    ).first()
+    if rule is None:
+        return None
+    return _q3(Decimal(rule.vat_rate))
 
 
 def _freeze_quote_document_snapshot(
@@ -5638,8 +5730,20 @@ def create_quote_from_payload(
     quote_meta = _normalize_quote_meta(payload.meta)
     if payload.language is not None and payload.language.strip():
         quote_meta["language"] = payload.language.strip().lower()
-    if payload.vat_rate is not None:
-        quote_meta["tva_rate"] = str(payload.vat_rate)
+    recipient_country = _quote_recipient_country(client=client, prospect=prospect)
+    effective_vat_rate = payload.vat_rate
+    if effective_vat_rate is None:
+        effective_vat_rate = _country_vat_rate_for_quote(
+            db,
+            country=recipient_country,
+            lines=payload.lines,
+            on_date=payload.quote_date or now.date(),
+        )
+        if effective_vat_rate is not None:
+            quote_meta["vat_country_code"] = recipient_country
+            quote_meta["vat_rate_source"] = "recipient_country"
+    if effective_vat_rate is not None:
+        quote_meta["tva_rate"] = str(effective_vat_rate)
     resolved_language = (
         payload.language.strip().lower()
         if payload.language is not None and payload.language.strip()
@@ -5718,7 +5822,7 @@ def create_quote_from_payload(
         expires_at=None,
         school_year_label=effective_school_year_label,
         language=resolved_language or None,
-        vat_rate=payload.vat_rate if payload.vat_rate is not None else _extract_vat_rate(quote_meta),
+        vat_rate=effective_vat_rate if effective_vat_rate is not None else _extract_vat_rate(quote_meta),
         estimated_solfege_level=payload.estimated_solfege_level,
         selected_solfege_slot=payload.selected_solfege_slot,
         calendar_snapshot=payload.calendar_snapshot,
@@ -5742,7 +5846,15 @@ def create_quote_from_payload(
     db.add(row)
     db.flush()
 
-    total = _materialize_quote_lines(db, quote=row, lines_in=payload.lines)
+    effective_lines = payload.lines
+    if effective_vat_rate is not None:
+        effective_lines = [
+            line
+            if line.vat_rate is not None
+            else line.model_copy(update={"vat_rate": effective_vat_rate})
+            for line in payload.lines
+        ]
+    total = _materialize_quote_lines(db, quote=row, lines_in=effective_lines)
     lines = _load_quote_lines(db, row.id)
     row.calendar_snapshot = _calendar_snapshot_with_line_recommendation_keys(
         db,
@@ -6105,6 +6217,32 @@ def update_quote(
     return _quote_detail_out(db, row)
 
 
+@router.patch("/quotes/{quote_id}/admin-hold-note", response_model=QuoteDetailOut)
+def update_quote_admin_hold_note(
+    quote_id: UUID,
+    payload: QuoteAdminHoldNoteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteDetailOut:
+    row = _load_quote(db, quote_id, lock=True)
+    changed = _set_quote_admin_hold_note(row, payload.admin_hold_note)
+    if changed:
+        row.updated_at = _utcnow()
+        db.add(row)
+        db.add(
+            QuoteEvent(
+                quote_id=row.id,
+                event_type="quote_admin_hold_note_updated",
+                actor_type="admin",
+                actor_id=current_user.id,
+                payload={"active": bool(_quote_admin_hold_note(row.meta))},
+            )
+        )
+        db.commit()
+        db.refresh(row)
+    return _quote_detail_out(db, row)
+
+
 @router.post("/quotes/{quote_id}/duplicate", response_model=QuoteDetailOut, status_code=status.HTTP_201_CREATED)
 def duplicate_quote(
     quote_id: UUID,
@@ -6147,7 +6285,7 @@ def duplicate_quote(
         payment_terms_snapshot=source.payment_terms_snapshot,
         cgv_snapshot=source.cgv_snapshot,
         price_snapshot=source.price_snapshot,
-        meta={**(source.meta or {}), "duplicated_from": str(source.id)},
+        meta={**_quote_meta_without_admin_hold_note(source.meta), "duplicated_from": str(source.id)},
         created_by_user_id=current_user.id,
         created_at=now,
         updated_at=now,
@@ -6242,6 +6380,7 @@ def _quote_meta_for_duplicated_child(
     extra: dict[str, object],
 ) -> dict[str, object]:
     meta = deepcopy(_json_object(source_meta))
+    meta.pop(QUOTE_ADMIN_HOLD_NOTE_META_KEY, None)
     full_name = _quote_join_name(child_first_name, child_last_name) or child_first_name or child_last_name
     birth_date_text = child_birth_date.isoformat() if isinstance(child_birth_date, date) else (str(child_birth_date).strip() if child_birth_date else None)
     typeform_meta = _json_object(meta.get("typeform_intake"))

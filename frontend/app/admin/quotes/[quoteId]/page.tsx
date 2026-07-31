@@ -39,6 +39,7 @@ import {
   sendQuoteManualEmailAction,
   sendQuoteAction,
   updateQuoteLinesAction,
+  updateQuoteAdminHoldNoteAction,
   updateQuotePlanningAction,
   updateQuoteSettingsAction,
 } from "../../../../lib/actions";
@@ -154,6 +155,7 @@ type QuoteOut = {
   payment_terms_snapshot: Record<string, unknown>;
   cgv_snapshot: Record<string, unknown>;
   meta: Record<string, unknown>;
+  admin_hold_note: string | null;
   document_status: string;
   document_snapshot_id: string | null;
   document_hash: string | null;
@@ -2811,6 +2813,8 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const sectionHref = (section: QuoteWorkspaceSection): string =>
     withUiLanguage(`${quoteBasePath}?back=${encodeURIComponent(backPath)}&section=${section}`, language);
   const selfPath = appendQuickScenario(sectionHref(activeSection), quickScenario);
+  const adminHoldNote = String(detail.quote.admin_hold_note || "").trim();
+  const canAddAdminHoldNote = !adminHoldNote && detail.quote.status === "created";
   const intakePanelOpen = readParam(searchParams, "intake") === "1";
   const intakePanelHref = appendQueryParam(selfPath, "intake", "1");
   const intakeDetailHref = typeformIntakeId ? withUiLanguage(`/admin/intakes/${encodeURIComponent(typeformIntakeId)}`, language) : "";
@@ -3113,6 +3117,62 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
               },
               { label: t("admin.quote_detail.status_integration"), value: integrationStateLabel(integrationState, language) },
             ]}
+            notice={adminHoldNote ? (
+              <section className="quote-admin-hold-banner is-active" role="note" aria-live="polite">
+                <div className="row spread wrap gap-sm quote-admin-hold-heading">
+                  <div>
+                    <span className="badge quote-admin-hold-badge">{t("admin.quote_detail.hold_badge")}</span>
+                    <h3>{t("admin.quote_detail.hold_title")}</h3>
+                  </div>
+                  <form action={updateQuoteAdminHoldNoteAction}>
+                    <input type="hidden" name="quote_id" value={detail.quote.id} />
+                    <input type="hidden" name="return_to" value={selfPath} />
+                    <input type="hidden" name="intent" value="resolve" />
+                    <button type="submit" className="ghost quote-admin-hold-resolve">
+                      {t("admin.quote_detail.hold_resolve")}
+                    </button>
+                  </form>
+                </div>
+                <p className="quote-admin-hold-note">{adminHoldNote}</p>
+                <details className="quote-admin-hold-editor">
+                  <summary>{t("admin.quote_detail.hold_edit")}</summary>
+                  <form action={updateQuoteAdminHoldNoteAction} className="stack top-gap-sm">
+                    <input type="hidden" name="quote_id" value={detail.quote.id} />
+                    <input type="hidden" name="return_to" value={selfPath} />
+                    <textarea
+                      name="admin_hold_note"
+                      rows={3}
+                      maxLength={4000}
+                      defaultValue={adminHoldNote}
+                      aria-label={t("admin.quote_detail.hold_field_label")}
+                    />
+                    <div className="row modal-actions-end">
+                      <button type="submit">{t("common.save")}</button>
+                    </div>
+                  </form>
+                </details>
+              </section>
+            ) : canAddAdminHoldNote ? (
+              <details className="quote-admin-hold-banner is-empty">
+                <summary>{t("admin.quote_detail.hold_add")}</summary>
+                <p className="muted">{t("admin.quote_detail.hold_help")}</p>
+                <form action={updateQuoteAdminHoldNoteAction} className="stack top-gap-sm">
+                  <input type="hidden" name="quote_id" value={detail.quote.id} />
+                  <input type="hidden" name="return_to" value={selfPath} />
+                  <textarea
+                    name="admin_hold_note"
+                    rows={3}
+                    maxLength={4000}
+                    required
+                    placeholder={t("admin.quote_detail.hold_placeholder")}
+                    aria-label={t("admin.quote_detail.hold_field_label")}
+                  />
+                  <div className="row modal-actions-end">
+                    <button type="submit">{t("admin.quote_detail.hold_save")}</button>
+                  </div>
+                </form>
+              </details>
+            ) : null}
           />
         )}
         sidebar={<QuoteWorkspaceSidebar items={sidebarItems} language={language} />}

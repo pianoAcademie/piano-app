@@ -142,6 +142,7 @@ class QuoteOut(BaseModel):
     cgv_snapshot: dict[str, object] = Field(default_factory=dict)
     price_snapshot: dict[str, object] = Field(default_factory=dict)
     meta: dict[str, object] = Field(default_factory=dict)
+    admin_hold_note: str | None = None
     document_status: str = "stale"
     document_snapshot_id: UUID | None = None
     document_hash: str | None = None
@@ -251,6 +252,10 @@ class QuoteUpdateRequest(BaseModel):
     meta: dict[str, object] | None = None
     lines: list[QuoteLineIn] | None = None
     remove_orphan_activity_line_ids: list[UUID] | None = None
+
+
+class QuoteAdminHoldNoteRequest(BaseModel):
+    admin_hold_note: str | None = Field(default=None, max_length=4000)
 
 
 class QuoteSendRequest(BaseModel):

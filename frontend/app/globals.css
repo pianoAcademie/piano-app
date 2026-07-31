@@ -16542,6 +16542,72 @@ button.danger:focus-visible {
   margin-bottom: 0;
 }
 
+.quote-admin-hold-banner {
+  margin-top: 12px;
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.quote-admin-hold-banner.is-active {
+  border: 1px solid #d79a24;
+  border-left: 6px solid #b66b12;
+  background: linear-gradient(135deg, #fff4d6 0%, #fffaf0 100%);
+  box-shadow: 0 6px 18px rgba(121, 73, 10, 0.12);
+}
+
+.quote-admin-hold-banner.is-empty {
+  border: 1px dashed #d7c7ad;
+  background: #fffcf7;
+}
+
+.quote-admin-hold-banner > summary,
+.quote-admin-hold-editor > summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: #60431e;
+}
+
+.quote-admin-hold-heading {
+  align-items: flex-start;
+}
+
+.quote-admin-hold-heading h3 {
+  margin: 5px 0 0;
+  font-size: 1.05rem;
+}
+
+.quote-admin-hold-badge {
+  background: #8f5111;
+  border-color: #8f5111;
+  color: #fff;
+  letter-spacing: 0.04em;
+  font-size: 0.72rem;
+}
+
+.quote-admin-hold-note {
+  margin: 10px 0 8px;
+  color: #352515;
+  font-size: 1rem;
+  font-weight: 650;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.quote-admin-hold-editor {
+  margin-top: 4px;
+}
+
+.quote-admin-hold-editor textarea,
+.quote-admin-hold-banner.is-empty textarea {
+  width: 100%;
+  min-height: 86px;
+}
+
+.quote-admin-hold-resolve {
+  background: rgba(255, 255, 255, 0.72);
+}
+
 .quote-header-status {
   background: #f3efe8;
   color: #3f352a;
@@ -17274,6 +17340,17 @@ button.danger:focus-visible {
   .cols-span-2,
   .cols-span-4 {
     grid-column: span 1;
+  }
+}
+
+@media (max-width: 640px) {
+  .quote-admin-hold-banner {
+    padding: 11px;
+  }
+
+  .quote-admin-hold-heading > form,
+  .quote-admin-hold-resolve {
+    width: 100%;
   }
 }
 

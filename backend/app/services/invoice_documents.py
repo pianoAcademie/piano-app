@@ -673,6 +673,7 @@ COUNTRY_NAME_BY_CODE = {
     "US": "Etats-Unis",
     "CA": "Canada",
     "DE": "Allemagne",
+    "SA": "Arabie saoudite",
 }
 
 INVOICE_TEXT: dict[str, dict[str, str]] = {
