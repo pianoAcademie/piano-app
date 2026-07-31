@@ -626,12 +626,9 @@ def _booking_vat_country(
 ) -> str:
     location = db.scalar(select(Location).where(Location.id == session_obj.location_id))
 
-    if course_type.mode == DeliveryMode.ONLINE:
-        is_online = True
-    elif course_type.mode == DeliveryMode.ONSITE:
-        is_online = False
-    else:
-        is_online = bool(location.is_online) if location is not None else False
+    is_online = course_type.mode == DeliveryMode.ONLINE or bool(
+        location.is_online if location is not None else False
+    )
 
     if is_online:
         return (billing_profile.residence_country or "FR").upper()
