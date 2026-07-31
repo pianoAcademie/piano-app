@@ -178,6 +178,9 @@ export default async function EventDetailPage({
                       <h3>{slot.label || formatDate(slot.start_at_utc, slot.timezone, language)}</h3>
                       {slot.label ? <p>{formatDate(slot.start_at_utc, slot.timezone, language)}</p> : null}
                       <p className="muted">{slot.location?.name ?? event.location?.name ?? text("Lieu communiqué prochainement", "Location to be confirmed")}</p>
+                      <p className="muted">
+                        {text("Capacité officielle", "Official capacity")} : {slot.capacity_max} {text("personne(s)", "people")}
+                      </p>
                     </div>
                     <span className={`${styles.badge} ${isFull && !hasPendingPayment ? styles.waitlist : ""}`}>
                       {hasPendingPayment

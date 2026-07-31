@@ -16836,6 +16836,8 @@ export async function createSchoolEventSlotAction(formData: FormData): Promise<v
         end_at_utc: String(formData.get("end_at") ?? "").trim(),
         timezone: String(formData.get("timezone") ?? "Europe/Paris").trim(),
         capacity_max: Number.parseInt(String(formData.get("capacity_max") ?? "1"), 10) || 1,
+        admin_capacity_max:
+          Number.parseInt(String(formData.get("admin_capacity_max") ?? formData.get("capacity_max") ?? "1"), 10) || 1,
         location_id: optionalField(formData, "location_id"),
         label: optionalField(formData, "label"),
       }),
@@ -16848,6 +16850,33 @@ export async function createSchoolEventSlotAction(formData: FormData): Promise<v
   revalidatePath(`/admin/events/${eventId}`);
   revalidatePath("/events");
   redirect(appendQueryMessage(returnTo, "ok", "Créneau ajouté"));
+}
+
+export async function updateSchoolEventSlotCapacitiesAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const eventId = String(formData.get("event_id") ?? "").trim();
+  const slotId = String(formData.get("slot_id") ?? "").trim();
+  const returnTo = safeEventReturnPath(formData, eventId ? `/admin/events/${eventId}` : "/admin/events");
+  if (!token || !eventId || !slotId) {
+    redirect(appendQueryMessage(returnTo, "error", "Créneau introuvable"));
+  }
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/admin/events/${encodeURIComponent(eventId)}/slots/${encodeURIComponent(slotId)}/capacities`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        capacity_max: Number.parseInt(String(formData.get("capacity_max") ?? "1"), 10) || 1,
+        admin_capacity_max: Number.parseInt(String(formData.get("admin_capacity_max") ?? "1"), 10) || 1,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath(`/admin/events/${eventId}`);
+  revalidatePath("/events");
+  redirect(appendQueryMessage(returnTo, "ok", "Limites du créneau enregistrées"));
 }
 
 export async function deleteSchoolEventSlotAction(formData: FormData): Promise<void> {
@@ -17001,4 +17030,33 @@ export async function updateSchoolEventRegistrationGroupStatusAction(formData: F
   revalidatePath(returnTo.split("?")[0]);
   revalidatePath("/events");
   redirect(appendQueryMessage(returnTo, "ok", "Statut du groupe mis à jour"));
+}
+
+export async function createAdminSchoolEventRegistrationAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const eventId = String(formData.get("event_id") ?? "").trim();
+  const returnTo = safeEventReturnPath(formData, eventId ? `/admin/events/${eventId}` : "/admin/events");
+  const slotId = String(formData.get("slot_id") ?? "").trim();
+  const participantUserId = String(formData.get("participant_user_id") ?? "").trim();
+  if (!token || !eventId || !slotId || !participantUserId) {
+    redirect(appendQueryMessage(returnTo, "error", "Personne ou créneau introuvable"));
+  }
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/admin/events/${encodeURIComponent(eventId)}/registrations`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        slot_id: slotId,
+        participant_user_id: participantUserId,
+        send_confirmation: checkboxField(formData, "send_confirmation"),
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath(`/admin/events/${eventId}`);
+  revalidatePath("/events");
+  redirect(appendQueryMessage(returnTo, "ok", "Personne ajoutée et inscription confirmée"));
 }

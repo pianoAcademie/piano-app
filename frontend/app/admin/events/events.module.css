@@ -64,7 +64,9 @@
 
 .filters,
 .formGrid,
-.slotForm {
+.slotForm,
+.capacityForm,
+.clientSearchForm {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.8rem;
@@ -194,6 +196,47 @@
   padding: 0.85rem;
 }
 
+.capacityForm {
+  grid-template-columns: repeat(2, minmax(120px, 220px)) auto;
+  align-items: end;
+  margin: 0.8rem 0;
+}
+
+.manualRegistration {
+  margin: 1rem 0;
+  border: 1px solid #ead2a6;
+  border-radius: 14px;
+  padding: 0.85rem;
+  background: #fffaf1;
+}
+
+.manualRegistration summary {
+  cursor: pointer;
+}
+
+.clientSearchForm {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  margin-top: 0.8rem;
+}
+
+.participantOptions {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.8rem;
+}
+
+.participantOption {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(220px, 1fr) auto auto;
+  gap: 0.75rem;
+  align-items: end;
+  border: 1px solid #dfe5ee;
+  border-radius: 12px;
+  padding: 0.75rem;
+  background: #fff;
+}
+
 .registrationGrid {
   display: grid;
   grid-template-columns: minmax(0, 2fr) repeat(3, minmax(120px, 1fr));
@@ -232,6 +275,9 @@
   .cards,
   .formGrid,
   .slotForm,
+  .capacityForm,
+  .clientSearchForm,
+  .participantOption,
   .filters,
   .registrationGrid {
     grid-template-columns: 1fr;

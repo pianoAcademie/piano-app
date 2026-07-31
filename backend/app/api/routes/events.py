@@ -33,12 +33,15 @@ from app.models.family import ClientFamilyLink
 from app.models.ops import CommunicationDeliveryStatus, CommunicationLog
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.event import (
+    SchoolEventAdminRegistrationCreateRequest,
+    SchoolEventAdminParticipantOptionOut,
     SchoolEventCreateRequest,
     SchoolEventOut,
     SchoolEventRegistrationCreateOut,
     SchoolEventRegistrationCreateRequest,
     SchoolEventRegistrationOut,
     SchoolEventRegistrationStatusUpdateRequest,
+    SchoolEventSlotCapacityUpdateRequest,
     SchoolEventSlotCreateRequest,
     SchoolEventSlotOut,
     SchoolEventUpdateRequest,
@@ -170,7 +173,12 @@ def _registration_counts(db: Session, slot_ids: list[UUID]) -> tuple[dict[UUID, 
     return booked, waitlisted
 
 
-def _serialize_events(db: Session, events: list[SchoolEvent]) -> list[SchoolEventOut]:
+def _serialize_events(
+    db: Session,
+    events: list[SchoolEvent],
+    *,
+    include_admin_capacity: bool = False,
+) -> list[SchoolEventOut]:
     event_ids = [event.id for event in events]
     slots = db.scalars(
         select(SchoolEventSlot)
@@ -220,6 +228,7 @@ def _serialize_events(db: Session, events: list[SchoolEvent]) -> list[SchoolEven
         event_slots: list[SchoolEventSlotOut] = []
         for slot in slots_by_event.get(event.id, []):
             booked = booked_by_slot.get(slot.id, 0)
+            admin_capacity = slot.admin_capacity_max if include_admin_capacity else slot.capacity_max
             event_slots.append(
                 SchoolEventSlotOut(
                     id=slot.id,
@@ -229,8 +238,10 @@ def _serialize_events(db: Session, events: list[SchoolEvent]) -> list[SchoolEven
                     end_at_utc=slot.end_at_utc,
                     timezone=slot.timezone,
                     capacity_max=slot.capacity_max,
+                    admin_capacity_max=admin_capacity,
                     booked_count=booked,
                     seats_remaining=max(slot.capacity_max - booked, 0),
+                    admin_seats_remaining=max(admin_capacity - booked, 0),
                     waitlist_count=waitlisted_by_slot.get(slot.id, 0),
                     status=slot.status,
                     location=_location_out(locations_by_id.get(slot.location_id or event.location_id)),
@@ -1045,7 +1056,45 @@ def list_admin_events(
     _: User = Depends(require_admin_or_permissions("can_manage_events")),
 ) -> list[SchoolEventOut]:
     events = db.scalars(select(SchoolEvent).order_by(SchoolEvent.created_at.desc())).all()
-    return _serialize_events(db, list(events))
+    return _serialize_events(db, list(events), include_admin_capacity=True)
+
+
+@router.get(
+    "/admin/events/participant-options",
+    response_model=list[SchoolEventAdminParticipantOptionOut],
+)
+def list_admin_event_participant_options(
+    search: str,
+    limit: int = 30,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_manage_events")),
+) -> list[SchoolEventAdminParticipantOptionOut]:
+    search_value = search.strip()
+    if len(search_value) < 2:
+        return []
+    stmt = select(User).where(User.role == UserRole.CLIENT, User.is_active.is_(True))
+    for token in search_value.split():
+        pattern = f"%{token}%"
+        stmt = stmt.where(
+            or_(
+                User.first_name.ilike(pattern),
+                User.last_name.ilike(pattern),
+                User.email.ilike(pattern),
+                User.contact_email.ilike(pattern),
+            )
+        )
+    clients = db.scalars(
+        stmt.order_by(User.last_name.asc(), User.first_name.asc(), User.email.asc()).limit(min(max(limit, 1), 100))
+    ).all()
+    return [
+        SchoolEventAdminParticipantOptionOut(
+            id=client.id,
+            display_name=_display_name(client),
+            email=deliverable_client_email(client) or "",
+            client_kind=client.client_kind.value,
+        )
+        for client in clients
+    ]
 
 
 @router.post("/admin/events", response_model=SchoolEventOut, status_code=status.HTTP_201_CREATED)
@@ -1068,7 +1117,7 @@ def create_admin_event(
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ce slug est déjà utilisé") from exc
     db.refresh(event)
-    return _serialize_events(db, [event])[0]
+    return _serialize_events(db, [event], include_admin_capacity=True)[0]
 
 
 @router.get("/admin/events/{event_id}", response_model=SchoolEventOut)
@@ -1080,7 +1129,7 @@ def get_admin_event(
     event = db.get(SchoolEvent, event_id)
     if event is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Événement introuvable")
-    return _serialize_events(db, [event])[0]
+    return _serialize_events(db, [event], include_admin_capacity=True)[0]
 
 
 @router.put("/admin/events/{event_id}", response_model=SchoolEventOut)
@@ -1152,7 +1201,7 @@ def update_admin_event(
             participant_names=participant_names,
             paid=paid,
         )
-    return _serialize_events(db, [event])[0]
+    return _serialize_events(db, [event], include_admin_capacity=True)[0]
 
 
 @router.post("/admin/events/{event_id}/duplicate", response_model=SchoolEventOut, status_code=status.HTTP_201_CREATED)
@@ -1210,12 +1259,13 @@ def duplicate_admin_event(
                 end_at_utc=source_slot.end_at_utc,
                 timezone=source_slot.timezone,
                 capacity_max=source_slot.capacity_max,
+                admin_capacity_max=source_slot.admin_capacity_max,
                 status=SchoolEventSlotStatus.SCHEDULED,
             )
         )
     db.commit()
     db.refresh(duplicate)
-    return _serialize_events(db, [duplicate])[0]
+    return _serialize_events(db, [duplicate], include_admin_capacity=True)[0]
 
 
 @router.post("/admin/events/{event_id}/slots", response_model=SchoolEventSlotOut, status_code=status.HTTP_201_CREATED)
@@ -1232,7 +1282,54 @@ def create_admin_event_slot(
     db.add(slot)
     db.commit()
     db.refresh(slot)
-    serialized_slots = _serialize_events(db, [event])[0].slots
+    serialized_slots = _serialize_events(db, [event], include_admin_capacity=True)[0].slots
+    return next(serialized_slot for serialized_slot in serialized_slots if serialized_slot.id == slot.id)
+
+
+@router.patch(
+    "/admin/events/{event_id}/slots/{slot_id}/capacities",
+    response_model=SchoolEventSlotOut,
+)
+def update_admin_event_slot_capacities(
+    event_id: UUID,
+    slot_id: UUID,
+    payload: SchoolEventSlotCapacityUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_manage_events")),
+) -> SchoolEventSlotOut:
+    slot = db.scalar(
+        select(SchoolEventSlot)
+        .where(SchoolEventSlot.id == slot_id, SchoolEventSlot.event_id == event_id)
+        .with_for_update()
+    )
+    if slot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Créneau introuvable")
+    occupied = int(
+        db.scalar(
+            select(func.coalesce(func.sum(SchoolEventRegistration.party_size), 0)).where(
+                SchoolEventRegistration.slot_id == slot.id,
+                _capacity_registration_condition(_utcnow()),
+            )
+        )
+        or 0
+    )
+    if payload.admin_capacity_max < occupied:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"La limite administrative ne peut pas être inférieure aux {occupied} places déjà occupées",
+        )
+    slot.capacity_max = payload.capacity_max
+    slot.admin_capacity_max = payload.admin_capacity_max
+    slot.updated_at = _utcnow()
+    db.flush()
+    event = db.get(SchoolEvent, event_id)
+    if event is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Événement introuvable")
+    promoted_groups = _promote_waitlist(db, slot)
+    db.commit()
+    db.refresh(slot)
+    _send_waitlist_promotions(db, event=event, slot=slot, promoted_groups=promoted_groups)
+    serialized_slots = _serialize_events(db, [event], include_admin_capacity=True)[0].slots
     return next(serialized_slot for serialized_slot in serialized_slots if serialized_slot.id == slot.id)
 
 
@@ -1260,6 +1357,96 @@ def delete_admin_event_slot(
     db.delete(slot)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/admin/events/{event_id}/registrations",
+    response_model=SchoolEventRegistrationOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_admin_event_registration(
+    event_id: UUID,
+    payload: SchoolEventAdminRegistrationCreateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_manage_events")),
+) -> SchoolEventRegistrationOut:
+    slot = db.scalar(
+        select(SchoolEventSlot)
+        .where(SchoolEventSlot.id == payload.slot_id, SchoolEventSlot.event_id == event_id)
+        .with_for_update()
+    )
+    event = db.get(SchoolEvent, event_id)
+    participant = db.get(User, payload.participant_user_id)
+    if event is None or slot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Événement ou créneau introuvable")
+    if participant is None or participant.role != UserRole.CLIENT:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client introuvable")
+    if slot.status != SchoolEventSlotStatus.SCHEDULED:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ce créneau n’est pas actif")
+    existing = db.scalar(
+        select(SchoolEventRegistration.id)
+        .where(
+            SchoolEventRegistration.slot_id == slot.id,
+            SchoolEventRegistration.participant_user_id == participant.id,
+            SchoolEventRegistration.status.in_(ACTIVE_REGISTRATION_STATUSES),
+        )
+        .limit(1)
+    )
+    if existing is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cette personne est déjà inscrite sur ce créneau")
+    occupied = int(
+        db.scalar(
+            select(func.coalesce(func.sum(SchoolEventRegistration.party_size), 0)).where(
+                SchoolEventRegistration.slot_id == slot.id,
+                _capacity_registration_condition(_utcnow()),
+            )
+        )
+        or 0
+    )
+    if occupied >= slot.admin_capacity_max:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="La limite administrative de ce créneau est atteinte",
+        )
+    booker = participant
+    if participant.client_kind == ClientKind.CHILD:
+        responsible_adult_id = db.scalar(
+            select(ClientFamilyLink.adult_user_id)
+            .where(ClientFamilyLink.child_user_id == participant.id)
+            .order_by(ClientFamilyLink.is_billing_recipient.desc(), ClientFamilyLink.created_at.asc())
+            .limit(1)
+        )
+        responsible_adult = db.get(User, responsible_adult_id) if responsible_adult_id else None
+        if responsible_adult is not None:
+            booker = responsible_adult
+    unit_price = Decimal(event.price_ttc or 0).quantize(Decimal("0.01"))
+    registration = SchoolEventRegistration(
+        group_id=uuid4(),
+        slot_id=slot.id,
+        booker_user_id=booker.id,
+        participant_user_id=participant.id,
+        participant_display_name=_display_name(participant),
+        party_size=1,
+        guest_names_json=[],
+        answers_json={"admin_added": True},
+        status=SchoolEventRegistrationStatus.CONFIRMED,
+        unit_price_ttc_snapshot=unit_price,
+        total_ttc_snapshot=unit_price,
+        currency_snapshot=event.currency.upper(),
+    )
+    db.add(registration)
+    db.commit()
+    db.refresh(registration)
+    location = db.get(Location, slot.location_id or event.location_id) if (slot.location_id or event.location_id) else None
+    if payload.send_confirmation:
+        _send_registration_confirmation(
+            booker=booker,
+            event=event,
+            slot=slot,
+            status_value=SchoolEventRegistrationStatus.CONFIRMED,
+            participant_names=[registration.participant_display_name],
+        )
+    return _registration_out(registration, event=event, slot=slot, location=location)
 
 
 @router.get("/admin/events/{event_id}/registrations", response_model=list[SchoolEventRegistrationOut])
@@ -1364,6 +1551,16 @@ def update_admin_event_registration_group_status(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin_or_permissions("can_manage_events")),
 ) -> list[SchoolEventRegistrationOut]:
+    slot_id = db.scalar(
+        select(SchoolEventRegistration.slot_id)
+        .where(SchoolEventRegistration.group_id == group_id)
+        .limit(1)
+    )
+    if slot_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inscription introuvable")
+    locked_slot = db.scalar(
+        select(SchoolEventSlot).where(SchoolEventSlot.id == slot_id).with_for_update()
+    )
     joined_rows = db.execute(
         select(SchoolEventRegistration, SchoolEventSlot, SchoolEvent, Location)
         .join(SchoolEventSlot, SchoolEventSlot.id == SchoolEventRegistration.slot_id)
@@ -1376,7 +1573,7 @@ def update_admin_event_registration_group_status(
     if not joined_rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inscription introuvable")
     registrations = [row[0] for row in joined_rows]
-    slot = joined_rows[0][1]
+    slot = locked_slot or joined_rows[0][1]
     event = joined_rows[0][2]
     location = joined_rows[0][3]
     previous_statuses = {registration.status for registration in registrations}
@@ -1396,7 +1593,7 @@ def update_admin_event_registration_group_status(
             or 0
         )
         requested = sum(registration.party_size for registration in registrations)
-        if occupied + requested > slot.capacity_max:
+        if occupied + requested > slot.admin_capacity_max:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Capacité insuffisante pour confirmer ce groupe")
     now = _utcnow()
     for registration in registrations:
@@ -1447,6 +1644,16 @@ def update_admin_event_registration_status(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin_or_permissions("can_manage_events")),
 ) -> SchoolEventRegistrationOut:
+    slot_id = db.scalar(
+        select(SchoolEventRegistration.slot_id)
+        .where(SchoolEventRegistration.id == registration_id)
+        .limit(1)
+    )
+    if slot_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inscription introuvable")
+    locked_slot = db.scalar(
+        select(SchoolEventSlot).where(SchoolEventSlot.id == slot_id).with_for_update()
+    )
     row = db.execute(
         select(SchoolEventRegistration, SchoolEventSlot, SchoolEvent, Location)
         .join(SchoolEventSlot, SchoolEventSlot.id == SchoolEventRegistration.slot_id)
@@ -1457,7 +1664,26 @@ def update_admin_event_registration_status(
     ).first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inscription introuvable")
-    registration, slot, event, location = row
+    registration, joined_slot, event, location = row
+    slot = locked_slot or joined_slot
+    target_uses_capacity = payload.status in EVENT_REGISTRATION_CAPACITY_STATUSES
+    registration_uses_capacity = registration.status in EVENT_REGISTRATION_CAPACITY_STATUSES
+    if target_uses_capacity and not registration_uses_capacity:
+        occupied = int(
+            db.scalar(
+                select(func.coalesce(func.sum(SchoolEventRegistration.party_size), 0)).where(
+                    SchoolEventRegistration.slot_id == slot.id,
+                    SchoolEventRegistration.id != registration.id,
+                    _capacity_registration_condition(_utcnow()),
+                )
+            )
+            or 0
+        )
+        if occupied + registration.party_size > slot.admin_capacity_max:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="La limite administrative de ce créneau est atteinte",
+            )
     registration.status = payload.status
     registration.checked_in_at = _utcnow() if payload.status == SchoolEventRegistrationStatus.ATTENDED else None
     if payload.status != SchoolEventRegistrationStatus.PENDING_PAYMENT:

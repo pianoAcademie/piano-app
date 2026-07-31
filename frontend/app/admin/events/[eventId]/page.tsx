@@ -2,17 +2,20 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import {
+  createAdminSchoolEventRegistrationAction,
   createSchoolEventSlotAction,
   deleteSchoolEventSlotAction,
   duplicateSchoolEventAction,
   updateSchoolEventAction,
   updateSchoolEventRegistrationGroupStatusAction,
+  updateSchoolEventSlotCapacitiesAction,
 } from "../../../../lib/actions";
 import { hasAdminPermission } from "../../../../lib/admin-access";
 import { getAdminToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
 import type {
   LocationOut,
+  SchoolEventAdminParticipantOptionOut,
   SchoolEventOut,
   SchoolEventRegistrationOut,
   UserOut,
@@ -90,6 +93,15 @@ export default async function AdminEventDetailPage({
   }
   const event = eventResult.data;
   const registrations = registrationResult.ok ? registrationResult.data : [];
+  const clientSearch = param(searchParams, "client_search").trim();
+  const participantOptionsResult = clientSearch.length >= 2
+    ? await backendRequest<SchoolEventAdminParticipantOptionOut[]>(
+      `/api/v1/admin/events/participant-options?search=${encodeURIComponent(clientSearch)}&limit=30`,
+      {},
+      token,
+    )
+    : null;
+  const participantOptions = participantOptionsResult?.ok ? participantOptionsResult.data : [];
   const registrationGroups = Array.from(
     registrations.reduce((groups, registration) => {
       const group = groups.get(registration.group_id) ?? [];
@@ -100,7 +112,9 @@ export default async function AdminEventDetailPage({
   );
   const locations = locationsResult.ok ? locationsResult.data : [];
   const ok = param(searchParams, "ok");
-  const error = param(searchParams, "error") || (!registrationResult.ok ? registrationResult.message : "");
+  const error = param(searchParams, "error")
+    || (!registrationResult.ok ? registrationResult.message : "")
+    || (participantOptionsResult && !participantOptionsResult.ok ? participantOptionsResult.message : "");
   const returnTo = `/admin/events/${event.id}`;
   const nextStart = new Date(Date.now() + 24 * 60 * 60 * 1000);
   nextStart.setMinutes(0, 0, 0);
@@ -264,7 +278,9 @@ export default async function AdminEventDetailPage({
 
       <section className={styles.panel}>
         <h2>Créneaux proposés</h2>
-        <p className="muted">Chaque créneau gère sa capacité et sa liste d’attente.</p>
+        <p className="muted">
+          La limite publique est affichée aux clients. La limite administrative permet des ajouts manuels au-delà de ce seuil.
+        </p>
         <form action={createSchoolEventSlotAction} className={styles.slotForm}>
           <input type="hidden" name="event_id" value={event.id} />
           <input type="hidden" name="return_to" value={returnTo} />
@@ -282,8 +298,12 @@ export default async function AdminEventDetailPage({
             <input name="label" placeholder="Passage 1, répétition..." />
           </label>
           <label className={styles.field}>
-            <span>Capacité *</span>
+            <span>Limite publique *</span>
             <input name="capacity_max" type="number" min="1" required defaultValue="10" />
+          </label>
+          <label className={styles.field}>
+            <span>Limite administrative *</span>
+            <input name="admin_capacity_max" type="number" min="1" required defaultValue="12" />
           </label>
           <label className={styles.field}>
             <span>Lieu</span>
@@ -304,10 +324,35 @@ export default async function AdminEventDetailPage({
                   <p className="muted">{slot.location?.name ?? event.location?.name ?? "Lieu à préciser"}</p>
                 </div>
                 <div className={styles.badges}>
-                  <span className={styles.badge}>{slot.booked_count}/{slot.capacity_max}</span>
+                  <span className={styles.badge}>Public {slot.booked_count}/{slot.capacity_max}</span>
+                  <span className={styles.badge}>
+                    Admin {slot.booked_count}/{slot.admin_capacity_max}
+                  </span>
                   {slot.waitlist_count ? <span className={styles.badge}>{slot.waitlist_count} en attente</span> : null}
                 </div>
               </div>
+              <form action={updateSchoolEventSlotCapacitiesAction} className={styles.capacityForm}>
+                <input type="hidden" name="event_id" value={event.id} />
+                <input type="hidden" name="slot_id" value={slot.id} />
+                <input type="hidden" name="return_to" value={returnTo} />
+                <label className={styles.field}>
+                  <span>Limite publique</span>
+                  <input name="capacity_max" type="number" min="1" required defaultValue={slot.capacity_max} />
+                </label>
+                <label className={styles.field}>
+                  <span>Limite administrative</span>
+                  <input
+                    name="admin_capacity_max"
+                    type="number"
+                    min="1"
+                    required
+                    defaultValue={slot.admin_capacity_max}
+                  />
+                </label>
+                <div className={styles.actions}>
+                  <button type="submit">Mettre à jour</button>
+                </div>
+              </form>
               <form action={deleteSchoolEventSlotAction}>
                 <input type="hidden" name="event_id" value={event.id} />
                 <input type="hidden" name="slot_id" value={slot.id} />
@@ -332,6 +377,74 @@ export default async function AdminEventDetailPage({
             Exporter en CSV
           </Link>
         </div>
+        <details className={styles.manualRegistration} open={Boolean(clientSearch)}>
+          <summary><strong>Ajouter une personne manuellement</strong></summary>
+          <p className="muted">
+            Cet ajout utilise la limite administrative du créneau et confirme immédiatement l’inscription.
+          </p>
+          <form method="get" className={styles.clientSearchForm}>
+            <label className={styles.field}>
+              <span>Rechercher un client</span>
+              <input
+                name="client_search"
+                type="search"
+                minLength={2}
+                required
+                defaultValue={clientSearch}
+                placeholder="Nom, prénom ou email"
+              />
+            </label>
+            <div className={styles.actions}>
+              <button type="submit">Rechercher</button>
+              {clientSearch ? <Link className="ghost" href={returnTo}>Effacer</Link> : null}
+            </div>
+          </form>
+          {clientSearch.length >= 2 ? (
+            <div className={styles.participantOptions}>
+              {participantOptions.map((participant) => (
+                <form
+                  action={createAdminSchoolEventRegistrationAction}
+                  className={styles.participantOption}
+                  key={participant.id}
+                >
+                  <input type="hidden" name="event_id" value={event.id} />
+                  <input type="hidden" name="participant_user_id" value={participant.id} />
+                  <input type="hidden" name="return_to" value={returnTo} />
+                  <div>
+                    <strong>{participant.display_name}</strong>
+                    <p className="muted">
+                      {participant.client_kind === "CHILD" ? "Enfant" : "Adulte"}
+                      {participant.email ? ` · ${participant.email}` : ""}
+                    </p>
+                  </div>
+                  <label className={styles.field}>
+                    <span>Créneau</span>
+                    <select name="slot_id" required>
+                      {event.slots
+                        .filter((slot) => slot.status === "SCHEDULED")
+                        .map((slot) => (
+                          <option value={slot.id} key={slot.id}>
+                            {slot.label || formatDate(slot.start_at_utc, slot.timezone)}
+                            {` · ${slot.booked_count}/${slot.admin_capacity_max} admin`}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <label className={styles.checkLabel}>
+                    <input type="checkbox" name="send_confirmation" defaultChecked />
+                    Envoyer la confirmation
+                  </label>
+                  <button type="submit" disabled={!event.slots.some((slot) => slot.status === "SCHEDULED")}>
+                    Ajouter et confirmer
+                  </button>
+                </form>
+              ))}
+              {participantOptions.length === 0 ? (
+                <div className={styles.empty}>Aucun client trouvé pour « {clientSearch} ».</div>
+              ) : null}
+            </div>
+          ) : null}
+        </details>
         <div className={styles.registrationList}>
           {registrationGroups.map(([groupId, group]) => {
             const registration = group[0];

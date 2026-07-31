@@ -2630,8 +2630,10 @@ export type SchoolEventSlotOut = {
   end_at_utc: string;
   timezone: string;
   capacity_max: number;
+  admin_capacity_max: number;
   booked_count: number;
   seats_remaining: number;
+  admin_seats_remaining: number;
   waitlist_count: number;
   status: SchoolEventSlotStatus;
   location: SchoolEventLocationOut | null;
@@ -2707,4 +2709,11 @@ export type SchoolEventRegistrationCreateOut = {
   status: SchoolEventRegistrationStatus;
   registrations: SchoolEventRegistrationOut[];
   checkout_url: string | null;
+};
+
+export type SchoolEventAdminParticipantOptionOut = {
+  id: string;
+  display_name: string;
+  email: string;
+  client_kind: "ADULT" | "CHILD" | string;
 };

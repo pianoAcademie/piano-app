@@ -65,6 +65,7 @@ class SchoolEventSlotCreateRequest(BaseModel):
     end_at_utc: datetime
     timezone: str = Field(default="Europe/Paris", min_length=1, max_length=100)
     capacity_max: int = Field(ge=1, le=10000)
+    admin_capacity_max: int | None = Field(default=None, ge=1, le=10000)
     location_id: UUID | None = None
     label: str | None = Field(default=None, max_length=180)
 
@@ -80,6 +81,21 @@ class SchoolEventSlotCreateRequest(BaseModel):
             self.end_at_utc = self.end_at_utc.replace(tzinfo=event_timezone).astimezone(timezone.utc)
         if self.start_at_utc >= self.end_at_utc:
             raise ValueError("start_at_utc must be before end_at_utc")
+        if self.admin_capacity_max is None:
+            self.admin_capacity_max = self.capacity_max
+        if self.admin_capacity_max < self.capacity_max:
+            raise ValueError("admin_capacity_max must be greater than or equal to capacity_max")
+        return self
+
+
+class SchoolEventSlotCapacityUpdateRequest(BaseModel):
+    capacity_max: int = Field(ge=1, le=10000)
+    admin_capacity_max: int = Field(ge=1, le=10000)
+
+    @model_validator(mode="after")
+    def validate_capacities(self) -> "SchoolEventSlotCapacityUpdateRequest":
+        if self.admin_capacity_max < self.capacity_max:
+            raise ValueError("admin_capacity_max must be greater than or equal to capacity_max")
         return self
 
 
@@ -98,8 +114,10 @@ class SchoolEventSlotOut(BaseModel):
     end_at_utc: datetime
     timezone: str
     capacity_max: int
+    admin_capacity_max: int
     booked_count: int
     seats_remaining: int
+    admin_seats_remaining: int
     waitlist_count: int
     status: SchoolEventSlotStatus
     location: SchoolEventLocationOut | None
@@ -187,3 +205,16 @@ class SchoolEventRegistrationCreateOut(BaseModel):
 
 class SchoolEventRegistrationStatusUpdateRequest(BaseModel):
     status: SchoolEventRegistrationStatus
+
+
+class SchoolEventAdminRegistrationCreateRequest(BaseModel):
+    slot_id: UUID
+    participant_user_id: UUID
+    send_confirmation: bool = True
+
+
+class SchoolEventAdminParticipantOptionOut(BaseModel):
+    id: UUID
+    display_name: str
+    email: str
+    client_kind: str

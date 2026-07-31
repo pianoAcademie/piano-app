@@ -162,6 +162,10 @@ class SchoolEventSlot(Base):
     __tablename__ = "school_event_slots"
     __table_args__ = (
         CheckConstraint("capacity_max >= 1", name="ck_school_event_slots_capacity_positive"),
+        CheckConstraint(
+            "admin_capacity_max >= capacity_max",
+            name="ck_school_event_slots_admin_capacity_not_below_public",
+        ),
         CheckConstraint("end_at_utc > start_at_utc", name="ck_school_event_slots_dates_order"),
         Index("ix_school_event_slots_event_start", "event_id", "start_at_utc"),
     )
@@ -187,6 +191,7 @@ class SchoolEventSlot(Base):
     end_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     timezone: Mapped[str] = mapped_column(String(100), nullable=False, server_default=text("'Europe/Paris'"))
     capacity_max: Mapped[int] = mapped_column(Integer, nullable=False)
+    admin_capacity_max: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[SchoolEventSlotStatus] = mapped_column(
         Enum(
             SchoolEventSlotStatus,
