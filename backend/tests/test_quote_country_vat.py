@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from app.api.routes.quotes import _country_vat_rate_for_quote, _quote_recipient_country
 from app.schemas.quote import QuoteLineIn
+from app.services.pricing import resolve_vat_rate
 
 
 class QuoteCountryVatTests(unittest.TestCase):
@@ -22,14 +23,12 @@ class QuoteCountryVatTests(unittest.TestCase):
 
         self.assertEqual(_quote_recipient_country(client=None, prospect=prospect), "SA")
 
-    def test_country_rate_uses_french_fallback_for_live_service(self) -> None:
+    def test_country_rate_uses_saudi_zero_vat_rule(self) -> None:
         db = MagicMock()
         db.scalar.return_value = SimpleNamespace(service_code="PIANO_CLASS")
         exact_result = MagicMock()
-        exact_result.first.return_value = None
-        french_result = MagicMock()
-        french_result.first.return_value = SimpleNamespace(vat_rate=Decimal("20.00"))
-        db.scalars.side_effect = [exact_result, french_result]
+        exact_result.first.return_value = SimpleNamespace(vat_rate=Decimal("0.00"))
+        db.scalars.return_value = exact_result
         line = QuoteLineIn(
             line_category="service",
             activity_id=uuid4(),
@@ -44,7 +43,7 @@ class QuoteCountryVatTests(unittest.TestCase):
             on_date=date(2026, 7, 31),
         )
 
-        self.assertEqual(rate, Decimal("20.000"))
+        self.assertEqual(rate, Decimal("0.000"))
 
     def test_country_rate_does_not_override_french_quotes(self) -> None:
         db = MagicMock()
@@ -59,6 +58,22 @@ class QuoteCountryVatTests(unittest.TestCase):
         self.assertIsNone(rate)
         db.scalar.assert_not_called()
         db.scalars.assert_not_called()
+
+    def test_new_saudi_service_codes_still_default_to_zero(self) -> None:
+        db = MagicMock()
+        exact_result = MagicMock()
+        exact_result.first.return_value = None
+        db.scalars.return_value = exact_result
+
+        rate = resolve_vat_rate(
+            db,
+            country="SA",
+            service_code="FUTURE_ONLINE_SERVICE",
+            on_date=date(2026, 7, 31),
+        )
+
+        self.assertEqual(rate, Decimal("0.00"))
+        self.assertEqual(db.scalars.call_count, 1)
 
 
 if __name__ == "__main__":

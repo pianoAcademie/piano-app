@@ -159,6 +159,12 @@ def resolve_vat_rate(
     if rule is not None:
         return quantize_money(Decimal(rule.vat_rate))
 
+    # French VAT is not applied to virtual educational services supplied to
+    # customers established in Saudi Arabia. Keep this fallback for new
+    # service codes that may be created after the VAT rules migration.
+    if (country or "").strip().upper() == "SA" and on_date >= date(2025, 1, 1):
+        return Decimal("0.00")
+
     fallback = db.scalars(
         select(VatRule)
         .where(

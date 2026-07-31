@@ -315,6 +315,7 @@ INVOICE_RANGE_PUBLIC_TOKEN_SCOPE = "INVOICE_RANGE_PUBLIC_DOWNLOAD"
 INVOICE_RANGE_PUBLIC_PAYMENT_TOKEN_SCOPE = "INVOICE_RANGE_PUBLIC_PAY"
 INVOICE_RENDER_TIMEZONE_NAME = "Europe/Paris"
 WEEKDAY_LABELS_FR = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+WEEKDAY_LABELS_EN = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 COUNTRY_NAME_BY_CODE = {
     "FR": "France",
@@ -328,6 +329,22 @@ COUNTRY_NAME_BY_CODE = {
     "US": "Etats-Unis",
     "CA": "Canada",
     "DE": "Allemagne",
+    "SA": "Arabie saoudite",
+}
+
+COUNTRY_NAME_BY_CODE_EN = {
+    "FR": "France",
+    "BE": "Belgium",
+    "CH": "Switzerland",
+    "LU": "Luxembourg",
+    "ES": "Spain",
+    "IT": "Italy",
+    "GB": "United Kingdom",
+    "UK": "United Kingdom",
+    "US": "United States",
+    "CA": "Canada",
+    "DE": "Germany",
+    "SA": "Saudi Arabia",
 }
 
 
@@ -951,20 +968,21 @@ def _display_name(first_name: str | None, last_name: str | None, email: str) -> 
     return full_name or email
 
 
-def _country_display_name(raw: str | None) -> str:
+def _country_display_name(raw: str | None, *, language: str | None = None) -> str:
     value = (raw or "").strip()
     if not value:
         return ""
     code = value.upper()
     if len(code) == 2:
-        return COUNTRY_NAME_BY_CODE.get(code, code)
+        names = COUNTRY_NAME_BY_CODE_EN if normalize_language(language) == "en" else COUNTRY_NAME_BY_CODE
+        return names.get(code, code)
     return value[:1].upper() + value[1:].lower()
 
 
-def _billing_address_label(user: User) -> str:
+def _billing_address_label(user: User, *, language: str | None = None) -> str:
     line_1 = (user.address_line or "").strip()
     city_line = " ".join(part for part in [(user.postal_code or "").strip(), (user.city or "").strip()] if part).strip()
-    country = _country_display_name(user.address_country or user.residence_country)
+    country = _country_display_name(user.address_country or user.residence_country, language=language)
     parts = [line_1, city_line, country]
     return ", ".join(part for part in parts if part) or "-"
 
@@ -4084,8 +4102,15 @@ def _require_active_legal_entity(db: Session, *, legal_entity_id: UUID) -> Legal
     return entity
 
 
-def _payment_source_label(source: str) -> str:
+def _payment_source_label(source: str, *, language: str | None = None) -> str:
     normalized = (source or "").strip().upper()
+    if normalize_language(language) == "en":
+        return {
+            "PLAN_PURCHASE": "Plan purchase",
+            "BOOKING": "Booking",
+            "PAYMENT_RECEIPT": "Booking payment receipt",
+            "MANUAL": "Manual transaction",
+        }.get(normalized, normalized or "Payment")
     if normalized == "PLAN_PURCHASE":
         return "Achat formule"
     if normalized == "BOOKING":
@@ -4095,6 +4120,50 @@ def _payment_source_label(source: str) -> str:
     if normalized == "MANUAL":
         return "Transaction manuelle"
     return normalized or "Paiement"
+
+
+def _invoice_payment_label(label: str, *, language: str | None = None) -> str:
+    value = str(label or "").strip()
+    if normalize_language(language) != "en" or not value:
+        return value
+    replacements = (
+        ("Cours de piano collectif", "Group piano lesson"),
+        ("Cours collectif", "Group lesson"),
+        ("Cours particulier", "Private piano lesson"),
+        ("Cours de piano", "Piano lesson"),
+        ("Solfège", "Music theory"),
+        ("Solfege", "Music theory"),
+        ("Achat formule", "Plan purchase"),
+    )
+    normalized_value = value.casefold()
+    for french, english in replacements:
+        if normalized_value.startswith(french.casefold()):
+            return f"{english}{value[len(french):]}"
+    return value
+
+
+def _saudi_zero_vat_note(*, language: str | None = None) -> str:
+    if normalize_language(language) == "en":
+        return (
+            "French VAT not applicable — virtual educational services supplied to a customer "
+            "established outside France (Article 259-0 A of the French General Tax Code)."
+        )
+    return (
+        "TVA française non applicable — prestations éducatives virtuelles fournies à un client "
+        "établi hors de France (article 259-0 A du CGI)."
+    )
+
+
+def _append_invoice_note(existing: str | None, additional: str | None) -> str | None:
+    normalized_existing = _normalize_optional(existing)
+    normalized_additional = _normalize_optional(additional)
+    if not normalized_additional:
+        return normalized_existing
+    if not normalized_existing:
+        return normalized_additional
+    if normalized_additional in normalized_existing:
+        return normalized_existing
+    return f"{normalized_existing}\n\n{normalized_additional}"
 
 
 def _invoice_student_match_text(value: str | None) -> str:
@@ -11057,6 +11126,9 @@ def send_admin_client_range_invoice_email(
         private_note=_normalize_optional(str(metadata.get("private_note") or "")),
         note=None,
         invoice_status=_normalize_optional(str(metadata.get("invoice_status") or "")),
+        language=normalize_language(
+            str(metadata.get("language") or billing_profile.preferred_language or client.preferred_language)
+        ),
         client_name_snapshot=_normalize_optional(str(metadata.get("client_name") or "")),
         client_billing_address_snapshot=_normalize_optional(str(metadata.get("client_billing_address") or "")),
         issuer_snapshot=metadata.get("issuer_snapshot") if isinstance(metadata.get("issuer_snapshot"), dict) else None,
@@ -11449,6 +11521,7 @@ def download_admin_client_range_invoice(
     private_note: str | None = Query(default=None, max_length=2000),
     note: str | None = Query(default=None, max_length=2000),
     invoice_status: str | None = Query(default=None, max_length=20),
+    language: str | None = Query(default=None, max_length=8),
     client_name_snapshot: str | None = Query(default=None, max_length=255),
     client_billing_address_snapshot: str | None = Query(default=None, max_length=1000),
     issuer_snapshot: dict[str, object] | None = None,
@@ -11457,6 +11530,10 @@ def download_admin_client_range_invoice(
     actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> Response:
     client = _require_client(db, client_id)
+    billing_profile = resolve_billing_profile(db, client)
+    invoice_language = normalize_language(
+        language or billing_profile.preferred_language or client.preferred_language
+    )
     normalized_note_id = note_id if isinstance(note_id, UUID) else None
     normalized_layout = _normalize_invoice_layout(layout)
     normalized_generation_mode = _normalize_invoice_generation_mode(generation_mode)
@@ -11598,8 +11675,8 @@ def download_admin_client_range_invoice(
             invoice_lines.append(
                 InvoicePeriodLine(
                     date_label=row.occurred_at.strftime("%d/%m/%Y"),
-                    type_label=_payment_source_label(row.source),
-                    label=row.label,
+                    type_label=_payment_source_label(row.source, language=invoice_language),
+                    label=_invoice_payment_label(row.label, language=invoice_language),
                     quantity=1,
                     amount_excl_vat=_quantize_money(Decimal(row.amount_excl_vat)),
                     vat_rate=Decimal(row.vat_rate).quantize(Decimal("0.01")),
@@ -11675,8 +11752,8 @@ def download_admin_client_range_invoice(
         grouped_others: dict[tuple[str, str, str, Decimal], dict[str, Decimal | int | str]] = {}
         for row in payments:
             currency = _normalize_currency(row.currency, fallback="EUR")
-            type_label = _payment_source_label(row.source)
-            base_label = row.label
+            type_label = _payment_source_label(row.source, language=invoice_language)
+            base_label = _invoice_payment_label(row.label, language=invoice_language)
             quote_line_id = manual_quote_line_id_by_payment_id.get(row.id)
             kit_detail = kit_details_by_quote_line_id.get(quote_line_id) if quote_line_id is not None else None
             vat_rate_key = Decimal(row.vat_rate).quantize(Decimal("0.001"))
@@ -11691,7 +11768,8 @@ def download_admin_client_range_invoice(
                 except ZoneInfoNotFoundError:
                     local_dt = row.occurred_at.astimezone(timezone.utc)
                 weekday_index = int(local_dt.weekday())
-                weekday_label = WEEKDAY_LABELS_FR[weekday_index] if 0 <= weekday_index < len(WEEKDAY_LABELS_FR) else local_dt.strftime("%A")
+                weekday_labels = WEEKDAY_LABELS_EN if invoice_language == "en" else WEEKDAY_LABELS_FR
+                weekday_label = weekday_labels[weekday_index] if 0 <= weekday_index < len(weekday_labels) else local_dt.strftime("%A")
                 time_label = local_dt.strftime("%H:%M")
                 duration_minutes = int(context.get("duration_minutes") or 0)
                 slot_key = (
@@ -11792,7 +11870,10 @@ def download_admin_client_range_invoice(
                     InvoicePeriodLine(
                         date_label=f"{weekday_label} {time_label}",
                         type_label=type_label,
-                        label=f"{course_type_name}{duration_suffix}{location_suffix}",
+                        label=(
+                            f"{_invoice_payment_label(course_type_name, language=invoice_language)}"
+                            f"{duration_suffix}{location_suffix}"
+                        ),
                         quantity=int(values["quantity"]),
                         amount_excl_vat=amount_excl_vat,
                         vat_rate=vat_rate,
@@ -11829,7 +11910,7 @@ def download_admin_client_range_invoice(
                 InvoicePeriodLine(
                     date_label="",
                     type_label="",
-                    label="Produits et autres lignes",
+                    label="Products and other items" if invoice_language == "en" else "Produits et autres lignes",
                     quantity=0,
                     amount_excl_vat=Decimal("0.00"),
                     vat_rate=Decimal("0.00"),
@@ -11884,9 +11965,14 @@ def download_admin_client_range_invoice(
     normalized_auto_footer_note = _normalize_optional(auto_footer_note)
     normalized_public_note = _normalize_optional(public_note) or _normalize_optional(note) or normalized_auto_footer_note
     normalized_private_note = _normalize_optional(private_note)
-    billing_profile = resolve_billing_profile(db, client)
+    billing_country = str(billing_profile.residence_country or billing_profile.address_country or "").strip().upper()
+    if billing_country == "SA" and any(Decimal(row.vat_rate) == Decimal("0") for row in payments):
+        normalized_public_note = _append_invoice_note(
+            normalized_public_note,
+            _saudi_zero_vat_note(language=invoice_language),
+        )
     client_label_live = _display_name(billing_profile.first_name, billing_profile.last_name, billing_profile.email)
-    client_billing_address_live = _billing_address_label(billing_profile)
+    client_billing_address_live = _billing_address_label(billing_profile, language=invoice_language)
     client_label = client_name_snapshot or client_label_live
     client_billing_address = client_billing_address_snapshot or client_billing_address_live
     persisted_note_id = normalized_note_id
@@ -11961,6 +12047,7 @@ def download_admin_client_range_invoice(
             "totals_by_currency": totals_payload,
             "total_to_pay_by_currency": total_to_pay_payload,
             "invoice_status": "ISSUED",
+            "language": invoice_language,
             "client_name": client_label_live,
             "client_billing_address": client_billing_address_live,
             "issuer_snapshot": build_company_identity_snapshot(
@@ -12035,14 +12122,14 @@ def download_admin_client_range_invoice(
         total_to_pay_by_currency=total_to_pay_by_currency,
         payment_link_url=payment_link_url,
         watermark=(
-            ("PAID" if normalize_language(client.preferred_language) == "en" else "PAYE")
+            ("PAID" if invoice_language == "en" else "PAYE")
             if ((invoice_status or "").strip().upper() in {"PAID", "PAYE"})
             else None
         ),
         legal_entity_id=resolved_seller_legal_entity_id,
         billing_entity=resolved_billing_entity,
         company_identity_override=frozen_company_identity,
-        language=normalize_language(client.preferred_language),
+        language=invoice_language,
     )
     file_name = f"{resolved_invoice_number}.pdf".replace('"', "")
     return Response(
@@ -12063,7 +12150,7 @@ def download_admin_client_range_invoice_from_note(
     db: Session = Depends(get_db),
     actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> Response:
-    _require_client(db, client_id)
+    client = _require_client(db, client_id)
     _, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=False)
     frozen_payment_keys, resolved_billing_entity, resolved_seller_legal_entity_id = _frozen_invoice_selection_for_note(
         db,
@@ -12132,6 +12219,7 @@ def download_admin_client_range_invoice_from_note(
         private_note=_normalize_optional(str(metadata.get("private_note") or "")),
         note=None,
         invoice_status=_normalize_optional(str(metadata.get("invoice_status") or "")),
+        language=normalize_language(str(metadata.get("language") or client.preferred_language)),
         client_name_snapshot=_normalize_optional(str(metadata.get("client_name") or "")),
         client_billing_address_snapshot=_normalize_optional(str(metadata.get("client_billing_address") or "")),
         issuer_snapshot=metadata.get("issuer_snapshot") if isinstance(metadata.get("issuer_snapshot"), dict) else None,
@@ -12224,6 +12312,7 @@ def download_admin_client_range_invoice_public(
         private_note=_normalize_optional(str(metadata.get("private_note") or "")),
         note=None,
         invoice_status=_normalize_optional(str(metadata.get("invoice_status") or "")),
+        language=normalize_language(str(metadata.get("language") or client.preferred_language)),
         client_name_snapshot=_normalize_optional(str(metadata.get("client_name") or "")),
         client_billing_address_snapshot=_normalize_optional(str(metadata.get("client_billing_address") or "")),
         issuer_snapshot=metadata.get("issuer_snapshot") if isinstance(metadata.get("issuer_snapshot"), dict) else None,
@@ -13141,11 +13230,12 @@ def download_admin_client_payment_invoice(
 
     invoice_number = payment.invoice_number or _invoice_number_for_payment(payment.id, payment.occurred_at)
     billing_profile = resolve_billing_profile(db, payment_user)
+    invoice_language = normalize_language(billing_profile.preferred_language or payment_user.preferred_language)
     client_label = _display_name(billing_profile.first_name, billing_profile.last_name, billing_profile.email)
     line = InvoicePeriodLine(
         date_label=payment.occurred_at.strftime("%d/%m/%Y"),
-        type_label=_payment_source_label(payment.source),
-        label=payment.label,
+        type_label=_payment_source_label(payment.source, language=invoice_language),
+        label=_invoice_payment_label(payment.label, language=invoice_language),
         quantity=1,
         amount_excl_vat=_quantize_money(Decimal(payment.amount_excl_vat)),
         vat_rate=Decimal(payment.vat_rate).quantize(Decimal("0.01")),
@@ -13169,17 +13259,22 @@ def download_admin_client_payment_invoice(
         period_label=payment.occurred_at.strftime("%d/%m/%Y"),
         lines=[line],
         totals_by_currency=totals,
-        note=None,
-        client_billing_address=_billing_address_label(billing_profile),
+        note=(
+            _saudi_zero_vat_note(language=invoice_language)
+            if str(billing_profile.residence_country or billing_profile.address_country or "").strip().upper() == "SA"
+            and Decimal(payment.vat_rate) == Decimal("0")
+            else None
+        ),
+        client_billing_address=_billing_address_label(billing_profile, language=invoice_language),
         due_date=payment.occurred_at.date(),
         watermark=(
             "PAID"
-            if normalize_language(payment_user.preferred_language) == "en" and (payment.invoice_status or "").strip().upper() == "PAID"
+            if invoice_language == "en" and (payment.invoice_status or "").strip().upper() == "PAID"
             else ("PAYE" if (payment.invoice_status or "").strip().upper() == "PAID" else None)
         ),
         legal_entity_id=payment.seller_legal_entity_id,
         billing_entity=_payment_billing_entity(payment),
-        language=normalize_language(payment_user.preferred_language),
+        language=invoice_language,
     )
 
     file_name = f"{invoice_number}.pdf".replace('"', "")
