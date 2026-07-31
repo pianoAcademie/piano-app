@@ -348,6 +348,23 @@ COUNTRY_NAME_BY_CODE_EN = {
 }
 
 
+def _country_code_from_value(raw: str | None) -> str | None:
+    value = (raw or "").strip()
+    if not value:
+        return None
+    code = value.upper()
+    if len(code) == 2 and code.isalpha():
+        return code
+    normalized = value.casefold()
+    for names in (COUNTRY_NAME_BY_CODE, COUNTRY_NAME_BY_CODE_EN):
+        for candidate_code, candidate_name in names.items():
+            if normalized == candidate_name.casefold():
+                return candidate_code
+    if normalized in {"saudi arabia (ksa)", "kingdom of saudi arabia", "royaume d'arabie saoudite"}:
+        return "SA"
+    return None
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -969,8 +986,8 @@ def _country_display_name(raw: str | None, *, language: str | None = None) -> st
     value = (raw or "").strip()
     if not value:
         return ""
-    code = value.upper()
-    if len(code) == 2:
+    code = _country_code_from_value(value)
+    if code is not None:
         names = COUNTRY_NAME_BY_CODE_EN if normalize_language(language) == "en" else COUNTRY_NAME_BY_CODE
         return names.get(code, code)
     return value[:1].upper() + value[1:].lower()
@@ -982,6 +999,19 @@ def _billing_address_label(user: User, *, language: str | None = None) -> str:
     country = _country_display_name(user.address_country or user.residence_country, language=language)
     parts = [line_1, city_line, country]
     return ", ".join(part for part in parts if part) or "-"
+
+
+def _localize_billing_address_label(value: str | None, *, language: str | None = None) -> str | None:
+    normalized = _normalize_optional(value)
+    if normalized is None:
+        return None
+    prefix, separator, country_label = normalized.rpartition(",")
+    candidate = country_label.strip() if separator else normalized
+    country_code = _country_code_from_value(candidate)
+    if country_code is None:
+        return normalized
+    localized_country = _country_display_name(country_code, language=language)
+    return f"{prefix}{separator} {localized_country}".strip() if separator else localized_country
 
 
 def _invoice_render_timezone() -> ZoneInfo:
@@ -11971,7 +12001,10 @@ def download_admin_client_range_invoice(
     client_label_live = _display_name(billing_profile.first_name, billing_profile.last_name, billing_profile.email)
     client_billing_address_live = _billing_address_label(billing_profile, language=invoice_language)
     client_label = client_name_snapshot or client_label_live
-    client_billing_address = client_billing_address_snapshot or client_billing_address_live
+    client_billing_address = (
+        _localize_billing_address_label(client_billing_address_snapshot, language=invoice_language)
+        or client_billing_address_live
+    )
     persisted_note_id = normalized_note_id
     issuer_identity_snapshot: dict[str, object] | None = None
     if not persist_note and normalized_note_id is not None:

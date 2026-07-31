@@ -6,7 +6,9 @@ from types import SimpleNamespace
 from app.api.routes.admin_clients import (
     _append_invoice_note,
     _billing_address_label,
+    _country_display_name,
     _invoice_payment_label,
+    _localize_billing_address_label,
     _payment_source_label,
     _saudi_zero_vat_note,
 )
@@ -31,6 +33,17 @@ class InvoiceLocalizationTests(unittest.TestCase):
 
         self.assertEqual(_billing_address_label(customer, language="en"), "Riyadh, Saudi Arabia")
         self.assertEqual(_billing_address_label(customer, language="fr"), "Riyadh, Arabie saoudite")
+
+    def test_french_country_name_in_frozen_invoice_is_translated(self) -> None:
+        self.assertEqual(_country_display_name("Arabie saoudite", language="en"), "Saudi Arabia")
+        self.assertEqual(
+            _localize_billing_address_label("Riyadh, Arabie saoudite", language="en"),
+            "Riyadh, Saudi Arabia",
+        )
+        self.assertEqual(
+            _localize_billing_address_label("Arabie saoudite", language="en"),
+            "Saudi Arabia",
+        )
 
     def test_zero_vat_note_is_english_and_not_duplicated(self) -> None:
         note = _saudi_zero_vat_note(language="en")
