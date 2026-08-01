@@ -3,14 +3,18 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
 from app.models.user import User
 from app.services.email_delivery import send_email
+from app.services.session_teachers import effective_teacher_filter_for_professor
 
 logger = logging.getLogger(__name__)
+PARIS_TIMEZONE = ZoneInfo("Europe/Paris")
 
 
 @dataclass(frozen=True)
@@ -22,7 +26,7 @@ class ProfessorDailyDigestResult:
     failed: int
 
 
-def _parse_hhmm_utc(value: str) -> time | None:
+def _parse_hhmm(value: str) -> time | None:
     raw = (value or "").strip()
     if len(raw) != 5 or raw[2] != ":":
         return None
@@ -33,7 +37,7 @@ def _parse_hhmm_utc(value: str) -> time | None:
         return None
     if hour < 0 or hour > 23 or minute < 0 or minute > 59:
         return None
-    return time(hour=hour, minute=minute, tzinfo=timezone.utc)
+    return time(hour=hour, minute=minute)
 
 
 def _attendance_label(status: BookingStatus) -> str:
@@ -53,13 +57,14 @@ def _build_digest_body(
     professor: Professor,
     day_start_utc: datetime,
     day_end_utc: datetime,
+    digest_date: date,
 ) -> tuple[str, str, int]:
     sessions = db.execute(
         select(CourseSession, CourseType, Location)
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
         .where(
-            CourseSession.professor_id == professor.id,
+            effective_teacher_filter_for_professor(professor_id=professor.id),
             CourseSession.start_at_utc >= day_start_utc,
             CourseSession.start_at_utc < day_end_utc,
             CourseSession.status != SessionStatus.CANCELLED,
@@ -67,7 +72,7 @@ def _build_digest_body(
         .order_by(CourseSession.start_at_utc.asc())
     ).all()
 
-    subject = f"Planning du jour - {day_start_utc.strftime('%d/%m/%Y')}"
+    subject = f"Planning du jour - {digest_date.strftime('%d/%m/%Y')}"
     if not sessions:
         return subject, "Bonjour,\n\nAucun cours programme aujourd'hui.\n", 0
 
@@ -83,8 +88,10 @@ def _build_digest_body(
     )
 
     for session_obj, course_type, location in sessions:
+        local_start = session_obj.start_at_utc.astimezone(PARIS_TIMEZONE)
+        local_end = session_obj.end_at_utc.astimezone(PARIS_TIMEZONE)
         lines.append(
-            f"- {session_obj.start_at_utc.strftime('%H:%M')} - {session_obj.end_at_utc.strftime('%H:%M')} | {session_obj.title} | {course_type.name} | {location.name}"
+            f"- {local_start.strftime('%H:%M')} - {local_end.strftime('%H:%M')} | {session_obj.title} | {course_type.name} | {location.name}"
         )
 
         roster_rows = db.execute(
@@ -115,10 +122,12 @@ def run_send_professor_daily_digest_job(
     now: datetime,
     limit: int = 300,
 ) -> ProfessorDailyDigestResult:
-    utc_now = now.astimezone(timezone.utc)
-    today_utc: date = utc_now.date()
-    day_start_utc = datetime.combine(today_utc, time(hour=0, minute=0, tzinfo=timezone.utc))
-    day_end_utc = day_start_utc + timedelta(days=1)
+    paris_now = now.astimezone(PARIS_TIMEZONE)
+    today_paris: date = paris_now.date()
+    day_start_paris = datetime.combine(today_paris, time.min, tzinfo=PARIS_TIMEZONE)
+    day_end_paris = datetime.combine(today_paris + timedelta(days=1), time.min, tzinfo=PARIS_TIMEZONE)
+    day_start_utc = day_start_paris.astimezone(timezone.utc)
+    day_end_utc = day_end_paris.astimezone(timezone.utc)
 
     professors = db.scalars(
         select(Professor)
@@ -137,17 +146,17 @@ def run_send_professor_daily_digest_job(
     failed = 0
 
     for professor in professors:
-        if professor.last_daily_schedule_sent_on == today_utc:
+        if professor.last_daily_schedule_sent_on == today_paris:
             skipped_not_due += 1
             continue
 
-        due_time = _parse_hhmm_utc(professor.daily_schedule_email_time)
+        due_time = _parse_hhmm(professor.daily_schedule_email_time)
         if due_time is None:
             skipped_not_due += 1
             continue
 
-        due_at_utc = datetime.combine(today_utc, due_time)
-        if utc_now < due_at_utc:
+        due_at_paris = datetime.combine(today_paris, due_time, tzinfo=PARIS_TIMEZONE)
+        if paris_now < due_at_paris:
             skipped_not_due += 1
             continue
 
@@ -157,9 +166,10 @@ def run_send_professor_daily_digest_job(
                 professor=professor,
                 day_start_utc=day_start_utc,
                 day_end_utc=day_end_utc,
+                digest_date=today_paris,
             )
             if professor.daily_schedule_skip_if_no_course and session_count == 0:
-                professor.last_daily_schedule_sent_on = today_utc
+                professor.last_daily_schedule_sent_on = today_paris
                 skipped_no_courses += 1
                 continue
 
@@ -178,7 +188,7 @@ def run_send_professor_daily_digest_job(
                 professor.email,
                 subject,
             )
-            professor.last_daily_schedule_sent_on = today_utc
+            professor.last_daily_schedule_sent_on = today_paris
             sent += 1
         except Exception as exc:  # pragma: no cover - defensive logging path
             logger.exception("Professor daily digest failed | professor_id=%s | error=%s", professor.id, exc)
