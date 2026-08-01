@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import or_, select
@@ -204,6 +204,7 @@ def run_reminder_generation_job(
                     Booking.status == BookingStatus.BOOKED,
                     CourseSession.status == SessionStatus.SCHEDULED,
                     CourseSession.start_at_utc > now,
+                    CourseSession.start_at_utc <= now + timedelta(days=7),
                 )
                 .order_by(CourseSession.start_at_utc.asc(), Booking.booked_at.asc())
                 .limit(limit)

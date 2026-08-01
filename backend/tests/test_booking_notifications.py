@@ -10,10 +10,18 @@ from uuid import uuid4
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.services.notifications.application.orchestrator import schedule_booking_created_notifications
+from app.models.catalog import DeliveryMode
+from app.services.notifications.application.orchestrator import (
+    _build_lesson_reminder_email,
+    schedule_booking_created_notifications,
+    schedule_reminder_notifications_for_booking,
+)
+from app.services.notifications.application.recipients import ResolvedRecipient
 from app.services.notifications.domain.constants import (
+    NOTIFICATION_TYPE_REMINDER_EMAIL,
     NOTIFICATION_TYPE_TEACHER_BOOKING_CONFIRMATION,
     QUEUE_NOTIFICATIONS_IMMEDIATE,
+    QUEUE_NOTIFICATIONS_SCHEDULED,
 )
 
 
@@ -28,6 +36,125 @@ class _FakeSession:
 
 
 class BookingNotificationTests(unittest.TestCase):
+    def test_online_reminder_is_localized_and_includes_link(self) -> None:
+        subject, body = _build_lesson_reminder_email(
+            recipient_name="Sarah Alshaikh",
+            student_name="Alya Alsowailem",
+            course_type_name="Cours particulier",
+            start_at=datetime(2026, 8, 2, 15, 0, tzinfo=timezone.utc),
+            end_at=datetime(2026, 8, 2, 16, 0, tzinfo=timezone.utc),
+            timezone_name="Asia/Riyadh",
+            location_name="Online",
+            meeting_link="https://example.test/online-lesson",
+            language="en",
+        )
+
+        self.assertEqual(subject, "Lesson reminder - Private piano lesson")
+        self.assertIn("02/08/2026 18:00 - 19:00 (Asia/Riyadh)", body)
+        self.assertIn("Online lesson link: https://example.test/online-lesson", body)
+
+    def test_reminder_schedules_email_for_guardian_and_teacher(self) -> None:
+        now = datetime(2026, 8, 1, 18, 0, tzinfo=timezone.utc)
+        session_id = uuid4()
+        course_type_id = uuid4()
+        location_id = uuid4()
+        student_id = uuid4()
+        guardian_id = uuid4()
+        teacher_id = uuid4()
+        booking = SimpleNamespace(
+            id=uuid4(),
+            session_id=session_id,
+            user_id=student_id,
+            student_start_at_utc=None,
+            student_end_at_utc=None,
+        )
+        session_obj = SimpleNamespace(
+            id=session_id,
+            course_type_id=course_type_id,
+            location_id=location_id,
+            professor_id=teacher_id,
+            substitute_teacher_id=None,
+            start_at_utc=datetime(2026, 8, 2, 15, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 8, 2, 16, 0, tzinfo=timezone.utc),
+            timezone="Europe/Paris",
+            zoom_link="https://example.test/online-lesson",
+        )
+        course_type = SimpleNamespace(
+            id=course_type_id,
+            name="Cours particulier",
+            mode=DeliveryMode.ONLINE,
+        )
+        location = SimpleNamespace(name="Online", is_online=True, timezone="Europe/Paris")
+        student = SimpleNamespace(first_name="Alya", last_name="Alsowailem", email=None)
+        guardian = SimpleNamespace(
+            first_name="Sarah",
+            last_name="Alshaikh",
+            email="parent@example.test",
+            preferred_language="en",
+            timezone="Asia/Riyadh",
+        )
+        teacher = SimpleNamespace(
+            id=teacher_id,
+            first_name="Prof",
+            last_name="Test",
+            email="teacher@example.test",
+            zoom_link="https://example.test/teacher-room",
+            active=True,
+        )
+        fake_db = _FakeSession([location, student, teacher, guardian])
+        guardian_recipient = ResolvedRecipient(
+            contact_type="USER",
+            contact_id=guardian_id,
+            email="parent@example.test",
+            phone=None,
+        )
+        notification_ids = [uuid4(), uuid4()]
+
+        with patch(
+            "app.services.notifications.application.orchestrator._booking_context",
+            return_value=(session_obj, course_type),
+        ), patch(
+            "app.services.notifications.application.orchestrator._notification_rule_for_session",
+            return_value=(True, 1440, False, 60),
+        ), patch(
+            "app.services.notifications.application.orchestrator.resolve_reminder_recipients",
+            return_value=[guardian_recipient],
+        ), patch(
+            "app.services.notifications.application.orchestrator.effective_teacher_id_for_session",
+            return_value=teacher_id,
+        ), patch(
+            "app.services.notifications.application.orchestrator._teacher_booking_notification_recipient",
+            return_value=("teacher@example.test", teacher_id),
+        ), patch(
+            "app.services.notifications.application.orchestrator._notification_already_exists",
+            return_value=False,
+        ), patch(
+            "app.services.notifications.application.orchestrator.create_domain_event",
+            return_value=SimpleNamespace(id=uuid4()),
+        ), patch(
+            "app.services.notifications.application.orchestrator.create_notification_if_new",
+            side_effect=[SimpleNamespace(id=value) for value in notification_ids],
+        ) as create_notification:
+            queued = schedule_reminder_notifications_for_booking(
+                fake_db,
+                booking=booking,
+                now=now,
+            )
+
+        self.assertEqual(create_notification.call_count, 2)
+        guardian_kwargs = create_notification.call_args_list[0].kwargs
+        teacher_kwargs = create_notification.call_args_list[1].kwargs
+        self.assertEqual(guardian_kwargs["notification_type"], NOTIFICATION_TYPE_REMINDER_EMAIL)
+        self.assertEqual(guardian_kwargs["recipient_email"], "parent@example.test")
+        self.assertIn("02/08/2026 18:00 - 19:00 (Asia/Riyadh)", guardian_kwargs["body_snapshot"])
+        self.assertIn("Online lesson link: https://example.test/online-lesson", guardian_kwargs["body_snapshot"])
+        self.assertEqual(teacher_kwargs["recipient_type"], "PROFESSOR")
+        self.assertEqual(teacher_kwargs["recipient_email"], "teacher@example.test")
+        self.assertIn("02/08/2026 17:00 - 18:00 (Europe/Paris)", teacher_kwargs["body_snapshot"])
+        self.assertIn("Lien du cours en ligne : https://example.test/online-lesson", teacher_kwargs["body_snapshot"])
+        self.assertEqual([item.notification_id for item in queued], notification_ids)
+        self.assertTrue(all(item.queue_name == QUEUE_NOTIFICATIONS_SCHEDULED for item in queued))
+
     def test_confirmed_booking_notifies_session_teacher(self) -> None:
         now = datetime(2026, 6, 15, 13, 30, tzinfo=timezone.utc)
         session_id = uuid4()

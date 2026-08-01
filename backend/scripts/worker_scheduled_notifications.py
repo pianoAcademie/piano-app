@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
 
@@ -12,7 +12,10 @@ if str(ROOT_DIR) not in sys.path:
 
 from app.db.session import SessionLocal
 from app.services.jobs.application.session_jobs import run_session_auto_completion_job
-from app.services.jobs.application.notification_jobs import run_scheduled_notification_dispatch_job
+from app.services.jobs.application.notification_jobs import (
+    run_reminder_generation_job,
+    run_scheduled_notification_dispatch_job,
+)
 from app.services.invoice_reminders import run_invoice_due_reminder_job
 from app.services.bank_transfer_orders import run_bank_transfer_order_expiration_job, run_bank_transfer_review_digest_job
 from app.services.quotes.lifecycle_jobs import run_quote_daily_lifecycle_job
@@ -26,10 +29,19 @@ def utcnow() -> datetime:
 
 
 def main() -> None:
+    last_reminder_generation_at: datetime | None = None
     while True:
         db = SessionLocal()
         try:
-            jobs = (
+            cycle_now = utcnow()
+            jobs = []
+            if (
+                last_reminder_generation_at is None
+                or cycle_now - last_reminder_generation_at >= timedelta(minutes=1)
+            ):
+                jobs.append(("reminder_generation", run_reminder_generation_job))
+                last_reminder_generation_at = cycle_now
+            jobs.extend((
                 ("scheduled_notification_dispatch", run_scheduled_notification_dispatch_job),
                 ("invoice_due_reminders", run_invoice_due_reminder_job),
                 ("quote_daily_lifecycle", run_quote_daily_lifecycle_job),
@@ -38,7 +50,7 @@ def main() -> None:
                 ("expire_pending_payment_bookings", run_expire_pending_payment_bookings_job),
                 ("auto_cancel_empty_sessions", run_auto_cancel_empty_sessions_job),
                 ("session_auto_completion", run_session_auto_completion_job),
-            )
+            ))
             for job_name, job_fn in jobs:
                 try:
                     job_fn(
