@@ -658,9 +658,8 @@ def schedule_reminder_notifications_for_booking(
     student = db.scalar(select(User).where(User.id == booking.user_id))
     teacher_id = effective_teacher_id_for_session(session_obj)
     teacher = db.scalar(select(Professor).where(Professor.id == teacher_id)) if teacher_id is not None else None
-    teacher_recipient = _teacher_booking_notification_recipient(db, session_obj=session_obj, teacher=teacher)
 
-    if not recipients and teacher_recipient is None:
+    if not recipients:
         return []
 
     event = None
@@ -826,54 +825,4 @@ def schedule_reminder_notifications_for_booking(
                         )
                     )
 
-    if email_enabled and teacher_recipient is not None and teacher is not None:
-        teacher_email, teacher_contact_id = teacher_recipient
-        scheduled_for = booking_start_at - timedelta(minutes=email_offset_minutes)
-        idempotency_key = _idempotency_key_for_reminder(
-            notification_type=NOTIFICATION_TYPE_REMINDER_EMAIL,
-            booking_id=booking.id,
-            recipient_contact_id=teacher_contact_id,
-            offset_minutes=email_offset_minutes,
-            scheduled_for=scheduled_for,
-        )
-        if not _notification_already_exists(db, idempotency_key=idempotency_key):
-            subject, body = _build_lesson_reminder_email(
-                recipient_name=professor_display_name(teacher),
-                student_name=student_name,
-                course_type_name=course_type.name,
-                start_at=booking_start_at,
-                end_at=booking_end_at,
-                timezone_name=session_obj.timezone or (location.timezone if location is not None else "UTC"),
-                location_name=location_name,
-                meeting_link=meeting_link,
-                language="fr",
-            )
-            created = create_notification_if_new(
-                db,
-                notification_type=NOTIFICATION_TYPE_REMINDER_EMAIL,
-                channel=CHANNEL_EMAIL,
-                dispatch_mode=DISPATCH_MODE_SCHEDULED,
-                source_event_id=_event_id(),
-                source=SOURCE_SCHEDULER,
-                related_entity_type="booking",
-                related_entity_id=booking.id,
-                booking_id=booking.id,
-                slot_id=session_obj.id,
-                recipient_type="PROFESSOR",
-                recipient_contact_id=teacher_contact_id,
-                recipient_email=teacher_email,
-                recipient_phone=None,
-                subject=subject,
-                body_snapshot=body,
-                payload_snapshot={
-                    "offset_minutes": email_offset_minutes,
-                    "body_format": "TEXT",
-                    "meeting_link_included": bool(meeting_link),
-                },
-                idempotency_key=idempotency_key,
-                scheduled_for=scheduled_for,
-                status=NOTIFICATION_STATUS_PENDING,
-            )
-            if created is not None:
-                out.append(OrchestratedNotification(notification_id=created.id, queue_name=QUEUE_NOTIFICATIONS_SCHEDULED))
     return out

@@ -53,7 +53,7 @@ class BookingNotificationTests(unittest.TestCase):
         self.assertIn("02/08/2026 18:00 - 19:00 (Asia/Riyadh)", body)
         self.assertIn("Online lesson link: https://example.test/online-lesson", body)
 
-    def test_reminder_schedules_email_for_guardian_and_teacher(self) -> None:
+    def test_reminder_schedules_email_for_guardian_only(self) -> None:
         now = datetime(2026, 8, 1, 18, 0, tzinfo=timezone.utc)
         session_id = uuid4()
         course_type_id = uuid4()
@@ -108,7 +108,7 @@ class BookingNotificationTests(unittest.TestCase):
             email="parent@example.test",
             phone=None,
         )
-        notification_ids = [uuid4(), uuid4()]
+        notification_ids = [uuid4()]
 
         with patch(
             "app.services.notifications.application.orchestrator._booking_context",
@@ -122,9 +122,6 @@ class BookingNotificationTests(unittest.TestCase):
         ), patch(
             "app.services.notifications.application.orchestrator.effective_teacher_id_for_session",
             return_value=teacher_id,
-        ), patch(
-            "app.services.notifications.application.orchestrator._teacher_booking_notification_recipient",
-            return_value=("teacher@example.test", teacher_id),
         ), patch(
             "app.services.notifications.application.orchestrator._notification_already_exists",
             return_value=False,
@@ -141,17 +138,12 @@ class BookingNotificationTests(unittest.TestCase):
                 now=now,
             )
 
-        self.assertEqual(create_notification.call_count, 2)
+        self.assertEqual(create_notification.call_count, 1)
         guardian_kwargs = create_notification.call_args_list[0].kwargs
-        teacher_kwargs = create_notification.call_args_list[1].kwargs
         self.assertEqual(guardian_kwargs["notification_type"], NOTIFICATION_TYPE_REMINDER_EMAIL)
         self.assertEqual(guardian_kwargs["recipient_email"], "parent@example.test")
         self.assertIn("02/08/2026 18:00 - 19:00 (Asia/Riyadh)", guardian_kwargs["body_snapshot"])
         self.assertIn("Online lesson link: https://example.test/online-lesson", guardian_kwargs["body_snapshot"])
-        self.assertEqual(teacher_kwargs["recipient_type"], "PROFESSOR")
-        self.assertEqual(teacher_kwargs["recipient_email"], "teacher@example.test")
-        self.assertIn("02/08/2026 17:00 - 18:00 (Europe/Paris)", teacher_kwargs["body_snapshot"])
-        self.assertIn("Lien du cours en ligne : https://example.test/online-lesson", teacher_kwargs["body_snapshot"])
         self.assertEqual([item.notification_id for item in queued], notification_ids)
         self.assertTrue(all(item.queue_name == QUEUE_NOTIFICATIONS_SCHEDULED for item in queued))
 

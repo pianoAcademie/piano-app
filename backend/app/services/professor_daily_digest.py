@@ -3,13 +3,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
-from uuid import uuid4
-
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
 from app.models.user import User
+from app.services.email_delivery import send_email
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +72,7 @@ def _build_digest_body(
         return subject, "Bonjour,\n\nAucun cours programme aujourd'hui.\n", 0
 
     lines: list[str] = ["Bonjour,", "", "Voici vos cours du jour:", ""]
-    recipient_count = 0
+    session_count = len(sessions)
 
     roster_statuses = (
         BookingStatus.BOOKED,
@@ -105,11 +104,9 @@ def _build_digest_body(
         for booking, user in roster_rows:
             display_name = f"{(user.first_name or '').strip()} {(user.last_name or '').strip()}".strip() or user.email
             lines.append(f"  * {display_name} - {_attendance_label(booking.status)}")
-            recipient_count += 1
-
         lines.append("")
 
-    return subject, "\n".join(lines), recipient_count
+    return subject, "\n".join(lines), session_count
 
 
 def run_send_professor_daily_digest_job(
@@ -155,24 +152,31 @@ def run_send_professor_daily_digest_job(
             continue
 
         try:
-            subject, body, recipient_count = _build_digest_body(
+            subject, body, session_count = _build_digest_body(
                 db,
                 professor=professor,
                 day_start_utc=day_start_utc,
                 day_end_utc=day_end_utc,
             )
-            if professor.daily_schedule_skip_if_no_course and recipient_count == 0:
+            if professor.daily_schedule_skip_if_no_course and session_count == 0:
                 professor.last_daily_schedule_sent_on = today_utc
                 skipped_no_courses += 1
                 continue
 
-            message_id = f"prof-digest-{uuid4()}"
+            message_id = send_email(
+                to_email=professor.email,
+                subject=subject,
+                body=body,
+                body_format="TEXT",
+                context="PROFESSOR_DAILY_DIGEST",
+            )
+            if not message_id:
+                raise RuntimeError("email provider returned empty message id")
             logger.info(
-                "Professor daily digest sent | id=%s | to=%s | subject=%s | body=%s",
+                "Professor daily digest sent | id=%s | to=%s | subject=%s",
                 message_id,
                 professor.email,
                 subject,
-                body,
             )
             professor.last_daily_schedule_sent_on = today_utc
             sent += 1
