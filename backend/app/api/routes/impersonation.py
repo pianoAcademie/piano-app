@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -23,6 +24,21 @@ IMPERSONATION_TOKEN_TTL_MINUTES = 15
 def _display_name(first_name: str | None, last_name: str | None, fallback: str) -> str:
     full_name = f"{(first_name or '').strip()} {(last_name or '').strip()}".strip()
     return full_name or fallback
+
+
+def _teacher_impersonation_destination(
+    view_mode: Literal["teacher", "manager"],
+    *,
+    has_manager_access: bool,
+) -> tuple[str, str]:
+    if view_mode == "manager" and not has_manager_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Teacher has no manager access",
+        )
+    if view_mode == "manager":
+        return "manager", "/admin"
+    return "teacher", "/prof"
 
 
 @router.post("/admin/impersonate/client/{client_id}", response_model=AdminImpersonationStartOut)
@@ -59,6 +75,7 @@ def start_admin_client_impersonation(
 @router.post("/admin/impersonate/teacher/{teacher_id}", response_model=AdminImpersonationStartOut)
 def start_admin_teacher_impersonation(
     teacher_id: UUID,
+    view_mode: Literal["teacher", "manager"] = "teacher",
     db: Session = Depends(get_db),
     actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminImpersonationStartOut:
@@ -75,8 +92,10 @@ def start_admin_teacher_impersonation(
 
     permission_map = get_admin_permission_map(db, target)
     has_manager_access = any(bool(permission_map.get(field)) for field in BACKOFFICE_PERMISSION_KEYS)
-    target_role = "manager" if has_manager_access else "teacher"
-    redirect_path = "/admin" if has_manager_access else "/prof"
+    target_role, redirect_path = _teacher_impersonation_destination(
+        view_mode,
+        has_manager_access=has_manager_access,
+    )
 
     access_token = create_access_token(
         subject=str(target.id),

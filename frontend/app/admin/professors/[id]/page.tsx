@@ -640,13 +640,26 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
             {t("admin.professor_detail.back_list")}
           </Link>
           {canManageCollaborators ? (
-            <form action={adminViewTeacherPortalAction} target="_blank" rel="noopener noreferrer">
-              <input type="hidden" name="teacher_id" value={professor.id} />
-              <input type="hidden" name="return_to" value={`/admin/professors/${professor.id}?tab=${currentTab}`} />
-              <button type="submit" className="mode-link">
-                {isManagerProfile ? (language === "en" ? "Manager view" : "Vue gestionnaire") : t("admin.professor_detail.view_teacher_portal")}
-              </button>
-            </form>
+            <div className="row teacher-actions-wrap">
+              <form action={adminViewTeacherPortalAction} target="_blank" rel="noopener noreferrer">
+                <input type="hidden" name="teacher_id" value={professor.id} />
+                <input type="hidden" name="view_mode" value="teacher" />
+                <input type="hidden" name="return_to" value={`/admin/professors/${professor.id}?tab=${currentTab}`} />
+                <button type="submit" className="mode-link">
+                  {t("admin.professor_detail.view_teacher_portal")}
+                </button>
+              </form>
+              {isManagerProfile ? (
+                <form action={adminViewTeacherPortalAction} target="_blank" rel="noopener noreferrer">
+                  <input type="hidden" name="teacher_id" value={professor.id} />
+                  <input type="hidden" name="view_mode" value="manager" />
+                  <input type="hidden" name="return_to" value={`/admin/professors/${professor.id}?tab=${currentTab}`} />
+                  <button type="submit" className="ghost">
+                    {language === "en" ? "Manager view" : "Vue gestionnaire"}
+                  </button>
+                </form>
+              ) : null}
+            </div>
           ) : null}
           <span className={`status-pill ${professor.active ? "status-ok" : "status-off"}`}>
             {professor.active ? t("common.active") : t("common.inactive")}

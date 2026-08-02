@@ -4298,13 +4298,14 @@ export async function adminViewTeacherPortalAction(formData: FormData): Promise<
   const language = await ensureAdminAndGetLanguage(token);
 
   const teacherId = String(formData.get("teacher_id") ?? "").trim();
+  const viewMode = String(formData.get("view_mode") ?? "teacher").trim() === "manager" ? "manager" : "teacher";
   const returnTo = String(formData.get("return_to") ?? "").trim() || `/admin/professors/${teacherId}?tab=profil`;
   if (!teacherId) {
     redirect("/admin/professors?error=Collaborateur%20invalide");
   }
 
   const result = await backendRequest<AdminImpersonationStartOut>(
-    `/api/v1/admin/impersonate/teacher/${teacherId}`,
+    `/api/v1/admin/impersonate/teacher/${teacherId}?view_mode=${viewMode}`,
     {
       method: "POST",
     },
