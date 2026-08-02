@@ -11548,6 +11548,23 @@ button.danger:focus-visible {
   color: #243a55;
 }
 
+.statement-attendance-block {
+  border-top: 1px solid #e4e9f1;
+  padding-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.statement-attendance-list {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.statement-attendance-empty {
+  margin: 0;
+  font-size: 12px;
+}
+
 .statement-validation-actions {
   display: grid;
   gap: 10px;

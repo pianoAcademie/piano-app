@@ -35,6 +35,10 @@ type StatementServiceRow = {
   amountHt: string;
   vat: string;
   totalTtc: string;
+  attendance: Array<{
+    studentName: string;
+    status: string;
+  }>;
 };
 
 function profTabHref(tab: string): string {
@@ -55,6 +59,7 @@ function formatDateLabel(value: string, language: UiLanguage): string {
     return value;
   }
   return parsed.toLocaleDateString(localeForUiLanguage(language), {
+    timeZone: "Europe/Paris",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -67,9 +72,27 @@ function formatTimeLabel(value: string, language: UiLanguage): string {
     return "-";
   }
   return parsed.toLocaleTimeString(localeForUiLanguage(language), {
+    timeZone: "Europe/Paris",
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function attendanceLabel(rawStatus: string, language: UiLanguage): string {
+  const normalized = rawStatus.trim().toUpperCase();
+  if (normalized === "ATTENDED") return uiText(language, "teacher.attendance_attended");
+  if (normalized === "NO_SHOW") return uiText(language, "teacher.attendance_no_show");
+  if (normalized === "EXCUSED_ABSENCE") return uiText(language, "teacher.attendance_excused_absence");
+  if (normalized === "BOOKED") return uiText(language, "teacher.attendance_booked");
+  return rawStatus || "-";
+}
+
+function attendanceTone(rawStatus: string): string {
+  const normalized = rawStatus.trim().toUpperCase();
+  if (normalized === "ATTENDED") return "status-ok";
+  if (normalized === "BOOKED") return "status-warn";
+  if (normalized === "NO_SHOW") return "status-error";
+  return "status-off";
 }
 
 function safeNumber(value: unknown, fallback = 0): number {
@@ -149,6 +172,7 @@ function flattenServices(statements: TeacherStatementOut[], language: UiLanguage
           const rowId = `${statement.payor_legal_entity_id}:${String(record.session_id ?? "line")}:${index}`;
           const rawModality = String(record.modality ?? "").trim();
           const localizedModality = rawModality ? modeLabel(rawModality, language) : "";
+          const rawAttendance = Array.isArray(record.attendance) ? record.attendance : [];
           out.push({
             rowId,
             payorName: statement.payor_legal_entity_name,
@@ -162,6 +186,15 @@ function flattenServices(statements: TeacherStatementOut[], language: UiLanguage
             amountHt,
             vat,
             totalTtc,
+            attendance: rawAttendance
+              .map((rawRow) => {
+                const attendanceRow = (rawRow ?? {}) as Record<string, unknown>;
+                return {
+                  studentName: String(attendanceRow.student_name ?? "-").trim() || "-",
+                  status: String(attendanceRow.status ?? "").trim(),
+                };
+              })
+              .sort((a, b) => a.studentName.localeCompare(b.studentName, localeForUiLanguage(language))),
           });
         });
       } else {
@@ -180,6 +213,7 @@ function flattenServices(statements: TeacherStatementOut[], language: UiLanguage
           amountHt,
           vat: (safeNumber(totalTtc) - safeNumber(amountHt)).toFixed(2),
           totalTtc,
+          attendance: [],
         });
       }
     }
@@ -296,6 +330,7 @@ export default async function TeacherStatementsPage({
   const globalStatus = statusValues[0] ? statusLabel(statusValues[0], language) : t("teacher.statement_status_to_verify");
   const globalStatusTone = statusValues[0] ? statusTone(statusValues[0]) : "status-off";
   const billingUnlocked = isValidatedForBilling(statusValues);
+  const attendanceComplete = statements.length > 0 && statements.every((statement) => statement.attendance_complete);
 
   const impersonationClaims = readPortalImpersonationClaims();
   const isImpersonating = Boolean(impersonationClaims?.imp);
@@ -490,6 +525,12 @@ export default async function TeacherStatementsPage({
             <small className="muted">{t("common.ttc")}</small>
             <strong>{totalTtc} EUR</strong>
           </div>
+          <div>
+            <small className="muted">{t("teacher.student_attendance")}</small>
+            <strong className={`status-pill ${attendanceComplete ? "status-ok" : "status-warn"}`}>
+              {attendanceComplete ? t("teacher.attendance_complete") : t("teacher.attendance_incomplete")}
+            </strong>
+          </div>
         </div>
       </article>
 
@@ -530,6 +571,23 @@ export default async function TeacherStatementsPage({
                     <small>{t("common.ht")}: <strong>{row.amountHt} EUR</strong></small>
                     <small>{t("common.vat")}: <strong>{row.vat} EUR</strong></small>
                     <small>{t("common.ttc")}: <strong>{row.totalTtc} EUR</strong></small>
+                  </div>
+                  <div className="statement-attendance-block">
+                    <small className="muted">{t("teacher.student_attendance")}</small>
+                    {row.attendance.length === 0 ? (
+                      <p className="muted statement-attendance-empty">{t("teacher.no_student_registered")}</p>
+                    ) : (
+                      <div className="row statement-attendance-list">
+                        {row.attendance.map((attendanceRow, attendanceIndex) => (
+                          <span
+                            key={`${row.rowId}-${attendanceRow.studentName}-${attendanceIndex}`}
+                            className={`status-pill ${attendanceTone(attendanceRow.status)}`}
+                          >
+                            {attendanceRow.studentName} · {attendanceLabel(attendanceRow.status, language)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </article>
               );
