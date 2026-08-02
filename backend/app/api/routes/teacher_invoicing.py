@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import csv
+import re
+import unicodedata
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from io import StringIO
@@ -233,6 +235,13 @@ def _quantize(value: Decimal) -> Decimal:
 
 def _format_money(value: Decimal | None) -> str:
     return f"{_quantize(value or Decimal('0'))}"
+
+
+def _safe_filename_component(value: str, *, fallback: str = "professeur") -> str:
+    normalized = unicodedata.normalize("NFKD", (value or "").strip())
+    ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
+    safe_value = re.sub(r"[^A-Za-z0-9]+", "_", ascii_value).strip("_")
+    return safe_value[:100] or fallback
 
 
 def _delivery_mode_label(mode: DeliveryMode, *, language: str | None = None) -> str:
@@ -990,7 +999,10 @@ def export_admin_teacher_statement_month_pdf(
         language=_teacher_language(current_user),
     )
     db.commit()
-    file_name = f"releve_heures_{year}_{month:02d}.pdf"
+    professor_file_label = _safe_filename_component(
+        f"{(professor.last_name or '').strip()}_{(professor.first_name or '').strip()}"
+    )
+    file_name = f"releve_heures_{professor_file_label}_{year}-{month:02d}.pdf"
     return Response(
         content=content,
         media_type="application/pdf",

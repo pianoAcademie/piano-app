@@ -15,13 +15,16 @@ from pypdf import PdfReader
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.api.routes.teacher_invoicing import _render_statement_csv, _session_attendance_csv_label
+from app.api.routes.teacher_invoicing import _render_statement_csv, _safe_filename_component, _session_attendance_csv_label
 from app.services.invoice_documents import CompanyIdentity
 from app.services.teacher_invoicing import ComputedStatement, ComputedStatementLine, month_bounds_utc
 from app.services.teacher_statement_documents import render_teacher_statement_pdf
 
 
 class TeacherMonthlyStatementTests(unittest.TestCase):
+    def test_pdf_filename_component_is_portable(self) -> None:
+        self.assertEqual(_safe_filename_component("Dûpont-Léa / Martin"), "Dupont_Lea_Martin")
+
     def test_month_bounds_follow_paris_summer_time(self) -> None:
         start, end = month_bounds_utc(year=2026, month=7)
 
