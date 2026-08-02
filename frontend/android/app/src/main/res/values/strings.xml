@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Piano Academie Professeur</string>
+    <string name="title_activity_main">Piano Academie Professeur</string>
+    <string name="package_name">com.pianoacademie.professeur</string>
+    <string name="custom_url_scheme">com.pianoacademie.professeur</string>
+</resources>

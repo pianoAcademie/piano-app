@@ -8,10 +8,15 @@
     "start": "next start -p 3000",
     "mobile:sync:client": "MOBILE_APP_TARGET=client cap sync ios",
     "mobile:sync:prof": "MOBILE_APP_TARGET=prof cap sync ios",
+    "mobile:sync:prof:android": "MOBILE_APP_TARGET=prof cap sync android",
     "mobile:prepare:client": "node scripts/prepare-ios-target.mjs client",
     "mobile:prepare:prof": "node scripts/prepare-ios-target.mjs prof",
     "mobile:open:client": "MOBILE_APP_TARGET=client cap open ios",
-    "mobile:open:prof": "MOBILE_APP_TARGET=prof cap open ios"
+    "mobile:open:prof": "MOBILE_APP_TARGET=prof cap open ios",
+    "mobile:open:prof:android": "MOBILE_APP_TARGET=prof cap open android",
+    "mobile:archive:prof:ios": "npm run mobile:sync:prof && npm run mobile:prepare:prof && xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Release -destination generic/platform=iOS -archivePath build/PianoAcademieProfesseur.xcarchive -allowProvisioningUpdates archive",
+    "mobile:bundle:prof:android": "npm run mobile:sync:prof:android && cd android && ./gradlew bundleRelease",
+    "mobile:verify:prof": "node scripts/verify-prof-mobile-release.mjs"
   },
   "dependencies": {
     "@tiptap/extension-font-family": "^2.11.5",
@@ -28,9 +33,10 @@
     "read-excel-file": "^5.8.8"
   },
   "devDependencies": {
-    "@capacitor/cli": "^7.6.5",
-    "@capacitor/core": "^7.6.5",
-    "@capacitor/ios": "^7.6.5",
+    "@capacitor/android": "8.4.2",
+    "@capacitor/cli": "8.4.2",
+    "@capacitor/core": "8.4.2",
+    "@capacitor/ios": "8.4.2",
     "@types/node": "20.14.12",
     "@types/react": "18.3.3",
     "@types/react-dom": "18.3.0",

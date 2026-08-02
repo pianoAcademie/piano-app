@@ -2,6 +2,8 @@ const professorManifest = {
   name: "Piano Academie Professeur",
   short_name: "PA Prof",
   description: "Espace professeur Piano Academie",
+  lang: "fr",
+  categories: ["education", "productivity"],
   id: "/prof",
   start_url: "/prof?source=mobile_app",
   scope: "/",

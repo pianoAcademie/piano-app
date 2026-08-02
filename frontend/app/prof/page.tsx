@@ -16,6 +16,7 @@ import DayEventsDrawer from "../../components/planning/day-events-drawer";
 import MonthDayCard from "../../components/planning/month-day-card";
 import PortalImpersonationBanner from "../../components/portal-impersonation-banner";
 import ActionCard from "../../components/teacher-ui/action-card";
+import AppInstallCard from "../../components/teacher-ui/app-install-card";
 import AlertCard from "../../components/teacher-ui/alert-card";
 import BottomTabs from "../../components/teacher-ui/bottom-tabs";
 import ProfessorHelpAssistant from "../../components/teacher-ui/help-assistant";
@@ -715,6 +716,9 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
             <Link className="teacher-header-menu-link" href={buildProfHref({ tab: "finance", agendaView, agendaDate })}>
               {uiText(language, "teacher.balance")}
             </Link>
+            <Link className="teacher-header-menu-link" href={`${buildProfHref({ tab: "profile", agendaView, agendaDate })}#prof-mobile-app`}>
+              {language === "en" ? "Install the app" : "Installer l’application"}
+            </Link>
             <form action={logoutAction}>
               <button className="ghost teacher-header-menu-btn" type="submit">
                 {uiText(language, "common.logout")}
@@ -1283,6 +1287,8 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
       {currentTab === "profile" ? (
         <section className="teacher-section-stack">
+          <AppInstallCard language={language} />
+
           <SectionAccordion title={t("teacher.my_profile")} subtitle={t("teacher.main_information")} defaultOpen={true}>
             <div className="list teacher-list-compact">
               <ListRow left={t("teacher.name")} right={fullName || "-"} />

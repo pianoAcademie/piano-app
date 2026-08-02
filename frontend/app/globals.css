@@ -11120,6 +11120,117 @@ button.danger:focus-visible {
   gap: 12px;
 }
 
+.teacher-mobile-app-card {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 14px;
+  padding: 16px;
+  scroll-margin-top: 16px;
+  border-color: #e1bd7d;
+  background: linear-gradient(145deg, #211812 0%, #322319 42%, #fff8eb 42.2%, #fffaf2 100%);
+}
+
+.teacher-mobile-app-icon {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  align-self: start;
+  border: 1px solid rgba(245, 196, 108, 0.7);
+  border-radius: 16px;
+  color: #f3c469;
+  background: #050403;
+  font-family: Georgia, serif;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  box-shadow: 0 8px 20px rgba(27, 17, 10, 0.16);
+  overflow: hidden;
+}
+
+.teacher-mobile-app-icon img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.teacher-mobile-app-content {
+  min-width: 0;
+  display: grid;
+  gap: 9px;
+}
+
+.teacher-mobile-app-content h2,
+.teacher-mobile-app-content p {
+  margin: 0;
+}
+
+.teacher-mobile-app-content h2 {
+  font-size: 19px;
+  color: #241b16;
+}
+
+.teacher-mobile-app-content p {
+  max-width: 760px;
+  color: #5d5146;
+  line-height: 1.45;
+}
+
+.teacher-mobile-app-eyebrow {
+  color: #9b641d;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.teacher-mobile-app-button {
+  width: fit-content;
+  min-height: 44px;
+}
+
+.teacher-mobile-app-instructions,
+.teacher-mobile-app-installed {
+  max-width: 760px;
+  padding: 10px 12px;
+  border: 1px solid #e4c58e;
+  border-radius: 10px;
+  background: #fff7e6;
+  color: #513816;
+  line-height: 1.45;
+}
+
+.teacher-mobile-app-installed {
+  display: grid;
+  gap: 3px;
+  border-color: #b9dfc3;
+  background: #edf9f0;
+  color: #245b31;
+}
+
+@media (max-width: 620px) {
+  .teacher-mobile-app-card {
+    grid-template-columns: 52px minmax(0, 1fr);
+    padding: 14px;
+    background: linear-gradient(145deg, #211812 0%, #322319 26%, #fff8eb 26.2%, #fffaf2 100%);
+  }
+
+  .teacher-mobile-app-icon {
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
+    font-size: 18px;
+  }
+
+  .teacher-mobile-app-content {
+    grid-column: 1 / -1;
+  }
+
+  .teacher-mobile-app-button {
+    width: 100%;
+  }
+}
+
 .teacher-action-card {
   display: grid;
   gap: 10px;
