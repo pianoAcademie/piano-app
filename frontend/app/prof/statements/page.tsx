@@ -12,6 +12,7 @@ import {
 } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
 import { getPortalReturnTo, getPortalToken, readPortalImpersonationClaims } from "../../../lib/auth-cookies";
+import { buildProfessorHelpLabels } from "../../../lib/professor-help-labels";
 import AlertCard from "../../../components/teacher-ui/alert-card";
 import BottomTabs from "../../../components/teacher-ui/bottom-tabs";
 import ProfessorHelpAssistant from "../../../components/teacher-ui/help-assistant";
@@ -776,7 +777,7 @@ export default async function TeacherStatementsPage({
           </a>
         </article>
       </section>
-      <ProfessorHelpAssistant language={language} />
+      <ProfessorHelpAssistant language={language} interfaceLabels={buildProfessorHelpLabels(language)} />
     </section>
   );
 }

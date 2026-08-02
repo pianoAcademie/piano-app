@@ -46,8 +46,8 @@ const COPY: Record<UiLanguage, HelpCopy> = {
     quickQuestions: "Questions fréquentes",
     results: "Résultats",
     noResultTitle: "Je n’ai pas encore cette réponse.",
-    noResultBody: "Vous pouvez envoyer votre question à l’administration depuis la messagerie professeur.",
-    contactAdmin: "Écrire à l’administration",
+    noResultBody: "Pour une question liée à un cours, ouvrez ce cours dans le planning et utilisez la note interne destinée à l’administration.",
+    contactAdmin: "Ouvrir le planning",
     steps: "Étapes",
   },
   en: {
@@ -61,8 +61,8 @@ const COPY: Record<UiLanguage, HelpCopy> = {
     quickQuestions: "Common questions",
     results: "Results",
     noResultTitle: "I do not have this answer yet.",
-    noResultBody: "You can send your question to the administration from the teacher messaging area.",
-    contactAdmin: "Contact administration",
+    noResultBody: "For a lesson-related question, open the lesson in the schedule and use the internal note for the administration.",
+    contactAdmin: "Open the schedule",
     steps: "Steps",
   },
 };
@@ -77,12 +77,12 @@ const TOPICS: Record<UiLanguage, HelpTopic[]> = {
       keywords: ["présence", "présences", "appel", "élève", "cours", "absent", "attendance"],
       intro: "La saisie se fait directement depuis la liste des présences manquantes ou depuis le cours dans le planning.",
       steps: [
-        "Ouvrez l’onglet À faire et choisissez un cours dans Présences à renseigner.",
-        "Pour chaque élève, sélectionnez Présent, Absence excusée ou Absence non excusée.",
-        "Le statut est enregistré dès que vous appuyez sur le bouton. Lorsque tous les élèves sont renseignés, le cours disparaît de la liste À faire.",
+        "Ouvrez l’onglet {{todo}} puis, dans {{today_title}}, sélectionnez le cours marqué {{attendance_booked}}.",
+        "Pour chaque élève, sélectionnez {{present}}, {{excused}} ou {{unexcused}}.",
+        "Le statut est enregistré dès que vous appuyez sur le bouton. Lorsque tous les élèves sont renseignés, le cours disparaît de {{today_title}}.",
       ],
       href: "/prof?tab=overview",
-      action: "Ouvrir les présences à renseigner",
+      action: "Ouvrir {{todo}}",
     },
     {
       id: "student-absence",
@@ -92,12 +92,12 @@ const TOPICS: Record<UiLanguage, HelpTopic[]> = {
       keywords: ["absence", "élève", "excusée", "non excusée", "absent", "présence"],
       intro: "L’absence d’un élève se renseigne dans la feuille de présence du cours concerné.",
       steps: [
-        "Ouvrez le cours depuis À faire ou depuis le Planning.",
+        "Ouvrez le cours depuis {{todo}} ou depuis {{planning}}.",
         "Repérez l’élève concerné dans la liste des inscrits.",
-        "Choisissez Absence excusée si l’absence a été signalée, sinon Absence non excusée.",
+        "Choisissez {{excused}} si l’absence a été signalée, sinon {{unexcused}}.",
       ],
       href: "/prof?tab=overview",
-      action: "Ouvrir mes tâches",
+      action: "Ouvrir {{todo}}",
     },
     {
       id: "teacher-absence",
@@ -107,10 +107,10 @@ const TOPICS: Record<UiLanguage, HelpTopic[]> = {
       keywords: ["mon absence", "professeur absent", "annuler cours", "annulation", "prévenir élèves", "absence prof"],
       intro: "La déclaration annule le cours concerné. Vous pouvez prévenir les élèves au même moment.",
       steps: [
-        "Ouvrez le Planning, puis le cours concerné.",
-        "Dépliez la rubrique Absence du professeur.",
-        "Choisissez si les élèves doivent être prévenus et vérifiez le message.",
-        "Ouvrez la confirmation, puis appuyez sur Confirmer l’absence du professeur.",
+        "Ouvrez {{planning}}, puis le cours concerné.",
+        "Dépliez la rubrique {{teacher_absence}}.",
+        "Cochez {{notify_students}} si nécessaire, puis vérifiez le sujet et le message.",
+        "Ouvrez {{declare_teacher_absence}}, puis appuyez sur {{confirm_teacher_absence}}.",
       ],
       note: "Si la rubrique n’apparaît pas, vous n’avez pas l’autorisation de modifier ce cours : contactez l’administration.",
       href: "/prof?tab=planning",
@@ -119,15 +119,15 @@ const TOPICS: Record<UiLanguage, HelpTopic[]> = {
     {
       id: "validate-statement",
       icon: "€",
-      title: "Valider mon relevé",
-      question: "Comment vérifier et valider mon relevé ?",
+      title: "{{approve_statement}}",
+      question: "Comment vérifier et approuver mon relevé ?",
       keywords: ["relevé", "valider", "validation", "heures", "prestations", "montant", "facturation"],
       intro: "Le relevé mensuel récapitule vos cours, les présences, les durées et les montants à facturer.",
       steps: [
-        "Ouvrez Relevés et sélectionnez le mois avec les boutons Mois précédent ou Mois suivant.",
+        "Ouvrez {{statements}} et sélectionnez le mois avec {{previous_month}} ou {{next_month}}.",
         "Vérifiez les lignes de cours, les présences, les durées et les montants HT.",
-        "Utilisez Signaler un problème ou Ajouter une prestation manquante si une correction est nécessaire.",
-        "Lorsque tout est correct, appuyez sur Valider mon relevé dans la rubrique Validation du relevé.",
+        "Utilisez {{report_issue}} ou {{add_missing_service}} si une correction est nécessaire.",
+        "Lorsque tout est correct, dans {{statement_validation}}, appuyez sur {{approve_statement}}.",
       ],
       note: "La facturation n’est disponible qu’après validation du relevé.",
       href: "/prof/statements",
@@ -141,10 +141,10 @@ const TOPICS: Record<UiLanguage, HelpTopic[]> = {
       keywords: ["facture", "facturer", "comptabilité", "envoyer", "siret", "iban", "relevé"],
       intro: "Après validation du relevé, la rubrique Facturation devient disponible.",
       steps: [
-        "Vérifiez d’abord que vos informations professionnelles, votre SIRET et votre IBAN sont à jour dans Profil.",
-        "Dans Relevés, validez le mois concerné.",
-        "Choisissez Générer la facture, ou Facturation externe si vous utilisez votre propre outil.",
-        "Vérifiez le PDF, puis appuyez sur Envoyer à la comptabilité.",
+        "Dans {{statements}}, ouvrez le mois concerné et appuyez sur {{approve_statement}}.",
+        "Dans {{billing}}, choisissez {{generate_invoice}}, ou {{external_billing}} si vous utilisez votre propre outil.",
+        "Vérifiez la facture générée, notamment le SIRET et l’IBAN affichés.",
+        "Lorsque tout est correct, appuyez sur {{send_to_accounting}}. Si le SIRET ou l’IBAN est incorrect, contactez d’abord l’administration.",
       ],
       href: "/prof/statements",
       action: "Ouvrir la facturation",
@@ -157,9 +157,9 @@ const TOPICS: Record<UiLanguage, HelpTopic[]> = {
       keywords: ["zoom", "lien", "cours en ligne", "online", "visioconférence", "visio"],
       intro: "Le lien du cours en ligne est associé au créneau dans le planning.",
       steps: [
-        "Ouvrez le Planning et sélectionnez le cours concerné.",
-        "Dépliez Détails du créneau.",
-        "Dans la ligne Lien Zoom, appuyez sur Ouvrir le lien.",
+        "Ouvrez {{planning}} et sélectionnez le cours concerné.",
+        "Dépliez {{slot_details}}.",
+        "Dans la ligne {{zoom_link}}, appuyez sur {{open_link}}.",
       ],
       note: "Si aucun lien n’est affiché pour un cours en ligne, contactez l’administration avant le début du cours.",
       href: "/prof?tab=planning",
@@ -168,17 +168,17 @@ const TOPICS: Record<UiLanguage, HelpTopic[]> = {
     {
       id: "contact-admin",
       icon: "✉",
-      title: "Contacter l’administration",
-      question: "Comment envoyer un message à l’administration ?",
+      title: "Envoyer une note à l’administration",
+      question: "Comment envoyer une note à l’administration au sujet d’un cours ?",
       keywords: ["message", "administration", "aide", "problème", "contacter", "écrire"],
-      intro: "La messagerie professeur permet de conserver votre échange dans l’application.",
+      intro: "La note est liée au cours et n’est jamais envoyée aux élèves ni aux parents.",
       steps: [
-        "Ouvrez Messages.",
-        "Choisissez Administration comme destinataire.",
-        "Rédigez l’objet et votre message, puis envoyez-le.",
+        "Ouvrez {{planning}} et sélectionnez le cours concerné.",
+        "Dépliez {{admin_note_section}}.",
+        "Renseignez {{subject}} et {{internal_note}}, puis appuyez sur {{save_note}}.",
       ],
-      href: "/prof?tab=messages",
-      action: "Ouvrir la messagerie",
+      href: "/prof?tab=planning",
+      action: "Ouvrir {{planning}}",
     },
   ],
   en: [
@@ -190,12 +190,12 @@ const TOPICS: Record<UiLanguage, HelpTopic[]> = {
       keywords: ["attendance", "student", "lesson", "present", "absent", "register"],
       intro: "You can record attendance from the missing-attendance list or directly from a lesson in the schedule.",
       steps: [
-        "Open To do and select a lesson under Attendance to complete.",
-        "For each student, choose Present, Excused absence or Unexcused absence.",
-        "The status is saved as soon as you press the button. Once all students are recorded, the lesson disappears from the To do list.",
+        "Open {{todo}} and, under {{today_title}}, select the lesson marked {{attendance_booked}}.",
+        "For each student, choose {{present}}, {{excused}} or {{unexcused}}.",
+        "The status is saved as soon as you press the button. Once all students are recorded, the lesson disappears from {{today_title}}.",
       ],
       href: "/prof?tab=overview",
-      action: "Open attendance to complete",
+      action: "Open {{todo}}",
     },
     {
       id: "student-absence",
@@ -205,12 +205,12 @@ const TOPICS: Record<UiLanguage, HelpTopic[]> = {
       keywords: ["absence", "student", "excused", "unexcused", "absent", "attendance"],
       intro: "A student absence is recorded in the attendance sheet for the relevant lesson.",
       steps: [
-        "Open the lesson from To do or from the Schedule.",
+        "Open the lesson from {{todo}} or from {{planning}}.",
         "Find the relevant student in the enrolment list.",
-        "Choose Excused absence if it was reported, otherwise choose Unexcused absence.",
+        "Choose {{excused}} if it was reported, otherwise choose {{unexcused}}.",
       ],
       href: "/prof?tab=overview",
-      action: "Open my tasks",
+      action: "Open {{todo}}",
     },
     {
       id: "teacher-absence",
@@ -220,10 +220,10 @@ const TOPICS: Record<UiLanguage, HelpTopic[]> = {
       keywords: ["my absence", "teacher absent", "cancel lesson", "cancellation", "notify students"],
       intro: "Reporting your absence cancels the relevant lesson. You can notify the students at the same time.",
       steps: [
-        "Open the Schedule, then select the relevant lesson.",
-        "Expand the Teacher absence section.",
-        "Choose whether students should be notified and check the message.",
-        "Open the confirmation and press Confirm teacher absence.",
+        "Open {{planning}}, then select the relevant lesson.",
+        "Expand {{teacher_absence}}.",
+        "Select {{notify_students}} if required, then check the subject and message.",
+        "Open {{declare_teacher_absence}}, then press {{confirm_teacher_absence}}.",
       ],
       note: "If the section is not shown, you are not allowed to edit this lesson. Please contact the administration.",
       href: "/prof?tab=planning",
@@ -232,15 +232,15 @@ const TOPICS: Record<UiLanguage, HelpTopic[]> = {
     {
       id: "validate-statement",
       icon: "€",
-      title: "Approve my statement",
+      title: "{{approve_statement}}",
       question: "How do I check and approve my statement?",
       keywords: ["statement", "approve", "validate", "hours", "services", "amount", "billing"],
       intro: "The monthly statement summarises your lessons, attendance, durations and billable amounts.",
       steps: [
-        "Open Statements and select the month using Previous month or Next month.",
+        "Open {{statements}} and select the month using {{previous_month}} or {{next_month}}.",
         "Check the lesson lines, attendance, durations and amounts excluding VAT.",
-        "Use Report an issue or Add a missing service if a correction is required.",
-        "When everything is correct, press Approve my statement in the Statement approval section.",
+        "Use {{report_issue}} or {{add_missing_service}} if a correction is required.",
+        "When everything is correct, press {{approve_statement}} under {{statement_validation}}.",
       ],
       note: "Billing only becomes available after the statement has been approved.",
       href: "/prof/statements",
@@ -254,10 +254,10 @@ const TOPICS: Record<UiLanguage, HelpTopic[]> = {
       keywords: ["invoice", "billing", "accounting", "send", "siret", "iban", "statement"],
       intro: "After the statement is approved, the Billing section becomes available.",
       steps: [
-        "First check that your business details, SIRET and IBAN are up to date under Profile.",
-        "Open Statements and approve the relevant month.",
-        "Choose Generate invoice, or External billing if you use your own invoicing tool.",
-        "Check the PDF, then press Send to accounting.",
+        "Under {{statements}}, open the relevant month and press {{approve_statement}}.",
+        "Under {{billing}}, choose {{generate_invoice}}, or {{external_billing}} if you use your own software.",
+        "Check the generated invoice, including the displayed SIRET and IBAN.",
+        "When everything is correct, press {{send_to_accounting}}. If the SIRET or IBAN is incorrect, contact the administration first.",
       ],
       href: "/prof/statements",
       action: "Open billing",
@@ -270,9 +270,9 @@ const TOPICS: Record<UiLanguage, HelpTopic[]> = {
       keywords: ["zoom", "link", "online lesson", "video", "videoconference"],
       intro: "The online lesson link is attached to the slot in the schedule.",
       steps: [
-        "Open the Schedule and select the relevant lesson.",
-        "Expand Slot details.",
-        "On the Zoom link row, press Open link.",
+        "Open {{planning}} and select the relevant lesson.",
+        "Expand {{slot_details}}.",
+        "On the {{zoom_link}} row, press {{open_link}}.",
       ],
       note: "If no link is shown for an online lesson, contact the administration before the lesson starts.",
       href: "/prof?tab=planning",
@@ -281,17 +281,17 @@ const TOPICS: Record<UiLanguage, HelpTopic[]> = {
     {
       id: "contact-admin",
       icon: "✉",
-      title: "Contact administration",
-      question: "How do I send a message to the administration?",
+      title: "Send a note to the administration",
+      question: "How do I send the administration a note about a lesson?",
       keywords: ["message", "administration", "help", "problem", "contact", "write"],
-      intro: "Teacher messaging keeps your conversation available in the application.",
+      intro: "The note is linked to the lesson and is never sent to students or parents.",
       steps: [
-        "Open Messages.",
-        "Choose Administration as the recipient.",
-        "Write the subject and message, then send it.",
+        "Open {{planning}} and select the relevant lesson.",
+        "Expand {{admin_note_section}}.",
+        "Complete {{subject}} and {{internal_note}}, then press {{save_note}}.",
       ],
-      href: "/prof?tab=messages",
-      action: "Open messaging",
+      href: "/prof?tab=planning",
+      action: "Open {{planning}}",
     },
   ],
 };
@@ -304,9 +304,37 @@ function normalizeSearch(value: string): string {
     .trim();
 }
 
-export default function ProfessorHelpAssistant({ language }: { language: UiLanguage }): JSX.Element {
+function withInterfaceLabels(value: string, interfaceLabels: Record<string, string>): string {
+  return Object.entries(interfaceLabels).reduce(
+    (result, [token, label]) => result.replaceAll(`{{${token}}}`, `« ${label} »`),
+    value,
+  );
+}
+
+function hydrateHelpTopic(topic: HelpTopic, interfaceLabels: Record<string, string>): HelpTopic {
+  return {
+    ...topic,
+    title: withInterfaceLabels(topic.title, interfaceLabels),
+    question: withInterfaceLabels(topic.question, interfaceLabels),
+    intro: withInterfaceLabels(topic.intro, interfaceLabels),
+    steps: topic.steps.map((step) => withInterfaceLabels(step, interfaceLabels)),
+    note: topic.note ? withInterfaceLabels(topic.note, interfaceLabels) : undefined,
+    action: withInterfaceLabels(topic.action, interfaceLabels),
+  };
+}
+
+export default function ProfessorHelpAssistant({
+  language,
+  interfaceLabels,
+}: {
+  language: UiLanguage;
+  interfaceLabels: Record<string, string>;
+}): JSX.Element {
   const copy = COPY[language];
-  const topics = TOPICS[language];
+  const topics = useMemo(
+    () => TOPICS[language].map((topic) => hydrateHelpTopic(topic, interfaceLabels)),
+    [interfaceLabels, language],
+  );
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -413,7 +441,7 @@ export default function ProfessorHelpAssistant({ language }: { language: UiLangu
                   <div className="prof-help-empty">
                     <strong>{copy.noResultTitle}</strong>
                     <p>{copy.noResultBody}</p>
-                    <Link href="/prof?tab=messages" onClick={close}>{copy.contactAdmin} →</Link>
+                    <Link href="/prof?tab=planning" onClick={close}>{copy.contactAdmin} →</Link>
                   </div>
                 )}
               </>

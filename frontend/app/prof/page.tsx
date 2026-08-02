@@ -27,6 +27,7 @@ import StatCard from "../../components/teacher-ui/stat-card";
 import StatChip from "../../components/teacher-ui/stat-chip";
 import StickyActionBar from "../../components/teacher-ui/sticky-action-bar";
 import { getPortalReturnTo, getPortalToken, readPortalImpersonationClaims } from "../../lib/auth-cookies";
+import { buildProfessorHelpLabels } from "../../lib/professor-help-labels";
 import type { PlanningEventChipData } from "../../components/planning/month-event-chip";
 import type {
   ProfessorAttendancePendingOut,
@@ -1675,7 +1676,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
           </article>
         </section>
       ) : null}
-      <ProfessorHelpAssistant language={language} />
+      <ProfessorHelpAssistant language={language} interfaceLabels={buildProfessorHelpLabels(language)} />
     </main>
   );
 }

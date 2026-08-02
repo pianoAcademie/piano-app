@@ -9,6 +9,7 @@ import {
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
 import { getPortalReturnTo, getPortalToken, readPortalImpersonationClaims } from "../../../../lib/auth-cookies";
+import { buildProfessorHelpLabels } from "../../../../lib/professor-help-labels";
 import ActionCard from "../../../../components/teacher-ui/action-card";
 import AlertCard from "../../../../components/teacher-ui/alert-card";
 import BottomTabs from "../../../../components/teacher-ui/bottom-tabs";
@@ -182,7 +183,7 @@ export default async function TeacherInvoiceDetailPage({
           ))}
         </div>
       </SectionAccordion>
-      <ProfessorHelpAssistant language={language} />
+      <ProfessorHelpAssistant language={language} interfaceLabels={buildProfessorHelpLabels(language)} />
     </section>
   );
 }
