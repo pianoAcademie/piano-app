@@ -168,6 +168,9 @@ export default async function AdminTeacherInvoicingStatementsPage({
   const exportHref = professorId
     ? `/admin/teacher-invoicing/statements/export?professor_id=${encodeURIComponent(professorId)}&year=${year}&month=${month}`
     : "";
+  const exportPdfHref = professorId
+    ? `/admin/teacher-invoicing/statements/export-pdf?professor_id=${encodeURIComponent(professorId)}&year=${year}&month=${month}`
+    : "";
 
   return (
     <section className="admin-page-grid">
@@ -210,7 +213,12 @@ export default async function AdminTeacherInvoicingStatementsPage({
                 <p className="statement-title">{selectedProfessor ? `${selectedProfessor.first_name} ${selectedProfessor.last_name}` : t("admin.teacher_invoicing.teacher")}</p>
                 <p className="muted">{t("admin.teacher_invoicing.period_value", { period })}</p>
               </div>
-              {sessions.length > 0 ? <a className="mode-link" href={exportHref}>{t("admin.teacher_invoicing.export_csv")}</a> : null}
+              {sessions.length > 0 ? (
+                <div className="row statement-export-actions">
+                  <a className="mode-link" href={exportPdfHref}>{t("admin.teacher_invoicing.export_pdf")}</a>
+                  <a className="ghost" href={exportHref}>{t("admin.teacher_invoicing.export_csv")}</a>
+                </div>
+              ) : null}
             </div>
           </section>
 

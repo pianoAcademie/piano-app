@@ -975,6 +975,16 @@ def _company_identity(
     )
 
 
+def resolve_company_identity(
+    db: Session,
+    *,
+    legal_entity_id: UUID | None = None,
+    billing_entity: str | None = None,
+) -> CompanyIdentity:
+    """Return the configured legal identity used on official documents."""
+    return _company_identity(db, legal_entity_id=legal_entity_id, billing_entity=billing_entity)
+
+
 def build_company_identity_snapshot(
     db: Session,
     *,

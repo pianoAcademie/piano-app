@@ -11565,6 +11565,11 @@ button.danger:focus-visible {
   font-size: 12px;
 }
 
+.statement-export-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .statement-validation-actions {
   display: grid;
   gap: 10px;
@@ -11732,6 +11737,11 @@ button.danger:focus-visible {
   .statement-service-head {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .statement-export-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .statement-payor-badge {

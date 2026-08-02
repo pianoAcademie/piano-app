@@ -36,11 +36,13 @@ from app.schemas.professor import (
 from app.services.email_delivery import send_email
 from app.services.i18n import normalize_language
 from app.services.messaging_templates import resolve_sender_profile
+from app.services.invoice_documents import resolve_company_identity
 from app.services.teacher_invoice_documents import (
     get_teacher_invoice_template,
     render_teacher_invoice_html,
     render_teacher_invoice_pdf_from_html,
 )
+from app.services.teacher_statement_documents import render_teacher_statement_pdf
 from app.services.teacher_invoicing import (
     ComputedStatement,
     PARIS_TIMEZONE,
@@ -947,6 +949,51 @@ def export_admin_teacher_statement_month_csv(
     return Response(
         content=content,
         media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@router.get("/admin/statements/{professor_id}/{year}/{month}/export.pdf")
+def export_admin_teacher_statement_month_pdf(
+    professor_id: UUID,
+    year: int,
+    month: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> Response:
+    if year < 2000 or year > 2100 or month < 1 or month > 12:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Periode invalide")
+    professor = db.scalar(select(Professor).where(Professor.id == professor_id))
+    if professor is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Professeur introuvable")
+    rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=_teacher_text("statement_not_found_period", current_user=current_user),
+        )
+    computed_rows = [computed for _, computed in rows]
+    identities = {
+        computed.payor_legal_entity_id: resolve_company_identity(
+            db,
+            legal_entity_id=computed.payor_legal_entity_id,
+        )
+        for computed in computed_rows
+    }
+    professor_name = f"{(professor.first_name or '').strip()} {(professor.last_name or '').strip()}".strip()
+    content = render_teacher_statement_pdf(
+        professor_name=professor_name or professor.email,
+        year=year,
+        month=month,
+        statements=computed_rows,
+        identities=identities,
+        language=_teacher_language(current_user),
+    )
+    db.commit()
+    file_name = f"releve_heures_{year}_{month:02d}.pdf"
+    return Response(
+        content=content,
+        media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
 
