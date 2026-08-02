@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from html import escape
+from urllib.parse import urlparse
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -30,6 +32,7 @@ from app.services.notifications.domain.constants import (
     EVENT_BOOKING_REMINDER_DUE,
     EVENT_SLOT_CANCELLED,
     NOTIFICATION_STATUS_PENDING,
+    NOTIFICATION_STATUS_QUEUED,
     NOTIFICATION_STATUS_SKIPPED,
     NOTIFICATION_TYPE_ADMIN_BOOKING_CANCELLATION,
     NOTIFICATION_TYPE_ADMIN_BOOKING_CONFIRMATION,
@@ -244,39 +247,171 @@ def _build_lesson_reminder_email(
 ) -> tuple[str, str]:
     normalized_language = normalize_language(language)
     activity_name = _reminder_activity_name(course_type_name, language=normalized_language)
-    period_label = _reminder_period_label(
-        start_at=start_at,
-        end_at=end_at,
-        timezone_name=timezone_name,
+    normalized_timezone = (timezone_name or "UTC").strip() or "UTC"
+    try:
+        recipient_timezone = ZoneInfo(normalized_timezone)
+    except ZoneInfoNotFoundError:
+        normalized_timezone = "UTC"
+        recipient_timezone = ZoneInfo("UTC")
+    local_start = start_at.astimezone(recipient_timezone)
+    local_end = end_at.astimezone(recipient_timezone)
+
+    english_months = (
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December",
     )
+    french_months = (
+        "janvier", "février", "mars", "avril", "mai", "juin",
+        "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+    )
+    english_weekdays = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+    french_weekdays = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+
     if normalized_language == "en":
         subject = f"Lesson reminder - {activity_name}"
-        lines = [
-            f"Hello {recipient_name},",
-            "",
-            f"This is a reminder for the upcoming lesson: {activity_name}.",
-            f"Student: {student_name}",
-            f"Date and time: {period_label}",
-            f"Location: {location_name}",
-        ]
-        if meeting_link:
-            lines.append(f"Online lesson link: {meeting_link}")
-        lines.extend(["", "Piano Academie"])
-        return subject, "\n".join(lines)
+        eyebrow = "LESSON REMINDER"
+        title = "Your lesson is coming up"
+        greeting = f"Hello {recipient_name},"
+        intro = "Here are the details of the upcoming lesson."
+        student_label = "Student"
+        date_label = "Date"
+        time_label = "Time"
+        location_label = "Location"
+        timezone_label = "Time zone"
+        online_label = "ONLINE LESSON"
+        online_title = "Join your lesson on Zoom"
+        online_help = "Use the button below at the scheduled lesson time."
+        button_label = "Join the Zoom lesson"
+        fallback_label = "If the button does not work, copy this link:"
+        footer = "This is an automatic reminder from Piano Academie."
+        date_value = (
+            f"{english_weekdays[local_start.weekday()]}, {english_months[local_start.month - 1]} "
+            f"{local_start.day}, {local_start.year}"
+        )
+        displayed_location = "Online" if location_name.strip().lower() in {"online", "en ligne"} else location_name
+    else:
+        subject = f"Rappel de cours - {activity_name}"
+        eyebrow = "RAPPEL DE COURS"
+        title = "Votre cours approche"
+        greeting = f"Bonjour {recipient_name},"
+        intro = "Voici les informations de votre prochain cours."
+        student_label = "Élève"
+        date_label = "Date"
+        time_label = "Horaire"
+        location_label = "Lieu"
+        timezone_label = "Fuseau horaire"
+        online_label = "COURS EN LIGNE"
+        online_title = "Rejoignez votre cours sur Zoom"
+        online_help = "Utilisez le bouton ci-dessous à l'heure prévue du cours."
+        button_label = "Rejoindre le cours Zoom"
+        fallback_label = "Si le bouton ne fonctionne pas, copiez ce lien :"
+        footer = "Ceci est un rappel automatique envoyé par Piano Academie."
+        date_value = (
+            f"{french_weekdays[local_start.weekday()]} {local_start.day} "
+            f"{french_months[local_start.month - 1]} {local_start.year}"
+        )
+        displayed_location = "En ligne" if location_name.strip().lower() in {"online", "en ligne"} else location_name
 
-    subject = f"Rappel de cours - {activity_name}"
-    lines = [
-        f"Bonjour {recipient_name},",
-        "",
-        f"Rappel pour le cours à venir : {activity_name}.",
-        f"Élève : {student_name}",
-        f"Date et heure : {period_label}",
-        f"Lieu : {location_name}",
-    ]
+    if local_start.date() == local_end.date():
+        time_value = f"{local_start.strftime('%H:%M')} – {local_end.strftime('%H:%M')}"
+    else:
+        time_value = (
+            f"{local_start.strftime('%H:%M')} – "
+            f"{local_end.strftime('%d/%m/%Y %H:%M')}"
+        )
+
+    safe_meeting_link: str | None = None
     if meeting_link:
-        lines.append(f"Lien du cours en ligne : {meeting_link}")
-    lines.extend(["", "Piano Academie"])
-    return subject, "\n".join(lines)
+        raw_meeting_link = meeting_link.strip()
+        parsed_link = urlparse(raw_meeting_link)
+        if parsed_link.scheme.lower() in {"http", "https"} and parsed_link.netloc:
+            safe_meeting_link = raw_meeting_link
+
+    zoom_block = ""
+    if safe_meeting_link:
+        escaped_link = escape(safe_meeting_link, quote=True)
+        zoom_block = (
+            '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
+            'style="margin:0 0 24px 0;background:#fff7e6;border:2px solid #d9a441;border-radius:14px;">'
+            '<tr><td style="padding:22px;text-align:center;">'
+            f'<div style="font-size:12px;line-height:18px;font-weight:800;letter-spacing:1.2px;color:#8a5a12;">{escape(online_label)}</div>'
+            f'<div style="margin-top:4px;font-size:21px;line-height:28px;font-weight:800;color:#172033;">{escape(online_title)}</div>'
+            f'<div style="margin:8px 0 18px 0;font-size:15px;line-height:22px;color:#5f6673;">{escape(online_help)}</div>'
+            '<table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center"><tr><td '
+            'style="border-radius:9px;background:#c98224;">'
+            f'<a href="{escaped_link}" style="display:inline-block;padding:13px 22px;color:#ffffff;text-decoration:none;font-size:16px;line-height:20px;font-weight:800;">{escape(button_label)}</a>'
+            '</td></tr></table>'
+            f'<div style="margin-top:15px;font-size:12px;line-height:18px;color:#6f6557;">{escape(fallback_label)}<br>'
+            f'<a href="{escaped_link}" style="color:#8a5a12;text-decoration:underline;word-break:break-all;">{escaped_link}</a></div>'
+            '</td></tr></table>'
+        )
+
+    body = (
+        '<!doctype html><html><body style="margin:0;padding:0;background:#f2f4f7;">'
+        '<div style="display:none;max-height:0;overflow:hidden;opacity:0;">'
+        f'{escape(activity_name)} · {escape(date_value)} · {escape(time_value)}</div>'
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f2f4f7;">'
+        '<tr><td align="center" style="padding:24px 12px;">'
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
+        'style="max-width:620px;background:#ffffff;border:1px solid #e3e7ee;border-radius:16px;overflow:hidden;">'
+        '<tr><td style="padding:28px 30px;background:#172033;">'
+        '<div style="font-size:13px;line-height:18px;font-weight:800;letter-spacing:1.5px;color:#e4b85d;">PIANO ACADEMIE</div>'
+        f'<div style="margin-top:8px;font-size:12px;line-height:18px;font-weight:700;letter-spacing:1px;color:#e4b85d;">{escape(eyebrow)}</div>'
+        f'<div style="margin-top:5px;font-size:28px;line-height:35px;font-weight:800;color:#ffffff;">{escape(title)}</div>'
+        '</td></tr>'
+        '<tr><td style="padding:28px 30px 30px 30px;">'
+        f'<p style="margin:0 0 10px 0;font-size:17px;line-height:25px;color:#172033;">{escape(greeting)}</p>'
+        f'<p style="margin:0 0 22px 0;font-size:15px;line-height:23px;color:#5f6673;">{escape(intro)}</p>'
+        f'{zoom_block}'
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
+        'style="margin:0;background:#f8fafc;border:1px solid #e3e7ee;border-radius:12px;">'
+        '<tr><td colspan="2" style="padding:18px 20px 12px 20px;font-size:20px;line-height:27px;font-weight:800;color:#172033;">'
+        f'{escape(activity_name)}</td></tr>'
+        f'<tr><td style="padding:8px 12px 8px 20px;width:34%;font-size:13px;font-weight:700;color:#667085;">{escape(student_label)}</td>'
+        f'<td style="padding:8px 20px 8px 12px;font-size:15px;font-weight:700;color:#172033;">{escape(student_name)}</td></tr>'
+        f'<tr><td style="padding:8px 12px 8px 20px;font-size:13px;font-weight:700;color:#667085;">{escape(date_label)}</td>'
+        f'<td style="padding:8px 20px 8px 12px;font-size:15px;color:#172033;">{escape(date_value)}</td></tr>'
+        f'<tr><td style="padding:8px 12px 8px 20px;font-size:13px;font-weight:700;color:#667085;">{escape(time_label)}</td>'
+        f'<td style="padding:8px 20px 8px 12px;font-size:15px;font-weight:700;color:#172033;">{escape(time_value)}</td></tr>'
+        f'<tr><td style="padding:8px 12px 8px 20px;font-size:13px;font-weight:700;color:#667085;">{escape(timezone_label)}</td>'
+        f'<td style="padding:8px 20px 8px 12px;font-size:15px;color:#172033;">{escape(normalized_timezone)}</td></tr>'
+        f'<tr><td style="padding:8px 12px 18px 20px;font-size:13px;font-weight:700;color:#667085;">{escape(location_label)}</td>'
+        f'<td style="padding:8px 20px 18px 12px;font-size:15px;color:#172033;">{escape(displayed_location)}</td></tr>'
+        '</table>'
+        f'<p style="margin:22px 0 0 0;font-size:12px;line-height:19px;color:#7b8494;text-align:center;">{escape(footer)}</p>'
+        '</td></tr></table>'
+        '</td></tr></table></body></html>'
+    )
+    return subject, body
+
+
+def _refresh_pending_email_reminder(
+    db: Session,
+    *,
+    idempotency_key: str,
+    recipient_email: str | None,
+    subject: str,
+    body: str,
+    meeting_link_included: bool,
+    now: datetime,
+) -> Notification | None:
+    notification = db.scalar(
+        select(Notification).where(Notification.idempotency_key == idempotency_key).limit(1)
+    )
+    if notification is None:
+        return None
+    if notification.status in {NOTIFICATION_STATUS_PENDING, NOTIFICATION_STATUS_QUEUED}:
+        notification.recipient_email = recipient_email
+        notification.subject = subject
+        notification.body_snapshot = body
+        notification.payload_snapshot = {
+            **(notification.payload_snapshot or {}),
+            "body_format": "HTML",
+            "meeting_link_included": meeting_link_included,
+        }
+        notification.updated_at = now
+        db.add(notification)
+    return notification
 
 
 def _notification_already_exists(db: Session, *, idempotency_key: str) -> bool:
@@ -732,7 +867,16 @@ def schedule_reminder_notifications_for_booking(
                 offset_minutes=email_offset_minutes,
                 scheduled_for=scheduled_for,
             )
-            if not _notification_already_exists(db, idempotency_key=idempotency_key):
+            existing_email_reminder = _refresh_pending_email_reminder(
+                db,
+                idempotency_key=idempotency_key,
+                recipient_email=recipient.email,
+                subject=subject,
+                body=body,
+                meeting_link_included=bool(meeting_link),
+                now=now,
+            )
+            if existing_email_reminder is None:
                 created = create_notification_if_new(
                     db,
                     notification_type=NOTIFICATION_TYPE_REMINDER_EMAIL,
@@ -752,7 +896,7 @@ def schedule_reminder_notifications_for_booking(
                     body_snapshot=body,
                     payload_snapshot={
                         "offset_minutes": email_offset_minutes,
-                        "body_format": "TEXT",
+                        "body_format": "HTML",
                         "meeting_link_included": bool(meeting_link),
                     },
                     idempotency_key=idempotency_key,

@@ -647,7 +647,9 @@ def _auto_invoice_rule_out(rule: ClientAutoInvoiceRule) -> AdminClientAutoInvoic
 
 
 def _message_preview(value: str | None, *, max_length: int = 100) -> str | None:
-    normalized = " ".join((value or "").split()).strip()
+    raw = value or ""
+    without_markup = re.sub(r"<[^>]+>", " ", raw) if "<" in raw and ">" in raw else raw
+    normalized = " ".join(html.unescape(without_markup).split()).strip()
     if not normalized:
         return None
     if len(normalized) <= max_length:

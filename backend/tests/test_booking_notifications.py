@@ -13,11 +13,13 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.models.catalog import DeliveryMode
 from app.services.notifications.application.orchestrator import (
     _build_lesson_reminder_email,
+    _refresh_pending_email_reminder,
     schedule_booking_created_notifications,
     schedule_reminder_notifications_for_booking,
 )
 from app.services.notifications.application.recipients import ResolvedRecipient
 from app.services.notifications.domain.constants import (
+    NOTIFICATION_STATUS_PENDING,
     NOTIFICATION_TYPE_REMINDER_EMAIL,
     NOTIFICATION_TYPE_TEACHER_BOOKING_CONFIRMATION,
     QUEUE_NOTIFICATIONS_IMMEDIATE,
@@ -28,11 +30,15 @@ from app.services.notifications.domain.constants import (
 class _FakeSession:
     def __init__(self, scalar_values: list[object | None]) -> None:
         self._scalar_values = list(scalar_values)
+        self.added: list[object] = []
 
     def scalar(self, _query: object) -> object | None:
         if not self._scalar_values:
             return None
         return self._scalar_values.pop(0)
+
+    def add(self, value: object) -> None:
+        self.added.append(value)
 
 
 class BookingNotificationTests(unittest.TestCase):
@@ -50,8 +56,13 @@ class BookingNotificationTests(unittest.TestCase):
         )
 
         self.assertEqual(subject, "Lesson reminder - Private piano lesson")
-        self.assertIn("02/08/2026 18:00 - 19:00 (Asia/Riyadh)", body)
-        self.assertIn("Online lesson link: https://example.test/online-lesson", body)
+        self.assertTrue(body.startswith("<!doctype html>"))
+        self.assertIn("Sunday, August 2, 2026", body)
+        self.assertIn("18:00 – 19:00", body)
+        self.assertIn("Asia/Riyadh", body)
+        self.assertIn("Join the Zoom lesson", body)
+        self.assertIn('href="https://example.test/online-lesson"', body)
+        self.assertIn("If the button does not work, copy this link", body)
 
     def test_reminder_schedules_email_for_guardian_only(self) -> None:
         now = datetime(2026, 8, 1, 18, 0, tzinfo=timezone.utc)
@@ -123,9 +134,6 @@ class BookingNotificationTests(unittest.TestCase):
             "app.services.notifications.application.orchestrator.effective_teacher_id_for_session",
             return_value=teacher_id,
         ), patch(
-            "app.services.notifications.application.orchestrator._notification_already_exists",
-            return_value=False,
-        ), patch(
             "app.services.notifications.application.orchestrator.create_domain_event",
             return_value=SimpleNamespace(id=uuid4()),
         ), patch(
@@ -142,10 +150,43 @@ class BookingNotificationTests(unittest.TestCase):
         guardian_kwargs = create_notification.call_args_list[0].kwargs
         self.assertEqual(guardian_kwargs["notification_type"], NOTIFICATION_TYPE_REMINDER_EMAIL)
         self.assertEqual(guardian_kwargs["recipient_email"], "parent@example.test")
-        self.assertIn("02/08/2026 18:00 - 19:00 (Asia/Riyadh)", guardian_kwargs["body_snapshot"])
-        self.assertIn("Online lesson link: https://example.test/online-lesson", guardian_kwargs["body_snapshot"])
+        self.assertIn("Sunday, August 2, 2026", guardian_kwargs["body_snapshot"])
+        self.assertIn("Join the Zoom lesson", guardian_kwargs["body_snapshot"])
+        self.assertIn('href="https://example.test/online-lesson"', guardian_kwargs["body_snapshot"])
+        self.assertEqual(guardian_kwargs["payload_snapshot"]["body_format"], "HTML")
         self.assertEqual([item.notification_id for item in queued], notification_ids)
         self.assertTrue(all(item.queue_name == QUEUE_NOTIFICATIONS_SCHEDULED for item in queued))
+
+    def test_existing_pending_reminder_is_upgraded_to_html(self) -> None:
+        notification = SimpleNamespace(
+            status=NOTIFICATION_STATUS_PENDING,
+            recipient_email="old@example.test",
+            subject="Old reminder",
+            body_snapshot="Old plain-text reminder",
+            payload_snapshot={"body_format": "TEXT", "offset_minutes": 1440},
+            updated_at=None,
+        )
+        db = _FakeSession([notification])
+        now = datetime(2026, 8, 2, 9, 0, tzinfo=timezone.utc)
+
+        result = _refresh_pending_email_reminder(
+            db,
+            idempotency_key="reminder-key",
+            recipient_email="parent@example.test",
+            subject="Lesson reminder",
+            body="<!doctype html><p>Zoom</p>",
+            meeting_link_included=True,
+            now=now,
+        )
+
+        self.assertIs(result, notification)
+        self.assertEqual(notification.recipient_email, "parent@example.test")
+        self.assertEqual(notification.subject, "Lesson reminder")
+        self.assertTrue(notification.body_snapshot.startswith("<!doctype html>"))
+        self.assertEqual(notification.payload_snapshot["body_format"], "HTML")
+        self.assertTrue(notification.payload_snapshot["meeting_link_included"])
+        self.assertEqual(notification.updated_at, now)
+        self.assertEqual(db.added, [notification])
 
     def test_confirmed_booking_notifies_session_teacher(self) -> None:
         now = datetime(2026, 6, 15, 13, 30, tzinfo=timezone.utc)
