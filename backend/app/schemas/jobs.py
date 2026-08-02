@@ -32,6 +32,14 @@ class ProfessorDailyDigestJobResponse(BaseModel):
     failed: int
 
 
+class ProfessorAttendanceReminderJobResponse(BaseModel):
+    checked: int
+    sent: int
+    skipped_not_due: int
+    skipped_complete: int
+    failed: int
+
+
 class SubscriptionBillingJobResponse(BaseModel):
     checked: int
     charged: int

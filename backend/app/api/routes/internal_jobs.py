@@ -13,6 +13,7 @@ from app.schemas.jobs import (
     InvoiceReminderJobResponse,
     NotificationEngineJobResponse,
     PayoutJobResponse,
+    ProfessorAttendanceReminderJobResponse,
     ProfessorDailyDigestJobResponse,
     ReminderJobResponse,
     SubscriptionBillingJobResponse,
@@ -30,6 +31,7 @@ from app.services.jobs.application.notification_jobs import (
     run_scheduled_notification_dispatch_job,
 )
 from app.services.professor_daily_digest import run_send_professor_daily_digest_job
+from app.services.professor_attendance_reminders import run_send_professor_attendance_reminder_job
 from app.services.payouts import run_calc_professor_payouts_job
 from app.services.subscription_billing import (
     run_subscription_billing_job,
@@ -115,6 +117,24 @@ def send_professor_daily_digests(
         sent=result.sent,
         skipped_not_due=result.skipped_not_due,
         skipped_no_courses=result.skipped_no_courses,
+        failed=result.failed,
+    )
+
+
+@router.post("/send-professor-attendance-reminders", response_model=ProfessorAttendanceReminderJobResponse)
+def send_professor_attendance_reminders(
+    limit: int = Query(default=300, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> ProfessorAttendanceReminderJobResponse:
+    now = datetime.now(timezone.utc)
+    result = run_send_professor_attendance_reminder_job(db, now=now, limit=limit)
+    db.commit()
+    return ProfessorAttendanceReminderJobResponse(
+        checked=result.checked,
+        sent=result.sent,
+        skipped_not_due=result.skipped_not_due,
+        skipped_complete=result.skipped_complete,
         failed=result.failed,
     )
 

@@ -109,6 +109,7 @@ class Professor(Base):
     daily_schedule_email_time: Mapped[str] = mapped_column(String(5), nullable=False, server_default=text("'07:00'"))
     daily_schedule_skip_if_no_course: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     last_daily_schedule_sent_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    last_attendance_reminder_sent_on: Mapped[date | None] = mapped_column(Date, nullable=True)
     last_activation_email_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

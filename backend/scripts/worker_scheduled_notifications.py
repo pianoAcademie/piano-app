@@ -20,6 +20,7 @@ from app.services.invoice_reminders import run_invoice_due_reminder_job
 from app.services.bank_transfer_orders import run_bank_transfer_order_expiration_job, run_bank_transfer_review_digest_job
 from app.services.quotes.lifecycle_jobs import run_quote_daily_lifecycle_job
 from app.services.professor_daily_digest import run_send_professor_daily_digest_job
+from app.services.professor_attendance_reminders import run_send_professor_attendance_reminder_job
 from app.services.session_automation import run_auto_cancel_empty_sessions_job, run_expire_pending_payment_bookings_job
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ def utcnow() -> datetime:
 def main() -> None:
     last_reminder_generation_at: datetime | None = None
     last_professor_digest_at: datetime | None = None
+    last_professor_attendance_reminder_at: datetime | None = None
     while True:
         db = SessionLocal()
         try:
@@ -46,6 +48,12 @@ def main() -> None:
             if last_professor_digest_at is None or cycle_now - last_professor_digest_at >= timedelta(minutes=1):
                 jobs.append(("professor_daily_digest", run_send_professor_daily_digest_job))
                 last_professor_digest_at = cycle_now
+            if (
+                last_professor_attendance_reminder_at is None
+                or cycle_now - last_professor_attendance_reminder_at >= timedelta(minutes=1)
+            ):
+                jobs.append(("professor_attendance_reminder", run_send_professor_attendance_reminder_job))
+                last_professor_attendance_reminder_at = cycle_now
             jobs.extend((
                 ("scheduled_notification_dispatch", run_scheduled_notification_dispatch_job),
                 ("invoice_due_reminders", run_invoice_due_reminder_job),
