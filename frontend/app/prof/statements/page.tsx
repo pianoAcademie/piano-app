@@ -14,6 +14,7 @@ import { backendRequest } from "../../../lib/backend";
 import { getPortalReturnTo, getPortalToken, readPortalImpersonationClaims } from "../../../lib/auth-cookies";
 import AlertCard from "../../../components/teacher-ui/alert-card";
 import BottomTabs from "../../../components/teacher-ui/bottom-tabs";
+import ProfessorHelpAssistant from "../../../components/teacher-ui/help-assistant";
 import PageHeaderMobile from "../../../components/teacher-ui/page-header-mobile";
 import TeacherMissingServiceForm, { type MissingServiceActivityOption, type MissingServiceLocationOption } from "../../../components/teacher-missing-service-form";
 import PortalImpersonationBanner from "../../../components/portal-impersonation-banner";
@@ -775,6 +776,7 @@ export default async function TeacherStatementsPage({
           </a>
         </article>
       </section>
+      <ProfessorHelpAssistant language={language} />
     </section>
   );
 }

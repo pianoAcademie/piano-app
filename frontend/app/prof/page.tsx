@@ -18,6 +18,7 @@ import PortalImpersonationBanner from "../../components/portal-impersonation-ban
 import ActionCard from "../../components/teacher-ui/action-card";
 import AlertCard from "../../components/teacher-ui/alert-card";
 import BottomTabs from "../../components/teacher-ui/bottom-tabs";
+import ProfessorHelpAssistant from "../../components/teacher-ui/help-assistant";
 import ListRow from "../../components/teacher-ui/list-row";
 import PageHeaderMobile from "../../components/teacher-ui/page-header-mobile";
 import PortalBrandLockup from "../../components/portal-brand-lockup";
@@ -1674,6 +1675,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
           </article>
         </section>
       ) : null}
+      <ProfessorHelpAssistant language={language} />
     </main>
   );
 }
