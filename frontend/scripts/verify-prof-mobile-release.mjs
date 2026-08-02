@@ -19,6 +19,7 @@ const requireFile = (relativePath) => {
 };
 
 const capacitorConfigPath = requireFile("ios/App/App/capacitor.prof.config.json");
+const iosProjectPath = requireFile("ios/App/App.xcodeproj/project.pbxproj");
 const androidGradlePath = requireFile("android/app/build.gradle");
 const androidStringsPath = requireFile("android/app/src/main/res/values/strings.xml");
 const androidVariablesPath = requireFile("android/variables.gradle");
@@ -33,6 +34,17 @@ if (existsSync(capacitorConfigPath)) {
   if (config.appId !== expected.appId) failures.push(`iOS appId must be ${expected.appId}`);
   if (config.appName !== expected.appName) failures.push(`iOS appName must be ${expected.appName}`);
   if (config.server?.url !== expected.url) failures.push(`iOS start URL must be ${expected.url}`);
+}
+
+if (existsSync(iosProjectPath)) {
+  const project = readFileSync(iosProjectPath, "utf8");
+  const releaseConfiguration = project.match(/504EC3181FED79650016851F \/\* Release \*\/ = \{[\s\S]*?\n\t\t\};/u)?.[0] ?? "";
+  if (!releaseConfiguration.includes('CODE_SIGN_IDENTITY = "Apple Distribution";')) {
+    failures.push("iOS Release signing identity must be Apple Distribution");
+  }
+  if (!releaseConfiguration.includes("CODE_SIGN_STYLE = Automatic;")) {
+    failures.push("iOS Release signing must be managed automatically by Xcode");
+  }
 }
 
 if (existsSync(androidGradlePath)) {

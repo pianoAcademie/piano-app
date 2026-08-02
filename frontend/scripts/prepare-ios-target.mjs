@@ -7,13 +7,11 @@ const targets = {
     appName: "Piano Academie Client",
     bundleId: "com.pianoacademie.client",
     configFile: "capacitor.client.config.json",
-    provisioningProfile: "Piano Academie Client App Store",
   },
   prof: {
     appName: "Piano Academie Professeur",
     bundleId: "com.pianoacademie.professeur",
     configFile: "capacitor.prof.config.json",
-    provisioningProfile: "Piano Academie Professeur App Store",
   },
 };
 
@@ -56,13 +54,6 @@ replaceOrFail(
   /PRODUCT_BUNDLE_IDENTIFIER = com\.pianoacademie\.(client|professeur);/g,
   `PRODUCT_BUNDLE_IDENTIFIER = ${target.bundleId};`,
   "PRODUCT_BUNDLE_IDENTIFIER",
-);
-
-replaceOrFail(
-  projectPath,
-  /(PROVISIONING_PROFILE_SPECIFIER\[sdk=iphoneos\*\]" = ")([^"]*)(";)/,
-  `$1${target.provisioningProfile}$3`,
-  "PROVISIONING_PROFILE_SPECIFIER",
 );
 
 copyFileSync(targetConfigPath, activeConfigPath);
