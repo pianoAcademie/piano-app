@@ -22,6 +22,7 @@ from app.models.family import ClientFamilyLink
 from app.models.ops import AppSetting, PasswordResetToken
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.schemas.auth import (
+    ChangePasswordRequest,
     EmailLookupRequest,
     EmailLookupResponse,
     ForgotPasswordRequest,
@@ -661,6 +662,56 @@ def reset_password(payload: ResetPasswordRequest, request: Request, db: Session 
         ) from exc
 
     return ResetPasswordResponse(message="Mot de passe mis a jour")
+
+
+@router.post("/change-password", response_model=ResetPasswordResponse)
+def change_password(
+    payload: ChangePasswordRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ResetPasswordResponse:
+    _enforce_auth_rate_limit(
+        request=request,
+        bucket="auth-change-password-account",
+        identifier=str(current_user.id),
+        limit=10,
+        window_seconds=900,
+    )
+
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="CURRENT_PASSWORD_INCORRECT",
+        )
+    if verify_password(payload.new_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="PASSWORD_UNCHANGED",
+        )
+
+    now = datetime.now(timezone.utc)
+    current_user.hashed_password = hash_password(payload.new_password)
+    current_user.updated_at = now
+    db.execute(
+        update(PasswordResetToken)
+        .where(
+            PasswordResetToken.user_id == current_user.id,
+            PasswordResetToken.used_at.is_(None),
+        )
+        .values(used_at=now)
+    )
+
+    try:
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {exc.__class__.__name__}",
+        ) from exc
+
+    return ResetPasswordResponse(message="PASSWORD_CHANGED")
 
 
 @router.get("/me", response_model=UserOut)

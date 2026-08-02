@@ -6,6 +6,7 @@ import { getAdminToken, getPortalReturnTo, getPortalToken, readPortalImpersonati
 import { backendRequest } from "../../lib/backend";
 import {
   cancelBookingAction,
+  changePasswordAction,
   endPortalImpersonationAction,
   logoutAction,
   openClientPaymentCheckoutAction,
@@ -1235,6 +1236,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const confirmExistingPackPurchase = readParam(searchParams, "confirm_existing_pack_purchase") === "1";
   const confirmPlanId = readParam(searchParams, "confirm_plan_id").trim();
   const editProfile = readParam(searchParams, "edit_profile") === "1";
+  const changePassword = readParam(searchParams, "change_password") === "1";
   const homeCalendarView = readParam(searchParams, "home_calendar_view") === "BY_MEMBER" ? "BY_MEMBER" : "FAMILY";
   const preFetchErrors: string[] = [];
   let paymentResultMessage = "";
@@ -5673,9 +5675,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <ListRow title={t("common.language")} right={me.preferred_language === "en" ? t("common.english") : t("common.french")} />
                       <ListRow title={t("client.timezone_label")} right={labelFromOptions(TIMEZONE_OPTIONS, me.timezone)} />
                     </div>
-                    <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "account", edit_profile: editProfile ? null : "1" })}>
-                      {editProfile ? t("client.edit_profile_close") : t("client.edit_profile_open")}
-                    </a>
+                    <div className="row">
+                      <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "account", edit_profile: editProfile ? null : "1" })}>
+                        {editProfile ? t("client.edit_profile_close") : t("client.edit_profile_open")}
+                      </a>
+                      <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "account", change_password: changePassword ? null : "1" })}>
+                        🔒 {changePassword ? t("client.close_password_change") : t("client.change_password")}
+                      </a>
+                    </div>
                   </div>
                 </details>
 
@@ -5773,9 +5780,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 <Card>
                   <div className="row spread">
                     <h2>{t("client.account_title")}</h2>
-                    <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "account", edit_profile: editProfile ? null : "1" })}>
-                      {editProfile ? "✖" : "✎"}
-                    </a>
+                    <div className="row">
+                      <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "account", change_password: changePassword ? null : "1" })}>
+                        🔒 {changePassword ? t("client.close_password_change") : t("client.change_password")}
+                      </a>
+                      <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "account", edit_profile: editProfile ? null : "1" })}>
+                        {editProfile ? "✖" : "✎"}
+                      </a>
+                    </div>
                   </div>
 
                   <div className="client-info-list">
@@ -5881,6 +5893,54 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   </div>
                 )}
               </Card>
+
+              {changePassword ? (
+                <Card className="client-account-edit client-password-edit">
+                  <h2>{t("client.password_security_title")}</h2>
+                  <p className="muted">{t("client.password_security_help")}</p>
+                  <form action={changePasswordAction} className="client-filter-grid">
+                    <label className="span-2">
+                      {t("client.current_password")}
+                      <input
+                        type="password"
+                        name="current_password"
+                        autoComplete="current-password"
+                        minLength={8}
+                        maxLength={128}
+                        required
+                      />
+                    </label>
+                    <label>
+                      {t("client.new_password")}
+                      <input
+                        type="password"
+                        name="new_password"
+                        autoComplete="new-password"
+                        minLength={8}
+                        maxLength={128}
+                        required
+                      />
+                    </label>
+                    <label>
+                      {t("client.confirm_new_password")}
+                      <input
+                        type="password"
+                        name="new_password_confirm"
+                        autoComplete="new-password"
+                        minLength={8}
+                        maxLength={128}
+                        required
+                      />
+                    </label>
+                    <div className="row span-2">
+                      <button type="submit">{t("client.save_new_password")}</button>
+                      <a className="reset-link" href={withUpdatedQuery(rawParams, { tab: "account", change_password: null })}>
+                        {t("common.cancel")}
+                      </a>
+                    </div>
+                  </form>
+                </Card>
+              ) : null}
 
               {editProfile ? (
                 <Card className="client-account-edit">

@@ -1634,6 +1634,54 @@ export async function resetPasswordAction(formData: FormData): Promise<void> {
   redirect(`/login?mode=login&ok=${encodeURIComponent(result.data.message)}`);
 }
 
+export async function changePasswordAction(formData: FormData): Promise<void> {
+  const token = currentPortalToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+
+  const currentPassword = String(formData.get("current_password") ?? "");
+  const newPassword = String(formData.get("new_password") ?? "");
+  const newPasswordConfirm = String(formData.get("new_password_confirm") ?? "");
+  const changePasswordPath = "/client?tab=account&change_password=1";
+
+  if (!currentPassword) {
+    redirect(`${changePasswordPath}&error_code=password_current_required`);
+  }
+  if (newPassword.length < 8) {
+    redirect(`${changePasswordPath}&error_code=password_new_too_short`);
+  }
+  if (newPassword !== newPasswordConfirm) {
+    redirect(`${changePasswordPath}&error_code=password_mismatch`);
+  }
+
+  const result = await backendRequest<{ message: string }>(
+    "/api/v1/auth/change-password",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    if (result.message === "CURRENT_PASSWORD_INCORRECT") {
+      redirect(`${changePasswordPath}&error_code=password_current_incorrect`);
+    }
+    if (result.message === "PASSWORD_UNCHANGED") {
+      redirect(`${changePasswordPath}&error_code=password_unchanged`);
+    }
+    redirect(`${changePasswordPath}&error=${encodeURIComponent(result.message)}`);
+  }
+
+  revalidatePath("/client");
+  revalidatePath("/dashboard");
+  redirect("/client?tab=account&ok_code=password_changed");
+}
+
 export async function logoutAction(): Promise<void> {
   clearToken();
   redirect("/login?ok_code=logged_out");
