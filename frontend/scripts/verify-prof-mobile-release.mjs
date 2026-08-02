@@ -39,11 +39,11 @@ if (existsSync(capacitorConfigPath)) {
 if (existsSync(iosProjectPath)) {
   const project = readFileSync(iosProjectPath, "utf8");
   const releaseConfiguration = project.match(/504EC3181FED79650016851F \/\* Release \*\/ = \{[\s\S]*?\n\t\t\};/u)?.[0] ?? "";
-  if (!releaseConfiguration.includes('CODE_SIGN_IDENTITY = "Apple Distribution";')) {
-    failures.push("iOS Release signing identity must be Apple Distribution");
-  }
   if (!releaseConfiguration.includes("CODE_SIGN_STYLE = Automatic;")) {
     failures.push("iOS Release signing must be managed automatically by Xcode");
+  }
+  if (releaseConfiguration.includes("CODE_SIGN_IDENTITY =") || releaseConfiguration.includes("PROVISIONING_PROFILE_SPECIFIER =")) {
+    failures.push("iOS Release signing must not force a certificate or provisioning profile");
   }
 }
 
