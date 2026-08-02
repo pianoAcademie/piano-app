@@ -45,6 +45,7 @@ from app.services.professor_default_grid import DefaultProfessorGridLine, load_d
 from app.services.professor_permissions import permissions_dict
 from app.services.reminders import skip_pending_reminders_for_booking
 from app.services.session_notifications import send_session_operation_email
+from app.services.session_teachers import effective_teacher_filter_for_professor
 
 router = APIRouter()
 
@@ -283,6 +284,50 @@ def _serialize_professor_contract_grid(db: Session, *, grid: ProfessorContractGr
             )
             for line in lines
         ],
+    )
+
+
+def _school_year_bounds_for_day(reference_date: date) -> tuple[datetime, datetime]:
+    start_year = reference_date.year if reference_date.month >= 8 else reference_date.year - 1
+    return (
+        datetime(start_year, 8, 1, tzinfo=timezone.utc),
+        datetime(start_year + 1, 8, 1, tzinfo=timezone.utc),
+    )
+
+
+def _planned_professor_course_type_ids(
+    db: Session,
+    *,
+    professor_id: UUID,
+    reference_date: date,
+) -> set[UUID]:
+    season_start, season_end = _school_year_bounds_for_day(reference_date)
+    rows = db.scalars(
+        select(CourseSession.course_type_id)
+        .where(
+            effective_teacher_filter_for_professor(professor_id=professor_id),
+            CourseSession.start_at_utc >= season_start,
+            CourseSession.start_at_utc < season_end,
+            CourseSession.status != SessionStatus.CANCELLED,
+        )
+        .distinct()
+    ).all()
+    return set(rows)
+
+
+def _filter_contract_grid_to_course_types(
+    grid: ProfessorContractGridOut,
+    *,
+    course_type_ids: set[UUID],
+) -> ProfessorContractGridOut:
+    return grid.model_copy(
+        update={
+            "lines": [
+                line
+                for line in grid.lines
+                if line.course_type_id is not None and line.course_type_id in course_type_ids
+            ]
+        }
     )
 
 
@@ -741,6 +786,13 @@ def list_my_contract_grids(
 ) -> list[ProfessorContractGridOut]:
     professor = _resolve_professor_profile(db, current_user=current_user)
     reference_date = on_date or date.today()
+    planned_course_type_ids = _planned_professor_course_type_ids(
+        db,
+        professor_id=professor.id,
+        reference_date=reference_date,
+    )
+    if not planned_course_type_ids:
+        return []
 
     effective_grid = _build_effective_contract_grid(
         db,
@@ -748,7 +800,11 @@ def list_my_contract_grids(
         reference_date=reference_date,
     )
     if effective_grid is not None:
-        return [effective_grid]
+        visible_grid = _filter_contract_grid_to_course_types(
+            effective_grid,
+            course_type_ids=planned_course_type_ids,
+        )
+        return [visible_grid] if visible_grid.lines else []
 
     grids = db.scalars(
         select(ProfessorContractGrid)
@@ -759,7 +815,14 @@ def list_my_contract_grids(
         )
         .order_by(ProfessorContractGrid.valid_from.desc(), ProfessorContractGrid.created_at.desc())
     ).all()
-    return [_serialize_professor_contract_grid(db, grid=grid) for grid in grids]
+    visible_grids = [
+        _filter_contract_grid_to_course_types(
+            _serialize_professor_contract_grid(db, grid=grid),
+            course_type_ids=planned_course_type_ids,
+        )
+        for grid in grids
+    ]
+    return [grid for grid in visible_grids if grid.lines]
 
 
 @router.get("/professors/me/messages", response_model=list[ProfessorSessionMessageOut])
