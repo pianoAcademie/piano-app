@@ -6,12 +6,14 @@ from datetime import UTC, date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
 from app.models.ops import LegalEntity
+from app.models.user import User
 from app.services.i18n import normalize_language
 from app.services.payouts import resolve_hourly_rate_for_session
 
@@ -45,6 +47,7 @@ _MONTH_LABELS = {
         "December",
     ),
 }
+PARIS_TIMEZONE = ZoneInfo("Europe/Paris")
 
 
 def _utcnow() -> datetime:
@@ -56,12 +59,12 @@ def _quantize(value: Decimal) -> Decimal:
 
 
 def month_bounds_utc(*, year: int, month: int) -> tuple[datetime, datetime]:
-    start = datetime(year, month, 1, tzinfo=UTC)
+    start_local = datetime(year, month, 1, tzinfo=PARIS_TIMEZONE)
     if month == 12:
-        end = datetime(year + 1, 1, 1, tzinfo=UTC)
+        end_local = datetime(year + 1, 1, 1, tzinfo=PARIS_TIMEZONE)
     else:
-        end = datetime(year, month + 1, 1, tzinfo=UTC)
-    return start, end
+        end_local = datetime(year, month + 1, 1, tzinfo=PARIS_TIMEZONE)
+    return start_local.astimezone(UTC), end_local.astimezone(UTC)
 
 
 def session_duration_hours(session_obj: CourseSession) -> Decimal:
@@ -124,6 +127,7 @@ def compute_teacher_monthly_statements(
             func.coalesce(CourseSession.substitute_teacher_id, CourseSession.professor_id) == professor.id,
             CourseSession.start_at_utc >= period_start,
             CourseSession.start_at_utc < period_end,
+            CourseSession.end_at_utc <= now,
             CourseSession.status != SessionStatus.CANCELLED,
         )
         .order_by(CourseSession.start_at_utc.asc(), CourseSession.id.asc())
@@ -157,6 +161,34 @@ def compute_teacher_monthly_statements(
     for session_id, pending_count, total_count in booking_stats_rows:
         stats_by_session[session_id] = (int(pending_count or 0), int(total_count or 0))
 
+    attendance_rows = db.execute(
+        select(Booking, User)
+        .join(User, User.id == Booking.user_id)
+        .where(
+            Booking.session_id.in_(session_ids),
+            Booking.status.in_(
+                (
+                    BookingStatus.BOOKED,
+                    BookingStatus.ATTENDED,
+                    BookingStatus.NO_SHOW,
+                    BookingStatus.EXCUSED_ABSENCE,
+                )
+            ),
+        )
+        .order_by(Booking.session_id.asc(), User.last_name.asc(), User.first_name.asc(), User.email.asc())
+    ).all()
+    attendance_by_session: dict[UUID, list[dict[str, str]]] = defaultdict(list)
+    for booking, student in attendance_rows:
+        display_name = f"{(student.first_name or '').strip()} {(student.last_name or '').strip()}".strip()
+        attendance_by_session[booking.session_id].append(
+            {
+                "booking_id": str(booking.id),
+                "student_id": str(student.id),
+                "student_name": display_name or (student.email or "-").strip() or "-",
+                "status": booking.status.value,
+            }
+        )
+
     grouped_rows: dict[UUID, list[tuple[CourseSession, CourseType, LegalEntity, Location]]] = defaultdict(list)
     for row in session_rows:
         grouped_rows[row[0].snapshot_payor_legal_entity_id].append(row)
@@ -173,6 +205,7 @@ def compute_teacher_monthly_statements(
         attendance_complete = True
 
         for session_obj, course_type, _, location in rows:
+            local_start = session_obj.start_at_utc.astimezone(PARIS_TIMEZONE)
             pending_count, total_count = stats_by_session.get(session_obj.id, (0, 0))
             if pending_count > 0 and session_obj.start_at_utc <= now:
                 attendance_complete = False
@@ -191,7 +224,7 @@ def compute_teacher_monthly_statements(
             resolved_rate = resolve_hourly_rate_for_session(
                 db,
                 session_obj=session_obj,
-                on_date=session_obj.start_at_utc.date(),
+                on_date=local_start.date(),
                 professor_id_override=professor.id,
                 default_grid_lines=None,
             )
@@ -206,7 +239,7 @@ def compute_teacher_monthly_statements(
             session_item = {
                 "session_id": str(session_obj.id),
                 "title": (session_obj.title or "").strip() or course_type.name,
-                "date": session_obj.start_at_utc.date().isoformat(),
+                "date": local_start.date().isoformat(),
                 "start_at_utc": session_obj.start_at_utc.isoformat(),
                 "end_at_utc": session_obj.end_at_utc.isoformat(),
                 "student_or_group": (session_obj.title or "").strip() or None,
@@ -217,6 +250,7 @@ def compute_teacher_monthly_statements(
                 "amount_ht": f"{amount_ht}",
                 "vat_amount": f"{vat_amount}",
                 "amount_ttc": f"{amount_ttc}",
+                "attendance": attendance_by_session.get(session_obj.id, []),
             }
 
             key = (course_type.id, course_type.name, unit_rate_ht)

@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
-from app.models.catalog import CourseType, DeliveryMode, Location, Professor
+from app.models.catalog import BookingStatus, CourseType, DeliveryMode, Location, Professor
 from app.models.ops import AppSetting, LegalEntity
 from app.models.teacher_invoicing import (
     TeacherInvoice,
@@ -43,6 +43,7 @@ from app.services.teacher_invoice_documents import (
 )
 from app.services.teacher_invoicing import (
     ComputedStatement,
+    PARIS_TIMEZONE,
     compute_teacher_monthly_statements,
     invoice_period_label,
     statement_to_snapshot_payload,
@@ -91,12 +92,17 @@ TEACHER_I18N = {
         "csv_header_time": "horaire",
         "csv_header_student_group": "eleve_ou_groupe",
         "csv_header_location_mode": "lieu_modalite",
+        "csv_header_attendance": "presences_eleves",
         "csv_header_duration": "duree_minutes",
         "csv_header_rate_ht": "taux_ht",
         "csv_header_amount_ht": "montant_ht",
         "csv_header_vat": "tva",
         "csv_header_total_ttc": "total_ttc",
         "csv_header_currency": "devise",
+        "attendance_booked": "A renseigner",
+        "attendance_attended": "Present(e)",
+        "attendance_no_show": "Absent(e) non excuse(e)",
+        "attendance_excused": "Absent(e) excuse(e)",
         "teacher_invoice_not_found": "Facture professeur introuvable",
         "teacher_invoice_subject": "Facture professeur {invoice_number}",
         "teacher_invoice_body": "Facture professeur {invoice_number}\nPeriode: {period}\nTotal TTC: {total_ttc}\nProfesseur: {teacher_name}",
@@ -140,12 +146,17 @@ TEACHER_I18N = {
         "csv_header_time": "time",
         "csv_header_student_group": "student_or_group",
         "csv_header_location_mode": "location_mode",
+        "csv_header_attendance": "student_attendance",
         "csv_header_duration": "duration_minutes",
         "csv_header_rate_ht": "net_rate",
         "csv_header_amount_ht": "net_amount",
         "csv_header_vat": "vat",
         "csv_header_total_ttc": "gross_total",
         "csv_header_currency": "currency",
+        "attendance_booked": "To complete",
+        "attendance_attended": "Present",
+        "attendance_no_show": "Unexcused absence",
+        "attendance_excused": "Excused absence",
         "teacher_invoice_not_found": "Teacher invoice not found",
         "teacher_invoice_subject": "Teacher invoice {invoice_number}",
         "teacher_invoice_body": "Teacher invoice {invoice_number}\nPeriod: {period}\nGross total: {total_ttc}\nTeacher: {teacher_name}",
@@ -174,6 +185,7 @@ def _teacher_csv_headers(language: str | None) -> list[str]:
         _teacher_text("csv_header_time", language=language),
         _teacher_text("csv_header_student_group", language=language),
         _teacher_text("csv_header_location_mode", language=language),
+        _teacher_text("csv_header_attendance", language=language),
         _teacher_text("csv_header_duration", language=language),
         _teacher_text("csv_header_rate_ht", language=language),
         _teacher_text("csv_header_amount_ht", language=language),
@@ -181,6 +193,32 @@ def _teacher_csv_headers(language: str | None) -> list[str]:
         _teacher_text("csv_header_total_ttc", language=language),
         _teacher_text("csv_header_currency", language=language),
     ]
+
+
+def _attendance_status_label(value: str, *, language: str | None = None) -> str:
+    normalized = (value or "").strip().upper()
+    key_by_status = {
+        BookingStatus.BOOKED.value: "attendance_booked",
+        BookingStatus.ATTENDED.value: "attendance_attended",
+        BookingStatus.NO_SHOW.value: "attendance_no_show",
+        BookingStatus.EXCUSED_ABSENCE.value: "attendance_excused",
+    }
+    key = key_by_status.get(normalized)
+    return _teacher_text(key, language=language) if key is not None else normalized or "-"
+
+
+def _session_attendance_csv_label(item: dict[str, Any], *, language: str | None = None) -> str:
+    raw_attendance = item.get("attendance")
+    if not isinstance(raw_attendance, list) or not raw_attendance:
+        return "-"
+    labels: list[str] = []
+    for raw_row in raw_attendance:
+        if not isinstance(raw_row, dict):
+            continue
+        student_name = str(raw_row.get("student_name") or "-").strip() or "-"
+        status_label = _attendance_status_label(str(raw_row.get("status") or ""), language=language)
+        labels.append(f"{student_name}: {status_label}")
+    return " | ".join(labels) or "-"
 
 
 def _utcnow() -> datetime:
@@ -336,6 +374,113 @@ def _statement_out(row: TeacherMonthlyStatement, computed: ComputedStatement) ->
             for item in computed.missing_sessions
         ],
     )
+
+
+def _render_statement_csv(
+    rows: list[tuple[TeacherMonthlyStatement, ComputedStatement]],
+    *,
+    year: int,
+    month: int,
+    language: str,
+) -> str:
+    output = StringIO()
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow(_teacher_csv_headers(language))
+    period_label = invoice_period_label(year=year, month=month, language=language)
+    total_hours = Decimal("0.00")
+    total_ht = Decimal("0.00")
+    total_vat = Decimal("0.00")
+    total_ttc = Decimal("0.00")
+
+    for _, computed in rows:
+        total_hours += sum((line.hours for line in computed.lines), Decimal("0.00"))
+        total_ht += computed.totals_ht
+        total_vat += computed.totals_vat
+        total_ttc += computed.totals_ttc
+        for line in computed.lines:
+            session_items = line.meta.get("session_items") if isinstance(line.meta, dict) else None
+            if isinstance(session_items, list) and session_items:
+                for item in session_items:
+                    start_iso = str(item.get("start_at_utc") or "")
+                    end_iso = str(item.get("end_at_utc") or "")
+                    start_dt = datetime.fromisoformat(start_iso) if start_iso else None
+                    end_dt = datetime.fromisoformat(end_iso) if end_iso else None
+                    schedule_label = "-"
+                    if start_dt is not None and end_dt is not None:
+                        local_start = start_dt.astimezone(PARIS_TIMEZONE)
+                        local_end = end_dt.astimezone(PARIS_TIMEZONE)
+                        schedule_label = f"{local_start.strftime('%H:%M')} - {local_end.strftime('%H:%M')}"
+                    raw_modality = str(item.get("modality") or "").strip().upper()
+                    if raw_modality in {"EN_LIGNE", "ONLINE"}:
+                        modality_label = _teacher_text("delivery_online", language=language)
+                    elif raw_modality in {"PRESENTIEL", "ONSITE"}:
+                        modality_label = _teacher_text("delivery_onsite", language=language)
+                    else:
+                        modality_label = raw_modality or "-"
+                    writer.writerow(
+                        [
+                            computed.payor_legal_entity_name,
+                            period_label,
+                            str(item.get("title") or line.course_type_label),
+                            str(item.get("date") or ""),
+                            schedule_label,
+                            str(item.get("student_or_group") or ""),
+                            f"{item.get('location_name') or '-'} / {modality_label}",
+                            _session_attendance_csv_label(item, language=language),
+                            str(item.get("duration_minutes") or ""),
+                            str(item.get("unit_rate_ht") or line.unit_rate_ht),
+                            str(item.get("amount_ht") or line.amount_ht),
+                            str(
+                                item.get("vat_amount")
+                                or _quantize(
+                                    Decimal(item.get("amount_ttc") or "0")
+                                    - Decimal(item.get("amount_ht") or "0")
+                                )
+                            ),
+                            str(item.get("amount_ttc") or line.amount_ttc),
+                            computed.currency,
+                        ]
+                    )
+            else:
+                writer.writerow(
+                    [
+                        computed.payor_legal_entity_name,
+                        period_label,
+                        line.course_type_label,
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        f"{line.unit_rate_ht}",
+                        f"{line.amount_ht}",
+                        f"{_quantize(line.amount_ttc - line.amount_ht)}",
+                        f"{line.amount_ttc}",
+                        computed.currency,
+                    ]
+                )
+
+    writer.writerow([])
+    writer.writerow(
+        [
+            "RECAPITULATIF" if normalize_language(language) == "fr" else "SUMMARY",
+            period_label,
+            "TOTAL",
+            "",
+            "",
+            "",
+            "",
+            "",
+            f"{_quantize(total_hours)} h",
+            "",
+            f"{_quantize(total_ht)}",
+            f"{_quantize(total_vat)}",
+            f"{_quantize(total_ttc)}",
+            rows[0][1].currency if rows else "EUR",
+        ]
+    )
+    return output.getvalue()
 
 
 def _invoice_lines_for_invoice_ids(db: Session, *, invoice_ids: list[UUID]) -> dict[UUID, list[TeacherInvoiceLine]]:
@@ -755,6 +900,54 @@ def _generate_invoices_for_period(
             for invoice in generated
         ],
         blocked_missing_sessions=[],
+    )
+
+
+@router.get("/admin/statements/{professor_id}/{year}/{month}", response_model=list[TeacherStatementOut])
+def get_admin_teacher_statement_month(
+    professor_id: UUID,
+    year: int,
+    month: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[TeacherStatementOut]:
+    if year < 2000 or year > 2100 or month < 1 or month > 12:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Periode invalide")
+    professor = db.scalar(select(Professor).where(Professor.id == professor_id))
+    if professor is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Professeur introuvable")
+    rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
+    db.commit()
+    return [_statement_out(statement, computed) for statement, computed in rows]
+
+
+@router.get("/admin/statements/{professor_id}/{year}/{month}/export.csv")
+def export_admin_teacher_statement_month_csv(
+    professor_id: UUID,
+    year: int,
+    month: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> Response:
+    if year < 2000 or year > 2100 or month < 1 or month > 12:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Periode invalide")
+    professor = db.scalar(select(Professor).where(Professor.id == professor_id))
+    if professor is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Professeur introuvable")
+    rows = _sync_monthly_statements(db, professor=professor, year=year, month=month)
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=_teacher_text("statement_not_found_period", current_user=current_user),
+        )
+    language = _teacher_language(current_user)
+    content = _render_statement_csv(rows, year=year, month=month, language=language)
+    db.commit()
+    file_name = f"releve_heures_{year}_{month:02d}.csv"
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
 
 
@@ -1194,63 +1387,9 @@ def export_teacher_statement_month_csv(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_teacher_text("statement_not_found_period", current_user=current_user))
     language = _teacher_language(current_user)
 
-    output = StringIO()
-    writer = csv.writer(output, delimiter=";")
-    writer.writerow(_teacher_csv_headers(language))
-
-    period_label = invoice_period_label(year=year, month=month, language=language)
+    content = _render_statement_csv(rows, year=year, month=month, language=language)
     now = _utcnow()
-    for statement, computed in rows:
-        for line in computed.lines:
-            session_items = line.meta.get("session_items") if isinstance(line.meta, dict) else None
-            if isinstance(session_items, list) and session_items:
-                for item in session_items:
-                    start_iso = str(item.get("start_at_utc") or "")
-                    end_iso = str(item.get("end_at_utc") or "")
-                    start_dt = datetime.fromisoformat(start_iso) if start_iso else None
-                    end_dt = datetime.fromisoformat(end_iso) if end_iso else None
-                    horaire = "-"
-                    if start_dt is not None and end_dt is not None:
-                        horaire = f"{start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')}"
-                    writer.writerow(
-                        [
-                            computed.payor_legal_entity_name,
-                            period_label,
-                            str(item.get("title") or line.course_type_label),
-                            str(item.get("date") or ""),
-                            horaire,
-                            str(item.get("student_or_group") or ""),
-                            (
-                                f"{item.get('location_name') or '-'} / "
-                                f"{_teacher_text('delivery_online', language=language) if str(item.get('modality') or '').strip().upper() in {'EN_LIGNE', 'ONLINE'} else _teacher_text('delivery_onsite', language=language) if str(item.get('modality') or '').strip().upper() in {'PRESENTIEL', 'ONSITE'} else (item.get('modality') or '-')}"
-                            ),
-                            str(item.get("duration_minutes") or ""),
-                            str(item.get("unit_rate_ht") or line.unit_rate_ht),
-                            str(item.get("amount_ht") or line.amount_ht),
-                            str(item.get("vat_amount") or _quantize(Decimal(item.get("amount_ttc") or "0") - Decimal(item.get("amount_ht") or "0"))),
-                            str(item.get("amount_ttc") or line.amount_ttc),
-                            computed.currency,
-                        ]
-                    )
-            else:
-                writer.writerow(
-                    [
-                        computed.payor_legal_entity_name,
-                        period_label,
-                        line.course_type_label,
-                        "",
-                        "",
-                        "",
-                        "",
-                        "",
-                        f"{line.unit_rate_ht}",
-                        f"{line.amount_ht}",
-                        f"{_quantize(line.amount_ttc - line.amount_ht)}",
-                        f"{line.amount_ttc}",
-                        computed.currency,
-                    ]
-                )
-
+    for statement, _ in rows:
         if statement.status not in {"invoice_generated", "closed"}:
             statement.status = "exported"
             statement.updated_at = now
@@ -1267,7 +1406,7 @@ def export_teacher_statement_month_csv(
     db.commit()
     file_name = _teacher_text("csv_file_name", language=language, year=year, month=f"{month:02d}")
     return Response(
-        content=output.getvalue(),
+        content=content,
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
