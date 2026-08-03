@@ -69,6 +69,7 @@ from app.services.payment_receipts import (
     send_final_invoice_email,
 )
 from app.services.reminders import ensure_booking_reminder, skip_pending_reminders_for_booking
+from app.services.makeup_passes import grant_makeup_for_excused_absence, revoke_pending_makeup_for_corrected_absence
 from app.services.session_audience import (
     coerce_session_scope_sets,
     legacy_flags_from_scopes,
@@ -3592,7 +3593,7 @@ def update_admin_session_booking_attendance(
     booking_id: UUID,
     payload: AdminSessionBookingAttendanceUpdateRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
+    actor: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> AdminSessionBookingOut:
     session_obj = db.scalar(select(CourseSession).where(CourseSession.id == session_id).with_for_update())
     if session_obj is None:
@@ -3642,6 +3643,17 @@ def update_admin_session_booking_attendance(
                         status_code=status.HTTP_409_CONFLICT,
                         detail="Credits insuffisants pour remettre le statut present/absent",
                     )
+
+    attendance_updated_at = _utcnow()
+    if previous_status != next_status and next_status == BookingStatus.EXCUSED_ABSENCE:
+        grant_makeup_for_excused_absence(
+            db,
+            booking=booking,
+            actor_user_id=actor.id,
+            now=attendance_updated_at,
+        )
+    elif previous_status == BookingStatus.EXCUSED_ABSENCE and next_status != BookingStatus.EXCUSED_ABSENCE:
+        revoke_pending_makeup_for_corrected_absence(db, booking=booking, now=attendance_updated_at)
 
     booking.status = next_status
     booking.cancelled_at = None

@@ -173,6 +173,11 @@ class CatalogProduct(Base):
     is_virtual: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     purchasable_online: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    is_makeup_pass: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    makeup_pass_credits: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    makeup_pass_price_first_incl_vat: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    makeup_pass_price_next_incl_vat: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    makeup_pass_requires_active_forfait: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

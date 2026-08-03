@@ -42,6 +42,7 @@ from app.api.routes.bookings import (
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location, SessionStatus
 from app.models.client_record import ClientAutoInvoiceRule, ClientInvoiceLine, ClientManualTransaction, ClientNoteEntry
 from app.models.family import ClientFamilyLink
+from app.models.makeup import MakeupPassPurchase
 from app.models.ops import AppSetting, CommunicationSenderCategory, LegalEntity
 from app.models.plan import ClientForfaitActivityPricing, ClientPlanSubscription, Plan, PlanEntitlement, PlanKind, SubscriptionStatus
 from app.models.product_catalog import CatalogKit, CatalogProduct, ProductCategory
@@ -9841,6 +9842,57 @@ def _create_followup_manual_transactions(
         created_transaction_ids.append(transaction.id)
 
 
+def _create_followup_makeup_pass_purchases(
+    db: Session,
+    *,
+    quote: Quote,
+    student: User,
+    subscription: ClientPlanSubscription | None,
+    actor_user_id: UUID,
+    created_purchase_ids: list[UUID],
+) -> None:
+    if subscription is None:
+        return
+    rows = db.execute(
+        select(QuoteLine, CatalogProduct)
+        .join(CatalogProduct, CatalogProduct.id == QuoteLine.product_id)
+        .where(
+            QuoteLine.quote_id == quote.id,
+            QuoteLine.line_type == "item",
+            CatalogProduct.is_makeup_pass.is_(True),
+        )
+        .order_by(QuoteLine.sort_order.asc(), QuoteLine.created_at.asc())
+    ).all()
+    now = _utcnow()
+    for line, product in rows:
+        existing = db.scalar(
+            select(MakeupPassPurchase.id).where(MakeupPassPurchase.source_quote_line_id == line.id)
+        )
+        if existing is not None:
+            continue
+        quantity = max(int(Decimal(line.quantity or 0)), 0)
+        credits = max(int(product.makeup_pass_credits or 0), 0) * quantity
+        if credits <= 0:
+            continue
+        purchase = MakeupPassPurchase(
+            user_id=student.id,
+            product_id=product.id,
+            forfait_subscription_id=subscription.id,
+            purchased_by_user_id=actor_user_id,
+            source_quote_id=quote.id,
+            source_quote_line_id=line.id,
+            credits_initial=credits,
+            credits_remaining=credits,
+            price_incl_vat_snapshot=_q2(Decimal(line.amount_ttc or 0)),
+            currency_snapshot=(quote.currency or "EUR").upper(),
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(purchase)
+        db.flush()
+        created_purchase_ids.append(purchase.id)
+
+
 def _quote_deposit_invoice_breakdown(
     db: Session,
     *,
@@ -10223,6 +10275,7 @@ def _execute_quote_followup_transformation(
     created_booking_ids: list[UUID] = []
     created_transaction_ids: list[UUID] = []
     created_invoice_note_ids: list[UUID] = []
+    created_makeup_pass_purchase_ids: list[UUID] = []
     quote_snapshot = _snapshot_quote_state(quote)
     followup_snapshot = _snapshot_quote_followup(followup)
 
@@ -10461,6 +10514,14 @@ def _execute_quote_followup_transformation(
         skip_row_ids=forfait_discount_row_ids,
         forced_effective_date=monthly_card_fixed_fee_date,
     )
+    _create_followup_makeup_pass_purchases(
+        db,
+        quote=quote,
+        student=student,
+        subscription=subscription,
+        actor_user_id=current_user.id,
+        created_purchase_ids=created_makeup_pass_purchase_ids,
+    )
     _create_followup_deposit_invoice(
         db,
         quote=quote,
@@ -10516,6 +10577,7 @@ def _execute_quote_followup_transformation(
         "created_booking_ids": _serialize_uuid_list(created_booking_ids),
         "created_transaction_ids": _serialize_uuid_list(created_transaction_ids),
         "created_invoice_note_ids": _serialize_uuid_list(created_invoice_note_ids),
+        "created_makeup_pass_purchase_ids": _serialize_uuid_list(created_makeup_pass_purchase_ids),
         "monthly_card_fixed_fee_date": monthly_card_fixed_fee_date.isoformat() if monthly_card_fixed_fee_date else None,
         "monthly_card_auto_invoice_rule_id": str(monthly_card_auto_rule_id) if monthly_card_auto_rule_id is not None else None,
         "user_snapshots": _serialize_snapshot_map(user_snapshots),
@@ -10561,6 +10623,9 @@ def _rollback_quote_followup_transformation(
     created_subscription_ids = [_parse_uuid_value(item) for item in _json_list(execution.get("created_subscription_ids"))]
     created_family_link_ids = [_parse_uuid_value(item) for item in _json_list(execution.get("created_family_link_ids"))]
     created_user_ids = [_parse_uuid_value(item) for item in _json_list(execution.get("created_user_ids"))]
+    created_makeup_pass_purchase_ids = [
+        _parse_uuid_value(item) for item in _json_list(execution.get("created_makeup_pass_purchase_ids"))
+    ]
 
     subscription_map: dict[UUID, tuple[ClientPlanSubscription, Plan | None]] = {}
     for subscription_id in created_subscription_ids:
@@ -10599,6 +10664,13 @@ def _rollback_quote_followup_transformation(
         transaction = db.scalar(select(ClientManualTransaction).where(ClientManualTransaction.id == transaction_id).with_for_update())
         if transaction is not None:
             db.delete(transaction)
+
+    for purchase_id in created_makeup_pass_purchase_ids:
+        if purchase_id is None:
+            continue
+        purchase = db.scalar(select(MakeupPassPurchase).where(MakeupPassPurchase.id == purchase_id).with_for_update())
+        if purchase is not None:
+            db.delete(purchase)
 
     for subscription_id in created_subscription_ids:
         if subscription_id is None:

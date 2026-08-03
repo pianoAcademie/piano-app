@@ -137,6 +137,8 @@ from app.schemas.admin import (
     AdminPaymentReceiptEmailOut,
     AdminPaymentReceiptOut,
 )
+from app.schemas.booking import MakeupStudentSummaryOut
+from app.services.makeup_passes import makeup_summaries
 from app.schemas.plan import ClientSubscriptionOut, PlanMiniOut
 from app.api.routes.bookings import (
     PAYMENT_TIMEOUT_CANCELLATION_REASON,
@@ -7957,6 +7959,22 @@ def create_admin_client_note(
     db.commit()
     db.refresh(note)
     return _client_note_out(note, author=actor)
+
+
+@router.get("/{client_id}/makeup-summary", response_model=list[MakeupStudentSummaryOut])
+def get_admin_client_makeup_summary(
+    client_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_view_clients")),
+) -> list[MakeupStudentSummaryOut]:
+    client = _require_client(db, client_id)
+    user_ids = {client.id}
+    if client.client_kind == ClientKind.ADULT:
+        child_ids = db.scalars(
+            select(ClientFamilyLink.child_user_id).where(ClientFamilyLink.adult_user_id == client.id)
+        ).all()
+        user_ids.update(child_ids)
+    return [MakeupStudentSummaryOut(**row) for row in makeup_summaries(db, user_ids=user_ids)]
 
 
 @router.get("/{client_id}/bookings", response_model=list[AdminClientBookingOut])

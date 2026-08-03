@@ -83,6 +83,7 @@ import type {
   AdminCatalogProductOut,
   AdminProductCategoriesOut,
   PlanOut,
+  MakeupStudentSummaryOut,
   UserOut,
 } from "../../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, translateBackendMessage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
@@ -1783,6 +1784,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     notesResult,
     quoteChangesResult,
     approvedQuotesResult,
+    makeupSummaryResult,
   ] = await Promise.all([
     backendRequest<UserOut>("/api/v1/auth/me", {}, token),
     backendRequest<AdminConfigAccountOut>("/api/v1/admin/config/account", {}, token),
@@ -1805,6 +1807,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     backendRequest<AdminClientNoteOut[]>(`/api/v1/admin/clients/${params.clientId}/notes`, {}, token),
     backendRequest<AdminStudentQuoteChangeOut[]>(`/api/v1/admin/clients/${params.clientId}/quote-changes`, {}, token),
     backendRequest<ApprovedQuoteOption[]>(`/api/v1/admin/clients/${params.clientId}/approved-quotes`, {}, token),
+    backendRequest<MakeupStudentSummaryOut[]>(`/api/v1/admin/clients/${params.clientId}/makeup-summary`, {}, token),
   ]);
 
   const language = meResult.ok ? normalizeUiLanguage(meResult.data.preferred_language) : "fr";
@@ -1902,6 +1905,12 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     : (() => {
         errors.push(`bookings: ${bookingsResult.message}`);
         return [] as AdminClientBookingOut[];
+      })();
+  const makeupSummaries = makeupSummaryResult.ok
+    ? makeupSummaryResult.data
+    : (() => {
+        errors.push(`makeup-summary: ${makeupSummaryResult.message}`);
+        return [] as MakeupStudentSummaryOut[];
       })();
 
   const messages = messagesResult.ok
@@ -7180,6 +7189,29 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
       {currentTab === "reservations" ? (
         <section className="admin-page-grid">
+          {makeupSummaries.map((summary) => (
+            <article className="card" key={summary.user_id}>
+              <div className="row spread">
+                <div>
+                  <h3>{t("admin.client_detail.makeup_pass_title")}</h3>
+                  <p className="muted">{summary.display_name}</p>
+                </div>
+                <span className="badge">
+                  {t("admin.client_detail.makeup_pass_balance", {
+                    remaining: summary.credits_remaining,
+                    initial: summary.credits_initial,
+                  })}
+                </span>
+              </div>
+              <p>{t("admin.client_detail.makeup_pending_count", { count: summary.pending_makeups.length })}</p>
+              {summary.pending_makeups.map((credit) => (
+                <article className="item" key={credit.id}>
+                  <strong>{credit.original_session_title}</strong>
+                  <p className="muted">{formatDate(credit.original_session_start_at_utc, language)}</p>
+                </article>
+              ))}
+            </article>
+          ))}
           <section className="grid cols-2">
             <article className="card">
               <h3>{t("admin.client_detail.bookings_stats_title")}</h3>

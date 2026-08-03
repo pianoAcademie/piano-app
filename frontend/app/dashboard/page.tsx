@@ -41,6 +41,7 @@ import type {
   PublicFormulaPurchaseContextOut,
   CourseTypeOut,
   LocationOut,
+  MakeupStudentSummaryOut,
   PlanOut,
   SessionOut,
   SubscriptionOut,
@@ -1327,6 +1328,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     messagesResult,
     paymentsResult,
     invoicesResult,
+    makeupSummaryResult,
   ] = await Promise.all([
     backendRequest<CourseTypeOut[]>("/api/v1/course-types", {}, token),
     backendRequest<LocationOut[]>("/api/v1/locations", {}, token),
@@ -1340,6 +1342,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     backendRequest<ClientMessageOut[]>(`/api/v1/clients/me/messages?scope=${messageScope}`, {}, token),
     backendRequest<ClientPaymentOut[]>("/api/v1/clients/me/payments", {}, token),
     backendRequest<ClientInvoiceOut[]>("/api/v1/clients/me/invoices", {}, token),
+    backendRequest<MakeupStudentSummaryOut[]>("/api/v1/clients/me/makeup-summary", {}, token),
   ]);
 
   const errors: string[] = [...preFetchErrors];
@@ -1412,6 +1415,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         errors.push(`family: ${familyResult.message}`);
         return null;
       })();
+
+  const makeupSummaries = makeupSummaryResult.ok
+    ? makeupSummaryResult.data
+    : (() => {
+        errors.push(`makeup-summary: ${makeupSummaryResult.message}`);
+        return [] as MakeupStudentSummaryOut[];
+      })();
+  const makeupSummaryByMemberId = new Map(makeupSummaries.map((summary) => [summary.user_id, summary]));
 
   const contentCourses = contentCoursesResult.ok
     ? contentCoursesResult.data
@@ -2392,6 +2403,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         : suggestedReservationMemberOption?.member_id ?? "";
   const selectedReservationMemberOption =
     reservationOptionsMembers.find((option) => option.member_id === selectedReservationMemberId) ?? null;
+  const selectedReservationMakeupSummary = selectedReservationMemberOption
+    ? makeupSummaryByMemberId.get(selectedReservationMemberOption.member_id)
+    : null;
+  const selectedReservationCanCancel = selectedReservationMemberOption
+    ? normalizeStatus(selectedReservationMemberOption.booking_status || "") === "WAITLISTED"
+      || (
+        normalizeStatus(selectedReservationMemberOption.booking_status || "") === "BOOKED"
+        && (
+          !selectedReservationMakeupSummary?.has_active_restricted_forfait
+          || selectedReservationMakeupSummary.credits_remaining > 0
+        )
+      )
+    : false;
   const selectedSessionReturnTo = selectedSession
     ? withUpdatedQuery(rawParams, {
         tab: "planning",
@@ -4176,13 +4200,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <div className="client-session-modal-action-list">
                         {selectedSessionHasBooking && selectedReservationMemberOption?.booking_id ? (
                           <div className="client-session-modal-booking-actions">
-                            <form action={cancelBookingAction}>
-                              <input type="hidden" name="booking_id" value={selectedReservationMemberOption.booking_id} />
-                              <input type="hidden" name="return_to" value={selectedSessionReturnTo} />
-                              <button className="client-session-cancel-button" type="submit">
-                                {t("client.cancel_for", { member: selectedReservationMemberOption.member_display_name })}
-                              </button>
-                            </form>
+                            {selectedReservationCanCancel ? (
+                              <form action={cancelBookingAction}>
+                                <input type="hidden" name="booking_id" value={selectedReservationMemberOption.booking_id} />
+                                <input type="hidden" name="return_to" value={selectedSessionReturnTo} />
+                                <button className="client-session-cancel-button" type="submit">
+                                  {t("client.cancel_for", { member: selectedReservationMemberOption.member_display_name })}
+                                </button>
+                              </form>
+                            ) : (
+                              <small className="muted">{t("client.makeup_cancel_blocked")}</small>
+                            )}
                             {(selectedReservationMemberOption.booking_status || "").toUpperCase() === "BOOKED" ? (
                               <a className="mode-link client-session-calendar-link" href={`/client/bookings/${selectedReservationMemberOption.booking_id}/calendar`}>
                                 {t("client.add_to_calendar_for", { member: selectedReservationMemberOption.member_display_name })}
@@ -4509,6 +4537,43 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 <span className="badge">{reservationRows.length}</span>
               </div>
 
+              {makeupSummaries.length > 0 ? (
+                <section className="client-makeup-summary" aria-label={t("client.makeup_pass_title")}>
+                  <div className="row spread">
+                    <div>
+                      <strong>{t("client.makeup_pass_title")}</strong>
+                      <p className="muted">{t("client.makeup_pass_help")}</p>
+                    </div>
+                  </div>
+                  <div className="client-makeup-summary-grid">
+                    {makeupSummaries.map((summary) => (
+                      <article className="item" key={summary.user_id}>
+                        <div className="row spread">
+                          <strong>{summary.display_name}</strong>
+                          <span className="badge">
+                            {t("client.makeup_pass_remaining", {
+                              remaining: summary.credits_remaining,
+                              initial: summary.credits_initial,
+                            })}
+                          </span>
+                        </div>
+                        <p className="muted">
+                          {t("client.makeup_pending_count", { count: summary.pending_makeups.length })}
+                        </p>
+                        {summary.pending_makeups.map((credit) => (
+                          <p className="muted" key={credit.id}>
+                            {t("client.makeup_pending_from", {
+                              course: credit.original_session_title,
+                              date: formatDateTimeInTimezone(credit.original_session_start_at_utc, timezone, language),
+                            })}
+                          </p>
+                        ))}
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
               <form method="get" className="client-filter-grid client-reservation-filters">
                 <input type="hidden" name="tab" value="reservations" />
                 <label>
@@ -4569,7 +4634,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     </thead>
                     <tbody>
                       {reservationRows.map((booking) => {
-                        const canCancel = ["BOOKED", "WAITLISTED"].includes(normalizeStatus(booking.status));
+                        const normalizedBookingStatus = normalizeStatus(booking.status);
+                        const makeupSummary = makeupSummaryByMemberId.get(booking.owner_client_id);
+                        const canCancel = normalizedBookingStatus === "WAITLISTED"
+                          || (
+                            normalizedBookingStatus === "BOOKED"
+                            && (!makeupSummary?.has_active_restricted_forfait || makeupSummary.credits_remaining > 0)
+                          );
                         return (
                           <tr key={booking.id}>
                             <td>{booking.owner_display_name}</td>
@@ -4588,6 +4659,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     🗑️
                                   </button>
                                 </form>
+                              ) : normalizedBookingStatus === "BOOKED" && makeupSummary?.has_active_restricted_forfait ? (
+                                <small className="muted">{t("client.makeup_cancel_blocked")}</small>
                               ) : (
                                 <span className="muted">-</span>
                               )}
@@ -4600,7 +4673,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </div>
                 <div className="list client-mobile-list">
                   {reservationRows.map((booking) => {
-                    const canCancel = ["BOOKED", "WAITLISTED"].includes(normalizeStatus(booking.status));
+                    const normalizedBookingStatus = normalizeStatus(booking.status);
+                    const makeupSummary = makeupSummaryByMemberId.get(booking.owner_client_id);
+                    const canCancel = normalizedBookingStatus === "WAITLISTED"
+                      || (
+                        normalizedBookingStatus === "BOOKED"
+                        && (!makeupSummary?.has_active_restricted_forfait || makeupSummary.credits_remaining > 0)
+                      );
                     return (
                       <article key={`${booking.id}-mobile`} className="item client-mobile-card">
                         <div className="row spread">
@@ -4617,6 +4696,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "reservations" })} />
                               <button className="ghost" type="submit">{t("common.cancel")}</button>
                             </form>
+                          ) : normalizedBookingStatus === "BOOKED" && makeupSummary?.has_active_restricted_forfait ? (
+                            <small className="muted">{t("client.makeup_cancel_blocked")}</small>
                           ) : null}
                         </div>
                       </article>

@@ -39,6 +39,7 @@ from app.models.plan import (
 )
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.booking import BookingCreateRequest, BookingOut, ClientBookingOut, SessionMiniOut
+from app.services.makeup_passes import active_restricted_forfait_for_booking, consume_pass_and_create_makeup
 from app.services.family_billing import resolve_billing_profile
 from app.services.notifications.application.orchestrator import (
     enqueue_notifications,
@@ -1462,6 +1463,38 @@ def cancel_booking(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Cancellation deadline reached for this activity",
             )
+
+    restricted_forfait = None
+    if previous_status == BookingStatus.BOOKED:
+        restricted_forfait = active_restricted_forfait_for_booking(
+            db,
+            booking=booking,
+            now=now,
+            lock=True,
+        )
+        if restricted_forfait is not None:
+            try:
+                consume_pass_and_create_makeup(
+                    db,
+                    booking=booking,
+                    subscription=restricted_forfait,
+                    actor_user_id=current_user.id,
+                    now=now,
+                )
+            except ValueError as exc:
+                if str(exc) == "MAKEUP_PASS_REQUIRED":
+                    preferred_language = str(current_user.preferred_language or "fr").strip().lower()
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=(
+                            "Cancellation is not available: the 2026-2027 annual plan requires a Makeup Pass "
+                            "with at least one remaining credit."
+                            if preferred_language.startswith("en")
+                            else "Annulation impossible : le forfait Année 2026-2027 exige un Pass Récup "
+                            "avec au moins un crédit disponible."
+                        ),
+                    ) from exc
+                raise
 
     if previous_status == BookingStatus.BOOKED and booking.client_plan_subscription_id is not None and session_obj.start_at_utc > now:
         sub_and_plan = _load_subscription_with_plan_for_update(

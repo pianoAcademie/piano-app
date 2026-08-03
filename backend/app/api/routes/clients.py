@@ -71,7 +71,7 @@ from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduc
 from app.models.quote import Quote, QuoteAcceptanceFollowup, QuoteLine
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.catalog import SessionCourseTypeOut, SessionLocationOut, SessionOut, SessionProfessorOut
-from app.schemas.booking import BookingCreateRequest
+from app.schemas.booking import BookingCreateRequest, MakeupStudentSummaryOut
 from app.schemas.user import (
     ClientCatalogProductOut,
     ClientContentCourseOut,
@@ -103,6 +103,7 @@ from app.schemas.user import (
 from app.services.family_billing import resolve_billing_profile
 from app.services.client_purchase_notifications import send_client_payment_success_notifications
 from app.services.i18n import normalize_language
+from app.services.makeup_passes import makeup_summaries
 from app.services.invoice_documents import (
     InvoiceAppliedPaymentLine,
     InvoicePeriodLine,
@@ -1927,6 +1928,15 @@ def list_client_catalog_products(
         )
         for product in products
     ]
+
+
+@router.get("/clients/me/makeup-summary", response_model=list[MakeupStudentSummaryOut])
+def get_client_makeup_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+) -> list[MakeupStudentSummaryOut]:
+    managed_ids = _managed_client_ids_for_sessions(db, current_user)
+    return [MakeupStudentSummaryOut(**row) for row in makeup_summaries(db, user_ids=managed_ids)]
 
 
 @router.get("/clients/me/sessions", response_model=list[SessionOut])

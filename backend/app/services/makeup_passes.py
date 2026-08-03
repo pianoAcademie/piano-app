@@ -1,0 +1,251 @@
+from __future__ import annotations
+
+import re
+import unicodedata
+from datetime import datetime, timezone
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models.catalog import Booking, CourseSession
+from app.models.makeup import MakeupPassPurchase, MakeupRequest, MakeupRequestStatus
+from app.models.plan import ClientPlanSubscription, Plan, PlanKind, SubscriptionStatus
+from app.models.user import ClientKind, User
+
+RESTRICTED_FORFAIT_NAME = "annee 2026 2027"
+
+
+def _normalized(value: object) -> str:
+    decomposed = unicodedata.normalize("NFKD", str(value or ""))
+    without_accents = "".join(char for char in decomposed if not unicodedata.combining(char))
+    return re.sub(r"[^a-z0-9]+", " ", without_accents.casefold()).strip()
+
+
+def is_restricted_annual_forfait(plan: Plan) -> bool:
+    return plan.kind == PlanKind.FORFAIT and _normalized(plan.name) == RESTRICTED_FORFAIT_NAME
+
+
+def active_restricted_forfait_for_booking(
+    db: Session,
+    *,
+    booking: Booking,
+    now: datetime,
+    lock: bool = False,
+) -> ClientPlanSubscription | None:
+    owner = db.scalar(select(User).where(User.id == booking.user_id))
+    if owner is None or owner.client_kind != ClientKind.CHILD:
+        return None
+
+    query = (
+        select(ClientPlanSubscription, Plan)
+        .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
+        .where(
+            ClientPlanSubscription.user_id == booking.user_id,
+            ClientPlanSubscription.status == SubscriptionStatus.ACTIVE,
+            ClientPlanSubscription.started_at <= now,
+            (ClientPlanSubscription.ends_at.is_(None) | (ClientPlanSubscription.ends_at >= now)),
+            Plan.kind == PlanKind.FORFAIT,
+        )
+        .order_by(
+            (ClientPlanSubscription.id == booking.client_plan_subscription_id).desc(),
+            ClientPlanSubscription.created_at.desc(),
+        )
+    )
+    if lock:
+        query = query.with_for_update(of=ClientPlanSubscription)
+    for subscription, plan in db.execute(query).all():
+        if is_restricted_annual_forfait(plan):
+            return subscription
+    return None
+
+
+def consume_pass_and_create_makeup(
+    db: Session,
+    *,
+    booking: Booking,
+    subscription: ClientPlanSubscription,
+    actor_user_id: UUID,
+    now: datetime,
+) -> MakeupRequest:
+    purchase = db.scalar(
+        select(MakeupPassPurchase)
+        .where(
+            MakeupPassPurchase.user_id == booking.user_id,
+            MakeupPassPurchase.forfait_subscription_id == subscription.id,
+            MakeupPassPurchase.credits_remaining > 0,
+        )
+        .order_by(MakeupPassPurchase.created_at.asc(), MakeupPassPurchase.id.asc())
+        .with_for_update()
+        .limit(1)
+    )
+    if purchase is None:
+        raise ValueError("MAKEUP_PASS_REQUIRED")
+
+    purchase.credits_remaining -= 1
+    purchase.updated_at = now
+    request = MakeupRequest(
+        user_id=booking.user_id,
+        original_booking_id=booking.id,
+        forfait_subscription_id=subscription.id,
+        used_pass_purchase_id=purchase.id,
+        created_by_user_id=actor_user_id,
+        status=MakeupRequestStatus.PROPOSED,
+        proposed_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add_all([purchase, request])
+    db.flush()
+    booking.makeup_request_id = request.id
+    booking.makeup_credit_consumed = True
+    return request
+
+
+def grant_makeup_for_excused_absence(
+    db: Session,
+    *,
+    booking: Booking,
+    actor_user_id: UUID,
+    now: datetime,
+) -> bool:
+    existing_request = db.scalar(
+        select(MakeupRequest.id).where(MakeupRequest.original_booking_id == booking.id).limit(1)
+    )
+    if existing_request is not None:
+        return False
+    subscription = active_restricted_forfait_for_booking(db, booking=booking, now=now, lock=True)
+    if subscription is None:
+        return False
+    try:
+        consume_pass_and_create_makeup(
+            db,
+            booking=booking,
+            subscription=subscription,
+            actor_user_id=actor_user_id,
+            now=now,
+        )
+    except ValueError as exc:
+        if str(exc) == "MAKEUP_PASS_REQUIRED":
+            return False
+        raise
+    return True
+
+
+def revoke_pending_makeup_for_corrected_absence(
+    db: Session,
+    *,
+    booking: Booking,
+    now: datetime,
+) -> bool:
+    request = db.scalar(
+        select(MakeupRequest)
+        .where(
+            MakeupRequest.original_booking_id == booking.id,
+            MakeupRequest.status == MakeupRequestStatus.PROPOSED,
+        )
+        .with_for_update()
+        .limit(1)
+    )
+    if request is None:
+        return False
+    purchase = None
+    if request.used_pass_purchase_id is not None:
+        purchase = db.scalar(
+            select(MakeupPassPurchase)
+            .where(MakeupPassPurchase.id == request.used_pass_purchase_id)
+            .with_for_update()
+        )
+    if purchase is not None:
+        purchase.credits_remaining = min(purchase.credits_remaining + 1, purchase.credits_initial)
+        purchase.updated_at = now
+        db.add(purchase)
+    request.status = MakeupRequestStatus.CANCELLED
+    request.updated_at = now
+    booking.makeup_request_id = None
+    booking.makeup_credit_consumed = False
+    db.add(request)
+    return True
+
+
+def makeup_summaries(
+    db: Session,
+    *,
+    user_ids: set[UUID],
+    now: datetime | None = None,
+) -> list[dict[str, object]]:
+    if not user_ids:
+        return []
+    reference_time = now or datetime.now(timezone.utc)
+    users = {row.id: row for row in db.scalars(select(User).where(User.id.in_(user_ids))).all()}
+    subscription_rows = db.execute(
+        select(ClientPlanSubscription, Plan)
+        .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
+        .where(
+            ClientPlanSubscription.user_id.in_(user_ids),
+            ClientPlanSubscription.status == SubscriptionStatus.ACTIVE,
+            ClientPlanSubscription.started_at <= reference_time,
+            (ClientPlanSubscription.ends_at.is_(None) | (ClientPlanSubscription.ends_at >= reference_time)),
+        )
+    ).all()
+    purchase_rows = db.execute(
+        select(MakeupPassPurchase, ClientPlanSubscription, Plan)
+        .join(ClientPlanSubscription, ClientPlanSubscription.id == MakeupPassPurchase.forfait_subscription_id)
+        .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
+        .where(MakeupPassPurchase.user_id.in_(user_ids))
+        .order_by(MakeupPassPurchase.created_at.asc())
+    ).all()
+    requests = db.execute(
+        select(MakeupRequest, Booking, CourseSession)
+        .join(Booking, Booking.id == MakeupRequest.original_booking_id)
+        .join(CourseSession, CourseSession.id == Booking.session_id)
+        .where(MakeupRequest.user_id.in_(user_ids))
+        .order_by(MakeupRequest.created_at.desc())
+    ).all()
+    purchases_by_user: dict[UUID, list[MakeupPassPurchase]] = {user_id: [] for user_id in user_ids}
+    active_by_user: dict[UUID, bool] = {user_id: False for user_id in user_ids}
+    for subscription, plan in subscription_rows:
+        if is_restricted_annual_forfait(plan):
+            active_by_user[subscription.user_id] = True
+    for purchase, subscription, plan in purchase_rows:
+        is_currently_usable = (
+            subscription.status == SubscriptionStatus.ACTIVE
+            and subscription.started_at <= reference_time
+            and (subscription.ends_at is None or subscription.ends_at >= reference_time)
+            and is_restricted_annual_forfait(plan)
+        )
+        if is_currently_usable:
+            purchases_by_user.setdefault(purchase.user_id, []).append(purchase)
+            active_by_user[purchase.user_id] = True
+    requests_by_user: dict[UUID, list[dict[str, object]]] = {user_id: [] for user_id in user_ids}
+    for request, booking, session in requests:
+        requests_by_user.setdefault(request.user_id, []).append(
+            {
+                "id": request.id,
+                "status": request.status,
+                "original_booking_id": booking.id,
+                "original_session_title": session.title,
+                "original_session_start_at_utc": session.start_at_utc,
+                "created_at": request.created_at,
+            }
+        )
+    result: list[dict[str, object]] = []
+    for user_id in sorted(user_ids, key=str):
+        user = users.get(user_id)
+        purchases = purchases_by_user.get(user_id, [])
+        if not purchases and not requests_by_user.get(user_id) and not active_by_user.get(user_id):
+            continue
+        result.append(
+            {
+                "user_id": user_id,
+                "display_name": " ".join(part for part in ((user.first_name if user else None), (user.last_name if user else None)) if part).strip() or (user.email if user else str(user_id)),
+                "has_active_restricted_forfait": active_by_user.get(user_id, False),
+                "credits_initial": sum(row.credits_initial for row in purchases),
+                "credits_remaining": sum(row.credits_remaining for row in purchases),
+                "pending_makeups": [
+                    row for row in requests_by_user.get(user_id, []) if row["status"] == MakeupRequestStatus.PROPOSED
+                ],
+                "history": requests_by_user.get(user_id, []),
+            }
+        )
+    return result

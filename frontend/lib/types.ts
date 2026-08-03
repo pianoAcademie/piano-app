@@ -226,6 +226,25 @@ export type ClientBookingOut = {
   };
 };
 
+export type MakeupCreditOut = {
+  id: string;
+  status: string;
+  original_booking_id: string;
+  original_session_title: string;
+  original_session_start_at_utc: string;
+  created_at: string;
+};
+
+export type MakeupStudentSummaryOut = {
+  user_id: string;
+  display_name: string;
+  has_active_restricted_forfait: boolean;
+  credits_initial: number;
+  credits_remaining: number;
+  pending_makeups: MakeupCreditOut[];
+  history: MakeupCreditOut[];
+};
+
 export type AdminClientOut = {
   id: string;
   email: string;

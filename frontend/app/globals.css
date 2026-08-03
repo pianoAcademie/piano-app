@@ -12504,6 +12504,21 @@ button.danger:focus-visible {
   align-items: end;
 }
 
+.client-makeup-summary {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid var(--client-border, #ead0a5);
+  border-radius: 1rem;
+  background: #fffaf1;
+}
+
+.client-makeup-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
 .client-reservation-drawer {
   align-self: end;
 }

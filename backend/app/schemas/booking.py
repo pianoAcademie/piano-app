@@ -66,3 +66,22 @@ class ClientBookingOut(BaseModel):
     student_start_at_utc: datetime | None = None
     student_end_at_utc: datetime | None = None
     session: SessionMiniOut
+
+
+class MakeupCreditOut(BaseModel):
+    id: UUID
+    status: str
+    original_booking_id: UUID
+    original_session_title: str
+    original_session_start_at_utc: datetime
+    created_at: datetime
+
+
+class MakeupStudentSummaryOut(BaseModel):
+    user_id: UUID
+    display_name: str
+    has_active_restricted_forfait: bool
+    credits_initial: int
+    credits_remaining: int
+    pending_makeups: list[MakeupCreditOut]
+    history: list[MakeupCreditOut]

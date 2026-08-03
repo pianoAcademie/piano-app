@@ -44,6 +44,7 @@ from app.services.professor_contracts import label_for_contract_location
 from app.services.professor_default_grid import DefaultProfessorGridLine, load_default_professor_grid
 from app.services.professor_permissions import permissions_dict
 from app.services.reminders import skip_pending_reminders_for_booking
+from app.services.makeup_passes import grant_makeup_for_excused_absence, revoke_pending_makeup_for_corrected_absence
 from app.services.session_notifications import send_session_operation_email
 from app.services.session_teachers import effective_teacher_filter_for_professor
 
@@ -1149,6 +1150,17 @@ def update_booking_attendance(
             ):
                 if not _consume_pack_credit(subscription, plan):
                     raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Insufficient credits to remove excused absence")
+
+    attendance_updated_at = _utcnow()
+    if previous_status != next_status and next_status == BookingStatus.EXCUSED_ABSENCE:
+        grant_makeup_for_excused_absence(
+            db,
+            booking=booking,
+            actor_user_id=current_user.id,
+            now=attendance_updated_at,
+        )
+    elif previous_status == BookingStatus.EXCUSED_ABSENCE and next_status != BookingStatus.EXCUSED_ABSENCE:
+        revoke_pending_makeup_for_corrected_absence(db, booking=booking, now=attendance_updated_at)
 
     booking.status = next_status
     booking.cancelled_at = None
