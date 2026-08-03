@@ -193,8 +193,12 @@ export default async function EventDetailPage({
         <section className={styles.panel}>
           <h2>{text("Choisir un créneau", "Choose a time")}</h2>
           <p className="muted">{text(
-            "Les places affichées sont mises à jour lors de chaque inscription.",
-            "Availability is updated after every registration.",
+            event.show_remaining_seats
+              ? "Les places restantes sont mises à jour lors de chaque inscription."
+              : "La disponibilité est mise à jour lors de chaque inscription.",
+            event.show_remaining_seats
+              ? "Remaining places are updated after every registration."
+              : "Availability is updated after every registration.",
           )}</p>
           <div className={styles.slots}>
             {slots.map((slot) => {
@@ -215,16 +219,15 @@ export default async function EventDetailPage({
                         {(slot.location ?? event.location)?.address_line ? ` · ${(slot.location ?? event.location)?.address_line}` : ""}
                         {(slot.location ?? event.location)?.city ? `, ${(slot.location ?? event.location)?.postal_code ?? ""} ${(slot.location ?? event.location)?.city}` : ""}
                       </p>
-                      <p className="muted">
-                        {text("Capacité officielle", "Official capacity")} : {slot.capacity_max} {text("personne(s)", "people")}
-                      </p>
                     </div>
                     <span className={`${styles.badge} ${isFull && !hasPendingPayment ? styles.waitlist : ""}`}>
                       {hasPendingPayment
                         ? text("Place réservée", "Place reserved")
                         : isFull
                         ? event.waitlist_enabled ? text("Liste d’attente ouverte", "Waiting list open") : text("Complet", "Full")
-                        : `${slot.seats_remaining} ${text("place(s)", "place(s)")}`}
+                        : event.show_remaining_seats
+                          ? `${slot.seats_remaining} ${text("place(s) restante(s)", "place(s) remaining")}`
+                          : text("Places disponibles", "Places available")}
                     </span>
                   </div>
 

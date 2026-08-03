@@ -2702,6 +2702,7 @@ export type SchoolEventOut = {
   currency: string;
   max_per_family: number;
   waitlist_enabled: boolean;
+  show_remaining_seats: boolean;
   cancellation_deadline_hours: number;
   collect_piece_info: boolean;
   collect_photo_consent: boolean;

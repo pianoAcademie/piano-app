@@ -296,6 +296,9 @@ export default async function AdminEventDetailPage({
           </label>
           <div className={`${styles.checkRow} ${styles.full}`}>
             <label className={styles.checkLabel}><input type="checkbox" name="waitlist_enabled" defaultChecked={event.waitlist_enabled} /> Liste d’attente</label>
+            <label className={styles.checkLabel}>
+              <input type="checkbox" name="show_remaining_seats" defaultChecked={event.show_remaining_seats} /> Afficher les places restantes
+            </label>
             <label className={styles.checkLabel}><input type="checkbox" name="collect_piece_info" defaultChecked={event.collect_piece_info} /> Pièce interprétée</label>
             <label className={styles.checkLabel}><input type="checkbox" name="collect_photo_consent" defaultChecked={event.collect_photo_consent} /> Consentement photo</label>
             <label className={styles.checkLabel}>

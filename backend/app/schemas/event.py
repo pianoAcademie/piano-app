@@ -37,6 +37,7 @@ class SchoolEventCreateRequest(BaseModel):
     currency: str = Field(default="EUR", min_length=3, max_length=3)
     max_per_family: int = Field(default=6, ge=1, le=100)
     waitlist_enabled: bool = True
+    show_remaining_seats: bool = True
     cancellation_deadline_hours: int = Field(default=24, ge=0, le=8760)
     collect_piece_info: bool = False
     collect_photo_consent: bool = False
@@ -201,6 +202,7 @@ class SchoolEventOut(BaseModel):
     currency: str
     max_per_family: int
     waitlist_enabled: bool
+    show_remaining_seats: bool
     cancellation_deadline_hours: int
     collect_piece_info: bool
     collect_photo_consent: bool

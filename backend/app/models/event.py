@@ -149,6 +149,7 @@ class SchoolEvent(Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'EUR'"))
     max_per_family: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("6"))
     waitlist_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    show_remaining_seats: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     cancellation_deadline_hours: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("24"))
     collect_piece_info: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     collect_photo_consent: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))

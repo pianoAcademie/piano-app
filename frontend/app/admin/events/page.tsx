@@ -232,6 +232,9 @@ export default async function AdminEventsPage({ searchParams = {} }: { searchPar
           <input type="hidden" name="cancellation_deadline_hours" value="24" />
           <div className={`${styles.checkRow} ${styles.full}`}>
             <label className={styles.checkLabel}><input type="checkbox" name="waitlist_enabled" defaultChecked /> Liste d’attente</label>
+            <label className={styles.checkLabel}>
+              <input type="checkbox" name="show_remaining_seats" defaultChecked /> Afficher les places restantes
+            </label>
             <label className={styles.checkLabel}><input type="checkbox" name="collect_piece_info" /> Pièce interprétée</label>
             <label className={styles.checkLabel}><input type="checkbox" name="collect_photo_consent" /> Consentement photo</label>
             <label className={styles.checkLabel}>

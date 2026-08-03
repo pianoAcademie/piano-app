@@ -16844,6 +16844,7 @@ function eventPayloadFromForm(formData: FormData): Record<string, unknown> {
     currency: "EUR",
     max_per_family: Number.parseInt(String(formData.get("max_per_family") ?? "6"), 10) || 6,
     waitlist_enabled: checkboxField(formData, "waitlist_enabled"),
+    show_remaining_seats: checkboxField(formData, "show_remaining_seats"),
     cancellation_deadline_hours:
       Number.parseInt(String(formData.get("cancellation_deadline_hours") ?? "24"), 10) || 0,
     collect_piece_info: checkboxField(formData, "collect_piece_info"),
