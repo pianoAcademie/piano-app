@@ -140,6 +140,11 @@ class SchoolEventPriceTierCreateRequest(BaseModel):
     label_en: str | None = Field(default=None, max_length=120)
     price_ttc: Decimal = Field(ge=0)
     sort_order: int = Field(default=0, ge=0, le=10000)
+    is_online_booking_enabled: bool = True
+
+
+class SchoolEventPriceTierUpdateRequest(BaseModel):
+    is_online_booking_enabled: bool
 
 
 class SchoolEventPriceTierOut(BaseModel):
@@ -149,6 +154,7 @@ class SchoolEventPriceTierOut(BaseModel):
     label_en: str | None
     price_ttc: Decimal
     sort_order: int
+    is_online_booking_enabled: bool
     is_active: bool
 
 
@@ -210,10 +216,16 @@ class SchoolEventOut(BaseModel):
     updated_at: datetime
 
 
+class SchoolEventGuestTicketRequest(BaseModel):
+    participant_name: str = Field(min_length=2, max_length=255)
+    price_tier_id: UUID | None = None
+
+
 class SchoolEventRegistrationCreateRequest(BaseModel):
     slot_id: UUID
     participant_user_ids: list[UUID] = Field(default_factory=list, max_length=100)
     guest_names: list[str] = Field(default_factory=list, max_length=100)
+    guest_tickets: list[SchoolEventGuestTicketRequest] = Field(default_factory=list, max_length=100)
     price_tier_id: UUID | None = None
     participant_price_tier_ids: dict[UUID, UUID] = Field(default_factory=dict)
     guest_price_tier_id: UUID | None = None

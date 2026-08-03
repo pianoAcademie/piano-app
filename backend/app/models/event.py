@@ -321,6 +321,9 @@ class SchoolEventPriceTier(Base):
     label_en: Mapped[str | None] = mapped_column(String(120), nullable=True)
     price_ttc: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    is_online_booking_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))

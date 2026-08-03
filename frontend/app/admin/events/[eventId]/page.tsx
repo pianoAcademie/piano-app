@@ -12,6 +12,7 @@ import {
   updateSchoolEventAction,
   uploadSchoolEventImageAction,
   updateSchoolEventRegistrationGroupStatusAction,
+  updateSchoolEventPriceTierVisibilityAction,
   updateSchoolEventSlotCapacitiesAction,
 } from "../../../../lib/actions";
 import { hasAdminPermission } from "../../../../lib/admin-access";
@@ -320,12 +321,31 @@ export default async function AdminEventDetailPage({
         <h2>Tarifs proposés</h2>
         <p className="muted">
           Ajoutez autant de catégories que nécessaire (enfant, adulte, élève, parent d’élève, invité…).
-          Le client choisira son tarif lors de l’inscription.
+          Seuls les tarifs marqués « Réservation en ligne » seront proposés au client.
         </p>
         <div className={styles.slotList}>
           {event.price_tiers.map((tier) => (
             <div className={styles.slot} key={tier.id}>
-              <strong>{tier.label_fr}</strong> — {Number(tier.price_ttc).toFixed(2)} {event.currency}
+              <div>
+                <strong>{tier.label_fr}</strong> — {Number(tier.price_ttc).toFixed(2)} {event.currency}
+                <small className="muted">
+                  {tier.is_online_booking_enabled ? " · Visible en réservation en ligne" : " · Tarif interne uniquement"}
+                </small>
+              </div>
+              <form action={updateSchoolEventPriceTierVisibilityAction}>
+                <input type="hidden" name="event_id" value={event.id} />
+                <input type="hidden" name="tier_id" value={tier.id} />
+                <input type="hidden" name="return_to" value={returnTo} />
+                <label className={styles.checkLabel}>
+                  <input
+                    type="checkbox"
+                    name="is_online_booking_enabled"
+                    defaultChecked={tier.is_online_booking_enabled}
+                  />
+                  Réservation en ligne
+                </label>
+                <button type="submit" className="ghost">Enregistrer</button>
+              </form>
               <form action={deleteSchoolEventPriceTierAction}>
                 <input type="hidden" name="event_id" value={event.id} />
                 <input type="hidden" name="tier_id" value={tier.id} />
@@ -341,6 +361,10 @@ export default async function AdminEventDetailPage({
           <label className={styles.field}><span>Libellé *</span><input name="label_fr" required placeholder="Tarif enfant" /></label>
           <label className={styles.field}><span>Libellé anglais</span><input name="label_en" placeholder="Child" /></label>
           <label className={styles.field}><span>Prix TTC *</span><input name="price_ttc" type="number" min="0" step="0.01" required /></label>
+          <label className={styles.checkLabel}>
+            <input type="checkbox" name="is_online_booking_enabled" defaultChecked />
+            Proposer ce tarif en réservation en ligne
+          </label>
           <input type="hidden" name="sort_order" value={event.price_tiers.length} />
           <div className={styles.actions}><button type="submit">Ajouter le tarif</button></div>
         </form>

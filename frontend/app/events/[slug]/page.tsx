@@ -76,12 +76,15 @@ export default async function EventDetailPage({
     : [null, null];
   const family = familyResult?.ok ? familyResult.data : null;
   const registrations = registrationsResult?.ok ? registrationsResult.data : [];
-  const participants = family
+  const familyMembers = family
     ? [
         family.me,
         ...family.links_as_adult.map((link) => link.child),
       ].filter((member, index, rows) => rows.findIndex((candidate) => candidate.id === member.id) === index && member.is_active)
     : [];
+  const participants = event.collect_performer_booking
+    ? familyMembers.filter((member) => member.client_kind === "CHILD")
+    : familyMembers;
   const previousBookingSlotIds = new Set(
     registrations
       .filter((registration) =>
@@ -164,6 +167,29 @@ export default async function EventDetailPage({
         {ok ? <p className="notice success">{ok}</p> : null}
         {error ? <p className="notice error">{error}</p> : null}
 
+        {!token ? (
+          <section className={styles.accountPrompt}>
+            <div>
+              <span className={styles.eyebrow}>{text("Déjà client de l’école ?", "Already a school client?")}</span>
+              <h2>{text("Connectez-vous avant de réserver", "Sign in before booking")}</h2>
+              <p>{text(
+                "Vous pourrez sélectionner un ou plusieurs de vos enfants depuis votre dossier famille, puis ajouter les accompagnants éventuels.",
+                "You can select one or more children from your family account, then add any accompanying guests.",
+              )}</p>
+            </div>
+            <Link
+              className={styles.loginCta}
+              href={withLanguage(`/login?mode=login&return_to=${encodeURIComponent(withLanguage(`/events/${event.slug}`))}`)}
+            >
+              {text("Se connecter et choisir mes enfants", "Sign in and choose my children")}
+            </Link>
+            <small>{text(
+              "Vous n’avez pas de compte client ? La réservation sans compte reste disponible ci-dessous.",
+              "No client account? Guest booking remains available below.",
+            )}</small>
+          </section>
+        ) : null}
+
         <section className={styles.panel}>
           <h2>{text("Choisir un créneau", "Choose a time")}</h2>
           <p className="muted">{text(
@@ -234,17 +260,31 @@ export default async function EventDetailPage({
                           "A booking already exists. To buy additional tickets, leave the child unchecked and enter only the new guests.",
                         )}</p>
                       ) : null}
+                      <div className={styles.connectedBookingIntro}>
+                        <strong>{text("Réservation depuis votre compte famille", "Booking from your family account")}</strong>
+                        <span>{text(
+                          event.collect_performer_booking
+                            ? "Sélectionnez le ou les enfants qui participent au concert, puis ajoutez les accompagnants."
+                            : "Sélectionnez les membres de votre famille présents, puis ajoutez éventuellement d’autres accompagnants.",
+                          event.collect_performer_booking
+                            ? "Select the child or children performing in the concert, then add accompanying guests."
+                            : "Select the family members attending, then add any other guests.",
+                        )}</span>
+                      </div>
                       <fieldset>
-                        <legend><strong>{text("Qui participe ?", "Who is attending?")}</strong></legend>
+                        <legend><strong>{text(
+                          event.collect_performer_booking ? "Enfant(s) participant(s)" : "Membres de la famille présents",
+                          event.collect_performer_booking ? "Participating child(ren)" : "Family members attending",
+                        )}</strong></legend>
                         <div className={styles.participants}>
-                          {participants.map((participant, index) => (
+                          {participants.map((participant) => (
                             <div className={styles.participant} key={participant.id}>
                               <input
                                 id={`participant_${participant.id}`}
                                 type="checkbox"
                                 name="participant_user_ids"
                                 value={participant.id}
-                                defaultChecked={!hasPreviousBooking && (participants.length === 1 || index === 0)}
+                                defaultChecked={!hasPreviousBooking && participants.length === 1}
                               />
                               <label htmlFor={`participant_${participant.id}`}>{memberName(participant)}</label>
                               {event.price_tiers.length ? (
@@ -259,23 +299,49 @@ export default async function EventDetailPage({
                               ) : null}
                             </div>
                           ))}
+                          {!participants.length ? (
+                            <p className="muted">{text(
+                              event.collect_performer_booking
+                                ? "Aucun enfant actif n’est rattaché à ce compte. Vous pouvez poursuivre avec les accompagnants ou demander la mise à jour de votre dossier famille."
+                                : "Aucun membre actif n’est disponible dans ce dossier famille.",
+                              event.collect_performer_booking
+                                ? "No active child is linked to this account. You can continue with guests or ask us to update your family account."
+                                : "No active member is available in this family account.",
+                            )}</p>
+                          ) : null}
                         </div>
                       </fieldset>
                       {event.registration_mode === "GROUP_SESSION" ? (
-                        <label className={styles.field}>
-                          <span>{text("Invités supplémentaires (un nom par ligne)", "Additional guests (one name per line)")}</span>
-                          <textarea name="guest_names" rows={2} placeholder={text("Prénom Nom", "First name Last name")} />
-                          {event.price_tiers.length ? (
-                            <select name="guest_price_tier_id" defaultValue="">
-                              <option value="" disabled>{text("Tarif des invités", "Guest price")}</option>
-                              {event.price_tiers.map((tier) => (
-                                <option value={tier.id} key={tier.id}>
-                                  {language === "en" && tier.label_en ? tier.label_en : tier.label_fr} — {Number(tier.price_ttc).toFixed(2)} €
-                                </option>
-                              ))}
-                            </select>
-                          ) : null}
-                        </label>
+                        <fieldset>
+                          <legend><strong>{text("Accompagnants", "Accompanying guests")}</strong></legend>
+                          <p className="muted">{text(
+                            "Ajoutez uniquement les places supplémentaires nécessaires. Chaque accompagnant peut avoir son propre tarif.",
+                            "Add only the extra tickets you need. Each guest may have a different price.",
+                          )}</p>
+                          <div className={styles.publicTickets}>
+                            {Array.from({ length: Math.min(event.max_per_family, 10) }, (_, index) => (
+                              <div className={styles.publicTicket} key={index}>
+                                <label className={styles.field}>
+                                  <span>{text(`Accompagnant ${index + 1}`, `Guest ${index + 1}`)}</span>
+                                  <input name={`guest_name_${index}`} placeholder={text("Prénom Nom", "First name Last name")} />
+                                </label>
+                                {event.price_tiers.length ? (
+                                  <label className={styles.field}>
+                                    <span>{text("Tarif", "Price")}</span>
+                                    <select name={`guest_price_tier_id_${index}`} defaultValue="">
+                                      <option value="" disabled>{text("Choisir", "Choose")}</option>
+                                      {event.price_tiers.map((tier) => (
+                                        <option value={tier.id} key={tier.id}>
+                                          {language === "en" && tier.label_en ? tier.label_en : tier.label_fr} — {Number(tier.price_ttc).toFixed(2)} €
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        </fieldset>
                       ) : null}
                       {event.collect_piece_info ? (
                         <label className={styles.field}>
@@ -309,6 +375,7 @@ export default async function EventDetailPage({
                       <input type="hidden" name="slot_id" value={slot.id} />
                       <input type="hidden" name="return_to" value={withLanguage(`/events/${event.slug}`)} />
                       <input type="hidden" name="ui_language" value={language} />
+                      <h3>{text("Réserver sans compte", "Book without an account")}</h3>
                       <div className={styles.publicContactGrid}>
                         <label className={styles.field}>
                           <span>{text("Votre prénom *", "Your first name *")}</span>

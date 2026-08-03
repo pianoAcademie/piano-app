@@ -17036,10 +17036,11 @@ export async function registerSchoolEventAction(formData: FormData): Promise<voi
     setPortalReturnTo(returnTo);
     redirect(`/login?return_to=${encodeURIComponent(returnTo)}`);
   }
-  const guestNames = String(formData.get("guest_names") ?? "")
-    .split(/[\n,;]+/)
-    .map((value) => value.trim())
-    .filter(Boolean);
+  const guestTickets = Array.from({ length: 20 }, (_, index) => {
+    const participantName = String(formData.get(`guest_name_${index}`) ?? "").trim();
+    const priceTierId = String(formData.get(`guest_price_tier_id_${index}`) ?? "").trim();
+    return participantName ? { participant_name: participantName, price_tier_id: priceTierId || null } : null;
+  }).filter((ticket): ticket is { participant_name: string; price_tier_id: string | null } => ticket !== null);
   const participantIds = formData.getAll("participant_user_ids").map(String).filter(Boolean);
   const participantPriceTierIds = Object.fromEntries(
     participantIds
@@ -17053,7 +17054,7 @@ export async function registerSchoolEventAction(formData: FormData): Promise<voi
       body: JSON.stringify({
         slot_id: String(formData.get("slot_id") ?? "").trim(),
         participant_user_ids: participantIds,
-        guest_names: guestNames,
+        guest_tickets: guestTickets,
         participant_price_tier_ids: participantPriceTierIds,
         guest_price_tier_id: optionalField(formData, "guest_price_tier_id"),
         piece_info: optionalField(formData, "piece_info"),
@@ -17274,6 +17275,7 @@ export async function createSchoolEventPriceTierAction(formData: FormData): Prom
         label_en: optionalField(formData, "label_en"),
         price_ttc: String(formData.get("price_ttc") ?? "0").trim(),
         sort_order: Number.parseInt(String(formData.get("sort_order") ?? "0"), 10) || 0,
+        is_online_booking_enabled: checkboxField(formData, "is_online_booking_enabled"),
       }),
     }, token,
   );
@@ -17281,6 +17283,28 @@ export async function createSchoolEventPriceTierAction(formData: FormData): Prom
   revalidatePath(`/admin/events/${eventId}`);
   revalidatePath("/events");
   redirect(appendQueryMessage(returnTo, "ok", "Tarif ajouté"));
+}
+
+export async function updateSchoolEventPriceTierVisibilityAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const eventId = String(formData.get("event_id") ?? "").trim();
+  const tierId = String(formData.get("tier_id") ?? "").trim();
+  const returnTo = safeEventReturnPath(formData, eventId ? `/admin/events/${eventId}` : "/admin/events");
+  if (!token || !eventId || !tierId) redirect(appendQueryMessage(returnTo, "error", "Tarif introuvable"));
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/admin/events/${encodeURIComponent(eventId)}/price-tiers/${encodeURIComponent(tierId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        is_online_booking_enabled: checkboxField(formData, "is_online_booking_enabled"),
+      }),
+    },
+    token,
+  );
+  if (!result.ok) redirect(appendQueryMessage(returnTo, "error", result.message));
+  revalidatePath(`/admin/events/${eventId}`);
+  revalidatePath("/events");
+  redirect(appendQueryMessage(returnTo, "ok", "Visibilité du tarif mise à jour"));
 }
 
 export async function deleteSchoolEventPriceTierAction(formData: FormData): Promise<void> {

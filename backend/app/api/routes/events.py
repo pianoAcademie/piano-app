@@ -55,6 +55,7 @@ from app.schemas.event import (
     SchoolEventImageUploadOut,
     SchoolEventPriceTierCreateRequest,
     SchoolEventPriceTierOut,
+    SchoolEventPriceTierUpdateRequest,
     SchoolEventVenueCreateRequest,
     SchoolEventVenueOut,
 )
@@ -228,6 +229,7 @@ def _serialize_events(
     events: list[SchoolEvent],
     *,
     include_admin_capacity: bool = False,
+    include_private_price_tiers: bool = False,
 ) -> list[SchoolEventOut]:
     event_ids = [event.id for event in events]
     slots = db.scalars(
@@ -249,9 +251,15 @@ def _serialize_events(
     }
     venues = db.scalars(select(SchoolEventVenue).where(SchoolEventVenue.id.in_(venue_ids))).all() if venue_ids else []
     venues_by_id = {venue.id: venue for venue in venues}
+    price_tier_filters = [
+        SchoolEventPriceTier.event_id.in_(event_ids),
+        SchoolEventPriceTier.is_active.is_(True),
+    ]
+    if not include_private_price_tiers:
+        price_tier_filters.append(SchoolEventPriceTier.is_online_booking_enabled.is_(True))
     price_tiers = db.scalars(
         select(SchoolEventPriceTier)
-        .where(SchoolEventPriceTier.event_id.in_(event_ids), SchoolEventPriceTier.is_active.is_(True))
+        .where(*price_tier_filters)
         .order_by(SchoolEventPriceTier.sort_order, SchoolEventPriceTier.created_at)
     ).all() if event_ids else []
     price_tiers_by_event: dict[UUID, list[SchoolEventPriceTier]] = defaultdict(list)
@@ -341,6 +349,7 @@ def _serialize_events(
                         label_en=tier.label_en,
                         price_ttc=tier.price_ttc,
                         sort_order=tier.sort_order,
+                        is_online_booking_enabled=bool(tier.is_online_booking_enabled),
                         is_active=bool(tier.is_active),
                     )
                     for tier in price_tiers_by_event.get(event.id, [])
@@ -434,13 +443,24 @@ def _registration_price_tier(
     *,
     event: SchoolEvent,
     requested_tier_id: UUID | None,
+    allow_private_tiers: bool = False,
 ) -> tuple[Decimal, SchoolEventPriceTier | None]:
+    tier_filters = [
+        SchoolEventPriceTier.event_id == event.id,
+        SchoolEventPriceTier.is_active.is_(True),
+    ]
+    if not allow_private_tiers:
+        tier_filters.append(SchoolEventPriceTier.is_online_booking_enabled.is_(True))
     tiers = db.scalars(
         select(SchoolEventPriceTier)
-        .where(SchoolEventPriceTier.event_id == event.id, SchoolEventPriceTier.is_active.is_(True))
+        .where(*tier_filters)
         .order_by(SchoolEventPriceTier.sort_order, SchoolEventPriceTier.created_at)
     ).all()
+    if not allow_private_tiers:
+        tiers = [tier for tier in tiers if getattr(tier, "is_online_booking_enabled", True)]
     if not tiers:
+        if requested_tier_id is not None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Tarif invalide")
         return Decimal(event.price_ttc or 0).quantize(Decimal("0.01")), None
     if requested_tier_id is None:
         if len(tiers) > 1:
@@ -1063,9 +1083,23 @@ def register_for_event(
     participant_ids = list(dict.fromkeys(payload.participant_user_ids))
     if any(participant_id not in managed_ids for participant_id in participant_ids):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Participant non autorisé")
-    guests = [name.strip() for name in payload.guest_names if name.strip()]
-    total_people = len(participant_ids) + len(guests)
+    guest_tickets = [
+        (ticket.participant_name.strip(), ticket.price_tier_id)
+        for ticket in payload.guest_tickets
+        if ticket.participant_name.strip()
+    ]
+    guest_tickets.extend(
+        (name.strip(), payload.guest_price_tier_id)
+        for name in payload.guest_names
+        if name.strip()
+    )
+    total_people = len(participant_ids) + len(guest_tickets)
     if total_people < 1:
+        if event.collect_performer_booking:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Sélectionnez au moins un enfant ou ajoutez un accompagnant",
+            )
         participant_ids = [current_user.id]
         total_people = 1
     if total_people > event.max_per_family:
@@ -1112,18 +1146,16 @@ def register_for_event(
         )
         for participant_id in participant_ids
     }
-    guest_price = (
+    guest_prices = [
         _registration_price_tier(
             db,
             event=event,
-            requested_tier_id=payload.guest_price_tier_id or payload.price_tier_id,
+            requested_tier_id=price_tier_id or payload.price_tier_id,
         )
-        if guests
-        else None
-    )
+        for _, price_tier_id in guest_tickets
+    ]
     total_due = sum((price for price, _ in participant_prices.values()), Decimal("0"))
-    if guest_price:
-        total_due += guest_price[0] * len(guests)
+    total_due += sum((price for price, _ in guest_prices), Decimal("0"))
     registration_status = SchoolEventRegistrationStatus.CONFIRMED
     if total_people > seats_remaining:
         if not event.waitlist_enabled:
@@ -1165,24 +1197,22 @@ def register_for_event(
                 ),
             )
         )
-    if guests:
-        assert guest_price is not None
-        unit_price, selected_tier = guest_price
+    for (guest_name, _), (unit_price, selected_tier) in zip(guest_tickets, guest_prices, strict=True):
         rows_to_create.append(
             SchoolEventRegistration(
                 group_id=group_id,
                 slot_id=slot.id,
                 booker_user_id=current_user.id,
                 participant_user_id=None,
-                participant_display_name=", ".join(guests),
-                party_size=len(guests),
-                guest_names_json=guests,
+                participant_display_name=guest_name,
+                party_size=1,
+                guest_names_json=[guest_name],
                 answers_json=answers,
                 status=registration_status,
                 unit_price_ttc_snapshot=unit_price,
                 price_tier_id=selected_tier.id if selected_tier else None,
                 price_tier_label_snapshot=selected_tier.label_fr if selected_tier else None,
-                total_ttc_snapshot=(unit_price * len(guests)).quantize(Decimal("0.01")),
+                total_ttc_snapshot=unit_price,
                 currency_snapshot=event.currency.upper(),
                 payment_hold_expires_at=(
                     now + PAYMENT_HOLD_DURATION
@@ -1464,7 +1494,12 @@ def list_admin_events(
     _: User = Depends(require_admin_or_permissions("can_manage_events")),
 ) -> list[SchoolEventOut]:
     events = db.scalars(select(SchoolEvent).order_by(SchoolEvent.created_at.desc())).all()
-    return _serialize_events(db, list(events), include_admin_capacity=True)
+    return _serialize_events(
+        db,
+        list(events),
+        include_admin_capacity=True,
+        include_private_price_tiers=True,
+    )
 
 
 @router.get("/admin/event-venues", response_model=list[SchoolEventVenueOut])
@@ -1555,7 +1590,12 @@ def create_admin_event(
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ce slug est déjà utilisé") from exc
     db.refresh(event)
-    return _serialize_events(db, [event], include_admin_capacity=True)[0]
+    return _serialize_events(
+        db,
+        [event],
+        include_admin_capacity=True,
+        include_private_price_tiers=True,
+    )[0]
 
 
 @router.get("/admin/events/{event_id}", response_model=SchoolEventOut)
@@ -1567,7 +1607,12 @@ def get_admin_event(
     event = db.get(SchoolEvent, event_id)
     if event is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Événement introuvable")
-    return _serialize_events(db, [event], include_admin_capacity=True)[0]
+    return _serialize_events(
+        db,
+        [event],
+        include_admin_capacity=True,
+        include_private_price_tiers=True,
+    )[0]
 
 
 @router.post(
@@ -1640,6 +1685,33 @@ def create_admin_event_price_tier(
         )
     tier = SchoolEventPriceTier(event_id=event.id, **payload.model_dump())
     db.add(tier)
+    db.commit()
+    db.refresh(tier)
+    return SchoolEventPriceTierOut.model_validate(tier, from_attributes=True)
+
+
+@router.patch(
+    "/admin/events/{event_id}/price-tiers/{tier_id}",
+    response_model=SchoolEventPriceTierOut,
+)
+def update_admin_event_price_tier(
+    event_id: UUID,
+    tier_id: UUID,
+    payload: SchoolEventPriceTierUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_manage_events")),
+) -> SchoolEventPriceTierOut:
+    tier = db.scalar(
+        select(SchoolEventPriceTier).where(
+            SchoolEventPriceTier.id == tier_id,
+            SchoolEventPriceTier.event_id == event_id,
+            SchoolEventPriceTier.is_active.is_(True),
+        )
+    )
+    if tier is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarif introuvable")
+    tier.is_online_booking_enabled = payload.is_online_booking_enabled
+    tier.updated_at = _utcnow()
     db.commit()
     db.refresh(tier)
     return SchoolEventPriceTierOut.model_validate(tier, from_attributes=True)
@@ -1759,7 +1831,12 @@ def update_admin_event(
                 participant_names=participant_names,
                 paid=paid,
             )
-    return _serialize_events(db, [event], include_admin_capacity=True)[0]
+    return _serialize_events(
+        db,
+        [event],
+        include_admin_capacity=True,
+        include_private_price_tiers=True,
+    )[0]
 
 
 @router.post("/admin/events/{event_id}/duplicate", response_model=SchoolEventOut, status_code=status.HTTP_201_CREATED)
@@ -1814,6 +1891,7 @@ def duplicate_admin_event(
                 label_en=source_tier.label_en,
                 price_ttc=source_tier.price_ttc,
                 sort_order=source_tier.sort_order,
+                is_online_booking_enabled=source_tier.is_online_booking_enabled,
             )
         )
     source_slots = db.scalars(
@@ -1841,7 +1919,12 @@ def duplicate_admin_event(
         )
     db.commit()
     db.refresh(duplicate)
-    return _serialize_events(db, [duplicate], include_admin_capacity=True)[0]
+    return _serialize_events(
+        db,
+        [duplicate],
+        include_admin_capacity=True,
+        include_private_price_tiers=True,
+    )[0]
 
 
 @router.post("/admin/events/{event_id}/slots", response_model=SchoolEventSlotOut, status_code=status.HTTP_201_CREATED)
@@ -1860,7 +1943,12 @@ def create_admin_event_slot(
     db.add(slot)
     db.commit()
     db.refresh(slot)
-    serialized_slots = _serialize_events(db, [event], include_admin_capacity=True)[0].slots
+    serialized_slots = _serialize_events(
+        db,
+        [event],
+        include_admin_capacity=True,
+        include_private_price_tiers=True,
+    )[0].slots
     return next(serialized_slot for serialized_slot in serialized_slots if serialized_slot.id == slot.id)
 
 
@@ -1907,7 +1995,12 @@ def update_admin_event_slot_capacities(
     db.commit()
     db.refresh(slot)
     _send_waitlist_promotions(db, event=event, slot=slot, promoted_groups=promoted_groups)
-    serialized_slots = _serialize_events(db, [event], include_admin_capacity=True)[0].slots
+    serialized_slots = _serialize_events(
+        db,
+        [event],
+        include_admin_capacity=True,
+        include_private_price_tiers=True,
+    )[0].slots
     return next(serialized_slot for serialized_slot in serialized_slots if serialized_slot.id == slot.id)
 
 
@@ -1998,7 +2091,10 @@ def create_admin_event_registration(
         if responsible_adult is not None:
             booker = responsible_adult
     unit_price, selected_tier = _registration_price_tier(
-        db, event=event, requested_tier_id=payload.price_tier_id
+        db,
+        event=event,
+        requested_tier_id=payload.price_tier_id,
+        allow_private_tiers=True,
     )
     registration = SchoolEventRegistration(
         group_id=uuid4(),

@@ -2655,6 +2655,7 @@ export type SchoolEventPriceTierOut = {
   label_en: string | null;
   price_ttc: string;
   sort_order: number;
+  is_online_booking_enabled: boolean;
   is_active: boolean;
 };
 

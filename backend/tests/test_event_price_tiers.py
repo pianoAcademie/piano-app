@@ -97,6 +97,37 @@ class EventPriceTierTests(unittest.TestCase):
         self.assertEqual(price, Decimal("12.50"))
         self.assertIs(tier, selected)
 
+    def test_private_tier_is_rejected_for_online_booking(self) -> None:
+        event = SimpleNamespace(id=uuid4(), price_ttc=Decimal("0"))
+        private_tier = SimpleNamespace(
+            id=uuid4(),
+            price_ttc=Decimal("0"),
+            is_online_booking_enabled=False,
+        )
+        with self.assertRaises(HTTPException) as context:
+            _registration_price_tier(
+                _Db([private_tier]),
+                event=event,
+                requested_tier_id=private_tier.id,
+            )
+        self.assertEqual(context.exception.status_code, 422)
+
+    def test_private_tier_remains_available_for_admin_booking(self) -> None:
+        event = SimpleNamespace(id=uuid4(), price_ttc=Decimal("0"))
+        private_tier = SimpleNamespace(
+            id=uuid4(),
+            price_ttc=Decimal("0"),
+            is_online_booking_enabled=False,
+        )
+        price, tier = _registration_price_tier(
+            _Db([private_tier]),
+            event=event,
+            requested_tier_id=private_tier.id,
+            allow_private_tiers=True,
+        )
+        self.assertEqual(price, Decimal("0.00"))
+        self.assertIs(tier, private_tier)
+
     def test_participants_can_choose_different_tiers(self) -> None:
         slot_id = uuid4()
         adult_id, child_id = uuid4(), uuid4()
@@ -113,6 +144,21 @@ class EventPriceTierTests(unittest.TestCase):
         )
         self.assertEqual(payload.participant_price_tier_ids[adult_id], adult_tier_id)
         self.assertEqual(payload.participant_price_tier_ids[child_id], child_tier_id)
+
+    def test_connected_booking_accepts_guests_with_distinct_prices(self) -> None:
+        adult_tier_id, child_tier_id = uuid4(), uuid4()
+        payload = SchoolEventRegistrationCreateRequest.model_validate(
+            {
+                "slot_id": str(uuid4()),
+                "guest_tickets": [
+                    {"participant_name": "Alice Martin", "price_tier_id": str(adult_tier_id)},
+                    {"participant_name": "Léa Martin", "price_tier_id": str(child_tier_id)},
+                ],
+            }
+        )
+        self.assertEqual(payload.guest_tickets[0].participant_name, "Alice Martin")
+        self.assertEqual(payload.guest_tickets[0].price_tier_id, adult_tier_id)
+        self.assertEqual(payload.guest_tickets[1].price_tier_id, child_tier_id)
 
     def test_public_booking_accepts_named_tickets_with_distinct_prices(self) -> None:
         performer_tier_id, adult_tier_id = uuid4(), uuid4()

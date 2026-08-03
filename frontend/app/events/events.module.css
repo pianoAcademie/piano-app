@@ -269,6 +269,10 @@
   color: rgba(255, 255, 255, 0.88);
 }
 
+.detailTitle li {
+  color: rgba(255, 255, 255, 0.9);
+}
+
 .slots {
   display: grid;
   gap: 0.8rem;
@@ -297,6 +301,37 @@
   margin-top: 0.9rem;
   padding-top: 0.9rem;
   border-top: 1px solid #ece3d5;
+}
+
+.accountPrompt {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.7rem 1.2rem;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding: 1.1rem 1.2rem;
+  border: 1px solid #d7a14d;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #fff8ea, #fff);
+  box-shadow: 0 8px 24px rgba(74, 48, 18, 0.08);
+}
+
+.accountPrompt h2,
+.accountPrompt p {
+  margin: 0.25rem 0;
+}
+
+.accountPrompt small {
+  grid-column: 1 / -1;
+  color: #6d6257;
+}
+
+.connectedBookingIntro {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.8rem;
+  border-radius: 12px;
+  background: #f7f2e9;
 }
 
 .pendingPayment {
@@ -389,7 +424,8 @@
 @media (max-width: 850px) {
   .hero,
   .detailHero,
-  .grid {
+  .grid,
+  .accountPrompt {
     grid-template-columns: 1fr;
   }
 
