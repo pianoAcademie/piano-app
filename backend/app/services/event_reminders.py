@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -30,6 +30,7 @@ from app.models.user import User
 from app.services.client_email import deliverable_client_email
 from app.services.communication_journal import COMMUNICATION_TYPE_EVENT_REMINDER, log_communication
 from app.services.email_delivery import send_email
+from app.services.local_time import resolve_timezone_name
 from app.services.messaging_templates import resolve_frontend_base_url
 
 
@@ -61,16 +62,14 @@ def event_reminder_source(*, event_id: UUID, group_id: UUID, start_at_utc: datet
     return f"SCHOOL_EVENT_REMINDER:{event_id}:{group_id}:{start_key}"
 
 
-def _event_datetime(slot: SchoolEventSlot, language: str) -> str:
-    try:
-        timezone = ZoneInfo(slot.timezone)
-    except ZoneInfoNotFoundError:
-        timezone = ZoneInfo("UTC")
+def _event_datetime(slot: SchoolEventSlot, language: str, recipient_timezone: str | None) -> str:
+    timezone_name = resolve_timezone_name(recipient_timezone, slot.timezone)
+    timezone = ZoneInfo(timezone_name)
     local_start = slot.start_at_utc.astimezone(timezone)
     local_end = slot.end_at_utc.astimezone(timezone)
     if language == "en":
-        return f"{local_start.strftime('%A %d %B %Y, %H:%M')}–{local_end.strftime('%H:%M')}"
-    return f"{local_start.strftime('%d/%m/%Y à %H:%M')}–{local_end.strftime('%H:%M')}"
+        return f"{local_start.strftime('%A %d %B %Y, %H:%M')}–{local_end.strftime('%H:%M')} ({timezone_name})"
+    return f"{local_start.strftime('%d/%m/%Y à %H:%M')}–{local_end.strftime('%H:%M')} ({timezone_name})"
 
 
 def _location_label(location: Location | None, language: str) -> str:
@@ -94,7 +93,7 @@ def _message(
 ) -> tuple[str, str]:
     language = "en" if (booker.preferred_language or "fr").strip().lower().startswith("en") else "fr"
     title = event.title_en if language == "en" and event.title_en else event.title_fr
-    when = _event_datetime(slot, language)
+    when = _event_datetime(slot, language, booker.timezone)
     where = _location_label(location, language)
     base_url = resolve_frontend_base_url(db).rstrip("/")
     event_url = f"{base_url}/events/{event.slug}{'?lang=en' if language == 'en' else ''}"

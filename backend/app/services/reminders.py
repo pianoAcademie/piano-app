@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -22,6 +22,7 @@ from app.models.ops import (
     ReminderStatus,
 )
 from app.models.user import User
+from app.services.local_time import resolve_timezone_name
 from app.services.communication_journal import (
     COMMUNICATION_TYPE_COURSE_REMINDER,
     COMMUNICATION_TYPE_OPERATIONAL,
@@ -201,16 +202,8 @@ def _format_session_datetime(
     *,
     booking: Booking | None = None,
 ) -> str:
-    tz_name = timezone_preference or location.timezone or "UTC"
-    try:
-        tz = ZoneInfo(tz_name)
-    except ZoneInfoNotFoundError:
-        tz_name = location.timezone or "UTC"
-        try:
-            tz = ZoneInfo(tz_name)
-        except ZoneInfoNotFoundError:
-            tz_name = "UTC"
-            tz = ZoneInfo("UTC")
+    tz_name = resolve_timezone_name(timezone_preference, location.timezone, session_obj.timezone)
+    tz = ZoneInfo(tz_name)
 
     start_at = _booking_start_at_utc(booking, session_obj) if booking is not None else session_obj.start_at_utc
     end_at = _booking_end_at_utc(booking, session_obj) if booking is not None else session_obj.end_at_utc

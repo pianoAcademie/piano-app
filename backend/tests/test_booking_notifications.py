@@ -12,6 +12,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.models.catalog import DeliveryMode
 from app.services.notifications.application.orchestrator import (
+    _body_for_booking_notification,
     _build_lesson_reminder_email,
     _refresh_pending_email_reminder,
     schedule_booking_created_notifications,
@@ -42,6 +43,18 @@ class _FakeSession:
 
 
 class BookingNotificationTests(unittest.TestCase):
+    def test_cancellation_uses_local_time_instead_of_utc(self) -> None:
+        _, body = _body_for_booking_notification(
+            is_cancellation=True,
+            course_type_name="Cours collectif",
+            start_at=datetime(2026, 9, 12, 10, 0, tzinfo=timezone.utc),
+            student_label="Sienna Stiebert Ambroise",
+            timezone_name="Europe/Paris",
+        )
+
+        self.assertIn("12/09/2026 12:00 (Europe/Paris)", body)
+        self.assertNotIn("UTC", body)
+
     def test_online_reminder_is_localized_and_includes_link(self) -> None:
         subject, body = _build_lesson_reminder_email(
             recipient_name="Sarah Alshaikh",

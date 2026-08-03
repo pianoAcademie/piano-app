@@ -63,6 +63,7 @@ def _default_rendered_email(
                 f"Activity: {context['activity_name']}\n"
                 f"Date: {context['session_date']}\n"
                 f"Time: {context['session_time']}\n"
+                f"Time zone: {context['session_timezone']}\n"
                 f"Location: {context['location_name']}\n"
             )
         else:
@@ -73,6 +74,7 @@ def _default_rendered_email(
                 f"Activite: {context['activity_name']}\n"
                 f"Date: {context['session_date']}\n"
                 f"Heure: {context['session_time']}\n"
+                f"Fuseau horaire: {context['session_timezone']}\n"
                 f"Lieu: {context['location_name']}\n"
             )
         if teacher_name:
@@ -88,6 +90,7 @@ def _default_rendered_email(
             f"Activity: {context['activity_name']}\n"
             f"Date: {context['session_date']}\n"
             f"Time: {context['session_time']}\n"
+            f"Time zone: {context['session_timezone']}\n"
             f"Location: {context['location_name']}\n"
             f"My account: {context['account_url']}\n\n"
             "Piano Academie"
@@ -107,6 +110,7 @@ def _default_rendered_email(
             f"Activite: {context['activity_name']}\n"
             f"Date: {context['session_date']}\n"
             f"Heure: {context['session_time']}\n"
+            f"Fuseau horaire: {context['session_timezone']}\n"
             f"Lieu: {context['location_name']}\n"
             f"Mon compte: {context['account_url']}\n\n"
             "Piano Academie"
@@ -162,15 +166,22 @@ def render_booking_confirmation_email(
     language: str | None = None,
 ) -> RenderedBookingConfirmationEmail | None:
     normalized_language = normalize_language(language)
-    localized_start = _localized_start_at(start_at, timezone_name)
+    resolved_timezone_name = (timezone_name or "").strip() or "Europe/Paris"
+    try:
+        ZoneInfo(resolved_timezone_name)
+    except ZoneInfoNotFoundError:
+        resolved_timezone_name = "Europe/Paris"
+    localized_start = _localized_start_at(start_at, resolved_timezone_name)
     normalized_teacher_name = _normalize_teacher_name(teacher_name)
     context = {
-            "recipient_name": (recipient_name or "").strip() or ("Administration" if audience == "ADMIN" else ("Customer" if normalized_language == "en" else "Client")),
+        "recipient_name": (recipient_name or "").strip()
+        or ("Administration" if audience == "ADMIN" else ("Customer" if normalized_language == "en" else "Client")),
         "student_name": student_name.strip() or "-",
         "activity_name": activity_name.strip() or "-",
         "session_date": localized_start.strftime("%d/%m/%Y"),
         "session_time": localized_start.strftime("%H:%M"),
         "session_start_local": localized_start.strftime("%d/%m/%Y %H:%M"),
+        "session_timezone": resolved_timezone_name,
         "location_name": (location_name or "").strip() or "-",
         "teacher_name": normalized_teacher_name,
         "account_url": _frontend_url("/client?tab=planning"),

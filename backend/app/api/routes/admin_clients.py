@@ -172,6 +172,7 @@ from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, l
 from app.services.email_delivery import send_email
 from app.services.family_billing import resolve_billing_profile
 from app.services.i18n import normalize_language
+from app.services.local_time import resolve_timezone_name
 from app.services.invoice_documents import (
     InvoiceAppliedPaymentLine,
     InvoicePeriodLine,
@@ -2743,7 +2744,11 @@ def _send_invoice_range_booking_confirmation_emails(
                 student_name=student_label,
                 activity_name=course_type.name,
                 start_at=session_obj.start_at_utc,
-                timezone_name=session_obj.timezone,
+                timezone_name=resolve_timezone_name(
+                    recipient_user.timezone if recipient_user is not None else None,
+                    session_obj.timezone,
+                    location.timezone,
+                ),
                 location_name=location_label,
                 teacher_name=teacher_label,
                 language=recipient_user.preferred_language if recipient_user is not None else None,
@@ -2776,7 +2781,7 @@ def _send_invoice_range_booking_confirmation_emails(
                 student_name=student_label,
                 activity_name=course_type.name,
                 start_at=session_obj.start_at_utc,
-                timezone_name=session_obj.timezone,
+                timezone_name=resolve_timezone_name(session_obj.timezone, location.timezone),
                 location_name=location_label,
                 teacher_name=teacher_label,
                 language="fr",

@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from urllib import error as urllib_error
 from urllib import request as urllib_request
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session
 
@@ -80,6 +80,7 @@ def _log_sms(
     delivery_status: CommunicationDeliveryStatus,
     subject: str | None,
     error_message: str | None = None,
+    recipient_user_id: UUID | None = None,
     db: Session | None = None,
 ) -> None:
     log_communication(
@@ -88,6 +89,7 @@ def _log_sms(
         communication_type=COMMUNICATION_TYPE_OPERATIONAL,
         sender_category=CommunicationSenderCategory.SYSTEM,
         sender_label="Systeme",
+        recipient_user_id=recipient_user_id,
         recipient=to_phone,
         subject=(subject or "").strip() or "Notification SMS",
         content=message,
@@ -106,6 +108,7 @@ def send_provider_sms(
     message: str,
     context: str,
     subject: str | None = None,
+    recipient_user_id: UUID | None = None,
     db: Session | None = None,
 ) -> SmsProviderSendResult:
     normalized_phone = normalize_sms_recipient_number(to_phone)
@@ -141,6 +144,7 @@ def send_provider_sms(
                 provider_message_id=provider_message_id,
                 delivery_status=CommunicationDeliveryStatus.SKIPPED,
                 subject=subject,
+                recipient_user_id=recipient_user_id,
                 db=db,
             )
         except Exception as exc:  # pragma: no cover - defensive safety net
@@ -192,6 +196,7 @@ def send_provider_sms(
             delivery_status=CommunicationDeliveryStatus.FAILED,
             subject=subject,
             error_message=error_message,
+            recipient_user_id=recipient_user_id,
             db=db,
         )
         return SmsProviderSendResult(
@@ -213,6 +218,7 @@ def send_provider_sms(
             delivery_status=CommunicationDeliveryStatus.FAILED,
             subject=subject,
             error_message=error_message,
+            recipient_user_id=recipient_user_id,
             db=db,
         )
         return SmsProviderSendResult(
@@ -232,6 +238,7 @@ def send_provider_sms(
         provider_message_id=resolved_message_id,
         delivery_status=CommunicationDeliveryStatus.SENT,
         subject=subject,
+        recipient_user_id=recipient_user_id,
         db=db,
     )
     return SmsProviderSendResult(

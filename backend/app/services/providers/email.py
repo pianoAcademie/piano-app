@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from uuid import UUID
 
 from app.services.email_delivery import send_email
 from app.services.messaging_templates import resolve_messaging_delivery_config
@@ -22,6 +23,7 @@ def send_provider_email(
     body: str,
     body_format: str,
     context: str,
+    recipient_user_id: UUID | None = None,
 ) -> EmailProviderSendResult:
     provider_name = resolve_messaging_delivery_config().provider
     try:
@@ -31,6 +33,7 @@ def send_provider_email(
             body=body,
             body_format=body_format,
             context=context,
+            recipient_user_id=recipient_user_id,
         )
     except Exception as exc:  # pragma: no cover - defensive safety net
         return EmailProviderSendResult(

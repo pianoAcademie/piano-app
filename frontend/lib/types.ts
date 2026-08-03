@@ -2430,6 +2430,7 @@ export type CommunicationReportRow = {
   occurred_at: string;
   subject: string;
   recipient: string;
+  recipient_display_name: string | null;
   recipient_user_id: string | null;
   delivery_status: "DELIVERED" | "SENT" | "FAILED" | "PENDING" | "SKIPPED" | "UNKNOWN";
   provider_message_id: string | null;

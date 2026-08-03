@@ -140,6 +140,7 @@ class CommunicationReportRow(BaseModel):
     occurred_at: datetime
     subject: str
     recipient: str
+    recipient_display_name: str | None
     recipient_user_id: UUID | None
     delivery_status: CommunicationDeliveryStatus
     provider_message_id: str | None

@@ -113,6 +113,7 @@ def dispatch_notification(
                 else "TEXT"
             ),
             context=f"NOTIFICATION:{notification.notification_type}",
+            recipient_user_id=user.id if user is not None else None,
         )
         notification.provider_name = provider_result.provider_name
         notification.provider_message_id = provider_result.provider_message_id
@@ -162,6 +163,7 @@ def dispatch_notification(
             to_phone=notification.recipient_phone,
             message=notification.body_snapshot or "Notification",
             context=f"NOTIFICATION:{notification.notification_type}",
+            recipient_user_id=user.id if user is not None else None,
         )
         notification.provider_name = provider_result.provider_name
         notification.provider_message_id = provider_result.provider_message_id

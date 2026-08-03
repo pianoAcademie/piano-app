@@ -196,7 +196,67 @@ def _parse_communication_log_id(raw_value: str) -> UUID:
         ) from exc
 
 
-def _communication_row_out(row: CommunicationLog) -> CommunicationReportRow:
+def _communication_recipient_user_id(row: CommunicationLog) -> UUID | None:
+    if row.recipient_user_id is not None:
+        return row.recipient_user_id
+    raw_recipient = str(row.recipient or "").strip()
+    if not raw_recipient.lower().startswith("client:"):
+        return None
+    try:
+        return UUID(raw_recipient.split(":", 1)[1].strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _communication_recipient_names(
+    db: Session,
+    rows: list[CommunicationLog],
+) -> dict[UUID, str]:
+    user_ids = {
+        user_id
+        for row in rows
+        if (user_id := _communication_recipient_user_id(row)) is not None
+    }
+    recipient_emails = {
+        str(row.recipient or "").strip().lower()
+        for row in rows
+        if "@" in str(row.recipient or "")
+    }
+    if not user_ids and not recipient_emails:
+        return {}
+
+    user_filters = []
+    if user_ids:
+        user_filters.append(User.id.in_(user_ids))
+    if recipient_emails:
+        user_filters.append(func.lower(User.email).in_(recipient_emails))
+    users = db.scalars(select(User).where(or_(*user_filters))).all()
+    users_by_id = {user.id: user for user in users}
+    users_by_email = {
+        str(user.email or "").strip().lower(): user
+        for user in users
+        if str(user.email or "").strip()
+    }
+
+    names_by_log_id: dict[UUID, str] = {}
+    for row in rows:
+        user_id = _communication_recipient_user_id(row)
+        user = users_by_id.get(user_id) if user_id is not None else None
+        if user is None:
+            user = users_by_email.get(str(row.recipient or "").strip().lower())
+        if user is None:
+            continue
+        display_name = f"{(user.first_name or '').strip()} {(user.last_name or '').strip()}".strip()
+        if display_name:
+            names_by_log_id[row.id] = display_name
+    return names_by_log_id
+
+
+def _communication_row_out(
+    row: CommunicationLog,
+    *,
+    recipient_display_name: str | None = None,
+) -> CommunicationReportRow:
     return CommunicationReportRow(
         id=f"communication-log-{row.id}",
         channel=CommunicationChannel(row.channel.value),
@@ -210,6 +270,7 @@ def _communication_row_out(row: CommunicationLog) -> CommunicationReportRow:
         occurred_at=row.occurred_at,
         subject=row.subject,
         recipient=row.recipient,
+        recipient_display_name=recipient_display_name,
         recipient_user_id=row.recipient_user_id,
         delivery_status=row.delivery_status.value,
         provider_message_id=row.provider_message_id,
@@ -3435,8 +3496,12 @@ def report_communications(
     data_stmt = data_stmt.order_by(CommunicationLog.occurred_at.desc()).offset(offset).limit(per_page)
     rows = db.scalars(data_stmt).all()
 
+    recipient_names = _communication_recipient_names(db, rows)
     return CommunicationReportPageOut(
-        items=[_communication_row_out(row) for row in rows],
+        items=[
+            _communication_row_out(row, recipient_display_name=recipient_names.get(row.id))
+            for row in rows
+        ],
         page=current_page,
         per_page=per_page,
         total=total,

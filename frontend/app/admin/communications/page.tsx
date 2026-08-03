@@ -109,6 +109,18 @@ function channelLabel(value: CommunicationReportRow["channel"], language: UiLang
   return value === "SMS" ? uiText(language, "common.sms") : uiText(language, "common.email");
 }
 
+function recipientLabel(row: CommunicationReportRow): JSX.Element {
+  if (!row.recipient_display_name) {
+    return <>{row.recipient}</>;
+  }
+  return (
+    <>
+      <strong>{row.recipient_display_name}</strong>
+      <div className="muted">{row.recipient}</div>
+    </>
+  );
+}
+
 function periodLabel(value: CommunicationPeriod, language: UiLanguage): string {
   if (value === "TODAY") {
     return uiText(language, "admin.communications.period_today");
@@ -389,7 +401,7 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
                   </td>
                   <td data-mobile-hidden="true">{row.communication_type_label}</td>
                   <td data-mobile-label="" className="mobile-row-primary">{row.subject}</td>
-                  <td data-mobile-label={t("admin.communications.recipient")}>{row.recipient}</td>
+                  <td data-mobile-label={t("admin.communications.recipient")}>{recipientLabel(row)}</td>
                   <td data-mobile-label={t("admin.communications.delivery_status")}>
                     <span className="badge">{deliveryLabel(row.delivery_status, language)}</span>
                   </td>
@@ -435,7 +447,8 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
               <strong>{t("admin.communications.detail_type")}:</strong> {selected.communication_type_label}
             </p>
             <p>
-              <strong>{t("admin.communications.detail_recipient")}:</strong> {selected.recipient}
+              <strong>{t("admin.communications.detail_recipient")}:</strong>{" "}
+              {selected.recipient_display_name ? `${selected.recipient_display_name} — ${selected.recipient}` : selected.recipient}
             </p>
             <p>
               <strong>{t("admin.communications.detail_subject")}:</strong> {selected.subject}

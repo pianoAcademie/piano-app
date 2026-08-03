@@ -140,6 +140,37 @@ class ClientEmailTemplateTests(unittest.TestCase):
         self.assertEqual(rendered.body_format, "HTML")
         self.assertIn("/client?tab=planning", rendered.body)
 
+    def test_booking_confirmation_uses_recipient_local_timezone(self) -> None:
+        template = {
+            "active": True,
+            "subject": "Confirmation - {activity_name}",
+            "body": "{session_date} {session_time} ({session_timezone})",
+            "body_format": "TEXT",
+        }
+        with patch(
+            "app.services.booking_confirmation_templates.resolve_predefined_template",
+            return_value=template,
+        ), patch(
+            "app.services.booking_confirmation_templates._frontend_url",
+            return_value="https://app.piano-academie.com/client?tab=planning",
+        ):
+            rendered = render_booking_confirmation_email(
+                db=object(),
+                audience="CLIENT",
+                recipient_name="Sarah",
+                student_name="Alya",
+                activity_name="Cours en ligne",
+                start_at=datetime(2026, 8, 3, 15, 0, tzinfo=timezone.utc),
+                timezone_name="Asia/Riyadh",
+                location_name="Online",
+                teacher_name="Prof Test",
+                language="en",
+            )
+
+        self.assertIsNotNone(rendered)
+        assert rendered is not None
+        self.assertEqual(rendered.body, "03/08/2026 18:00 (Asia/Riyadh)")
+
     def test_booking_confirmation_omits_teacher_row_when_absent(self) -> None:
         template = {
             "active": True,

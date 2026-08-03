@@ -977,6 +977,7 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
                     ("Activite", "{activity_name}"),
                     ("Date", "{session_date}"),
                     ("Horaire", "{session_time}"),
+                    ("Fuseau horaire", "{session_timezone}"),
                     ("Lieu", "{location_name}"),
                     ("Professeur", "{teacher_name}"),
                 ]
@@ -989,7 +990,7 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         description="Confirmation de reservation envoyee au client ou au responsable legal.",
         variables_hint=(
             "{recipient_name} {student_name} {activity_name} {session_date} {session_time} "
-            "{session_start_local} {location_name} {teacher_name} {account_url}"
+            "{session_start_local} {session_timezone} {location_name} {teacher_name} {account_url}"
         ),
         body_format="HTML",
     ),
@@ -1005,13 +1006,14 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
             "<li><strong>Activite :</strong> {activity_name}</li>"
             "<li><strong>Date :</strong> {session_date}</li>"
             "<li><strong>Heure :</strong> {session_time}</li>"
+            "<li><strong>Fuseau horaire :</strong> {session_timezone}</li>"
             "<li><strong>Lieu :</strong> {location_name}</li>"
             "<li><strong>Professeur :</strong> {teacher_name}</li>"
             "</ul>"
             "<p>Piano Academie</p>"
         ),
         description="Confirmation de reservation envoyee aux administrateurs.",
-        variables_hint="{student_name} {activity_name} {session_date} {session_time} {session_start_local} {location_name} {teacher_name}",
+        variables_hint="{student_name} {activity_name} {session_date} {session_time} {session_start_local} {session_timezone} {location_name} {teacher_name}",
         body_format="HTML",
     ),
     MessagingTemplateDefinition(

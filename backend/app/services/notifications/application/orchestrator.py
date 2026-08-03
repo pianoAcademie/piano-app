@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from html import escape
 from urllib.parse import urlparse
 from uuid import UUID
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,6 +16,7 @@ from app.models.ops import AppSetting
 from app.models.user import User, UserRole
 from app.services.booking_confirmation_templates import render_booking_confirmation_email
 from app.services.i18n import normalize_language
+from app.services.local_time import localize_datetime, resolve_timezone_name
 from app.services.notifications.application.recipients import (
     resolve_admin_booking_notification_recipients,
     resolve_admin_cancellation_recipients,
@@ -111,8 +112,10 @@ def _body_for_booking_notification(
     course_type_name: str,
     start_at: datetime,
     student_label: str,
+    timezone_name: str | None,
 ) -> tuple[str, str]:
-    date_label = start_at.strftime("%d/%m/%Y %H:%M UTC")
+    local_start, resolved_timezone = localize_datetime(start_at, timezone_name)
+    date_label = f"{local_start.strftime('%d/%m/%Y %H:%M')} ({resolved_timezone})"
     if is_cancellation:
         subject = f"Annulation de reservation - {course_type_name}"
         body = (
@@ -191,6 +194,25 @@ def _reminder_display_name(user: User | None, *, fallback: str) -> str:
     return full_name or (user.email or fallback)
 
 
+def _course_timezone_name(session_obj: CourseSession, location: Location | None) -> str:
+    return resolve_timezone_name(
+        getattr(session_obj, "timezone", None),
+        getattr(location, "timezone", None) if location is not None else None,
+    )
+
+
+def _recipient_course_timezone_name(
+    recipient_user: User | None,
+    session_obj: CourseSession,
+    location: Location | None,
+) -> str:
+    return resolve_timezone_name(
+        getattr(recipient_user, "timezone", None) if recipient_user is not None else None,
+        getattr(session_obj, "timezone", None),
+        getattr(location, "timezone", None) if location is not None else None,
+    )
+
+
 def _reminder_activity_name(name: str, *, language: str | None) -> str:
     value = (name or "").strip()
     if normalize_language(language) != "en":
@@ -214,12 +236,8 @@ def _reminder_period_label(
     end_at: datetime,
     timezone_name: str | None,
 ) -> str:
-    normalized_timezone = (timezone_name or "UTC").strip() or "UTC"
-    try:
-        recipient_timezone = ZoneInfo(normalized_timezone)
-    except ZoneInfoNotFoundError:
-        normalized_timezone = "UTC"
-        recipient_timezone = ZoneInfo("UTC")
+    normalized_timezone = resolve_timezone_name(timezone_name)
+    recipient_timezone = ZoneInfo(normalized_timezone)
     local_start = start_at.astimezone(recipient_timezone)
     local_end = end_at.astimezone(recipient_timezone)
     if local_start.date() == local_end.date():
@@ -247,12 +265,8 @@ def _build_lesson_reminder_email(
 ) -> tuple[str, str]:
     normalized_language = normalize_language(language)
     activity_name = _reminder_activity_name(course_type_name, language=normalized_language)
-    normalized_timezone = (timezone_name or "UTC").strip() or "UTC"
-    try:
-        recipient_timezone = ZoneInfo(normalized_timezone)
-    except ZoneInfoNotFoundError:
-        normalized_timezone = "UTC"
-        recipient_timezone = ZoneInfo("UTC")
+    normalized_timezone = resolve_timezone_name(timezone_name)
+    recipient_timezone = ZoneInfo(normalized_timezone)
     local_start = start_at.astimezone(recipient_timezone)
     local_end = end_at.astimezone(recipient_timezone)
 
@@ -479,7 +493,7 @@ def schedule_booking_created_notifications(
             student_name=student_label,
             activity_name=course_type.name,
             start_at=session_obj.start_at_utc,
-            timezone_name=session_obj.timezone,
+            timezone_name=_recipient_course_timezone_name(client_contact, session_obj, location),
             location_name=location_label,
             teacher_name=teacher_label,
             language=client_contact.preferred_language if client_contact is not None else None,
@@ -528,7 +542,7 @@ def schedule_booking_created_notifications(
             student_name=student_label,
             activity_name=course_type.name,
             start_at=session_obj.start_at_utc,
-            timezone_name=session_obj.timezone,
+            timezone_name=_course_timezone_name(session_obj, location),
             location_name=location_label,
             teacher_name=teacher_label,
             language="fr",
@@ -574,7 +588,7 @@ def schedule_booking_created_notifications(
             student_name=student_label,
             activity_name=course_type.name,
             start_at=session_obj.start_at_utc,
-            timezone_name=session_obj.timezone,
+            timezone_name=_course_timezone_name(session_obj, location),
             location_name=location_label,
             teacher_name=teacher_label,
             language="fr",
@@ -625,12 +639,7 @@ def schedule_booking_cancelled_notifications(
     student_label = (f"{(student.first_name or '').strip()} {(student.last_name or '').strip()}".strip() if student is not None else "") or (
         student.email if student is not None else str(booking.user_id)
     )
-    subject, body = _body_for_booking_notification(
-        is_cancellation=True,
-        course_type_name=course_type.name,
-        start_at=session_obj.start_at_utc,
-        student_label=student_label,
-    )
+    location = db.scalar(select(Location).where(Location.id == session_obj.location_id))
 
     event = create_domain_event(
         db,
@@ -651,6 +660,18 @@ def schedule_booking_cancelled_notifications(
     out: list[OrchestratedNotification] = []
     client_recipient = resolve_client_booking_notification_recipient(db, booking=booking)
     if client_recipient is not None and client_recipient.email is not None:
+        client_contact = (
+            db.scalar(select(User).where(User.id == client_recipient.contact_id))
+            if client_recipient.contact_id is not None
+            else None
+        )
+        client_subject, client_body = _body_for_booking_notification(
+            is_cancellation=True,
+            course_type_name=course_type.name,
+            start_at=session_obj.start_at_utc,
+            student_label=student_label,
+            timezone_name=_recipient_course_timezone_name(client_contact, session_obj, location),
+        )
         created = create_notification_if_new(
             db,
             notification_type=NOTIFICATION_TYPE_CLIENT_BOOKING_CANCELLATION,
@@ -666,8 +687,8 @@ def schedule_booking_cancelled_notifications(
             recipient_contact_id=client_recipient.contact_id,
             recipient_email=client_recipient.email,
             recipient_phone=None,
-            subject=subject,
-            body_snapshot=body,
+            subject=client_subject,
+            body_snapshot=client_body,
             payload_snapshot={"booking_id": str(booking.id)},
             idempotency_key=_idempotency_key_for_booking_notification(
                 notification_type=NOTIFICATION_TYPE_CLIENT_BOOKING_CANCELLATION,
@@ -681,6 +702,13 @@ def schedule_booking_cancelled_notifications(
         if created is not None:
             out.append(OrchestratedNotification(notification_id=created.id, queue_name=QUEUE_NOTIFICATIONS_IMMEDIATE))
 
+    admin_subject, admin_body = _body_for_booking_notification(
+        is_cancellation=True,
+        course_type_name=course_type.name,
+        start_at=session_obj.start_at_utc,
+        student_label=student_label,
+        timezone_name=_course_timezone_name(session_obj, location),
+    )
     for admin_recipient in resolve_admin_booking_notification_recipients(db, is_cancellation=True):
         if admin_recipient.email is None:
             continue
@@ -699,8 +727,8 @@ def schedule_booking_cancelled_notifications(
             recipient_contact_id=admin_recipient.contact_id,
             recipient_email=admin_recipient.email,
             recipient_phone=None,
-            subject=subject,
-            body_snapshot=body,
+            subject=admin_subject,
+            body_snapshot=admin_body,
             payload_snapshot={"booking_id": str(booking.id)},
             idempotency_key=_idempotency_key_for_booking_notification(
                 notification_type=NOTIFICATION_TYPE_ADMIN_BOOKING_CANCELLATION,
@@ -741,7 +769,11 @@ def schedule_slot_cancelled_notifications(
     )
 
     subject = f"Creneau annule - {slot.title}"
-    body = f"Creneau annule.\nTitre: {slot.title}\nDebut: {slot.start_at_utc.strftime('%d/%m/%Y %H:%M UTC')}\n"
+    local_start, resolved_timezone = localize_datetime(slot.start_at_utc, slot.timezone)
+    body = (
+        f"Creneau annule.\nTitre: {slot.title}\n"
+        f"Debut: {local_start.strftime('%d/%m/%Y %H:%M')} ({resolved_timezone})\n"
+    )
     out: list[OrchestratedNotification] = []
     for recipient in resolve_admin_cancellation_recipients(db):
         if recipient.email is None:
@@ -835,11 +867,7 @@ def schedule_reminder_notifications_for_booking(
             if recipient.contact_id is not None
             else None
         )
-        recipient_timezone = (
-            recipient_user.timezone
-            if recipient_user is not None
-            else (session_obj.timezone or (location.timezone if location is not None else "UTC"))
-        )
+        recipient_timezone = _recipient_course_timezone_name(recipient_user, session_obj, location)
         if email_enabled:
             scheduled_for = booking_start_at - timedelta(minutes=email_offset_minutes)
             status = NOTIFICATION_STATUS_PENDING

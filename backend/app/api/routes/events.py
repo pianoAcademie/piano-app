@@ -51,6 +51,7 @@ from app.services.client_email import deliverable_client_email
 from app.services.email_delivery import send_email
 from app.services.event_reminders import school_event_reminder_hours
 from app.services.messaging_templates import resolve_frontend_base_url
+from app.services.local_time import resolve_timezone_name
 from app.services.payment_checkout import (
     CheckoutCreateRequest,
     PaymentLookupResult,
@@ -334,6 +335,12 @@ def _event_is_open(event: SchoolEvent, now: datetime) -> bool:
     return True
 
 
+def _event_datetime_for_booker(*, slot: SchoolEventSlot, booker: User) -> str:
+    timezone_name = resolve_timezone_name(booker.timezone, slot.timezone)
+    local_start = slot.start_at_utc.astimezone(ZoneInfo(timezone_name))
+    return f"{local_start.strftime('%d/%m/%Y %H:%M')} ({timezone_name})"
+
+
 def _send_registration_confirmation(
     *,
     booker: User,
@@ -348,11 +355,7 @@ def _send_registration_confirmation(
     language = (booker.preferred_language or "fr").strip().lower()
     is_english = language.startswith("en")
     title = event.title_en if is_english and event.title_en else event.title_fr
-    try:
-        slot_timezone = ZoneInfo(slot.timezone)
-    except (KeyError, ValueError):
-        slot_timezone = timezone.utc
-    when = slot.start_at_utc.astimezone(slot_timezone).strftime("%d/%m/%Y %H:%M")
+    when = _event_datetime_for_booker(slot=slot, booker=booker)
     waiting = status_value == SchoolEventRegistrationStatus.WAITLISTED
     subject = (
         f"Waiting list - {title}" if is_english and waiting
@@ -394,11 +397,7 @@ def _send_payment_required(
     language = (booker.preferred_language or "fr").strip().lower()
     is_english = language.startswith("en")
     title = event.title_en if is_english and event.title_en else event.title_fr
-    try:
-        slot_timezone = ZoneInfo(slot.timezone)
-    except (KeyError, ValueError):
-        slot_timezone = timezone.utc
-    when = slot.start_at_utc.astimezone(slot_timezone).strftime("%d/%m/%Y %H:%M")
+    when = _event_datetime_for_booker(slot=slot, booker=booker)
     base_url = resolve_frontend_base_url(db).rstrip("/")
     payment_url = f"{base_url}/events/{event.slug}"
     subject = f"Payment required - {title}" if is_english else f"Paiement requis - {title}"
@@ -435,11 +434,7 @@ def _send_event_cancellation(
     language = (booker.preferred_language or "fr").strip().lower()
     is_english = language.startswith("en")
     title = event.title_en if is_english and event.title_en else event.title_fr
-    try:
-        slot_timezone = ZoneInfo(slot.timezone)
-    except (KeyError, ValueError):
-        slot_timezone = timezone.utc
-    when = slot.start_at_utc.astimezone(slot_timezone).strftime("%d/%m/%Y %H:%M")
+    when = _event_datetime_for_booker(slot=slot, booker=booker)
     payment_note = (
         "\nThe school will contact you separately regarding the paid registration."
         if is_english and paid
