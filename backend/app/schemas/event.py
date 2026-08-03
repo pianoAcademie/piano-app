@@ -30,6 +30,7 @@ class SchoolEventCreateRequest(BaseModel):
     registration_mode: SchoolEventRegistrationMode = SchoolEventRegistrationMode.GROUP_SESSION
     payment_mode: SchoolEventPaymentMode = SchoolEventPaymentMode.FREE
     location_id: UUID | None = None
+    event_venue_id: UUID | None = None
     booking_opens_at: datetime | None = None
     booking_closes_at: datetime | None = None
     price_ttc: Decimal = Field(default=Decimal("0"), ge=0)
@@ -39,6 +40,7 @@ class SchoolEventCreateRequest(BaseModel):
     cancellation_deadline_hours: int = Field(default=24, ge=0, le=8760)
     collect_piece_info: bool = False
     collect_photo_consent: bool = False
+    collect_performer_booking: bool = False
     confirmation_message_fr: str | None = None
     confirmation_message_en: str | None = None
 
@@ -67,6 +69,7 @@ class SchoolEventSlotCreateRequest(BaseModel):
     capacity_max: int = Field(ge=1, le=10000)
     admin_capacity_max: int | None = Field(default=None, ge=1, le=10000)
     location_id: UUID | None = None
+    event_venue_id: UUID | None = None
     label: str | None = Field(default=None, max_length=180)
 
     @model_validator(mode="after")
@@ -104,6 +107,54 @@ class SchoolEventLocationOut(BaseModel):
     name: str
     timezone: str
     is_online: bool
+    address_line: str | None = None
+    postal_code: str | None = None
+    city: str | None = None
+    country_code: str | None = None
+
+
+class SchoolEventVenueCreateRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=180)
+    address_line: str | None = Field(default=None, max_length=255)
+    postal_code: str | None = Field(default=None, max_length=20)
+    city: str | None = Field(default=None, max_length=120)
+    country_code: str = Field(default="FR", min_length=2, max_length=2)
+    timezone: str = Field(default="Europe/Paris", min_length=1, max_length=100)
+    is_online: bool = False
+
+    @model_validator(mode="after")
+    def validate_timezone(self) -> "SchoolEventVenueCreateRequest":
+        try:
+            ZoneInfo(self.timezone)
+        except (KeyError, ValueError) as exc:
+            raise ValueError("timezone is invalid") from exc
+        return self
+
+
+class SchoolEventVenueOut(SchoolEventLocationOut):
+    is_active: bool
+
+
+class SchoolEventPriceTierCreateRequest(BaseModel):
+    label_fr: str = Field(min_length=1, max_length=120)
+    label_en: str | None = Field(default=None, max_length=120)
+    price_ttc: Decimal = Field(ge=0)
+    sort_order: int = Field(default=0, ge=0, le=10000)
+
+
+class SchoolEventPriceTierOut(BaseModel):
+    id: UUID
+    event_id: UUID
+    label_fr: str
+    label_en: str | None
+    price_ttc: Decimal
+    sort_order: int
+    is_active: bool
+
+
+class SchoolEventImageUploadOut(BaseModel):
+    image_url: str
+    storage_key: str
 
 
 class SchoolEventSlotOut(BaseModel):
@@ -140,12 +191,14 @@ class SchoolEventOut(BaseModel):
     booking_opens_at: datetime | None
     booking_closes_at: datetime | None
     price_ttc: Decimal
+    price_tiers: list[SchoolEventPriceTierOut]
     currency: str
     max_per_family: int
     waitlist_enabled: bool
     cancellation_deadline_hours: int
     collect_piece_info: bool
     collect_photo_consent: bool
+    collect_performer_booking: bool
     confirmation_message_fr: str | None
     confirmation_message_en: str | None
     reminder_hours_before_start: int
@@ -161,8 +214,42 @@ class SchoolEventRegistrationCreateRequest(BaseModel):
     slot_id: UUID
     participant_user_ids: list[UUID] = Field(default_factory=list, max_length=100)
     guest_names: list[str] = Field(default_factory=list, max_length=100)
+    price_tier_id: UUID | None = None
+    participant_price_tier_ids: dict[UUID, UUID] = Field(default_factory=dict)
+    guest_price_tier_id: UUID | None = None
     piece_info: str | None = Field(default=None, max_length=1000)
     photo_consent: bool | None = None
+
+
+class SchoolEventPublicTicketRequest(BaseModel):
+    participant_name: str = Field(min_length=2, max_length=255)
+    price_tier_id: UUID | None = None
+
+
+class SchoolEventPublicRegistrationCreateRequest(BaseModel):
+    request_id: UUID
+    slot_id: UUID
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    email: str = Field(min_length=5, max_length=255, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+    phone: str | None = Field(default=None, max_length=30)
+    language: str = Field(default="fr", max_length=8)
+    tickets: list[SchoolEventPublicTicketRequest] = Field(min_length=1, max_length=20)
+    terms_accepted: bool
+    website: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_public_booking(self) -> "SchoolEventPublicRegistrationCreateRequest":
+        if not self.terms_accepted:
+            raise ValueError("terms_accepted must be true")
+        self.first_name = self.first_name.strip()
+        self.last_name = self.last_name.strip()
+        self.email = self.email.strip().lower()
+        self.phone = self.phone.strip() if self.phone else None
+        self.language = "en" if self.language.strip().lower().startswith("en") else "fr"
+        for ticket in self.tickets:
+            ticket.participant_name = ticket.participant_name.strip()
+        return self
 
 
 class SchoolEventRegistrationOut(BaseModel):
@@ -178,7 +265,11 @@ class SchoolEventRegistrationOut(BaseModel):
     end_at_utc: datetime
     timezone: str
     location_name: str | None
-    booker_user_id: UUID
+    booker_user_id: UUID | None
+    public_booker_first_name: str | None
+    public_booker_last_name: str | None
+    public_booker_email: str | None
+    public_booker_phone: str | None
     participant_user_id: UUID | None
     participant_display_name: str
     party_size: int
@@ -186,6 +277,8 @@ class SchoolEventRegistrationOut(BaseModel):
     answers: dict[str, object]
     status: SchoolEventRegistrationStatus
     unit_price_ttc_snapshot: Decimal
+    price_tier_id: UUID | None
+    price_tier_label_snapshot: str | None
     total_ttc_snapshot: Decimal
     currency_snapshot: str
     payment_provider: str | None
@@ -210,6 +303,7 @@ class SchoolEventRegistrationStatusUpdateRequest(BaseModel):
 class SchoolEventAdminRegistrationCreateRequest(BaseModel):
     slot_id: UUID
     participant_user_id: UUID
+    price_tier_id: UUID | None = None
     send_confirmation: bool = True
 
 

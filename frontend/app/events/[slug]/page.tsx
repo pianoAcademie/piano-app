@@ -1,9 +1,11 @@
 import Link from "next/link";
+import { randomUUID } from "crypto";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 
 import {
   registerSchoolEventAction,
+  registerPublicSchoolEventAction,
   startSchoolEventPaymentAction,
 } from "../../../lib/actions";
 import { getPortalToken } from "../../../lib/auth-cookies";
@@ -80,20 +82,11 @@ export default async function EventDetailPage({
         ...family.links_as_adult.map((link) => link.child),
       ].filter((member, index, rows) => rows.findIndex((candidate) => candidate.id === member.id) === index && member.is_active)
     : [];
-  const existingSlotIds = new Set(
+  const previousBookingSlotIds = new Set(
     registrations
       .filter((registration) =>
         registration.event_id === event.id
-        && (
-          ["CONFIRMED", "WAITLISTED"].includes(registration.status)
-          || (
-            registration.status === "PENDING_PAYMENT"
-            && (
-              !registration.payment_hold_expires_at
-              || new Date(registration.payment_hold_expires_at).getTime() > Date.now()
-            )
-          )
-        )
+        && ["CONFIRMED", "WAITLISTED"].includes(registration.status)
       )
       .map((registration) => registration.slot_id),
   );
@@ -146,9 +139,20 @@ export default async function EventDetailPage({
               "Choisissez le créneau qui vous convient et réservez votre place.",
               "Choose the time that suits you and book your place.",
             )}</p>
-            <p><strong>{Number(event.price_ttc) > 0
-              ? `${Number(event.price_ttc).toFixed(2)} € ${text("par personne", "per person")}`
-              : text("Événement gratuit", "Free event")}</strong></p>
+            {event.price_tiers.length ? (
+              <div>
+                <strong>{text("Tarifs proposés", "Available prices")}</strong>
+                <ul>
+                  {event.price_tiers.map((tier) => (
+                    <li key={tier.id}>{language === "en" && tier.label_en ? tier.label_en : tier.label_fr} : {Number(tier.price_ttc).toFixed(2)} €</li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <p><strong>{Number(event.price_ttc) > 0
+                ? `${Number(event.price_ttc).toFixed(2)} € ${text("par personne", "per person")}`
+                : text("Événement gratuit", "Free event")}</strong></p>
+            )}
           </div>
           {event.image_url ? (
             <img className={styles.detailImage} src={event.image_url} alt="" />
@@ -169,15 +173,22 @@ export default async function EventDetailPage({
           <div className={styles.slots}>
             {slots.map((slot) => {
               const isFull = slot.seats_remaining <= 0;
-              const alreadyRegistered = existingSlotIds.has(slot.id);
+              const publicPaidOnline = event.payment_mode === "ONLINE"
+                && (event.price_tiers.some((tier) => Number(tier.price_ttc) > 0) || Number(event.price_ttc) > 0);
               const hasPendingPayment = pendingBySlot.has(slot.id);
+              const hasPreviousBooking = previousBookingSlotIds.has(slot.id);
+              const alreadyRegistered = hasPendingPayment;
               return (
                 <article className={styles.slot} key={slot.id}>
                   <div className={styles.slotHeader}>
                     <div>
                       <h3>{slot.label || formatDate(slot.start_at_utc, slot.timezone, language)}</h3>
                       {slot.label ? <p>{formatDate(slot.start_at_utc, slot.timezone, language)}</p> : null}
-                      <p className="muted">{slot.location?.name ?? event.location?.name ?? text("Lieu communiqué prochainement", "Location to be confirmed")}</p>
+                      <p className="muted">
+                        {slot.location?.name ?? event.location?.name ?? text("Lieu communiqué prochainement", "Location to be confirmed")}
+                        {(slot.location ?? event.location)?.address_line ? ` · ${(slot.location ?? event.location)?.address_line}` : ""}
+                        {(slot.location ?? event.location)?.city ? `, ${(slot.location ?? event.location)?.postal_code ?? ""} ${(slot.location ?? event.location)?.city}` : ""}
+                      </p>
                       <p className="muted">
                         {text("Capacité officielle", "Official capacity")} : {slot.capacity_max} {text("personne(s)", "people")}
                       </p>
@@ -217,19 +228,36 @@ export default async function EventDetailPage({
                       <input type="hidden" name="slot_id" value={slot.id} />
                       <input type="hidden" name="return_to" value={withLanguage(`/events/${event.slug}`)} />
                       <input type="hidden" name="ui_language" value={language} />
+                      {hasPreviousBooking ? (
+                        <p className="notice success">{text(
+                          "Une réservation existe déjà. Pour acheter des places supplémentaires, ne resélectionnez pas l’enfant et renseignez seulement les nouveaux accompagnants.",
+                          "A booking already exists. To buy additional tickets, leave the child unchecked and enter only the new guests.",
+                        )}</p>
+                      ) : null}
                       <fieldset>
                         <legend><strong>{text("Qui participe ?", "Who is attending?")}</strong></legend>
                         <div className={styles.participants}>
                           {participants.map((participant, index) => (
-                            <label className={styles.participant} key={participant.id}>
+                            <div className={styles.participant} key={participant.id}>
                               <input
+                                id={`participant_${participant.id}`}
                                 type="checkbox"
                                 name="participant_user_ids"
                                 value={participant.id}
-                                defaultChecked={participants.length === 1 || index === 0}
+                                defaultChecked={!hasPreviousBooking && (participants.length === 1 || index === 0)}
                               />
-                              <span>{memberName(participant)}</span>
-                            </label>
+                              <label htmlFor={`participant_${participant.id}`}>{memberName(participant)}</label>
+                              {event.price_tiers.length ? (
+                                <select name={`price_tier_id_${participant.id}`} defaultValue="" aria-label={text("Tarif du participant", "Participant price")}>
+                                  <option value="" disabled>{text("Choisir son tarif", "Choose their price")}</option>
+                                  {event.price_tiers.map((tier) => (
+                                    <option value={tier.id} key={tier.id}>
+                                      {language === "en" && tier.label_en ? tier.label_en : tier.label_fr} — {Number(tier.price_ttc).toFixed(2)} €
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : null}
+                            </div>
                           ))}
                         </div>
                       </fieldset>
@@ -237,6 +265,16 @@ export default async function EventDetailPage({
                         <label className={styles.field}>
                           <span>{text("Invités supplémentaires (un nom par ligne)", "Additional guests (one name per line)")}</span>
                           <textarea name="guest_names" rows={2} placeholder={text("Prénom Nom", "First name Last name")} />
+                          {event.price_tiers.length ? (
+                            <select name="guest_price_tier_id" defaultValue="">
+                              <option value="" disabled>{text("Tarif des invités", "Guest price")}</option>
+                              {event.price_tiers.map((tier) => (
+                                <option value={tier.id} key={tier.id}>
+                                  {language === "en" && tier.label_en ? tier.label_en : tier.label_fr} — {Number(tier.price_ttc).toFixed(2)} €
+                                </option>
+                              ))}
+                            </select>
+                          ) : null}
                         </label>
                       ) : null}
                       {event.collect_piece_info ? (
@@ -257,17 +295,105 @@ export default async function EventDetailPage({
                       <button className="primary" type="submit" disabled={isFull && !event.waitlist_enabled}>
                         {isFull
                           ? text("Rejoindre la liste d’attente", "Join the waiting list")
-                          : event.payment_mode === "ON_SITE" && Number(event.price_ttc) > 0
+                          : event.payment_mode === "ON_SITE" && (event.price_tiers.some((tier) => Number(tier.price_ttc) > 0) || Number(event.price_ttc) > 0)
                             ? text("Réserver — paiement sur place", "Book — pay on site")
-                            : event.payment_mode === "ONLINE" && Number(event.price_ttc) > 0
+                            : event.payment_mode === "ONLINE" && (event.price_tiers.some((tier) => Number(tier.price_ttc) > 0) || Number(event.price_ttc) > 0)
                               ? text("Réserver et payer en ligne", "Book and pay online")
                             : text("Confirmer l’inscription", "Confirm registration")}
                       </button>
                     </form>
                   ) : (
-                    <Link className={styles.loginCta} href={withLanguage(`/login?return_to=${encodeURIComponent(withLanguage(`/events/${event.slug}`))}`)}>
-                      {text("Se connecter pour réserver", "Sign in to book")}
-                    </Link>
+                    <form action={registerPublicSchoolEventAction} className={styles.registerForm}>
+                      <input type="hidden" name="request_id" value={randomUUID()} />
+                      <input type="hidden" name="event_slug" value={event.slug} />
+                      <input type="hidden" name="slot_id" value={slot.id} />
+                      <input type="hidden" name="return_to" value={withLanguage(`/events/${event.slug}`)} />
+                      <input type="hidden" name="ui_language" value={language} />
+                      <div className={styles.publicContactGrid}>
+                        <label className={styles.field}>
+                          <span>{text("Votre prénom *", "Your first name *")}</span>
+                          <input name="first_name" required autoComplete="given-name" />
+                        </label>
+                        <label className={styles.field}>
+                          <span>{text("Votre nom *", "Your last name *")}</span>
+                          <input name="last_name" required autoComplete="family-name" />
+                        </label>
+                        <label className={styles.field}>
+                          <span>{text("Email de confirmation *", "Confirmation email *")}</span>
+                          <input name="email" type="email" required autoComplete="email" />
+                        </label>
+                        <label className={styles.field}>
+                          <span>{text("Téléphone", "Phone")}</span>
+                          <input name="phone" type="tel" autoComplete="tel" />
+                        </label>
+                      </div>
+                      <fieldset>
+                        <legend><strong>{text("Billets", "Tickets")}</strong></legend>
+                        <p className="muted">{text(
+                          event.collect_performer_booking
+                            ? "Première ligne : enfant qui joue. Ajoutez ensuite chaque accompagnant."
+                            : "Ajoutez une ligne nominative pour chaque spectateur.",
+                          event.collect_performer_booking
+                            ? "First row: performing child. Then add each accompanying guest."
+                            : "Add one named line for each audience member.",
+                        )}</p>
+                        <div className={styles.publicTickets}>
+                          {Array.from({ length: Math.min(event.max_per_family, 10) }, (_, index) => (
+                            <div className={styles.publicTicket} key={index}>
+                              <label className={styles.field}>
+                                <span>{event.collect_performer_booking
+                                  ? index === 0
+                                    ? text("Enfant qui joue *", "Performing child *")
+                                    : text(`Accompagnant ${index}`, `Guest ${index}`)
+                                  : text(`Spectateur ${index + 1}${index === 0 ? " *" : ""}`, `Audience member ${index + 1}${index === 0 ? " *" : ""}`)}</span>
+                                <input name={`ticket_name_${index}`} required={index === 0} placeholder={text("Prénom Nom", "First name Last name")} />
+                              </label>
+                              {event.price_tiers.length ? (
+                                <label className={styles.field}>
+                                  <span>{text("Tarif", "Price")}{index === 0 ? " *" : ""}</span>
+                                  <select name={`ticket_price_tier_id_${index}`} required={index === 0} defaultValue="">
+                                    <option value="" disabled>{text("Choisir", "Choose")}</option>
+                                    {event.price_tiers.map((tier) => (
+                                      <option value={tier.id} key={tier.id}>
+                                        {language === "en" && tier.label_en ? tier.label_en : tier.label_fr} — {Number(tier.price_ttc).toFixed(2)} €
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      </fieldset>
+                      <label className={styles.participant}>
+                        <input type="checkbox" name="terms_accepted" required />
+                        <span>{text(
+                          "J’accepte que mes informations soient utilisées pour gérer cette réservation.",
+                          "I agree that my information may be used to manage this booking.",
+                        )}</span>
+                      </label>
+                      <label className={styles.honeypot} aria-hidden="true">
+                        Website<input name="website" tabIndex={-1} autoComplete="off" />
+                      </label>
+                      <div className={styles.publicBookingActions}>
+                        <button
+                          className="primary"
+                          type="submit"
+                          disabled={isFull && (!event.waitlist_enabled || publicPaidOnline)}
+                        >
+                          {isFull
+                            ? publicPaidOnline
+                              ? text("Complet", "Sold out")
+                              : text("Rejoindre la liste d’attente", "Join the waiting list")
+                            : publicPaidOnline
+                              ? text("Réserver et payer", "Book and pay")
+                              : text("Confirmer la réservation", "Confirm booking")}
+                        </button>
+                        <Link href={withLanguage(`/login?return_to=${encodeURIComponent(withLanguage(`/events/${event.slug}`))}`)}>
+                          {text("Déjà client ? Se connecter", "Already a client? Sign in")}
+                        </Link>
+                      </div>
+                    </form>
                   )}
                 </article>
               );

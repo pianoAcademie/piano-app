@@ -102,6 +102,7 @@ import type {
   LocationOut,
   AdminSessionOut,
   SchoolEventOut,
+  SchoolEventImageUploadOut,
   SchoolEventRegistrationCreateOut,
 } from "./types";
 
@@ -16835,7 +16836,8 @@ function eventPayloadFromForm(formData: FormData): Record<string, unknown> {
     audience: String(formData.get("audience") ?? "CLIENTS").trim().toUpperCase(),
     registration_mode: String(formData.get("registration_mode") ?? "GROUP_SESSION").trim().toUpperCase(),
     payment_mode: paymentMode,
-    location_id: optionalField(formData, "location_id"),
+    location_id: null,
+    event_venue_id: optionalField(formData, "event_venue_id"),
     booking_opens_at: optionalField(formData, "booking_opens_at"),
     booking_closes_at: optionalField(formData, "booking_closes_at"),
     price_ttc: paymentMode === "FREE" ? "0" : String(formData.get("price_ttc") ?? "0").trim(),
@@ -16846,6 +16848,7 @@ function eventPayloadFromForm(formData: FormData): Record<string, unknown> {
       Number.parseInt(String(formData.get("cancellation_deadline_hours") ?? "24"), 10) || 0,
     collect_piece_info: checkboxField(formData, "collect_piece_info"),
     collect_photo_consent: checkboxField(formData, "collect_photo_consent"),
+    collect_performer_booking: checkboxField(formData, "collect_performer_booking"),
     confirmation_message_fr: optionalField(formData, "confirmation_message_fr"),
     confirmation_message_en: optionalField(formData, "confirmation_message_en"),
   };
@@ -16865,8 +16868,43 @@ export async function createSchoolEventAction(formData: FormData): Promise<void>
   if (!result.ok) {
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
+  const imageFile = formData.get("image_file");
+  if (imageFile instanceof File && imageFile.size > 0) {
+    const uploadPayload = new FormData();
+    uploadPayload.set("file", imageFile, imageFile.name || "visuel-evenement");
+    const uploadResult = await backendRequest<SchoolEventImageUploadOut>(
+      `/api/v1/admin/events/${encodeURIComponent(result.data.id)}/image`,
+      { method: "POST", body: uploadPayload },
+      token,
+    );
+    if (!uploadResult.ok) {
+      revalidatePath("/admin/events");
+      redirect(`/admin/events/${result.data.id}?error=${encodeURIComponent(`Événement créé, mais visuel non importé : ${uploadResult.message}`)}`);
+    }
+  }
   revalidatePath("/admin/events");
   redirect(`/admin/events/${result.data.id}?ok=${encodeURIComponent("Événement créé")}`);
+}
+
+export async function uploadSchoolEventImageAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const eventId = String(formData.get("event_id") ?? "").trim();
+  const returnTo = safeEventReturnPath(formData, eventId ? `/admin/events/${eventId}` : "/admin/events");
+  const imageFile = formData.get("image_file");
+  if (!token || !eventId || !(imageFile instanceof File) || imageFile.size <= 0) {
+    redirect(appendQueryMessage(returnTo, "error", "Sélectionnez un visuel JPG, PNG ou WebP"));
+  }
+  const uploadPayload = new FormData();
+  uploadPayload.set("file", imageFile, imageFile.name || "visuel-evenement");
+  const result = await backendRequest<SchoolEventImageUploadOut>(
+    `/api/v1/admin/events/${encodeURIComponent(eventId)}/image`,
+    { method: "POST", body: uploadPayload },
+    token,
+  );
+  if (!result.ok) redirect(appendQueryMessage(returnTo, "error", result.message));
+  revalidatePath(`/admin/events/${eventId}`);
+  revalidatePath("/events");
+  redirect(appendQueryMessage(returnTo, "ok", "Visuel du concert importé"));
 }
 
 export async function updateSchoolEventAction(formData: FormData): Promise<void> {
@@ -16927,7 +16965,8 @@ export async function createSchoolEventSlotAction(formData: FormData): Promise<v
         capacity_max: Number.parseInt(String(formData.get("capacity_max") ?? "1"), 10) || 1,
         admin_capacity_max:
           Number.parseInt(String(formData.get("admin_capacity_max") ?? formData.get("capacity_max") ?? "1"), 10) || 1,
-        location_id: optionalField(formData, "location_id"),
+        location_id: null,
+        event_venue_id: optionalField(formData, "event_venue_id"),
         label: optionalField(formData, "label"),
       }),
     },
@@ -17001,14 +17040,22 @@ export async function registerSchoolEventAction(formData: FormData): Promise<voi
     .split(/[\n,;]+/)
     .map((value) => value.trim())
     .filter(Boolean);
+  const participantIds = formData.getAll("participant_user_ids").map(String).filter(Boolean);
+  const participantPriceTierIds = Object.fromEntries(
+    participantIds
+      .map((participantId) => [participantId, String(formData.get(`price_tier_id_${participantId}`) ?? "").trim()])
+      .filter(([, tierId]) => Boolean(tierId)),
+  );
   const result = await backendRequest<SchoolEventRegistrationCreateOut>(
     `/api/v1/clients/me/events/${encodeURIComponent(slug)}/register`,
     {
       method: "POST",
       body: JSON.stringify({
         slot_id: String(formData.get("slot_id") ?? "").trim(),
-        participant_user_ids: formData.getAll("participant_user_ids").map(String).filter(Boolean),
+        participant_user_ids: participantIds,
         guest_names: guestNames,
+        participant_price_tier_ids: participantPriceTierIds,
+        guest_price_tier_id: optionalField(formData, "guest_price_tier_id"),
         piece_info: optionalField(formData, "piece_info"),
         photo_consent: formData.get("photo_consent") === null ? null : checkboxField(formData, "photo_consent"),
       }),
@@ -17027,6 +17074,43 @@ export async function registerSchoolEventAction(formData: FormData): Promise<voi
   const message = result.data.status === "WAITLISTED"
     ? language === "en" ? "Registration added to the waiting list" : "Inscription ajoutée à la liste d’attente"
     : language === "en" ? "Registration confirmed" : "Inscription confirmée";
+  redirect(appendQueryMessage(returnTo, "ok", message));
+}
+
+export async function registerPublicSchoolEventAction(formData: FormData): Promise<void> {
+  const slug = String(formData.get("event_slug") ?? "").trim();
+  const returnTo = safeEventReturnPath(formData, slug ? `/events/${slug}` : "/events");
+  const tickets = Array.from({ length: 20 }, (_, index) => {
+    const participantName = String(formData.get(`ticket_name_${index}`) ?? "").trim();
+    const priceTierId = String(formData.get(`ticket_price_tier_id_${index}`) ?? "").trim();
+    return participantName ? { participant_name: participantName, price_tier_id: priceTierId || null } : null;
+  }).filter((ticket): ticket is { participant_name: string; price_tier_id: string | null } => ticket !== null);
+  const result = await backendRequest<SchoolEventRegistrationCreateOut>(
+    `/api/v1/events/${encodeURIComponent(slug)}/register`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        request_id: String(formData.get("request_id") ?? "").trim(),
+        slot_id: String(formData.get("slot_id") ?? "").trim(),
+        first_name: String(formData.get("first_name") ?? "").trim(),
+        last_name: String(formData.get("last_name") ?? "").trim(),
+        email: String(formData.get("email") ?? "").trim(),
+        phone: optionalField(formData, "phone"),
+        language: String(formData.get("ui_language") ?? "fr"),
+        tickets,
+        terms_accepted: checkboxField(formData, "terms_accepted"),
+        website: optionalField(formData, "website"),
+      }),
+    },
+  );
+  if (!result.ok) redirect(appendQueryMessage(returnTo, "error", result.message));
+  revalidatePath("/events");
+  revalidatePath(`/events/${slug}`);
+  if (result.data.checkout_url) redirect(result.data.checkout_url);
+  const language = String(formData.get("ui_language") ?? "fr").trim().toLowerCase();
+  const message = result.data.status === "WAITLISTED"
+    ? language === "en" ? "Booking added to the waiting list" : "Réservation ajoutée à la liste d’attente"
+    : language === "en" ? "Booking confirmed — check your email" : "Réservation confirmée — consultez votre email";
   redirect(appendQueryMessage(returnTo, "ok", message));
 }
 
@@ -17137,6 +17221,7 @@ export async function createAdminSchoolEventRegistrationAction(formData: FormDat
       body: JSON.stringify({
         slot_id: slotId,
         participant_user_id: participantUserId,
+        price_tier_id: optionalField(formData, "price_tier_id"),
         send_confirmation: checkboxField(formData, "send_confirmation"),
       }),
     },
@@ -17148,4 +17233,68 @@ export async function createAdminSchoolEventRegistrationAction(formData: FormDat
   revalidatePath(`/admin/events/${eventId}`);
   revalidatePath("/events");
   redirect(appendQueryMessage(returnTo, "ok", "Personne ajoutée et inscription confirmée"));
+}
+
+export async function createSchoolEventVenueAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const returnTo = safeEventReturnPath(formData, "/admin/events");
+  if (!token) redirect("/login?error_code=session_expired");
+  const result = await backendRequest<Record<string, unknown>>(
+    "/api/v1/admin/event-venues",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        name: String(formData.get("name") ?? "").trim(),
+        address_line: optionalField(formData, "address_line"),
+        postal_code: optionalField(formData, "postal_code"),
+        city: optionalField(formData, "city"),
+        country_code: "FR",
+        timezone: "Europe/Paris",
+        is_online: false,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) redirect(appendQueryMessage(returnTo, "error", result.message));
+  revalidatePath("/admin/events");
+  redirect(appendQueryMessage(returnTo, "ok", "Lieu événementiel ajouté"));
+}
+
+export async function createSchoolEventPriceTierAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const eventId = String(formData.get("event_id") ?? "").trim();
+  const returnTo = safeEventReturnPath(formData, eventId ? `/admin/events/${eventId}` : "/admin/events");
+  if (!token || !eventId) redirect(appendQueryMessage(returnTo, "error", "Événement introuvable"));
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/admin/events/${encodeURIComponent(eventId)}/price-tiers`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        label_fr: String(formData.get("label_fr") ?? "").trim(),
+        label_en: optionalField(formData, "label_en"),
+        price_ttc: String(formData.get("price_ttc") ?? "0").trim(),
+        sort_order: Number.parseInt(String(formData.get("sort_order") ?? "0"), 10) || 0,
+      }),
+    }, token,
+  );
+  if (!result.ok) redirect(appendQueryMessage(returnTo, "error", result.message));
+  revalidatePath(`/admin/events/${eventId}`);
+  revalidatePath("/events");
+  redirect(appendQueryMessage(returnTo, "ok", "Tarif ajouté"));
+}
+
+export async function deleteSchoolEventPriceTierAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const eventId = String(formData.get("event_id") ?? "").trim();
+  const tierId = String(formData.get("tier_id") ?? "").trim();
+  const returnTo = safeEventReturnPath(formData, eventId ? `/admin/events/${eventId}` : "/admin/events");
+  if (!token || !eventId || !tierId) redirect(appendQueryMessage(returnTo, "error", "Tarif introuvable"));
+  const result = await backendRequest<Record<string, never>>(
+    `/api/v1/admin/events/${encodeURIComponent(eventId)}/price-tiers/${encodeURIComponent(tierId)}`,
+    { method: "DELETE" }, token,
+  );
+  if (!result.ok) redirect(appendQueryMessage(returnTo, "error", result.message));
+  revalidatePath(`/admin/events/${eventId}`);
+  revalidatePath("/events");
+  redirect(appendQueryMessage(returnTo, "ok", "Tarif retiré"));
 }

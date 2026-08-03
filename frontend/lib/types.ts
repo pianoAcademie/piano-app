@@ -2640,6 +2640,27 @@ export type SchoolEventLocationOut = {
   name: string;
   timezone: string;
   is_online: boolean;
+  address_line: string | null;
+  postal_code: string | null;
+  city: string | null;
+  country_code: string | null;
+};
+
+export type SchoolEventVenueOut = SchoolEventLocationOut & { is_active: boolean };
+
+export type SchoolEventPriceTierOut = {
+  id: string;
+  event_id: string;
+  label_fr: string;
+  label_en: string | null;
+  price_ttc: string;
+  sort_order: number;
+  is_active: boolean;
+};
+
+export type SchoolEventImageUploadOut = {
+  image_url: string;
+  storage_key: string;
 };
 
 export type SchoolEventSlotOut = {
@@ -2676,12 +2697,14 @@ export type SchoolEventOut = {
   booking_opens_at: string | null;
   booking_closes_at: string | null;
   price_ttc: string;
+  price_tiers: SchoolEventPriceTierOut[];
   currency: string;
   max_per_family: number;
   waitlist_enabled: boolean;
   cancellation_deadline_hours: number;
   collect_piece_info: boolean;
   collect_photo_consent: boolean;
+  collect_performer_booking: boolean;
   confirmation_message_fr: string | null;
   confirmation_message_en: string | null;
   reminder_hours_before_start: number;
@@ -2706,7 +2729,11 @@ export type SchoolEventRegistrationOut = {
   end_at_utc: string;
   timezone: string;
   location_name: string | null;
-  booker_user_id: string;
+  booker_user_id: string | null;
+  public_booker_first_name: string | null;
+  public_booker_last_name: string | null;
+  public_booker_email: string | null;
+  public_booker_phone: string | null;
   participant_user_id: string | null;
   participant_display_name: string;
   party_size: number;
@@ -2714,6 +2741,8 @@ export type SchoolEventRegistrationOut = {
   answers: Record<string, unknown>;
   status: SchoolEventRegistrationStatus;
   unit_price_ttc_snapshot: string;
+  price_tier_id: string | null;
+  price_tier_label_snapshot: string | null;
   total_ttc_snapshot: string;
   currency_snapshot: string;
   payment_provider: string | null;

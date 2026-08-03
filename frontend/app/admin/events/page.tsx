@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
-import { createSchoolEventAction } from "../../../lib/actions";
+import { createSchoolEventAction, createSchoolEventVenueAction } from "../../../lib/actions";
 import { hasAdminPermission } from "../../../lib/admin-access";
 import { getAdminToken } from "../../../lib/auth-cookies";
 import { backendRequest } from "../../../lib/backend";
-import type { LocationOut, SchoolEventOut, UserOut } from "../../../lib/types";
+import type { SchoolEventOut, SchoolEventVenueOut, UserOut } from "../../../lib/types";
 import styles from "./events.module.css";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -38,16 +38,16 @@ function nextSlot(event: SchoolEventOut): string {
 export default async function AdminEventsPage({ searchParams = {} }: { searchParams?: SearchParams }): Promise<JSX.Element> {
   const token = getAdminToken();
   if (!token) redirect("/login?error_code=session_expired");
-  const [meResult, eventsResult, locationsResult] = await Promise.all([
+  const [meResult, eventsResult, venuesResult] = await Promise.all([
     backendRequest<UserOut>("/api/v1/auth/me", {}, token),
     backendRequest<SchoolEventOut[]>("/api/v1/admin/events", {}, token),
-    backendRequest<LocationOut[]>("/api/v1/locations?active=true", {}, token),
+    backendRequest<SchoolEventVenueOut[]>("/api/v1/admin/event-venues", {}, token),
   ]);
   if (!meResult.ok || !hasAdminPermission(meResult.data, "can_manage_events")) {
     redirect("/admin?error=Accès%20non%20autorisé");
   }
   const events = eventsResult.ok ? eventsResult.data : [];
-  const locations = locationsResult.ok ? locationsResult.data : [];
+  const venues = venuesResult.ok ? venuesResult.data : [];
   const query = param(searchParams, "q").trim().toLowerCase();
   const status = param(searchParams, "status").trim().toUpperCase();
   const visibleEvents = events.filter((event) => {
@@ -73,6 +73,14 @@ export default async function AdminEventsPage({ searchParams = {} }: { searchPar
 
       {ok ? <p className="notice success">{ok}</p> : null}
       {error ? <p className="notice error">{error}</p> : null}
+
+      <section className={styles.panel}>
+        <strong>Visibilité côté client</strong>
+        <p className="muted">
+          Dès qu’il est publié, « Comptes clients » l’affiche dans l’onglet Événements après connexion ;
+          « Public » l’affiche aussi sur la page publique et autorise la réservation sans compte. Ajoutez au moins un créneau pour permettre les inscriptions.
+        </p>
+      </section>
 
       <section className={styles.metrics}>
         <div className={styles.metric}><span>Total</span><strong>{events.length}</strong></div>
@@ -128,6 +136,22 @@ export default async function AdminEventsPage({ searchParams = {} }: { searchPar
         {visibleEvents.length === 0 ? <div className={styles.empty}>Aucun événement ne correspond aux filtres.</div> : null}
       </section>
 
+      <details className={styles.panel} id="event-venues">
+        <summary><strong>Lieux événementiels ({venues.length})</strong></summary>
+        <p className="muted">Ce répertoire est indépendant des lieux utilisés pour les cours.</p>
+        {venues.length ? (
+          <p>{venues.map((venue) => `${venue.name}${venue.city ? ` — ${venue.city}` : ""}`).join(" · ")}</p>
+        ) : null}
+        <form action={createSchoolEventVenueAction} className={styles.formGrid}>
+          <input type="hidden" name="return_to" value="/admin/events" />
+          <label className={styles.field}><span>Nom du lieu *</span><input name="name" required placeholder="Théâtre le Ranelagh" /></label>
+          <label className={styles.field}><span>Adresse</span><input name="address_line" placeholder="5 rue des Vignes" /></label>
+          <label className={styles.field}><span>Code postal</span><input name="postal_code" placeholder="75016" /></label>
+          <label className={styles.field}><span>Ville</span><input name="city" placeholder="Paris" /></label>
+          <div className={styles.actions}><button type="submit">Ajouter ce lieu</button></div>
+        </form>
+      </details>
+
       <details className={styles.panel} id="new-event" open={events.length === 0}>
         <summary><strong>Créer un événement</strong></summary>
         <form action={createSchoolEventAction} className={styles.formGrid}>
@@ -163,11 +187,15 @@ export default async function AdminEventsPage({ searchParams = {} }: { searchPar
             <span>Description anglaise</span>
             <textarea name="description_en" rows={3} />
           </label>
+          <label className={`${styles.field} ${styles.full}`}>
+            <span>Visuel du concert (JPG, PNG ou WebP — 8 Mo maximum)</span>
+            <input name="image_file" type="file" accept="image/jpeg,image/png,image/webp" />
+          </label>
           <label className={styles.field}>
             <span>Lieu par défaut</span>
-            <select name="location_id" defaultValue="">
+            <select name="event_venue_id" defaultValue="">
               <option value="">À définir par créneau</option>
-              {locations.map((location) => <option value={location.id} key={location.id}>{location.name}</option>)}
+              {venues.map((venue) => <option value={venue.id} key={venue.id}>{venue.name}</option>)}
             </select>
           </label>
           <label className={styles.field}>
@@ -193,7 +221,7 @@ export default async function AdminEventsPage({ searchParams = {} }: { searchPar
             </select>
           </label>
           <label className={styles.field}>
-            <span>Prix par personne</span>
+            <span>Prix unique initial</span>
             <input name="price_ttc" type="number" min="0" step="0.01" defaultValue="0" />
           </label>
           <label className={styles.field}>
@@ -206,10 +234,14 @@ export default async function AdminEventsPage({ searchParams = {} }: { searchPar
             <label className={styles.checkLabel}><input type="checkbox" name="waitlist_enabled" defaultChecked /> Liste d’attente</label>
             <label className={styles.checkLabel}><input type="checkbox" name="collect_piece_info" /> Pièce interprétée</label>
             <label className={styles.checkLabel}><input type="checkbox" name="collect_photo_consent" /> Consentement photo</label>
+            <label className={styles.checkLabel}>
+              <input type="checkbox" name="collect_performer_booking" /> L’enfant réservé est interprète
+            </label>
           </div>
           <div className={`${styles.actions} ${styles.full}`}>
             <button className="primary" type="submit">Créer puis ajouter les créneaux</button>
           </div>
+          <p className={`${styles.full} muted`}>Après création, vous pourrez ajouter plusieurs tarifs et définir la jauge maximale de chaque créneau.</p>
         </form>
       </details>
     </main>

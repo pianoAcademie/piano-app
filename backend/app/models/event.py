@@ -138,6 +138,11 @@ class SchoolEvent(Base):
         ForeignKey("locations.id", ondelete="SET NULL"),
         nullable=True,
     )
+    event_venue_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("school_event_venues.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     booking_opens_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     booking_closes_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     price_ttc: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
@@ -147,6 +152,7 @@ class SchoolEvent(Base):
     cancellation_deadline_hours: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("24"))
     collect_piece_info: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     collect_photo_consent: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    collect_performer_booking: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     confirmation_message_fr: Mapped[str | None] = mapped_column(Text, nullable=True)
     confirmation_message_en: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by_user_id: Mapped[UUID | None] = mapped_column(
@@ -184,6 +190,11 @@ class SchoolEventSlot(Base):
     location_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("locations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    event_venue_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("school_event_venues.id", ondelete="SET NULL"),
         nullable=True,
     )
     label: Mapped[str | None] = mapped_column(String(180), nullable=True)
@@ -229,11 +240,17 @@ class SchoolEventRegistration(Base):
         ForeignKey("school_event_slots.id", ondelete="CASCADE"),
         nullable=False,
     )
-    booker_user_id: Mapped[UUID] = mapped_column(
+    booker_user_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
     )
+    public_booker_first_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    public_booker_last_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    public_booker_email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    public_booker_phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    public_booker_language: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    public_booking_request_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True, index=True)
     participant_user_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -255,6 +272,12 @@ class SchoolEventRegistration(Base):
         nullable=False,
     )
     unit_price_ttc_snapshot: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
+    price_tier_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("school_event_price_tiers.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    price_tier_label_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
     total_ttc_snapshot: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
     currency_snapshot: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'EUR'"))
     payment_provider: Mapped[str | None] = mapped_column(String(30), nullable=True)
@@ -265,3 +288,39 @@ class SchoolEventRegistration(Base):
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancellation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     checked_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SchoolEventVenue(Base):
+    __tablename__ = "school_event_venues"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+    address_line: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    postal_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    country_code: Mapped[str] = mapped_column(String(2), nullable=False, server_default=text("'FR'"))
+    timezone: Mapped[str] = mapped_column(String(100), nullable=False, server_default=text("'Europe/Paris'"))
+    is_online: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
+
+class SchoolEventPriceTier(Base):
+    __tablename__ = "school_event_price_tiers"
+    __table_args__ = (
+        CheckConstraint("price_ttc >= 0", name="ck_school_event_price_tiers_price_non_negative"),
+        Index("ix_school_event_price_tiers_event_sort", "event_id", "sort_order"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    event_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("school_events.id", ondelete="CASCADE"), nullable=False
+    )
+    label_fr: Mapped[str] = mapped_column(String(120), nullable=False)
+    label_en: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    price_ttc: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))

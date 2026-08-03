@@ -1,12 +1,16 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 
 import {
   createAdminSchoolEventRegistrationAction,
+  createSchoolEventPriceTierAction,
   createSchoolEventSlotAction,
   deleteSchoolEventSlotAction,
+  deleteSchoolEventPriceTierAction,
   duplicateSchoolEventAction,
   updateSchoolEventAction,
+  uploadSchoolEventImageAction,
   updateSchoolEventRegistrationGroupStatusAction,
   updateSchoolEventSlotCapacitiesAction,
 } from "../../../../lib/actions";
@@ -14,7 +18,7 @@ import { hasAdminPermission } from "../../../../lib/admin-access";
 import { getAdminToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
 import type {
-  LocationOut,
+  SchoolEventVenueOut,
   SchoolEventAdminParticipantOptionOut,
   SchoolEventOut,
   SchoolEventRegistrationOut,
@@ -74,7 +78,7 @@ export default async function AdminEventDetailPage({
 }): Promise<JSX.Element> {
   const token = getAdminToken();
   if (!token) redirect("/login?error_code=session_expired");
-  const [meResult, eventResult, registrationResult, locationsResult] = await Promise.all([
+  const [meResult, eventResult, registrationResult, venuesResult] = await Promise.all([
     backendRequest<UserOut>("/api/v1/auth/me", {}, token),
     backendRequest<SchoolEventOut>(`/api/v1/admin/events/${encodeURIComponent(params.eventId)}`, {}, token),
     backendRequest<SchoolEventRegistrationOut[]>(
@@ -82,7 +86,7 @@ export default async function AdminEventDetailPage({
       {},
       token,
     ),
-    backendRequest<LocationOut[]>("/api/v1/locations?active=true", {}, token),
+    backendRequest<SchoolEventVenueOut[]>("/api/v1/admin/event-venues", {}, token),
   ]);
   if (!meResult.ok || !hasAdminPermission(meResult.data, "can_manage_events")) {
     redirect("/admin?error=Accès%20non%20autorisé");
@@ -92,6 +96,10 @@ export default async function AdminEventDetailPage({
     redirect(`/admin/events?error=${encodeURIComponent(eventResult.message)}`);
   }
   const event = eventResult.data;
+  const requestHeaders = headers();
+  const forwardedHost = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "";
+  const forwardedProtocol = requestHeaders.get("x-forwarded-proto") ?? (forwardedHost.includes("localhost") ? "http" : "https");
+  const directBookingUrl = forwardedHost ? `${forwardedProtocol}://${forwardedHost}/events/${event.slug}` : `/events/${event.slug}`;
   const registrations = registrationResult.ok ? registrationResult.data : [];
   const clientSearch = param(searchParams, "client_search").trim();
   const participantOptionsResult = clientSearch.length >= 2
@@ -110,7 +118,7 @@ export default async function AdminEventDetailPage({
       return groups;
     }, new Map<string, SchoolEventRegistrationOut[]>()),
   );
-  const locations = locationsResult.ok ? locationsResult.data : [];
+  const venues = venuesResult.ok ? venuesResult.data : [];
   const ok = param(searchParams, "ok");
   const error = param(searchParams, "error")
     || (!registrationResult.ok ? registrationResult.message : "")
@@ -154,6 +162,34 @@ export default async function AdminEventDetailPage({
 
       {ok ? <p className="notice success">{ok}</p> : null}
       {error ? <p className="notice error">{error}</p> : null}
+
+      {event.status === "PUBLISHED" && event.audience === "PUBLIC" ? (
+        <section className={styles.panel}>
+          <h2>Lien direct de réservation</h2>
+          <p className="muted">Envoyez ce lien aux familles et aux accompagnants. Aucun compte n’est nécessaire.</p>
+          <div className={styles.slotForm}>
+            <input readOnly value={directBookingUrl} aria-label="Lien direct de réservation" />
+            <a className="ghost" href={directBookingUrl} target="_blank" rel="noreferrer">Ouvrir le formulaire</a>
+          </div>
+        </section>
+      ) : null}
+
+      <section className={styles.panel}>
+        <h2>Visuel du concert</h2>
+        <div className={styles.slotForm}>
+          {event.image_url ? (
+            <img src={event.image_url} alt={`Visuel de ${event.title_fr}`} style={{ maxWidth: "260px", maxHeight: "180px", objectFit: "cover", borderRadius: "12px" }} />
+          ) : <p className="muted">Aucun visuel importé.</p>}
+          <form action={uploadSchoolEventImageAction} className={styles.field}>
+            <input type="hidden" name="event_id" value={event.id} />
+            <input type="hidden" name="return_to" value={returnTo} />
+            <span>Importer ou remplacer le visuel</span>
+            <input name="image_file" type="file" accept="image/jpeg,image/png,image/webp" required />
+            <button type="submit">Importer</button>
+            <small className="muted">JPG, PNG ou WebP — 8 Mo maximum.</small>
+          </form>
+        </div>
+      </section>
 
       <details className={styles.panel}>
         <summary><strong>Paramètres et publication</strong></summary>
@@ -200,9 +236,9 @@ export default async function AdminEventDetailPage({
           </label>
           <label className={styles.field}>
             <span>Lieu par défaut</span>
-            <select name="location_id" defaultValue={event.location?.id ?? ""}>
+            <select name="event_venue_id" defaultValue={event.location?.id ?? ""}>
               <option value="">À définir par créneau</option>
-              {locations.map((location) => <option value={location.id} key={location.id}>{location.name}</option>)}
+              {venues.map((venue) => <option value={venue.id} key={venue.id}>{venue.name}</option>)}
             </select>
           </label>
           <label className={styles.field}>
@@ -246,7 +282,7 @@ export default async function AdminEventDetailPage({
             </select>
           </label>
           <label className={styles.field}>
-            <span>Prix par personne</span>
+            <span>Prix unique (utilisé sans grille tarifaire)</span>
             <input name="price_ttc" type="number" min="0" step="0.01" defaultValue={event.price_ttc} />
           </label>
           <label className={styles.field}>
@@ -261,6 +297,10 @@ export default async function AdminEventDetailPage({
             <label className={styles.checkLabel}><input type="checkbox" name="waitlist_enabled" defaultChecked={event.waitlist_enabled} /> Liste d’attente</label>
             <label className={styles.checkLabel}><input type="checkbox" name="collect_piece_info" defaultChecked={event.collect_piece_info} /> Pièce interprétée</label>
             <label className={styles.checkLabel}><input type="checkbox" name="collect_photo_consent" defaultChecked={event.collect_photo_consent} /> Consentement photo</label>
+            <label className={styles.checkLabel}>
+              <input type="checkbox" name="collect_performer_booking" defaultChecked={event.collect_performer_booking} />
+              L’enfant réservé est interprète
+            </label>
           </div>
           <label className={`${styles.field} ${styles.full}`}>
             <span>Message de confirmation français</span>
@@ -277,9 +317,41 @@ export default async function AdminEventDetailPage({
       </details>
 
       <section className={styles.panel}>
+        <h2>Tarifs proposés</h2>
+        <p className="muted">
+          Ajoutez autant de catégories que nécessaire (enfant, adulte, élève, parent d’élève, invité…).
+          Le client choisira son tarif lors de l’inscription.
+        </p>
+        <div className={styles.slotList}>
+          {event.price_tiers.map((tier) => (
+            <div className={styles.slot} key={tier.id}>
+              <strong>{tier.label_fr}</strong> — {Number(tier.price_ttc).toFixed(2)} {event.currency}
+              <form action={deleteSchoolEventPriceTierAction}>
+                <input type="hidden" name="event_id" value={event.id} />
+                <input type="hidden" name="tier_id" value={tier.id} />
+                <input type="hidden" name="return_to" value={returnTo} />
+                <button type="submit" className="ghost">Retirer</button>
+              </form>
+            </div>
+          ))}
+        </div>
+        <form action={createSchoolEventPriceTierAction} className={styles.slotForm}>
+          <input type="hidden" name="event_id" value={event.id} />
+          <input type="hidden" name="return_to" value={returnTo} />
+          <label className={styles.field}><span>Libellé *</span><input name="label_fr" required placeholder="Tarif enfant" /></label>
+          <label className={styles.field}><span>Libellé anglais</span><input name="label_en" placeholder="Child" /></label>
+          <label className={styles.field}><span>Prix TTC *</span><input name="price_ttc" type="number" min="0" step="0.01" required /></label>
+          <input type="hidden" name="sort_order" value={event.price_tiers.length} />
+          <div className={styles.actions}><button type="submit">Ajouter le tarif</button></div>
+        </form>
+        {!event.price_tiers.length ? <p className="muted">Le prix unique ci-dessus reste utilisé tant qu’aucun tarif n’est ajouté.</p> : null}
+      </section>
+
+      <section className={styles.panel}>
         <h2>Créneaux proposés</h2>
         <p className="muted">
-          La limite publique est affichée aux clients. La limite administrative permet des ajouts manuels au-delà de ce seuil.
+          Le nombre maximum d’inscrits est géré ici, pour chaque créneau. La jauge client bloque les inscriptions publiques ;
+          la jauge administrative autorise les ajouts manuels au-delà de ce seuil.
         </p>
         <form action={createSchoolEventSlotAction} className={styles.slotForm}>
           <input type="hidden" name="event_id" value={event.id} />
@@ -298,18 +370,18 @@ export default async function AdminEventDetailPage({
             <input name="label" placeholder="Passage 1, répétition..." />
           </label>
           <label className={styles.field}>
-            <span>Limite publique *</span>
+            <span>Jauge client (maximum d’inscrits) *</span>
             <input name="capacity_max" type="number" min="1" required defaultValue="10" />
           </label>
           <label className={styles.field}>
-            <span>Limite administrative *</span>
+            <span>Jauge administrative *</span>
             <input name="admin_capacity_max" type="number" min="1" required defaultValue="12" />
           </label>
           <label className={styles.field}>
             <span>Lieu</span>
-            <select name="location_id" defaultValue={event.location?.id ?? ""}>
+            <select name="event_venue_id" defaultValue={event.location?.id ?? ""}>
               <option value="">Lieu par défaut</option>
-              {locations.map((location) => <option value={location.id} key={location.id}>{location.name}</option>)}
+              {venues.map((venue) => <option value={venue.id} key={venue.id}>{venue.name}</option>)}
             </select>
           </label>
           <div className={styles.actions}><button type="submit">Ajouter le créneau</button></div>
@@ -336,11 +408,11 @@ export default async function AdminEventDetailPage({
                 <input type="hidden" name="slot_id" value={slot.id} />
                 <input type="hidden" name="return_to" value={returnTo} />
                 <label className={styles.field}>
-                  <span>Limite publique</span>
+                  <span>Jauge client</span>
                   <input name="capacity_max" type="number" min="1" required defaultValue={slot.capacity_max} />
                 </label>
                 <label className={styles.field}>
-                  <span>Limite administrative</span>
+                  <span>Jauge administrative</span>
                   <input
                     name="admin_capacity_max"
                     type="number"
@@ -430,6 +502,17 @@ export default async function AdminEventDetailPage({
                         ))}
                     </select>
                   </label>
+                  {event.price_tiers.length ? (
+                    <label className={styles.field}>
+                      <span>Tarif</span>
+                      <select name="price_tier_id" required defaultValue="">
+                        <option value="" disabled>Choisir</option>
+                        {event.price_tiers.map((tier) => (
+                          <option value={tier.id} key={tier.id}>{tier.label_fr} — {Number(tier.price_ttc).toFixed(2)} €</option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
                   <label className={styles.checkLabel}>
                     <input type="checkbox" name="send_confirmation" defaultChecked />
                     Envoyer la confirmation
@@ -457,6 +540,16 @@ export default async function AdminEventDetailPage({
                   <div>
                     <strong>{participantNames.join(", ")}</strong>
                     <p className="muted">{formatDate(registration.start_at_utc, registration.timezone)} · {registration.location_name ?? "Lieu à préciser"}</p>
+                    {registration.public_booker_email ? (
+                      <small className="muted">
+                        Réservation publique par {[registration.public_booker_first_name, registration.public_booker_last_name].filter(Boolean).join(" ")}
+                        {` · ${registration.public_booker_email}`}
+                        {registration.public_booker_phone ? ` · ${registration.public_booker_phone}` : ""}
+                      </small>
+                    ) : null}
+                    {registration.price_tier_label_snapshot ? (
+                      <small className="muted">Tarif : {registration.price_tier_label_snapshot} · {totalAmount.toFixed(2)} €</small>
+                    ) : null}
                     {registration.payment_reference ? (
                       <small className="muted">
                         Paiement {registration.payment_provider ?? "PSP"} · {registration.payment_reference} · {totalAmount.toFixed(2)} €

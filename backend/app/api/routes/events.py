@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
+import os
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -22,12 +25,14 @@ from app.models.event import (
     SchoolEvent,
     SchoolEventAudience,
     SchoolEventPaymentMode,
+    SchoolEventPriceTier,
     SchoolEventRegistration,
     SchoolEventRegistrationMode,
     SchoolEventRegistrationStatus,
     SchoolEventSlot,
     SchoolEventSlotStatus,
     SchoolEventStatus,
+    SchoolEventVenue,
 )
 from app.models.family import ClientFamilyLink
 from app.models.ops import CommunicationDeliveryStatus, CommunicationLog
@@ -39,6 +44,7 @@ from app.schemas.event import (
     SchoolEventOut,
     SchoolEventRegistrationCreateOut,
     SchoolEventRegistrationCreateRequest,
+    SchoolEventPublicRegistrationCreateRequest,
     SchoolEventRegistrationOut,
     SchoolEventRegistrationStatusUpdateRequest,
     SchoolEventSlotCapacityUpdateRequest,
@@ -46,6 +52,11 @@ from app.schemas.event import (
     SchoolEventSlotOut,
     SchoolEventUpdateRequest,
     SchoolEventLocationOut,
+    SchoolEventImageUploadOut,
+    SchoolEventPriceTierCreateRequest,
+    SchoolEventPriceTierOut,
+    SchoolEventVenueCreateRequest,
+    SchoolEventVenueOut,
 )
 from app.services.client_email import deliverable_client_email
 from app.services.email_delivery import send_email
@@ -65,6 +76,7 @@ from app.services.payment_provider import (
     resolve_provider,
     resolve_webhook_secret,
 )
+from app.services.shared.rate_limit import consume_rate_limit
 
 
 router = APIRouter()
@@ -76,10 +88,43 @@ ACTIVE_REGISTRATION_STATUSES = {
     SchoolEventRegistrationStatus.NO_SHOW,
 }
 PAYMENT_HOLD_DURATION = timedelta(minutes=20)
+EVENT_IMAGE_MAX_BYTES = int(os.getenv("EVENT_IMAGE_MAX_BYTES", str(8 * 1024 * 1024)))
+EVENT_IMAGE_UPLOAD_DIR = Path(os.getenv("EVENT_IMAGE_UPLOAD_DIR", "/app/uploads/catalog-products/events"))
+EVENT_IMAGE_ALLOWED_TYPES: dict[str, str] = {
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _event_image_dir() -> Path:
+    EVENT_IMAGE_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    return EVENT_IMAGE_UPLOAD_DIR
+
+
+def _event_image_path(file_name: str) -> Path:
+    if not file_name or "/" in file_name or "\\" in file_name or ".." in file_name:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visuel introuvable")
+    base = _event_image_dir().resolve()
+    path = (base / file_name).resolve()
+    if base not in path.parents or not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Visuel introuvable")
+    return path
+
+
+def _valid_event_image_signature(raw: bytes, extension: str) -> bool:
+    if extension == ".jpg":
+        return raw.startswith(b"\xff\xd8\xff")
+    if extension == ".png":
+        return raw.startswith(b"\x89PNG\r\n\x1a\n")
+    if extension == ".webp":
+        return len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP"
+    return False
 
 
 def _display_name(user: User) -> str:
@@ -134,7 +179,7 @@ def _capacity_registration_condition(now: datetime):
     )
 
 
-def _location_out(location: Location | None) -> SchoolEventLocationOut | None:
+def _location_out(location: Location | SchoolEventVenue | None) -> SchoolEventLocationOut | None:
     if location is None:
         return None
     return SchoolEventLocationOut(
@@ -142,6 +187,10 @@ def _location_out(location: Location | None) -> SchoolEventLocationOut | None:
         name=location.name,
         timezone=location.timezone,
         is_online=bool(location.is_online),
+        address_line=getattr(location, "address_line", None),
+        postal_code=getattr(location, "postal_code", None),
+        city=getattr(location, "city", None),
+        country_code=getattr(location, "country_code", None),
     )
 
 
@@ -193,6 +242,21 @@ def _serialize_events(
     }
     locations = db.scalars(select(Location).where(Location.id.in_(location_ids))).all() if location_ids else []
     locations_by_id = {location.id: location for location in locations}
+    venue_ids = {
+        venue_id
+        for venue_id in [*(event.event_venue_id for event in events), *(slot.event_venue_id for slot in slots)]
+        if venue_id is not None
+    }
+    venues = db.scalars(select(SchoolEventVenue).where(SchoolEventVenue.id.in_(venue_ids))).all() if venue_ids else []
+    venues_by_id = {venue.id: venue for venue in venues}
+    price_tiers = db.scalars(
+        select(SchoolEventPriceTier)
+        .where(SchoolEventPriceTier.event_id.in_(event_ids), SchoolEventPriceTier.is_active.is_(True))
+        .order_by(SchoolEventPriceTier.sort_order, SchoolEventPriceTier.created_at)
+    ).all() if event_ids else []
+    price_tiers_by_event: dict[UUID, list[SchoolEventPriceTier]] = defaultdict(list)
+    for tier in price_tiers:
+        price_tiers_by_event[tier.event_id].append(tier)
     slots_by_event: dict[UUID, list[SchoolEventSlot]] = defaultdict(list)
     for slot in slots:
         slots_by_event[slot.event_id].append(slot)
@@ -245,7 +309,10 @@ def _serialize_events(
                     admin_seats_remaining=max(admin_capacity - booked, 0),
                     waitlist_count=waitlisted_by_slot.get(slot.id, 0),
                     status=slot.status,
-                    location=_location_out(locations_by_id.get(slot.location_id or event.location_id)),
+                    location=_location_out(
+                        venues_by_id.get(slot.event_venue_id or event.event_venue_id)
+                        or locations_by_id.get(slot.location_id or event.location_id)
+                    ),
                 )
             )
         payload.append(
@@ -262,16 +329,29 @@ def _serialize_events(
                 audience=event.audience,
                 registration_mode=event.registration_mode,
                 payment_mode=event.payment_mode,
-                location=_location_out(locations_by_id.get(event.location_id)),
+                location=_location_out(venues_by_id.get(event.event_venue_id) or locations_by_id.get(event.location_id)),
                 booking_opens_at=event.booking_opens_at,
                 booking_closes_at=event.booking_closes_at,
                 price_ttc=event.price_ttc,
+                price_tiers=[
+                    SchoolEventPriceTierOut(
+                        id=tier.id,
+                        event_id=tier.event_id,
+                        label_fr=tier.label_fr,
+                        label_en=tier.label_en,
+                        price_ttc=tier.price_ttc,
+                        sort_order=tier.sort_order,
+                        is_active=bool(tier.is_active),
+                    )
+                    for tier in price_tiers_by_event.get(event.id, [])
+                ],
                 currency=event.currency,
                 max_per_family=event.max_per_family,
                 waitlist_enabled=bool(event.waitlist_enabled),
                 cancellation_deadline_hours=event.cancellation_deadline_hours,
                 collect_piece_info=bool(event.collect_piece_info),
                 collect_photo_consent=bool(event.collect_photo_consent),
+                collect_performer_booking=bool(event.collect_performer_booking),
                 confirmation_message_fr=event.confirmation_message_fr,
                 confirmation_message_en=event.confirmation_message_en,
                 reminder_hours_before_start=reminder_hours,
@@ -291,7 +371,7 @@ def _registration_out(
     *,
     event: SchoolEvent,
     slot: SchoolEventSlot,
-    location: Location | None,
+    location: Location | SchoolEventVenue | None,
 ) -> SchoolEventRegistrationOut:
     return SchoolEventRegistrationOut(
         id=registration.id,
@@ -307,6 +387,10 @@ def _registration_out(
         timezone=slot.timezone,
         location_name=location.name if location else None,
         booker_user_id=registration.booker_user_id,
+        public_booker_first_name=registration.public_booker_first_name,
+        public_booker_last_name=registration.public_booker_last_name,
+        public_booker_email=registration.public_booker_email,
+        public_booker_phone=registration.public_booker_phone,
         participant_user_id=registration.participant_user_id,
         participant_display_name=registration.participant_display_name,
         party_size=registration.party_size,
@@ -314,6 +398,8 @@ def _registration_out(
         answers=dict(registration.answers_json or {}),
         status=registration.status,
         unit_price_ttc_snapshot=registration.unit_price_ttc_snapshot,
+        price_tier_id=registration.price_tier_id,
+        price_tier_label_snapshot=registration.price_tier_label_snapshot,
         total_ttc_snapshot=registration.total_ttc_snapshot,
         currency_snapshot=registration.currency_snapshot,
         payment_provider=registration.payment_provider,
@@ -333,6 +419,38 @@ def _event_is_open(event: SchoolEvent, now: datetime) -> bool:
     if event.booking_closes_at and now >= event.booking_closes_at:
         return False
     return True
+
+
+def _resolved_event_location(db: Session, event: SchoolEvent, slot: SchoolEventSlot) -> Location | SchoolEventVenue | None:
+    venue_id = slot.event_venue_id or event.event_venue_id
+    if venue_id:
+        return db.get(SchoolEventVenue, venue_id)
+    location_id = slot.location_id or event.location_id
+    return db.get(Location, location_id) if location_id else None
+
+
+def _registration_price_tier(
+    db: Session,
+    *,
+    event: SchoolEvent,
+    requested_tier_id: UUID | None,
+) -> tuple[Decimal, SchoolEventPriceTier | None]:
+    tiers = db.scalars(
+        select(SchoolEventPriceTier)
+        .where(SchoolEventPriceTier.event_id == event.id, SchoolEventPriceTier.is_active.is_(True))
+        .order_by(SchoolEventPriceTier.sort_order, SchoolEventPriceTier.created_at)
+    ).all()
+    if not tiers:
+        return Decimal(event.price_ttc or 0).quantize(Decimal("0.01")), None
+    if requested_tier_id is None:
+        if len(tiers) > 1:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Veuillez choisir un tarif")
+        tier = tiers[0]
+    else:
+        tier = next((item for item in tiers if item.id == requested_tier_id), None)
+        if tier is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Tarif invalide")
+    return Decimal(tier.price_ttc).quantize(Decimal("0.01")), tier
 
 
 def _event_datetime_for_booker(*, slot: SchoolEventSlot, booker: User) -> str:
@@ -379,6 +497,44 @@ def _send_registration_confirmation(
         body=body,
         context="SCHOOL_EVENT_REGISTRATION",
         recipient_user_id=booker.id,
+        communication_type="EVENT_REGISTRATION",
+    )
+
+
+def _send_public_registration_confirmation(
+    *,
+    email: str,
+    first_name: str,
+    language: str,
+    event: SchoolEvent,
+    slot: SchoolEventSlot,
+    status_value: SchoolEventRegistrationStatus,
+    participant_names: list[str],
+) -> None:
+    is_english = language.startswith("en")
+    title = event.title_en if is_english and event.title_en else event.title_fr
+    timezone_name = resolve_timezone_name(None, slot.timezone)
+    local_start = slot.start_at_utc.astimezone(ZoneInfo(timezone_name))
+    when = f"{local_start.strftime('%d/%m/%Y %H:%M')} ({timezone_name})"
+    waiting = status_value == SchoolEventRegistrationStatus.WAITLISTED
+    subject = (
+        f"Waiting list - {title}" if is_english and waiting
+        else f"Registration confirmed - {title}" if is_english
+        else f"Liste d'attente - {title}" if waiting
+        else f"Inscription confirmée - {title}"
+    )
+    body = (
+        f"Hello {first_name},\n\nYour registration for {title} is {'on the waiting list' if waiting else 'confirmed'}.\n"
+        f"Date: {when}\nTickets: {', '.join(participant_names)}"
+        if is_english
+        else f"Bonjour {first_name},\n\nVotre réservation pour {title} est {'sur liste d’attente' if waiting else 'confirmée'}.\n"
+        f"Date : {when}\nBillets : {', '.join(participant_names)}"
+    )
+    send_email(
+        to_email=email,
+        subject=subject,
+        body=body,
+        context="SCHOOL_EVENT_PUBLIC_REGISTRATION",
         communication_type="EVENT_REGISTRATION",
     )
 
@@ -460,6 +616,41 @@ def _send_event_cancellation(
     )
 
 
+def _send_public_event_cancellation(
+    *,
+    registration: SchoolEventRegistration,
+    event: SchoolEvent,
+    slot: SchoolEventSlot,
+    participant_names: list[str],
+    paid: bool,
+) -> None:
+    if not registration.public_booker_email:
+        return
+    language = registration.public_booker_language or "fr"
+    is_english = language.startswith("en")
+    title = event.title_en if is_english and event.title_en else event.title_fr
+    timezone_name = resolve_timezone_name(None, slot.timezone)
+    when = f"{slot.start_at_utc.astimezone(ZoneInfo(timezone_name)).strftime('%d/%m/%Y %H:%M')} ({timezone_name})"
+    payment_note = (
+        "\nThe school will contact you separately regarding your payment." if is_english and paid
+        else "\nL’école vous contactera séparément concernant votre règlement." if paid
+        else ""
+    )
+    subject = f"Event cancelled - {title}" if is_english else f"Événement annulé - {title}"
+    body = (
+        f"The event {title}, scheduled for {when}, has been cancelled.\nTickets: {', '.join(participant_names)}{payment_note}"
+        if is_english
+        else f"L’événement {title}, prévu le {when}, est annulé.\nBillets : {', '.join(participant_names)}{payment_note}"
+    )
+    send_email(
+        to_email=registration.public_booker_email,
+        subject=subject,
+        body=body,
+        context="SCHOOL_EVENT_PUBLIC_CANCELLED",
+        communication_type="EVENT_CANCELLED",
+    )
+
+
 def _event_checkout_urls(db: Session, *, event: SchoolEvent, group_id: UUID) -> tuple[str, str, str]:
     base_url = resolve_frontend_base_url(db).rstrip("/")
     event_path = f"/events/{event.slug}"
@@ -477,8 +668,11 @@ def _create_event_checkout(
     *,
     event: SchoolEvent,
     slot: SchoolEventSlot,
-    booker: User,
+    booker: User | None,
     rows: list[SchoolEventRegistration],
+    public_email: str | None = None,
+    public_first_name: str | None = None,
+    public_last_name: str | None = None,
 ) -> str:
     if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inscription introuvable")
@@ -487,26 +681,33 @@ def _create_event_checkout(
     if total_due <= Decimal("0.00"):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Aucun paiement n’est requis")
     success_url, cancel_url, webhook_url = _event_checkout_urls(db, event=event, group_id=group_id)
+    customer_email = deliverable_client_email(booker) if booker else public_email
+    if not customer_email:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Adresse email requise")
+    metadata = {
+        "source": "SCHOOL_EVENT",
+        "event_registration_group_id": str(group_id),
+        "event_id": str(event.id),
+        "event_slot_id": str(slot.id),
+    }
+    if booker:
+        metadata["client_id"] = str(booker.id)
+    else:
+        metadata["public_booking"] = "true"
     checkout = create_checkout_session(
         db,
         CheckoutCreateRequest(
             amount=total_due,
             currency=(event.currency or "EUR").upper(),
             description=f"{event.title_fr} ({len(rows)} inscription(s))",
-            customer_email=deliverable_client_email(booker) or booker.email,
-            customer_first_name=booker.first_name,
-            customer_last_name=booker.last_name,
-            customer_country=(booker.residence_country or "FR"),
+            customer_email=customer_email,
+            customer_first_name=booker.first_name if booker else public_first_name,
+            customer_last_name=booker.last_name if booker else public_last_name,
+            customer_country=(booker.residence_country or "FR") if booker else "FR",
             success_return_url=success_url,
             cancel_return_url=cancel_url,
             webhook_url=webhook_url,
-            metadata={
-                "source": "SCHOOL_EVENT",
-                "event_registration_group_id": str(group_id),
-                "event_id": str(event.id),
-                "event_slot_id": str(slot.id),
-                "client_id": str(booker.id),
-            },
+            metadata=metadata,
         ),
     )
     if not checkout.success or not checkout.checkout_url:
@@ -578,6 +779,16 @@ def reconcile_event_payment_by_provider_reference(
                     status_value=SchoolEventRegistrationStatus.CONFIRMED,
                     participant_names=[row.participant_display_name for row in rows],
                 )
+            elif rows[0].public_booker_email:
+                _send_public_registration_confirmation(
+                    email=rows[0].public_booker_email,
+                    first_name=rows[0].public_booker_first_name or rows[0].public_booker_email,
+                    language=rows[0].public_booker_language or "fr",
+                    event=event,
+                    slot=slot,
+                    status_value=SchoolEventRegistrationStatus.CONFIRMED,
+                    participant_names=[row.participant_display_name for row in rows],
+                )
     elif lookup.success and (lookup.cancelled or lookup.failed):
         released_capacity = any(row.status == SchoolEventRegistrationStatus.PENDING_PAYMENT for row in rows)
         for row in rows:
@@ -614,6 +825,11 @@ def list_public_events(
     return _serialize_events(db, list(events))
 
 
+@router.get("/events/images/{file_name}")
+def get_public_event_image(file_name: str) -> FileResponse:
+    return FileResponse(_event_image_path(file_name))
+
+
 @router.get("/events/{slug}", response_model=SchoolEventOut)
 def get_public_event(slug: str, db: Session = Depends(get_db)) -> SchoolEventOut:
     event = db.scalar(
@@ -626,6 +842,162 @@ def get_public_event(slug: str, db: Session = Depends(get_db)) -> SchoolEventOut
     if event is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Événement introuvable")
     return _serialize_events(db, [event])[0]
+
+
+@router.post("/events/{slug}/register", response_model=SchoolEventRegistrationCreateOut)
+def register_public_for_event(
+    slug: str,
+    payload: SchoolEventPublicRegistrationCreateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> SchoolEventRegistrationCreateOut:
+    if payload.website:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Réservation invalide")
+    client_ip = request.client.host if request.client else "unknown"
+    email_key = hashlib.sha256(payload.email.encode("utf-8")).hexdigest()
+    for bucket, key, limit in (
+        ("public-event-booking-ip", client_ip, 20),
+        ("public-event-booking-email", email_key, 10),
+    ):
+        allowed, retry_after = consume_rate_limit(bucket=bucket, key=key, limit=limit, window_seconds=3600)
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Trop de tentatives. Réessayez dans {retry_after} secondes.",
+            )
+
+    now = _utcnow()
+    event = db.scalar(
+        select(SchoolEvent)
+        .where(
+            SchoolEvent.slug == slug,
+            SchoolEvent.audience == SchoolEventAudience.PUBLIC,
+        )
+        .with_for_update()
+    )
+    if event is None or not _event_is_open(event, now):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Les inscriptions ne sont pas ouvertes")
+    slot = db.scalar(
+        select(SchoolEventSlot)
+        .where(SchoolEventSlot.id == payload.slot_id, SchoolEventSlot.event_id == event.id)
+        .with_for_update()
+    )
+    if slot is None or slot.status != SchoolEventSlotStatus.SCHEDULED or slot.start_at_utc <= now:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ce créneau n’est plus disponible")
+    if len(payload.tickets) > event.max_per_family:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Nombre maximal de billets dépassé")
+    if event.registration_mode == SchoolEventRegistrationMode.INDIVIDUAL_SLOT and len(payload.tickets) != 1:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Ce créneau accepte un seul billet")
+    existing_rows = db.scalars(
+        select(SchoolEventRegistration)
+        .where(
+            SchoolEventRegistration.slot_id == slot.id,
+            SchoolEventRegistration.public_booking_request_id == payload.request_id,
+        )
+        .order_by(SchoolEventRegistration.booked_at)
+    ).all()
+    if existing_rows:
+        location = _resolved_event_location(db, event, slot)
+        return SchoolEventRegistrationCreateOut(
+            group_id=existing_rows[0].group_id,
+            status=existing_rows[0].status,
+            registrations=[
+                _registration_out(row, event=event, slot=slot, location=location) for row in existing_rows
+            ],
+            checkout_url=existing_rows[0].payment_checkout_url,
+        )
+
+    ticket_prices = [
+        _registration_price_tier(db, event=event, requested_tier_id=ticket.price_tier_id)
+        for ticket in payload.tickets
+    ]
+    total_due = sum((price for price, _ in ticket_prices), Decimal("0"))
+    booked_count = int(
+        db.scalar(
+            select(func.coalesce(func.sum(SchoolEventRegistration.party_size), 0)).where(
+                SchoolEventRegistration.slot_id == slot.id,
+                _capacity_registration_condition(now),
+            )
+        )
+        or 0
+    )
+    seats_remaining = max(slot.capacity_max - booked_count, 0)
+    registration_status = SchoolEventRegistrationStatus.CONFIRMED
+    if len(payload.tickets) > seats_remaining:
+        if event.payment_mode == SchoolEventPaymentMode.ONLINE and total_due > Decimal("0"):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Il ne reste pas assez de places")
+        if not event.waitlist_enabled:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ce créneau est complet")
+        registration_status = SchoolEventRegistrationStatus.WAITLISTED
+    elif event.payment_mode == SchoolEventPaymentMode.ONLINE and total_due > Decimal("0"):
+        registration_status = SchoolEventRegistrationStatus.PENDING_PAYMENT
+
+    group_id = uuid4()
+    rows_to_create: list[SchoolEventRegistration] = []
+    for ticket, (unit_price, selected_tier) in zip(payload.tickets, ticket_prices, strict=True):
+        rows_to_create.append(
+            SchoolEventRegistration(
+                group_id=group_id,
+                slot_id=slot.id,
+                booker_user_id=None,
+                public_booker_first_name=payload.first_name,
+                public_booker_last_name=payload.last_name,
+                public_booker_email=payload.email,
+                public_booker_phone=payload.phone,
+                public_booker_language=payload.language,
+                public_booking_request_id=payload.request_id,
+                participant_user_id=None,
+                participant_display_name=ticket.participant_name,
+                party_size=1,
+                guest_names_json=[],
+                answers_json={"public_booking": True, "terms_accepted": True},
+                status=registration_status,
+                unit_price_ttc_snapshot=unit_price,
+                price_tier_id=selected_tier.id if selected_tier else None,
+                price_tier_label_snapshot=selected_tier.label_fr if selected_tier else None,
+                total_ttc_snapshot=unit_price,
+                currency_snapshot=event.currency.upper(),
+                payment_hold_expires_at=(
+                    now + PAYMENT_HOLD_DURATION
+                    if registration_status == SchoolEventRegistrationStatus.PENDING_PAYMENT
+                    else None
+                ),
+            )
+        )
+    db.add_all(rows_to_create)
+    checkout_url: str | None = None
+    if registration_status == SchoolEventRegistrationStatus.PENDING_PAYMENT:
+        db.flush()
+        checkout_url = _create_event_checkout(
+            db,
+            event=event,
+            slot=slot,
+            booker=None,
+            rows=rows_to_create,
+            public_email=payload.email,
+            public_first_name=payload.first_name,
+            public_last_name=payload.last_name,
+        )
+    else:
+        db.commit()
+        _send_public_registration_confirmation(
+            email=payload.email,
+            first_name=payload.first_name,
+            language=payload.language,
+            event=event,
+            slot=slot,
+            status_value=registration_status,
+            participant_names=[row.participant_display_name for row in rows_to_create],
+        )
+    for row in rows_to_create:
+        db.refresh(row)
+    location = _resolved_event_location(db, event, slot)
+    return SchoolEventRegistrationCreateOut(
+        group_id=group_id,
+        status=registration_status,
+        registrations=[_registration_out(row, event=event, slot=slot, location=location) for row in rows_to_create],
+        checkout_url=checkout_url,
+    )
 
 
 @router.get("/clients/me/events", response_model=list[SchoolEventOut])
@@ -658,7 +1030,15 @@ def list_my_event_registrations(
         )
         .order_by(SchoolEventSlot.start_at_utc.desc(), SchoolEventRegistration.booked_at.desc())
     ).all()
-    return [_registration_out(registration, event=event, slot=slot, location=location) for registration, slot, event, location in rows]
+    return [
+        _registration_out(
+            registration,
+            event=event,
+            slot=slot,
+            location=location or _resolved_event_location(db, event, slot),
+        )
+        for registration, slot, event, location in rows
+    ]
 
 
 @router.post("/clients/me/events/{slug}/register", response_model=SchoolEventRegistrationCreateOut)
@@ -724,12 +1104,32 @@ def register_for_event(
         or 0
     )
     seats_remaining = max(slot.capacity_max - booked_count, 0)
+    participant_prices: dict[UUID, tuple[Decimal, SchoolEventPriceTier | None]] = {
+        participant_id: _registration_price_tier(
+            db,
+            event=event,
+            requested_tier_id=payload.participant_price_tier_ids.get(participant_id) or payload.price_tier_id,
+        )
+        for participant_id in participant_ids
+    }
+    guest_price = (
+        _registration_price_tier(
+            db,
+            event=event,
+            requested_tier_id=payload.guest_price_tier_id or payload.price_tier_id,
+        )
+        if guests
+        else None
+    )
+    total_due = sum((price for price, _ in participant_prices.values()), Decimal("0"))
+    if guest_price:
+        total_due += guest_price[0] * len(guests)
     registration_status = SchoolEventRegistrationStatus.CONFIRMED
     if total_people > seats_remaining:
         if not event.waitlist_enabled:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ce créneau est complet")
         registration_status = SchoolEventRegistrationStatus.WAITLISTED
-    elif event.payment_mode == SchoolEventPaymentMode.ONLINE and Decimal(event.price_ttc or 0) > Decimal("0"):
+    elif event.payment_mode == SchoolEventPaymentMode.ONLINE and total_due > Decimal("0"):
         registration_status = SchoolEventRegistrationStatus.PENDING_PAYMENT
 
     group_id = uuid4()
@@ -739,9 +1139,9 @@ def register_for_event(
     if event.collect_photo_consent:
         answers["photo_consent"] = bool(payload.photo_consent)
     rows_to_create: list[SchoolEventRegistration] = []
-    unit_price = Decimal(event.price_ttc or 0).quantize(Decimal("0.01"))
     for participant_id in participant_ids:
         participant = users_by_id[participant_id]
+        unit_price, selected_tier = participant_prices[participant_id]
         rows_to_create.append(
             SchoolEventRegistration(
                 group_id=group_id,
@@ -754,6 +1154,8 @@ def register_for_event(
                 answers_json=answers,
                 status=registration_status,
                 unit_price_ttc_snapshot=unit_price,
+                price_tier_id=selected_tier.id if selected_tier else None,
+                price_tier_label_snapshot=selected_tier.label_fr if selected_tier else None,
                 total_ttc_snapshot=unit_price,
                 currency_snapshot=event.currency.upper(),
                 payment_hold_expires_at=(
@@ -764,6 +1166,8 @@ def register_for_event(
             )
         )
     if guests:
+        assert guest_price is not None
+        unit_price, selected_tier = guest_price
         rows_to_create.append(
             SchoolEventRegistration(
                 group_id=group_id,
@@ -776,6 +1180,8 @@ def register_for_event(
                 answers_json=answers,
                 status=registration_status,
                 unit_price_ttc_snapshot=unit_price,
+                price_tier_id=selected_tier.id if selected_tier else None,
+                price_tier_label_snapshot=selected_tier.label_fr if selected_tier else None,
                 total_ttc_snapshot=(unit_price * len(guests)).quantize(Decimal("0.01")),
                 currency_snapshot=event.currency.upper(),
                 payment_hold_expires_at=(
@@ -793,7 +1199,7 @@ def register_for_event(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Une inscription existe déjà") from exc
     for row in rows_to_create:
         db.refresh(row)
-    location = db.get(Location, slot.location_id or event.location_id) if (slot.location_id or event.location_id) else None
+    location = _resolved_event_location(db, event, slot)
     checkout_url: str | None = None
     if registration_status == SchoolEventRegistrationStatus.PENDING_PAYMENT:
         checkout_url = _create_event_checkout(
@@ -846,23 +1252,20 @@ def _promote_waitlist(db: Session, slot: SchoolEventSlot) -> list[list[SchoolEve
     for row in waitlisted:
         groups[row.group_id].append(row)
     event = db.get(SchoolEvent, slot.event_id)
-    payment_required = bool(
-        event
-        and event.payment_mode == SchoolEventPaymentMode.ONLINE
-        and Decimal(event.price_ttc or 0) > Decimal("0")
-    )
+    payment_required = bool(event and event.payment_mode == SchoolEventPaymentMode.ONLINE)
     promoted: list[list[SchoolEventRegistration]] = []
     for rows in groups.values():
         group_size = sum(row.party_size for row in rows)
         if group_size > remaining:
             continue
         for row in rows:
+            row_requires_payment = payment_required and Decimal(row.total_ttc_snapshot or 0) > Decimal("0")
             row.status = (
                 SchoolEventRegistrationStatus.PENDING_PAYMENT
-                if payment_required
+                if row_requires_payment
                 else SchoolEventRegistrationStatus.CONFIRMED
             )
-            row.payment_hold_expires_at = now + PAYMENT_HOLD_DURATION if payment_required else None
+            row.payment_hold_expires_at = now + PAYMENT_HOLD_DURATION if row_requires_payment else None
         promoted.append(rows)
         remaining -= group_size
         if remaining <= 0:
@@ -882,6 +1285,16 @@ def _send_waitlist_promotions(
             continue
         booker = db.get(User, rows[0].booker_user_id)
         if booker is None:
+            if rows[0].public_booker_email and rows[0].status == SchoolEventRegistrationStatus.CONFIRMED:
+                _send_public_registration_confirmation(
+                    email=rows[0].public_booker_email,
+                    first_name=rows[0].public_booker_first_name or rows[0].public_booker_email,
+                    language=rows[0].public_booker_language or "fr",
+                    event=event,
+                    slot=slot,
+                    status_value=SchoolEventRegistrationStatus.CONFIRMED,
+                    participant_names=[row.participant_display_name for row in rows],
+                )
             continue
         if rows[0].status == SchoolEventRegistrationStatus.PENDING_PAYMENT:
             _send_payment_required(
@@ -932,7 +1345,7 @@ def checkout_event_registration_group(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Événement introuvable")
     if (
         event.payment_mode != SchoolEventPaymentMode.ONLINE
-        or Decimal(event.price_ttc or 0) <= Decimal("0")
+        or sum((Decimal(row.total_ttc_snapshot or 0) for row in rows), Decimal("0")) <= Decimal("0")
     ):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Aucun paiement en ligne n’est requis")
     if slot.status != SchoolEventSlotStatus.SCHEDULED or slot.start_at_utc <= now:
@@ -947,7 +1360,7 @@ def checkout_event_registration_group(
     }
     if len(active_checkout_urls) == 1:
         checkout_url = next(iter(active_checkout_urls))
-        location = db.get(Location, slot.location_id or event.location_id) if (slot.location_id or event.location_id) else None
+        location = _resolved_event_location(db, event, slot)
         return SchoolEventRegistrationCreateOut(
             group_id=group_id,
             status=SchoolEventRegistrationStatus.PENDING_PAYMENT,
@@ -986,7 +1399,7 @@ def checkout_event_registration_group(
         booker=current_user,
         rows=list(rows),
     )
-    location = db.get(Location, slot.location_id or event.location_id) if (slot.location_id or event.location_id) else None
+    location = _resolved_event_location(db, event, slot)
     return SchoolEventRegistrationCreateOut(
         group_id=group_id,
         status=SchoolEventRegistrationStatus.PENDING_PAYMENT,
@@ -1054,6 +1467,34 @@ def list_admin_events(
     return _serialize_events(db, list(events), include_admin_capacity=True)
 
 
+@router.get("/admin/event-venues", response_model=list[SchoolEventVenueOut])
+def list_admin_event_venues(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_manage_events")),
+) -> list[SchoolEventVenueOut]:
+    venues = db.scalars(
+        select(SchoolEventVenue).where(SchoolEventVenue.is_active.is_(True)).order_by(SchoolEventVenue.name)
+    ).all()
+    return [SchoolEventVenueOut(**_location_out(venue).model_dump(), is_active=True) for venue in venues]
+
+
+@router.post("/admin/event-venues", response_model=SchoolEventVenueOut, status_code=status.HTTP_201_CREATED)
+def create_admin_event_venue(
+    payload: SchoolEventVenueCreateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_manage_events")),
+) -> SchoolEventVenueOut:
+    venue = SchoolEventVenue(
+        **payload.model_dump(exclude={"name", "country_code"}),
+        name=payload.name.strip(),
+        country_code=payload.country_code.strip().upper(),
+    )
+    db.add(venue)
+    db.commit()
+    db.refresh(venue)
+    return SchoolEventVenueOut(**_location_out(venue).model_dump(), is_active=True)
+
+
 @router.get(
     "/admin/events/participant-options",
     response_model=list[SchoolEventAdminParticipantOptionOut],
@@ -1098,6 +1539,8 @@ def create_admin_event(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin_or_permissions("can_manage_events")),
 ) -> SchoolEventOut:
+    if payload.event_venue_id and db.get(SchoolEventVenue, payload.event_venue_id) is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Lieu événementiel introuvable")
     event = SchoolEvent(
         **payload.model_dump(exclude={"slug", "category", "currency"}),
         slug=_normalized_slug(payload.slug),
@@ -1127,6 +1570,101 @@ def get_admin_event(
     return _serialize_events(db, [event], include_admin_capacity=True)[0]
 
 
+@router.post(
+    "/admin/events/{event_id}/image",
+    response_model=SchoolEventImageUploadOut,
+)
+async def upload_admin_event_image(
+    event_id: UUID,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_manage_events")),
+) -> SchoolEventImageUploadOut:
+    event = db.get(SchoolEvent, event_id)
+    if event is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Événement introuvable")
+    content_type = (file.content_type or "").strip().lower()
+    extension = EVENT_IMAGE_ALLOWED_TYPES.get(content_type)
+    if extension is None:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Formats acceptés : JPG, PNG ou WebP",
+        )
+    raw = await file.read(EVENT_IMAGE_MAX_BYTES + 1)
+    if not raw:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Le fichier est vide")
+    if len(raw) > EVENT_IMAGE_MAX_BYTES:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Le visuel dépasse 8 Mo")
+    if not _valid_event_image_signature(raw, extension):
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Le contenu du fichier image est invalide")
+
+    storage_key = f"{uuid4().hex}{extension}"
+    image_path = _event_image_dir() / storage_key
+    image_path.write_bytes(raw)
+    previous_image_url = event.image_url or ""
+    event.image_url = f"/api/events/images/{storage_key}"
+    event.updated_at = _utcnow()
+    try:
+        db.commit()
+    except Exception:
+        image_path.unlink(missing_ok=True)
+        raise
+    if previous_image_url.startswith("/api/events/images/"):
+        previous_key = previous_image_url.rsplit("/", 1)[-1]
+        if previous_key != storage_key:
+            try:
+                _event_image_path(previous_key).unlink(missing_ok=True)
+            except HTTPException:
+                pass
+    return SchoolEventImageUploadOut(image_url=event.image_url, storage_key=storage_key)
+
+
+@router.post(
+    "/admin/events/{event_id}/price-tiers",
+    response_model=SchoolEventPriceTierOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_admin_event_price_tier(
+    event_id: UUID,
+    payload: SchoolEventPriceTierCreateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_manage_events")),
+) -> SchoolEventPriceTierOut:
+    event = db.get(SchoolEvent, event_id)
+    if event is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Événement introuvable")
+    if event.payment_mode == SchoolEventPaymentMode.FREE and payload.price_ttc > Decimal("0"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Choisissez d’abord un mode de paiement pour ajouter un tarif payant",
+        )
+    tier = SchoolEventPriceTier(event_id=event.id, **payload.model_dump())
+    db.add(tier)
+    db.commit()
+    db.refresh(tier)
+    return SchoolEventPriceTierOut.model_validate(tier, from_attributes=True)
+
+
+@router.delete("/admin/events/{event_id}/price-tiers/{tier_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_admin_event_price_tier(
+    event_id: UUID,
+    tier_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_manage_events")),
+) -> Response:
+    tier = db.scalar(
+        select(SchoolEventPriceTier).where(
+            SchoolEventPriceTier.id == tier_id, SchoolEventPriceTier.event_id == event_id
+        )
+    )
+    if tier is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tarif introuvable")
+    tier.is_active = False
+    tier.updated_at = _utcnow()
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.put("/admin/events/{event_id}", response_model=SchoolEventOut)
 def update_admin_event(
     event_id: UUID,
@@ -1137,13 +1675,28 @@ def update_admin_event(
     event = db.get(SchoolEvent, event_id)
     if event is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Événement introuvable")
+    if payload.event_venue_id and db.get(SchoolEventVenue, payload.event_venue_id) is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Lieu événementiel introuvable")
+    if payload.payment_mode == SchoolEventPaymentMode.FREE:
+        paid_tier_exists = db.scalar(
+            select(SchoolEventPriceTier.id).where(
+                SchoolEventPriceTier.event_id == event.id,
+                SchoolEventPriceTier.is_active.is_(True),
+                SchoolEventPriceTier.price_ttc > 0,
+            ).limit(1)
+        )
+        if paid_tier_exists is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Retirez les tarifs payants avant de passer l’événement en gratuit",
+            )
     previous_status = event.status
-    cancellation_messages: list[tuple[User, SchoolEventSlot, list[str], bool]] = []
+    cancellation_messages: list[tuple[User | None, SchoolEventRegistration, SchoolEventSlot, list[str], bool]] = []
     if previous_status != SchoolEventStatus.CANCELLED and payload.status == SchoolEventStatus.CANCELLED:
         registration_rows = db.execute(
             select(SchoolEventRegistration, SchoolEventSlot, User)
             .join(SchoolEventSlot, SchoolEventSlot.id == SchoolEventRegistration.slot_id)
-            .join(User, User.id == SchoolEventRegistration.booker_user_id)
+            .outerjoin(User, User.id == SchoolEventRegistration.booker_user_id)
             .where(
                 SchoolEventSlot.event_id == event.id,
                 SchoolEventRegistration.status.in_(ACTIVE_REGISTRATION_STATUSES),
@@ -1151,7 +1704,7 @@ def update_admin_event(
             .order_by(SchoolEventRegistration.booked_at.asc())
             .with_for_update()
         ).all()
-        rows_by_group: dict[UUID, list[tuple[SchoolEventRegistration, SchoolEventSlot, User]]] = defaultdict(list)
+        rows_by_group: dict[UUID, list[tuple[SchoolEventRegistration, SchoolEventSlot, User | None]]] = defaultdict(list)
         for registration, slot, booker in registration_rows:
             rows_by_group[registration.group_id].append((registration, slot, booker))
         now = _utcnow()
@@ -1160,6 +1713,7 @@ def update_admin_event(
             cancellation_messages.append(
                 (
                     booker,
+                    first_registration,
                     first_slot,
                     [registration.participant_display_name for registration, _, _ in group_rows],
                     any(
@@ -1188,14 +1742,23 @@ def update_admin_event(
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ce slug est déjà utilisé") from exc
     db.refresh(event)
-    for booker, slot, participant_names, paid in cancellation_messages:
-        _send_event_cancellation(
-            booker=booker,
-            event=event,
-            slot=slot,
-            participant_names=participant_names,
-            paid=paid,
-        )
+    for booker, registration, slot, participant_names, paid in cancellation_messages:
+        if booker is not None:
+            _send_event_cancellation(
+                booker=booker,
+                event=event,
+                slot=slot,
+                participant_names=participant_names,
+                paid=paid,
+            )
+        else:
+            _send_public_event_cancellation(
+                registration=registration,
+                event=event,
+                slot=slot,
+                participant_names=participant_names,
+                paid=paid,
+            )
     return _serialize_events(db, [event], include_admin_capacity=True)[0]
 
 
@@ -1221,6 +1784,7 @@ def duplicate_admin_event(
         registration_mode=source.registration_mode,
         payment_mode=source.payment_mode,
         location_id=source.location_id,
+        event_venue_id=source.event_venue_id,
         booking_opens_at=None,
         booking_closes_at=None,
         price_ttc=source.price_ttc,
@@ -1230,12 +1794,28 @@ def duplicate_admin_event(
         cancellation_deadline_hours=source.cancellation_deadline_hours,
         collect_piece_info=source.collect_piece_info,
         collect_photo_consent=source.collect_photo_consent,
+        collect_performer_booking=source.collect_performer_booking,
         confirmation_message_fr=source.confirmation_message_fr,
         confirmation_message_en=source.confirmation_message_en,
         created_by_user_id=current_user.id,
     )
     db.add(duplicate)
     db.flush()
+    source_tiers = db.scalars(
+        select(SchoolEventPriceTier)
+        .where(SchoolEventPriceTier.event_id == source.id, SchoolEventPriceTier.is_active.is_(True))
+        .order_by(SchoolEventPriceTier.sort_order)
+    ).all()
+    for source_tier in source_tiers:
+        db.add(
+            SchoolEventPriceTier(
+                event_id=duplicate.id,
+                label_fr=source_tier.label_fr,
+                label_en=source_tier.label_en,
+                price_ttc=source_tier.price_ttc,
+                sort_order=source_tier.sort_order,
+            )
+        )
     source_slots = db.scalars(
         select(SchoolEventSlot)
         .where(
@@ -1249,6 +1829,7 @@ def duplicate_admin_event(
             SchoolEventSlot(
                 event_id=duplicate.id,
                 location_id=source_slot.location_id,
+                event_venue_id=source_slot.event_venue_id,
                 label=source_slot.label,
                 start_at_utc=source_slot.start_at_utc,
                 end_at_utc=source_slot.end_at_utc,
@@ -1273,6 +1854,8 @@ def create_admin_event_slot(
     event = db.get(SchoolEvent, event_id)
     if event is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Événement introuvable")
+    if payload.event_venue_id and db.get(SchoolEventVenue, payload.event_venue_id) is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Lieu événementiel introuvable")
     slot = SchoolEventSlot(event_id=event.id, **payload.model_dump())
     db.add(slot)
     db.commit()
@@ -1414,7 +1997,9 @@ def create_admin_event_registration(
         responsible_adult = db.get(User, responsible_adult_id) if responsible_adult_id else None
         if responsible_adult is not None:
             booker = responsible_adult
-    unit_price = Decimal(event.price_ttc or 0).quantize(Decimal("0.01"))
+    unit_price, selected_tier = _registration_price_tier(
+        db, event=event, requested_tier_id=payload.price_tier_id
+    )
     registration = SchoolEventRegistration(
         group_id=uuid4(),
         slot_id=slot.id,
@@ -1426,13 +2011,15 @@ def create_admin_event_registration(
         answers_json={"admin_added": True},
         status=SchoolEventRegistrationStatus.CONFIRMED,
         unit_price_ttc_snapshot=unit_price,
+        price_tier_id=selected_tier.id if selected_tier else None,
+        price_tier_label_snapshot=selected_tier.label_fr if selected_tier else None,
         total_ttc_snapshot=unit_price,
         currency_snapshot=event.currency.upper(),
     )
     db.add(registration)
     db.commit()
     db.refresh(registration)
-    location = db.get(Location, slot.location_id or event.location_id) if (slot.location_id or event.location_id) else None
+    location = _resolved_event_location(db, event, slot)
     if payload.send_confirmation:
         _send_registration_confirmation(
             booker=booker,
@@ -1458,7 +2045,15 @@ def list_admin_event_registrations(
         .where(SchoolEvent.id == event_id)
         .order_by(SchoolEventSlot.start_at_utc.asc(), SchoolEventRegistration.booked_at.asc())
     ).all()
-    return [_registration_out(registration, event=event, slot=slot, location=location) for registration, slot, event, location in rows]
+    return [
+        _registration_out(
+            registration,
+            event=event,
+            slot=slot,
+            location=location or _resolved_event_location(db, event, slot),
+        )
+        for registration, slot, event, location in rows
+    ]
 
 
 @router.get("/admin/events/{event_id}/registrations/export")
@@ -1474,7 +2069,7 @@ def export_admin_event_registrations(
         select(SchoolEventRegistration, SchoolEventSlot, Location, User)
         .join(SchoolEventSlot, SchoolEventSlot.id == SchoolEventRegistration.slot_id)
         .outerjoin(Location, Location.id == func.coalesce(SchoolEventSlot.location_id, event.location_id))
-        .join(User, User.id == SchoolEventRegistration.booker_user_id)
+        .outerjoin(User, User.id == SchoolEventRegistration.booker_user_id)
         .where(SchoolEventSlot.event_id == event.id)
         .order_by(SchoolEventSlot.start_at_utc.asc(), SchoolEventRegistration.booked_at.asc())
     ).all()
@@ -1491,6 +2086,7 @@ def export_admin_event_registrations(
             "email",
             "téléphone",
             "participant",
+            "tarif",
             "places",
             "invités",
             "statut",
@@ -1505,16 +2101,20 @@ def export_admin_event_registrations(
     )
     for registration, slot, location, booker in rows:
         answers = dict(registration.answers_json or {})
+        resolved_location = location or _resolved_event_location(db, event, slot)
         writer.writerow(
             [
                 str(registration.group_id),
                 slot.label or "",
                 slot.start_at_utc.astimezone(ZoneInfo(slot.timezone)).strftime("%d/%m/%Y %H:%M"),
-                location.name if location else "",
-                _display_name(booker),
-                deliverable_client_email(booker) or booker.email,
-                booker.mobile_phone_1 or booker.phone or booker.home_phone or "",
+                resolved_location.name if resolved_location else "",
+                _display_name(booker) if booker else " ".join(
+                    part for part in [registration.public_booker_first_name, registration.public_booker_last_name] if part
+                ),
+                (deliverable_client_email(booker) or booker.email) if booker else registration.public_booker_email or "",
+                (booker.mobile_phone_1 or booker.phone or booker.home_phone or "") if booker else registration.public_booker_phone or "",
                 registration.participant_display_name,
+                registration.price_tier_label_snapshot or "",
                 registration.party_size,
                 " | ".join(registration.guest_names_json or []),
                 registration.status.value,
@@ -1625,9 +2225,24 @@ def update_admin_event_registration_group_status(
                 status_value=SchoolEventRegistrationStatus.CONFIRMED,
                 participant_names=[registration.participant_display_name for registration in registrations],
             )
+        elif registrations[0].public_booker_email:
+            _send_public_registration_confirmation(
+                email=registrations[0].public_booker_email,
+                first_name=registrations[0].public_booker_first_name or registrations[0].public_booker_email,
+                language=registrations[0].public_booker_language or "fr",
+                event=event,
+                slot=slot,
+                status_value=SchoolEventRegistrationStatus.CONFIRMED,
+                participant_names=[registration.participant_display_name for registration in registrations],
+            )
     _send_waitlist_promotions(db, event=event, slot=slot, promoted_groups=promoted_groups)
     return [
-        _registration_out(registration, event=event, slot=slot, location=location)
+        _registration_out(
+            registration,
+            event=event,
+            slot=slot,
+            location=location or _resolved_event_location(db, event, slot),
+        )
         for registration in registrations
     ]
 
@@ -1693,4 +2308,9 @@ def update_admin_event_registration_status(
     db.commit()
     db.refresh(registration)
     _send_waitlist_promotions(db, event=event, slot=slot, promoted_groups=promoted_groups)
-    return _registration_out(registration, event=event, slot=slot, location=location)
+    return _registration_out(
+        registration,
+        event=event,
+        slot=slot,
+        location=location or _resolved_event_location(db, event, slot),
+    )

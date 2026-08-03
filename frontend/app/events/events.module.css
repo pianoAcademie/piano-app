@@ -318,11 +318,17 @@
 
 .participant {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.55rem;
   align-items: center;
   border: 1px solid #dfd4c3;
   border-radius: 12px;
   padding: 0.7rem;
+}
+
+.participant select {
+  margin-left: auto;
+  max-width: 100%;
 }
 
 .field {
@@ -334,6 +340,39 @@
 .field input {
   width: 100%;
   box-sizing: border-box;
+}
+
+.publicContactGrid,
+.publicTicket {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.publicTickets {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.publicTicket {
+  padding: 0.75rem;
+  border: 1px solid #dfd4c3;
+  border-radius: 12px;
+}
+
+.publicBookingActions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.honeypot {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
 }
 
 .loginCta {
@@ -397,6 +436,11 @@
   }
 
   .participants {
+    grid-template-columns: 1fr;
+  }
+
+  .publicContactGrid,
+  .publicTicket {
     grid-template-columns: 1fr;
   }
 

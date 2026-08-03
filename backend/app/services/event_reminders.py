@@ -17,6 +17,7 @@ from app.models.event import (
     SchoolEventSlot,
     SchoolEventSlotStatus,
     SchoolEventStatus,
+    SchoolEventVenue,
 )
 from app.models.ops import (
     AppSetting,
@@ -72,7 +73,7 @@ def _event_datetime(slot: SchoolEventSlot, language: str, recipient_timezone: st
     return f"{local_start.strftime('%d/%m/%Y à %H:%M')}–{local_end.strftime('%H:%M')} ({timezone_name})"
 
 
-def _location_label(location: Location | None, language: str) -> str:
+def _location_label(location: Location | SchoolEventVenue | None, language: str) -> str:
     if location is None:
         return "Location to be confirmed" if language == "en" else "Lieu à préciser"
     if location.is_online:
@@ -84,26 +85,33 @@ def _location_label(location: Location | None, language: str) -> str:
 def _message(
     *,
     db: Session,
-    booker: User,
+    registration: SchoolEventRegistration,
+    booker: User | None,
     event: SchoolEvent,
     slot: SchoolEventSlot,
-    location: Location | None,
+    location: Location | SchoolEventVenue | None,
     participant_names: list[str],
     group_id: UUID,
 ) -> tuple[str, str]:
-    language = "en" if (booker.preferred_language or "fr").strip().lower().startswith("en") else "fr"
+    preferred_language = booker.preferred_language if booker else registration.public_booker_language
+    language = "en" if (preferred_language or "fr").strip().lower().startswith("en") else "fr"
     title = event.title_en if language == "en" and event.title_en else event.title_fr
-    when = _event_datetime(slot, language, booker.timezone)
+    when = _event_datetime(slot, language, booker.timezone if booker else None)
     where = _location_label(location, language)
     base_url = resolve_frontend_base_url(db).rstrip("/")
     event_url = f"{base_url}/events/{event.slug}{'?lang=en' if language == 'en' else ''}"
     calendar_url = f"{base_url}/events/calendar/{group_id}"
+    calendar_line = (
+        f"Add to calendar: {calendar_url}" if booker and language == "en"
+        else f"Ajouter au calendrier : {calendar_url}" if booker
+        else ""
+    )
     if language == "en":
         return (
             f"Reminder — {title}",
             "\n".join(
                 [
-                    f"Hello {(booker.first_name or '').strip() or booker.email},",
+                    f"Hello {((booker.first_name or '').strip() or booker.email) if booker else registration.public_booker_first_name or registration.public_booker_email},",
                     "",
                     f"This is a reminder for {title}.",
                     f"Date: {when}",
@@ -111,7 +119,7 @@ def _message(
                     f"Participants: {', '.join(participant_names)}",
                     "",
                     f"View the event: {event_url}",
-                    f"Add to calendar: {calendar_url}",
+                    calendar_line,
                     "",
                     "Piano Académie",
                 ]
@@ -121,7 +129,7 @@ def _message(
         f"Rappel — {title}",
         "\n".join(
             [
-                f"Bonjour {(booker.first_name or '').strip() or booker.email},",
+                f"Bonjour {((booker.first_name or '').strip() or booker.email) if booker else registration.public_booker_first_name or registration.public_booker_email},",
                 "",
                 f"Nous vous rappelons votre inscription à {title}.",
                 f"Date : {when}",
@@ -129,7 +137,7 @@ def _message(
                 f"Participants : {', '.join(participant_names)}",
                 "",
                 f"Voir l’événement : {event_url}",
-                f"Ajouter au calendrier : {calendar_url}",
+                calendar_line,
                 "",
                 "Piano Académie",
             ]
@@ -145,11 +153,15 @@ def run_school_event_reminders_job(
 ) -> EventReminderJobResult:
     cutoff = now + timedelta(hours=school_event_reminder_hours(db))
     joined_rows = db.execute(
-        select(SchoolEventRegistration, SchoolEventSlot, SchoolEvent, Location, User)
+        select(SchoolEventRegistration, SchoolEventSlot, SchoolEvent, Location, SchoolEventVenue, User)
         .join(SchoolEventSlot, SchoolEventSlot.id == SchoolEventRegistration.slot_id)
         .join(SchoolEvent, SchoolEvent.id == SchoolEventSlot.event_id)
         .outerjoin(Location, Location.id == func.coalesce(SchoolEventSlot.location_id, SchoolEvent.location_id))
-        .join(User, User.id == SchoolEventRegistration.booker_user_id)
+        .outerjoin(
+            SchoolEventVenue,
+            SchoolEventVenue.id == func.coalesce(SchoolEventSlot.event_venue_id, SchoolEvent.event_venue_id),
+        )
+        .outerjoin(User, User.id == SchoolEventRegistration.booker_user_id)
         .where(
             SchoolEvent.status.in_([SchoolEventStatus.PUBLISHED, SchoolEventStatus.CLOSED]),
             SchoolEventSlot.status == SchoolEventSlotStatus.SCHEDULED,
@@ -162,12 +174,12 @@ def run_school_event_reminders_job(
     ).all()
     rows_by_group: dict[
         UUID,
-        list[tuple[SchoolEventRegistration, SchoolEventSlot, SchoolEvent, Location | None, User]],
+        list[tuple[SchoolEventRegistration, SchoolEventSlot, SchoolEvent, Location | SchoolEventVenue | None, User | None]],
     ] = defaultdict(list)
-    for registration, slot, event, location, booker in joined_rows:
+    for registration, slot, event, location, venue, booker in joined_rows:
         if registration.group_id not in rows_by_group and len(rows_by_group) >= limit:
             continue
-        rows_by_group[registration.group_id].append((registration, slot, event, location, booker))
+        rows_by_group[registration.group_id].append((registration, slot, event, venue or location, booker))
 
     sent = 0
     skipped = 0
@@ -191,10 +203,11 @@ def run_school_event_reminders_job(
         if already_processed is not None:
             skipped += 1
             continue
-        email = deliverable_client_email(booker)
+        email = deliverable_client_email(booker) if booker else first_registration.public_booker_email
         participant_names = [registration.participant_display_name for registration, _, _, _, _ in group_rows]
         subject, body = _message(
             db=db,
+            registration=first_registration,
             booker=booker,
             event=event,
             slot=slot,
@@ -211,7 +224,7 @@ def run_school_event_reminders_job(
                 sender_category=CommunicationSenderCategory.SYSTEM,
                 sender_label="Système",
                 recipient="-",
-                recipient_user_id=booker.id,
+                recipient_user_id=booker.id if booker else None,
                 subject=subject,
                 content=body,
                 content_format=MessageFormat.TEXT,
@@ -227,7 +240,7 @@ def run_school_event_reminders_job(
                 subject=subject,
                 body=body,
                 context=source,
-                recipient_user_id=booker.id,
+                recipient_user_id=booker.id if booker else None,
                 communication_type=COMMUNICATION_TYPE_EVENT_REMINDER,
             )
             latest_delivery = db.scalar(
