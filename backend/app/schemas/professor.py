@@ -40,12 +40,14 @@ class ProfessorSessionStudentOut(BaseModel):
     attendance_status: BookingStatus
     is_trial_course: bool
     is_first_course: bool
+    internal_note: str | None = None
 
 
 class ProfessorSessionOut(BaseModel):
     id: UUID
     title: str
     description: str | None
+    internal_note: str | None = None
     start_at_utc: datetime
     end_at_utc: datetime
     status: SessionStatus
@@ -145,6 +147,16 @@ class ProfessorSessionMessageCreateRequest(BaseModel):
     body_format: MessageFormat = MessageFormat.TEXT
     recipient_scope: str = "GROUP"
     target_user_id: UUID | None = None
+
+
+class ProfessorInternalNoteUpdateRequest(BaseModel):
+    internal_note: str | None = Field(default=None, max_length=12000)
+
+
+class ProfessorInternalNoteOut(BaseModel):
+    session_id: UUID
+    booking_id: UUID | None = None
+    internal_note: str | None = None
 
 
 class ProfessorSessionMessageOut(BaseModel):

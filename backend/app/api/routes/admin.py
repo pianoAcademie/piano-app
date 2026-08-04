@@ -85,6 +85,7 @@ from app.services.session_teachers import (
 )
 from app.services.session_notifications import send_session_operation_email
 from app.schemas.admin import (
+    AdminInternalNoteUpdateRequest,
     AdminSessionBroadcastAudience,
     AdminSessionBroadcastOut,
     AdminSessionBroadcastRequest,
@@ -444,6 +445,7 @@ def _to_admin_session_out(
         private_description=session_obj.private_description,
         professor_reminder_note=session_obj.professor_reminder_note,
         group_note=session_obj.group_note,
+        internal_note=session_obj.internal_note,
         start_at_utc=session_obj.start_at_utc,
         end_at_utc=session_obj.end_at_utc,
         is_all_day=session_obj.is_all_day,
@@ -577,6 +579,7 @@ def _to_admin_session_booking_out(db: Session, booking: Booking, client: User) -
         student_end_at_utc=booking.student_end_at_utc,
         waitlist_position=_waitlist_position(db, booking),
         student_note=booking.student_note,
+        internal_note=booking.internal_note,
     )
 
 
@@ -694,6 +697,7 @@ def _copy_booking_payload(source: Booking, target: Booking) -> None:
     target.total_incl_vat_snapshot = source.total_incl_vat_snapshot
     target.currency_snapshot = source.currency_snapshot
     target.student_note = source.student_note
+    target.internal_note = source.internal_note
 
 
 def _cancel_pending_notification_reminders_for_booking(
@@ -3701,6 +3705,35 @@ def update_admin_session_group_note(
     )
 
 
+@router.patch("/sessions/{session_id}/internal-note", response_model=AdminSessionOut)
+def update_admin_session_internal_note(
+    session_id: UUID,
+    payload: AdminInternalNoteUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
+) -> AdminSessionOut:
+    session_obj = db.scalar(select(CourseSession).where(CourseSession.id == session_id).with_for_update())
+    if session_obj is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    session_obj.internal_note = _normalize_message_field(payload.internal_note)
+    session_obj.updated_at = _utcnow()
+    db.commit()
+    db.refresh(session_obj)
+
+    session_with_refs = _load_admin_session_with_refs(db, session_id=session_obj.id)
+    if session_with_refs is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    session_ref, course_type, location, professor, substitute_professor = session_with_refs
+    return _to_admin_session_out(
+        session_ref,
+        booked_count=_booked_count_by_session(db, session_ref.id),
+        course_type=course_type,
+        location=location,
+        professor=professor,
+        substitute_professor=substitute_professor,
+    )
+
+
 @router.post("/sessions/{session_id}/broadcast", response_model=AdminSessionBroadcastOut)
 def broadcast_admin_session_message(
     session_id: UUID,
@@ -3915,6 +3948,34 @@ def update_admin_session_booking_note(
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
 
+    return _to_admin_session_booking_out(db, booking, client)
+
+
+@router.patch("/sessions/{session_id}/bookings/{booking_id}/internal-note", response_model=AdminSessionBookingOut)
+def update_admin_session_booking_internal_note(
+    session_id: UUID,
+    booking_id: UUID,
+    payload: AdminInternalNoteUpdateRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
+) -> AdminSessionBookingOut:
+    booking = db.scalar(
+        select(Booking)
+        .where(
+            Booking.id == booking_id,
+            Booking.session_id == session_id,
+            Booking.status.in_(BOOKING_STATUSES_ACTIVE),
+        )
+        .with_for_update()
+    )
+    if booking is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+    booking.internal_note = _normalize_message_field(payload.internal_note)
+    db.commit()
+    db.refresh(booking)
+    client = db.scalar(select(User).where(User.id == booking.user_id))
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
     return _to_admin_session_booking_out(db, booking, client)
 
 

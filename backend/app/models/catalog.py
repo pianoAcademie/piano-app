@@ -344,6 +344,7 @@ class CourseSession(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     private_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     group_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    internal_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     professor_reminder_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     start_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -446,6 +447,7 @@ class Booking(Base):
     student_start_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     student_end_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     student_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    internal_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_trial_course: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     makeup_request_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("makeup_requests.id", ondelete="SET NULL"), nullable=True

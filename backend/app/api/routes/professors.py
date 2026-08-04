@@ -27,6 +27,8 @@ from app.schemas.professor import (
     ProfessorContractGridLineOut,
     ProfessorContractGridOut,
     ProfessorContractGridRuleOut,
+    ProfessorInternalNoteOut,
+    ProfessorInternalNoteUpdateRequest,
     ProfessorMarkAbsenceRequest,
     ProfessorMeOut,
     ProfessorPayoutOut,
@@ -222,6 +224,7 @@ def _session_students(
                 attendance_status=booking.status,
                 is_trial_course=bool(booking.is_trial_course or user.client_status == ClientStatus.TRIAL),
                 is_first_course=is_first_course,
+                internal_note=booking.internal_note,
             )
         )
     return out
@@ -596,6 +599,7 @@ def list_my_professor_sessions(
             id=session.id,
             title=session.title,
             description=session.description,
+            internal_note=session.internal_note,
             start_at_utc=session.start_at_utc,
             end_at_utc=session.end_at_utc,
             status=session.status,
@@ -617,6 +621,89 @@ def list_my_professor_sessions(
         )
         for session, course_type, location, booked_count in rows
     ]
+
+
+def _require_internal_note_permission(permissions: dict[str, Any]) -> None:
+    if not (
+        permissions.get("can_take_attendance")
+        or permissions.get("can_edit_own_sessions")
+        or permissions.get("can_edit_planning")
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Internal note permission denied")
+
+
+def _normalize_internal_note(value: str | None) -> str | None:
+    normalized = (value or "").strip()
+    return normalized or None
+
+
+@router.patch("/professors/me/sessions/{session_id}/internal-note", response_model=ProfessorInternalNoteOut)
+def update_my_session_internal_note(
+    session_id: UUID,
+    payload: ProfessorInternalNoteUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROF)),
+) -> ProfessorInternalNoteOut:
+    professor = _resolve_professor_profile(db, current_user=current_user)
+    permissions = _resolve_professor_permissions(db, professor_id=professor.id)
+    _require_internal_note_permission(permissions)
+    session_obj = _require_professor_session(
+        db,
+        professor_id=professor.id,
+        session_id=session_id,
+        lock=True,
+    )
+    session_obj.internal_note = _normalize_internal_note(payload.internal_note)
+    session_obj.updated_at = _utcnow()
+    db.commit()
+    db.refresh(session_obj)
+    return ProfessorInternalNoteOut(session_id=session_obj.id, internal_note=session_obj.internal_note)
+
+
+@router.patch(
+    "/professors/me/sessions/{session_id}/bookings/{booking_id}/internal-note",
+    response_model=ProfessorInternalNoteOut,
+)
+def update_my_booking_internal_note(
+    session_id: UUID,
+    booking_id: UUID,
+    payload: ProfessorInternalNoteUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROF)),
+) -> ProfessorInternalNoteOut:
+    professor = _resolve_professor_profile(db, current_user=current_user)
+    permissions = _resolve_professor_permissions(db, professor_id=professor.id)
+    _require_internal_note_permission(permissions)
+    session_obj = _require_professor_session(
+        db,
+        professor_id=professor.id,
+        session_id=session_id,
+        lock=True,
+    )
+    booking = db.scalar(
+        select(Booking)
+        .where(
+            Booking.id == booking_id,
+            Booking.session_id == session_obj.id,
+            Booking.status.in_((
+                BookingStatus.BOOKED,
+                BookingStatus.ATTENDED,
+                BookingStatus.NO_SHOW,
+                BookingStatus.EXCUSED_ABSENCE,
+            )),
+        )
+        .with_for_update()
+    )
+    if booking is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
+    booking.internal_note = _normalize_internal_note(payload.internal_note)
+    db.commit()
+    db.refresh(booking)
+    return ProfessorInternalNoteOut(
+        session_id=session_obj.id,
+        booking_id=booking.id,
+        internal_note=booking.internal_note,
+    )
 
 
 @router.get("/professors/me/sessions/{session_id}/bookings", response_model=list[ProfessorSessionStudentOut])

@@ -2270,6 +2270,7 @@ class AdminSessionOut(BaseModel):
     private_description: str | None
     professor_reminder_note: str | None
     group_note: str | None
+    internal_note: str | None
     start_at_utc: datetime
     end_at_utc: datetime
     is_all_day: bool
@@ -2312,6 +2313,7 @@ class AdminSessionBookingOut(BaseModel):
     student_end_at_utc: datetime | None
     waitlist_position: int | None
     student_note: str | None
+    internal_note: str | None
 
 
 class AdminSessionBookingCreateRequest(BaseModel):
@@ -2332,6 +2334,10 @@ class AdminSessionGroupNoteUpdateRequest(BaseModel):
 
 class AdminSessionBookingNoteUpdateRequest(BaseModel):
     student_note: str | None = Field(default=None, max_length=12000)
+
+
+class AdminInternalNoteUpdateRequest(BaseModel):
+    internal_note: str | None = Field(default=None, max_length=12000)
 
 
 class AdminSessionBookingStudentTimeUpdateRequest(BaseModel):

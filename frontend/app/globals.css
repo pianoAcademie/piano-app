@@ -6187,6 +6187,45 @@ button.danger:focus-visible {
   background: #fff1f0;
 }
 
+.teacher-student-note {
+  border-top: 1px solid #edf0f5;
+  padding-top: 8px;
+}
+
+.teacher-student-note > summary {
+  min-height: 44px;
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #25364b;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.teacher-student-note > summary::-webkit-details-marker {
+  display: none;
+}
+
+.teacher-student-note-form {
+  display: grid;
+  gap: 10px;
+  padding-top: 8px;
+}
+
+.teacher-student-note-form textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+}
+
+.teacher-student-note-form button {
+  min-height: 44px;
+  width: 100%;
+}
+
 .teacher-attendance-accordion {
   border: 1px solid #e6e8ee;
   border-radius: 14px;

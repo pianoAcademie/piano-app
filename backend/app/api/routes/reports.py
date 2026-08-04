@@ -2768,6 +2768,17 @@ def _load_trial_course_report_rows(
         quote_status = quote_status_by_client_id.get(student.id)
         client_status = _enum_value(student.client_status)
         is_registered = student.id in registered_student_ids or client_status == ClientStatus.ACTIVE.value
+        persisted_notes = [booking.internal_note, session.internal_note]
+        candidate_notes = (
+            persisted_notes
+            if any(str(note or "").strip() for note in persisted_notes)
+            else notes_by_session_id.get(session.id, [])
+        )
+        internal_notes: list[str] = []
+        for candidate_note in candidate_notes:
+            normalized_note = str(candidate_note or "").strip()
+            if normalized_note and normalized_note not in internal_notes:
+                internal_notes.append(normalized_note)
         out.append(
             TrialCourseReportRow(
                 booking_id=booking.id,
@@ -2792,7 +2803,7 @@ def _load_trial_course_report_rows(
                     session_start_at=booking.student_start_at_utc or session.start_at_utc,
                     now=timestamp,
                 ),
-                internal_note="\n\n".join(notes_by_session_id.get(session.id, [])) or None,
+                internal_note="\n\n".join(internal_notes) or None,
                 conversion_status=_trial_conversion_status(
                     client_status=client_status,
                     registered=is_registered,

@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import {
   adminAddClientToSessionAction,
   adminRemoveClientFromSessionAction,
-  adminSendSessionBookingInternalNoteAction,
+  adminUpdateSessionBookingInternalNoteAction,
   adminSendSessionBroadcastAction,
   adminUpdateSessionAttendanceAction,
   adminUpdateSessionBookingNoteAction,
@@ -1537,7 +1537,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     ? ""
     : `${pickText(language, "Reservation", "Booking")}: ${selectedSessionBookingLabel}${selectedSession.external_booking_price_ttc ? ` · ${pickText(language, "Tarif ext.", "External price")}: ${selectedSession.external_booking_price_ttc} EUR TTC` : ""}`;
   const selectedSessionHasNotesSection = Boolean(
-    selectedSession?.group_note ||
+    selectedSession?.internal_note ||
+      selectedSession?.group_note ||
       selectedSession?.public_description ||
       selectedSession?.private_description ||
       selectedSession?.professor_reminder_note,
@@ -2491,6 +2492,12 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   <details className="session-slot-section session-slot-section-notes">
                     <summary>{isEnglish ? "Notes & messages" : "Notes & messages"}</summary>
                     <div className="session-slot-section-body session-slot-details-list">
+                      {selectedSession.internal_note ? (
+                        <section className="session-slot-note-block">
+                          <span className="session-slot-fact-label">{isEnglish ? "Internal lesson note" : "Note interne du cours"}</span>
+                          <p>{selectedSession.internal_note}</p>
+                        </section>
+                      ) : null}
                       {selectedSession.group_note ? (
                         <section className="session-slot-note-block">
                           <span className="session-slot-fact-label">{isEnglish ? "Group note" : "Note de groupe"}</span>
@@ -3220,29 +3227,27 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
                     <details className="attendance-v2-notes" open>
                       <summary>{isEnglish ? "Internal admin note (never sent to parents)" : "Note interne administration (jamais envoyee aux parents)"}</summary>
-                      <form action={adminSendSessionBookingInternalNoteAction} className="attendance-v2-note-form">
+                      <form action={adminUpdateSessionBookingInternalNoteAction} className="attendance-v2-note-form">
                         <input type="hidden" name="session_id" value={selectedSession.id} />
-                        <input type="hidden" name="student_display_name" value={focusedAttendanceBooking.client_display_name || pickText(language, "Eleve", "Student")} />
-                        <input type="hidden" name="session_title" value={selectedSession.title} />
+                        <input type="hidden" name="booking_id" value={focusedAttendanceBooking.id} />
                         <input type="hidden" name="return_to" value={attendanceBookingHref(focusedAttendanceBooking.id)} />
                         <p className="note-safety-message note-safety-internal">
                           {isEnglish
-                            ? "This note is sent only to the administration. It is never sent to students or parents."
-                            : "Cette note part uniquement a l administration. Elle n est jamais envoyee aux eleves ni aux parents."}
+                            ? "Saved on this student's booking. Never sent to students or parents."
+                            : "Enregistree sur l inscription de cet eleve. Jamais envoyee aux eleves ni aux parents."}
                         </p>
                         <label className="session-edit-span">
                           {isEnglish ? "Internal note" : "Note interne"}
-                          <input type="hidden" name="body_format" value="TEXT" />
                           <textarea
-                            name="body"
+                            name="internal_note"
                             rows={4}
                             placeholder={isEnglish ? "Internal note for the administration..." : "Note interne pour l administration..."}
-                            required
+                            defaultValue={focusedAttendanceBooking.internal_note ?? ""}
                           />
                         </label>
                         <div className="row">
                           <button type="submit" className="ghost">
-                            {isEnglish ? "Send internally" : "Envoyer en interne"}
+                            {isEnglish ? "Save" : "Enregistrer"}
                           </button>
                         </div>
                       </form>

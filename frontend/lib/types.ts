@@ -1192,12 +1192,14 @@ export type ProfessorSessionStudentOut = {
   attendance_status: "BOOKED" | "WAITLISTED" | "ATTENDED" | "NO_SHOW" | "EXCUSED_ABSENCE" | string;
   is_trial_course: boolean;
   is_first_course: boolean;
+  internal_note: string | null;
 };
 
 export type ProfessorSessionOut = {
   id: string;
   title: string;
   description: string | null;
+  internal_note: string | null;
   start_at_utc: string;
   end_at_utc: string;
   status: "SCHEDULED" | "CANCELLED" | "COMPLETED" | string;
@@ -1423,6 +1425,7 @@ export type AdminSessionOut = {
   private_description: string | null;
   professor_reminder_note: string | null;
   group_note: string | null;
+  internal_note: string | null;
   start_at_utc: string;
   end_at_utc: string;
   is_all_day: boolean;
@@ -1465,6 +1468,7 @@ export type AdminSessionBookingOut = {
   student_end_at_utc: string | null;
   waitlist_position: number | null;
   student_note: string | null;
+  internal_note: string | null;
 };
 
 export type AdminSessionBookingOperationOut = {

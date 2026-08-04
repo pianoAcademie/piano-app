@@ -8,6 +8,8 @@ import {
   professorMarkSessionAbsentAction,
   professorSendSessionMessageAction,
   professorUpdateAttendanceAction,
+  professorUpdateBookingInternalNoteAction,
+  professorUpdateSessionInternalNoteAction,
 } from "../../lib/actions";
 import { backendRequest } from "../../lib/backend";
 import AutoSubmitInput from "../../components/auto-submit-input";
@@ -1421,6 +1423,43 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                         ) : (
                           <p className="muted">{t("teacher.read_only")}</p>
                         )}
+
+                        {student.attendance_status !== "WAITLISTED" && canTakeAttendance ? (
+                          <details className="teacher-student-note">
+                            <summary>
+                              <span>{t("teacher.student_internal_note")}</span>
+                              <span className={`status-pill ${student.internal_note ? "status-ok" : "status-scheduled"}`}>
+                                {student.internal_note ? t("teacher.note_entered") : t("teacher.add_note")}
+                              </span>
+                            </summary>
+                            <form action={professorUpdateBookingInternalNoteAction} className="teacher-student-note-form">
+                              <input type="hidden" name="session_id" value={selectedSession.id} />
+                              <input type="hidden" name="booking_id" value={student.booking_id} />
+                              <input
+                                type="hidden"
+                                name="return_to"
+                                value={buildProfHref({
+                                  tab: "planning",
+                                  agendaView,
+                                  agendaDate,
+                                  sessionId: selectedSession.id,
+                                  attendanceFilter,
+                                })}
+                              />
+                              <p className="teacher-note-safety-text teacher-note-safety-internal">
+                                {t("teacher.student_internal_note_help")}
+                              </p>
+                              <textarea
+                                name="internal_note"
+                                rows={3}
+                                maxLength={12000}
+                                defaultValue={student.internal_note ?? ""}
+                                placeholder={t("teacher.student_internal_note_placeholder")}
+                              />
+                              <button type="submit" className="ghost">{t("teacher.save")}</button>
+                            </form>
+                          </details>
+                        ) : null}
                       </article>
                     ))}
                   </div>
@@ -1485,37 +1524,31 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                   </div>
                 </details>
 
-                {canMessageStudents ? (
+                {canTakeAttendance ? (
                   <details className="teacher-attendance-accordion" open>
-                    <summary>{t("teacher.admin_note_section")}</summary>
+                    <summary>{t("teacher.session_internal_note_section")}</summary>
                     <div className="teacher-attendance-accordion-body">
-                      <p className="teacher-note-safety-text teacher-note-safety-internal">{t("teacher.admin_note_help")}</p>
-                      <form action={professorSendSessionMessageAction} className="grid">
+                      <p className="teacher-note-safety-text teacher-note-safety-internal">{t("teacher.session_internal_note_help")}</p>
+                      <form action={professorUpdateSessionInternalNoteAction} className="grid">
                         <input type="hidden" name="session_id" value={selectedSession.id} />
                         <input
                           type="hidden"
                           name="return_to"
                           value={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id, attendanceFilter })}
                         />
-                        <input type="hidden" name="recipient_target" value="ADMIN" />
                         <label>
-                          {t("teacher.subject")}
-                          <input
-                            type="text"
-                            name="subject"
-                            required
-                            maxLength={255}
-                            defaultValue={t("teacher.lesson_note_subject", { title: selectedSession.title })}
+                          {t("teacher.session_internal_note")}
+                          <textarea
+                            name="internal_note"
+                            rows={4}
+                            maxLength={12000}
+                            defaultValue={selectedSession.internal_note ?? ""}
+                            placeholder={t("teacher.session_internal_note_placeholder")}
                           />
-                        </label>
-                        <label>
-                          {t("teacher.internal_note")}
-                          <input type="hidden" name="body_format" value="TEXT" />
-                          <textarea name="body" rows={4} maxLength={12000} placeholder={t("teacher.note_admin_placeholder")} required />
                         </label>
                         <div className="row">
                           <button type="submit" className="ghost">
-                            {t("teacher.save_note")}
+                            {t("teacher.save")}
                           </button>
                         </div>
                       </form>

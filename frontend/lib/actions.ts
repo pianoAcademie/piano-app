@@ -2243,6 +2243,57 @@ export async function professorUpdateAttendanceAction(formData: FormData): Promi
   redirect(appendQueryMessage(returnTo, "ok", t("teacher.action.attendance_updated")));
 }
 
+export async function professorUpdateSessionInternalNoteAction(formData: FormData): Promise<void> {
+  const token = currentPortalToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureProfessorAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const returnTo = safeProfessorReturnPath(formData, "/prof?tab=planning");
+  const sessionId = String(formData.get("session_id") ?? "").trim();
+  const internalNote = optionalField(formData, "internal_note");
+  if (!sessionId) {
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.invalid_session_slot")));
+  }
+  const result = await backendRequest<{ id: string }>(
+    `/api/v1/professors/me/sessions/${sessionId}/internal-note`,
+    { method: "PATCH", body: JSON.stringify({ internal_note: internalNote }) },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/prof");
+  redirect(appendQueryMessage(returnTo, "ok", t("teacher.action.session_internal_note_saved")));
+}
+
+export async function professorUpdateBookingInternalNoteAction(formData: FormData): Promise<void> {
+  const token = currentPortalToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureProfessorAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const returnTo = safeProfessorReturnPath(formData, "/prof?tab=planning");
+  const sessionId = String(formData.get("session_id") ?? "").trim();
+  const bookingId = String(formData.get("booking_id") ?? "").trim();
+  const internalNote = optionalField(formData, "internal_note");
+  if (!sessionId || !bookingId) {
+    redirect(appendQueryMessage(returnTo, "error", t("teacher.action.invalid_attendance_entry")));
+  }
+  const result = await backendRequest<{ booking_id: string }>(
+    `/api/v1/professors/me/sessions/${sessionId}/bookings/${bookingId}/internal-note`,
+    { method: "PATCH", body: JSON.stringify({ internal_note: internalNote }) },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/prof");
+  redirect(appendQueryMessage(returnTo, "ok", t("teacher.action.student_internal_note_saved")));
+}
+
 export async function professorSendSessionMessageAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {
@@ -3680,7 +3731,7 @@ export async function adminUpdateSessionBookingNoteAction(formData: FormData): P
   redirect(appendQueryMessage(returnTo, "ok", t("admin.planning_action.family_note_saved")));
 }
 
-export async function adminSendSessionBookingInternalNoteAction(formData: FormData): Promise<void> {
+export async function adminUpdateSessionBookingInternalNoteAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {
     redirect("/login?error_code=session_expired");
@@ -3691,48 +3742,18 @@ export async function adminSendSessionBookingInternalNoteAction(formData: FormDa
   const returnTo = safeAdminReturnPath(formData, "/admin?edit=1");
 
   const sessionId = String(formData.get("session_id") ?? "").trim();
-  const studentDisplayName = String(formData.get("student_display_name") ?? "").trim();
-  const sessionTitle = String(formData.get("session_title") ?? "").trim();
-  const body = String(formData.get("body") ?? "").trim();
-  const bodyFormat = String(formData.get("body_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
+  const bookingId = String(formData.get("booking_id") ?? "").trim();
+  const internalNote = optionalField(formData, "internal_note");
 
-  if (!sessionId) {
-    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.invalid_session")));
-  }
-  if (!body) {
-    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.booking_internal_note_required")));
+  if (!sessionId || !bookingId) {
+    redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.invalid_booking")));
   }
 
-  const subject = t("admin.planning_action.booking_internal_note_subject", {
-    student: studentDisplayName || t("admin.planning_action.student_fallback"),
-    title: sessionTitle || t("admin.planning_action.slot_fallback"),
-  });
-  const prefixedBody = `${t("admin.planning_action.booking_internal_note_context", {
-    student: studentDisplayName || t("admin.planning_action.student_fallback"),
-    title: sessionTitle || t("admin.planning_action.slot_fallback"),
-  })}\n\n${body}`;
-
-  const result = await backendRequest<{
-    channel: "EMAIL";
-    recipient_count: number;
-    cc_count: number;
-    skipped_count: number;
-    details: string[];
-  }>(
-    `/api/v1/admin/sessions/${sessionId}/broadcast`,
+  const result = await backendRequest<{ id: string }>(
+    `/api/v1/admin/sessions/${sessionId}/bookings/${bookingId}/internal-note`,
     {
-      method: "POST",
-      body: JSON.stringify({
-        channel: "EMAIL",
-        audience: "ADMINS",
-        included_student_ids: [],
-        send_to_self: true,
-        subject,
-        body: prefixedBody,
-        body_format: bodyFormat,
-        cc_emails: [],
-        cc_phone_numbers: [],
-      }),
+      method: "PATCH",
+      body: JSON.stringify({ internal_note: internalNote }),
     },
     token,
   );
@@ -3742,7 +3763,7 @@ export async function adminSendSessionBookingInternalNoteAction(formData: FormDa
   }
 
   revalidatePath("/admin");
-  redirect(appendQueryMessage(returnTo, "ok", t("admin.planning_action.booking_internal_note_sent", { count: result.data.recipient_count })));
+  redirect(appendQueryMessage(returnTo, "ok", t("admin.planning_action.internal_note_saved")));
 }
 
 export async function adminUpdateSessionBookingStudentTimeAction(formData: FormData): Promise<void> {
