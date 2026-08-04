@@ -74,6 +74,8 @@ class TypeformIntake(Base):
         Index("ix_typeform_intakes_form_config_id", "form_config_id"),
         Index("ix_typeform_intakes_related_quote_id", "related_quote_id"),
         Index("ix_typeform_intakes_received_at", "received_at"),
+        Index("ix_typeform_intakes_local_confirmation_status", "local_confirmation_status"),
+        Index("ix_typeform_intakes_local_confirmation_assignee", "local_confirmation_assignee_professor_id"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -130,5 +132,39 @@ class TypeformIntake(Base):
         ForeignKey("quotes.id", ondelete="SET NULL"),
         nullable=True,
     )
+    local_confirmation_status: Mapped[str] = mapped_column(
+        String(40), nullable=False, server_default=text("'NOT_REQUIRED'")
+    )
+    local_confirmation_assignee_professor_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("professors.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    local_confirmation_assignee_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    local_confirmation_session_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("course_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    local_confirmation_product_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("catalog_products.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    local_confirmation_schedule_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    local_confirmation_partition_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    local_confirmation_partition_not_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    local_confirmation_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    local_confirmation_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    local_confirmation_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    local_confirmation_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    local_confirmation_confirmed_by_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    local_confirmation_confirmed_by_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))

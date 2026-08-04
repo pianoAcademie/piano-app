@@ -2243,6 +2243,45 @@ export async function professorUpdateAttendanceAction(formData: FormData): Promi
   redirect(appendQueryMessage(returnTo, "ok", t("teacher.action.attendance_updated")));
 }
 
+export async function professorConfirmLocalIntakeAction(formData: FormData): Promise<void> {
+  const token = currentPortalToken();
+  const intakeId = String(formData.get("intake_id") ?? "").trim();
+  const returnTo = safeProfessorReturnPath(
+    formData,
+    intakeId ? `/prof/intakes/${intakeId}` : "/prof",
+  );
+  if (!token) {
+    redirect("/login?portal=prof&error_code=session_expired");
+  }
+  const sessionId = String(formData.get("session_id") ?? "").trim();
+  const productId = optionalField(formData, "product_id");
+  const customPartition = optionalField(formData, "custom_partition");
+  const partitionNotRequired = checkboxField(formData, "partition_not_required");
+  if (!intakeId || !sessionId) {
+    redirect(appendQueryMessage(returnTo, "error", "Sélectionnez un créneau Bar-le-Duc."));
+  }
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/professors/me/intakes/local-confirmations/${encodeURIComponent(intakeId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        session_id: sessionId,
+        product_id: productId,
+        custom_partition: customPartition,
+        partition_not_required: partitionNotRequired,
+        comment: optionalField(formData, "comment"),
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/prof");
+  revalidatePath(`/prof/intakes/${intakeId}`);
+  redirect(appendQueryMessage(returnTo, "ok", "Confirmation Bar-le-Duc enregistrée"));
+}
+
 export async function professorUpdateSessionInternalNoteAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {

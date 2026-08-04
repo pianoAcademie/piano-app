@@ -175,6 +175,59 @@ class ProfessorInternalNoteListOut(BaseModel):
     location_name: str
 
 
+class ProfessorLocalIntakeTaskOut(BaseModel):
+    id: UUID
+    received_at: datetime
+    local_confirmation_status: str
+    prospect_label: str
+    child_label: str | None = None
+    requested_summary: str | None = None
+    detected_location: str | None = None
+    local_confirmation_schedule_snapshot: str | None = None
+    local_confirmation_partition_snapshot: str | None = None
+    local_confirmation_confirmed_at: datetime | None = None
+
+
+class ProfessorLocalIntakeSlotOut(BaseModel):
+    session_id: UUID
+    label: str
+    start_at_utc: datetime
+    end_at_utc: datetime
+    timezone: str
+    course_type_name: str
+    location_name: str
+    capacity_max: int
+    booked_count: int
+    seats_remaining: int
+    recurrence_group_id: UUID | None = None
+
+
+class ProfessorLocalIntakePartitionOut(BaseModel):
+    product_id: UUID
+    title: str
+    category_name: str | None = None
+    real_quantity: int
+    estimated_quantity: int
+
+
+class ProfessorLocalIntakeDetailOut(ProfessorLocalIntakeTaskOut):
+    normalized_payload_json: dict[str, object] = Field(default_factory=dict)
+    slot_options: list[ProfessorLocalIntakeSlotOut] = Field(default_factory=list)
+    partition_options: list[ProfessorLocalIntakePartitionOut] = Field(default_factory=list)
+    local_confirmation_session_id: UUID | None = None
+    local_confirmation_product_id: UUID | None = None
+    local_confirmation_partition_not_required: bool = False
+    local_confirmation_comment: str | None = None
+
+
+class ProfessorLocalIntakeConfirmRequest(BaseModel):
+    session_id: UUID
+    product_id: UUID | None = None
+    custom_partition: str | None = Field(default=None, max_length=500)
+    partition_not_required: bool = False
+    comment: str | None = Field(default=None, max_length=2000)
+
+
 class ProfessorSessionMessageOut(BaseModel):
     id: UUID
     session_id: UUID

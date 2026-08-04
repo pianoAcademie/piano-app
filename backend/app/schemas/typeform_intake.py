@@ -153,6 +153,11 @@ class TypeformIntakeListOut(BaseModel):
     admin_comment: str | None = None
     related_quote_id: UUID | None = None
     referral: dict[str, object] | None = None
+    local_confirmation_status: str = "NOT_REQUIRED"
+    local_confirmation_assignee_name: str | None = None
+    local_confirmation_schedule_snapshot: str | None = None
+    local_confirmation_partition_snapshot: str | None = None
+    local_confirmation_confirmed_at: datetime | None = None
 
 
 class TypeformIntakeListPageOut(BaseModel):
@@ -186,6 +191,19 @@ class TypeformIntakeDetailOut(BaseModel):
     related_quote_id: UUID | None = None
     form_config: TypeformFormConfigOut | None = None
     referral: dict[str, object] | None = None
+    local_confirmation_status: str = "NOT_REQUIRED"
+    local_confirmation_assignee_professor_id: UUID | None = None
+    local_confirmation_assignee_name: str | None = None
+    local_confirmation_session_id: UUID | None = None
+    local_confirmation_product_id: UUID | None = None
+    local_confirmation_schedule_snapshot: str | None = None
+    local_confirmation_partition_snapshot: str | None = None
+    local_confirmation_partition_not_required: bool = False
+    local_confirmation_comment: str | None = None
+    local_confirmation_requested_at: datetime | None = None
+    local_confirmation_notified_at: datetime | None = None
+    local_confirmation_confirmed_at: datetime | None = None
+    local_confirmation_confirmed_by_name: str | None = None
 
 
 class TypeformIntakeResolutionRequest(BaseModel):

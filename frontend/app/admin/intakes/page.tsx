@@ -33,6 +33,11 @@ type TypeformIntakeListOut = {
   blockages: string[];
   admin_comment: string | null;
   related_quote_id: string | null;
+  local_confirmation_status: string;
+  local_confirmation_assignee_name: string | null;
+  local_confirmation_schedule_snapshot: string | null;
+  local_confirmation_partition_snapshot: string | null;
+  local_confirmation_confirmed_at: string | null;
 };
 
 type TypeformIntakeListPageOut = {
@@ -478,6 +483,15 @@ export default async function AdminTypeformIntakesPage({ searchParams }: { searc
                     <td data-mobile-label={t("admin.intakes.segment")}>{segmentLabel(row.detected_segment, language)}</td>
                     <td data-mobile-label={uiText(language, "common.status")}>
                       <span className={`status-pill ${statusClass(row.intake_status)}`}>{statusLabel(row.intake_status, language)}</span>
+                      {row.local_confirmation_status !== "NOT_REQUIRED" ? (
+                        <div className="top-gap-xs">
+                          <span className={`status-pill ${row.local_confirmation_status === "CONFIRMED" ? "status-ok" : "status-warn"}`}>
+                            {row.local_confirmation_status === "CONFIRMED"
+                              ? "Confirmé par Bar-le-Duc"
+                              : "En attente de confirmation Bar-le-Duc"}
+                          </span>
+                        </div>
+                      ) : null}
                     </td>
                     <td data-mobile-label={language === "fr" ? "Commentaire" : "Comment"}>
                       {row.admin_comment ? (

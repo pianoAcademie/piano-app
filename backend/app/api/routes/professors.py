@@ -4,9 +4,10 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
@@ -19,6 +20,8 @@ from app.models.plan import ClientPlanSubscription, Plan, PlanKind
 from app.models.professor_contract import ProfessorContractGrid, ProfessorContractGridLine, ProfessorContractGridLineRule
 from app.models.professor_contract import ProfessorContractLineMode
 from app.models.professor_access import ProfessorPermission
+from app.models.product_catalog import CatalogProduct, ProductCategory, ProductLocationStock
+from app.models.typeform_intake import TypeformIntake
 from app.models.user import ClientStatus, User, UserRole
 from app.schemas.booking import AttendanceUpdateRequest, BookingOut
 from app.schemas.professor import (
@@ -30,6 +33,11 @@ from app.schemas.professor import (
     ProfessorInternalNoteListOut,
     ProfessorInternalNoteOut,
     ProfessorInternalNoteUpdateRequest,
+    ProfessorLocalIntakeConfirmRequest,
+    ProfessorLocalIntakeDetailOut,
+    ProfessorLocalIntakePartitionOut,
+    ProfessorLocalIntakeSlotOut,
+    ProfessorLocalIntakeTaskOut,
     ProfessorMarkAbsenceRequest,
     ProfessorMeOut,
     ProfessorPayoutOut,
@@ -44,6 +52,7 @@ from app.schemas.professor import (
     ProfessorSessionStudentOut,
 )
 from app.services.professor_contracts import label_for_contract_location
+from app.services.intake_local_confirmation import LOCAL_CONFIRMATION_CONFIRMED
 from app.services.professor_default_grid import DefaultProfessorGridLine, load_default_professor_grid
 from app.services.professor_permissions import permissions_dict
 from app.services.reminders import skip_pending_reminders_for_booking
@@ -663,6 +672,304 @@ def list_my_professor_sessions(
         )
         for session, course_type, location, booked_count in rows
     ]
+
+
+_FRENCH_WEEKDAYS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+_FRENCH_MONTHS = (
+    "janvier", "février", "mars", "avril", "mai", "juin",
+    "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+)
+
+
+def _normalized_intake_payload(intake: TypeformIntake) -> dict[str, object]:
+    return intake.normalized_payload_json if isinstance(intake.normalized_payload_json, dict) else {}
+
+
+def _intake_people(intake: TypeformIntake) -> tuple[str, str | None]:
+    normalized = _normalized_intake_payload(intake)
+    parent = " ".join(
+        str(normalized.get(key) or "").strip()
+        for key in ("parent_first_name", "parent_last_name")
+        if str(normalized.get(key) or "").strip()
+    )
+    child = " ".join(
+        str(normalized.get(key) or "").strip()
+        for key in ("child_first_name", "child_last_name")
+        if str(normalized.get(key) or "").strip()
+    )
+    email = str(normalized.get("parent_email") or "").strip()
+    return parent or email or "Prospect", child or None
+
+
+def _intake_requested_summary(intake: TypeformIntake) -> str | None:
+    normalized = _normalized_intake_payload(intake)
+    values: list[str] = []
+    for key in (
+        "requested_activity",
+        "requested_course",
+        "requested_formula",
+        "requested_formula_type",
+        "instrument",
+    ):
+        value = normalized.get(key)
+        for item in value if isinstance(value, list) else [value]:
+            text = str(item or "").strip()
+            if text and text.lower() not in {existing.lower() for existing in values}:
+                values.append(text)
+    return " · ".join(values) or None
+
+
+def _local_intake_task_out(intake: TypeformIntake) -> ProfessorLocalIntakeTaskOut:
+    prospect_label, child_label = _intake_people(intake)
+    return ProfessorLocalIntakeTaskOut(
+        id=intake.id,
+        received_at=intake.received_at,
+        local_confirmation_status=intake.local_confirmation_status,
+        prospect_label=prospect_label,
+        child_label=child_label,
+        requested_summary=_intake_requested_summary(intake),
+        detected_location=intake.detected_location,
+        local_confirmation_schedule_snapshot=intake.local_confirmation_schedule_snapshot,
+        local_confirmation_partition_snapshot=intake.local_confirmation_partition_snapshot,
+        local_confirmation_confirmed_at=intake.local_confirmation_confirmed_at,
+    )
+
+
+def _require_assigned_local_intake(
+    db: Session,
+    *,
+    intake_id: UUID,
+    professor_id: UUID,
+    lock: bool = False,
+) -> TypeformIntake:
+    stmt = select(TypeformIntake).where(
+        TypeformIntake.id == intake_id,
+        TypeformIntake.local_confirmation_assignee_professor_id == professor_id,
+    )
+    if lock:
+        stmt = stmt.with_for_update()
+    intake = db.scalar(stmt)
+    if intake is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Local intake confirmation not found")
+    return intake
+
+
+def _local_intake_slot_options(db: Session, *, professor_id: UUID) -> list[ProfessorLocalIntakeSlotOut]:
+    booked_counts = (
+        select(Booking.session_id.label("session_id"), func.count(Booking.id).label("booked_count"))
+        .where(Booking.status.in_(BOOKING_STATUSES_COUNTED_AS_RESERVED))
+        .group_by(Booking.session_id)
+        .subquery()
+    )
+    rows = db.execute(
+        select(
+            CourseSession,
+            CourseType,
+            Location,
+            func.coalesce(booked_counts.c.booked_count, 0).label("booked_count"),
+        )
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .outerjoin(booked_counts, booked_counts.c.session_id == CourseSession.id)
+        .where(
+            effective_teacher_filter_for_professor(professor_id=professor_id),
+            CourseSession.status == SessionStatus.SCHEDULED,
+            CourseSession.start_at_utc >= _utcnow(),
+            or_(Location.code.ilike("%bar%duc%"), Location.name.ilike("%bar%duc%")),
+        )
+        .order_by(CourseSession.start_at_utc.asc())
+        .limit(400)
+    ).all()
+
+    options: list[ProfessorLocalIntakeSlotOut] = []
+    seen: set[object] = set()
+    for session_obj, course_type, location, booked_count in rows:
+        dedupe_key: object = session_obj.recurrence_group_id or session_obj.id
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        try:
+            local_start = session_obj.start_at_utc.astimezone(ZoneInfo(session_obj.timezone or location.timezone))
+        except Exception:
+            local_start = session_obj.start_at_utc.astimezone(timezone.utc)
+        label = (
+            f"{_FRENCH_WEEKDAYS[local_start.weekday()].capitalize()} à {local_start:%H:%M}"
+            f" · {course_type.name} · prochain le {local_start.day} {_FRENCH_MONTHS[local_start.month - 1]}"
+        )
+        reserved = int(booked_count or 0)
+        options.append(
+            ProfessorLocalIntakeSlotOut(
+                session_id=session_obj.id,
+                label=label,
+                start_at_utc=session_obj.start_at_utc,
+                end_at_utc=session_obj.end_at_utc,
+                timezone=session_obj.timezone or location.timezone,
+                course_type_name=course_type.name,
+                location_name=location.name,
+                capacity_max=session_obj.capacity_max,
+                booked_count=reserved,
+                seats_remaining=max(session_obj.capacity_max - reserved, 0),
+                recurrence_group_id=session_obj.recurrence_group_id,
+            )
+        )
+    return options
+
+
+def _local_intake_partition_options(db: Session) -> list[ProfessorLocalIntakePartitionOut]:
+    bld_location_ids = list(
+        db.scalars(
+            select(Location.id).where(
+                or_(Location.code.ilike("%bar%duc%"), Location.name.ilike("%bar%duc%"))
+            )
+        ).all()
+    )
+    stock_join = and_(ProductLocationStock.product_id == CatalogProduct.id)
+    if bld_location_ids:
+        stock_join = and_(stock_join, ProductLocationStock.location_id.in_(bld_location_ids))
+    rows = db.execute(
+        select(
+            CatalogProduct,
+            ProductCategory,
+            func.coalesce(func.sum(ProductLocationStock.real_quantity), 0).label("real_quantity"),
+            func.coalesce(func.sum(ProductLocationStock.estimated_quantity), 0).label("estimated_quantity"),
+        )
+        .outerjoin(ProductCategory, ProductCategory.id == CatalogProduct.category_id)
+        .outerjoin(ProductLocationStock, stock_join)
+        .where(
+            CatalogProduct.active.is_(True),
+            or_(
+                ProductCategory.code.ilike("%partition%"),
+                ProductCategory.name.ilike("%partition%"),
+                CatalogProduct.title.ilike("%partition%"),
+            ),
+        )
+        .group_by(CatalogProduct.id, ProductCategory.id)
+        .order_by(CatalogProduct.title.asc())
+        .limit(500)
+    ).all()
+    return [
+        ProfessorLocalIntakePartitionOut(
+            product_id=product.id,
+            title=product.title,
+            category_name=category.name if category is not None else None,
+            real_quantity=int(real_quantity or 0),
+            estimated_quantity=int(estimated_quantity or 0),
+        )
+        for product, category, real_quantity, estimated_quantity in rows
+    ]
+
+
+def _local_intake_detail_out(
+    db: Session,
+    *,
+    intake: TypeformIntake,
+    professor_id: UUID,
+) -> ProfessorLocalIntakeDetailOut:
+    task = _local_intake_task_out(intake)
+    return ProfessorLocalIntakeDetailOut(
+        **task.model_dump(),
+        normalized_payload_json=_normalized_intake_payload(intake),
+        slot_options=_local_intake_slot_options(db, professor_id=professor_id),
+        partition_options=_local_intake_partition_options(db),
+        local_confirmation_session_id=intake.local_confirmation_session_id,
+        local_confirmation_product_id=intake.local_confirmation_product_id,
+        local_confirmation_partition_not_required=intake.local_confirmation_partition_not_required,
+        local_confirmation_comment=intake.local_confirmation_comment,
+    )
+
+
+@router.get("/professors/me/intakes/local-confirmations", response_model=list[ProfessorLocalIntakeTaskOut])
+def list_my_local_intake_confirmations(
+    status_filter: str = Query(default="PENDING", alias="status", pattern="^(PENDING|CONFIRMED|ALL)$"),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROF)),
+) -> list[ProfessorLocalIntakeTaskOut]:
+    professor = _resolve_professor_profile(db, current_user=current_user)
+    stmt = select(TypeformIntake).where(
+        TypeformIntake.local_confirmation_assignee_professor_id == professor.id
+    )
+    if status_filter != "ALL":
+        stmt = stmt.where(TypeformIntake.local_confirmation_status == status_filter)
+    intakes = db.scalars(
+        stmt.order_by(TypeformIntake.received_at.desc()).limit(limit)
+    ).all()
+    return [_local_intake_task_out(intake) for intake in intakes]
+
+
+@router.get(
+    "/professors/me/intakes/local-confirmations/{intake_id}",
+    response_model=ProfessorLocalIntakeDetailOut,
+)
+def get_my_local_intake_confirmation(
+    intake_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROF)),
+) -> ProfessorLocalIntakeDetailOut:
+    professor = _resolve_professor_profile(db, current_user=current_user)
+    intake = _require_assigned_local_intake(db, intake_id=intake_id, professor_id=professor.id)
+    return _local_intake_detail_out(db, intake=intake, professor_id=professor.id)
+
+
+@router.patch(
+    "/professors/me/intakes/local-confirmations/{intake_id}",
+    response_model=ProfessorLocalIntakeDetailOut,
+)
+def confirm_my_local_intake(
+    intake_id: UUID,
+    payload: ProfessorLocalIntakeConfirmRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROF)),
+) -> ProfessorLocalIntakeDetailOut:
+    professor = _resolve_professor_profile(db, current_user=current_user)
+    intake = _require_assigned_local_intake(
+        db, intake_id=intake_id, professor_id=professor.id, lock=True
+    )
+    slots = {option.session_id: option for option in _local_intake_slot_options(db, professor_id=professor.id)}
+    selected_slot = slots.get(payload.session_id)
+    if selected_slot is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Le créneau choisi n'est plus disponible dans votre planning Bar-le-Duc.",
+        )
+
+    custom_partition = (payload.custom_partition or "").strip()
+    selection_count = int(payload.product_id is not None) + int(bool(custom_partition)) + int(payload.partition_not_required)
+    if selection_count != 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Choisissez une partition, saisissez une partition libre ou indiquez qu'aucune partition n'est nécessaire.",
+        )
+
+    partition_snapshot: str
+    selected_product_id: UUID | None = None
+    if payload.product_id is not None:
+        products = {option.product_id: option for option in _local_intake_partition_options(db)}
+        selected_product = products.get(payload.product_id)
+        if selected_product is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Partition introuvable dans le catalogue.")
+        selected_product_id = selected_product.product_id
+        partition_snapshot = selected_product.title
+    elif custom_partition:
+        partition_snapshot = custom_partition
+    else:
+        partition_snapshot = "Aucune partition nécessaire"
+
+    intake.local_confirmation_session_id = selected_slot.session_id
+    intake.local_confirmation_product_id = selected_product_id
+    intake.local_confirmation_schedule_snapshot = selected_slot.label
+    intake.local_confirmation_partition_snapshot = partition_snapshot
+    intake.local_confirmation_partition_not_required = payload.partition_not_required
+    intake.local_confirmation_comment = (payload.comment or "").strip() or None
+    intake.local_confirmation_status = LOCAL_CONFIRMATION_CONFIRMED
+    intake.local_confirmation_confirmed_at = _utcnow()
+    intake.local_confirmation_confirmed_by_user_id = current_user.id
+    intake.local_confirmation_confirmed_by_name = _display_name(current_user)
+    intake.updated_at = _utcnow()
+    db.add(intake)
+    db.commit()
+    db.refresh(intake)
+    return _local_intake_detail_out(db, intake=intake, professor_id=professor.id)
 
 
 def _require_internal_note_permission(permissions: dict[str, Any]) -> None:

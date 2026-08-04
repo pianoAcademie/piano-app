@@ -1242,6 +1242,51 @@ export type ProfessorInternalNoteListOut = {
   location_name: string;
 };
 
+export type ProfessorLocalIntakeTaskOut = {
+  id: string;
+  received_at: string;
+  local_confirmation_status: "PENDING" | "CONFIRMED" | string;
+  prospect_label: string;
+  child_label: string | null;
+  requested_summary: string | null;
+  detected_location: string | null;
+  local_confirmation_schedule_snapshot: string | null;
+  local_confirmation_partition_snapshot: string | null;
+  local_confirmation_confirmed_at: string | null;
+};
+
+export type ProfessorLocalIntakeSlotOut = {
+  session_id: string;
+  label: string;
+  start_at_utc: string;
+  end_at_utc: string;
+  timezone: string;
+  course_type_name: string;
+  location_name: string;
+  capacity_max: number;
+  booked_count: number;
+  seats_remaining: number;
+  recurrence_group_id: string | null;
+};
+
+export type ProfessorLocalIntakePartitionOut = {
+  product_id: string;
+  title: string;
+  category_name: string | null;
+  real_quantity: number;
+  estimated_quantity: number;
+};
+
+export type ProfessorLocalIntakeDetailOut = ProfessorLocalIntakeTaskOut & {
+  normalized_payload_json: Record<string, unknown>;
+  slot_options: ProfessorLocalIntakeSlotOut[];
+  partition_options: ProfessorLocalIntakePartitionOut[];
+  local_confirmation_session_id: string | null;
+  local_confirmation_product_id: string | null;
+  local_confirmation_partition_not_required: boolean;
+  local_confirmation_comment: string | null;
+};
+
 export type ProfessorAttendancePendingOut = {
   session_id: string;
   title: string;

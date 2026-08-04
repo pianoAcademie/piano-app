@@ -37,6 +37,7 @@ import type {
   ProfessorBalanceOut,
   ProfessorContractGridOut,
   ProfessorInternalNoteListOut,
+  ProfessorLocalIntakeTaskOut,
   AdminCatalogProductOut,
   AdminCatalogRequestOut,
   LocationOut,
@@ -586,6 +587,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
     catalogProductsResult,
     catalogLocationsResult,
     catalogRequestsResult,
+    localIntakesResult,
   ] = await Promise.all([
     backendRequest<ProfessorMeOut>("/api/v1/professors/me", {}, token),
     backendRequest<ProfessorAttendancePendingOut[]>("/api/v1/professors/me/attendance/pending?limit=200", {}, token),
@@ -601,6 +603,11 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
     backendRequest<AdminCatalogProductOut[]>("/api/v1/professors/me/catalog/products", {}, token),
     backendRequest<LocationOut[]>("/api/v1/locations?active=true", {}, token),
     backendRequest<AdminCatalogRequestOut[]>("/api/v1/professors/me/catalog/requests", {}, token),
+    backendRequest<ProfessorLocalIntakeTaskOut[]>(
+      "/api/v1/professors/me/intakes/local-confirmations?status=PENDING&limit=100",
+      {},
+      token,
+    ),
   ]);
 
   if (!profileResult.ok) {
@@ -689,6 +696,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
   const pendingRows = pendingResult.ok ? pendingResult.data : [];
   const pendingCount = pendingRows.reduce((sum, row) => sum + row.pending_students_count, 0);
+  const pendingLocalIntakes = localIntakesResult.ok ? localIntakesResult.data : [];
   const catalogStudents = catalogStudentsResult.ok ? catalogStudentsResult.data : [];
   const catalogProducts = catalogProductsResult.ok ? catalogProductsResult.data.filter((row) => row.active) : [];
   const catalogLocations = catalogLocationsResult.ok ? catalogLocationsResult.data.filter((row) => row.active) : [];
@@ -856,9 +864,29 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
       {!catalogStudentsResult.ok ? <AlertCard tone="error">{t("teacher.catalog_students_error")}: {catalogStudentsResult.message}</AlertCard> : null}
       {!catalogProductsResult.ok ? <AlertCard tone="error">{t("teacher.catalog_products_error")}: {catalogProductsResult.message}</AlertCard> : null}
       {!catalogRequestsResult.ok ? <AlertCard tone="error">{t("teacher.catalog_requests_error")}: {catalogRequestsResult.message}</AlertCard> : null}
+      {!localIntakesResult.ok ? <AlertCard tone="error">Confirmations Bar-le-Duc : {localIntakesResult.message}</AlertCard> : null}
 
       {currentTab === "overview" ? (
         <section className="teacher-section-stack">
+          {pendingLocalIntakes.length > 0 ? (
+            <ActionCard
+              title="Confirmations Bar-le-Duc"
+              subtitle="Choisissez le créneau et la partition à prévoir pour chaque nouvel intake."
+              chips={<StatChip label="À confirmer" value={pendingLocalIntakes.length} tone="warn" />}
+            >
+              <div className="list teacher-list-compact">
+                {pendingLocalIntakes.map((intake) => (
+                  <ListRow
+                    key={intake.id}
+                    href={`/prof/intakes/${intake.id}`}
+                    left={intake.child_label || intake.prospect_label}
+                    subtitle={[intake.requested_summary, intake.prospect_label].filter(Boolean).join(" · ")}
+                    right={<span className="status-pill status-warn">À confirmer</span>}
+                  />
+                ))}
+              </div>
+            </ActionCard>
+          ) : null}
           <ActionCard
             title={t("teacher.today_title")}
             subtitle={t("teacher.today_subtitle")}

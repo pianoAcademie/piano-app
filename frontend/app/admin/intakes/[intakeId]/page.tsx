@@ -201,6 +201,19 @@ type TypeformIntakeDetailOut = {
       reasons: string[];
     }>;
   } | null;
+  local_confirmation_status: string;
+  local_confirmation_assignee_professor_id: string | null;
+  local_confirmation_assignee_name: string | null;
+  local_confirmation_session_id: string | null;
+  local_confirmation_product_id: string | null;
+  local_confirmation_schedule_snapshot: string | null;
+  local_confirmation_partition_snapshot: string | null;
+  local_confirmation_partition_not_required: boolean;
+  local_confirmation_comment: string | null;
+  local_confirmation_requested_at: string | null;
+  local_confirmation_notified_at: string | null;
+  local_confirmation_confirmed_at: string | null;
+  local_confirmation_confirmed_by_name: string | null;
 };
 
 function readParam(params: SearchParams, key: string): string {
@@ -959,6 +972,13 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
           <div>
             <div className="row wrap gap-sm">
               <span className={`status-pill ${statusClass(detail.intake_status)}`}>{statusLabel(detail.intake_status, language)}</span>
+              {detail.local_confirmation_status !== "NOT_REQUIRED" ? (
+                <span className={`status-pill ${detail.local_confirmation_status === "CONFIRMED" ? "status-ok" : "status-warn"}`}>
+                  {detail.local_confirmation_status === "CONFIRMED"
+                    ? "Confirmé par Bar-le-Duc"
+                    : "En attente de confirmation Bar-le-Duc"}
+                </span>
+              ) : null}
               <span className="badge">{detail.source_form_label}</span>
             </div>
             <h2 className="top-gap-sm">{t("admin.intakes.detail_title")}</h2>
@@ -972,6 +992,40 @@ export default async function AdminTypeformIntakeDetailPage({ params, searchPara
           </div>
         </div>
       </section>
+
+      {detail.local_confirmation_status !== "NOT_REQUIRED" ? (
+        <section className={`card ${styles.localConfirmationCard}`}>
+          <div className="row spread wrap gap-sm">
+            <div>
+              <h3>Confirmation locale Bar-le-Duc</h3>
+              <p className="muted">
+                {detail.local_confirmation_status === "CONFIRMED"
+                  ? "Le créneau et la partition ont été renseignés par la responsable locale."
+                  : "Cette demande reste à traiter dans l’espace professeur d’Estela."}
+              </p>
+            </div>
+            <span className={`status-pill ${detail.local_confirmation_status === "CONFIRMED" ? "status-ok" : "status-warn"}`}>
+              {detail.local_confirmation_status === "CONFIRMED" ? "Confirmé" : "À confirmer"}
+            </span>
+          </div>
+          <div className={`${styles.kvGrid} top-gap-sm`}>
+            <div><strong>Responsable locale</strong><p className="muted">{detail.local_confirmation_assignee_name || "Estela Oliviero"}</p></div>
+            <div><strong>Créneau confirmé</strong><p className="muted">{detail.local_confirmation_schedule_snapshot || "En attente"}</p></div>
+            <div><strong>Partition à donner</strong><p className="muted">{detail.local_confirmation_partition_snapshot || "En attente"}</p></div>
+            <div>
+              <strong>Confirmation</strong>
+              <p className="muted">
+                {detail.local_confirmation_confirmed_at
+                  ? `${formatDate(detail.local_confirmation_confirmed_at, language)}${detail.local_confirmation_confirmed_by_name ? ` · ${detail.local_confirmation_confirmed_by_name}` : ""}`
+                  : "Non confirmée"}
+              </p>
+            </div>
+          </div>
+          {detail.local_confirmation_comment ? (
+            <p className="top-gap-sm"><strong>Commentaire local :</strong> {detail.local_confirmation_comment}</p>
+          ) : null}
+        </section>
+      ) : null}
 
       <nav
         className={styles.mobileDetailNav}

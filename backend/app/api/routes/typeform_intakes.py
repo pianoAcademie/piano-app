@@ -66,6 +66,10 @@ from app.schemas.typeform_intake import (
     TypeformWebhookOut,
 )
 from app.services.invoice_documents import normalize_billing_entity
+from app.services.intake_local_confirmation import (
+    ensure_local_confirmation_assignment,
+    notify_local_confirmation_assignee,
+)
 from app.services.professor_activation import generate_temporary_password
 from app.services.quotes.quote_documents import _calendar_snapshot_with_planning_sessions
 from app.services.referrals import (
@@ -5438,6 +5442,11 @@ def _intake_list_out(intake: TypeformIntake, analysis: dict[str, object]) -> Typ
         admin_comment=_text(intake.admin_comment) or None,
         related_quote_id=intake.related_quote_id,
         referral=analysis.get("referral") if isinstance(analysis.get("referral"), dict) else None,
+        local_confirmation_status=getattr(intake, "local_confirmation_status", None) or "NOT_REQUIRED",
+        local_confirmation_assignee_name=getattr(intake, "local_confirmation_assignee_name", None),
+        local_confirmation_schedule_snapshot=getattr(intake, "local_confirmation_schedule_snapshot", None),
+        local_confirmation_partition_snapshot=getattr(intake, "local_confirmation_partition_snapshot", None),
+        local_confirmation_confirmed_at=getattr(intake, "local_confirmation_confirmed_at", None),
     )
 
 
@@ -5493,6 +5502,11 @@ def _intake_list_out_fast(
         admin_comment=_text(intake.admin_comment) or None,
         related_quote_id=intake.related_quote_id,
         referral=None,
+        local_confirmation_status=getattr(intake, "local_confirmation_status", None) or "NOT_REQUIRED",
+        local_confirmation_assignee_name=getattr(intake, "local_confirmation_assignee_name", None),
+        local_confirmation_schedule_snapshot=getattr(intake, "local_confirmation_schedule_snapshot", None),
+        local_confirmation_partition_snapshot=getattr(intake, "local_confirmation_partition_snapshot", None),
+        local_confirmation_confirmed_at=getattr(intake, "local_confirmation_confirmed_at", None),
     )
 
 
@@ -5557,6 +5571,19 @@ def _intake_detail_out(intake: TypeformIntake, analysis: dict[str, object]) -> T
         related_quote_id=intake.related_quote_id,
         form_config=config_out,
         referral=analysis.get("referral") if isinstance(analysis.get("referral"), dict) else None,
+        local_confirmation_status=intake.local_confirmation_status or "NOT_REQUIRED",
+        local_confirmation_assignee_professor_id=intake.local_confirmation_assignee_professor_id,
+        local_confirmation_assignee_name=intake.local_confirmation_assignee_name,
+        local_confirmation_session_id=intake.local_confirmation_session_id,
+        local_confirmation_product_id=intake.local_confirmation_product_id,
+        local_confirmation_schedule_snapshot=intake.local_confirmation_schedule_snapshot,
+        local_confirmation_partition_snapshot=intake.local_confirmation_partition_snapshot,
+        local_confirmation_partition_not_required=intake.local_confirmation_partition_not_required,
+        local_confirmation_comment=intake.local_confirmation_comment,
+        local_confirmation_requested_at=intake.local_confirmation_requested_at,
+        local_confirmation_notified_at=intake.local_confirmation_notified_at,
+        local_confirmation_confirmed_at=intake.local_confirmation_confirmed_at,
+        local_confirmation_confirmed_by_name=intake.local_confirmation_confirmed_by_name,
     )
 
 
@@ -5634,8 +5661,17 @@ def _ingest_typeform_payload(db: Session, payload: dict[str, object]) -> Typefor
     db.flush()
     _refresh_intake_analysis(db, intake)
     ensure_referral_for_intake(db, intake=intake, normalized=_json_object(intake.normalized_payload_json))
+    local_assignee = ensure_local_confirmation_assignment(db, intake=intake, config=config)
     db.commit()
     db.refresh(intake)
+    if local_assignee is not None and intake.local_confirmation_notified_at is None:
+        try:
+            if notify_local_confirmation_assignee(db, intake=intake, professor=local_assignee):
+                db.commit()
+                db.refresh(intake)
+        except Exception:
+            db.rollback()
+            logger.exception("Unable to notify Bar-le-Duc local confirmation assignee for intake %s", intake.id)
     return intake
 
 

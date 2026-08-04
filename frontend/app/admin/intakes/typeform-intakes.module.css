@@ -546,3 +546,7 @@
     grid-template-columns: minmax(84px, 0.34fr) minmax(0, 1fr);
   }
 }
+.localConfirmationCard {
+  border-color: #dfad62;
+  background: linear-gradient(135deg, #fffaf0, #fff);
+}
