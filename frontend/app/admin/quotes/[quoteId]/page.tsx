@@ -38,6 +38,7 @@ import {
   selectQuoteFollowupSlotAction,
   sendQuoteManualEmailAction,
   sendQuoteAction,
+  updateQuoteExpirationAction,
   updateQuoteLinesAction,
   updateQuoteAdminHoldNoteAction,
   updateQuotePlanningAction,
@@ -137,6 +138,7 @@ type QuoteOut = {
   terms_template_version_id: string | null;
   currency: string;
   language: string | null;
+  timezone: string | null;
   total_ttc: string;
   vat_rate: string | null;
   expiry_days: number;
@@ -497,6 +499,33 @@ function formatDate(value: string | null, language: UiLanguage = "fr"): string {
     return "-";
   }
   return parsed.toLocaleString(localeForUiLanguage(language), { dateStyle: "short", timeStyle: "short" });
+}
+
+function dateTimeLocalValue(value: string | null, timezoneRaw: string | null): string {
+  if (!value) {
+    return "";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  const timezone = timezoneRaw?.trim() || "Europe/Paris";
+  let parts: Intl.DateTimeFormatPart[];
+  try {
+    parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(parsed);
+  } catch {
+    return dateTimeLocalValue(value, "Europe/Paris");
+  }
+  const part = (type: Intl.DateTimeFormatPartTypes): string => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}T${part("hour")}:${part("minute")}`;
 }
 
 function formatDateOnly(value: string | null, language: UiLanguage = "fr"): string {
@@ -1744,6 +1773,7 @@ function validationClientDateLabelFromQuote(quote: QuoteOut, language: UiLanguag
 const QUOTE_INTERACTION_EVENT_TYPES = new Set([
   "quote_created",
   "quote_document_regenerated",
+  "quote_expiration_updated",
   "quote_email_sent",
   "quote_manual_email_sent",
   "quote_manual_email_received",
@@ -1804,6 +1834,7 @@ function quoteEventTitle(event: QuoteEventOut, language: UiLanguage = "fr"): str
   const keyByType: Record<string, string> = {
     quote_created: "admin.quote_events.title.created",
     quote_document_regenerated: "admin.quote_events.title.document_regenerated",
+    quote_expiration_updated: "admin.quote_events.title.expiration_updated",
     quote_email_sent: "admin.quote_events.title.email_sent",
     quote_manual_email_sent: "admin.quote_events.title.manual_email_sent",
     quote_manual_email_received: "admin.quote_events.title.manual_email_received",
@@ -1844,6 +1875,7 @@ function quoteEventTone(event: QuoteEventOut): "client" | "admin" | "system" {
       "quote_cancelled",
       "quote_transformation_rolled_back",
       "quote_document_regenerated",
+      "quote_expiration_updated",
       "quote_email_sent",
       "quote_manual_email_sent",
       "quote_sms_sent",
@@ -1901,6 +1933,15 @@ function quoteEventDescription(event: QuoteEventOut, language: UiLanguage = "fr"
   }
   if (type === "quote_document_regenerated") {
     return uiText(language, "admin.quote_events.description.document_regenerated", { actor: actorLabel });
+  }
+  if (type === "quote_expiration_updated") {
+    const previousExpiresAt = typeof payload.previous_expires_at === "string" ? payload.previous_expires_at : "";
+    const expiresAt = typeof payload.expires_at === "string" ? payload.expires_at : "";
+    return uiText(language, "admin.quote_events.description.expiration_updated", {
+      actor: actorLabel,
+      from: formatDate(previousExpiresAt || null, language),
+      to: formatDate(expiresAt || null, language),
+    });
   }
   if (type === "quote_email_sent") {
     if (kind.trim().toLowerCase().startsWith("quote_public_") && kind.trim().toLowerCase().endsWith("_confirmation")) {
@@ -2436,6 +2477,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
   const publicChangeRequestMessage = publicResponseLastMessage || revisionChangeRequestMessage || t("admin.quote_detail.public_change_request_fallback");
   const canEditQuote = ["created", "change_requested"].includes(quoteStatus) && !hasChangeRequestRevision;
   const canSendQuote = quoteStatus === "created";
+  const canChangeQuoteExpiration = quoteStatus === "sent" && !hasChangeRequestRevision;
   const canResendQuote = ["sent", "approved", "rejected", "expired", "change_requested"].includes(quoteStatus) && !hasChangeRequestRevision;
   const quoteHasKitLine = detail.lines.some((line) => Boolean(line.kit_id));
   const showMissingKitWarning = !quoteHasKitLine;
@@ -3715,6 +3757,35 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                     {t("admin.quote_detail.send_unavailable_status")}
                   </small>
                 )}
+
+                {canChangeQuoteExpiration ? (
+                  <div className="card" style={{ minWidth: 320, flex: "1 1 320px" }}>
+                    <h4>{t("admin.quote_detail.change_expiration_title")}</h4>
+                    <p className="muted top-gap-sm">
+                      {t("admin.quote_detail.change_expiration_help")}
+                    </p>
+                    <form action={updateQuoteExpirationAction} className="top-gap-sm">
+                      <input type="hidden" name="quote_id" value={detail.quote.id} />
+                      <input type="hidden" name="return_to" value={selfPath} />
+                      <input type="hidden" name="timezone" value={detail.quote.timezone || "Europe/Paris"} />
+                      <label>
+                        {t("admin.quote_detail.new_expiration")}
+                        <input
+                          type="datetime-local"
+                          name="expires_at_local"
+                          defaultValue={dateTimeLocalValue(detail.quote.expires_at, detail.quote.timezone)}
+                          required
+                        />
+                      </label>
+                      <small className="muted">
+                        {t("admin.quote_detail.expiration_timezone", { timezone: detail.quote.timezone || "Europe/Paris" })}
+                      </small>
+                      <div className="top-gap-sm">
+                        <button type="submit" className="ghost">{t("admin.quote_detail.change_expiration_button")}</button>
+                      </div>
+                    </form>
+                  </div>
+                ) : null}
 
 	                {canCancelQuote ? (
 	                  <div className="card" style={{ minWidth: 360, flex: "1 1 360px" }}>

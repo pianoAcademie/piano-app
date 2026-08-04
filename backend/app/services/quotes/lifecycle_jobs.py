@@ -1014,7 +1014,7 @@ def run_quote_daily_lifecycle_job(
                                 template_ref=settings.quote_reminder_template_ref,
                                 now=ts,
                                 delivery_enabled=settings.delivery_enabled,
-                                dedupe_suffix=f"{offset_hours}h",
+                                dedupe_suffix=f"{offset_hours}h:{quote.expires_at.astimezone(UTC).strftime('%Y%m%d%H%M')}",
                             )
                         if recipient_phone and settings.quote_reminder_sms_enabled:
                             sms_sent = _send_sms_if_enabled(

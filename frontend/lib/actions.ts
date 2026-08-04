@@ -12155,6 +12155,47 @@ export async function resendQuoteAction(formData: FormData): Promise<void> {
   redirect(withUiMessageCode(successReturnTo, "ok", "quote_resent", { lang: language }));
 }
 
+export async function updateQuoteExpirationAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+
+  const quoteId = String(formData.get("quote_id") ?? "").trim();
+  const returnTo = safeAdminQuotesPath(String(formData.get("return_to") ?? `/admin/quotes/${encodeURIComponent(quoteId)}?section=document`));
+  const successReturnTo = withUiLanguage(returnTo, language);
+  const localExpiration = String(formData.get("expires_at_local") ?? "").trim();
+  const timezone = normalizeTimezone(String(formData.get("timezone") ?? "Europe/Paris"), "Europe/Paris");
+  const localMatch = localExpiration.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/);
+  const expiresAt = localMatch
+    ? parseUtcFromDateAndTimeInTimezone(localMatch[1], localMatch[2], timezone)
+    : null;
+
+  if (!quoteId) {
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_not_found", { lang: language }));
+  }
+  if (!expiresAt) {
+    redirect(withUiMessageCode(successReturnTo, "error", "quote_expiration_invalid", { lang: language }));
+  }
+
+  const result = await backendRequest<{ quote: { id: string } }>(
+    `/api/v1/quotes/${encodeURIComponent(quoteId)}/expiration`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ expires_at: expiresAt }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(successReturnTo, "error", result.message));
+  }
+  revalidatePath("/admin/quotes");
+  revalidatePath(`/admin/quotes/${quoteId}`);
+  redirect(withUiMessageCode(successReturnTo, "ok", "quote_expiration_updated", { lang: language }));
+}
+
 export async function sendQuoteManualEmailAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

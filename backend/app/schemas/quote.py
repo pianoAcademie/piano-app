@@ -258,6 +258,10 @@ class QuoteAdminHoldNoteRequest(BaseModel):
     admin_hold_note: str | None = Field(default=None, max_length=4000)
 
 
+class QuoteExpirationUpdateRequest(BaseModel):
+    expires_at: datetime
+
+
 class QuoteSendRequest(BaseModel):
     recipient_email: str | None = Field(default=None, min_length=3, max_length=255)
     template_ref: str | None = Field(default=None, max_length=120)

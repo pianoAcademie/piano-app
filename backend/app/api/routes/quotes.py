@@ -95,6 +95,7 @@ from app.schemas.quote import (
     QuoteDiscountRuleUpsertRequest,
     QuoteDuplicateForChildRequest,
     QuoteEmailPreviewOut,
+    QuoteExpirationUpdateRequest,
     QuoteEventOut,
     QuoteFollowupOut,
     QuoteFollowupPaymentMethodRequest,
@@ -2974,7 +2975,8 @@ def _resolve_recipient_phone(db: Session, quote: Quote, explicit_phone: str | No
 
 
 def _quote_meta_dict(quote: Quote) -> dict[str, object]:
-    return dict(quote.meta) if isinstance(quote.meta, dict) else {}
+    meta = getattr(quote, "meta", None)
+    return dict(meta) if isinstance(meta, dict) else {}
 
 
 def _update_public_response_meta(
@@ -4690,6 +4692,53 @@ def _apply_quote_expiry_days_update(
     return True
 
 
+def _apply_sent_quote_expiration_update(
+    quote: Quote,
+    expires_at: datetime,
+    *,
+    now: datetime | None = None,
+) -> tuple[datetime | None, datetime, bool]:
+    if str(quote.status or "").strip().lower() != "sent":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only a sent quote awaiting the client's response can have its expiration changed",
+        )
+    if expires_at.tzinfo is None or expires_at.utcoffset() is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Quote expiration timezone is required",
+        )
+
+    updated_at = now or _utcnow()
+    normalized_expiration = expires_at.astimezone(timezone.utc)
+    if normalized_expiration <= updated_at:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Quote expiration must be in the future",
+        )
+
+    previous_expiration = quote.expires_at
+    if previous_expiration is not None and previous_expiration.tzinfo is None:
+        previous_expiration = previous_expiration.replace(tzinfo=timezone.utc)
+    if previous_expiration == normalized_expiration:
+        return previous_expiration, normalized_expiration, False
+
+    quote.expires_at = normalized_expiration
+    if quote.sent_at is not None:
+        sent_at = quote.sent_at
+        if sent_at.tzinfo is None:
+            sent_at = sent_at.replace(tzinfo=timezone.utc)
+        duration_seconds = max(1, int((normalized_expiration - sent_at).total_seconds()))
+        quote.expiry_days = max(1, (duration_seconds + 86_399) // 86_400)
+
+    meta = dict(quote.meta or {})
+    meta.pop("reminder_offsets_sent", None)
+    quote.meta = meta
+    quote.reminder_sent_at = None
+    quote.updated_at = updated_at
+    return previous_expiration, normalized_expiration, True
+
+
 def _quote_type_default_expiry_days(quote_type: QuoteType | object | None) -> int:
     return int(getattr(quote_type, "default_expiry_days", None) or QUOTE_FALLBACK_EXPIRY_DAYS)
 
@@ -6211,6 +6260,47 @@ def update_quote(
     db.commit()
     db.refresh(row)
     return _quote_detail_out(db, row)
+
+
+@router.patch("/quotes/{quote_id}/expiration", response_model=QuoteDetailOut)
+def update_sent_quote_expiration(
+    quote_id: UUID,
+    payload: QuoteExpirationUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN)),
+) -> QuoteDetailOut:
+    quote = _load_quote(db, quote_id, lock=True)
+    now = _utcnow()
+    previous_expiration, next_expiration, changed = _apply_sent_quote_expiration_update(
+        quote,
+        payload.expires_at,
+        now=now,
+    )
+    if not changed:
+        return _quote_detail_out(db, quote)
+
+    db.add(quote)
+    db.flush()
+    lines = _load_quote_lines(db, quote.id)
+    snapshot = _freeze_quote_document_snapshot(db, quote=quote, lines=lines, state="frozen")
+    db.add(
+        QuoteEvent(
+            quote_id=quote.id,
+            event_type="quote_expiration_updated",
+            actor_type="admin",
+            actor_id=current_user.id,
+            payload={
+                "previous_expires_at": previous_expiration.isoformat() if previous_expiration else None,
+                "expires_at": next_expiration.isoformat(),
+                "snapshot_id": str(snapshot.id),
+                "document_hash": snapshot.document_hash,
+            },
+            created_at=now,
+        )
+    )
+    db.commit()
+    db.refresh(quote)
+    return _quote_detail_out(db, quote)
 
 
 @router.patch("/quotes/{quote_id}/admin-hold-note", response_model=QuoteDetailOut)

@@ -6,10 +6,13 @@ import sys
 import unittest
 from types import SimpleNamespace
 
+from fastapi import HTTPException
+
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.quotes import (
     _apply_quote_expiry_days_update,
+    _apply_sent_quote_expiration_update,
     _mark_quote_sent_for_first_delivery,
     _quote_expiry_days_for_context,
     _sync_draft_quote_expiry_days_from_type,
@@ -18,6 +21,73 @@ from app.services.quotes.quote_documents import display_quote_expires_at
 
 
 class QuoteExpiryUpdateTests(unittest.TestCase):
+    def test_sent_quote_expiration_can_be_changed_to_a_future_instant(self) -> None:
+        now = datetime(2026, 8, 4, 10, 0, tzinfo=timezone.utc)
+        sent_at = datetime(2026, 8, 1, 8, 0, tzinfo=timezone.utc)
+        original_expiration = datetime(2026, 8, 6, 8, 0, tzinfo=timezone.utc)
+        next_expiration = datetime(2026, 8, 12, 18, 30, tzinfo=timezone.utc)
+        quote = SimpleNamespace(
+            status="sent",
+            sent_at=sent_at,
+            expires_at=original_expiration,
+            expiry_days=5,
+            meta={"reminder_offsets_sent": [48, 24], "other": "kept"},
+            reminder_sent_at=datetime(2026, 8, 4, 8, 0, tzinfo=timezone.utc),
+            updated_at=None,
+        )
+
+        previous, updated, changed = _apply_sent_quote_expiration_update(
+            quote,
+            next_expiration,
+            now=now,
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(previous, original_expiration)
+        self.assertEqual(updated, next_expiration)
+        self.assertEqual(quote.expires_at, next_expiration)
+        self.assertEqual(quote.expiry_days, 12)
+        self.assertIsNone(quote.reminder_sent_at)
+        self.assertEqual(quote.meta, {"other": "kept"})
+        self.assertEqual(quote.updated_at, now)
+
+    def test_sent_quote_expiration_rejects_a_past_instant(self) -> None:
+        now = datetime(2026, 8, 4, 10, 0, tzinfo=timezone.utc)
+        quote = SimpleNamespace(status="sent")
+
+        with self.assertRaises(HTTPException) as raised:
+            _apply_sent_quote_expiration_update(
+                quote,
+                datetime(2026, 8, 4, 9, 59, tzinfo=timezone.utc),
+                now=now,
+            )
+
+        self.assertEqual(raised.exception.status_code, 422)
+
+    def test_sent_quote_expiration_requires_an_explicit_timezone(self) -> None:
+        quote = SimpleNamespace(status="sent")
+
+        with self.assertRaises(HTTPException) as raised:
+            _apply_sent_quote_expiration_update(
+                quote,
+                datetime(2026, 8, 12, 18, 30),
+                now=datetime(2026, 8, 4, 10, 0, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(raised.exception.status_code, 422)
+
+    def test_only_a_quote_still_awaiting_response_can_change_expiration(self) -> None:
+        quote = SimpleNamespace(status="approved")
+
+        with self.assertRaises(HTTPException) as raised:
+            _apply_sent_quote_expiration_update(
+                quote,
+                datetime(2026, 8, 12, 18, 30, tzinfo=timezone.utc),
+                now=datetime(2026, 8, 4, 10, 0, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(raised.exception.status_code, 409)
+
     def test_same_expiry_days_preserves_existing_expiration_date(self) -> None:
         original_expiration = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
         quote = SimpleNamespace(expiry_days=10, expires_at=original_expiration)
