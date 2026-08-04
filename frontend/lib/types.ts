@@ -1226,6 +1226,22 @@ export type ProfessorSessionOut = {
   };
 };
 
+export type ProfessorInternalNoteListOut = {
+  id: string;
+  note_type: "SESSION" | "STUDENT" | string;
+  body: string;
+  session_id: string;
+  booking_id: string | null;
+  student_id: string | null;
+  student_display_name: string | null;
+  session_title: string;
+  session_start_at_utc: string;
+  session_timezone: string;
+  course_type_name: string;
+  location_id: string;
+  location_name: string;
+};
+
 export type ProfessorAttendancePendingOut = {
   session_id: string;
   title: string;

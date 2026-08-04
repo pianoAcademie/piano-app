@@ -159,6 +159,22 @@ class ProfessorInternalNoteOut(BaseModel):
     internal_note: str | None = None
 
 
+class ProfessorInternalNoteListOut(BaseModel):
+    id: str
+    note_type: str
+    body: str
+    session_id: UUID
+    booking_id: UUID | None = None
+    student_id: UUID | None = None
+    student_display_name: str | None = None
+    session_title: str
+    session_start_at_utc: datetime
+    session_timezone: str
+    course_type_name: str
+    location_id: UUID
+    location_name: str
+
+
 class ProfessorSessionMessageOut(BaseModel):
     id: UUID
     session_id: UUID

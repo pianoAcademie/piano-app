@@ -36,6 +36,7 @@ import type {
   ProfessorAttendancePendingOut,
   ProfessorBalanceOut,
   ProfessorContractGridOut,
+  ProfessorInternalNoteListOut,
   AdminCatalogProductOut,
   AdminCatalogRequestOut,
   LocationOut,
@@ -49,7 +50,7 @@ import type {
 import { normalizeUiLanguage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
-type Tab = "overview" | "planning" | "finance" | "messages" | "catalog" | "profile";
+type Tab = "overview" | "planning" | "notes" | "finance" | "messages" | "catalog" | "profile";
 type AgendaView = "week" | "day" | "agenda";
 
 type AgendaRange = {
@@ -82,7 +83,7 @@ function resolveProfessorErrorMessage(rawError: string, errorCode: string, error
 }
 
 function parseTab(value: string): Tab {
-  if (value === "planning" || value === "finance" || value === "messages" || value === "catalog" || value === "profile") {
+  if (value === "planning" || value === "notes" || value === "finance" || value === "messages" || value === "catalog" || value === "profile") {
     return value;
   }
   return "overview";
@@ -568,6 +569,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
     profileResult,
     pendingResult,
     sessionsResult,
+    notesResult,
     balanceResult,
     payoutsResult,
     messagesResult,
@@ -580,6 +582,9 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
     backendRequest<ProfessorMeOut>("/api/v1/professors/me", {}, token),
     backendRequest<ProfessorAttendancePendingOut[]>("/api/v1/professors/me/attendance/pending?limit=200", {}, token),
     backendRequest<ProfessorSessionOut[]>(`/api/v1/professors/me/sessions?${sessionsQuery.toString()}`, {}, token),
+    currentTab === "notes"
+      ? backendRequest<ProfessorInternalNoteListOut[]>("/api/v1/professors/me/notes?limit=1000", {}, token)
+      : Promise.resolve({ ok: true as const, status: 200, data: [] as ProfessorInternalNoteListOut[] }),
     backendRequest<ProfessorBalanceOut>("/api/v1/professors/me/balance", {}, token),
     backendRequest<ProfessorPayoutOut[]>("/api/v1/professors/me/payouts?limit=200", {}, token),
     backendRequest<ProfessorSessionMessageOut[]>("/api/v1/professors/me/messages?limit=100", {}, token),
@@ -683,6 +688,42 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   const nextAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: nextAgendaDate, dayDetails: "" });
   const todayAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: todayKeyUtc(), dayDetails: "" });
   const archivedMessages = messagesResult.ok ? messagesResult.data : [];
+  const internalNotes = notesResult.ok ? notesResult.data : [];
+  const noteSearch = readParam(searchParams, "note_q").trim().toLocaleLowerCase();
+  const noteTypeRaw = readParam(searchParams, "note_type").toUpperCase();
+  const noteType = noteTypeRaw === "SESSION" || noteTypeRaw === "STUDENT" ? noteTypeRaw : "ALL";
+  const notePeriodRaw = readParam(searchParams, "note_period").toUpperCase();
+  const notePeriod = notePeriodRaw === "30" || notePeriodRaw === "90" || notePeriodRaw === "365" || notePeriodRaw === "ALL"
+    ? notePeriodRaw
+    : "ALL";
+  const noteLocation = readParam(searchParams, "note_location");
+  const notePeriodCutoff = notePeriod === "ALL" ? null : Date.now() - Number(notePeriod) * 24 * 60 * 60 * 1000;
+  const noteLocationOptions = Array.from(
+    new Map(internalNotes.map((note) => [note.location_id, note.location_name])).entries(),
+  )
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name, language));
+  const filteredInternalNotes = internalNotes.filter((note) => {
+    if (noteType !== "ALL" && note.note_type !== noteType) {
+      return false;
+    }
+    if (noteLocation && note.location_id !== noteLocation) {
+      return false;
+    }
+    if (notePeriodCutoff !== null && new Date(note.session_start_at_utc).getTime() < notePeriodCutoff) {
+      return false;
+    }
+    if (!noteSearch) {
+      return true;
+    }
+    return [
+      note.body,
+      note.student_display_name ?? "",
+      note.session_title,
+      note.course_type_name,
+      note.location_name,
+    ].join(" ").toLocaleLowerCase().includes(noteSearch);
+  });
   const selectedMessage = selectedMessageId ? archivedMessages.find((message) => message.id === selectedMessageId) ?? null : null;
   const sentMessage = sentMessageId ? archivedMessages.find((message) => message.id === sentMessageId) ?? null : null;
   const selectedSessionMessages = selectedSession
@@ -692,6 +733,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   const navTabs: Array<{ id: Tab; label: string; icon: string }> = [
     { id: "overview", label: uiText(language, "teacher.todo"), icon: "🗂" },
     { id: "planning", label: uiText(language, "teacher.planning"), icon: "📅" },
+    { id: "notes", label: uiText(language, "teacher.notes"), icon: "📝" },
     { id: "catalog", label: uiText(language, "teacher.products"), icon: "📦" },
     { id: "finance", label: uiText(language, "teacher.balance"), icon: "💶" },
     { id: "messages", label: uiText(language, "teacher.messages"), icon: "✉️" },
@@ -717,6 +759,9 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
             </Link>
             <Link className="teacher-header-menu-link" href={buildProfHref({ tab: "finance", agendaView, agendaDate })}>
               {uiText(language, "teacher.balance")}
+            </Link>
+            <Link className="teacher-header-menu-link" href={buildProfHref({ tab: "notes", agendaView, agendaDate })}>
+              {uiText(language, "teacher.notes")}
             </Link>
             <Link className="teacher-header-menu-link" href={`${buildProfHref({ tab: "profile", agendaView, agendaDate })}#prof-mobile-app`}>
               {language === "en" ? "Install the app" : "Installer l’application"}
@@ -767,7 +812,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
         items={[
           { id: "overview", label: uiText(language, "teacher.todo"), icon: "📌", href: buildProfHref({ tab: "overview", agendaView, agendaDate }) },
           { id: "planning", label: uiText(language, "teacher.planning"), icon: "📅", href: buildProfHref({ tab: "planning", agendaView, agendaDate }) },
-          { id: "statements", label: uiText(language, "teacher.statements"), icon: "🧾", href: "/prof/statements" },
+          { id: "notes", label: uiText(language, "teacher.notes"), icon: "📝", href: buildProfHref({ tab: "notes", agendaView, agendaDate }) },
           { id: "messages", label: uiText(language, "teacher.messages"), icon: "✉️", href: buildProfHref({ tab: "messages", agendaView, agendaDate }) },
           { id: "profile", label: uiText(language, "teacher.profile"), icon: "👤", href: buildProfHref({ tab: "profile", agendaView, agendaDate }) },
         ]}
@@ -783,6 +828,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
       {!pendingResult.ok ? <AlertCard tone="error">{t("teacher.attendance_error")}: {pendingResult.message}</AlertCard> : null}
       {!balanceResult.ok ? <AlertCard tone="error">{t("teacher.balance_error")}: {balanceResult.message}</AlertCard> : null}
       {!messagesResult.ok ? <AlertCard tone="error">{t("teacher.messages_error")}: {messagesResult.message}</AlertCard> : null}
+      {currentTab === "notes" && !notesResult.ok ? <AlertCard tone="error">{t("teacher.notes_error")}: {notesResult.message}</AlertCard> : null}
       {!contractGridsResult.ok ? <AlertCard tone="error">{t("teacher.statement_contract_grid_error")}: {contractGridsResult.message}</AlertCard> : null}
       {!catalogStudentsResult.ok ? <AlertCard tone="error">{t("teacher.catalog_students_error")}: {catalogStudentsResult.message}</AlertCard> : null}
       {!catalogProductsResult.ok ? <AlertCard tone="error">{t("teacher.catalog_products_error")}: {catalogProductsResult.message}</AlertCard> : null}
@@ -1246,6 +1292,103 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
               })()
             ) : (
               <p className="muted">{t("teacher.no_active_compensation_grid")}</p>
+            )}
+          </ActionCard>
+        </section>
+      ) : null}
+
+      {currentTab === "notes" ? (
+        <section className="teacher-section-stack">
+          <ActionCard title={t("teacher.notes_title")} subtitle={t("teacher.notes_subtitle")}>
+            <form method="get" className="teacher-notes-filter-form">
+              <input type="hidden" name="tab" value="notes" />
+              <input type="hidden" name="agenda_view" value={agendaView} />
+              <input type="hidden" name="agenda_date" value={agendaDate} />
+              <label className="teacher-notes-search-field">
+                {t("teacher.notes_search")}
+                <input
+                  type="search"
+                  name="note_q"
+                  defaultValue={readParam(searchParams, "note_q")}
+                  placeholder={t("teacher.notes_search_placeholder")}
+                />
+              </label>
+              <div className="teacher-notes-filter-grid">
+                <label>
+                  {t("teacher.notes_type")}
+                  <select name="note_type" defaultValue={noteType}>
+                    <option value="ALL">{t("teacher.notes_type_all")}</option>
+                    <option value="SESSION">{t("teacher.notes_type_session")}</option>
+                    <option value="STUDENT">{t("teacher.notes_type_student")}</option>
+                  </select>
+                </label>
+                <label>
+                  {t("teacher.notes_period")}
+                  <select name="note_period" defaultValue={notePeriod}>
+                    <option value="ALL">{t("teacher.notes_period_all")}</option>
+                    <option value="30">{t("teacher.notes_period_30")}</option>
+                    <option value="90">{t("teacher.notes_period_90")}</option>
+                    <option value="365">{t("teacher.notes_period_365")}</option>
+                  </select>
+                </label>
+                <label>
+                  {t("teacher.notes_location")}
+                  <select name="note_location" defaultValue={noteLocation}>
+                    <option value="">{t("teacher.notes_location_all")}</option>
+                    {noteLocationOptions.map((location) => (
+                      <option key={location.id} value={location.id}>{location.name}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="teacher-notes-filter-actions">
+                <button type="submit">{t("teacher.notes_apply")}</button>
+                <Link className="mode-link" href={buildProfHref({ tab: "notes", agendaView, agendaDate })}>
+                  {t("teacher.notes_reset")}
+                </Link>
+              </div>
+            </form>
+          </ActionCard>
+
+          <ActionCard
+            title={t("teacher.notes_results", { count: filteredInternalNotes.length })}
+            subtitle={t("teacher.notes_results_subtitle")}
+          >
+            {filteredInternalNotes.length > 0 ? (
+              <div className="teacher-note-history-list">
+                {filteredInternalNotes.map((note) => {
+                  const isStudentNote = note.note_type === "STUDENT";
+                  const lessonDay = note.session_start_at_utc.slice(0, 10);
+                  return (
+                    <article key={note.id} className="teacher-note-history-card">
+                      <header className="teacher-note-history-head">
+                        <span className={`status-pill ${isStudentNote ? "status-info" : "status-warn"}`}>
+                          {isStudentNote ? t("teacher.notes_type_student") : t("teacher.notes_type_session")}
+                        </span>
+                        <time dateTime={note.session_start_at_utc}>{formatDateTime(note.session_start_at_utc, language)}</time>
+                      </header>
+                      <div className="teacher-note-history-title">
+                        <strong>{isStudentNote ? note.student_display_name ?? t("teacher.student_label") : t("teacher.notes_group_label")}</strong>
+                        <span className="muted">{note.session_title} · {note.course_type_name} · {note.location_name}</span>
+                      </div>
+                      <p className="teacher-note-history-body">{note.body}</p>
+                      <Link
+                        className="mode-link teacher-note-history-link"
+                        href={buildProfHref({
+                          tab: "planning",
+                          agendaView: "day",
+                          agendaDate: lessonDay,
+                          sessionId: note.session_id,
+                        })}
+                      >
+                        {t("teacher.notes_open_course")}
+                      </Link>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="muted">{t("teacher.notes_no_result")}</p>
             )}
           </ActionCard>
         </section>

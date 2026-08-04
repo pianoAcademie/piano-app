@@ -11159,6 +11159,104 @@ button.danger:focus-visible {
   gap: 12px;
 }
 
+.teacher-notes-filter-form,
+.teacher-notes-search-field,
+.teacher-notes-filter-grid label {
+  display: grid;
+  gap: 6px;
+}
+
+.teacher-notes-filter-form {
+  gap: 12px;
+}
+
+.teacher-notes-filter-form input,
+.teacher-notes-filter-form select {
+  min-height: 44px;
+}
+
+.teacher-notes-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.teacher-notes-filter-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.teacher-note-history-list {
+  display: grid;
+  gap: 10px;
+}
+
+.teacher-note-history-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #e2e7f0;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.teacher-note-history-head,
+.teacher-note-history-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.teacher-note-history-head time,
+.teacher-note-history-title .muted {
+  font-size: 12px;
+  text-align: right;
+}
+
+.teacher-note-history-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.teacher-note-history-link {
+  width: fit-content;
+  min-height: 40px;
+}
+
+@media (max-width: 620px) {
+  .teacher-notes-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .teacher-notes-filter-actions,
+  .teacher-notes-filter-actions button,
+  .teacher-notes-filter-actions .mode-link,
+  .teacher-note-history-link {
+    width: 100%;
+  }
+
+  .teacher-notes-filter-actions .mode-link,
+  .teacher-note-history-link {
+    justify-content: center;
+  }
+
+  .teacher-note-history-head,
+  .teacher-note-history-title {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .teacher-note-history-head time,
+  .teacher-note-history-title .muted {
+    text-align: left;
+  }
+}
+
 .teacher-mobile-app-card {
   display: grid;
   grid-template-columns: 64px minmax(0, 1fr);

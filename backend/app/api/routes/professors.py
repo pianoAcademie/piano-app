@@ -27,6 +27,7 @@ from app.schemas.professor import (
     ProfessorContractGridLineOut,
     ProfessorContractGridOut,
     ProfessorContractGridRuleOut,
+    ProfessorInternalNoteListOut,
     ProfessorInternalNoteOut,
     ProfessorInternalNoteUpdateRequest,
     ProfessorMarkAbsenceRequest,
@@ -635,6 +636,77 @@ def _require_internal_note_permission(permissions: dict[str, Any]) -> None:
 def _normalize_internal_note(value: str | None) -> str | None:
     normalized = (value or "").strip()
     return normalized or None
+
+
+@router.get("/professors/me/notes", response_model=list[ProfessorInternalNoteListOut])
+def list_my_internal_notes(
+    limit: int = Query(default=500, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROF)),
+) -> list[ProfessorInternalNoteListOut]:
+    professor = _resolve_professor_profile(db, current_user=current_user)
+    permissions = _resolve_professor_permissions(db, professor_id=professor.id)
+    if not permissions["can_view_planning"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Planning access denied")
+
+    session_note_rows = db.execute(
+        select(CourseSession, CourseType, Location)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .where(
+            CourseSession.professor_id == professor.id,
+            CourseSession.internal_note.is_not(None),
+            func.length(func.trim(CourseSession.internal_note)) > 0,
+        )
+    ).all()
+    student_note_rows = db.execute(
+        select(Booking, CourseSession, CourseType, Location, User)
+        .join(CourseSession, CourseSession.id == Booking.session_id)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .join(User, User.id == Booking.user_id)
+        .where(
+            CourseSession.professor_id == professor.id,
+            Booking.internal_note.is_not(None),
+            func.length(func.trim(Booking.internal_note)) > 0,
+        )
+    ).all()
+
+    notes = [
+        ProfessorInternalNoteListOut(
+            id=f"SESSION:{session_obj.id}",
+            note_type="SESSION",
+            body=session_obj.internal_note or "",
+            session_id=session_obj.id,
+            session_title=session_obj.title,
+            session_start_at_utc=session_obj.start_at_utc,
+            session_timezone=session_obj.timezone,
+            course_type_name=course_type.name,
+            location_id=location.id,
+            location_name=location.name,
+        )
+        for session_obj, course_type, location in session_note_rows
+    ]
+    notes.extend(
+        ProfessorInternalNoteListOut(
+            id=f"STUDENT:{booking.id}",
+            note_type="STUDENT",
+            body=booking.internal_note or "",
+            session_id=session_obj.id,
+            booking_id=booking.id,
+            student_id=student.id,
+            student_display_name=_display_name(student),
+            session_title=session_obj.title,
+            session_start_at_utc=session_obj.start_at_utc,
+            session_timezone=session_obj.timezone,
+            course_type_name=course_type.name,
+            location_id=location.id,
+            location_name=location.name,
+        )
+        for booking, session_obj, course_type, location, student in student_note_rows
+    )
+    notes.sort(key=lambda note: note.session_start_at_utc, reverse=True)
+    return notes[:limit]
 
 
 @router.patch("/professors/me/sessions/{session_id}/internal-note", response_model=ProfessorInternalNoteOut)
