@@ -32,6 +32,16 @@ const UI_LABEL_KEYS: Record<string, string> = {
   subject: "teacher.subject",
   internal_note: "teacher.internal_note",
   save_note: "teacher.save_note",
+  save: "teacher.save",
+  student_internal_note: "teacher.student_internal_note",
+  session_internal_note_section: "teacher.session_internal_note_section",
+  notes: "teacher.notes",
+  notes_search: "teacher.notes_search",
+  notes_type: "teacher.notes_type",
+  notes_period: "teacher.notes_period",
+  notes_location: "teacher.notes_location",
+  notes_apply: "teacher.notes_apply",
+  notes_open_course: "teacher.notes_open_course",
 };
 
 export function buildProfessorHelpLabels(language: UiLanguage): Record<string, string> {
