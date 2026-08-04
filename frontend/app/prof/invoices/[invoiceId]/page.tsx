@@ -8,7 +8,7 @@ import {
   teacherUncancelInvoiceAction,
 } from "../../../../lib/actions";
 import { backendRequest } from "../../../../lib/backend";
-import { getPortalReturnTo, getPortalToken, readPortalImpersonationClaims } from "../../../../lib/auth-cookies";
+import { getPortalReturnTo, getProfessorPortalToken, readPortalImpersonationClaims } from "../../../../lib/auth-cookies";
 import { buildProfessorHelpLabels } from "../../../../lib/professor-help-labels";
 import ActionCard from "../../../../components/teacher-ui/action-card";
 import AlertCard from "../../../../components/teacher-ui/alert-card";
@@ -55,7 +55,7 @@ export default async function TeacherInvoiceDetailPage({
   params: { invoiceId: string };
   searchParams: Record<string, string | string[] | undefined>;
 }): Promise<JSX.Element> {
-  const token = getPortalToken();
+  const token = getProfessorPortalToken();
   if (!token) {
     redirect("/login?error_code=session_expired");
   }

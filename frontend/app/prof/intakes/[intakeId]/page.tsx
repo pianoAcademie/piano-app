@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import AlertCard from "../../../../components/teacher-ui/alert-card";
 import PageHeaderMobile from "../../../../components/teacher-ui/page-header-mobile";
 import ProfessorLocalIntakeForm from "../../../../components/professor-local-intake-form";
-import { getPortalToken } from "../../../../lib/auth-cookies";
+import { getProfessorPortalToken } from "../../../../lib/auth-cookies";
 import { backendRequest } from "../../../../lib/backend";
 import type { ProfessorLocalIntakeDetailOut, UserOut } from "../../../../lib/types";
 
@@ -34,7 +34,7 @@ export default async function ProfessorLocalIntakePage({
   params: { intakeId: string };
   searchParams: SearchParams;
 }): Promise<JSX.Element> {
-  const token = getPortalToken();
+  const token = getProfessorPortalToken();
   const returnTo = `/prof/intakes/${encodeURIComponent(params.intakeId)}`;
   if (!token) redirect(`/login?portal=prof&return_to=${encodeURIComponent(returnTo)}&error_code=session_expired`);
 

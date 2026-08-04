@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { getPortalToken } from "../../../../../../lib/auth-cookies";
+import { getProfessorPortalToken } from "../../../../../../lib/auth-cookies";
 import { backendUrl } from "../../../../../../lib/backend";
 
 type RouteParams = {
@@ -11,7 +11,7 @@ type RouteParams = {
 };
 
 export async function GET(request: NextRequest, { params }: RouteParams): Promise<Response> {
-  const token = getPortalToken();
+  const token = getProfessorPortalToken();
   if (!token) {
     const loginUrl = new URL("/login?error_code=session_expired", request.url);
     return NextResponse.redirect(loginUrl, 302);

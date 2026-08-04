@@ -12,6 +12,7 @@ import {
   professorUpdateSessionInternalNoteAction,
 } from "../../lib/actions";
 import { backendRequest } from "../../lib/backend";
+import { hasAnyAdminAccess } from "../../lib/admin-access";
 import AutoSubmitInput from "../../components/auto-submit-input";
 import AutoSubmitSelect from "../../components/auto-submit-select";
 import DayEventsDrawer from "../../components/planning/day-events-drawer";
@@ -29,7 +30,7 @@ import SectionAccordion from "../../components/teacher-ui/section-accordion";
 import StatCard from "../../components/teacher-ui/stat-card";
 import StatChip from "../../components/teacher-ui/stat-chip";
 import StickyActionBar from "../../components/teacher-ui/sticky-action-bar";
-import { getPortalReturnTo, getPortalToken, readPortalImpersonationClaims } from "../../lib/auth-cookies";
+import { getPortalReturnTo, getProfessorPortalToken, readPortalImpersonationClaims } from "../../lib/auth-cookies";
 import { buildProfessorHelpLabels } from "../../lib/professor-help-labels";
 import type { PlanningEventChipData } from "../../components/planning/month-event-chip";
 import type {
@@ -536,7 +537,7 @@ function payoutStatusBadgeClass(status: string | null): string {
 }
 
 export default async function ProfessorPage({ searchParams }: { searchParams: SearchParams }): Promise<JSX.Element> {
-  const token = getPortalToken();
+  const token = getProfessorPortalToken();
   const professorLoginPath = "/login?portal=prof&return_to=%2Fprof&error_code=session_expired";
   if (!token) {
     redirect(professorLoginPath);
@@ -554,6 +555,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
     redirect("/client?tab=home");
   }
   const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const canAccessAdminPortal = hasAnyAdminAccess(meResult.data);
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
 
   const currentTab = parseTab(readParam(searchParams, "tab"));
@@ -779,9 +781,16 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
         statusLabel={profile.active ? uiText(language, "common.active") : uiText(language, "common.inactive")}
         menuLabel={uiText(language, "portal.teacher_menu")}
         trailing={
-          <Link className="mode-link teacher-header-link" href="/prof/statements">
-            {uiText(language, "teacher.statements")}
-          </Link>
+          <div className="row gap-sm">
+            {canAccessAdminPortal ? (
+              <Link className="mode-link teacher-header-link" href="/admin">
+                {language === "en" ? "Administration" : "Administration"}
+              </Link>
+            ) : null}
+            <Link className="mode-link teacher-header-link" href="/prof/statements">
+              {uiText(language, "teacher.statements")}
+            </Link>
+          </div>
         }
         menu={
           <div className="teacher-header-menu-items">

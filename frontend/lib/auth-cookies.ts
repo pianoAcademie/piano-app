@@ -156,12 +156,29 @@ export function getAnyToken(): string | null {
   );
 }
 
+export function getProfessorPortalToken(): string | null {
+  const portalToken = getPortalToken();
+  if (portalToken) {
+    return portalToken;
+  }
+
+  const adminToken = getAdminToken();
+  const adminClaims = decodeJwtPayloadUnsafe(adminToken);
+  if (adminToken && adminClaims?.role === "prof") {
+    return adminToken;
+  }
+  return null;
+}
+
 export function getTokenForPathname(pathname: string): string | null {
   const normalized = pathname.trim().toLowerCase();
   if (normalized.startsWith("/admin")) {
     return getAdminToken();
   }
-  if (normalized.startsWith("/client") || normalized.startsWith("/teacher") || normalized.startsWith("/prof") || normalized.startsWith("/q")) {
+  if (normalized.startsWith("/teacher") || normalized.startsWith("/prof")) {
+    return getProfessorPortalToken();
+  }
+  if (normalized.startsWith("/client") || normalized.startsWith("/q")) {
     return getPortalToken();
   }
   return getAnyToken();

@@ -11,7 +11,7 @@ import {
   teacherSendInvoiceToAccountingAction,
 } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
-import { getPortalReturnTo, getPortalToken, readPortalImpersonationClaims } from "../../../lib/auth-cookies";
+import { getPortalReturnTo, getProfessorPortalToken, readPortalImpersonationClaims } from "../../../lib/auth-cookies";
 import { buildProfessorHelpLabels } from "../../../lib/professor-help-labels";
 import AlertCard from "../../../components/teacher-ui/alert-card";
 import BottomTabs from "../../../components/teacher-ui/bottom-tabs";
@@ -282,7 +282,7 @@ export default async function TeacherStatementsPage({
 }: {
   searchParams: SearchParams;
 }): Promise<JSX.Element> {
-  const token = getPortalToken();
+  const token = getProfessorPortalToken();
   if (!token) {
     redirect("/login?error_code=session_expired");
   }

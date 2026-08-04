@@ -48,6 +48,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             </Suspense>
           </div>
           <div className="row admin-topbar-actions">
+            {meResult.data.role === "prof" ? (
+              <Link className="reset-link topbar-btn" href={withUiLanguage("/prof?tab=overview", language)}>
+                {language === "en" ? "Teacher space" : "Espace professeur"}
+              </Link>
+            ) : null}
             <Link className="reset-link topbar-btn" href={withUiLanguage("/client?tab=home", language)}>
               {language === "en" ? "Client view" : "Vue client"}
             </Link>
