@@ -49,7 +49,11 @@ from app.services.professor_permissions import permissions_dict
 from app.services.reminders import skip_pending_reminders_for_booking
 from app.services.makeup_passes import grant_makeup_for_excused_absence, revoke_pending_makeup_for_corrected_absence
 from app.services.session_notifications import send_session_operation_email
-from app.services.session_teachers import effective_teacher_filter_for_professor
+from app.services.session_teachers import (
+    effective_teacher_filter_for_professor,
+    effective_teacher_id_for_session,
+    professor_display_name,
+)
 
 router = APIRouter()
 
@@ -102,7 +106,7 @@ def _require_professor_session(
     session_obj = db.scalar(stmt)
     if session_obj is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    if session_obj.professor_id != professor_id:
+    if effective_teacher_id_for_session(session_obj) != professor_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Session does not belong to this professor")
     return session_obj
 
@@ -537,6 +541,7 @@ def list_my_professor_sessions(
     from_: datetime | None = Query(default=None, alias="from"),
     to: datetime | None = None,
     include_students: bool = False,
+    scope: str = Query(default="mine", pattern="^(mine|all)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.PROF)),
 ) -> list[ProfessorSessionOut]:
@@ -550,7 +555,12 @@ def list_my_professor_sessions(
     permissions = _resolve_professor_permissions(db, professor_id=professor.id)
     if not permissions["can_view_planning"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Planning access denied")
-    can_view_all_school_sessions = bool(permissions.get("can_view_all_school_sessions", False))
+    can_view_all_school_sessions = bool(
+        permissions.get("can_view_all_school_sessions", False)
+        or permissions.get("can_view_other_teachers_sessions", False)
+        or permissions.get("can_manage_other_teachers_students_and_sessions", False)
+    )
+    show_all_school_sessions = scope == "all" and can_view_all_school_sessions
 
     booked_counts = (
         select(
@@ -574,8 +584,8 @@ def list_my_professor_sessions(
         .outerjoin(booked_counts, booked_counts.c.session_id == CourseSession.id)
     )
 
-    if not can_view_all_school_sessions:
-        stmt = stmt.where(CourseSession.professor_id == professor.id)
+    if not show_all_school_sessions:
+        stmt = stmt.where(effective_teacher_filter_for_professor(professor_id=professor.id))
 
     if from_ is not None:
         stmt = stmt.where(CourseSession.start_at_utc >= from_)
@@ -585,12 +595,31 @@ def list_my_professor_sessions(
     rows = db.execute(stmt.order_by(CourseSession.start_at_utc.asc())).all()
     sessions = [row[0] for row in rows]
 
+    teacher_ids = {
+        teacher_id
+        for session_obj in sessions
+        for teacher_id in (session_obj.professor_id, session_obj.substitute_teacher_id)
+        if teacher_id is not None
+    }
+    professors_by_id = (
+        {
+            professor_obj.id: professor_obj
+            for professor_obj in db.scalars(select(ProfessorModel).where(ProfessorModel.id.in_(teacher_ids))).all()
+        }
+        if teacher_ids
+        else {}
+    )
+
     students_by_session: dict[UUID, list[ProfessorSessionStudentOut]] = {}
     if include_students and sessions:
         for session_obj in sessions:
             # With school-wide visibility, keep student roster visibility restricted
             # to the collaborator's own sessions unless explicit client rights are granted.
-            if can_view_all_school_sessions and session_obj.professor_id != professor.id and not permissions["can_view_clients"]:
+            if (
+                show_all_school_sessions
+                and effective_teacher_id_for_session(session_obj) != professor.id
+                and not permissions["can_view_clients"]
+            ):
                 students_by_session[session_obj.id] = []
             else:
                 students_by_session[session_obj.id] = _session_students(db, session_obj=session_obj)
@@ -607,6 +636,18 @@ def list_my_professor_sessions(
             capacity_max=session.capacity_max,
             booked_count=int(booked_count or 0),
             zoom_link=session.zoom_link,
+            habitual_teacher_id=session.professor_id,
+            habitual_teacher_display_name=professor_display_name(professors_by_id.get(session.professor_id)),
+            substitute_teacher_id=session.substitute_teacher_id,
+            substitute_teacher_display_name=(
+                professor_display_name(professors_by_id.get(session.substitute_teacher_id))
+                if session.substitute_teacher_id is not None
+                else None
+            ),
+            effective_teacher_id=effective_teacher_id_for_session(session),
+            effective_teacher_display_name=professor_display_name(
+                professors_by_id.get(effective_teacher_id_for_session(session))
+            ),
             students=students_by_session.get(session.id, []),
             course_type=ProfessorSessionCourseTypeOut(
                 id=course_type.id,
@@ -654,7 +695,7 @@ def list_my_internal_notes(
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
         .where(
-            CourseSession.professor_id == professor.id,
+            effective_teacher_filter_for_professor(professor_id=professor.id),
             CourseSession.internal_note.is_not(None),
             func.length(func.trim(CourseSession.internal_note)) > 0,
         )
@@ -666,7 +707,7 @@ def list_my_internal_notes(
         .join(Location, Location.id == CourseSession.location_id)
         .join(User, User.id == Booking.user_id)
         .where(
-            CourseSession.professor_id == professor.id,
+            effective_teacher_filter_for_professor(professor_id=professor.id),
             Booking.internal_note.is_not(None),
             func.length(func.trim(Booking.internal_note)) > 0,
         )

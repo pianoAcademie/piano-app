@@ -11618,6 +11618,24 @@ button.danger:focus-visible {
   font-size: 11px;
 }
 
+.teacher-planning-scope-toggle {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: min(100%, 430px);
+  gap: 6px;
+  margin: 12px 0 4px;
+  padding: 4px;
+  border: 1px solid #e2c38d;
+  border-radius: 12px;
+  background: #fff8eb;
+}
+
+.teacher-planning-scope-toggle .mode-link {
+  min-height: 44px;
+  justify-content: center;
+  text-align: center;
+}
+
 .teacher-planning-controls {
   align-items: end;
 }

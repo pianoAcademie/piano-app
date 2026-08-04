@@ -52,6 +52,7 @@ import { normalizeUiLanguage, resolveAuthOkMessage, type UiLanguage, uiText } fr
 type SearchParams = Record<string, string | string[] | undefined>;
 type Tab = "overview" | "planning" | "notes" | "finance" | "messages" | "catalog" | "profile";
 type AgendaView = "week" | "day" | "agenda";
+type PlanningScope = "mine" | "all";
 
 type AgendaRange = {
   from: Date;
@@ -382,6 +383,7 @@ function buildProfHref(params: {
   messageId?: string | null;
   dayDetails?: string | null;
   attendanceFilter?: string | null;
+  planningScope?: PlanningScope;
 }): string {
   const query = new URLSearchParams();
   query.set("tab", params.tab);
@@ -398,6 +400,9 @@ function buildProfHref(params: {
   }
   if (params.attendanceFilter && params.attendanceFilter !== "all") {
     query.set("attendance_filter", params.attendanceFilter);
+  }
+  if (params.planningScope === "all") {
+    query.set("planning_scope", "all");
   }
   return `/prof?${query.toString()}`;
 }
@@ -559,11 +564,14 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   const agendaDateRaw = readParam(searchParams, "agenda_date");
   const agendaDate = isDateKey(agendaDateRaw) ? agendaDateRaw : todayKeyUtc();
   const agendaRange = buildAgendaRange(agendaView, agendaDate, language);
+  const requestedPlanningScope: PlanningScope =
+    currentTab === "planning" && readParam(searchParams, "planning_scope") === "all" ? "all" : "mine";
 
   const sessionsQuery = new URLSearchParams();
   sessionsQuery.set("from", agendaRange.from.toISOString());
   sessionsQuery.set("to", agendaRange.to.toISOString());
   sessionsQuery.set("include_students", "true");
+  sessionsQuery.set("scope", requestedPlanningScope);
 
   const [
     profileResult,
@@ -601,6 +609,12 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
   const profile = profileResult.data;
   const fullName = `${profile.first_name} ${profile.last_name}`.trim();
+  const canViewAllSchoolSessions = Boolean(
+    profile.permissions.can_view_all_school_sessions
+      || profile.permissions.can_view_other_teachers_sessions
+      || profile.permissions.can_manage_other_teachers_students_and_sessions,
+  );
+  const planningScope: PlanningScope = canViewAllSchoolSessions && requestedPlanningScope === "all" ? "all" : "mine";
   const impersonationDisplayName = impersonationNameHint || fullName || profile.email;
   const okMessage = resolveAuthOkMessage(readParam(searchParams, "ok"), readParam(searchParams, "ok_code"), language);
   const errorMessage = resolveProfessorErrorMessage(
@@ -640,7 +654,10 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
         end_at_utc: session.end_at_utc,
         capacity_max: session.capacity_max,
         booked_count: Math.max(session.booked_count, reservedStudentsCountFromRoster(session)),
-        teacher_display_name: fullName || profile.email,
+        teacher_display_name: session.effective_teacher_display_name || fullName || profile.email,
+        habitual_teacher_display_name: session.habitual_teacher_display_name || undefined,
+        substitute_teacher_display_name: session.substitute_teacher_display_name,
+        effective_teacher_display_name: session.effective_teacher_display_name || undefined,
         location_label: shortLocationLabel(session.location.name, language),
         type_label: professorTypeLabel(session, language),
         status_label: statusLabel(displayStatus, language),
@@ -664,6 +681,9 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
       ? selectedSessionStudents.filter((student) => student.attendance_status === "BOOKED")
       : selectedSessionStudents;
   const editableAttendanceStudents = selectedSessionStudents.filter((student) => student.attendance_status !== "WAITLISTED");
+  const selectedSessionBelongsToProfessor = selectedSession
+    ? (selectedSession.effective_teacher_id ?? selectedSession.habitual_teacher_id) === profile.id
+    : false;
   const selectedMessageId = readParam(searchParams, "message_id");
   const sentMessageId = readParam(searchParams, "sent_message_id");
 
@@ -681,12 +701,15 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   const canEditPlanning = profile.permissions.can_edit_planning;
   const canTakeAttendance = profile.permissions.can_take_attendance || profile.permissions.can_edit_planning;
   const canMessageStudents = profile.permissions.can_message_clients;
+  const canTakeAttendanceForSelectedSession = canTakeAttendance && selectedSessionBelongsToProfessor;
+  const canMessageSelectedSession = canMessageStudents && selectedSessionBelongsToProfessor;
+  const canEditSelectedSession = canEditPlanning && selectedSessionBelongsToProfessor;
   const maxVisibleSessionsByDay = agendaView === "day" ? 24 : agendaView === "week" ? 8 : 5;
   const previousAgendaDate = shiftAgendaDate(agendaView, agendaDate, -1);
   const nextAgendaDate = shiftAgendaDate(agendaView, agendaDate, 1);
-  const previousAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: previousAgendaDate, dayDetails: "" });
-  const nextAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: nextAgendaDate, dayDetails: "" });
-  const todayAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: todayKeyUtc(), dayDetails: "" });
+  const previousAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: previousAgendaDate, dayDetails: "", planningScope });
+  const nextAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: nextAgendaDate, dayDetails: "", planningScope });
+  const todayAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: todayKeyUtc(), dayDetails: "", planningScope });
   const archivedMessages = messagesResult.ok ? messagesResult.data : [];
   const internalNotes = notesResult.ok ? notesResult.data : [];
   const noteSearch = readParam(searchParams, "note_q").trim().toLocaleLowerCase();
@@ -894,8 +917,26 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
             <span className="badge">{agendaRange.title}</span>
           </div>
 
+          {canViewAllSchoolSessions ? (
+            <nav className="teacher-planning-scope-toggle" aria-label={t("teacher.planning_scope_label")}>
+              <Link
+                className={`mode-link ${planningScope === "mine" ? "mode-active" : ""}`}
+                href={buildProfHref({ tab: "planning", agendaView, agendaDate, planningScope: "mine" })}
+              >
+                {t("teacher.planning_scope_mine")}
+              </Link>
+              <Link
+                className={`mode-link ${planningScope === "all" ? "mode-active" : ""}`}
+                href={buildProfHref({ tab: "planning", agendaView, agendaDate, planningScope: "all" })}
+              >
+                {t("teacher.planning_scope_all")}
+              </Link>
+            </nav>
+          ) : null}
+
           <form method="get" className="grid cols-4 teacher-planning-controls">
             <input type="hidden" name="tab" value="planning" />
+            <input type="hidden" name="planning_scope" value={planningScope} />
             <label>
               {t("teacher.view_label")}
               <AutoSubmitSelect
@@ -943,7 +984,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                 isToday={day.key === todayKeyUtc()}
                 maxVisibleEvents={maxVisibleSessionsByDay}
                 expanded={agendaView !== "agenda"}
-                dayDetailsHref={buildProfHref({ tab: "planning", agendaView, agendaDate, dayDetails: day.key })}
+                dayDetailsHref={buildProfHref({ tab: "planning", agendaView, agendaDate, dayDetails: day.key, planningScope })}
                 openSessionHref={(sessionId) =>
                   buildProfHref({
                     tab: "planning",
@@ -951,6 +992,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                     agendaDate,
                     sessionId,
                     dayDetails: "",
+                    planningScope,
                   })
                 }
               />
@@ -962,7 +1004,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
             isOpen={Boolean(selectedDayDetails && !selectedSession)}
             dayLabel={selectedDayDetails ? selectedDayDetails.label : ""}
             events={selectedDayDetails ? selectedDayDetails.events : []}
-            closeHref={buildProfHref({ tab: "planning", agendaView, agendaDate, dayDetails: "" })}
+            closeHref={buildProfHref({ tab: "planning", agendaView, agendaDate, dayDetails: "", planningScope })}
             openSessionHref={(sessionId) =>
               buildProfHref({
                 tab: "planning",
@@ -970,6 +1012,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                 agendaDate,
                 sessionId,
                 dayDetails: "",
+                planningScope,
               })
             }
           />
@@ -1466,6 +1509,9 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                 <h2 className="modal-title">{t("teacher.attendance_title")}</h2>
                 <p className="muted">
                   {formatDateTime(selectedSession.start_at_utc, language)} - {formatTime(selectedSession.end_at_utc, language)} · {selectedSession.location.name}
+                  {planningScope === "all" && selectedSession.effective_teacher_display_name
+                    ? ` · ${t("teacher.teacher_short")} ${selectedSession.effective_teacher_display_name}`
+                    : ""}
                 </p>
               </div>
               <div className="teacher-attendance-header-meta">
@@ -1475,7 +1521,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                 <span className="status-badge status-waitlist">{t("teacher.to_fill_count", { count: selectedSessionPendingCount })}</span>
                 <Link
                   className="modal-close-x"
-                  href={buildProfHref({ tab: "planning", agendaView, agendaDate })}
+                  href={buildProfHref({ tab: "planning", agendaView, agendaDate, planningScope })}
                   aria-label={uiText(language, "common.close")}
                 >
                   ×
@@ -1489,19 +1535,21 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                   <div className="teacher-attendance-filters">
                     <Link
                       className={`mode-link ${attendanceFilter === "all" ? "mode-active" : ""}`}
-                      href={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id, attendanceFilter: "all" })}
+                      href={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id, attendanceFilter: "all", planningScope })}
                     >
                       {t("teacher.all_filter")}
                     </Link>
                     <Link
                       className={`mode-link ${attendanceFilter === "missing" ? "mode-active" : ""}`}
-                      href={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id, attendanceFilter: "missing" })}
+                      href={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id, attendanceFilter: "missing", planningScope })}
                     >
                       {t("teacher.missing_filter")}
                     </Link>
                   </div>
-                  {canTakeAttendance && editableAttendanceStudents.length > 0 ? (
+                  {canTakeAttendanceForSelectedSession && editableAttendanceStudents.length > 0 ? (
                     <span className="status-badge status-scheduled">{t("teacher.one_tap_per_student")}</span>
+                  ) : planningScope === "all" && !selectedSessionBelongsToProfessor ? (
+                    <span className="status-badge status-scheduled">{t("teacher.planning_read_only_course")}</span>
                   ) : null}
                 </div>
 
@@ -1531,7 +1579,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
                         {student.attendance_status === "WAITLISTED" ? (
                           <p className="muted">{t("teacher.waitlist_student_readonly")}</p>
-                        ) : canTakeAttendance ? (
+                        ) : canTakeAttendanceForSelectedSession ? (
                           <div className="teacher-attendance-segment-grid">
                             {[
                               { value: "ATTENDED", label: t("teacher.present"), tone: "ok" },
@@ -1550,6 +1598,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                                     agendaDate,
                                     sessionId: selectedSession.id,
                                     attendanceFilter,
+                                    planningScope,
                                   })}
                                 />
                                 <button
@@ -1567,7 +1616,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                           <p className="muted">{t("teacher.read_only")}</p>
                         )}
 
-                        {student.attendance_status !== "WAITLISTED" && canTakeAttendance ? (
+                        {student.attendance_status !== "WAITLISTED" && canTakeAttendanceForSelectedSession ? (
                           <details className="teacher-student-note">
                             <summary>
                               <span>{t("teacher.student_internal_note")}</span>
@@ -1587,6 +1636,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                                   agendaDate,
                                   sessionId: selectedSession.id,
                                   attendanceFilter,
+                                  planningScope,
                                 })}
                               />
                               <p className="teacher-note-safety-text teacher-note-safety-internal">
@@ -1667,7 +1717,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                   </div>
                 </details>
 
-                {canTakeAttendance ? (
+                {canTakeAttendanceForSelectedSession ? (
                   <details className="teacher-attendance-accordion" open>
                     <summary>{t("teacher.session_internal_note_section")}</summary>
                     <div className="teacher-attendance-accordion-body">
@@ -1677,7 +1727,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                         <input
                           type="hidden"
                           name="return_to"
-                          value={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id, attendanceFilter })}
+                          value={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id, attendanceFilter, planningScope })}
                         />
                         <label>
                           {t("teacher.session_internal_note")}
@@ -1699,7 +1749,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                   </details>
                 ) : null}
 
-                {canMessageStudents ? (
+                {canMessageSelectedSession ? (
                   <details className="teacher-attendance-accordion">
                     <summary>{t("teacher.notify_students_section")}</summary>
                     <div className="teacher-attendance-accordion-body">
@@ -1709,7 +1759,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                         <input
                           type="hidden"
                           name="return_to"
-                          value={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id, attendanceFilter })}
+                          value={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id, attendanceFilter, planningScope })}
                         />
                         <input type="hidden" name="recipient_target" value="GROUP" />
                         <label>
@@ -1737,7 +1787,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                   </details>
                 ) : null}
 
-                {canEditPlanning && selectedSession.status !== "CANCELLED" ? (
+                {canEditSelectedSession && selectedSession.status !== "CANCELLED" ? (
                   <details className="teacher-attendance-accordion teacher-attendance-accordion-danger">
                     <summary>{t("teacher.teacher_absence")}</summary>
                     <div className="teacher-attendance-accordion-body">
@@ -1746,7 +1796,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                         <input
                           type="hidden"
                           name="return_to"
-                          value={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id, attendanceFilter })}
+                          value={buildProfHref({ tab: "planning", agendaView, agendaDate, sessionId: selectedSession.id, attendanceFilter, planningScope })}
                         />
                         <label className="checkline">
                           <input type="checkbox" name="notify_students" />
@@ -1788,7 +1838,8 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                       <strong>{t("teacher.location")}:</strong> {selectedSession.location.name}
                     </p>
                     <p>
-                      <strong>{t("teacher.teacher_label")}:</strong> {fullName || profile.email}
+                      <strong>{t("teacher.teacher_label")}:</strong>{" "}
+                      {selectedSession.effective_teacher_display_name || fullName || profile.email}
                     </p>
                     {selectedSession.zoom_link ? (
                       <p className="teacher-attendance-zoom-row">
@@ -1804,16 +1855,18 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
             </div>
 
             <footer className="teacher-attendance-footer">
-              <Link className="reset-link" href={buildProfHref({ tab: "planning", agendaView, agendaDate })}>
+              <Link className="reset-link" href={buildProfHref({ tab: "planning", agendaView, agendaDate, planningScope })}>
                 {uiText(language, "common.close")}
               </Link>
               <div className="row">
-                {selectedSessionPendingCount > 0 ? (
+                {!selectedSessionBelongsToProfessor ? (
+                  <span className="status-badge status-scheduled">{t("teacher.planning_read_only_course")}</span>
+                ) : selectedSessionPendingCount > 0 ? (
                   <span className="status-badge status-waitlist">{t("teacher.to_fill_count", { count: selectedSessionPendingCount })}</span>
                 ) : (
                   <span className="status-badge status-completed">{t("teacher.all_recorded")}</span>
                 )}
-                <Link className="mode-link" href={buildProfHref({ tab: "planning", agendaView, agendaDate })}>
+                <Link className="mode-link" href={buildProfHref({ tab: "planning", agendaView, agendaDate, planningScope })}>
                   {t("teacher.finish")}
                 </Link>
               </div>
