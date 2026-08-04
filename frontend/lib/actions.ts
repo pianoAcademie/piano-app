@@ -1173,6 +1173,7 @@ const PROFESSOR_PERMISSION_KEYS: ProfessorPermissionBooleanKey[] = [
   "can_view_admin_reservations",
   "can_access_collaborators",
   "can_view_planning_simulation",
+  "can_manage_check_deposits",
   "can_view_intakes",
   "can_view_quotes",
   "can_configure_app",
@@ -1204,6 +1205,7 @@ function parseProfessorPermissions(formData: FormData): ProfessorPermissionOut {
     permissions[key] = checkboxField(formData, key);
   }
   permissions.planning_simulation_location_id = optionalField(formData, "planning_simulation_location_id");
+  permissions.check_deposits_location_id = optionalField(formData, "check_deposits_location_id");
 
   return permissions;
 }

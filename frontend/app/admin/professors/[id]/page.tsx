@@ -336,6 +336,7 @@ const PERMISSION_SECTIONS: Array<{ titleKey: string; keys: Array<{ key: string; 
       { key: "can_view_planning", labelKey: "admin.professor_detail.permissions.view_planning" },
       { key: "can_edit_planning", labelKey: "admin.professor_detail.permissions.edit_planning" },
       { key: "can_view_planning_simulation", labelKey: "admin.professor_detail.permissions.view_planning_simulation" },
+      { key: "can_manage_check_deposits", labelKey: "admin.professor_detail.permissions.manage_check_deposits" },
       { key: "can_view_clients", labelKey: "admin.professor_detail.permissions.view_clients_readonly" },
       { key: "can_access_collaborators", labelKey: "admin.professor_detail.permissions.access_collaborators" },
       { key: "can_view_intakes", labelKey: "admin.professor_detail.permissions.view_intakes_readonly" },
@@ -493,6 +494,7 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
   const sessions = sessionsResult.ok ? sessionsResult.data : [];
   const locations = locationsResult.ok ? locationsResult.data : [];
   const selectedSimulationLocationId = String(permissionState.planning_simulation_location_id ?? "");
+  const selectedCheckDepositsLocationId = String(permissionState.check_deposits_location_id ?? "");
   const simulationLocationOptions = selectedSimulationLocationId && !locations.some((location) => location.id === selectedSimulationLocationId)
     ? [
         ...locations,
@@ -1060,6 +1062,27 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
                 </select>
               </label>
               <p className="muted">{t("admin.professor_detail.permissions.simulation_location_scope_help")}</p>
+            </article>
+            <article className="item span-2">
+              <label>
+                {t("admin.professor_detail.permissions.check_deposits_location_scope")}
+                <select
+                  name="check_deposits_location_id"
+                  defaultValue={selectedCheckDepositsLocationId}
+                >
+                  <option value="">{t("admin.professor_detail.permissions.check_deposits_location_required")}</option>
+                  {locations
+                    .filter((location) => !location.is_online)
+                    .slice()
+                    .sort((a, b) => a.name.localeCompare(b.name, "fr"))
+                    .map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <p className="muted">{t("admin.professor_detail.permissions.check_deposits_location_scope_help")}</p>
             </article>
 
             {PERMISSION_SECTIONS.map((section) => (

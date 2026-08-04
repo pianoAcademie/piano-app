@@ -21,6 +21,7 @@ from app.models.professor_contract import ProfessorContractGrid, ProfessorContra
 from app.models.professor_contract import ProfessorContractLineMode
 from app.models.professor_access import ProfessorPermission
 from app.models.product_catalog import CatalogProduct, ProductCategory, ProductLocationStock
+from app.models.quote import Quote
 from app.models.typeform_intake import TypeformIntake
 from app.models.user import ClientStatus, User, UserRole
 from app.schemas.booking import AttendanceUpdateRequest, BookingOut
@@ -735,6 +736,18 @@ def _local_intake_task_out(intake: TypeformIntake) -> ProfessorLocalIntakeTaskOu
     )
 
 
+def _local_intake_quote_still_actionable():
+    return or_(
+        TypeformIntake.related_quote_id.is_(None),
+        and_(
+            Quote.sent_at.is_(None),
+            Quote.approved_at.is_(None),
+            Quote.rejected_at.is_(None),
+            func.lower(Quote.status).notin_(("sent", "approved", "rejected", "cancelled", "expired")),
+        ),
+    )
+
+
 def _require_assigned_local_intake(
     db: Session,
     *,
@@ -742,9 +755,14 @@ def _require_assigned_local_intake(
     professor_id: UUID,
     lock: bool = False,
 ) -> TypeformIntake:
-    stmt = select(TypeformIntake).where(
-        TypeformIntake.id == intake_id,
-        TypeformIntake.local_confirmation_assignee_professor_id == professor_id,
+    stmt = (
+        select(TypeformIntake)
+        .outerjoin(Quote, Quote.id == TypeformIntake.related_quote_id)
+        .where(
+            TypeformIntake.id == intake_id,
+            TypeformIntake.local_confirmation_assignee_professor_id == professor_id,
+            _local_intake_quote_still_actionable(),
+        )
     )
     if lock:
         stmt = stmt.with_for_update()
@@ -886,8 +904,13 @@ def list_my_local_intake_confirmations(
     current_user: User = Depends(require_roles(UserRole.PROF)),
 ) -> list[ProfessorLocalIntakeTaskOut]:
     professor = _resolve_professor_profile(db, current_user=current_user)
-    stmt = select(TypeformIntake).where(
-        TypeformIntake.local_confirmation_assignee_professor_id == professor.id
+    stmt = (
+        select(TypeformIntake)
+        .outerjoin(Quote, Quote.id == TypeformIntake.related_quote_id)
+        .where(
+            TypeformIntake.local_confirmation_assignee_professor_id == professor.id,
+            _local_intake_quote_still_actionable(),
+        )
     )
     if status_filter != "ALL":
         stmt = stmt.where(TypeformIntake.local_confirmation_status == status_filter)

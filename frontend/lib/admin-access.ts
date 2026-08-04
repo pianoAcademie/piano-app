@@ -7,6 +7,7 @@ export const MANAGER_ADMIN_PERMISSION_KEYS: AdminPermissionKey[] = [
   "can_view_planning",
   "can_edit_planning",
   "can_view_planning_simulation",
+  "can_manage_check_deposits",
   "can_view_clients",
   "can_access_collaborators",
   "can_view_intakes",

@@ -2,9 +2,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { bulkUpdateAdminCheckDepositStatusAction } from "../../../lib/actions";
+import { hasAdminPermission } from "../../../lib/admin-access";
 import { getAdminToken } from "../../../lib/auth-cookies";
 import { backendRequest } from "../../../lib/backend";
-import type { AdminCheckDepositPaymentOut, UserOut } from "../../../lib/types";
+import type { AdminCheckDepositPaymentOut, LocationOut, UserOut } from "../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -25,6 +26,7 @@ const CHECK_DEPOSIT_TEXT: Record<UiLanguage, Record<string, string>> = {
     status_refused: "Refuses",
     title: "Depots de cheques",
     subtitle: "Traitez les cheques par lot apres scan, controle Excel ou depot banque.",
+    location_scope: "Perimetre : {location}",
     template: "Modele import",
     export_expected: "Exporter les cheques attendus",
     client_payments: "Paiements clients",
@@ -75,6 +77,7 @@ const CHECK_DEPOSIT_TEXT: Record<UiLanguage, Record<string, string>> = {
     status_refused: "Refused",
     title: "Check deposits",
     subtitle: "Process checks in batches after scanning, Excel review, or bank deposit.",
+    location_scope: "Scope: {location}",
     template: "Import template",
     export_expected: "Export expected checks",
     client_payments: "Client payments",
@@ -265,15 +268,22 @@ export default async function AdminCheckDepositsPage({ searchParams }: { searchP
     redirect("/login?error_code=session_expired");
   }
   const meResult = await backendRequest<UserOut>("/api/v1/auth/me", {}, token);
-  if (!meResult.ok || meResult.data.role !== "admin") {
+  if (!meResult.ok || !hasAdminPermission(meResult.data, "can_manage_check_deposits")) {
     redirect("/login?error_code=admin_access_required");
   }
   const language = normalizeUiLanguage(meResult.data.preferred_language);
-  const checksResult = await backendRequest<AdminCheckDepositPaymentOut[]>(
-    "/api/v1/admin/clients/check-deposits/pending?statuses=CHECK_RECEIVED,CHECK_DEPOSITED,CHECK_REFUSED",
-    {},
-    token,
-  );
+  const [checksResult, locationsResult] = await Promise.all([
+    backendRequest<AdminCheckDepositPaymentOut[]>(
+      "/api/v1/admin/clients/check-deposits/pending?statuses=CHECK_RECEIVED,CHECK_DEPOSITED,CHECK_REFUSED",
+      {},
+      token,
+    ),
+    backendRequest<LocationOut[]>("/api/v1/locations", {}, token),
+  ]);
+  const scopedLocationId = String(meResult.data.admin_permissions?.check_deposits_location_id ?? "");
+  const scopedLocationName = locationsResult.ok
+    ? locationsResult.data.find((location) => location.id === scopedLocationId)?.name ?? ""
+    : "";
   const searchQuery = normalizeSearch(readParam(searchParams, "q").trim());
   const returnTo = searchQuery ? `/admin/check-deposits?q=${encodeURIComponent(readParam(searchParams, "q").trim())}` : "/admin/check-deposits";
   const allChecks = checksResult.ok ? checksResult.data : [];
@@ -292,6 +302,7 @@ export default async function AdminCheckDepositsPage({ searchParams }: { searchP
           <div>
             <h2>{tt(language, "title")}</h2>
             <p className="muted">{tt(language, "subtitle")}</p>
+            {scopedLocationName ? <p className="status-pill status-info">{tt(language, "location_scope", { location: scopedLocationName })}</p> : null}
           </div>
           <div className="row wrap gap-sm">
             <Link className="ghost" href={`/admin/check-deposits/template${languageQuery}`}>{tt(language, "template")}</Link>

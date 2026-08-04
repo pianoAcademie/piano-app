@@ -1841,6 +1841,8 @@ class ProfessorPermissionOut(BaseModel):
     can_access_collaborators: bool
     can_view_planning_simulation: bool
     planning_simulation_location_id: UUID | None = None
+    can_manage_check_deposits: bool
+    check_deposits_location_id: UUID | None = None
     can_view_intakes: bool
     can_view_quotes: bool
     can_configure_app: bool
@@ -1891,6 +1893,8 @@ class ProfessorPermissionUpdateRequest(BaseModel):
     can_access_collaborators: bool = False
     can_view_planning_simulation: bool = False
     planning_simulation_location_id: UUID | None = None
+    can_manage_check_deposits: bool = False
+    check_deposits_location_id: UUID | None = None
     can_view_intakes: bool = False
     can_view_quotes: bool = False
     can_configure_app: bool = False

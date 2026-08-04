@@ -54,6 +54,12 @@ class ProfessorPermission(Base):
         ForeignKey("locations.id", ondelete="SET NULL"),
         nullable=True,
     )
+    can_manage_check_deposits: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    check_deposits_location_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("locations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     can_view_intakes: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     can_view_quotes: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     can_configure_app: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))

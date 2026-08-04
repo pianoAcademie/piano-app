@@ -21,7 +21,7 @@ from jwt import PyJWTError
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.orm import Session, aliased
 
-from app.api.deps import get_db, require_admin_or_permissions, require_roles
+from app.api.deps import get_admin_permission_map, get_db, require_admin_or_permissions, require_roles
 from app.core.config import settings
 from app.models.client_group import ClientGroup, ClientGroupMembership
 from app.models.client_record import (
@@ -9981,11 +9981,109 @@ def _check_deposit_payment_out(
     )
 
 
+def _check_deposit_scope_location_id(db: Session, *, actor: User) -> UUID | None:
+    if actor.role == UserRole.ADMIN:
+        return None
+    permission_map = get_admin_permission_map(db, actor)
+    raw_location_id = permission_map.get("check_deposits_location_id")
+    if not raw_location_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="A check-deposit location must be configured",
+        )
+    try:
+        location_id = UUID(str(raw_location_id))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid check-deposit location scope",
+        ) from exc
+    if db.scalar(select(Location.id).where(Location.id == location_id).limit(1)) is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Check-deposit location not found")
+    return location_id
+
+
+def _check_deposit_transaction_ids_for_location(
+    db: Session,
+    *,
+    rows: list[ClientManualTransaction],
+    location_id: UUID | None,
+) -> set[UUID]:
+    if location_id is None:
+        return {row.id for row in rows}
+    if not rows:
+        return set()
+
+    location = db.scalar(select(Location).where(Location.id == location_id).limit(1))
+    if location is None:
+        return set()
+
+    candidate_user_ids_by_transaction: dict[UUID, set[UUID]] = {}
+    payer_ids_without_student: set[UUID] = set()
+    for row in rows:
+        if row.student_user_id is not None:
+            candidate_user_ids_by_transaction[row.id] = {row.student_user_id}
+        else:
+            candidate_user_ids_by_transaction[row.id] = {row.user_id}
+            payer_ids_without_student.add(row.user_id)
+
+    if payer_ids_without_student:
+        family_rows = db.execute(
+            select(ClientFamilyLink.adult_user_id, ClientFamilyLink.child_user_id).where(
+                ClientFamilyLink.adult_user_id.in_(list(payer_ids_without_student))
+            )
+        ).all()
+        child_ids_by_adult: dict[UUID, set[UUID]] = {}
+        for adult_id, child_id in family_rows:
+            child_ids_by_adult.setdefault(adult_id, set()).add(child_id)
+        for row in rows:
+            if row.student_user_id is None:
+                candidate_user_ids_by_transaction[row.id].update(child_ids_by_adult.get(row.user_id, set()))
+
+    candidate_user_ids = {
+        user_id
+        for user_ids in candidate_user_ids_by_transaction.values()
+        for user_id in user_ids
+    }
+    if not candidate_user_ids:
+        return set()
+
+    normalized_location_code = str(location.code or "").strip().upper()
+    scoped_site = StudentSite.BAR_LE_DUC if normalized_location_code == "BAR_LE_DUC" else None
+    user_ids_at_location: set[UUID] = set()
+    if scoped_site is not None:
+        user_ids_at_location.update(
+            db.scalars(
+                select(User.id).where(
+                    User.id.in_(list(candidate_user_ids)),
+                    User.student_site == scoped_site,
+                )
+            ).all()
+        )
+    user_ids_at_location.update(
+        db.scalars(
+            select(Booking.user_id)
+            .join(CourseSession, CourseSession.id == Booking.session_id)
+            .where(
+                Booking.user_id.in_(list(candidate_user_ids)),
+                CourseSession.location_id == location_id,
+            )
+            .distinct()
+        ).all()
+    )
+
+    return {
+        transaction_id
+        for transaction_id, user_ids in candidate_user_ids_by_transaction.items()
+        if user_ids & user_ids_at_location
+    }
+
+
 @router.get("/check-deposits/pending", response_model=list[AdminCheckDepositPaymentOut])
 def list_admin_check_deposit_payments(
     statuses: str | None = Query(default="CHECK_RECEIVED"),
     db: Session = Depends(get_db),
-    _: User = Depends(require_roles(UserRole.ADMIN)),
+    actor: User = Depends(require_admin_or_permissions("can_manage_check_deposits")),
 ) -> list[AdminCheckDepositPaymentOut]:
     rows = db.execute(
         _check_payment_base_stmt(statuses=_check_deposit_statuses(statuses)).order_by(
@@ -9994,7 +10092,16 @@ def list_admin_check_deposit_payments(
             User.first_name.asc().nulls_last(),
         )
     ).all()
-    return [_check_deposit_payment_out(db, row=row, client=client) for row, client in rows]
+    allowed_transaction_ids = _check_deposit_transaction_ids_for_location(
+        db,
+        rows=[row for row, _client in rows],
+        location_id=_check_deposit_scope_location_id(db, actor=actor),
+    )
+    return [
+        _check_deposit_payment_out(db, row=row, client=client)
+        for row, client in rows
+        if row.id in allowed_transaction_ids
+    ]
 
 
 def _normalize_check_match_reference(value: str | None) -> str:
@@ -10048,7 +10155,7 @@ def _check_candidate_name_tokens_by_transaction(
 def bulk_update_admin_check_deposit_status(
     payload: AdminCheckDepositBulkUpdateRequest,
     db: Session = Depends(get_db),
-    actor: User = Depends(require_roles(UserRole.ADMIN)),
+    actor: User = Depends(require_admin_or_permissions("can_manage_check_deposits")),
 ) -> AdminCheckDepositBulkUpdateOut:
     target_status = payload.target_status.strip().upper()
     if target_status == "CHECK_DEPOSITED":
@@ -10077,6 +10184,12 @@ def bulk_update_admin_check_deposit_status(
         )
         .with_for_update()
     ).all()
+    allowed_transaction_ids = _check_deposit_transaction_ids_for_location(
+        db,
+        rows=rows,
+        location_id=_check_deposit_scope_location_id(db, actor=actor),
+    )
+    rows = [row for row in rows if row.id in allowed_transaction_ids]
     rows_by_id = {row.id: row for row in rows}
     rows_by_reference_amount: dict[tuple[str, Decimal], list[ClientManualTransaction]] = {}
     rows_by_amount: dict[Decimal, list[ClientManualTransaction]] = {}

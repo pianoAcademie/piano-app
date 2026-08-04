@@ -91,6 +91,8 @@ class ProfessorPermissionOut(BaseModel):
     can_access_collaborators: bool
     can_view_planning_simulation: bool
     planning_simulation_location_id: UUID | None = None
+    can_manage_check_deposits: bool
+    check_deposits_location_id: UUID | None = None
     can_configure_app: bool
     can_list_payments: bool
     can_manage_events: bool

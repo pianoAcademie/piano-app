@@ -34,6 +34,7 @@ PERMISSION_FIELDS: tuple[str, ...] = (
     "can_view_admin_reservations",
     "can_access_collaborators",
     "can_view_planning_simulation",
+    "can_manage_check_deposits",
     "can_view_intakes",
     "can_view_quotes",
     "can_configure_app",
@@ -83,6 +84,7 @@ DEFAULT_PROFESSOR_PERMISSIONS: dict[str, bool] = {
     "can_view_admin_reservations": False,
     "can_access_collaborators": False,
     "can_view_planning_simulation": False,
+    "can_manage_check_deposits": False,
     "can_view_intakes": False,
     "can_view_quotes": False,
     "can_configure_app": False,
@@ -125,10 +127,12 @@ def permissions_dict(row: ProfessorPermission | None, *, legacy_if_missing: bool
         else:
             payload = dict(DEFAULT_PROFESSOR_PERMISSIONS)
         payload["planning_simulation_location_id"] = None
+        payload["check_deposits_location_id"] = None
         return payload
 
     payload = {field: bool(getattr(row, field)) for field in PERMISSION_FIELDS}
     payload["planning_simulation_location_id"] = row.planning_simulation_location_id
+    payload["check_deposits_location_id"] = row.check_deposits_location_id
     return payload
 
 
