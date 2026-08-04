@@ -1398,15 +1398,17 @@ export async function loginAction(formData: FormData): Promise<void> {
     redirect("/login?error_code=invalid_session");
   }
 
-  if (hasAnyAdminAccess(me)) {
-    clearAllAuthTokens();
+  clearAllAuthTokens();
+  if (me.role === "admin") {
     setAdminSessionToken(result.data.access_token);
   } else {
-    clearAllAuthTokens();
     setPortalSessionToken(result.data.access_token);
+    if (me.role === "prof" && hasAnyAdminAccess(me)) {
+      setAdminSessionToken(result.data.access_token);
+    }
   }
 
-  if (hasAnyAdminAccess(me)) {
+  if (me.role === "admin") {
     redirect("/admin?ok_code=login_admin_success");
   }
 
