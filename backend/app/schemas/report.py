@@ -41,6 +41,36 @@ class AttendanceReportRow(BaseModel):
     attendance_status: str
 
 
+class TrialCourseReportRow(BaseModel):
+    booking_id: UUID
+    session_id: UUID
+    session_start_at: datetime
+    session_end_at: datetime
+    session_timezone: str
+    course_type_name: str
+    course_format: Literal["COLLECTIF", "PARTICULIER"]
+    location_id: UUID
+    location_name: str
+    professor_id: UUID | None = None
+    professor_name: str
+    student_id: UUID
+    student_first_name: str | None = None
+    student_last_name: str | None = None
+    student_email: str
+    parent_email: str | None = None
+    attendance_status: str
+    attendance_label: str
+    internal_note: str | None = None
+    conversion_status: str
+    client_status: str
+    has_intake: bool
+    intake_status: str | None = None
+    intake_received_at: datetime | None = None
+    quote_status: str | None = None
+    is_registered: bool
+    trial_detection_source: str
+
+
 class ProfessorStatementRow(BaseModel):
     session_id: UUID
     professor_id: UUID

@@ -37,7 +37,7 @@ from app.models.plan import (
     PlanRestrictionPeriod,
     SubscriptionStatus,
 )
-from app.models.user import ClientKind, User, UserRole
+from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.schemas.booking import BookingCreateRequest, BookingOut, ClientBookingOut, SessionMiniOut
 from app.services.makeup_passes import active_restricted_forfait_for_booking, consume_pass_and_create_makeup
 from app.services.family_billing import resolve_billing_profile
@@ -1322,6 +1322,7 @@ def _book_session_internal(
         booking.total_incl_vat_snapshot = total
         booking.currency_snapshot = currency
         booking.payment_hold_expires_at = payment_hold_expiration(now=now) if booking_status == BookingStatus.PENDING_PAYMENT else None
+        booking.is_trial_course = bool(booking.is_trial_course or booking_owner.client_status == ClientStatus.TRIAL)
     else:
         booking = Booking(
             session_id=session_id,
@@ -1336,6 +1337,7 @@ def _book_session_internal(
             vat_amount_snapshot=vat_amount,
             total_incl_vat_snapshot=total,
             currency_snapshot=currency,
+            is_trial_course=booking_owner.client_status == ClientStatus.TRIAL,
         )
         db.add(booking)
 

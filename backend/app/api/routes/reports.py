@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Alignment, Font, PatternFill
 from xhtml2pdf import pisa
 from sqlalchemy import Numeric, Text, case, cast, extract, func, or_, select, update
 from sqlalchemy.orm import Session
@@ -22,13 +22,14 @@ from app.api.deps import get_db, require_roles
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
 from app.models.client_record import ClientInvoiceLine, ClientManualTransaction, ClientNoteEntry
 from app.models.family import ClientFamilyLink
-from app.models.ops import CommunicationChannel as CommunicationChannelModel, CommunicationLog, LegalEntity
+from app.models.ops import CommunicationChannel as CommunicationChannelModel, CommunicationLog, LegalEntity, ProfessorSessionMessage
+from app.models.plan import ClientPlanSubscription, SubscriptionStatus
 from app.models.payout import ProfessorSessionPayout
 from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct, ProductCategory, ProductLocationStock
 from app.models.quote import Prospect, Quote, QuoteLine
 from app.models.reporting import GeneratedReport
 from app.models.typeform_intake import TypeformFormConfig, TypeformIntake
-from app.models.user import User, UserRole
+from app.models.user import ClientStatus, User, UserRole
 from app.schemas.report import (
     AttendanceReportRow,
     CommunicationChannel,
@@ -45,6 +46,7 @@ from app.schemas.report import (
     IntakeFamilySummaryRow,
     ProfessorStatementRow,
     ReservationReportRow,
+    TrialCourseReportRow,
 )
 from app.services.communication_journal import COMMUNICATION_TYPE_LABELS, KNOWN_COMMUNICATION_TYPES, communication_type_label
 from app.services.email_delivery import email_delivery_disabled_reason, send_email
@@ -61,6 +63,7 @@ REPORT_TYPE_LABELS: dict[str, str] = {
     "overdue-invoices": "Factures echues non payees",
     "reservations": "Reservations",
     "attendance": "Presence eleves",
+    "trial-courses": "Suivi des cours d'essai",
     "professor-statements": "Releves professeurs",
     "communications": "Communications",
     "payments": "Paiements clients",
@@ -2495,6 +2498,468 @@ def report_attendance(
         )
         for session, course_type, location, professor, booking, user in rows
     ]
+
+
+def _enum_value(value: object | None) -> str:
+    return str(getattr(value, "value", value) or "").strip().upper()
+
+
+def _trial_detection_source(session: CourseSession, course_type: CourseType, booking: Booking, user: User) -> str | None:
+    if bool(getattr(booking, "is_trial_course", False)):
+        return "RESERVATION_ESSAI"
+    if _enum_value(user.client_status) == ClientStatus.TRIAL.value:
+        return "STATUT_ESSAI"
+    trial_haystack = _normalize_token(f"{session.title} {course_type.name} {course_type.code}")
+    if "essai" in trial_haystack or "trial" in trial_haystack:
+        return "SEANCE_ESSAI"
+    effective_start = booking.student_start_at_utc or session.start_at_utc
+    if user.first_course_at is not None and booking.client_plan_subscription_id is None:
+        first_course_at = user.first_course_at
+        if first_course_at.tzinfo is None:
+            first_course_at = first_course_at.replace(tzinfo=timezone.utc)
+        effective_start_aware = effective_start
+        if effective_start_aware.tzinfo is None:
+            effective_start_aware = effective_start_aware.replace(tzinfo=timezone.utc)
+        if abs((first_course_at - effective_start_aware).total_seconds()) < 60:
+            return "PREMIER_COURS_HORS_ABONNEMENT"
+    return None
+
+
+def _trial_attendance_label(status_value: object | None, *, session_start_at: datetime, now: datetime) -> str:
+    normalized = _enum_value(status_value)
+    labels = {
+        BookingStatus.ATTENDED.value: "Present",
+        BookingStatus.NO_SHOW.value: "Absent non excuse",
+        BookingStatus.EXCUSED_ABSENCE.value: "Absence excusee",
+        BookingStatus.CANCELLED.value: "Reservation annulee",
+        BookingStatus.WAITLISTED.value: "Liste d attente",
+        BookingStatus.PENDING_PAYMENT.value: "Paiement en attente",
+    }
+    if normalized in labels:
+        return labels[normalized]
+    start_at = session_start_at if session_start_at.tzinfo is not None else session_start_at.replace(tzinfo=timezone.utc)
+    return "A venir" if start_at > now else "Presence non renseignee"
+
+
+def _intake_resolution_client_ids(intake: TypeformIntake) -> set[str]:
+    resolution = intake.resolution_json if isinstance(intake.resolution_json, dict) else {}
+    client_resolution = resolution.get("client_resolution") if isinstance(resolution.get("client_resolution"), dict) else {}
+    created_entities = resolution.get("created_entities") if isinstance(resolution.get("created_entities"), dict) else {}
+    keys = {
+        "selected_client_id",
+        "selected_family_adult_client_id",
+        "selected_family_child_client_id",
+        "selected_family_billing_client_id",
+        "client_id",
+        "adult_client_id",
+        "child_client_id",
+    }
+    values: set[str] = set()
+    for source in (client_resolution, created_entities):
+        for key in keys:
+            value = str(source.get(key) or "").strip()
+            if value:
+                values.add(value)
+    return values
+
+
+def _intake_matches_trial_student(
+    intake: TypeformIntake,
+    *,
+    student: User,
+    parent: User | None,
+) -> bool:
+    candidate_ids = {str(student.id)}
+    if parent is not None:
+        candidate_ids.add(str(parent.id))
+    if _intake_resolution_client_ids(intake) & candidate_ids:
+        return True
+
+    normalized = intake.normalized_payload_json if isinstance(intake.normalized_payload_json, dict) else {}
+    parent_email = str(normalized.get("parent_email") or normalized.get("adult_email") or "").strip().lower()
+    candidate_emails = {str(student.email or "").strip().lower()}
+    if parent is not None:
+        candidate_emails.add(str(parent.email or "").strip().lower())
+    if not parent_email or parent_email not in candidate_emails:
+        return False
+
+    requested_child = _normalize_token(
+        f"{normalized.get('child_first_name') or ''} {normalized.get('child_last_name') or ''}"
+    )
+    if not requested_child:
+        return True
+    student_name = _normalize_token(f"{student.first_name or ''} {student.last_name or ''}")
+    return requested_child == student_name
+
+
+def _trial_conversion_status(
+    *,
+    client_status: str,
+    registered: bool,
+    quote_status: str | None,
+    has_intake: bool,
+) -> str:
+    if registered or client_status == ClientStatus.ACTIVE.value:
+        return "Inscrit"
+    normalized_quote_status = str(quote_status or "").strip().lower()
+    if normalized_quote_status == "approved":
+        return "Devis accepte"
+    if normalized_quote_status in {"sent", "change_requested", "created"}:
+        return "Devis en cours"
+    if has_intake:
+        return "Intake rempli"
+    if client_status == ClientStatus.TRIAL.value:
+        return "Compte essai"
+    return "A relancer"
+
+
+def _load_trial_course_report_rows(
+    db: Session,
+    *,
+    date_from: date | None,
+    date_to: date | None,
+    professor_id: UUID | None,
+    location_id: UUID | None,
+    limit: int,
+    now: datetime | None = None,
+) -> list[TrialCourseReportRow]:
+    if date_from is not None and date_to is not None and date_from > date_to:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="'date_from' must be before 'date_to'")
+
+    stmt = (
+        select(CourseSession, CourseType, Location, Professor, Booking, User)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .outerjoin(Professor, Professor.id == func.coalesce(CourseSession.substitute_teacher_id, CourseSession.professor_id))
+        .join(Booking, Booking.session_id == CourseSession.id)
+        .join(User, User.id == Booking.user_id)
+        .where(User.role == UserRole.CLIENT)
+    )
+    if date_from is not None:
+        start_utc, _ = _day_bounds(date_from)
+        stmt = stmt.where(CourseSession.start_at_utc >= start_utc)
+    if date_to is not None:
+        _, end_utc = _day_bounds(date_to)
+        stmt = stmt.where(CourseSession.start_at_utc < end_utc)
+    if professor_id is not None:
+        stmt = stmt.where(func.coalesce(CourseSession.substitute_teacher_id, CourseSession.professor_id) == professor_id)
+    if location_id is not None:
+        stmt = stmt.where(CourseSession.location_id == location_id)
+
+    raw_rows = db.execute(
+        stmt.order_by(CourseSession.start_at_utc.desc(), Booking.booked_at.desc()).limit(limit * 5)
+    ).all()
+    trial_rows = [
+        (session, course_type, location, professor, booking, student, source)
+        for session, course_type, location, professor, booking, student in raw_rows
+        if (source := _trial_detection_source(session, course_type, booking, student)) is not None
+    ][:limit]
+    if not trial_rows:
+        return []
+
+    student_ids = {student.id for *_, student, _source in trial_rows}
+    session_ids = {session.id for session, *_rest in trial_rows}
+    family_rows = db.execute(
+        select(ClientFamilyLink, User)
+        .join(User, User.id == ClientFamilyLink.adult_user_id)
+        .where(ClientFamilyLink.child_user_id.in_(student_ids))
+        .order_by(ClientFamilyLink.is_billing_recipient.desc(), ClientFamilyLink.created_at.asc())
+    ).all()
+    parent_by_student_id: dict[UUID, User] = {}
+    for link, parent in family_rows:
+        parent_by_student_id.setdefault(link.child_user_id, parent)
+
+    note_rows = db.scalars(
+        select(ProfessorSessionMessage)
+        .where(
+            ProfessorSessionMessage.session_id.in_(session_ids),
+            ProfessorSessionMessage.subject.ilike("%(administration)%"),
+        )
+        .order_by(ProfessorSessionMessage.sent_at.asc())
+    ).all()
+    notes_by_session_id: dict[UUID, list[str]] = {}
+    for note in note_rows:
+        body = str(note.body or "").strip()
+        if body:
+            notes_by_session_id.setdefault(note.session_id, []).append(body)
+
+    registered_statuses = {
+        SubscriptionStatus.ACTIVE,
+        SubscriptionStatus.PAYMENT_ALERT,
+        SubscriptionStatus.PRE_TERMINATION,
+        SubscriptionStatus.PAUSED,
+        SubscriptionStatus.PENDING,
+    }
+    subscription_rows = db.execute(
+        select(ClientPlanSubscription.user_id, ClientPlanSubscription.status)
+        .where(ClientPlanSubscription.user_id.in_(student_ids))
+    ).all()
+    registered_student_ids = {
+        user_id for user_id, subscription_status in subscription_rows if subscription_status in registered_statuses
+    }
+
+    related_client_ids = set(student_ids) | {parent.id for parent in parent_by_student_id.values()}
+    quote_rows = db.execute(
+        select(Quote, Prospect)
+        .outerjoin(Prospect, Prospect.id == Quote.prospect_id)
+        .where(
+            or_(
+                Quote.client_id.in_(related_client_ids),
+                Prospect.linked_client_id.in_(related_client_ids),
+            )
+        )
+        .order_by(Quote.updated_at.desc())
+    ).all()
+    quote_rank = {
+        "approved": 6,
+        "sent": 5,
+        "change_requested": 4,
+        "created": 3,
+        "expired": 2,
+        "rejected": 1,
+        "cancelled": 0,
+    }
+    quote_status_by_client_id: dict[UUID, str] = {}
+    for quote, prospect in quote_rows:
+        client_id = quote.client_id or (prospect.linked_client_id if prospect is not None else None)
+        if client_id is None:
+            continue
+        current = quote_status_by_client_id.get(client_id)
+        if current is None or quote_rank.get(str(quote.status).lower(), -1) > quote_rank.get(current.lower(), -1):
+            quote_status_by_client_id[client_id] = str(quote.status)
+
+    intake_rows = db.scalars(
+        select(TypeformIntake).order_by(TypeformIntake.received_at.desc()).limit(10000)
+    ).all()
+    intakes_by_client_id: dict[str, list[TypeformIntake]] = {}
+    intakes_by_parent_email: dict[str, list[TypeformIntake]] = {}
+    for intake in intake_rows:
+        for client_id in _intake_resolution_client_ids(intake):
+            intakes_by_client_id.setdefault(client_id, []).append(intake)
+        normalized = intake.normalized_payload_json if isinstance(intake.normalized_payload_json, dict) else {}
+        intake_email = str(normalized.get("parent_email") or normalized.get("adult_email") or "").strip().lower()
+        if intake_email:
+            intakes_by_parent_email.setdefault(intake_email, []).append(intake)
+    timestamp = now or datetime.now(timezone.utc)
+    out: list[TrialCourseReportRow] = []
+    for session, course_type, location, professor, booking, student, detection_source in trial_rows:
+        parent = parent_by_student_id.get(student.id)
+        candidate_intakes: list[TypeformIntake] = []
+        for client_id in {str(student.id), str(parent.id) if parent is not None else ""}:
+            candidate_intakes.extend(intakes_by_client_id.get(client_id, []))
+        for email in {
+            str(student.email or "").strip().lower(),
+            str(parent.email or "").strip().lower() if parent is not None else "",
+        }:
+            candidate_intakes.extend(intakes_by_parent_email.get(email, []))
+        unique_candidate_intakes = sorted(
+            {intake.id: intake for intake in candidate_intakes}.values(),
+            key=lambda intake: intake.received_at,
+            reverse=True,
+        )
+        matching_intake = next(
+            (
+                intake
+                for intake in unique_candidate_intakes
+                if _intake_matches_trial_student(intake, student=student, parent=parent)
+            ),
+            None,
+        )
+        quote_status = quote_status_by_client_id.get(student.id)
+        client_status = _enum_value(student.client_status)
+        is_registered = student.id in registered_student_ids or client_status == ClientStatus.ACTIVE.value
+        out.append(
+            TrialCourseReportRow(
+                booking_id=booking.id,
+                session_id=session.id,
+                session_start_at=booking.student_start_at_utc or session.start_at_utc,
+                session_end_at=booking.student_end_at_utc or session.end_at_utc,
+                session_timezone=session.timezone or location.timezone or "Europe/Paris",
+                course_type_name=course_type.name,
+                course_format="PARTICULIER" if session.is_private or int(session.capacity_max or 0) <= 1 else "COLLECTIF",
+                location_id=location.id,
+                location_name=location.name,
+                professor_id=professor.id if professor is not None else None,
+                professor_name=_professor_name(professor) if professor is not None else "Non affecte",
+                student_id=student.id,
+                student_first_name=student.first_name,
+                student_last_name=student.last_name,
+                student_email=student.email,
+                parent_email=parent.email if parent is not None else None,
+                attendance_status=_enum_value(booking.status),
+                attendance_label=_trial_attendance_label(
+                    booking.status,
+                    session_start_at=booking.student_start_at_utc or session.start_at_utc,
+                    now=timestamp,
+                ),
+                internal_note="\n\n".join(notes_by_session_id.get(session.id, [])) or None,
+                conversion_status=_trial_conversion_status(
+                    client_status=client_status,
+                    registered=is_registered,
+                    quote_status=quote_status,
+                    has_intake=matching_intake is not None,
+                ),
+                client_status=client_status,
+                has_intake=matching_intake is not None,
+                intake_status=matching_intake.intake_status if matching_intake is not None else None,
+                intake_received_at=matching_intake.received_at if matching_intake is not None else None,
+                quote_status=quote_status,
+                is_registered=is_registered,
+                trial_detection_source=detection_source,
+            )
+        )
+    return out
+
+
+@router.get("/trial-courses", response_model=list[TrialCourseReportRow])
+def report_trial_courses(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    professor_id: UUID | None = None,
+    location_id: UUID | None = None,
+    limit: int = Query(default=2000, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> list[TrialCourseReportRow]:
+    return _load_trial_course_report_rows(
+        db,
+        date_from=date_from,
+        date_to=date_to,
+        professor_id=professor_id,
+        location_id=location_id,
+        limit=limit,
+    )
+
+
+def _trial_courses_xlsx(rows: list[TrialCourseReportRow]) -> bytes:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Cours d'essai"
+    headers = [
+        "Date",
+        "Heure debut",
+        "Heure fin",
+        "Type de cours",
+        "Format",
+        "Lieu",
+        "Professeur",
+        "Prenom eleve",
+        "Nom eleve",
+        "Email eleve",
+        "Email responsable",
+        "Presence",
+        "Note interne professeur",
+        "Statut de suivi",
+        "Intake rempli",
+        "Statut intake",
+        "Date intake",
+        "Statut devis",
+        "Inscrit",
+        "Source identification essai",
+    ]
+    sheet.append(headers)
+    for cell in sheet[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill(fill_type="solid", fgColor="23344D")
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    for row in rows:
+        try:
+            zone = ZoneInfo(row.session_timezone)
+        except Exception:
+            zone = ADMIN_COMMUNICATION_TIMEZONE
+        local_start = row.session_start_at.astimezone(zone)
+        local_end = row.session_end_at.astimezone(zone)
+        intake_local = row.intake_received_at.astimezone(zone) if row.intake_received_at is not None else None
+        sheet.append(
+            [
+                local_start.date(),
+                local_start.strftime("%H:%M"),
+                local_end.strftime("%H:%M"),
+                row.course_type_name,
+                "Particulier" if row.course_format == "PARTICULIER" else "Collectif",
+                row.location_name,
+                row.professor_name,
+                row.student_first_name or "",
+                row.student_last_name or "",
+                row.student_email,
+                row.parent_email or "",
+                row.attendance_label,
+                row.internal_note or "",
+                row.conversion_status,
+                "Oui" if row.has_intake else "Non",
+                row.intake_status or "",
+                intake_local.replace(tzinfo=None) if intake_local is not None else None,
+                row.quote_status or "",
+                "Oui" if row.is_registered else "Non",
+                row.trial_detection_source,
+            ]
+        )
+
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    sheet.row_dimensions[1].height = 34
+    widths = [12, 12, 12, 28, 14, 24, 24, 18, 20, 32, 32, 24, 48, 22, 14, 18, 20, 18, 12, 30]
+    for index, width in enumerate(widths, start=1):
+        sheet.column_dimensions[chr(64 + index) if index <= 26 else "A"].width = width
+    for row_cells in sheet.iter_rows(min_row=2):
+        for cell in row_cells:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+    for cell in sheet["A"][1:]:
+        cell.number_format = "dd/mm/yyyy"
+    for cell in sheet["Q"][1:]:
+        cell.number_format = "dd/mm/yyyy hh:mm"
+
+    summary = workbook.create_sheet("Synthese")
+    registered_count = sum(1 for row in rows if row.is_registered)
+    intake_count = sum(1 for row in rows if row.has_intake)
+    attended_count = sum(1 for row in rows if row.attendance_status == BookingStatus.ATTENDED.value)
+    summary_rows = [
+        ("Indicateur", "Valeur"),
+        ("Cours d'essai", len(rows)),
+        ("Presents", attended_count),
+        ("Intakes remplis", intake_count),
+        ("Inscriptions finales", registered_count),
+        ("Taux de conversion", registered_count / len(rows) if rows else 0),
+    ]
+    for values in summary_rows:
+        summary.append(values)
+    for cell in summary[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill(fill_type="solid", fgColor="23344D")
+    summary["B6"].number_format = "0.0%"
+    summary.column_dimensions["A"].width = 28
+    summary.column_dimensions["B"].width = 18
+
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+@router.get("/trial-courses/export.xlsx")
+def export_trial_courses_xlsx(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    professor_id: UUID | None = None,
+    location_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> Response:
+    rows = _load_trial_course_report_rows(
+        db,
+        date_from=date_from,
+        date_to=date_to,
+        professor_id=professor_id,
+        location_id=location_id,
+        limit=5000,
+    )
+    content = _trial_courses_xlsx(rows)
+    timestamp = datetime.now(ADMIN_COMMUNICATION_TIMEZONE).strftime("%Y%m%d-%H%M")
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="cours-essai-{timestamp}.xlsx"'},
+    )
 
 
 @router.get("/professor-statements", response_model=list[ProfessorStatementRow])

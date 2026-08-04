@@ -4130,6 +4130,7 @@ def add_admin_session_booking(
                     currency_snapshot=currency,
                     student_start_at_utc=student_start_at_utc,
                     student_end_at_utc=student_end_at_utc,
+                    is_trial_course=client.client_status == ClientStatus.TRIAL,
                 )
                 db.add(booking)
                 db.flush()
@@ -4146,6 +4147,7 @@ def add_admin_session_booking(
                 existing.currency_snapshot = currency
                 existing.student_start_at_utc = student_start_at_utc
                 existing.student_end_at_utc = student_end_at_utc
+                existing.is_trial_course = bool(existing.is_trial_course or client.client_status == ClientStatus.TRIAL)
                 booking = existing
 
             if next_status == BookingStatus.BOOKED:
@@ -5116,6 +5118,7 @@ def duplicate_session_operation(
                     student_note=source_booking.student_note,
                     student_start_at_utc=duplicate_student_start_at_utc,
                     student_end_at_utc=duplicate_student_end_at_utc,
+                    is_trial_course=source_booking.is_trial_course,
                 )
                 db.add(duplicate_booking)
                 db.flush()

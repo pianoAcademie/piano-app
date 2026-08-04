@@ -220,7 +220,7 @@ def _session_students(
                 last_name=user.last_name,
                 display_name=_display_name(user),
                 attendance_status=booking.status,
-                is_trial_course=user.client_status == ClientStatus.TRIAL,
+                is_trial_course=bool(booking.is_trial_course or user.client_status == ClientStatus.TRIAL),
                 is_first_course=is_first_course,
             )
         )

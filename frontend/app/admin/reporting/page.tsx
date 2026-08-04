@@ -21,6 +21,7 @@ type ReportType =
   | "overdue-invoices"
   | "reservations"
   | "attendance"
+  | "trial-courses"
   | "professor-statements"
   | "communications"
   | "payments"
@@ -75,6 +76,12 @@ const REPORT_DEFINITIONS: ReportDefinition[] = [
     label: "Presence eleves",
     description: "Suivi des presents, absences excusees et no-shows.",
     filterHint: "Periode, eleve, professeur, type de cours.",
+  },
+  {
+    type: "trial-courses",
+    label: "Suivi des cours d'essai",
+    description: "Essais collectifs et particuliers, presence, notes professeurs et conversion commerciale.",
+    filterHint: "Periode, professeur et lieu. Consultation detaillee et export Excel.",
   },
   {
     type: "professor-statements",
@@ -375,6 +382,16 @@ export default async function AdminReportingPage({ searchParams }: ReportingPage
                     <button type="submit">Continuer</button>
                   </div>
                 </form>
+              ) : reportDefinition.type === "trial-courses" ? (
+                <div className="grid cols-2 config-form-grid">
+                  <p className="muted span-2">
+                    Ouvrez le suivi pour filtrer les cours d'essai par date, professeur et lieu, puis exporter le resultat en Excel.
+                  </p>
+                  <div className="form-actions span-2">
+                    <Link className="button-link" href={withParams({ create: "1" })}>Retour</Link>
+                    <Link className="button-link" href="/admin/reporting/trial-courses">Ouvrir le reporting</Link>
+                  </div>
+                </div>
               ) : reportDefinition.type === "check-deposits" ? (
                 <form className="grid cols-2 config-form-grid" action={createGeneratedReportAction}>
                   <input type="hidden" name="report_type" value={reportDefinition.type} />
