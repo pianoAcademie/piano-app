@@ -21,7 +21,7 @@ import {
   DEFAULT_TIMEZONE,
   TIMEZONE_OPTIONS,
 } from "../../../lib/reference-data";
-import type { AdminClientGroupOut, AdminClientOut, UserOut } from "../../../lib/types";
+import type { AdminClientGroupOut, AdminClientOut, AdminMessagingTemplateOut, UserOut } from "../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -320,17 +320,23 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
     clientsQuery.set("group_id", selectedGroupId);
   }
 
-  const [clientsResult, allClientsResult, groupsResult, adultCandidatesResult, mmsImportStatusResult] = await Promise.all([
+  const [clientsResult, allClientsResult, groupsResult, adultCandidatesResult, mmsImportStatusResult, emailTemplatesResult] = await Promise.all([
     backendRequest<AdminClientOut[]>(`/api/v1/admin/clients?${clientsQuery.toString()}`, {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000&include_archived=true", {}, token),
     backendRequest<AdminClientGroupOut[]>("/api/v1/admin/clients/groups?include_inactive=true", {}, token),
     backendRequest<AdminClientOut[]>("/api/v1/admin/clients?limit=1000&include_archived=false&sort_by=last_name&sort_dir=asc", {}, token),
     backendRequest<MyMusicStaffImportStatus>("/api/v1/admin/clients/imports/my-music-staff-2025-2026/status", {}, token),
+    backendRequest<AdminMessagingTemplateOut[]>(
+      "/api/v1/admin/config/messaging-templates?channel=EMAIL&kind=CUSTOM&active_only=true",
+      {},
+      token,
+    ),
   ]);
 
   const listedClientsRaw = clientsResult.ok ? clientsResult.data : [];
   const allClients = allClientsResult.ok ? allClientsResult.data : [];
   const groups = groupsResult.ok ? groupsResult.data : [];
+  const emailTemplates = emailTemplatesResult.ok ? emailTemplatesResult.data : [];
   const mmsImportStatus = mmsImportStatusResult.ok ? mmsImportStatusResult.data : null;
   const adultCandidates = adultCandidatesResult.ok
     ? adultCandidatesResult.data.filter((client) => client.client_kind === "ADULT")
@@ -548,6 +554,13 @@ export default async function AdminClientsPage({ searchParams }: { searchParams:
             <section className="card">
               <ClientBulkControls
                 groups={groups.filter((group) => group.active).map((group) => ({ id: group.id, name: group.name }))}
+                emailTemplates={emailTemplates.map((template) => ({
+                  id: template.id,
+                  name: template.name,
+                  subject: template.subject ?? "",
+                  body: template.body,
+                  bodyFormat: template.body_format,
+                }))}
                 pageCount={listedClients.length}
                 filteredCount={listedClientsRaw.length}
                 language={language}

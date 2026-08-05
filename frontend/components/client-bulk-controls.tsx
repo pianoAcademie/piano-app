@@ -8,10 +8,19 @@ type GroupOption = {
   name: string;
 };
 
+type EmailTemplateOption = {
+  id: string;
+  name: string;
+  subject: string;
+  body: string;
+  bodyFormat: "TEXT" | "HTML";
+};
+
 type SelectionScope = "PAGE" | "FILTERED";
 
 type Props = {
   groups: GroupOption[];
+  emailTemplates: EmailTemplateOption[];
   pageCount: number;
   filteredCount: number;
   language?: "fr" | "en";
@@ -59,7 +68,7 @@ function syncHeaderToggle(form: HTMLFormElement): number {
   return selected;
 }
 
-export default function ClientBulkControls({ groups, pageCount, filteredCount, language }: Props): JSX.Element {
+export default function ClientBulkControls({ groups, emailTemplates, pageCount, filteredCount, language }: Props): JSX.Element {
   const searchParams = useSearchParams();
   const resolvedLanguage = language ?? (searchParams?.get("lang") === "en" ? "en" : "fr");
   const isEnglish = resolvedLanguage === "en";
@@ -87,6 +96,7 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
         assignGroup: "Assign to a group",
         archive: "Archive",
         emailClients: "New email (selected clients)",
+        emailClientsOperational: "Operational email (selected clients)",
         emailParents: "New email (selected parents)",
         smsClients: "Send SMS (selected clients)",
         smsParents: "Send SMS (selected parents)",
@@ -96,6 +106,8 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
         group: "Group",
         select: "Select",
         subject: "Subject",
+        template: "Template",
+        noTemplate: "No template",
         subjectRequired: "(required)",
         subjectOptionalSms: "(optional for SMS)",
         subjectPlaceholder: "Message subject",
@@ -116,6 +128,7 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
         smsRequired: "SMS message is required.",
         subjectMessageRequired: "Subject and message are required.",
         deleteConfirm: (total: number) => `Confirm permanent deletion of ${total} client(s)? This action cannot be undone.`,
+        operationalConfirm: (total: number) => `Send this operational email now to up to ${total} selected client(s)?`,
       }
     : {
         action: "Action",
@@ -123,6 +136,7 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
         assignGroup: "Affecter a un groupe",
         archive: "Archiver",
         emailClients: "Nouveau courriel (clients selectionnes)",
+        emailClientsOperational: "Courriel operationnel (clients selectionnes)",
         emailParents: "Nouveau courriel (parents selectionnes)",
         smsClients: "Envoyer SMS (clients selectionnes)",
         smsParents: "Envoyer SMS (parents selectionnes)",
@@ -132,6 +146,8 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
         group: "Groupe",
         select: "Selectionner",
         subject: "Sujet",
+        template: "Modele",
+        noTemplate: "Aucun modele",
         subjectRequired: "(obligatoire)",
         subjectOptionalSms: "(optionnel pour SMS)",
         subjectPlaceholder: "Objet du message",
@@ -152,14 +168,21 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
         smsRequired: "Message SMS obligatoire.",
         subjectMessageRequired: "Sujet et message obligatoires.",
         deleteConfirm: (total: number) => `Confirmer la suppression definitive de ${total} client(s) ? Cette action est irreversible.`,
+        operationalConfirm: (total: number) => `Envoyer maintenant ce courriel operationnel a un maximum de ${total} client(s) selectionne(s) ?`,
       };
   const [action, setAction] = useState("UPDATE_STATUS");
   const [selectionScope, setSelectionScope] = useState<SelectionScope>("PAGE");
   const [selectedOnPage, setSelectedOnPage] = useState(0);
+  const [messageSubject, setMessageSubject] = useState("");
+  const [messageBody, setMessageBody] = useState("");
+  const [messageBodyFormat, setMessageBodyFormat] = useState<"TEXT" | "HTML">("TEXT");
 
   const canPickGroup = useMemo(() => action === "ASSIGN_GROUP", [action]);
   const canPickStatus = useMemo(() => action === "UPDATE_STATUS", [action]);
-  const isEmailMessageAction = useMemo(() => action === "EMAIL_CLIENTS" || action === "EMAIL_PARENTS", [action]);
+  const isEmailMessageAction = useMemo(
+    () => action === "EMAIL_CLIENTS" || action === "EMAIL_CLIENTS_OPERATIONAL" || action === "EMAIL_PARENTS",
+    [action],
+  );
   const isSmsMessageAction = useMemo(() => action === "SMS_CLIENTS" || action === "SMS_PARENTS", [action]);
   const isMessageAction = useMemo(() => isEmailMessageAction || isSmsMessageAction, [isEmailMessageAction, isSmsMessageAction]);
 
@@ -209,6 +232,7 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
             <option value="ASSIGN_GROUP">{text.assignGroup}</option>
             <option value="ARCHIVE">{text.archive}</option>
             <option value="EMAIL_CLIENTS">{text.emailClients}</option>
+            <option value="EMAIL_CLIENTS_OPERATIONAL">{text.emailClientsOperational}</option>
             <option value="EMAIL_PARENTS">{text.emailParents}</option>
             <option value="SMS_CLIENTS">{text.smsClients}</option>
             <option value="SMS_PARENTS">{text.smsParents}</option>
@@ -243,20 +267,61 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
 
       {isMessageAction ? (
         <div className="grid cols-2">
+          {isEmailMessageAction && emailTemplates.length > 0 ? (
+            <label className="span-2">
+              {text.template}
+              <select
+                defaultValue=""
+                onChange={(event) => {
+                  const template = emailTemplates.find((item) => item.id === event.target.value);
+                  if (!template) {
+                    return;
+                  }
+                  setMessageSubject(template.subject);
+                  setMessageBody(template.body);
+                  setMessageBodyFormat(template.bodyFormat);
+                }}
+              >
+                <option value="">{text.noTemplate}</option>
+                {emailTemplates.map((template) => (
+                  <option key={template.id} value={template.id}>{template.name}</option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <label className="span-2">
             {text.subject} {isEmailMessageAction ? text.subjectRequired : text.subjectOptionalSms}
-            <input type="text" name="message_subject" maxLength={255} placeholder={text.subjectPlaceholder} />
+            <input
+              type="text"
+              name="message_subject"
+              maxLength={255}
+              placeholder={text.subjectPlaceholder}
+              value={messageSubject}
+              onChange={(event) => setMessageSubject(event.target.value)}
+            />
           </label>
           <label>
             {text.format}
-            <select name="message_body_format" defaultValue="TEXT" disabled={isSmsMessageAction}>
+            <select
+              name="message_body_format"
+              value={messageBodyFormat}
+              disabled={isSmsMessageAction}
+              onChange={(event) => setMessageBodyFormat(event.target.value === "HTML" ? "HTML" : "TEXT")}
+            >
               <option value="TEXT">{text.textFormat}</option>
               <option value="HTML">{text.htmlFormat}</option>
             </select>
           </label>
           <label className="span-2">
             {text.message}
-            <textarea name="message_body" rows={5} maxLength={12000} placeholder={text.messagePlaceholder} />
+            <textarea
+              name="message_body"
+              rows={12}
+              maxLength={12000}
+              placeholder={text.messagePlaceholder}
+              value={messageBody}
+              onChange={(event) => setMessageBody(event.target.value)}
+            />
           </label>
         </div>
       ) : null}
@@ -374,6 +439,13 @@ export default function ClientBulkControls({ groups, pageCount, filteredCount, l
                   : selectedIds.length;
               const confirmed = window.confirm(text.deleteConfirm(total));
               if (!confirmed) {
+                event.preventDefault();
+              }
+            }
+
+            if (action === "EMAIL_CLIENTS_OPERATIONAL") {
+              const total = selectionScope === "FILTERED" ? selectedFilteredIds.length : selectedIds.length;
+              if (!window.confirm(text.operationalConfirm(total))) {
                 event.preventDefault();
               }
             }

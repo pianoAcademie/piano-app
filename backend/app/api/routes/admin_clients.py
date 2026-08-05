@@ -6242,12 +6242,15 @@ def bulk_admin_clients(
 
     message_actions = {
         AdminClientBulkAction.EMAIL_CLIENTS,
+        AdminClientBulkAction.EMAIL_CLIENTS_OPERATIONAL,
         AdminClientBulkAction.EMAIL_PARENTS,
         AdminClientBulkAction.SMS_CLIENTS,
         AdminClientBulkAction.SMS_PARENTS,
     }
     if action in message_actions:
         is_email = action in {AdminClientBulkAction.EMAIL_CLIENTS, AdminClientBulkAction.EMAIL_PARENTS}
+        is_operational_email = action == AdminClientBulkAction.EMAIL_CLIENTS_OPERATIONAL
+        is_email = is_email or is_operational_email
         message_subject = _normalize_optional(payload.message_subject) or ""
         message_body = _normalize_optional(payload.message_body) or ""
         if is_email and (not message_subject or not message_body):
@@ -6284,11 +6287,15 @@ def bulk_admin_clients(
                 return
             sms_recipients.setdefault(resolved_phone, recipient_user_id)
 
-        target_clients_direct = action in {AdminClientBulkAction.EMAIL_CLIENTS, AdminClientBulkAction.SMS_CLIENTS}
+        target_clients_direct = action in {
+            AdminClientBulkAction.EMAIL_CLIENTS,
+            AdminClientBulkAction.EMAIL_CLIENTS_OPERATIONAL,
+            AdminClientBulkAction.SMS_CLIENTS,
+        }
         if target_clients_direct:
             for client in clients:
                 if is_email:
-                    if not client.email_opt_in:
+                    if not is_operational_email and not client.email_opt_in:
                         continue
                     add_email(client.email, client.id)
                 else:
@@ -6374,11 +6381,50 @@ def bulk_admin_clients(
             sender = resolve_sender_profile(db, sender_kind="STUDIO")
             actor_label = _display_name(actor.first_name, actor.last_name, actor.email)
             body_format = "HTML" if str(payload.message_body_format).strip().upper() == "HTML" else "TEXT"
+            renewal_rows = db.execute(
+                select(ClientPlanSubscription.user_id, ClientPlanSubscription.next_payment_at)
+                .where(
+                    ClientPlanSubscription.user_id.in_(unique_ids),
+                    ClientPlanSubscription.next_payment_at.is_not(None),
+                    ClientPlanSubscription.status.in_(
+                        [
+                            SubscriptionStatus.PENDING,
+                            SubscriptionStatus.ACTIVE,
+                            SubscriptionStatus.PAYMENT_ALERT,
+                            SubscriptionStatus.PAUSED,
+                        ]
+                    ),
+                )
+                .order_by(ClientPlanSubscription.next_payment_at.asc())
+            ).all()
+            renewal_by_user: dict[UUID, datetime] = {}
+            for renewal_user_id, renewal_at in renewal_rows:
+                if renewal_at is not None:
+                    renewal_by_user.setdefault(renewal_user_id, renewal_at)
+            login_url = f"{resolve_frontend_base_url(db).rstrip('/')}/login"
             for recipient_email, recipient_user_id in sorted(email_recipients.items()):
+                recipient_client = clients_by_id.get(recipient_user_id) if recipient_user_id is not None else None
+                renewal_at = renewal_by_user.get(recipient_user_id) if recipient_user_id is not None else None
+                renewal_date = ""
+                if renewal_at is not None:
+                    timezone_name = resolve_timezone_name(recipient_client.timezone if recipient_client is not None else None)
+                    renewal_date = renewal_at.astimezone(ZoneInfo(timezone_name)).strftime("%d/%m/%Y")
+                context = {
+                    "first_name": recipient_client.first_name if recipient_client is not None else "",
+                    "last_name": recipient_client.last_name if recipient_client is not None else "",
+                    "full_name": (
+                        _display_name(recipient_client.first_name, recipient_client.last_name, recipient_client.email)
+                        if recipient_client is not None
+                        else recipient_email
+                    ),
+                    "email": recipient_email,
+                    "renewal_date": renewal_date,
+                    "login_url": login_url,
+                }
                 send_email(
                     to_email=recipient_email,
-                    subject=message_subject,
-                    body=message_body,
+                    subject=render_template_content(message_subject, context),
+                    body=render_template_content(message_body, context),
                     body_format=body_format,
                     context="ADMIN_CLIENT_BULK_MESSAGE",
                     from_email=sender.from_email,

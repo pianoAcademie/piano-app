@@ -6961,8 +6961,12 @@ export async function bulkAdminClientsAction(formData: FormData): Promise<void> 
   const returnTo = safeAdminReturnPath(formData, "/admin/clients");
   const action = String(formData.get("bulk_action") ?? "").trim().toUpperCase();
   const isMessageAction =
-    action === "EMAIL_CLIENTS" || action === "EMAIL_PARENTS" || action === "SMS_CLIENTS" || action === "SMS_PARENTS";
-  const isEmailAction = action === "EMAIL_CLIENTS" || action === "EMAIL_PARENTS";
+    action === "EMAIL_CLIENTS" ||
+    action === "EMAIL_CLIENTS_OPERATIONAL" ||
+    action === "EMAIL_PARENTS" ||
+    action === "SMS_CLIENTS" ||
+    action === "SMS_PARENTS";
+  const isEmailAction = action === "EMAIL_CLIENTS" || action === "EMAIL_CLIENTS_OPERATIONAL" || action === "EMAIL_PARENTS";
   const selectionScopeRaw = String(formData.get("selection_scope") ?? "PAGE").trim().toUpperCase();
   const selectionScope = selectionScopeRaw === "FILTERED" ? "FILTERED" : "PAGE";
   const clientIds = parseStringList(formData.getAll("client_ids"));
