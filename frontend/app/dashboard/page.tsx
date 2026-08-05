@@ -3399,7 +3399,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
                 {planningMode === "book" ? (
                 <>
-                <form method="get" className="client-planning-filter-form">
+                <form method="get" action="#client-week-navigation" className="client-planning-filter-form">
                   <input type="hidden" name="tab" value="planning" />
                   <input type="hidden" name="planning_mode" value="book" />
                   <input type="hidden" name="agenda_view" value="week" />
@@ -3452,7 +3452,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     </div>
                   </div>
 
-                  <DrawerFilters title={`⚙ ${t("client.advanced_filters")}`} className={`client-planning-advanced ${advancedFiltersOpen ? "has-active" : ""}`} defaultOpen={advancedFiltersOpen}>
+                  <DrawerFilters title={`⚙ ${t("client.advanced_filters")}`} className={`client-planning-advanced ${advancedFiltersOpen ? "has-active" : ""}`} defaultOpen={false}>
                     <div className="client-planning-advanced-grid">
                       <label>
                         {t("client.activity")}
@@ -3533,7 +3533,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   </DrawerFilters>
                 </form>
 
-                <div className="client-week-toolbar">
+                <div id="client-week-navigation" className="client-week-toolbar">
                   <div className="client-week-toolbar-head">
                     <div className="client-week-title-group">
                       <span className="badge">{bookingOwnerLabel}</span>
@@ -3543,17 +3543,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <div className="client-week-toolbar-actions">
                       <a
                         className="client-date-nav-btn"
-                        href={withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: shiftDateKeyByDays(agendaDate, -7), agenda_view: "week" })}
+                        href={`${withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: shiftDateKeyByDays(agendaDate, -7), agenda_view: "week" })}#client-week-navigation`}
                         aria-label={t("client.previous_week")}
                       >
                         ←
                       </a>
-                      <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: todayKeyInTimezone(timezone), agenda_view: "week" })}>
+                      <a className="mode-link" href={`${withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: todayKeyInTimezone(timezone), agenda_view: "week" })}#client-week-navigation`}>
                         {t("client.today")}
                       </a>
                       <a
                         className="client-date-nav-btn"
-                        href={withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: shiftDateKeyByDays(agendaDate, 7), agenda_view: "week" })}
+                        href={`${withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: shiftDateKeyByDays(agendaDate, 7), agenda_view: "week" })}#client-week-navigation`}
                         aria-label={t("client.next_week")}
                       >
                         →

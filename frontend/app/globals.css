@@ -21055,3 +21055,109 @@ button.danger:focus-visible {
     justify-content: flex-start;
   }
 }
+
+/* Client planning: final mobile overrides live last to avoid older responsive
+   rules reintroducing the desktop time column or oversized controls. */
+@media (max-width: 600px) {
+  .client-planning-mode-switch {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .client-planning-mode-card {
+    min-height: 48px;
+    padding: 8px 10px;
+    align-content: center;
+    text-align: center;
+  }
+
+  .client-planning-mode-card small {
+    display: none;
+  }
+
+  .client-planning-hero {
+    gap: 6px;
+    padding: 6px;
+  }
+
+  .client-planning-toolbar-actions {
+    width: auto;
+    justify-self: end;
+  }
+
+  .client-planning-toolbar-actions .client-planning-reset {
+    flex: 0 0 40px;
+    width: 40px;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0;
+  }
+
+  .client-planning-advanced {
+    padding: 3px 6px;
+  }
+
+  .client-planning-advanced > summary {
+    min-height: 40px;
+    width: 100%;
+    padding: 6px 10px;
+    justify-content: space-between;
+  }
+
+  .client-planning-advanced:not([open]) {
+    border-color: transparent;
+    background: transparent;
+    padding-block: 0;
+  }
+
+  .client-week-toolbar {
+    scroll-margin-top: 76px;
+  }
+
+  .client-agenda-day {
+    padding: 8px;
+  }
+
+  .client-session-card.client-session-card-compact {
+    display: block;
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .client-session-card-compact .client-agenda-event {
+    width: 100%;
+    padding: 10px;
+    gap: 6px;
+  }
+
+  .client-session-card-compact .client-event-head .event-title {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    font-size: 15px;
+    line-height: 1.2;
+  }
+
+  .client-session-card-compact .client-event-color {
+    width: 22px;
+    height: 22px;
+    border-radius: 7px;
+  }
+
+  .client-session-location-chip {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .client-event-footer {
+    flex-wrap: wrap !important;
+    gap: 6px;
+  }
+
+  .client-session-cta {
+    min-height: 30px;
+    padding-inline: 10px;
+  }
+}
