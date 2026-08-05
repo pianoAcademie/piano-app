@@ -8,8 +8,8 @@ import { importSportigoAction } from "./actions";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
-type CatalogItem = { code: string; name: string; kind: string | null };
-type Catalog = { subscription_plans: CatalogItem[]; credit_types: CatalogItem[] };
+type CatalogItem = { code: string; name: string; kind: string | null; credit_type_codes: string[] };
+type Catalog = { subscription_plans: CatalogItem[]; pack_plans: CatalogItem[] };
 
 function value(params: Record<string, string | string[] | undefined>, name: string): string {
   const raw = params[name];
@@ -22,6 +22,15 @@ function findDefault(items: CatalogItem[], words: string[]): string {
     return words.every((word) => haystack.includes(word));
   });
   return match?.code ?? items[0]?.code ?? "";
+}
+
+function compatiblePacks(items: CatalogItem[], creditTypeCode: string): CatalogItem[] {
+  const matches = items.filter((item) => item.credit_type_codes.includes(creditTypeCode));
+  return matches.length > 0 ? matches : items;
+}
+
+function preferredPack(items: CatalogItem[], code: string, words: string[]): string {
+  return items.find((item) => item.code === code)?.code ?? findDefault(items, words);
 }
 
 export default async function SportigoImportPage({ searchParams }: { searchParams: SearchParams }) {
@@ -37,11 +46,19 @@ export default async function SportigoImportPage({ searchParams }: { searchParam
     return <section className="card"><h1>Import Sportigo</h1><p className="error">{catalogResult.message}</p></section>;
   }
   const catalog = catalogResult.data;
-  const monthlyDefault = findDefault(catalog.subscription_plans, ["collect", "adulte"]);
-  const studioDefault = findDefault(catalog.credit_types, ["studio"]);
-  const collectiveDefault = findDefault(catalog.credit_types, ["collect"]);
-  const onlineDefault = findDefault(catalog.credit_types, ["ligne"]);
-  const solfegeDefault = findDefault(catalog.credit_types, ["solf"]);
+  const monthlyDefault = preferredPack(
+    catalog.subscription_plans,
+    "FORM_ABONNEMENT_MENSUEL_PRESENTIEL_STUDIO_SOL_E2ED74",
+    ["présentiel", "studio", "solfège"],
+  );
+  const studioPacks = compatiblePacks(catalog.pack_plans, "CREDIT_STUDIO");
+  const collectivePacks = compatiblePacks(catalog.pack_plans, "CREDIT_PIANO_ONSITE");
+  const onlinePacks = compatiblePacks(catalog.pack_plans, "CREDIT_PIANO_ONLINE");
+  const solfegePacks = compatiblePacks(catalog.pack_plans, "CREDIT_SOLFEGE_ONLINE");
+  const studioDefault = preferredPack(studioPacks, "FORM_10_R_SERVATIONS_DE_STUDIO_2FC501", ["10", "studio"]);
+  const collectiveDefault = preferredPack(collectivePacks, "PACK_5_PIANO", ["5", "piano"]);
+  const onlineDefault = preferredPack(onlinePacks, "PACK_10_MULTI", ["10", "multi"]);
+  const solfegeDefault = preferredPack(solfegePacks, "PACK_SOLFEGE_ONLINE_BALANCE", ["solfège"]);
   const ok = value(params, "ok");
   const error = value(params, "error");
 
@@ -82,27 +99,27 @@ export default async function SportigoImportPage({ searchParams }: { searchParam
               </select>
             </label>
             <label>
-              Crédit studio
-              <select name="studio_credit_type_code" defaultValue={studioDefault} required>
-                {catalog.credit_types.map((item) => <option key={item.code} value={item.code}>{item.name} · {item.code}</option>)}
+              Carnet accès studio
+              <select name="studio_pack_plan_code" defaultValue={studioDefault} required>
+                {studioPacks.map((item) => <option key={item.code} value={item.code}>{item.name} · {item.code}</option>)}
               </select>
             </label>
             <label>
-              Crédit cours collectif
-              <select name="collective_credit_type_code" defaultValue={collectiveDefault} required>
-                {catalog.credit_types.map((item) => <option key={item.code} value={item.code}>{item.name} · {item.code}</option>)}
+              Carnet cours collectifs en présentiel
+              <select name="collective_pack_plan_code" defaultValue={collectiveDefault} required>
+                {collectivePacks.map((item) => <option key={item.code} value={item.code}>{item.name} · {item.code}</option>)}
               </select>
             </label>
             <label>
-              Crédit cours en ligne
-              <select name="online_credit_type_code" defaultValue={onlineDefault} required>
-                {catalog.credit_types.map((item) => <option key={item.code} value={item.code}>{item.name} · {item.code}</option>)}
+              Carnet cours collectifs en ligne
+              <select name="online_pack_plan_code" defaultValue={onlineDefault} required>
+                {onlinePacks.map((item) => <option key={item.code} value={item.code}>{item.name} · {item.code}</option>)}
               </select>
             </label>
             <label>
-              Crédit solfège
-              <select name="solfege_credit_type_code" defaultValue={solfegeDefault} required>
-                {catalog.credit_types.map((item) => <option key={item.code} value={item.code}>{item.name} · {item.code}</option>)}
+              Carnet de solfège en ligne
+              <select name="solfege_pack_plan_code" defaultValue={solfegeDefault} required>
+                {solfegePacks.map((item) => <option key={item.code} value={item.code}>{item.name} · {item.code}</option>)}
               </select>
             </label>
           </div>

@@ -42,10 +42,10 @@ export async function importSportigoAction(formData: FormData): Promise<void> {
   for (const name of [
     "batch_reference",
     "template_plan_code",
-    "studio_credit_type_code",
-    "collective_credit_type_code",
-    "online_credit_type_code",
-    "solfege_credit_type_code",
+    "studio_pack_plan_code",
+    "collective_pack_plan_code",
+    "online_pack_plan_code",
+    "solfege_pack_plan_code",
     "confirm_apply",
   ]) {
     payload.set(name, String(formData.get(name) ?? "").trim());

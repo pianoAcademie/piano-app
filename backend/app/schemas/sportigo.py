@@ -7,11 +7,12 @@ class SportigoCatalogItem(BaseModel):
     code: str
     name: str
     kind: str | None = None
+    credit_type_codes: list[str] = Field(default_factory=list)
 
 
 class SportigoImportCatalogOut(BaseModel):
     subscription_plans: list[SportigoCatalogItem] = Field(default_factory=list)
-    credit_types: list[SportigoCatalogItem] = Field(default_factory=list)
+    pack_plans: list[SportigoCatalogItem] = Field(default_factory=list)
 
 
 class SportigoImportOut(BaseModel):

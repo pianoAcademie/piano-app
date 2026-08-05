@@ -9,24 +9,9 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.services.sportigo_import import (
     SportigoCreditLot,
     _billing_method,
-    _ensure_pack_plan,
     _pack_plan_code,
     parse_sportigo_manifest,
 )
-
-
-class _PackPlanSessionStub:
-    def __init__(self) -> None:
-        self.added: list[object] = []
-
-    def scalar(self, _statement):
-        return None
-
-    def add(self, value: object) -> None:
-        self.added.append(value)
-
-    def flush(self) -> None:
-        return None
 
 
 class SportigoImportManifestTests(unittest.TestCase):
@@ -35,7 +20,7 @@ class SportigoImportManifestTests(unittest.TestCase):
             "sportigo_member_id;first_name;last_name;email;monthly;monthly_next_payment_at;credits_json\n"
             '42;Alice;Martin;alice@example.com;oui;2026-08-10T00:00:00+02:00;'
             '"[{""type"":""studio"",""value"":2,""expiration_date"":""2026-12-31T00:00:00+01:00""},'
-            '{""type"":""studio"",""value"":3,""expiration_date"":""2026-12-31T00:00:00+01:00""}]"\n'
+            '{""type"":""studio"",""value"":3,""expiration_date"":""2026-12-31T18:45:00+01:00""}]"\n'
         ).encode()
 
         rows, errors = parse_sportigo_manifest(content)
@@ -73,16 +58,6 @@ class SportigoImportManifestTests(unittest.TestCase):
         self.assertEqual(_billing_method("sepa-mollie"), "SEPA_DEBIT")
         self.assertEqual(_billing_method("cb-mollie"), "CARD_ONLINE")
         self.assertEqual(_billing_method("cheque"), "CARD_ONLINE")
-
-    def test_migration_pack_respects_catalog_validity_constraint(self) -> None:
-        db = _PackPlanSessionStub()
-        lot = SportigoCreditLot(source_type="studio", bucket="studio", value=4, expiration_at=None)
-        credit_type = type("CreditTypeStub", (), {"id": None, "name": "Studio"})()
-
-        plan = _ensure_pack_plan(db, lot, credit_type)
-
-        self.assertEqual(plan.pack_validity_months, 12)
-
 
 if __name__ == "__main__":
     unittest.main()

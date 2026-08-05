@@ -41,6 +41,12 @@ SOURCE_CREDIT_TYPES = {
     "cours-collectif-en-ligne": "online",
     "cours-de-solfge": "solfege",
 }
+BUCKET_CREDIT_TYPE_CODES = {
+    "studio": "CREDIT_STUDIO",
+    "collective": "CREDIT_PIANO_ONSITE",
+    "online": "CREDIT_PIANO_ONLINE",
+    "solfege": "CREDIT_SOLFEGE_ONLINE",
+}
 
 
 def _clean(value: object) -> str:
@@ -161,7 +167,7 @@ def parse_sportigo_manifest(content: bytes) -> tuple[list[SportigoImportRow], li
         if not isinstance(parsed_credits, list):
             errors.append(f"Ligne {row_number}: credits_json doit être une liste.")
             continue
-        grouped: Counter[tuple[str, str, datetime | None]] = Counter()
+        grouped: Counter[tuple[str, str, date | None]] = Counter()
         for item in parsed_credits:
             if not isinstance(item, dict):
                 errors.append(f"Ligne {row_number}: lot de crédits invalide.")
@@ -180,10 +186,15 @@ def parse_sportigo_manifest(content: bytes) -> tuple[list[SportigoImportRow], li
                 errors.append(f"Ligne {row_number}: quantité de crédits négative ({source_type}).")
                 continue
             expiration_at = _parse_datetime(item.get("expiration_date"))
-            grouped[(source_type, bucket, expiration_at)] += value
+            grouped[(source_type, bucket, expiration_at.date() if expiration_at else None)] += value
         credits.extend(
-            SportigoCreditLot(source_type=source_type, bucket=bucket, value=value, expiration_at=expiration_at)
-            for (source_type, bucket, expiration_at), value in grouped.items()
+            SportigoCreditLot(
+                source_type=source_type,
+                bucket=bucket,
+                value=value,
+                expiration_at=datetime.combine(expiration_date, time.min, tzinfo=timezone.utc) if expiration_date else None,
+            )
+            for (source_type, bucket, expiration_date), value in grouped.items()
             if value > 0
         )
 
@@ -286,55 +297,41 @@ def _pack_plan_code(lot: SportigoCreditLot) -> str:
     return f"{SPORTIGO_PACK_PREFIX}{lot.lot_key}"[:80]
 
 
-def _ensure_pack_plan(db: Session, lot: SportigoCreditLot, credit_type: CreditType) -> Plan:
-    code = _pack_plan_code(lot)
-    plan = db.scalar(select(Plan).where(Plan.code == code).with_for_update())
-    if plan is not None:
-        return plan
-    expiry_label = lot.expiration_at.date().strftime("%d/%m/%Y") if lot.expiration_at else "sans expiration"
-    plan = Plan(
-        code=code,
-        name=f"Sportigo – {credit_type.name} – {expiry_label}",
-        kind=PlanKind.PACK,
-        credits_count=1,
-        # The database restricts pack catalogue validity to 1-12 months. The
-        # migrated balance keeps its real lifetime on the client subscription
-        # (`ends_at`), including when Sportigo supplied no expiration date.
-        pack_validity_months=12,
-        currency_code="EUR",
-        description="Solde de crédits migré depuis Sportigo en août 2026.",
-        billing_frequency="one_off",
-        is_private=True,
-        options_json=[],
-        payment_methods_json=[],
-        restrictions_json=[],
-        active=True,
-        updated_at=datetime.now(timezone.utc),
-    )
-    db.add(plan)
-    db.flush()
-    db.add(PlanCreditGrant(plan_id=plan.id, credit_type_id=credit_type.id, credits_count=1))
-    return plan
-
-
 def _catalog_objects(
     db: Session,
     *,
     template_plan_code: str,
-    credit_type_codes: dict[str, str],
-) -> tuple[Plan | None, dict[str, CreditType], list[str]]:
+    pack_plan_codes: dict[str, str],
+) -> tuple[Plan | None, dict[str, Plan], list[str]]:
     errors: list[str] = []
     template = db.scalar(select(Plan).where(Plan.code == template_plan_code, Plan.active.is_(True)))
     if template is None or template.kind != PlanKind.SUBSCRIPTION:
         errors.append(f"Formule mensuelle introuvable ou non mensuelle : {template_plan_code}")
-    credit_types: dict[str, CreditType] = {}
-    for bucket, code in credit_type_codes.items():
-        credit_type = db.scalar(select(CreditType).where(CreditType.code == code, CreditType.active.is_(True)))
-        if credit_type is None:
-            errors.append(f"Type de crédit introuvable pour {bucket} : {code}")
-        else:
-            credit_types[bucket] = credit_type
-    return template, credit_types, errors
+    pack_plans: dict[str, Plan] = {}
+    for bucket, code in pack_plan_codes.items():
+        plan = db.scalar(select(Plan).where(Plan.code == code, Plan.active.is_(True)))
+        if plan is None or plan.kind != PlanKind.PACK:
+            errors.append(f"Carnet catalogue introuvable pour {bucket} : {code}")
+            continue
+        expected_credit_code = BUCKET_CREDIT_TYPE_CODES[bucket]
+        supports_credit = db.scalar(
+            select(PlanCreditGrant.id)
+            .join(CreditType, CreditType.id == PlanCreditGrant.credit_type_id)
+            .where(PlanCreditGrant.plan_id == plan.id, CreditType.code == expected_credit_code)
+        )
+        if supports_credit is None:
+            errors.append(
+                f"Le carnet {plan.name} ne porte pas le type de crédit requis pour {bucket} ({expected_credit_code})."
+            )
+            continue
+        pack_plans[bucket] = plan
+    return template, pack_plans, errors
+
+
+def _lot_ends_at(lot: SportigoCreditLot) -> datetime | None:
+    if lot.expiration_at is None:
+        return None
+    return datetime.combine(lot.expiration_at.date(), time.max, tzinfo=timezone.utc)
 
 
 def _preflight_rows(db: Session, rows: Iterable[SportigoImportRow], out: SportigoImportOut) -> None:
@@ -362,7 +359,7 @@ def run_sportigo_import(
     activate: bool,
     batch_reference: str,
     template_plan_code: str,
-    credit_type_codes: dict[str, str],
+    pack_plan_codes: dict[str, str],
 ) -> SportigoImportOut:
     out = SportigoImportOut(
         dry_run=dry_run,
@@ -385,10 +382,10 @@ def run_sportigo_import(
             elif lot.bucket == "solfege":
                 out.solfege_credits_total += lot.value
 
-    template, credit_types, catalog_errors = _catalog_objects(
+    template, pack_plans, catalog_errors = _catalog_objects(
         db,
         template_plan_code=template_plan_code,
-        credit_type_codes=credit_type_codes,
+        pack_plan_codes=pack_plan_codes,
     )
     out.errors.extend(catalog_errors)
     _preflight_rows(db, rows, out)
@@ -407,7 +404,7 @@ def run_sportigo_import(
     )
     if legacy_monthly_plan is not None and legacy_monthly_plan.id == monthly_plan.id:
         legacy_monthly_plan = None
-    all_pack_plans = {
+    legacy_pack_plans = {
         plan.code: plan
         for plan in db.scalars(select(Plan).where(Plan.code.like(f"{SPORTIGO_PACK_PREFIX}%"))).all()
     }
@@ -548,30 +545,50 @@ def run_sportigo_import(
                 db.add(subscription)
                 out.subscriptions_updated += 1
 
-        incoming_plan_codes: set[str] = set()
+        incoming_subscription_ids: set[UUID] = set()
         for lot in row.credits:
-            credit_type = credit_types[lot.bucket]
-            plan = _ensure_pack_plan(db, lot, credit_type)
-            all_pack_plans[plan.code] = plan
-            incoming_plan_codes.add(plan.code)
+            plan = pack_plans[lot.bucket]
+            ends_at = _lot_ends_at(lot)
+            end_condition = (
+                ClientPlanSubscription.ends_at.is_(None)
+                if ends_at is None
+                else ClientPlanSubscription.ends_at == ends_at
+            )
             subscription = db.scalar(
                 select(ClientPlanSubscription)
-                .where(ClientPlanSubscription.user_id == user.id, ClientPlanSubscription.plan_id == plan.id)
+                .where(
+                    ClientPlanSubscription.user_id == user.id,
+                    ClientPlanSubscription.plan_id == plan.id,
+                    ClientPlanSubscription.last_payment_status == "MIGRATED_CREDIT_BALANCE",
+                    end_condition,
+                )
                 .with_for_update()
             )
+            legacy_plan = legacy_pack_plans.get(_pack_plan_code(lot))
+            legacy_subscription = None
+            if legacy_plan is not None:
+                legacy_subscription = db.scalar(
+                    select(ClientPlanSubscription)
+                    .where(
+                        ClientPlanSubscription.user_id == user.id,
+                        ClientPlanSubscription.plan_id == legacy_plan.id,
+                    )
+                    .with_for_update()
+                )
+            if subscription is None and legacy_subscription is not None:
+                legacy_subscription.plan_id = plan.id
+                subscription = legacy_subscription
+            elif subscription is not None and legacy_subscription is not None and legacy_subscription.id != subscription.id:
+                db.delete(legacy_subscription)
             status_value = SubscriptionStatus.ACTIVE if activate else SubscriptionStatus.PENDING
-            started_at = now
-            ends_at = None
-            if lot.expiration_at:
-                ends_at = datetime.combine(lot.expiration_at.date(), time.max, tzinfo=lot.expiration_at.tzinfo or timezone.utc)
-                if ends_at <= now:
-                    status_value = SubscriptionStatus.EXPIRED
+            if ends_at is not None and ends_at <= now:
+                status_value = SubscriptionStatus.EXPIRED
             if subscription is None:
                 subscription = ClientPlanSubscription(
                     user_id=user.id,
                     plan_id=plan.id,
                     status=status_value,
-                    started_at=started_at,
+                    started_at=now,
                     ends_at=ends_at,
                     credits_initial=lot.value,
                     credits_remaining=lot.value,
@@ -594,25 +611,29 @@ def run_sportigo_import(
                 subscription.last_payment_status = "MIGRATED_CREDIT_BALANCE"
                 db.add(subscription)
                 out.credit_lots_updated += 1
+            db.flush()
+            incoming_subscription_ids.add(subscription.id)
 
-        if all_pack_plans:
+        if legacy_pack_plans or row.credits:
             existing_lots = db.execute(
                 select(ClientPlanSubscription, Plan)
                 .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
                 .where(
                     ClientPlanSubscription.user_id == user.id,
-                    Plan.code.like(f"{SPORTIGO_PACK_PREFIX}%"),
+                    Plan.kind == PlanKind.PACK,
+                    ClientPlanSubscription.last_payment_status == "MIGRATED_CREDIT_BALANCE",
                 )
                 .with_for_update()
             ).all()
-            for existing, plan in existing_lots:
-                if plan.code in incoming_plan_codes:
+            for existing, _plan in existing_lots:
+                if existing.id in incoming_subscription_ids:
                     continue
-                if (existing.credits_remaining or 0) != 0 or existing.status != SubscriptionStatus.EXPIRED:
-                    existing.credits_remaining = 0
-                    existing.status = SubscriptionStatus.EXPIRED
-                    db.add(existing)
-                    out.credit_lots_zeroed += 1
+                # These rows are exclusively identified by the migration
+                # marker. Removing obsolete/duplicate staging rows prevents
+                # technical Sportigo products from lingering in the client's
+                # finished-product history after the canonical pack is linked.
+                db.delete(existing)
+                out.credit_lots_zeroed += 1
 
     if legacy_monthly_plan is not None:
         db.flush()
@@ -625,6 +646,12 @@ def run_sportigo_import(
             legacy_monthly_plan.active = False
             legacy_monthly_plan.updated_at = now
             db.add(legacy_monthly_plan)
+
+    for legacy_plan in legacy_pack_plans.values():
+        if legacy_plan.active:
+            legacy_plan.active = False
+            legacy_plan.updated_at = now
+            db.add(legacy_plan)
 
     db.commit()
     return out

@@ -6,10 +6,10 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_roles
 from app.models.catalog import CreditType
-from app.models.plan import Plan, PlanKind
+from app.models.plan import Plan, PlanCreditGrant, PlanKind
 from app.models.user import User, UserRole
 from app.schemas.sportigo import SportigoCatalogItem, SportigoImportCatalogOut, SportigoImportOut
-from app.services.sportigo_import import parse_sportigo_manifest, run_sportigo_import
+from app.services.sportigo_import import SPORTIGO_PACK_PREFIX, parse_sportigo_manifest, run_sportigo_import
 
 
 router = APIRouter(prefix="/admin/sportigo-import")
@@ -25,12 +25,35 @@ def get_sportigo_import_catalog(
         .where(Plan.active.is_(True), Plan.kind == PlanKind.SUBSCRIPTION)
         .order_by(Plan.name.asc())
     ).all()
-    credit_types = db.scalars(
-        select(CreditType).where(CreditType.active.is_(True)).order_by(CreditType.name.asc())
+    pack_plans = db.scalars(
+        select(Plan)
+        .where(
+            Plan.active.is_(True),
+            Plan.kind == PlanKind.PACK,
+            ~Plan.code.like(f"{SPORTIGO_PACK_PREFIX}%"),
+        )
+        .order_by(Plan.name.asc())
     ).all()
+    pack_plan_ids = [plan.id for plan in pack_plans]
+    grant_rows = db.execute(
+        select(PlanCreditGrant.plan_id, CreditType.code)
+        .join(CreditType, CreditType.id == PlanCreditGrant.credit_type_id)
+        .where(PlanCreditGrant.plan_id.in_(pack_plan_ids), CreditType.active.is_(True))
+    ).all() if pack_plan_ids else []
+    credit_codes_by_plan: dict[object, list[str]] = {}
+    for plan_id, credit_code in grant_rows:
+        credit_codes_by_plan.setdefault(plan_id, []).append(credit_code)
     return SportigoImportCatalogOut(
         subscription_plans=[SportigoCatalogItem(code=plan.code, name=plan.name, kind=plan.kind.value) for plan in plans],
-        credit_types=[SportigoCatalogItem(code=item.code, name=item.name) for item in credit_types],
+        pack_plans=[
+            SportigoCatalogItem(
+                code=plan.code,
+                name=plan.name,
+                kind=plan.kind.value,
+                credit_type_codes=sorted(credit_codes_by_plan.get(plan.id, [])),
+            )
+            for plan in pack_plans
+        ],
     )
 
 
@@ -41,10 +64,10 @@ async def import_sportigo_manifest(
     activate: bool = Form(False),
     batch_reference: str = Form(..., min_length=3, max_length=120),
     template_plan_code: str = Form(..., min_length=1, max_length=80),
-    studio_credit_type_code: str = Form(..., min_length=1, max_length=80),
-    collective_credit_type_code: str = Form(..., min_length=1, max_length=80),
-    online_credit_type_code: str = Form(..., min_length=1, max_length=80),
-    solfege_credit_type_code: str = Form(..., min_length=1, max_length=80),
+    studio_pack_plan_code: str = Form(..., min_length=1, max_length=80),
+    collective_pack_plan_code: str = Form(..., min_length=1, max_length=80),
+    online_pack_plan_code: str = Form(..., min_length=1, max_length=80),
+    solfege_pack_plan_code: str = Form(..., min_length=1, max_length=80),
     confirm_apply: str = Form("", max_length=120),
     db: Session = Depends(get_db),
     _: User = Depends(require_roles(UserRole.ADMIN)),
@@ -76,11 +99,11 @@ async def import_sportigo_manifest(
         activate=activate,
         batch_reference=batch_reference.strip(),
         template_plan_code=template_plan_code.strip(),
-        credit_type_codes={
-            "studio": studio_credit_type_code.strip(),
-            "collective": collective_credit_type_code.strip(),
-            "online": online_credit_type_code.strip(),
-            "solfege": solfege_credit_type_code.strip(),
+        pack_plan_codes={
+            "studio": studio_pack_plan_code.strip(),
+            "collective": collective_pack_plan_code.strip(),
+            "online": online_pack_plan_code.strip(),
+            "solfege": solfege_pack_plan_code.strip(),
         },
     )
     if result.errors and not dry_run:
