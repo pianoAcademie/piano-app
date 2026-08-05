@@ -8,6 +8,7 @@ import secrets
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timezone
+from decimal import Decimal
 from typing import Iterable
 from uuid import UUID
 
@@ -335,7 +336,10 @@ def _ensure_pack_plan(db: Session, lot: SportigoCreditLot, credit_type: CreditTy
         name=f"Sportigo – {credit_type.name} – {expiry_label}",
         kind=PlanKind.PACK,
         credits_count=1,
-        pack_validity_months=120,
+        # The database restricts pack catalogue validity to 1-12 months. The
+        # migrated balance keeps its real lifetime on the client subscription
+        # (`ends_at`), including when Sportigo supplied no expiration date.
+        pack_validity_months=12,
         currency_code="EUR",
         description="Solde de crédits migré depuis Sportigo en août 2026.",
         billing_frequency="one_off",
@@ -535,6 +539,9 @@ def run_sportigo_import(
                     last_payment_status="MIGRATED_PAYMENT_METHOD_REQUIRED",
                     payment_provider_code="STRIPE",
                     payment_method_setup_required=True,
+                    forfait_loyalty_discount_per_hour_ttc=Decimal("0.00"),
+                    forfait_family_discount_per_hour_ttc=Decimal("0.00"),
+                    forfait_short_commitment_supplement_per_hour_ttc=Decimal("0.00"),
                 )
                 db.add(subscription)
                 out.subscriptions_created += 1
@@ -586,6 +593,9 @@ def run_sportigo_import(
                     auto_renew=False,
                     bookings_blocked=False,
                     last_payment_status="MIGRATED_CREDIT_BALANCE",
+                    forfait_loyalty_discount_per_hour_ttc=Decimal("0.00"),
+                    forfait_family_discount_per_hour_ttc=Decimal("0.00"),
+                    forfait_short_commitment_supplement_per_hour_ttc=Decimal("0.00"),
                 )
                 db.add(subscription)
                 out.credit_lots_created += 1
