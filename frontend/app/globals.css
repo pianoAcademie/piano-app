@@ -52,6 +52,10 @@
   scroll-snap-type: x proximity;
 }
 
+.client-offer-category-select {
+  display: none;
+}
+
 .client-offer-category-filter a {
   min-height: 42px;
   flex: 0 0 auto;
@@ -21159,5 +21163,172 @@ button.danger:focus-visible {
   .client-session-cta {
     min-height: 30px;
     padding-inline: 10px;
+  }
+}
+
+/* Client purchases: keep every control inside the phone viewport and replace
+   the wide category rail with a native, one-tap mobile filter. */
+@media (max-width: 600px) {
+  .client-content {
+    min-width: 0;
+    max-width: calc(100% - 32px);
+    overflow-x: clip;
+  }
+
+  .client-content > *,
+  .client-content .card,
+  #client-offer-catalog,
+  #client-offer-catalog > .card,
+  .client-purchase-toolbar,
+  .client-purchase-toolbar form,
+  .client-catalog-browser,
+  .client-offer-catalog-grid,
+  .client-catalog-offer-card {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  #client-offer-catalog {
+    scroll-margin-top: 76px;
+  }
+
+  #client-offer-catalog > .card {
+    padding: 12px;
+  }
+
+  .client-purchase-toolbar {
+    gap: 12px;
+    padding-top: 12px;
+  }
+
+  .client-purchase-toolbar > div h3 {
+    font-size: 17px;
+    line-height: 1.25;
+  }
+
+  .client-purchase-toolbar > div .muted {
+    margin: 4px 0 0;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .client-purchase-toolbar form.row {
+    width: 100%;
+    gap: 10px;
+  }
+
+  .client-purchase-toolbar form.row label {
+    min-width: 0;
+    width: 100%;
+    display: grid;
+    gap: 5px;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .client-purchase-toolbar form.row select,
+  .client-purchase-toolbar form.row input,
+  .client-purchase-toolbar form.row button {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding: 9px 11px;
+    font-size: 16px;
+  }
+
+  .client-catalog-browser {
+    margin-top: 16px;
+    padding-top: 14px;
+  }
+
+  .client-catalog-filter-heading {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 8px;
+  }
+
+  .client-catalog-filter-heading h4,
+  .client-catalog-results-head h4 {
+    font-size: 16px;
+    line-height: 1.25;
+  }
+
+  .client-catalog-filter-heading .client-offer-section-kicker {
+    margin-bottom: 2px;
+    font-size: 10px;
+  }
+
+  .client-offer-category-filter {
+    display: none;
+  }
+
+  .client-offer-category-select {
+    width: 100%;
+    display: grid;
+    margin-top: 10px;
+  }
+
+  .client-offer-category-select label {
+    width: 100%;
+    min-width: 0;
+    display: grid;
+    gap: 5px;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .client-offer-category-select select {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding: 9px 11px;
+    font-size: 16px;
+  }
+
+  .client-catalog-results-head {
+    margin-top: 12px;
+    padding-top: 12px;
+    gap: 3px;
+  }
+
+  .client-catalog-results-head p {
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
+  .client-offer-catalog-grid {
+    gap: 10px;
+    margin-top: 10px;
+  }
+
+  .client-catalog-offer-card {
+    width: 100%;
+    gap: 10px;
+    padding: 12px;
+    border-radius: 14px;
+  }
+
+  .client-catalog-offer-content h3 {
+    font-size: 16px;
+    line-height: 1.25;
+  }
+
+  .client-catalog-offer-description {
+    margin-top: 5px;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .client-catalog-offer-meta {
+    margin-top: 8px;
+  }
+
+  .client-catalog-offer-footer {
+    gap: 10px;
+    padding-top: 10px;
+  }
+
+  .client-catalog-price strong {
+    font-size: 20px;
   }
 }

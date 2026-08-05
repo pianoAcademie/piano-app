@@ -5128,6 +5128,31 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       ))}
                     </nav>
 
+                    <form method="get" className="client-offer-category-select">
+                      <input type="hidden" name="tab" value="offers" />
+                      <input type="hidden" name="purchase_user_id" value={selectedPurchaseOwner} />
+                      <input type="hidden" name="purchase_start_date" value={selectedPurchaseStartDate} />
+                      {readParam(searchParams, "imp") ? <input type="hidden" name="imp" value={readParam(searchParams, "imp")} /> : null}
+                      {readParam(searchParams, "imp_name") ? <input type="hidden" name="imp_name" value={readParam(searchParams, "imp_name")} /> : null}
+                      <label>
+                        <span>{t("client.filter_offers_by_category")}</span>
+                        <AutoSubmitSelect
+                          name="offer_category"
+                          defaultValue={selectedOfferCategory}
+                          options={[
+                            {
+                              value: "ALL",
+                              label: `${t("client.offer_category_all")} (${onlinePurchaseCount})`,
+                            },
+                            ...visibleOfferCategories.map((category) => ({
+                              value: category.key,
+                              label: `${t(category.labelKey)} (${offerCategoryCounts.get(category.key) ?? 0})`,
+                            })),
+                          ]}
+                        />
+                      </label>
+                    </form>
+
                     <div className="client-catalog-results-head">
                       <h4>
                         {selectedOfferCategory === "ALL"
