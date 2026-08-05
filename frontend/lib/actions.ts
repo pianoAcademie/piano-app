@@ -3577,6 +3577,8 @@ export async function adminUpdateSessionAttendanceAction(formData: FormData): Pr
   const sessionId = String(formData.get("session_id") ?? "").trim();
   const bookingId = String(formData.get("booking_id") ?? "").trim();
   const attendanceStatus = String(formData.get("attendance_status") ?? "").trim().toUpperCase();
+  const internalNoteIncluded = formData.has("internal_note");
+  const internalNote = optionalField(formData, "internal_note");
 
   if (!sessionId || !bookingId || !["BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"].includes(attendanceStatus)) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.invalid_attendance_entry")));
@@ -3586,7 +3588,10 @@ export async function adminUpdateSessionAttendanceAction(formData: FormData): Pr
     `/api/v1/admin/sessions/${sessionId}/bookings/${bookingId}/attendance`,
     {
       method: "POST",
-      body: JSON.stringify({ attendance_status: attendanceStatus }),
+      body: JSON.stringify({
+        attendance_status: attendanceStatus,
+        ...(internalNoteIncluded ? { internal_note: internalNote } : {}),
+      }),
     },
     token,
   );

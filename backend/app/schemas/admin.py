@@ -2330,6 +2330,7 @@ class AdminSessionBookingCreateRequest(BaseModel):
 
 class AdminSessionBookingAttendanceUpdateRequest(BaseModel):
     attendance_status: Literal["BOOKED", "ATTENDED", "NO_SHOW", "EXCUSED_ABSENCE"]
+    internal_note: str | None = Field(default=None, max_length=12000)
 
 
 class AdminSessionGroupNoteUpdateRequest(BaseModel):

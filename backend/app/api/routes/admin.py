@@ -3663,6 +3663,9 @@ def update_admin_session_booking_attendance(
     booking.status = next_status
     booking.cancelled_at = None
     booking.cancellation_reason = None
+    if "internal_note" in payload.model_fields_set:
+        booking.internal_note = _normalize_message_field(payload.internal_note)
+
     automation_notifications = []
     if previous_status != next_status and next_status == BookingStatus.ATTENDED:
         automation_notifications = schedule_trial_attended_triggers(

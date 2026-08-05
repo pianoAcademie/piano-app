@@ -27,6 +27,7 @@ import SessionTimeFields from "../../components/session-time-fields";
 import SessionVisibilityFields from "../../components/session-visibility-fields";
 import ModalA11yFrame from "../../components/modal-a11y-frame";
 import PresenceButtonsGroup from "../../components/presence-buttons-group";
+import AttendanceInternalNoteField from "../../components/attendance-internal-note-field";
 import DayEventsDrawer from "../../components/planning/day-events-drawer";
 import SessionEditModalBridge from "../../components/planning/session-edit-modal-bridge";
 import MonthDayCard from "../../components/planning/month-day-card";
@@ -3238,11 +3239,10 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                         </p>
                         <label className="session-edit-span">
                           {isEnglish ? "Internal note" : "Note interne"}
-                          <textarea
-                            name="internal_note"
-                            rows={4}
-                            placeholder={isEnglish ? "Internal note for the administration..." : "Note interne pour l administration..."}
+                          <AttendanceInternalNoteField
+                            attendanceFormId="attendance-status-form"
                             defaultValue={focusedAttendanceBooking.internal_note ?? ""}
+                            placeholder={isEnglish ? "Internal note for the administration..." : "Note interne pour l administration..."}
                           />
                         </label>
                         <div className="row">
