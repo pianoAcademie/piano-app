@@ -2819,6 +2819,60 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       {isEnglish ? "All-day slot" : "Creneau sur toute la journee"}
                     </label>
 
+                    <details className="session-edit-collapsible session-edit-span" open>
+                      <summary>{isEnglish ? "Automatic cancellation" : "Annulation automatique"}</summary>
+                      <div className="grid cols-2">
+                        <label className="session-edit-span">
+                          {isEnglish ? "Rule for this slot" : "Règle pour ce créneau"}
+                          <select
+                            name="auto_cancel_rule_mode"
+                            defaultValue={
+                              selectedSession.auto_cancel_rule_enabled_override === null
+                                ? "INHERIT"
+                                : selectedSession.auto_cancel_rule_enabled_override
+                                  ? "CUSTOM"
+                                  : "DISABLED"
+                            }
+                          >
+                            <option value="INHERIT">
+                              {isEnglish ? "Use activity rule" : "Hériter de la règle de l'activité"}
+                            </option>
+                            <option value="DISABLED">{isEnglish ? "Disabled for this slot" : "Désactivée pour ce créneau"}</option>
+                            <option value="CUSTOM">{isEnglish ? "Custom rule" : "Règle personnalisée"}</option>
+                          </select>
+                          <small className="muted">
+                            {courseTypeById.get(selectedSession.course_type_id)?.auto_cancel_rule_enabled
+                              ? (isEnglish
+                                  ? `Activity rule: minimum ${courseTypeById.get(selectedSession.course_type_id)?.auto_cancel_if_booked_less_than_override ?? "—"}, checked ${courseTypeById.get(selectedSession.course_type_id)?.auto_cancel_hours_before_start_override ?? "—"} h before.`
+                                  : `Règle activité : minimum ${courseTypeById.get(selectedSession.course_type_id)?.auto_cancel_if_booked_less_than_override ?? "—"} participants, vérifiée ${courseTypeById.get(selectedSession.course_type_id)?.auto_cancel_hours_before_start_override ?? "—"} h avant.`)
+                              : (isEnglish ? "The activity rule is disabled by default." : "La règle de l'activité est désactivée par défaut.")}
+                          </small>
+                        </label>
+                        <label>
+                          {isEnglish ? "Minimum attendees" : "Nombre minimum de participants"}
+                          <input
+                            type="number"
+                            name="auto_cancel_if_booked_less_than_override"
+                            min={1}
+                            step="1"
+                            defaultValue={selectedSession.auto_cancel_if_booked_less_than_override ?? ""}
+                            placeholder="3"
+                          />
+                        </label>
+                        <label>
+                          {isEnglish ? "Check hours before start" : "Vérification (heures avant le début)"}
+                          <input
+                            type="number"
+                            name="auto_cancel_hours_before_start_override"
+                            min={0}
+                            step="1"
+                            defaultValue={selectedSession.auto_cancel_hours_before_start_override ?? ""}
+                            placeholder="6"
+                          />
+                        </label>
+                      </div>
+                    </details>
+
                     <details className="session-edit-collapsible session-edit-span">
                       <summary>{isEnglish ? "Advanced options" : "Options avancees"}</summary>
                       <label>

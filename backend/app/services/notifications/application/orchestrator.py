@@ -17,6 +17,13 @@ from app.models.user import User, UserRole
 from app.services.booking_confirmation_templates import render_booking_confirmation_email
 from app.services.i18n import normalize_language
 from app.services.local_time import localize_datetime, resolve_timezone_name
+from app.services.messaging_templates import (
+    PREDEFINED_EMAIL_TEMPLATE_AUTO_CANCEL_ADMIN,
+    PREDEFINED_EMAIL_TEMPLATE_AUTO_CANCEL_PARTICIPANT,
+    PREDEFINED_EMAIL_TEMPLATE_AUTO_CANCEL_TEACHER,
+    render_template_content,
+    resolve_predefined_template,
+)
 from app.services.notifications.application.recipients import (
     resolve_admin_booking_notification_recipients,
     resolve_admin_cancellation_recipients,
@@ -32,12 +39,16 @@ from app.services.notifications.domain.constants import (
     EVENT_BOOKING_CREATED_FROM_CLIENT_PORTAL,
     EVENT_BOOKING_REMINDER_DUE,
     EVENT_SLOT_CANCELLED,
+    EVENT_SLOT_AUTO_CANCELLED_LOW_ATTENDANCE,
     NOTIFICATION_STATUS_PENDING,
     NOTIFICATION_STATUS_QUEUED,
     NOTIFICATION_STATUS_SKIPPED,
     NOTIFICATION_TYPE_ADMIN_BOOKING_CANCELLATION,
     NOTIFICATION_TYPE_ADMIN_BOOKING_CONFIRMATION,
     NOTIFICATION_TYPE_ADMIN_SLOT_CANCELLATION,
+    NOTIFICATION_TYPE_AUTO_CANCEL_ADMIN,
+    NOTIFICATION_TYPE_AUTO_CANCEL_PARTICIPANT,
+    NOTIFICATION_TYPE_AUTO_CANCEL_TEACHER,
     NOTIFICATION_TYPE_CLIENT_BOOKING_CANCELLATION,
     NOTIFICATION_TYPE_CLIENT_BOOKING_CONFIRMATION,
     NOTIFICATION_TYPE_REMINDER_EMAIL,
@@ -801,6 +812,163 @@ def schedule_slot_cancelled_notifications(
                 recipient_email=recipient.email,
                 cancelled_at=occurred_at,
             ),
+            scheduled_for=occurred_at,
+            status=NOTIFICATION_STATUS_PENDING,
+        )
+        if created is not None:
+            out.append(OrchestratedNotification(notification_id=created.id, queue_name=QUEUE_NOTIFICATIONS_IMMEDIATE))
+    return out
+
+
+def schedule_auto_low_attendance_cancellation_notifications(
+    db: Session,
+    *,
+    slot: CourseSession,
+    bookings: list[Booking],
+    booked_count: int,
+    minimum_attendees: int,
+    occurred_at: datetime,
+) -> list[OrchestratedNotification]:
+    course_type = db.scalar(select(CourseType).where(CourseType.id == slot.course_type_id))
+    location = db.scalar(select(Location).where(Location.id == slot.location_id))
+    teacher_id = effective_teacher_id_for_session(slot)
+    teacher = db.scalar(select(Professor).where(Professor.id == teacher_id)) if teacher_id is not None else None
+    local_start, timezone_name = localize_datetime(slot.start_at_utc, slot.timezone or (location.timezone if location else None))
+    location_name = (location.name or "").strip() if location is not None else ""
+    location_address = " ".join(
+        part for part in (
+            (location.address_line or "").strip() if location is not None else "",
+            (location.city or "").strip() if location is not None else "",
+        ) if part
+    )
+    teacher_name = professor_display_name(teacher)
+    common_context: dict[str, object] = {
+        "activity_name": course_type.name if course_type is not None else slot.title,
+        "session_date": local_start.strftime("%d/%m/%Y"),
+        "session_time": local_start.strftime("%H:%M"),
+        "timezone": timezone_name,
+        "location_name": location_name,
+        "location_address": location_address,
+        "teacher_name": teacher_name,
+        "booked_count": booked_count,
+        "minimum_attendees": minimum_attendees,
+    }
+    event = create_domain_event(
+        db,
+        event_type=EVENT_SLOT_AUTO_CANCELLED_LOW_ATTENDANCE,
+        source=SOURCE_SCHEDULER,
+        actor_type="system",
+        actor_id=None,
+        related_entity_type="slot",
+        related_entity_id=slot.id,
+        occurred_at=occurred_at,
+        payload_json={"slot_id": str(slot.id), **common_context},
+    )
+    out: list[OrchestratedNotification] = []
+
+    for booking in bookings:
+        recipient = resolve_client_booking_notification_recipient(db, booking=booking)
+        if recipient is None or recipient.email is None:
+            continue
+        contact = (
+            db.scalar(select(User).where(User.id == recipient.contact_id))
+            if recipient.contact_id is not None
+            else None
+        )
+        student = db.scalar(select(User).where(User.id == booking.user_id))
+        recipient_name = (
+            f"{(contact.first_name or '').strip()} {(contact.last_name or '').strip()}".strip()
+            if contact is not None
+            else recipient.email
+        )
+        student_name = (
+            f"{(student.first_name or '').strip()} {(student.last_name or '').strip()}".strip()
+            if student is not None
+            else ""
+        )
+        template = resolve_predefined_template(
+            db,
+            code=PREDEFINED_EMAIL_TEMPLATE_AUTO_CANCEL_PARTICIPANT,
+            language=contact.preferred_language if contact is not None else None,
+        )
+        context = {**common_context, "recipient_name": recipient_name, "student_name": student_name}
+        created = create_notification_if_new(
+            db,
+            notification_type=NOTIFICATION_TYPE_AUTO_CANCEL_PARTICIPANT,
+            channel=CHANNEL_EMAIL,
+            dispatch_mode=DISPATCH_MODE_IMMEDIATE,
+            source_event_id=event.id,
+            source=SOURCE_SCHEDULER,
+            related_entity_type="booking",
+            related_entity_id=booking.id,
+            booking_id=booking.id,
+            slot_id=slot.id,
+            recipient_type=recipient.contact_type,
+            recipient_contact_id=recipient.contact_id,
+            recipient_email=recipient.email,
+            recipient_phone=None,
+            subject=render_template_content(str(template.get("subject") or ""), context),
+            body_snapshot=render_template_content(str(template.get("body") or ""), context),
+            payload_snapshot={"booking_id": str(booking.id), "body_format": template.get("body_format", "HTML")},
+            idempotency_key=f"{NOTIFICATION_TYPE_AUTO_CANCEL_PARTICIPANT}:{booking.id}:{recipient.email}",
+            scheduled_for=occurred_at,
+            status=NOTIFICATION_STATUS_PENDING,
+        )
+        if created is not None:
+            out.append(OrchestratedNotification(notification_id=created.id, queue_name=QUEUE_NOTIFICATIONS_IMMEDIATE))
+
+    if teacher is not None and (teacher.email or "").strip() and bool(teacher.active):
+        template = resolve_predefined_template(db, code=PREDEFINED_EMAIL_TEMPLATE_AUTO_CANCEL_TEACHER, language="fr")
+        context = {**common_context, "recipient_name": teacher_name}
+        teacher_email = teacher.email.strip().lower()
+        created = create_notification_if_new(
+            db,
+            notification_type=NOTIFICATION_TYPE_AUTO_CANCEL_TEACHER,
+            channel=CHANNEL_EMAIL,
+            dispatch_mode=DISPATCH_MODE_IMMEDIATE,
+            source_event_id=event.id,
+            source=SOURCE_SCHEDULER,
+            related_entity_type="slot",
+            related_entity_id=slot.id,
+            booking_id=None,
+            slot_id=slot.id,
+            recipient_type="PROFESSOR",
+            recipient_contact_id=teacher.id,
+            recipient_email=teacher_email,
+            recipient_phone=None,
+            subject=render_template_content(str(template.get("subject") or ""), context),
+            body_snapshot=render_template_content(str(template.get("body") or ""), context),
+            payload_snapshot={"slot_id": str(slot.id), "body_format": template.get("body_format", "HTML")},
+            idempotency_key=f"{NOTIFICATION_TYPE_AUTO_CANCEL_TEACHER}:{slot.id}:{teacher_email}",
+            scheduled_for=occurred_at,
+            status=NOTIFICATION_STATUS_PENDING,
+        )
+        if created is not None:
+            out.append(OrchestratedNotification(notification_id=created.id, queue_name=QUEUE_NOTIFICATIONS_IMMEDIATE))
+
+    template = resolve_predefined_template(db, code=PREDEFINED_EMAIL_TEMPLATE_AUTO_CANCEL_ADMIN, language="fr")
+    for recipient in resolve_admin_cancellation_recipients(db):
+        if recipient.email is None:
+            continue
+        created = create_notification_if_new(
+            db,
+            notification_type=NOTIFICATION_TYPE_AUTO_CANCEL_ADMIN,
+            channel=CHANNEL_EMAIL,
+            dispatch_mode=DISPATCH_MODE_IMMEDIATE,
+            source_event_id=event.id,
+            source=SOURCE_SCHEDULER,
+            related_entity_type="slot",
+            related_entity_id=slot.id,
+            booking_id=None,
+            slot_id=slot.id,
+            recipient_type=recipient.contact_type,
+            recipient_contact_id=recipient.contact_id,
+            recipient_email=recipient.email,
+            recipient_phone=None,
+            subject=render_template_content(str(template.get("subject") or ""), common_context),
+            body_snapshot=render_template_content(str(template.get("body") or ""), common_context),
+            payload_snapshot={"slot_id": str(slot.id), "body_format": template.get("body_format", "HTML")},
+            idempotency_key=f"{NOTIFICATION_TYPE_AUTO_CANCEL_ADMIN}:{slot.id}:{recipient.email}",
             scheduled_for=occurred_at,
             status=NOTIFICATION_STATUS_PENDING,
         )

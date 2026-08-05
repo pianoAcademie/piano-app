@@ -3033,6 +3033,11 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   }
   const capacity_raw = String(formData.get("capacity_max") ?? "");
   const capacity_max = parseNonNegativeInt(capacity_raw);
+  const autoCancelRuleMode = String(formData.get("auto_cancel_rule_mode") ?? "INHERIT").trim().toUpperCase();
+  const autoCancelThresholdRaw = String(formData.get("auto_cancel_if_booked_less_than_override") ?? "").trim();
+  const autoCancelHoursRaw = String(formData.get("auto_cancel_hours_before_start_override") ?? "").trim();
+  const autoCancelThreshold = autoCancelThresholdRaw ? parsePositiveInt(autoCancelThresholdRaw) : null;
+  const autoCancelHours = autoCancelHoursRaw ? parseNonNegativeInt(autoCancelHoursRaw) : null;
 
   if (!session_id || !title || !start_at_utc || !course_type_id || !location_id) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.update_fields_invalid")));
@@ -3066,6 +3071,9 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   }
   if (externalBookingPriceRaw && externalBookingPrice === null) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.external_price_invalid")));
+  }
+  if (autoCancelRuleMode === "CUSTOM" && (autoCancelThreshold === null || autoCancelHours === null)) {
+    redirect(appendQueryMessage(returnTo, "error", "La règle personnalisée exige un seuil minimum et un délai."));
   }
 
   const recurrenceEnabled = recurrence_mode === "RECURRING";
@@ -3103,6 +3111,10 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
     show_external_remaining_seats,
     external_booking_price_ttc: externalBookingPriceRaw ? externalBookingPrice : null,
     timezone: session_timezone,
+    auto_cancel_rule_enabled_override:
+      autoCancelRuleMode === "CUSTOM" ? true : autoCancelRuleMode === "DISABLED" ? false : null,
+    auto_cancel_if_booked_less_than_override: autoCancelRuleMode === "CUSTOM" ? autoCancelThreshold : null,
+    auto_cancel_hours_before_start_override: autoCancelRuleMode === "CUSTOM" ? autoCancelHours : null,
   };
   payload.professor_id = professor_id || null;
   if (apply_scope === "ONE") {
@@ -8184,6 +8196,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   const autoCancelHoursBeforeStartOverride = parseOptionalPlanningRuleOverride(
     String(formData.get("auto_cancel_hours_before_start_override") ?? ""),
   );
+  const autoCancelRuleEnabled = checkboxField(formData, "auto_cancel_rule_enabled");
   const excludeHolidaysInRecurrence = checkboxField(formData, "exclude_holidays_in_recurrence");
   const excludeSchoolVacationsInRecurrence = checkboxField(formData, "exclude_school_vacations_in_recurrence");
   const planningLocationIds = parseStringList(formData.getAll("planning_location_ids"));
@@ -8229,6 +8242,13 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   if (autoCancelHoursBeforeStartOverride === "INVALID") {
     redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_auto_cancel_hours_before_start")));
   }
+  if (
+    autoCancelRuleEnabled
+    && (autoCancelIfBookedLessThanOverride === null || autoCancelIfBookedLessThanOverride < 1
+      || autoCancelHoursBeforeStartOverride === null)
+  ) {
+    redirect(appendQueryMessage(returnTo, "error", "Renseignez un seuil minimum (au moins 1) et un délai avant le cours."));
+  }
 
   const payload: Record<string, unknown> = {
     name,
@@ -8252,6 +8272,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
     cancellation_deadline_hours_override: cancellationDeadlineHoursOverride,
     auto_cancel_if_booked_less_than_override: autoCancelIfBookedLessThanOverride,
     auto_cancel_hours_before_start_override: autoCancelHoursBeforeStartOverride,
+    auto_cancel_rule_enabled: autoCancelRuleEnabled,
     exclude_holidays_in_recurrence: excludeHolidaysInRecurrence,
     exclude_school_vacations_in_recurrence: excludeSchoolVacationsInRecurrence,
     active: checkboxField(formData, "active"),
@@ -8359,6 +8380,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   const autoCancelHoursBeforeStartOverride = parseOptionalPlanningRuleOverride(
     String(formData.get("auto_cancel_hours_before_start_override") ?? ""),
   );
+  const autoCancelRuleEnabled = checkboxField(formData, "auto_cancel_rule_enabled");
   const excludeHolidaysInRecurrence = checkboxField(formData, "exclude_holidays_in_recurrence");
   const excludeSchoolVacationsInRecurrence = checkboxField(formData, "exclude_school_vacations_in_recurrence");
   const planningLocationIds = parseStringList(formData.getAll("planning_location_ids"));
@@ -8404,6 +8426,13 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   if (autoCancelHoursBeforeStartOverride === "INVALID") {
     redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_auto_cancel_hours_before_start")));
   }
+  if (
+    autoCancelRuleEnabled
+    && (autoCancelIfBookedLessThanOverride === null || autoCancelIfBookedLessThanOverride < 1
+      || autoCancelHoursBeforeStartOverride === null)
+  ) {
+    redirect(appendQueryMessage(returnTo, "error", "Renseignez un seuil minimum (au moins 1) et un délai avant le cours."));
+  }
 
   const payload: Record<string, unknown> = {
     name,
@@ -8428,6 +8457,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
     cancellation_deadline_hours_override: cancellationDeadlineHoursOverride,
     auto_cancel_if_booked_less_than_override: autoCancelIfBookedLessThanOverride,
     auto_cancel_hours_before_start_override: autoCancelHoursBeforeStartOverride,
+    auto_cancel_rule_enabled: autoCancelRuleEnabled,
     exclude_holidays_in_recurrence: excludeHolidaysInRecurrence,
     exclude_school_vacations_in_recurrence: excludeSchoolVacationsInRecurrence,
     active: checkboxField(formData, "active"),

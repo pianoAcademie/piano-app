@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import re
 from uuid import UUID, uuid4
@@ -11,7 +11,7 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_admin_or_permissions, require_roles
-from app.models.catalog import CourseType, CreditType, DeliveryMode
+from app.models.catalog import CourseSession, CourseType, CreditType, DeliveryMode, SessionStatus
 from app.models.external_content import (
     CourseTypeContentMapping,
     ExternalContentCourse,
@@ -359,6 +359,7 @@ def _serialize_activity(
         cancellation_deadline_hours_override=activity.cancellation_deadline_hours_override,
         auto_cancel_if_booked_less_than_override=activity.auto_cancel_if_booked_less_than_override,
         auto_cancel_hours_before_start_override=activity.auto_cancel_hours_before_start_override,
+        auto_cancel_rule_enabled=bool(activity.auto_cancel_rule_enabled),
         exclude_holidays_in_recurrence=bool(activity.exclude_holidays_in_recurrence),
         exclude_school_vacations_in_recurrence=bool(activity.exclude_school_vacations_in_recurrence),
         active=activity.active,
@@ -1879,6 +1880,16 @@ def create_admin_activity(
         while db.scalar(select(CourseType.id).where(CourseType.code == code)) is not None:
             code = _new_activity_code(name)
 
+    if payload.auto_cancel_rule_enabled and (
+        payload.auto_cancel_if_booked_less_than_override is None
+        or payload.auto_cancel_if_booked_less_than_override < 1
+        or payload.auto_cancel_hours_before_start_override is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Automatic cancellation requires a minimum attendee count and a check delay",
+        )
+
     activity = CourseType(
         code=code,
         name=name,
@@ -1908,6 +1919,7 @@ def create_admin_activity(
         cancellation_deadline_hours_override=payload.cancellation_deadline_hours_override,
         auto_cancel_if_booked_less_than_override=payload.auto_cancel_if_booked_less_than_override,
         auto_cancel_hours_before_start_override=payload.auto_cancel_hours_before_start_override,
+        auto_cancel_rule_enabled=bool(payload.auto_cancel_rule_enabled),
         exclude_holidays_in_recurrence=bool(payload.exclude_holidays_in_recurrence),
         exclude_school_vacations_in_recurrence=bool(payload.exclude_school_vacations_in_recurrence),
         active=bool(payload.active),
@@ -2064,6 +2076,9 @@ def update_admin_activity(
     if "auto_cancel_hours_before_start_override" in changes:
         activity.auto_cancel_hours_before_start_override = changes["auto_cancel_hours_before_start_override"]
 
+    if "auto_cancel_rule_enabled" in changes:
+        activity.auto_cancel_rule_enabled = bool(changes["auto_cancel_rule_enabled"])
+
     if "exclude_holidays_in_recurrence" in changes:
         activity.exclude_holidays_in_recurrence = bool(changes["exclude_holidays_in_recurrence"])
 
@@ -2072,6 +2087,41 @@ def update_admin_activity(
 
     if "active" in changes:
         activity.active = bool(changes["active"])
+
+    if bool(activity.auto_cancel_rule_enabled) and (
+        activity.auto_cancel_if_booked_less_than_override is None
+        or int(activity.auto_cancel_if_booked_less_than_override) < 1
+        or activity.auto_cancel_hours_before_start_override is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Automatic cancellation requires a minimum attendee count and a check delay",
+        )
+
+    if any(
+        field in changes
+        for field in (
+            "auto_cancel_rule_enabled",
+            "auto_cancel_if_booked_less_than_override",
+            "auto_cancel_hours_before_start_override",
+        )
+    ):
+        inherited_sessions = db.scalars(
+            select(CourseSession).where(
+                CourseSession.course_type_id == activity.id,
+                CourseSession.status == SessionStatus.SCHEDULED,
+                CourseSession.auto_cancel_rule_enabled_override.is_(None),
+                CourseSession.start_at_utc > datetime.now(timezone.utc),
+            )
+        ).all()
+        hours = int(activity.auto_cancel_hours_before_start_override or 0)
+        for session_obj in inherited_sessions:
+            session_obj.auto_cancel_checked_at = None
+            session_obj.auto_cancel_deadline_utc = (
+                session_obj.start_at_utc - timedelta(hours=hours)
+                if bool(activity.auto_cancel_rule_enabled) and hours > 0
+                else session_obj.start_at_utc - timedelta(minutes=1)
+            )
 
     db.add(activity)
     db.commit()

@@ -4050,24 +4050,28 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                         placeholder={t("admin.activity_modal.planning_placeholder")}
                                       />
                                     </label>
+                                    <label className="checkline span-2">
+                                      <input type="checkbox" name="auto_cancel_rule_enabled" />
+                                      Annuler automatiquement si le nombre minimum d'inscrits n'est pas atteint
+                                    </label>
                                     <label>
-                                      {t("admin.activity_modal.auto_cancel_less_than")} {"<"}
+                                      Nombre minimum de participants
                                       <input
                                         type="number"
                                         name="auto_cancel_if_booked_less_than_override"
-                                        min={0}
+                                        min={1}
                                         step="1"
-                                        placeholder={t("admin.activity_modal.planning_placeholder")}
+                                        placeholder="Ex. 3"
                                       />
                                     </label>
                                     <label>
-                                      {t("admin.activity_modal.auto_cancel_before_start")}
+                                      Vérification (heures avant le début)
                                       <input
                                         type="number"
                                         name="auto_cancel_hours_before_start_override"
                                         min={0}
                                         step="1"
-                                        placeholder={t("admin.activity_modal.planning_placeholder")}
+                                        placeholder="Ex. 6"
                                       />
                                     </label>
                                   </div>
@@ -4429,26 +4433,34 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                         placeholder={t("admin.activity_modal.planning_placeholder")}
                                       />
                                     </label>
+                                    <label className="checkline span-2">
+                                      <input
+                                        type="checkbox"
+                                        name="auto_cancel_rule_enabled"
+                                        defaultChecked={selectedActivity.auto_cancel_rule_enabled}
+                                      />
+                                      Annuler automatiquement si le nombre minimum d'inscrits n'est pas atteint
+                                    </label>
                                     <label>
-                                      {t("admin.activity_modal.auto_cancel_less_than")} {"<"}
+                                      Nombre minimum de participants
                                       <input
                                         type="number"
                                         name="auto_cancel_if_booked_less_than_override"
-                                        min={0}
+                                        min={1}
                                         step="1"
                                         defaultValue={selectedActivity.auto_cancel_if_booked_less_than_override ?? ""}
-                                        placeholder={t("admin.activity_modal.planning_placeholder")}
+                                        placeholder="Ex. 3"
                                       />
                                     </label>
                                     <label>
-                                      {t("admin.activity_modal.auto_cancel_before_start")}
+                                      Vérification (heures avant le début)
                                       <input
                                         type="number"
                                         name="auto_cancel_hours_before_start_override"
                                         min={0}
                                         step="1"
                                         defaultValue={selectedActivity.auto_cancel_hours_before_start_override ?? ""}
-                                        placeholder={t("admin.activity_modal.planning_placeholder")}
+                                        placeholder="Ex. 6"
                                       />
                                     </label>
                                   </div>

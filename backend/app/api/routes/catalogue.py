@@ -193,6 +193,9 @@ def list_course_types(
             default_capacity=row.default_capacity,
             default_hourly_rate=row.default_hourly_rate,
             default_course_rate_ttc=row.default_course_rate_ttc,
+            auto_cancel_if_booked_less_than_override=row.auto_cancel_if_booked_less_than_override,
+            auto_cancel_hours_before_start_override=row.auto_cancel_hours_before_start_override,
+            auto_cancel_rule_enabled=bool(row.auto_cancel_rule_enabled),
             active=row.active,
         )
         for row in rows

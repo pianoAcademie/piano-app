@@ -660,6 +660,7 @@ class AdminActivityOut(BaseModel):
     cancellation_deadline_hours_override: int | None
     auto_cancel_if_booked_less_than_override: int | None
     auto_cancel_hours_before_start_override: int | None
+    auto_cancel_rule_enabled: bool
     exclude_holidays_in_recurrence: bool
     exclude_school_vacations_in_recurrence: bool
     active: bool
@@ -690,6 +691,7 @@ class AdminActivityUpsertRequest(BaseModel):
     cancellation_deadline_hours_override: int | None = Field(default=None, ge=0)
     auto_cancel_if_booked_less_than_override: int | None = Field(default=None, ge=0)
     auto_cancel_hours_before_start_override: int | None = Field(default=None, ge=0)
+    auto_cancel_rule_enabled: bool = False
     exclude_holidays_in_recurrence: bool = True
     exclude_school_vacations_in_recurrence: bool = True
     active: bool = True
@@ -718,6 +720,7 @@ class AdminActivityUpdateRequest(BaseModel):
     cancellation_deadline_hours_override: int | None = Field(default=None, ge=0)
     auto_cancel_if_booked_less_than_override: int | None = Field(default=None, ge=0)
     auto_cancel_hours_before_start_override: int | None = Field(default=None, ge=0)
+    auto_cancel_rule_enabled: bool | None = None
     exclude_holidays_in_recurrence: bool | None = None
     exclude_school_vacations_in_recurrence: bool | None = None
     active: bool | None = None
@@ -2211,6 +2214,9 @@ class AdminSessionCreateRequest(BaseModel):
     is_all_day: bool = False
     capacity_max: int = Field(default=1, ge=0)
     auto_cancel_deadline_utc: datetime | None = None
+    auto_cancel_rule_enabled_override: bool | None = None
+    auto_cancel_if_booked_less_than_override: int | None = Field(default=None, ge=1)
+    auto_cancel_hours_before_start_override: int | None = Field(default=None, ge=0)
     zoom_link: str | None = None
     visibility_scopes: list[SessionAudienceScope] = Field(default_factory=lambda: [SessionAudienceScope.EXTERNAL])
     booking_scopes: list[SessionAudienceScope] = Field(default_factory=lambda: [SessionAudienceScope.EXTERNAL])
@@ -2240,6 +2246,9 @@ class AdminSessionUpdateRequest(BaseModel):
     is_all_day: bool | None = None
     capacity_max: int | None = Field(default=None, ge=0)
     auto_cancel_deadline_utc: datetime | None = None
+    auto_cancel_rule_enabled_override: bool | None = None
+    auto_cancel_if_booked_less_than_override: int | None = Field(default=None, ge=1)
+    auto_cancel_hours_before_start_override: int | None = Field(default=None, ge=0)
     zoom_link: str | None = None
     status: SessionStatus | None = None
     cancel_reason: str | None = None
@@ -2291,6 +2300,9 @@ class AdminSessionOut(BaseModel):
     booked_count: int
     status: SessionStatus
     auto_cancel_deadline_utc: datetime
+    auto_cancel_rule_enabled_override: bool | None
+    auto_cancel_if_booked_less_than_override: int | None
+    auto_cancel_hours_before_start_override: int | None
     cancel_reason: str | None
     zoom_link: str | None
     visibility_scopes: list[SessionAudienceScope] = Field(default_factory=list)

@@ -271,6 +271,11 @@ class CourseType(Base):
     cancellation_deadline_hours_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     auto_cancel_if_booked_less_than_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     auto_cancel_hours_before_start_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    auto_cancel_rule_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+    )
     exclude_holidays_in_recurrence: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -291,6 +296,16 @@ class CourseType(Base):
 
 class CourseSession(Base):
     __tablename__ = "course_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            "auto_cancel_if_booked_less_than_override IS NULL OR auto_cancel_if_booked_less_than_override >= 1",
+            name="ck_course_sessions_auto_cancel_count_override_positive",
+        ),
+        CheckConstraint(
+            "auto_cancel_hours_before_start_override IS NULL OR auto_cancel_hours_before_start_override >= 0",
+            name="ck_course_sessions_auto_cancel_hours_override_non_negative",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
@@ -363,6 +378,10 @@ class CourseSession(Base):
         server_default=text("'SCHEDULED'::session_status"),
     )
     auto_cancel_deadline_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    auto_cancel_rule_enabled_override: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    auto_cancel_if_booked_less_than_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    auto_cancel_hours_before_start_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    auto_cancel_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     zoom_link: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_private: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))

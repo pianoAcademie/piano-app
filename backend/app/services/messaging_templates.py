@@ -102,6 +102,9 @@ PREDEFINED_EMAIL_TEMPLATE_QUOTE_CHANGE_REQUESTED_DEFAULT = "QUOTE_CHANGE_REQUEST
 PREDEFINED_EMAIL_TEMPLATE_CLIENT_BOOKING_CONFIRMATION = "CLIENT_BOOKING_CONFIRMATION"
 PREDEFINED_EMAIL_TEMPLATE_ADMIN_BOOKING_CONFIRMATION = "ADMIN_BOOKING_CONFIRMATION"
 PREDEFINED_EMAIL_TEMPLATE_TRIAL_ADULT_GUIDE = "AUTOMATION_TRIAL_ADULT_BOOKING_GUIDE"
+PREDEFINED_EMAIL_TEMPLATE_AUTO_CANCEL_PARTICIPANT = "AUTO_CANCEL_LOW_ATTENDANCE_PARTICIPANT"
+PREDEFINED_EMAIL_TEMPLATE_AUTO_CANCEL_TEACHER = "AUTO_CANCEL_LOW_ATTENDANCE_TEACHER"
+PREDEFINED_EMAIL_TEMPLATE_AUTO_CANCEL_ADMIN = "AUTO_CANCEL_LOW_ATTENDANCE_ADMIN"
 PREDEFINED_SMS_TEMPLATE_QUOTE_SEND_DEFAULT = "QUOTE_SEND_SMS_DEFAULT"
 PREDEFINED_SMS_TEMPLATE_QUOTE_REMINDER_DEFAULT = "QUOTE_REMINDER_SMS_DEFAULT"
 PREDEFINED_SMS_TEMPLATE_QUOTE_CANCEL_DEFAULT = "QUOTE_CANCEL_SMS_DEFAULT"
@@ -686,6 +689,93 @@ def _email_secondary(text: str) -> str:
 
 
 PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
+    MessagingTemplateDefinition(
+        code=PREDEFINED_EMAIL_TEMPLATE_AUTO_CANCEL_PARTICIPANT,
+        name="Annulation automatique - participant",
+        channel="EMAIL",
+        subject="Annulation de votre cours du {session_date} - {activity_name}",
+        body=_email_layout(
+            _email_title(
+                "Votre cours est annule",
+                "Bonjour {recipient_name}, le nombre minimum de participants requis n a pas ete atteint.",
+            ),
+            _email_summary(
+                [
+                    ("Participant", "{student_name}"),
+                    ("Activite", "{activity_name}"),
+                    ("Date et heure", "{session_date} a {session_time} ({timezone})"),
+                    ("Lieu", "{location_name}"),
+                    ("Inscriptions", "{booked_count} / minimum {minimum_attendees}"),
+                ]
+            ),
+            _email_secondary(
+                "Le creneau a donc ete annule conformement aux conditions generales. "
+                "Votre reservation ne sera pas comptee comme un cours suivi."
+            ),
+            _email_secondary("Notre equipe reste a votre disposition pour vous aider a choisir un autre creneau."),
+        ),
+        description="Envoye a chaque participant lorsqu un creneau est annule faute d inscrits.",
+        variables_hint=(
+            "{recipient_name} {student_name} {activity_name} {session_date} {session_time} "
+            "{timezone} {location_name} {location_address} {booked_count} {minimum_attendees}"
+        ),
+        body_format="HTML",
+    ),
+    MessagingTemplateDefinition(
+        code=PREDEFINED_EMAIL_TEMPLATE_AUTO_CANCEL_TEACHER,
+        name="Annulation automatique - professeur",
+        channel="EMAIL",
+        subject="Cours annule faute d inscrits - {activity_name} du {session_date}",
+        body=_email_layout(
+            _email_title(
+                "Cours annule automatiquement",
+                "Bonjour {recipient_name}, le seuil minimum d inscriptions n a pas ete atteint.",
+            ),
+            _email_summary(
+                [
+                    ("Activite", "{activity_name}"),
+                    ("Date et heure", "{session_date} a {session_time} ({timezone})"),
+                    ("Lieu", "{location_name}"),
+                    ("Inscriptions", "{booked_count} / minimum {minimum_attendees}"),
+                ]
+            ),
+            _email_secondary("Le creneau a ete retire du planning et les participants ont ete avertis."),
+        ),
+        description="Envoye au professeur assigne lors d une annulation automatique faute d inscrits.",
+        variables_hint=(
+            "{recipient_name} {activity_name} {session_date} {session_time} {timezone} "
+            "{location_name} {location_address} {booked_count} {minimum_attendees}"
+        ),
+        body_format="HTML",
+    ),
+    MessagingTemplateDefinition(
+        code=PREDEFINED_EMAIL_TEMPLATE_AUTO_CANCEL_ADMIN,
+        name="Annulation automatique - administration",
+        channel="EMAIL",
+        subject="Annulation automatique - {activity_name} du {session_date}",
+        body=_email_layout(
+            _email_title(
+                "Un creneau a ete annule automatiquement",
+                "La regle de frequentation configuree a ete appliquee.",
+            ),
+            _email_summary(
+                [
+                    ("Activite", "{activity_name}"),
+                    ("Date et heure", "{session_date} a {session_time} ({timezone})"),
+                    ("Lieu", "{location_name}"),
+                    ("Professeur", "{teacher_name}"),
+                    ("Inscriptions", "{booked_count} / minimum {minimum_attendees}"),
+                ]
+            ),
+            _email_secondary("Les participants et le professeur assigne ont ete avertis automatiquement."),
+        ),
+        description="Envoye a l administration lors d une annulation automatique faute d inscrits.",
+        variables_hint=(
+            "{activity_name} {session_date} {session_time} {timezone} {location_name} "
+            "{location_address} {teacher_name} {booked_count} {minimum_attendees}"
+        ),
+        body_format="HTML",
+    ),
     MessagingTemplateDefinition(
         code=PREDEFINED_EMAIL_TEMPLATE_TRIAL_ADULT_GUIDE,
         name="Cours d'essai adulte - livret de preparation",

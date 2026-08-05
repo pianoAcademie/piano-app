@@ -40,6 +40,7 @@ from app.services.subscription_billing import (
     run_subscription_retry_job,
 )
 from app.services.session_automation import run_auto_cancel_empty_sessions_job
+from app.services.notifications.application.orchestrator import enqueue_notifications
 
 router = APIRouter(prefix="/internal/jobs")
 
@@ -72,6 +73,7 @@ def auto_cancel_empty_sessions(
     now = datetime.now(timezone.utc)
     result = run_auto_cancel_empty_sessions_job(db, now=now, limit=limit)
     db.commit()
+    enqueue_notifications(list(result.notifications))
     return AutoCancelJobResponse(
         checked=result.checked,
         cancelled_sessions=result.cancelled_sessions,

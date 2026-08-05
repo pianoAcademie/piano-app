@@ -124,21 +124,11 @@ export default async function AdminPlanningSettingsPage({
             <input type="number" min={0} name="waitlist_capacity" defaultValue={settings.waitlist_capacity} required />
           </label>
 
-          <label>
-            {t("admin.planning_settings.auto_cancel_if_booked_less_than")}
-            <input
-              type="number"
-              min={0}
-              name="auto_cancel_if_booked_less_than"
-              defaultValue={settings.auto_cancel_if_booked_less_than}
-              required
-            />
-          </label>
-
-          <label>
-            {t("admin.planning_settings.auto_cancel_hours_before_start")}
-            <input type="number" min={0} name="auto_cancel_hours_before_start" defaultValue={settings.auto_cancel_hours_before_start} required />
-          </label>
+          <input type="hidden" name="auto_cancel_if_booked_less_than" value={settings.auto_cancel_if_booked_less_than} />
+          <input type="hidden" name="auto_cancel_hours_before_start" value={settings.auto_cancel_hours_before_start} />
+          <p className="muted span-2">
+            Les règles d'annulation automatique se configurent désormais dans chaque activité, avec une dérogation possible sur le créneau.
+          </p>
 
           <label className="checkline">
             <input type="checkbox" name="is_private" defaultChecked={settings.is_private} />

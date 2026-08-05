@@ -454,6 +454,9 @@ def _to_admin_session_out(
         booked_count=booked_count,
         status=session_obj.status,
         auto_cancel_deadline_utc=session_obj.auto_cancel_deadline_utc,
+        auto_cancel_rule_enabled_override=session_obj.auto_cancel_rule_enabled_override,
+        auto_cancel_if_booked_less_than_override=session_obj.auto_cancel_if_booked_less_than_override,
+        auto_cancel_hours_before_start_override=session_obj.auto_cancel_hours_before_start_override,
         cancel_reason=session_obj.cancel_reason,
         zoom_link=session_obj.zoom_link,
         visibility_scopes=visibility_scopes,
@@ -1823,21 +1826,25 @@ def _resolve_auto_cancel_deadline(
     auto_cancel_deadline_utc: datetime | None,
     location_id: UUID,
     course_type_id: UUID,
+    auto_cancel_rule_enabled_override: bool | None = None,
+    auto_cancel_hours_before_start_override: int | None = None,
 ) -> datetime:
     if auto_cancel_deadline_utc is not None:
         return auto_cancel_deadline_utc
 
-    config = db.scalar(select(PlanningConfig).where(PlanningConfig.location_id == location_id))
-    hours = int(
-        config.auto_cancel_hours_before_start
-        if config is not None
-        else PLANNING_DEFAULTS["auto_cancel_hours_before_start"]
-    )
     course_type = db.scalar(select(CourseType).where(CourseType.id == course_type_id))
-    if course_type is not None and course_type.auto_cancel_hours_before_start_override is not None:
-        hours = int(course_type.auto_cancel_hours_before_start_override)
+    if auto_cancel_rule_enabled_override is True:
+        hours = int(auto_cancel_hours_before_start_override or 0)
+    elif auto_cancel_rule_enabled_override is False:
+        hours = 0
+    elif course_type is not None and bool(course_type.auto_cancel_rule_enabled):
+        hours = int(course_type.auto_cancel_hours_before_start_override or 0)
+    else:
+        hours = 0
     hours = max(0, hours)
-    return start_at_utc - timedelta(hours=hours)
+    # The legacy deadline column is non-null and must precede the start even
+    # when the opt-in rule is disabled. Disabled rules are excluded by the job.
+    return start_at_utc - timedelta(hours=hours) if hours > 0 else start_at_utc - timedelta(minutes=1)
 
 
 def _validate_session_times(*, start_at_utc: datetime, end_at_utc: datetime, auto_cancel_deadline_utc: datetime) -> None:
@@ -3220,6 +3227,14 @@ def create_session(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> AdminSessionOut:
+    if payload.auto_cancel_rule_enabled_override is True and (
+        payload.auto_cancel_if_booked_less_than_override is None
+        or payload.auto_cancel_hours_before_start_override is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A custom auto-cancellation rule requires a minimum attendee count and a check delay",
+        )
     course_type, location, professor = _validate_and_load_refs(
         db,
         course_type_id=payload.course_type_id,
@@ -3245,6 +3260,8 @@ def create_session(
         auto_cancel_deadline_utc=payload.auto_cancel_deadline_utc,
         location_id=payload.location_id,
         course_type_id=payload.course_type_id,
+        auto_cancel_rule_enabled_override=payload.auto_cancel_rule_enabled_override,
+        auto_cancel_hours_before_start_override=payload.auto_cancel_hours_before_start_override,
     )
     if is_vacation or not allows_student_bookings:
         capacity_max = 0
@@ -3380,6 +3397,9 @@ def create_session(
                 capacity_max=capacity_max,
                 status=SessionStatus.SCHEDULED,
                 auto_cancel_deadline_utc=deadline_at,
+                auto_cancel_rule_enabled_override=payload.auto_cancel_rule_enabled_override,
+                auto_cancel_if_booked_less_than_override=payload.auto_cancel_if_booked_less_than_override,
+                auto_cancel_hours_before_start_override=payload.auto_cancel_hours_before_start_override,
                 cancel_reason=None,
                 zoom_link=_resolve_session_zoom_link(
                     requested_zoom_link=payload.zoom_link,
@@ -4368,6 +4388,33 @@ def update_session(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
     updates = payload.model_dump(exclude_unset=True)
+    next_auto_cancel_enabled_override = updates.get(
+        "auto_cancel_rule_enabled_override",
+        session_obj.auto_cancel_rule_enabled_override,
+    )
+    next_auto_cancel_threshold_override = updates.get(
+        "auto_cancel_if_booked_less_than_override",
+        session_obj.auto_cancel_if_booked_less_than_override,
+    )
+    next_auto_cancel_hours_override = updates.get(
+        "auto_cancel_hours_before_start_override",
+        session_obj.auto_cancel_hours_before_start_override,
+    )
+    if next_auto_cancel_enabled_override is True and (
+        next_auto_cancel_threshold_override is None or next_auto_cancel_hours_override is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A custom auto-cancellation rule requires a minimum attendee count and a check delay",
+        )
+    has_auto_cancel_rule_update = any(
+        field in updates
+        for field in (
+            "auto_cancel_rule_enabled_override",
+            "auto_cancel_if_booked_less_than_override",
+            "auto_cancel_hours_before_start_override",
+        )
+    )
     recurrence_payload = updates.pop("recurrence", None)
     has_substitute_teacher_update = "substitute_teacher_id" in updates
     requested_substitute_teacher_id = updates.pop("substitute_teacher_id", None) if has_substitute_teacher_update else session_obj.substitute_teacher_id
@@ -4467,6 +4514,8 @@ def update_session(
                 auto_cancel_deadline_utc=None,
                 location_id=location_id,
                 course_type_id=course_type_id,
+                auto_cancel_rule_enabled_override=next_auto_cancel_enabled_override,
+                auto_cancel_hours_before_start_override=next_auto_cancel_hours_override,
             )
     else:
         if "end_at_utc" in updates:
@@ -4481,13 +4530,15 @@ def update_session(
 
         if "auto_cancel_deadline_utc" in updates:
             anchor_deadline = updates["auto_cancel_deadline_utc"]
-        elif "start_at_utc" in updates:
+        elif "start_at_utc" in updates or has_auto_cancel_rule_update or "course_type_id" in updates:
             anchor_deadline = _resolve_auto_cancel_deadline(
                 db,
                 start_at_utc=anchor_start,
                 auto_cancel_deadline_utc=None,
                 location_id=location_id,
                 course_type_id=course_type_id,
+                auto_cancel_rule_enabled_override=next_auto_cancel_enabled_override,
+                auto_cancel_hours_before_start_override=next_auto_cancel_hours_override,
             )
         else:
             anchor_deadline = original_anchor_deadline
@@ -4642,6 +4693,11 @@ def update_session(
         target.snapshot_payor_legal_entity_id = course_type.payor_legal_entity_id
         target.location_id = location_id
         target.professor_id = professor_id
+        target.auto_cancel_rule_enabled_override = next_auto_cancel_enabled_override
+        target.auto_cancel_if_booked_less_than_override = next_auto_cancel_threshold_override
+        target.auto_cancel_hours_before_start_override = next_auto_cancel_hours_override
+        if has_auto_cancel_rule_update or "start_at_utc" in updates or "course_type_id" in updates:
+            target.auto_cancel_checked_at = None
 
         if "title" in updates:
             target.title = updates["title"]
@@ -4732,6 +4788,8 @@ def update_session(
                         auto_cancel_deadline_utc=None,
                         location_id=target.location_id,
                         course_type_id=target.course_type_id,
+                        auto_cancel_rule_enabled_override=target.auto_cancel_rule_enabled_override,
+                        auto_cancel_hours_before_start_override=target.auto_cancel_hours_before_start_override,
                     )
             else:
                 resolved_end = resolved_start + anchor_new_duration
@@ -4757,6 +4815,16 @@ def update_session(
                 resolved_deadline = original_target_deadline + anchor_deadline_shift
             elif has_start_update:
                 resolved_deadline = resolved_start - (original_target_start - original_target_deadline)
+            elif has_auto_cancel_rule_update or "course_type_id" in updates:
+                resolved_deadline = _resolve_auto_cancel_deadline(
+                    db,
+                    start_at_utc=resolved_start,
+                    auto_cancel_deadline_utc=None,
+                    location_id=target.location_id,
+                    course_type_id=target.course_type_id,
+                    auto_cancel_rule_enabled_override=target.auto_cancel_rule_enabled_override,
+                    auto_cancel_hours_before_start_override=target.auto_cancel_hours_before_start_override,
+                )
             else:
                 resolved_deadline = original_target_deadline
 
@@ -4770,6 +4838,8 @@ def update_session(
                     auto_cancel_deadline_utc=None,
                     location_id=target.location_id,
                     course_type_id=target.course_type_id,
+                    auto_cancel_rule_enabled_override=target.auto_cancel_rule_enabled_override,
+                    auto_cancel_hours_before_start_override=target.auto_cancel_hours_before_start_override,
                 )
 
         _validate_session_times(
@@ -4903,6 +4973,9 @@ def update_session(
                     capacity_max=session_obj.capacity_max,
                     status=session_obj.status,
                     auto_cancel_deadline_utc=deadline_at,
+                    auto_cancel_rule_enabled_override=session_obj.auto_cancel_rule_enabled_override,
+                    auto_cancel_if_booked_less_than_override=session_obj.auto_cancel_if_booked_less_than_override,
+                    auto_cancel_hours_before_start_override=session_obj.auto_cancel_hours_before_start_override,
                     cancel_reason=session_obj.cancel_reason,
                     zoom_link=session_obj.zoom_link,
                     visibility_scope=session_obj.visibility_scope,
@@ -4968,6 +5041,9 @@ def update_session(
                     capacity_max=session_obj.capacity_max,
                     status=session_obj.status,
                     auto_cancel_deadline_utc=deadline_at,
+                    auto_cancel_rule_enabled_override=session_obj.auto_cancel_rule_enabled_override,
+                    auto_cancel_if_booked_less_than_override=session_obj.auto_cancel_if_booked_less_than_override,
+                    auto_cancel_hours_before_start_override=session_obj.auto_cancel_hours_before_start_override,
                     cancel_reason=session_obj.cancel_reason,
                     zoom_link=session_obj.zoom_link,
                     visibility_scope=session_obj.visibility_scope,
@@ -5136,6 +5212,9 @@ def duplicate_session_operation(
                 capacity_max=target.capacity_max,
                 status=SessionStatus.SCHEDULED,
                 auto_cancel_deadline_utc=duplicate_deadline,
+                auto_cancel_rule_enabled_override=target.auto_cancel_rule_enabled_override,
+                auto_cancel_if_booked_less_than_override=target.auto_cancel_if_booked_less_than_override,
+                auto_cancel_hours_before_start_override=target.auto_cancel_hours_before_start_override,
                 cancel_reason=None,
                 zoom_link=target.zoom_link,
                 visibility_scope=target.visibility_scope,

@@ -27,6 +27,9 @@ class CourseTypeOut(BaseModel):
     default_capacity: int
     default_hourly_rate: Decimal | None
     default_course_rate_ttc: Decimal | None
+    auto_cancel_if_booked_less_than_override: int | None = None
+    auto_cancel_hours_before_start_override: int | None = None
+    auto_cancel_rule_enabled: bool = False
     active: bool
 
 

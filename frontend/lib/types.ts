@@ -70,6 +70,7 @@ export type CourseTypeOut = {
   cancellation_deadline_hours_override: number | null;
   auto_cancel_if_booked_less_than_override: number | null;
   auto_cancel_hours_before_start_override: number | null;
+  auto_cancel_rule_enabled: boolean;
   exclude_holidays_in_recurrence: boolean;
   exclude_school_vacations_in_recurrence: boolean;
   active: boolean;
@@ -1505,6 +1506,9 @@ export type AdminSessionOut = {
   booked_count: number;
   status: "SCHEDULED" | "CANCELLED" | "COMPLETED" | string;
   auto_cancel_deadline_utc: string;
+  auto_cancel_rule_enabled_override: boolean | null;
+  auto_cancel_if_booked_less_than_override: number | null;
+  auto_cancel_hours_before_start_override: number | null;
   cancel_reason: string | null;
   zoom_link: string | null;
   visibility_scopes: SessionAudienceScope[];
@@ -2216,6 +2220,7 @@ export type AdminActivityOut = {
   cancellation_deadline_hours_override: number | null;
   auto_cancel_if_booked_less_than_override: number | null;
   auto_cancel_hours_before_start_override: number | null;
+  auto_cancel_rule_enabled: boolean;
   exclude_holidays_in_recurrence: boolean;
   exclude_school_vacations_in_recurrence: boolean;
   active: boolean;
