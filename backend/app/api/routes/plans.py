@@ -39,6 +39,7 @@ from app.schemas.plan import (
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, with_webhook_secret
 from app.services.messaging_templates import resolve_frontend_base_url
 from app.services.payment_provider import PaymentProvider, resolve_webhook_secret
+from app.services.plan_entitlements import effective_entitlements_by_plan
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.client_status import promote_client_to_active_student
 from app.services.subscriptions import add_months_utc, reconcile_subscription_status
@@ -206,23 +207,7 @@ def _entitlements_by_plan(
     *,
     plan_ids: list[UUID],
 ) -> tuple[dict[UUID, list[UUID]], dict[UUID, list[str]]]:
-    if not plan_ids:
-        return {}, {}
-
-    rows = db.execute(
-        select(PlanEntitlement.plan_id, PlanEntitlement.course_type_id, CourseType.name)
-        .join(CourseType, CourseType.id == PlanEntitlement.course_type_id)
-        .where(PlanEntitlement.plan_id.in_(plan_ids))
-        .order_by(PlanEntitlement.plan_id.asc(), CourseType.name.asc())
-    ).all()
-
-    ids_map: dict[UUID, list[UUID]] = defaultdict(list)
-    names_map: dict[UUID, list[str]] = defaultdict(list)
-    for plan_id, course_type_id, course_type_name in rows:
-        ids_map[plan_id].append(course_type_id)
-        names_map[plan_id].append(course_type_name)
-
-    return dict(ids_map), dict(names_map)
+    return effective_entitlements_by_plan(db, plan_ids=plan_ids)
 
 
 def _lock_user_purchase_scope(db: Session, user_id: UUID) -> None:

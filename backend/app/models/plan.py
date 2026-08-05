@@ -216,6 +216,7 @@ class ClientPlanSubscription(Base):
         ForeignKey("plans.id", ondelete="RESTRICT"),
         nullable=False,
     )
+    migration_source_code: Mapped[str | None] = mapped_column(String(60), nullable=True)
     payer_contact_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),

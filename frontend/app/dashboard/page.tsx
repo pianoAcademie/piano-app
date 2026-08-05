@@ -767,6 +767,17 @@ function isPendingSubscriptionCoveredInPreview(
   return true;
 }
 
+function isSubscriptionCoveredForPlanning(
+  sub: { status: string; started_at: string; ends_at: string | null; bookings_blocked?: boolean | null },
+  now: Date,
+  includePendingPreview: boolean,
+): boolean {
+  return (
+    isSubscriptionActiveNow(sub, now)
+    || (includePendingPreview && isPendingSubscriptionCoveredInPreview(sub, now))
+  );
+}
+
 function isSubscriptionVisibleInPortal(
   sub: {
     status: string;
@@ -1790,9 +1801,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const activeEntitlementsByOwner = new Map<string, Set<string>>();
   const activeSubscriptionByOwner = new Set<string>();
   for (const sub of subscriptions) {
-    const isCoveredForPlanning =
-      isSubscriptionActiveNow(sub, now)
-      || (isReadOnlyPreview && isPendingSubscriptionCoveredInPreview(sub, now));
+    const isCoveredForPlanning = isSubscriptionCoveredForPlanning(sub, now, isReadOnlyPreview);
     if (!isCoveredForPlanning) {
       continue;
     }
@@ -2478,7 +2487,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     let initial = 0;
     let packCount = 0;
     for (const sub of subscriptionsByOwner.get(memberId) ?? []) {
-      if (!isSubscriptionActiveNow(sub, now) || sub.plan.kind !== "PACK") {
+      if (!isSubscriptionCoveredForPlanning(sub, now, isReadOnlyPreview) || sub.plan.kind !== "PACK") {
         continue;
       }
       if (!(sub.entitlement_course_type_ids ?? []).includes(selectedSession.course_type.id)) {
@@ -2743,7 +2752,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   ];
 
   const positivePackSubscriptions = subscriptions.filter(
-    (sub) => isSubscriptionActiveNow(sub, now) && sub.plan.kind === "PACK" && (sub.credits_remaining ?? 0) > 0,
+    (sub) =>
+      isSubscriptionCoveredForPlanning(sub, now, isReadOnlyPreview)
+      && sub.plan.kind === "PACK"
+      && (sub.credits_remaining ?? 0) > 0,
   );
 
   const paidTotal = paymentRows

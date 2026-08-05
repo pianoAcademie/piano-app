@@ -822,6 +822,7 @@ def _select_eligible_subscription(
     requested_subscription_id: UUID | None,
     allowed_plan_kinds: set[PlanKind] | None = None,
     coverage_at: datetime | None = None,
+    include_pending_preview: bool = False,
 ) -> tuple[ClientPlanSubscription, Plan] | None:
     eligibility_at = coverage_at or now
     course_type = db.scalar(select(CourseType).where(CourseType.id == course_type_id))
@@ -829,16 +830,20 @@ def _select_eligible_subscription(
     course_type_name = course_type.name if course_type is not None else None
     course_type_service_code = course_type.service_code if course_type is not None else None
 
+    eligible_statuses = [
+        SubscriptionStatus.ACTIVE,
+        SubscriptionStatus.PAYMENT_ALERT,
+        SubscriptionStatus.PAUSED,
+    ]
+    if include_pending_preview:
+        eligible_statuses.append(SubscriptionStatus.PENDING)
+
     stmt = (
         select(ClientPlanSubscription, Plan)
         .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
         .where(
             ClientPlanSubscription.user_id == user_id,
-            ClientPlanSubscription.status.in_([
-                SubscriptionStatus.ACTIVE,
-                SubscriptionStatus.PAYMENT_ALERT,
-                SubscriptionStatus.PAUSED,
-            ]),
+            ClientPlanSubscription.status.in_(eligible_statuses),
             ClientPlanSubscription.started_at <= eligibility_at,
             or_(ClientPlanSubscription.ends_at.is_(None), ClientPlanSubscription.ends_at > eligibility_at),
             Plan.active.is_(True),
@@ -871,11 +876,12 @@ def _select_eligible_subscription(
             course_type_service_code=course_type_service_code,
         ):
             continue
-        if reconcile_subscription_status(subscription, now=now, plan_kind=plan.kind):
+        is_pending_preview = include_pending_preview and subscription.status == SubscriptionStatus.PENDING
+        if not is_pending_preview and reconcile_subscription_status(subscription, now=now, plan_kind=plan.kind):
             db.add(subscription)
         if plan.kind == PlanKind.PACK and (subscription.credits_remaining is None or subscription.credits_remaining <= 0):
             continue
-        if not _is_subscription_active(subscription, plan, eligibility_at):
+        if not is_pending_preview and not _is_subscription_active(subscription, plan, eligibility_at):
             continue
         return subscription, plan
 

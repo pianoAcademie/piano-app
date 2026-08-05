@@ -35,6 +35,7 @@ SPORTIGO_NOTE_BEGIN = "IMPORT_SOURCE:sportigo_2026"
 SPORTIGO_NOTE_END = "END_IMPORT_SOURCE:sportigo_2026"
 SPORTIGO_MONTHLY_PLAN_CODE = "SPORTIGO-MIG-MONTHLY-COLLECTIVE"
 SPORTIGO_PACK_PREFIX = "SPORTIGO-MIG-PACK-"
+SPORTIGO_MIGRATION_SOURCE_CODE = "SPORTIGO_2026_OPENING_BALANCE"
 SOURCE_CREDIT_TYPES = {
     "studio": "studio",
     "seance": "collective",
@@ -507,6 +508,7 @@ def run_sportigo_import(
                 subscription = ClientPlanSubscription(
                     user_id=user.id,
                     plan_id=monthly_plan.id,
+                    migration_source_code=SPORTIGO_MIGRATION_SOURCE_CODE,
                     status=status_value,
                     started_at=started_at,
                     ends_at=row.monthly_next_payment_at,
@@ -529,6 +531,7 @@ def run_sportigo_import(
                 out.subscriptions_created += 1
             else:
                 subscription.status = status_value
+                subscription.migration_source_code = SPORTIGO_MIGRATION_SOURCE_CODE
                 subscription.started_at = started_at
                 subscription.ends_at = row.monthly_next_payment_at
                 subscription.next_payment_at = row.monthly_next_payment_at
@@ -587,6 +590,7 @@ def run_sportigo_import(
                 subscription = ClientPlanSubscription(
                     user_id=user.id,
                     plan_id=plan.id,
+                    migration_source_code=SPORTIGO_MIGRATION_SOURCE_CODE,
                     status=status_value,
                     started_at=now,
                     ends_at=ends_at,
@@ -603,6 +607,7 @@ def run_sportigo_import(
                 out.credit_lots_created += 1
             else:
                 subscription.status = status_value
+                subscription.migration_source_code = SPORTIGO_MIGRATION_SOURCE_CODE
                 subscription.ends_at = ends_at
                 subscription.credits_initial = lot.value
                 subscription.credits_remaining = lot.value

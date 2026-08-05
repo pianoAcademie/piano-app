@@ -16,7 +16,7 @@ import jwt
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, aliased
 
-from app.api.deps import get_db, require_roles
+from app.api.deps import get_db, is_read_only_client_preview, require_roles
 from app.api.routes.bookings import (
     _count_booked,
     _effective_session_booking_rules,
@@ -131,6 +131,7 @@ from app.services.payment_receipts import (
     should_defer_booking_invoice,
 )
 from app.services.payment_provider import PaymentProvider, detect_provider_from_reference, resolve_provider, resolve_webhook_secret
+from app.services.plan_entitlements import effective_entitlements_by_plan
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.session_audience import (
     allowed_plan_kinds_for_scopes,
@@ -165,6 +166,7 @@ PENDING_PAYMENT_STATUSES = {
 }
 FAILED_PAYMENT_STATUSES = {"NOT_SUPPORTED", "MISSING_KEY", "MISSING_CUSTOMER_REF", "MISSING_MANDATE_REF", "NETWORK_ERROR", "UNEXPECTED_ERROR"}
 ONLINE_COLLECTION_METHOD_CODES = {"CARD_ONLINE", "SEPA_DEBIT", "PAYPAL"}
+SPORTIGO_OPENING_BALANCE_SOURCE_CODE = "SPORTIGO_2026_OPENING_BALANCE"
 INVOICE_RANGE_NOTE_PREFIX = "INVOICE_RANGE::"
 INVOICE_RANGE_PUBLIC_PAYMENT_TOKEN_SCOPE = "INVOICE_RANGE_PUBLIC_PAY"
 COUNTRY_NAME_BY_CODE = {
@@ -470,6 +472,24 @@ def _subscription_payment_status(subscription: ClientPlanSubscription) -> str:
     if billing_method:
         return "PAID"
     return "PENDING"
+
+
+def _sportigo_opening_balance_has_new_app_payment(subscription: ClientPlanSubscription) -> bool:
+    if (subscription.migration_source_code or "").strip().upper() != SPORTIGO_OPENING_BALANCE_SOURCE_CODE:
+        return True
+    if subscription.last_payment_at is None:
+        return False
+    return subscription.last_payment_at > subscription.created_at
+
+
+def _subscription_payment_occurred_at(subscription: ClientPlanSubscription) -> datetime:
+    if (
+        (subscription.migration_source_code or "").strip().upper() == SPORTIGO_OPENING_BALANCE_SOURCE_CODE
+        and subscription.last_payment_at is not None
+        and subscription.last_payment_at > subscription.created_at
+    ):
+        return subscription.last_payment_at
+    return subscription.started_at
 
 
 def _payment_source_label(source: str) -> str:
@@ -2372,17 +2392,10 @@ def get_client_family_overview(
     if changed:
         db.commit()
     plan_ids = list({plan.id for _, plan, _ in rows_subscriptions})
-    entitlement_rows = db.execute(
-        select(PlanEntitlement.plan_id, PlanEntitlement.course_type_id, CourseType.name)
-        .join(CourseType, CourseType.id == PlanEntitlement.course_type_id)
-        .where(PlanEntitlement.plan_id.in_(plan_ids))
-        .order_by(PlanEntitlement.plan_id.asc(), CourseType.name.asc())
-    ).all() if plan_ids else []
-    entitlement_course_type_ids_by_plan: dict[UUID, list[UUID]] = defaultdict(list)
-    entitlement_course_type_names_by_plan: dict[UUID, list[str]] = defaultdict(list)
-    for plan_id, course_type_id, course_type_name in entitlement_rows:
-        entitlement_course_type_ids_by_plan[plan_id].append(course_type_id)
-        entitlement_course_type_names_by_plan[plan_id].append(course_type_name)
+    entitlement_course_type_ids_by_plan, entitlement_course_type_names_by_plan = effective_entitlements_by_plan(
+        db,
+        plan_ids=plan_ids,
+    )
 
     subscription_ids = {sub.id for sub, _, _ in rows_subscriptions}
     quote_by_subscription_id: dict[UUID, Quote] = {}
@@ -2890,6 +2903,13 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
     for sub, plan, owner in rows_subs:
         if plan.kind == PlanKind.FORFAIT:
             continue
+        is_sportigo_opening_balance = (
+            (sub.migration_source_code or "").strip().upper() == SPORTIGO_OPENING_BALANCE_SOURCE_CODE
+        )
+        if plan.kind == PlanKind.PACK and is_sportigo_opening_balance:
+            continue
+        if not _sportigo_opening_balance_has_new_app_payment(sub):
+            continue
 
         billing_profile = resolve_billing_profile(db, owner)
         country_code = (billing_profile.residence_country or "FR").upper()
@@ -2941,7 +2961,7 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                 owner_client_id=owner.id,
                 owner_display_name=_display_name(owner),
                 source="PLAN_PURCHASE",
-                occurred_at=sub.started_at,
+                occurred_at=_subscription_payment_occurred_at(sub),
                 label=plan.name,
                 status=_subscription_payment_status(sub),
                 amount_excl_vat=price_excl_vat,
@@ -3529,6 +3549,7 @@ def get_client_session_reservation_options(
         booking_by_user.setdefault(booking.user_id, booking)
 
     member_options: list[ClientSessionReservationMemberOptionOut] = []
+    include_pending_preview = is_read_only_client_preview(getattr(current_user, "_auth_claims", {}))
     for member in members:
         try:
             existing = booking_by_user.get(member.id)
@@ -3651,6 +3672,7 @@ def get_client_session_reservation_options(
                 now=now,
                 requested_subscription_id=None,
                 allowed_plan_kinds=allowed_plan_kinds,
+                include_pending_preview=include_pending_preview,
             )
             if selected_subscription is not None:
                 _, selected_plan = selected_subscription

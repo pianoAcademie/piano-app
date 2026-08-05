@@ -181,6 +181,45 @@ class FormulaCompatibilityTests(unittest.TestCase):
         self.assertIs(selected_subscription, subscription)
         self.assertIs(selected_plan, plan)
 
+    def test_pending_migrated_pack_is_eligible_only_in_read_only_preview(self) -> None:
+        subscription = SimpleNamespace(
+            id=uuid4(),
+            user_id=uuid4(),
+            plan_id=uuid4(),
+            status=SubscriptionStatus.PENDING,
+            started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            ends_at=None,
+            credits_remaining=3,
+            created_at=datetime(2026, 8, 5, tzinfo=timezone.utc),
+            bookings_blocked=False,
+            cancellation_effective_at=None,
+            suspension_starts_at=None,
+            suspension_ends_at=None,
+        )
+        plan = SimpleNamespace(id=subscription.plan_id, kind=PlanKind.PACK, active=True)
+        course_type = SimpleNamespace(
+            id=uuid4(),
+            credit_type_id=uuid4(),
+            name="Reservation studio de repetition",
+            service_code="STUDIO_BOOKING",
+        )
+        fake_db = _FakeSession(
+            scalar_values=[course_type, None, uuid4()],
+            execute_rows=[(subscription, plan)],
+        )
+
+        selected = _select_eligible_subscription(
+            fake_db,
+            user_id=subscription.user_id,
+            course_type_id=course_type.id,
+            now=datetime(2026, 8, 5, 12, 0, tzinfo=timezone.utc),
+            requested_subscription_id=None,
+            allowed_plan_kinds={PlanKind.PACK},
+            include_pending_preview=True,
+        )
+
+        self.assertEqual(selected, (subscription, plan))
+
     def test_formula_options_include_entitlement_with_same_activity_name(self) -> None:
         plan = SimpleNamespace(
             id=uuid4(),
