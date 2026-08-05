@@ -36,6 +36,9 @@ SPORTIGO_NOTE_END = "END_IMPORT_SOURCE:sportigo_2026"
 SPORTIGO_MONTHLY_PLAN_CODE = "SPORTIGO-MIG-MONTHLY-COLLECTIVE"
 SPORTIGO_PACK_PREFIX = "SPORTIGO-MIG-PACK-"
 SPORTIGO_MIGRATION_SOURCE_CODE = "SPORTIGO_2026_OPENING_BALANCE"
+# Refunded accounts that must not be recreated by a later Sportigo refresh.
+# Rona Kreiner's studio pack (member 1717363) was fully refunded.
+SPORTIGO_EXCLUDED_MEMBER_IDS = {"1717363"}
 SOURCE_CREDIT_TYPES = {
     "studio": "studio",
     "seance": "collective",
@@ -157,6 +160,8 @@ def parse_sportigo_manifest(content: bytes) -> tuple[list[SportigoImportRow], li
             errors.append(f"Ligne {row_number}: identifiant Sportigo {member_id} en double.")
             continue
         seen.add(member_id)
+        if member_id in SPORTIGO_EXCLUDED_MEMBER_IDS:
+            continue
 
         credits: list[SportigoCreditLot] = []
         raw_credits = _clean(row.get("credits_json")) or "[]"

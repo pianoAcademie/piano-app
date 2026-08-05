@@ -15,6 +15,17 @@ from app.services.sportigo_import import (
 
 
 class SportigoImportManifestTests(unittest.TestCase):
+    def test_refunded_member_is_excluded_from_future_imports(self) -> None:
+        content = (
+            "sportigo_member_id;first_name;last_name;email;monthly;monthly_next_payment_at;credits_json\n"
+            '1717363;Rona;Kreiner;rekreiner22@gmail.com;0;;"[{""type"":""studio"",""value"":10}]"\n'
+        ).encode()
+
+        rows, errors = parse_sportigo_manifest(content)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(rows, [])
+
     def test_parser_groups_same_credit_type_and_expiration(self) -> None:
         content = (
             "sportigo_member_id;first_name;last_name;email;monthly;monthly_next_payment_at;credits_json\n"
