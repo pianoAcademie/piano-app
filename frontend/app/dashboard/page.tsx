@@ -75,6 +75,12 @@ type DashboardTab = "home" | "planning" | "courses" | "reservations" | "offers" 
 type MessageScope = "LAST_3_MONTHS" | "CURRENT_YEAR" | "ALL";
 type TimeBucket = "ALL" | "MORNING" | "AFTERNOON" | "EVENING";
 type PlanningSlotFilter = "ALL" | "AVAILABLE" | "ALREADY_BOOKED";
+const CLIENT_BOOKING_EXCLUDED_LOCATION_CODES = new Set(["DOMICILE"]);
+
+function isClientBookingLocation(location: LocationOut): boolean {
+  return !CLIENT_BOOKING_EXCLUDED_LOCATION_CODES.has(location.code.trim().toUpperCase());
+}
+
 type PlanningStatusCode =
   | "ALREADY_BOOKED"
   | "WAITLISTED"
@@ -1391,6 +1397,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         errors.push(`locations: ${locationsResult.message}`);
         return [] as LocationOut[];
       })();
+  const clientBookingLocations = locations.filter(isClientBookingLocation);
+  const selectedLocationIsExcluded = Boolean(
+    selectedLocation && locations.some((location) => location.id === selectedLocation && !isClientBookingLocation(location)),
+  );
+  if (tab === "planning" && planningMode === "book" && selectedLocationIsExcluded) {
+    redirect(
+      withUpdatedQuery(rawParams, {
+        location_id: null,
+        session_id: null,
+        session_member_id: null,
+      }),
+    );
+  }
 
   const sessions = sessionsResult.ok
     ? sessionsResult.data
@@ -2538,10 +2557,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedSessionActionCode = selectedReservationMemberOption?.action_code ?? "";
   const selectedSessionRequiresMemberChoice = reservationOptionsMembers.length > 1 && !selectedReservationMemberOption;
   const selectedSessionCatalogFormulaOptions = selectedSessionPurchaseCatalog?.formula_options ?? [];
-  const selectedSessionFormulaOptions =
-    (selectedReservationMemberOption?.formula_options?.length ?? 0) > 0
-      ? selectedReservationMemberOption?.formula_options ?? []
-      : selectedSessionCatalogFormulaOptions;
+  const selectedSessionFormulaOptions = selectedReservationMemberOption
+    ? selectedReservationMemberOption.formula_options
+    : selectedSessionCatalogFormulaOptions;
   const selectedSessionDirectPaymentAmount =
     selectedReservationMemberOption?.direct_payment_amount_ttc ?? selectedSessionPurchaseCatalog?.direct_payment_amount_ttc ?? null;
   const selectedSessionDirectPaymentCurrency =
@@ -3412,7 +3430,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         defaultValue={selectedLocation}
                         options={[
                           { value: "", label: t("client.all_locations") },
-                          ...locations.map((location) => ({ value: location.id, label: location.name })),
+                          ...clientBookingLocations.map((location) => ({ value: location.id, label: location.name })),
                         ]}
                       />
                     </label>
