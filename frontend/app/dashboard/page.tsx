@@ -749,6 +749,24 @@ function isPendingSubscriptionStatus(status: string): boolean {
   );
 }
 
+function isPendingSubscriptionCoveredInPreview(
+  sub: { status: string; started_at: string; ends_at: string | null },
+  now: Date,
+): boolean {
+  if (!isPendingSubscriptionStatus(sub.status)) {
+    return false;
+  }
+  const startedAt = safeDate(sub.started_at);
+  const endsAt = safeDate(sub.ends_at);
+  if (startedAt && startedAt > now) {
+    return false;
+  }
+  if (endsAt && endsAt <= now) {
+    return false;
+  }
+  return true;
+}
+
 function isSubscriptionVisibleInPortal(
   sub: {
     status: string;
@@ -1772,7 +1790,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const activeEntitlementsByOwner = new Map<string, Set<string>>();
   const activeSubscriptionByOwner = new Set<string>();
   for (const sub of subscriptions) {
-    if (!isSubscriptionActiveNow(sub, now)) {
+    const isCoveredForPlanning =
+      isSubscriptionActiveNow(sub, now)
+      || (isReadOnlyPreview && isPendingSubscriptionCoveredInPreview(sub, now));
+    if (!isCoveredForPlanning) {
       continue;
     }
     activeSubscriptionByOwner.add(sub.owner_client_id);
