@@ -101,6 +101,7 @@ PREDEFINED_EMAIL_TEMPLATE_QUOTE_REJECTED_DEFAULT = "QUOTE_REJECTED_DEFAULT"
 PREDEFINED_EMAIL_TEMPLATE_QUOTE_CHANGE_REQUESTED_DEFAULT = "QUOTE_CHANGE_REQUESTED_DEFAULT"
 PREDEFINED_EMAIL_TEMPLATE_CLIENT_BOOKING_CONFIRMATION = "CLIENT_BOOKING_CONFIRMATION"
 PREDEFINED_EMAIL_TEMPLATE_ADMIN_BOOKING_CONFIRMATION = "ADMIN_BOOKING_CONFIRMATION"
+PREDEFINED_EMAIL_TEMPLATE_TRIAL_ADULT_GUIDE = "AUTOMATION_TRIAL_ADULT_BOOKING_GUIDE"
 PREDEFINED_SMS_TEMPLATE_QUOTE_SEND_DEFAULT = "QUOTE_SEND_SMS_DEFAULT"
 PREDEFINED_SMS_TEMPLATE_QUOTE_REMINDER_DEFAULT = "QUOTE_REMINDER_SMS_DEFAULT"
 PREDEFINED_SMS_TEMPLATE_QUOTE_CANCEL_DEFAULT = "QUOTE_CANCEL_SMS_DEFAULT"
@@ -604,6 +605,7 @@ def _normalize_body_format(raw: object, *, default: str = "TEXT") -> str:
 
 MUSTACHE_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 SINGLE_PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+PERCENT_PLACEHOLDER_RE = re.compile(r"%([a-zA-Z_][a-zA-Z0-9_]*)%")
 
 
 def render_template_content(template: str, context: dict[str, object] | None = None) -> str:
@@ -619,6 +621,7 @@ def render_template_content(template: str, context: dict[str, object] | None = N
 
     normalized = MUSTACHE_PLACEHOLDER_RE.sub(_replace_mustache, template or "")
     normalized = SINGLE_PLACEHOLDER_RE.sub(_replace_single, normalized)
+    normalized = PERCENT_PLACEHOLDER_RE.sub(_replace_single, normalized)
     return normalized.strip()
 
 
@@ -683,6 +686,35 @@ def _email_secondary(text: str) -> str:
 
 
 PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
+    MessagingTemplateDefinition(
+        code=PREDEFINED_EMAIL_TEMPLATE_TRIAL_ADULT_GUIDE,
+        name="Cours d'essai adulte - livret de preparation",
+        channel="EMAIL",
+        subject="Preparez votre cours d'essai Piano Academie",
+        body=(
+            "<p>Bonjour {first_name},</p>"
+            "<p>Nous vous remercions d'avoir reserve un cours d'essai a l'ecole. "
+            "Afin de vous assurer le plus grand confort et la meilleure experience possible, "
+            "nous vous invitons a consulter ce livret contenant les informations utiles :</p>"
+            "<p><a href=\"https://piano-academie.com/livret-cours-dessai/\">Consulter le livret du cours d'essai</a></p>"
+            "<p>Vous y trouverez :</p>"
+            "<ul><li>ce qu'il faut apporter et ce qui est fourni par l'ecole ;</li>"
+            "<li>le deroule type de la seance ;</li>"
+            "<li>des reperes visuels (clavier, cles, doigtes) ;</li>"
+            "<li>quelques conseils pour adopter le bon etat d'esprit.</li></ul>"
+            "<p>Si vous avez la moindre question (acces, materiel, etc.), n'hesitez pas a nous contacter.</p>"
+            "<p>En esperant vous accueillir tres bientot,<br>Cordialement,<br>L'equipe PIANO ACADEMIE</p>"
+            "<p>1 RUE DE RICHELIEU, 75001 PARIS</p>"
+            "<p><a href=\"{unsubscribe_url}\">Cliquez ici pour ne plus recevoir d'emails.</a></p>"
+        ),
+        description="Message envoye apres l'achat d'un cours d'essai adulte.",
+        variables_hint=(
+            "{first_name} {last_name} {full_name} {student_name} {email} {plan_name} "
+            "{activity_name} {location_name} {location_address} {session_date} {session_time} "
+            "{account_url} {unsubscribe_url}"
+        ),
+        body_format="HTML",
+    ),
     MessagingTemplateDefinition(
         code=PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD,
         name="Student Portal Login Setup",

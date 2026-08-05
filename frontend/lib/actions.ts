@@ -17428,3 +17428,62 @@ export async function deleteSchoolEventPriceTierAction(formData: FormData): Prom
   revalidatePath("/events");
   redirect(appendQueryMessage(returnTo, "ok", "Tarif retiré"));
 }
+
+function automationRulePayload(formData: FormData): Record<string, unknown> {
+  const optionalId = (name: string): string | null => {
+    const value = String(formData.get(name) ?? "").trim();
+    return value || null;
+  };
+  return {
+    name: String(formData.get("name") ?? "").trim(),
+    event_type: String(formData.get("event_type") ?? "").trim(),
+    template_ref: String(formData.get("template_ref") ?? "").trim(),
+    plan_id: optionalId("plan_id"),
+    course_type_id: optionalId("course_type_id"),
+    location_id: optionalId("location_id"),
+    client_kind: optionalId("client_kind"),
+    delay_minutes: Number.parseInt(String(formData.get("delay_minutes") ?? "0"), 10) || 0,
+    active: checkboxField(formData, "active"),
+  };
+}
+
+export async function createAutomationTriggerAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) redirect("/login?error_code=session_expired");
+  const result = await backendRequest<Record<string, unknown>>(
+    "/api/v1/admin/triggers",
+    { method: "POST", body: JSON.stringify(automationRulePayload(formData)) },
+    token,
+  );
+  if (!result.ok) redirect(appendQueryMessage("/admin/triggers", "error", result.message));
+  revalidatePath("/admin/triggers");
+  redirect(appendQueryMessage("/admin/triggers", "ok", "Trigger créé"));
+}
+
+export async function updateAutomationTriggerAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const ruleId = String(formData.get("rule_id") ?? "").trim();
+  if (!token || !ruleId) redirect(appendQueryMessage("/admin/triggers", "error", "Trigger introuvable"));
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/admin/triggers/${encodeURIComponent(ruleId)}`,
+    { method: "PUT", body: JSON.stringify(automationRulePayload(formData)) },
+    token,
+  );
+  if (!result.ok) redirect(appendQueryMessage("/admin/triggers", "error", result.message));
+  revalidatePath("/admin/triggers");
+  redirect(appendQueryMessage("/admin/triggers", "ok", "Trigger mis à jour"));
+}
+
+export async function deleteAutomationTriggerAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const ruleId = String(formData.get("rule_id") ?? "").trim();
+  if (!token || !ruleId) redirect(appendQueryMessage("/admin/triggers", "error", "Trigger introuvable"));
+  const result = await backendRequest<Record<string, never>>(
+    `/api/v1/admin/triggers/${encodeURIComponent(ruleId)}`,
+    { method: "DELETE" },
+    token,
+  );
+  if (!result.ok) redirect(appendQueryMessage("/admin/triggers", "error", result.message));
+  revalidatePath("/admin/triggers");
+  redirect(appendQueryMessage("/admin/triggers", "ok", "Trigger supprimé"));
+}

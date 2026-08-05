@@ -37,6 +37,8 @@ from app.schemas.plan import (
     PublicFormulaPurchaseSummaryOut,
 )
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, with_webhook_secret
+from app.services.automation_triggers import schedule_plan_purchase_triggers
+from app.services.notifications.application.orchestrator import enqueue_notifications
 from app.services.messaging_templates import resolve_frontend_base_url
 from app.services.payment_provider import PaymentProvider, resolve_webhook_secret
 from app.services.plan_entitlements import effective_entitlements_by_plan
@@ -778,7 +780,17 @@ def purchase_plan(
         subscription.last_payment_status = (checkout.status or "WAITING_PAYMENT").strip().upper() or "WAITING_PAYMENT"
         checkout_url = checkout.checkout_url
 
+    automation_notifications = []
+    if initial_status == SubscriptionStatus.ACTIVE:
+        automation_notifications = schedule_plan_purchase_triggers(
+            db,
+            subscription=subscription,
+            plan=plan,
+            occurred_at=now,
+        )
+
     db.commit()
+    enqueue_notifications(automation_notifications)
     db.refresh(subscription)
 
     entitlement_ids_map, entitlement_names_map = _entitlements_by_plan(db, plan_ids=[plan.id])

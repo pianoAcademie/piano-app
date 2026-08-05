@@ -30,6 +30,8 @@ from app.models.plan import ClientPlanSubscription, Plan, PlanKind, Subscription
 from app.models.subscription_engine import SubscriptionBillingCycle
 from app.models.user import User
 from app.services.client_purchase_notifications import send_client_payment_success_notifications
+from app.services.automation_triggers import schedule_plan_purchase_triggers
+from app.services.notifications.application.orchestrator import enqueue_notifications
 from app.services.payment_checkout import lookup_payment
 from app.services.payment_provider import (
     PaymentProvider,
@@ -356,6 +358,15 @@ async def payment_webhook(
                     )
                 except Exception:
                     logger.exception("Unable to send paid confirmation emails for subscription=%s", sub.id)
+
+            automation_notifications = schedule_plan_purchase_triggers(
+                db,
+                subscription=sub,
+                plan=plan,
+                occurred_at=sub.last_payment_at or _utcnow(),
+            )
+            db.commit()
+            enqueue_notifications(automation_notifications)
 
         return {"ok": True, "processed": True, "payment_status": status_text}
     finally:

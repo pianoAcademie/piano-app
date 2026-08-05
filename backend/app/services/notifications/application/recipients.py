@@ -73,27 +73,38 @@ def resolve_reminder_recipients(db: Session, *, booking: Booking) -> list[Resolv
     if owner is None:
         return []
 
-    if owner.client_kind == ClientKind.ADULT:
-        return [
-            ResolvedRecipient(
-                contact_type="USER",
-                contact_id=owner.id,
-                email=_normalize_email(owner.email),
-                phone=_preferred_phone(owner),
-            )
-        ]
+    recipient = resolve_client_user_notification_recipient(db, user=owner)
+    return [recipient] if recipient is not None else []
 
-    guardian = _load_primary_guardian(db, child_user_id=owner.id)
-    if guardian is None:
-        return []
-    return [
-        ResolvedRecipient(
+
+def resolve_client_user_notification_recipient(
+    db: Session,
+    *,
+    user: User,
+) -> ResolvedRecipient | None:
+    """Return the adult account that receives a client's communications.
+
+    Children are deliberately routed to their billing guardian so generic
+    automations never expose a child's email or bypass the family model.
+    """
+
+    if user.client_kind == ClientKind.ADULT:
+        return ResolvedRecipient(
             contact_type="USER",
-            contact_id=guardian.id,
-            email=_normalize_email(guardian.email),
-            phone=_preferred_phone(guardian),
+            contact_id=user.id,
+            email=_normalize_email(user.email),
+            phone=_preferred_phone(user),
         )
-    ]
+
+    guardian = _load_primary_guardian(db, child_user_id=user.id)
+    if guardian is None:
+        return None
+    return ResolvedRecipient(
+        contact_type="USER",
+        contact_id=guardian.id,
+        email=_normalize_email(guardian.email),
+        phone=_preferred_phone(guardian),
+    )
 
 
 def resolve_client_booking_notification_recipient(

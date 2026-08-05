@@ -54,6 +54,7 @@ from app.models.notification_engine import Notification
 from app.models.quote import Prospect, Quote, QuoteAcceptanceFollowup
 from app.models.user import ClientStatus, User, UserRole
 from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
+from app.services.automation_triggers import schedule_trial_attended_triggers
 from app.services.invoice_documents import normalize_billing_entity
 from app.services.notifications.application.orchestrator import enqueue_notifications, schedule_slot_cancelled_notifications
 from app.services.notifications.domain.constants import (
@@ -3662,8 +3663,17 @@ def update_admin_session_booking_attendance(
     booking.status = next_status
     booking.cancelled_at = None
     booking.cancellation_reason = None
+    automation_notifications = []
+    if previous_status != next_status and next_status == BookingStatus.ATTENDED:
+        automation_notifications = schedule_trial_attended_triggers(
+            db,
+            booking=booking,
+            session_obj=session_obj,
+            occurred_at=attendance_updated_at,
+        )
 
     db.commit()
+    enqueue_notifications(automation_notifications)
     db.refresh(booking)
 
     client = db.scalar(select(User).where(User.id == booking.user_id))

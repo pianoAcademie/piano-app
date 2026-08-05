@@ -14,6 +14,7 @@ from app.api.routes import (
     admin_to_process,
     admin_pricing,
     admin_teacher_invoices,
+    admin_triggers,
     auth,
     bookings,
     catalogue,
@@ -47,6 +48,7 @@ api_router.include_router(admin_subscriptions.router, tags=["admin-subscriptions
 api_router.include_router(admin_sportigo_import.router, tags=["admin-sportigo-import"])
 api_router.include_router(admin_to_process.router, tags=["admin-to-process"])
 api_router.include_router(admin_teacher_invoices.router, tags=["admin-teacher-invoices"])
+api_router.include_router(admin_triggers.router, tags=["admin-triggers"])
 api_router.include_router(reports.router, tags=["admin-reports"])
 api_router.include_router(catalogue.router, tags=["catalogue"])
 api_router.include_router(plans.router, tags=["plans"])

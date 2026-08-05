@@ -101,7 +101,9 @@ from app.schemas.user import (
     UserOut,
 )
 from app.services.family_billing import resolve_billing_profile
+from app.services.automation_triggers import schedule_plan_purchase_triggers
 from app.services.client_purchase_notifications import send_client_payment_success_notifications
+from app.services.notifications.application.orchestrator import enqueue_notifications
 from app.services.i18n import normalize_language
 from app.services.makeup_passes import makeup_summaries
 from app.services.invoice_documents import (
@@ -4113,6 +4115,15 @@ def confirm_client_payment(
                 )
             except Exception:
                 logger.exception("Unable to send paid confirmation emails for subscription=%s", subscription.id)
+
+        automation_notifications = schedule_plan_purchase_triggers(
+            db,
+            subscription=subscription,
+            plan=plan,
+            occurred_at=subscription.last_payment_at or _utcnow(),
+        )
+        db.commit()
+        enqueue_notifications(automation_notifications)
 
     return ClientPaymentConfirmOut(
         payment_id=f"plan:{subscription.id}",

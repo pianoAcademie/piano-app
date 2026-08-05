@@ -1,0 +1,27 @@
+.page { display: grid; gap: 1rem; }
+.hero, .panel, .rule { background: #fff; border: 1px solid #ead8bd; border-radius: 18px; padding: 1rem; }
+.hero { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+.hero h1, .rule h2 { margin: 0; }
+.hero p, .rule p { margin: .35rem 0 0; }
+.metric { border-radius: 999px; background: #f6dfb4; padding: .45rem .75rem; white-space: nowrap; }
+.rules { display: grid; gap: .75rem; }
+.ruleHeader { display: flex; justify-content: space-between; align-items: center; gap: .75rem; }
+.badges { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .7rem; }
+.badge { border-radius: 999px; padding: .3rem .6rem; background: #f6f1e9; font-size: .85rem; }
+.active { background: #dff4e5; color: #166534; }
+.inactive { background: #eee; color: #666; }
+.form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; margin-top: 1rem; }
+.field { display: grid; gap: .35rem; min-width: 0; }
+.field span { font-weight: 700; }
+.field input, .field select { width: 100%; min-height: 44px; }
+.wide { grid-column: 1 / -1; }
+.check { display: flex; align-items: center; gap: .5rem; }
+.actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .6rem; }
+.danger { color: #a32121; border-color: #e8b7b7; }
+.help { background: #fff8e8; border-left: 4px solid #d29a2e; padding: .8rem 1rem; }
+@media (max-width: 720px) {
+  .hero { display: grid; }
+  .form { grid-template-columns: 1fr; }
+  .wide, .actions { grid-column: 1; }
+  .ruleHeader { align-items: flex-start; }
+}

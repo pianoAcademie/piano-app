@@ -96,6 +96,9 @@ function labelForSegment(segment: string, previous: string, language: UiLanguage
   if (segment === "communications") {
     return pickText(language, "Communications", "Communications");
   }
+  if (segment === "triggers") {
+    return "Triggers";
+  }
   if (segment === "a-traiter") {
     return pickText(language, "A traiter", "To process");
   }

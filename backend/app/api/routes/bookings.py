@@ -40,6 +40,7 @@ from app.models.plan import (
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.schemas.booking import BookingCreateRequest, BookingOut, ClientBookingOut, SessionMiniOut
 from app.services.makeup_passes import active_restricted_forfait_for_booking, consume_pass_and_create_makeup
+from app.services.automation_triggers import schedule_booking_created_triggers
 from app.services.family_billing import resolve_billing_profile
 from app.services.notifications.application.orchestrator import (
     enqueue_notifications,
@@ -196,14 +197,23 @@ def _activate_confirmed_booking(
         session_obj=session_obj,
         now=occurred_at,
     )
-    if actor_user_id is None:
-        return []
-    return schedule_booking_created_notifications(
-        db,
-        booking=booking,
-        actor_user_id=actor_user_id,
-        occurred_at=occurred_at,
+    notifications = []
+    if actor_user_id is not None:
+        notifications = schedule_booking_created_notifications(
+            db,
+            booking=booking,
+            actor_user_id=actor_user_id,
+            occurred_at=occurred_at,
+        )
+    notifications.extend(
+        schedule_booking_created_triggers(
+            db,
+            booking=booking,
+            session_obj=session_obj,
+            occurred_at=occurred_at,
+        )
     )
+    return notifications
 
 
 def promote_pending_payment_booking(
