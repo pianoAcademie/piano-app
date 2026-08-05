@@ -53,6 +53,7 @@ services:
       - "8000:8000"
     volumes:
       - catalog_product_images:/app/uploads/catalog-products
+      - legacy_invoice_documents:/app/uploads/legacy-invoices
     depends_on:
       db:
         condition: service_healthy
@@ -149,3 +150,4 @@ services:
 volumes:
   postgres_data:
   catalog_product_images:
+  legacy_invoice_documents:

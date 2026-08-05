@@ -33,7 +33,7 @@ const embeddedBookingSources = [
 const nextConfig = {
   experimental: {
     serverActions: {
-      bodySizeLimit: "2mb",
+      bodySizeLimit: "80mb",
     },
   },
   async headers() {

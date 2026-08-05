@@ -39,3 +39,16 @@ class SportigoImportOut(BaseModel):
     solfege_credits_total: int = 0
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+
+
+class SportigoInvoiceImportOut(BaseModel):
+    dry_run: bool
+    batch_reference: str
+    rows_seen: int = 0
+    rows_valid: int = 0
+    clients_matched: int = 0
+    invoices_created: int = 0
+    invoices_updated: int = 0
+    invoices_unchanged: int = 0
+    warnings: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)

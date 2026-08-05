@@ -78,3 +78,46 @@ export async function importSportigoAction(formData: FormData): Promise<void> {
   }
   redirect(`/admin/sportigo-import?${params.toString()}`);
 }
+
+type HistoricalInvoiceImportResult = {
+  dry_run: boolean;
+  rows_seen: number;
+  rows_valid: number;
+  clients_matched: number;
+  invoices_created: number;
+  invoices_updated: number;
+  invoices_unchanged: number;
+  errors: string[];
+};
+
+export async function importSportigoHistoricalInvoicesAction(formData: FormData): Promise<void> {
+  const token = cookies().get("admin_access_token")?.value ?? cookies().get("access_token")?.value;
+  if (!token) redirect("/login?error_code=session_expired");
+  const archive = formData.get("archive");
+  if (!(archive instanceof File) || archive.size <= 0) {
+    redirect("/admin/sportigo-import?invoice_error=Sélectionnez+une+archive+ZIP.");
+  }
+  const payload = new FormData();
+  payload.set("archive", archive, archive.name);
+  payload.set("batch_reference", String(formData.get("batch_reference") ?? "").trim());
+  payload.set("confirm_apply", String(formData.get("confirm_apply") ?? "").trim());
+  payload.set("dry_run", checked(formData, "dry_run") ? "true" : "false");
+  const result = await backendRequest<HistoricalInvoiceImportResult>(
+    "/api/v1/admin/sportigo-import/historical-invoices",
+    { method: "POST", body: payload },
+    token,
+    300000,
+  );
+  if (!result.ok) redirect(`/admin/sportigo-import?invoice_error=${encodeURIComponent(result.message)}`);
+  const data = result.data;
+  const params = new URLSearchParams();
+  params.set("invoice_mode", data.dry_run ? "Prévisualisation" : "Import appliqué");
+  params.set("invoice_rows", String(data.rows_valid));
+  params.set("invoice_clients", String(data.clients_matched));
+  params.set("invoice_created", String(data.invoices_created));
+  params.set("invoice_updated", String(data.invoices_updated));
+  params.set("invoice_unchanged", String(data.invoices_unchanged));
+  if (data.errors.length) params.set("invoice_error", data.errors.slice(0, 4).join(" | "));
+  else params.set("invoice_ok", "1");
+  redirect(`/admin/sportigo-import?${params.toString()}`);
+}

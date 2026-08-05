@@ -6,6 +6,8 @@ from decimal import Decimal
 import html
 import json
 import logging
+import os
+from pathlib import Path
 import re
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -39,7 +41,7 @@ from app.models.catalog import (
     SessionAudienceScope,
     SessionStatus,
 )
-from app.models.client_record import ClientInvoiceLine, ClientManualCreditBalance, ClientManualTransaction, ClientNoteEntry
+from app.models.client_record import ClientInvoiceLine, ClientLegacyInvoice, ClientManualCreditBalance, ClientManualTransaction, ClientNoteEntry
 from app.models.external_content import (
     CourseTypeContentMapping,
     ExternalContentCourse,
@@ -185,6 +187,7 @@ COUNTRY_NAME_BY_CODE = {
     "DE": "Allemagne",
 }
 ACCOUNT_DEFAULT_CURRENCY_KEY = "config_account_default_currency"
+LEGACY_INVOICE_UPLOAD_DIR = Path(os.getenv("LEGACY_INVOICE_UPLOAD_DIR", "/app/uploads/legacy-invoices"))
 
 
 def _utcnow() -> datetime:
@@ -4178,6 +4181,31 @@ def list_client_invoices(
     forfait_bookings = _forfait_booking_ids(db, booking_payment_ids)
     invoices: list[ClientInvoiceOut] = []
 
+    legacy_rows = db.scalars(
+        select(ClientLegacyInvoice)
+        .where(ClientLegacyInvoice.user_id.in_(managed_client_ids))
+        .order_by(ClientLegacyInvoice.issued_at.desc())
+    ).all()
+    for legacy in legacy_rows:
+        owner = users_by_id.get(legacy.user_id)
+        invoices.append(
+            ClientInvoiceOut(
+                id=f"legacy:{legacy.id}",
+                owner_client_id=legacy.user_id,
+                owner_display_name=_display_name(owner) if owner is not None else str(legacy.user_id),
+                invoice_number=legacy.external_reference,
+                issued_at=legacy.issued_at,
+                source=legacy.source,
+                status="PAID",
+                label=f"Historique {legacy.source.title()} · {legacy.label}",
+                total_incl_vat=Decimal(legacy.total_incl_vat),
+                currency=legacy.currency,
+                reference=legacy.external_reference,
+                download_url=f"/client/invoices/legacy:{legacy.id}/download",
+                payment_url=None,
+            )
+        )
+
     range_notes = db.scalars(
         select(ClientNoteEntry)
         .where(ClientNoteEntry.user_id.in_(managed_client_ids))
@@ -4435,6 +4463,34 @@ def download_client_invoice(
             headers={
                 "Content-Disposition": f'attachment; filename="{file_name}"',
                 "Cache-Control": "no-store",
+            },
+        )
+
+    if invoice_ref.startswith("legacy:"):
+        legacy_id_raw = invoice_ref[len("legacy:") :].strip()
+        try:
+            legacy_id = UUID(legacy_id_raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found") from exc
+        legacy = db.scalar(
+            select(ClientLegacyInvoice).where(
+                ClientLegacyInvoice.id == legacy_id,
+                ClientLegacyInvoice.user_id.in_(managed_client_ids),
+            )
+        )
+        if legacy is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+        file_path = (LEGACY_INVOICE_UPLOAD_DIR / legacy.pdf_storage_key).resolve()
+        storage_root = LEGACY_INVOICE_UPLOAD_DIR.resolve()
+        if storage_root not in file_path.parents or not file_path.is_file():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice document not found")
+        file_name = re.sub(r"[^A-Za-z0-9._-]", "_", legacy.original_file_name) or "facture-sportigo.pdf"
+        return Response(
+            content=file_path.read_bytes(),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{file_name}"',
+                "Cache-Control": "private, no-store",
             },
         )
 

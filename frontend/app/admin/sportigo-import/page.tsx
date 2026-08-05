@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 
 import { backendRequest } from "../../../lib/backend";
 import type { UserOut } from "../../../lib/types";
-import { importSportigoAction } from "./actions";
+import { importSportigoAction, importSportigoHistoricalInvoicesAction } from "./actions";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -61,6 +61,8 @@ export default async function SportigoImportPage({ searchParams }: { searchParam
   const solfegeDefault = preferredPack(solfegePacks, "PACK_SOLFEGE_ONLINE_BALANCE", ["solfège"]);
   const ok = value(params, "ok");
   const error = value(params, "error");
+  const invoiceOk = value(params, "invoice_ok");
+  const invoiceError = value(params, "invoice_error");
 
   return (
     <section className="admin-page-grid">
@@ -134,6 +136,37 @@ export default async function SportigoImportPage({ searchParams }: { searchParam
             <input name="confirm_apply" placeholder="Laisser vide en prévisualisation ; sinon recopier la référence du lot" />
           </label>
           <button type="submit">Contrôler / importer</button>
+        </form>
+      </section>
+
+      <section className="card">
+        <div>
+          <h2>Factures historiques Sportigo</h2>
+          <p className="muted">Charge des PDF acquittés en lecture seule. Cette opération ne crée ni paiement, ni solde, ni prélèvement.</p>
+        </div>
+        {invoiceError ? <p className="error">{invoiceError}</p> : null}
+        {invoiceOk ? (
+          <p className="success">
+            <strong>{value(params, "invoice_mode")}</strong> — {value(params, "invoice_rows")} facture(s), {value(params, "invoice_clients")} client(s). Créées : {value(params, "invoice_created")} · mises à jour : {value(params, "invoice_updated")} · inchangées : {value(params, "invoice_unchanged")}.
+          </p>
+        ) : null}
+        <form action={importSportigoHistoricalInvoicesAction} className="stack">
+          <label>
+            Archive ZIP (manifest.csv + PDF)
+            <input name="archive" type="file" accept=".zip,application/zip" required />
+          </label>
+          <label>
+            Référence du lot
+            <input name="batch_reference" defaultValue="SPORTIGO-INVOICES-2025-2026" required maxLength={120} />
+          </label>
+          <label className="row gap-sm">
+            <input name="dry_run" type="checkbox" defaultChecked /> Prévisualisation uniquement
+          </label>
+          <label>
+            Confirmation d’application
+            <input name="confirm_apply" placeholder="Laisser vide en prévisualisation ; sinon recopier la référence du lot" />
+          </label>
+          <button type="submit">Contrôler / charger les factures</button>
         </form>
       </section>
     </section>

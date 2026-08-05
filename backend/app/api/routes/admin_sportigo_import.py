@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -8,11 +11,13 @@ from app.api.deps import get_db, require_roles
 from app.models.catalog import CreditType
 from app.models.plan import Plan, PlanCreditGrant, PlanKind
 from app.models.user import User, UserRole
-from app.schemas.sportigo import SportigoCatalogItem, SportigoImportCatalogOut, SportigoImportOut
+from app.schemas.sportigo import SportigoCatalogItem, SportigoImportCatalogOut, SportigoImportOut, SportigoInvoiceImportOut
+from app.services.legacy_invoice_import import import_legacy_invoice_archive
 from app.services.sportigo_import import SPORTIGO_PACK_PREFIX, parse_sportigo_manifest, run_sportigo_import
 
 
 router = APIRouter(prefix="/admin/sportigo-import")
+LEGACY_INVOICE_UPLOAD_DIR = Path(os.getenv("LEGACY_INVOICE_UPLOAD_DIR", "/app/uploads/legacy-invoices"))
 
 
 @router.get("/catalog", response_model=SportigoImportCatalogOut)
@@ -105,6 +110,37 @@ async def import_sportigo_manifest(
             "online": online_pack_plan_code.strip(),
             "solfege": solfege_pack_plan_code.strip(),
         },
+    )
+    if result.errors and not dry_run:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="; ".join(result.errors[:10]))
+    return result
+
+
+@router.post("/historical-invoices", response_model=SportigoInvoiceImportOut)
+async def import_sportigo_historical_invoices(
+    archive: UploadFile = File(...),
+    dry_run: bool = Form(True),
+    batch_reference: str = Form(..., min_length=3, max_length=120),
+    confirm_apply: str = Form("", max_length=120),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(UserRole.ADMIN)),
+) -> SportigoInvoiceImportOut:
+    if not (archive.filename or "").lower().endswith(".zip"):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Archive ZIP requise")
+    content = await archive.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Archive ZIP vide")
+    if not dry_run and confirm_apply.strip() != batch_reference.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Pour appliquer l import, recopiez exactement la reference du lot.",
+        )
+    result = import_legacy_invoice_archive(
+        db,
+        content=content,
+        dry_run=dry_run,
+        batch_reference=batch_reference.strip(),
+        storage_dir=LEGACY_INVOICE_UPLOAD_DIR,
     )
     if result.errors and not dry_run:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="; ".join(result.errors[:10]))
