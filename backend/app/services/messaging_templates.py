@@ -411,6 +411,9 @@ def _set_setting_value(db: Session, key: str, value: str) -> datetime:
     setting = db.scalar(select(AppSetting).where(AppSetting.key == key).with_for_update())
     if setting is None:
         db.add(AppSetting(key=key, value=value, updated_at=now))
+        # SessionLocal disables autoflush. Custom template creation immediately
+        # reloads the JSON setting to return the newly created template.
+        db.flush()
         return now
     setting.value = value
     setting.updated_at = now
