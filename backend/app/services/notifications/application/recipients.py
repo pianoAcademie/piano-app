@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models.catalog import Booking
 from app.models.family import ClientFamilyLink
+from app.models.ops import AppSetting
 from app.models.user import ClientKind, User, UserRole
 from app.services.notifications.domain.constants import (
     NOTIFICATION_TYPE_ADMIN_BOOKING_CANCELLATION,
@@ -15,6 +16,7 @@ from app.services.notifications.domain.constants import (
     NOTIFICATION_TYPE_ADMIN_BANK_TRANSFER_REVIEW,
     NOTIFICATION_TYPE_ADMIN_QUOTES_EXPIRING_TODAY,
     NOTIFICATION_TYPE_ADMIN_SLOT_CANCELLATION,
+    NOTIFICATION_TYPE_SUBSCRIPTION_PAYMENT_SUCCESS_ADMIN,
 )
 from app.services.notifications.infrastructure.repository import list_admin_recipients_for_type
 
@@ -172,4 +174,21 @@ def resolve_admin_bank_transfer_review_recipients(db: Session) -> list[ResolvedR
     return [
         ResolvedRecipient(contact_type="ADMIN_EMAIL", contact_id=None, email=email, phone=None)
         for email in _admin_recipients_for_type(db, notification_type=NOTIFICATION_TYPE_ADMIN_BANK_TRANSFER_REVIEW)
+    ]
+
+
+def resolve_admin_plan_purchase_recipients(db: Session) -> list[ResolvedRecipient]:
+    """Return configured purchase recipients, preferring the account contact."""
+
+    emails = list_admin_recipients_for_type(
+        db,
+        notification_type=NOTIFICATION_TYPE_SUBSCRIPTION_PAYMENT_SUCCESS_ADMIN,
+    )
+    if not emails:
+        contact_email = db.scalar(select(AppSetting.value).where(AppSetting.key == "config_account_contact_email"))
+        normalized_contact = _normalize_email(contact_email)
+        emails = [normalized_contact] if normalized_contact else _fallback_admin_recipients(db)
+    return [
+        ResolvedRecipient(contact_type="ADMIN_EMAIL", contact_id=None, email=email, phone=None)
+        for email in emails
     ]

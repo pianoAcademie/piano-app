@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 import logging
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
@@ -16,6 +17,7 @@ from app.services.messaging_templates import (
     resolve_predefined_template,
     resolve_sender_profile,
 )
+from app.services.notifications.application.recipients import resolve_admin_plan_purchase_recipients
 
 logger = logging.getLogger(__name__)
 
@@ -196,4 +198,64 @@ def send_client_payment_success_notifications(
     )
 
 
-__all__ = ["send_client_payment_success_notifications", "send_payment_success_notifications"]
+def send_plan_purchase_admin_notifications(
+    db: Session,
+    *,
+    client_id: UUID,
+    client_email: str,
+    first_name: str | None,
+    last_name: str | None,
+    plan_name: str,
+    subscription_id: UUID,
+    payment_reference: str,
+    payment_method: str | None,
+    paid_at: datetime,
+    amount_paid: Decimal | None = None,
+    currency: str | None = None,
+) -> list[str]:
+    client_name = f"{(first_name or '').strip()} {(last_name or '').strip()}".strip() or client_email
+    normalized_currency = (currency or "EUR").strip().upper() or "EUR"
+    amount_text = ""
+    if amount_paid is not None:
+        amount_text = f"{amount_paid.quantize(Decimal('0.01')):.2f}"
+    try:
+        local_paid_at = paid_at.astimezone(ZoneInfo("Europe/Paris"))
+    except (ValueError, KeyError):
+        local_paid_at = paid_at
+    context = {
+        "client_name": client_name,
+        "client_email": client_email,
+        "plan_name": plan_name.strip() or "Formule Piano Academie",
+        "amount_paid": amount_text,
+        "currency": normalized_currency,
+        "paid_at": local_paid_at.strftime("%d/%m/%Y %H:%M"),
+        "payment_reference": payment_reference.strip() or "-",
+        "payment_method": (payment_method or "Paiement en ligne").strip() or "Paiement en ligne",
+        "subscription_reference": str(subscription_id),
+        "client_url": _frontend_url(f"/admin/clients/{client_id}?tab=fiche"),
+    }
+    message_ids: list[str] = []
+    sent_to: set[str] = set()
+    for recipient in resolve_admin_plan_purchase_recipients(db):
+        admin_email = (recipient.email or "").strip().lower()
+        if not admin_email or admin_email in sent_to:
+            continue
+        sent_to.add(admin_email)
+        message_id = _send_template_email(
+            db,
+            template_code="PLAN_PURCHASE_ADMIN",
+            context=context,
+            to_email=admin_email,
+            delivery_context="ADMIN_PLAN_PURCHASE_CONFIRMED",
+            language="fr",
+        )
+        if message_id:
+            message_ids.append(message_id)
+    return message_ids
+
+
+__all__ = [
+    "send_client_payment_success_notifications",
+    "send_payment_success_notifications",
+    "send_plan_purchase_admin_notifications",
+]

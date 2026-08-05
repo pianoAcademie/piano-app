@@ -104,7 +104,10 @@ from app.schemas.user import (
 )
 from app.services.family_billing import resolve_billing_profile
 from app.services.automation_triggers import schedule_plan_purchase_triggers
-from app.services.client_purchase_notifications import send_client_payment_success_notifications
+from app.services.client_purchase_notifications import (
+    send_client_payment_success_notifications,
+    send_plan_purchase_admin_notifications,
+)
 from app.services.notifications.application.orchestrator import enqueue_notifications
 from app.services.i18n import normalize_language
 from app.services.makeup_passes import makeup_summaries
@@ -4102,7 +4105,18 @@ def confirm_client_payment(
     if lookup.paid and not was_paid_before:
         owner = db.scalar(select(User).where(User.id == subscription.user_id))
         if owner is not None and owner.email:
-            try:
+            amount_due = (
+                Decimal(subscription.initial_total_incl_vat).quantize(Decimal("0.01"))
+                if subscription.initial_total_incl_vat is not None
+                else None
+            )
+            currency_code = (
+                subscription.initial_currency_code
+                or plan.currency_code
+                or owner.preferred_currency
+                or "EUR"
+            )
+            if amount_due is None:
                 amount_due, currency_code = _plan_amount_due_and_currency(
                     db,
                     plan=plan,
@@ -4110,6 +4124,7 @@ def confirm_client_payment(
                     currency=(owner.preferred_currency or "EUR").upper(),
                     on_date=subscription.started_at,
                 )
+            try:
                 send_client_payment_success_notifications(
                     db,
                     to_email=owner.email,
@@ -4124,6 +4139,23 @@ def confirm_client_payment(
                 )
             except Exception:
                 logger.exception("Unable to send paid confirmation emails for subscription=%s", subscription.id)
+            try:
+                send_plan_purchase_admin_notifications(
+                    db,
+                    client_id=owner.id,
+                    client_email=owner.email,
+                    first_name=owner.first_name,
+                    last_name=owner.last_name,
+                    plan_name=plan.name,
+                    subscription_id=subscription.id,
+                    payment_reference=lookup.provider_reference,
+                    payment_method=lookup.provider.value,
+                    paid_at=subscription.last_payment_at or _utcnow(),
+                    amount_paid=amount_due,
+                    currency=currency_code,
+                )
+            except Exception:
+                logger.exception("Unable to send admin purchase email for subscription=%s", subscription.id)
 
         automation_notifications = schedule_plan_purchase_triggers(
             db,

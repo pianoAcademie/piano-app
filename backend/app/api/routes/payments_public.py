@@ -29,7 +29,10 @@ from app.api.routes.events import reconcile_event_payment_by_provider_reference
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind, SubscriptionStatus
 from app.models.subscription_engine import SubscriptionBillingCycle
 from app.models.user import User
-from app.services.client_purchase_notifications import send_client_payment_success_notifications
+from app.services.client_purchase_notifications import (
+    send_client_payment_success_notifications,
+    send_plan_purchase_admin_notifications,
+)
 from app.services.automation_triggers import schedule_plan_purchase_triggers
 from app.services.notifications.application.orchestrator import enqueue_notifications
 from app.services.payment_checkout import lookup_payment
@@ -340,10 +343,18 @@ async def payment_webhook(
         if lookup.paid and not was_paid_before:
             owner = db.scalar(select(User).where(User.id == sub.user_id))
             if owner is not None and owner.email:
+                amount_paid: Decimal | None = None
+                if sub.initial_total_incl_vat is not None:
+                    amount_paid = Decimal(sub.initial_total_incl_vat).quantize(Decimal("0.01"))
+                elif plan.monthly_price_value is not None:
+                    amount_paid = Decimal(plan.monthly_price_value).quantize(Decimal("0.01"))
+                currency_code = (
+                    sub.initial_currency_code
+                    or plan.currency_code
+                    or owner.preferred_currency
+                    or "EUR"
+                )
                 try:
-                    amount_paid: Decimal | None = None
-                    if plan.monthly_price_value is not None:
-                        amount_paid = Decimal(plan.monthly_price_value).quantize(Decimal("0.01"))
                     send_client_payment_success_notifications(
                         db,
                         to_email=owner.email,
@@ -353,11 +364,28 @@ async def payment_webhook(
                         subscription_id=sub.id,
                         paid_at=sub.last_payment_at or _utcnow(),
                         amount_paid=amount_paid,
-                        currency=(plan.currency_code or owner.preferred_currency or "EUR"),
+                        currency=currency_code,
                         language=owner.preferred_language,
                     )
                 except Exception:
                     logger.exception("Unable to send paid confirmation emails for subscription=%s", sub.id)
+                try:
+                    send_plan_purchase_admin_notifications(
+                        db,
+                        client_id=owner.id,
+                        client_email=owner.email,
+                        first_name=owner.first_name,
+                        last_name=owner.last_name,
+                        plan_name=plan.name,
+                        subscription_id=sub.id,
+                        payment_reference=lookup.provider_reference or reference,
+                        payment_method=lookup.provider.value,
+                        paid_at=sub.last_payment_at or _utcnow(),
+                        amount_paid=amount_paid,
+                        currency=currency_code,
+                    )
+                except Exception:
+                    logger.exception("Unable to send admin purchase email for subscription=%s", sub.id)
 
             automation_notifications = schedule_plan_purchase_triggers(
                 db,

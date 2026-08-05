@@ -1398,6 +1398,30 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         ),
     ),
     MessagingTemplateDefinition(
+        code="PLAN_PURCHASE_ADMIN",
+        name="Plan Purchase Admin",
+        channel="EMAIL",
+        subject="Nouvel achat confirme - {plan_name}",
+        body=(
+            "Un achat vient d etre confirme dans l espace client.\n\n"
+            "Client: {client_name}\n"
+            "Email client: {client_email}\n"
+            "Formule: {plan_name}\n"
+            "Montant regle: {amount_paid} {currency}\n"
+            "Date de paiement: {paid_at}\n"
+            "Moyen de paiement: {payment_method}\n"
+            "Reference PSP: {payment_reference}\n"
+            "Reference abonnement / carnet: {subscription_reference}\n\n"
+            "Fiche client: {client_url}\n\n"
+            "Piano Academie"
+        ),
+        description="Notification interne envoyee apres la confirmation d un achat de formule dans l espace client.",
+        variables_hint=(
+            "{client_name} {client_email} {plan_name} {amount_paid} {currency} "
+            "{paid_at} {payment_method} {payment_reference} {subscription_reference} {client_url}"
+        ),
+    ),
+    MessagingTemplateDefinition(
         code="INVOICE_PAYMENT_ADMIN",
         name="Invoice Payment Admin",
         channel="EMAIL",

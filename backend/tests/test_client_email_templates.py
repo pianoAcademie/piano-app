@@ -15,6 +15,7 @@ from uuid import uuid4
 from app.services.client_purchase_notifications import (
     send_client_payment_success_notifications,
     send_payment_success_notifications,
+    send_plan_purchase_admin_notifications,
 )
 from app.services.messaging_templates import recipient_display_name, render_template_content
 
@@ -108,6 +109,48 @@ class ClientEmailTemplateTests(unittest.TestCase):
             invoice_context["invoice_url"],
             f"https://app.piano-academie.com/api/v1/public/invoices/plans/{subscription_id}/download",
         )
+
+    def test_plan_purchase_admin_notification_uses_admin_recipients_and_paris_time(self) -> None:
+        subscription_id = uuid4()
+        client_id = uuid4()
+        recipients = [
+            type("Recipient", (), {"email": "admin@example.com"})(),
+            type("Recipient", (), {"email": "ADMIN@example.com"})(),
+        ]
+        with patch(
+            "app.services.client_purchase_notifications.resolve_admin_plan_purchase_recipients",
+            return_value=recipients,
+        ), patch(
+            "app.services.client_purchase_notifications._send_template_email",
+            return_value="msg-admin",
+        ) as send_template_email, patch(
+            "app.services.client_purchase_notifications._frontend_url",
+            side_effect=lambda path: f"https://app.piano-academie.com{path}",
+        ):
+            result = send_plan_purchase_admin_notifications(
+                db=object(),
+                client_id=client_id,
+                client_email="hector@example.com",
+                first_name="Hector",
+                last_name="Souza",
+                plan_name="Carnet 10 cours",
+                subscription_id=subscription_id,
+                payment_reference="cs_test_123",
+                payment_method="STRIPE",
+                paid_at=datetime(2026, 8, 5, 18, 15, tzinfo=timezone.utc),
+                amount_paid=Decimal("280.00"),
+                currency="EUR",
+            )
+
+        self.assertEqual(result, ["msg-admin"])
+        self.assertEqual(send_template_email.call_count, 1)
+        kwargs = send_template_email.call_args.kwargs
+        self.assertEqual(kwargs["template_code"], "PLAN_PURCHASE_ADMIN")
+        self.assertEqual(kwargs["delivery_context"], "ADMIN_PLAN_PURCHASE_CONFIRMED")
+        self.assertEqual(kwargs["context"]["paid_at"], "05/08/2026 20:15")
+        self.assertEqual(kwargs["context"]["amount_paid"], "280.00")
+        self.assertEqual(kwargs["context"]["payment_method"], "STRIPE")
+        self.assertIn(str(client_id), kwargs["context"]["client_url"])
 
     def test_booking_confirmation_uses_client_planning_link(self) -> None:
         template = {
