@@ -10,10 +10,12 @@ from uuid import uuid4
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.clients import (
+    _active_formula_options_for_course_type,
     _eligible_formula_options_for_member,
     _is_piano_trial_formula_option,
 )
-from app.models.plan import PlanKind
+from app.models.catalog import DeliveryMode
+from app.models.plan import Plan, PlanKind
 from app.schemas.user import ClientSessionFormulaOptionOut
 
 
@@ -80,6 +82,97 @@ class ClientTrialFormulaEligibilityTests(unittest.TestCase):
 
         self.assertEqual(result, [self.pack])
         prior_booking.assert_not_called()
+
+
+class _RowsResult:
+    def __init__(self, rows: list[tuple[object, ...]]) -> None:
+        self._rows = rows
+
+    def all(self) -> list[tuple[object, ...]]:
+        return self._rows
+
+
+class _FormulaCatalogDb:
+    def __init__(self, rows: list[tuple[object, ...]]) -> None:
+        self._rows = rows
+
+    def execute(self, _query: object) -> _RowsResult:
+        return _RowsResult(self._rows)
+
+
+class ClientFormulaDeliveryModeTests(unittest.TestCase):
+    def test_online_only_formula_is_not_offered_for_onsite_course(self) -> None:
+        target_course_type_id = uuid4()
+        online_course_type_id = uuid4()
+        online_plan = Plan(
+            id=uuid4(),
+            code="MONTHLY_PIANO_ONLINE",
+            name="Abonnement mensuel online + solfège - adultes",
+            kind=PlanKind.SUBSCRIPTION,
+            active=True,
+            is_private=False,
+            currency_code="EUR",
+        )
+        db = _FormulaCatalogDb(
+            [
+                (
+                    online_plan,
+                    online_course_type_id,
+                    "Cours collectif",
+                    "PIANO_CLASS",
+                    DeliveryMode.ONLINE,
+                    None,
+                )
+            ]
+        )
+
+        result = _active_formula_options_for_course_type(
+            db,
+            course_type_id=target_course_type_id,
+            course_type_name="Cours collectif",
+            course_type_service_code="PIANO_CLASS",
+            course_type_mode=DeliveryMode.ONSITE,
+            credit_type_id=uuid4(),
+            allowed_plan_kinds={PlanKind.SUBSCRIPTION},
+        )
+
+        self.assertEqual(result, [])
+
+    def test_multichannel_formula_with_exact_onsite_entitlement_remains_available(self) -> None:
+        target_course_type_id = uuid4()
+        multichannel_plan = Plan(
+            id=uuid4(),
+            code="PACK_10_PIANO_MULTI",
+            name="Carnet 10 cours - multi canal",
+            kind=PlanKind.PACK,
+            active=True,
+            is_private=False,
+            currency_code="EUR",
+        )
+        db = _FormulaCatalogDb(
+            [
+                (
+                    multichannel_plan,
+                    target_course_type_id,
+                    "Cours collectif",
+                    "PIANO_CLASS",
+                    DeliveryMode.ONSITE,
+                    None,
+                )
+            ]
+        )
+
+        result = _active_formula_options_for_course_type(
+            db,
+            course_type_id=target_course_type_id,
+            course_type_name="Cours collectif",
+            course_type_service_code="PIANO_CLASS",
+            course_type_mode=DeliveryMode.ONSITE,
+            credit_type_id=uuid4(),
+            allowed_plan_kinds={PlanKind.PACK},
+        )
+
+        self.assertEqual([option.formula_code for option in result], ["PACK_10_PIANO_MULTI"])
 
 
 if __name__ == "__main__":

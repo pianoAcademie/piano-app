@@ -13,6 +13,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.bookings import _plan_supports_course_access, _select_eligible_subscription
 from app.api.routes.clients import _active_formula_options_for_course_type, _family_plan_mini_out, _session_purchase_catalog
+from app.models.catalog import DeliveryMode
 from app.models.plan import PlanKind, SubscriptionStatus
 
 
@@ -120,7 +121,7 @@ class FormulaCompatibilityTests(unittest.TestCase):
         )
         credit_type_id = uuid4()
         fake_db = _FakeSession(
-            execute_rows=[(plan, None, None, None, credit_type_id)],
+            execute_rows=[(plan, None, None, None, None, credit_type_id)],
         )
 
         options = _active_formula_options_for_course_type(
@@ -128,6 +129,7 @@ class FormulaCompatibilityTests(unittest.TestCase):
             course_type_id=uuid4(),
             course_type_name="Reservation studio de repetition",
             course_type_service_code="STUDIO_BOOKING",
+            course_type_mode=DeliveryMode.ONSITE,
             credit_type_id=credit_type_id,
             allowed_plan_kinds={PlanKind.PACK},
         )
@@ -234,7 +236,7 @@ class FormulaCompatibilityTests(unittest.TestCase):
             currency_code="EUR",
         )
         fake_db = _FakeSession(
-            execute_rows=[(plan, uuid4(), "Réservation studio de répétition", "STUDIO_BOOKING", None)],
+            execute_rows=[(plan, uuid4(), "Réservation studio de répétition", "STUDIO_BOOKING", DeliveryMode.ONSITE, None)],
         )
 
         options = _active_formula_options_for_course_type(
@@ -242,6 +244,7 @@ class FormulaCompatibilityTests(unittest.TestCase):
             course_type_id=uuid4(),
             course_type_name="Reservation studio de repetition",
             course_type_service_code="STUDIO_BOOKING",
+            course_type_mode=DeliveryMode.ONSITE,
             credit_type_id=None,
             allowed_plan_kinds={PlanKind.PACK},
         )
@@ -264,7 +267,7 @@ class FormulaCompatibilityTests(unittest.TestCase):
         )
         course_type_id = uuid4()
         fake_db = _FakeSession(
-            execute_rows=[(plan, course_type_id, "Reservation studio de repetition", None, None)],
+            execute_rows=[(plan, course_type_id, "Reservation studio de repetition", None, DeliveryMode.ONSITE, None)],
         )
 
         options = _active_formula_options_for_course_type(
@@ -272,6 +275,7 @@ class FormulaCompatibilityTests(unittest.TestCase):
             course_type_id=course_type_id,
             course_type_name="Réservation studio de répétition",
             course_type_service_code="STUDIO_BOOKING",
+            course_type_mode=DeliveryMode.ONSITE,
             credit_type_id=None,
             allowed_plan_kinds={PlanKind.PACK},
         )
@@ -295,7 +299,7 @@ class FormulaCompatibilityTests(unittest.TestCase):
         credit_type_id = uuid4()
         fake_db = _FakeSession(
             scalar_values=["EUR"],
-            execute_rows=[(plan, uuid4(), "Reservation studio de repetition", "STUDIO", credit_type_id)],
+            execute_rows=[(plan, uuid4(), "Reservation studio de repetition", "STUDIO", DeliveryMode.ONSITE, credit_type_id)],
         )
         session_obj = SimpleNamespace(
             visibility_scope="EXTERNAL",
@@ -310,6 +314,7 @@ class FormulaCompatibilityTests(unittest.TestCase):
             id=uuid4(),
             name="Reservation studio de repetition",
             service_code="STUDIO",
+            mode=DeliveryMode.ONSITE,
             credit_type_id=credit_type_id,
             allows_student_bookings=True,
         )

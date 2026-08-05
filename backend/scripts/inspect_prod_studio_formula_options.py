@@ -28,6 +28,7 @@ def main() -> None:
                 CourseType.id,
                 CourseType.name,
                 CourseType.service_code,
+                CourseType.mode,
                 CourseType.credit_type_id,
                 CreditType.code,
                 CreditType.name,
@@ -43,7 +44,7 @@ def main() -> None:
 
         _print(f"studio_course_types={len(studio_course_types)}")
         for row in studio_course_types:
-            course_type_id, name, service_code, credit_type_id, credit_code, credit_name = row
+            course_type_id, name, service_code, course_type_mode, credit_type_id, credit_code, credit_name = row
             _print(
                 "course_type="
                 f"{course_type_id}|name={name}|service_code={service_code or '-'}|"
@@ -129,6 +130,7 @@ def main() -> None:
                 course_type_id=course_type_id,
                 course_type_name=name,
                 course_type_service_code=service_code,
+                course_type_mode=course_type_mode,
                 credit_type_id=credit_type_id,
                 allowed_plan_kinds={PlanKind.PACK, PlanKind.SUBSCRIPTION, PlanKind.FORFAIT},
             )

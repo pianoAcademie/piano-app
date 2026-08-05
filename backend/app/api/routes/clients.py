@@ -1437,6 +1437,7 @@ def _active_formula_options_for_course_type(
     course_type_id: UUID,
     course_type_name: str,
     course_type_service_code: str | None,
+    course_type_mode: DeliveryMode,
     credit_type_id: UUID | None,
     allowed_plan_kinds: set[PlanKind],
 ) -> list[ClientSessionFormulaOptionOut]:
@@ -1458,6 +1459,7 @@ def _active_formula_options_for_course_type(
                 PlanEntitlement.course_type_id,
                 CourseType.name,
                 CourseType.service_code,
+                CourseType.mode,
                 PlanCreditGrant.credit_type_id,
             )
             .select_from(Plan)
@@ -1479,7 +1481,14 @@ def _active_formula_options_for_course_type(
         return []
 
     matched_plans: dict[UUID, Plan] = {}
-    for plan, entitlement_course_type_id, entitlement_name, entitlement_service_code, grant_credit_type_id in candidate_rows:
+    for (
+        plan,
+        entitlement_course_type_id,
+        entitlement_name,
+        entitlement_service_code,
+        entitlement_mode,
+        grant_credit_type_id,
+    ) in candidate_rows:
         matches_exact_entitlement = entitlement_course_type_id == course_type_id
         matches_credit_type = (
             credit_type_id is not None
@@ -1494,7 +1503,7 @@ def _active_formula_options_for_course_type(
             )
             if normalized
         }
-        matches_normalized_activity = bool(entitlement_keys & target_keys)
+        matches_normalized_activity = bool(entitlement_keys & target_keys) and entitlement_mode == course_type_mode
         if not (matches_exact_entitlement or matches_credit_type or matches_normalized_activity):
             continue
         if not _formula_purchase_link_allowed(plan):
@@ -1601,6 +1610,7 @@ def _session_purchase_catalog(
         course_type_id=course_type.id,
         course_type_name=course_type.name,
         course_type_service_code=course_type.service_code,
+        course_type_mode=course_type.mode,
         credit_type_id=course_type.credit_type_id,
         allowed_plan_kinds=allowed_plan_kinds,
     )
