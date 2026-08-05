@@ -84,6 +84,7 @@ type JwtPayloadLike = {
   imp?: boolean;
   act?: string;
   target_role?: string;
+  preview_read_only?: boolean;
   exp?: number;
   [key: string]: unknown;
 };

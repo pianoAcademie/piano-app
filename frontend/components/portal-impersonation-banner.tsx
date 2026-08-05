@@ -6,18 +6,20 @@ type PortalImpersonationBannerProps = {
   displayName: string;
   returnTo: string;
   language?: UiLanguage;
+  readOnly?: boolean;
 };
 
 export default function PortalImpersonationBanner({
   displayName,
   returnTo,
   language = "fr",
+  readOnly = false,
 }: PortalImpersonationBannerProps): JSX.Element {
   const safeReturnTo = returnTo.startsWith("/admin") ? returnTo : "/admin";
   return (
     <section className="portal-impersonation-banner" role="status" aria-live="polite">
       <span>
-        {uiText(language, "portal.impersonation")} <strong>{displayName}</strong>
+        {uiText(language, readOnly ? "portal.impersonation_read_only" : "portal.impersonation")} <strong>{displayName}</strong>
       </span>
       <Link className="mode-link" href={safeReturnTo}>
         {uiText(language, "portal.leave")}

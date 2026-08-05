@@ -48,7 +48,7 @@ def start_admin_client_impersonation(
     actor: User = Depends(require_roles(UserRole.ADMIN)),
 ) -> AdminImpersonationStartOut:
     target = db.scalar(select(User).where(User.id == client_id))
-    if target is None or target.role != UserRole.CLIENT or not target.is_active:
+    if target is None or target.role != UserRole.CLIENT:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
 
     access_token = create_access_token(
@@ -59,6 +59,7 @@ def start_admin_client_impersonation(
             "imp": True,
             "act": str(actor.id),
             "target_role": "client",
+            "preview_read_only": True,
         },
     )
     logger.info("impersonation_started actor=%s target=%s role=client", actor.id, target.id)

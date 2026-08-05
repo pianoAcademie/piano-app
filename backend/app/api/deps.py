@@ -19,6 +19,8 @@ from app.services.professor_permissions import permissions_dict
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
+READ_ONLY_HTTP_METHODS = {"GET", "HEAD", "OPTIONS"}
+
 BACKOFFICE_PERMISSION_KEYS = {
     "can_view_planning",
     "can_edit_planning",
@@ -46,6 +48,15 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+def is_read_only_client_preview(payload: dict[str, Any]) -> bool:
+    return bool(
+        payload.get("imp")
+        and payload.get("preview_read_only")
+        and payload.get("target_role") == "client"
+        and payload.get("act")
+    )
 
 
 def get_current_user(
@@ -79,6 +90,13 @@ def get_current_user(
             detail="Impersonation token cannot access admin endpoints",
         )
 
+    read_only_client_preview = is_read_only_client_preview(payload)
+    if read_only_client_preview and request.method.upper() not in READ_ONLY_HTTP_METHODS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Client preview is read-only",
+        )
+
     user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(
@@ -95,7 +113,7 @@ def get_current_user(
         ) from exc
 
     user = db.scalar(select(User).where(User.id == user_uuid))
-    if user is None or not user.is_active:
+    if user is None or (not user.is_active and not read_only_client_preview):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",

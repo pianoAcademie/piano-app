@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import PortalImpersonationBanner from "../../components/portal-impersonation-banner";
+import PortalReadOnlyPreviewGuard from "../../components/portal-read-only-preview-guard";
 import { getAdminToken, getPortalReturnTo, getPortalToken, readPortalImpersonationClaims } from "../../lib/auth-cookies";
 import { backendRequest } from "../../lib/backend";
 import {
@@ -1173,6 +1174,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const tab = parseTab(readParam(searchParams, "tab"));
   const impersonationClaims = readPortalImpersonationClaims();
   const isImpersonating = Boolean(impersonationClaims?.imp);
+  const isReadOnlyPreview = Boolean(impersonationClaims?.imp && impersonationClaims?.preview_read_only);
   const impersonationReturnTo = getPortalReturnTo() ?? "/admin";
   const impersonationNameHint = readParam(searchParams, "imp_name").trim();
   const rawParams = toSingleValueSearchParams(searchParams);
@@ -2849,7 +2851,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         </article>
 
         {isImpersonating ? (
-          <form action={endPortalImpersonationAction} className="client-admin-exit-form">
+          <form action={endPortalImpersonationAction} className="client-admin-exit-form" data-read-only-preview-allow="true">
             <input type="hidden" name="return_to" value={impersonationReturnTo} />
             <button className="ghost client-admin-exit-btn" type="submit">
               {uiText(language, "common.back_office")}
@@ -2873,7 +2875,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           </Link>
         </nav>
 
-        <form action={logoutAction} className="client-logout">
+        <form action={logoutAction} className="client-logout" data-read-only-preview-allow="true">
           <button className="ghost" type="submit">
             ⎋
           </button>
@@ -2913,14 +2915,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 {language === "en" ? "Events" : "Événements"}
               </a>
               {isImpersonating ? (
-                <form action={endPortalImpersonationAction}>
+                <form action={endPortalImpersonationAction} data-read-only-preview-allow="true">
                   <input type="hidden" name="return_to" value={impersonationReturnTo} />
                   <button className="ghost client-mobile-menu-btn" type="submit">
                     {uiText(language, "common.back_office")}
                   </button>
                 </form>
               ) : null}
-              <form action={logoutAction}>
+              <form action={logoutAction} data-read-only-preview-allow="true">
                 <button className="ghost client-mobile-menu-btn" type="submit">
                   {uiText(language, "common.logout")}
                 </button>
@@ -2946,8 +2948,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         </header>
 
         <section className="client-content">
+          <PortalReadOnlyPreviewGuard enabled={isReadOnlyPreview} language={language} />
           {isImpersonating ? (
-            <PortalImpersonationBanner displayName={impersonationDisplayName} returnTo={impersonationReturnTo} language={language} />
+            <PortalImpersonationBanner
+              displayName={impersonationDisplayName}
+              returnTo={impersonationReturnTo}
+              language={language}
+              readOnly={isReadOnlyPreview}
+            />
           ) : null}
           {globalOkMessage ? <Toast message={globalOkMessage} tone="ok" /> : null}
           {globalErrorMessage ? <section className="flash-err">{globalErrorMessage}</section> : null}
@@ -2960,7 +2968,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               {primaryRecoveryUrl ? (
                 <>
                   {" "}
-                  <a className="mode-link" href={primaryRecoveryUrl} target="_blank" rel="noreferrer">
+                  <a
+                    className="mode-link"
+                    href={primaryRecoveryUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    data-read-only-preview-block="true"
+                  >
                     {t("client.regularize_payment")}
                   </a>
                 </>
