@@ -21,7 +21,6 @@ from app.models.plan import (
     ClientPlanSubscription,
     Plan,
     PlanCreditGrant,
-    PlanEntitlement,
     PlanKind,
     SubscriptionStatus,
 )
@@ -283,44 +282,6 @@ def _ensure_group_membership(db: Session, user_id: UUID, group_id: UUID) -> None
         db.add(ClientGroupMembership(user_id=user_id, group_id=group_id))
 
 
-def _ensure_monthly_plan(db: Session, template: Plan) -> Plan:
-    plan = db.scalar(select(Plan).where(Plan.code == SPORTIGO_MONTHLY_PLAN_CODE).with_for_update())
-    if plan is not None:
-        return plan
-    plan = Plan(
-        code=SPORTIGO_MONTHLY_PLAN_CODE,
-        name=f"Sportigo – {template.name}",
-        kind=PlanKind.SUBSCRIPTION,
-        credits_count=template.credits_count,
-        pack_validity_months=template.pack_validity_months,
-        monthly_price_value=template.monthly_price_value,
-        price_tax_mode=template.price_tax_mode,
-        monthly_price_excl_vat=template.monthly_price_excl_vat,
-        currency_code=template.currency_code or "EUR",
-        description="Abonnements migrés depuis Sportigo en août 2026.",
-        billing_frequency=template.billing_frequency,
-        booking_rights_policy=template.booking_rights_policy,
-        retry_policy_id=template.retry_policy_id,
-        notification_policy_id=template.notification_policy_id,
-        signup_fee_value=0,
-        signup_fee_excl_vat=0,
-        credit_grants_relation=template.credit_grants_relation,
-        is_private=True,
-        options_json=list(template.options_json or []),
-        payment_methods_json=list(template.payment_methods_json or []),
-        restrictions_json=list(template.restrictions_json or []),
-        active=True,
-        updated_at=datetime.now(timezone.utc),
-    )
-    db.add(plan)
-    db.flush()
-    for entitlement in db.scalars(select(PlanEntitlement).where(PlanEntitlement.plan_id == template.id)).all():
-        db.add(PlanEntitlement(plan_id=plan.id, course_type_id=entitlement.course_type_id))
-    for grant in db.scalars(select(PlanCreditGrant).where(PlanCreditGrant.plan_id == template.id)).all():
-        db.add(PlanCreditGrant(plan_id=plan.id, credit_type_id=grant.credit_type_id, credits_count=grant.credits_count))
-    return plan
-
-
 def _pack_plan_code(lot: SportigoCreditLot) -> str:
     return f"{SPORTIGO_PACK_PREFIX}{lot.lot_key}"[:80]
 
@@ -437,7 +398,15 @@ def run_sportigo_import(
 
     now = datetime.now(timezone.utc)
     group = _ensure_group(db)
-    monthly_plan = _ensure_monthly_plan(db, template)
+    # Monthly subscribers use the existing catalogue formula selected by the
+    # administrator. Older staged imports created a private Sportigo clone;
+    # those subscriptions are moved to the catalogue formula below.
+    monthly_plan = template
+    legacy_monthly_plan = db.scalar(
+        select(Plan).where(Plan.code == SPORTIGO_MONTHLY_PLAN_CODE).with_for_update()
+    )
+    if legacy_monthly_plan is not None and legacy_monthly_plan.id == monthly_plan.id:
+        legacy_monthly_plan = None
     all_pack_plans = {
         plan.code: plan
         for plan in db.scalars(select(Plan).where(Plan.code.like(f"{SPORTIGO_PACK_PREFIX}%"))).all()
@@ -519,6 +488,22 @@ def run_sportigo_import(
                 .where(ClientPlanSubscription.user_id == user.id, ClientPlanSubscription.plan_id == monthly_plan.id)
                 .with_for_update()
             )
+            legacy_subscription = None
+            if legacy_monthly_plan is not None:
+                legacy_subscription = db.scalar(
+                    select(ClientPlanSubscription)
+                    .where(
+                        ClientPlanSubscription.user_id == user.id,
+                        ClientPlanSubscription.plan_id == legacy_monthly_plan.id,
+                    )
+                    .with_for_update()
+                )
+            if subscription is None and legacy_subscription is not None:
+                legacy_subscription.plan_id = monthly_plan.id
+                db.add(legacy_subscription)
+                subscription = legacy_subscription
+            elif subscription is not None and legacy_subscription is not None and legacy_subscription.id != subscription.id:
+                db.delete(legacy_subscription)
             started_at = row.monthly_started_at or now
             status_value = SubscriptionStatus.ACTIVE if activate else SubscriptionStatus.PENDING
             if subscription is None:
@@ -628,6 +613,18 @@ def run_sportigo_import(
                     existing.status = SubscriptionStatus.EXPIRED
                     db.add(existing)
                     out.credit_lots_zeroed += 1
+
+    if legacy_monthly_plan is not None:
+        db.flush()
+        remaining_legacy_subscriptions = db.scalar(
+            select(func.count(ClientPlanSubscription.id)).where(
+                ClientPlanSubscription.plan_id == legacy_monthly_plan.id
+            )
+        )
+        if int(remaining_legacy_subscriptions or 0) == 0 and legacy_monthly_plan.active:
+            legacy_monthly_plan.active = False
+            legacy_monthly_plan.updated_at = now
+            db.add(legacy_monthly_plan)
 
     db.commit()
     return out

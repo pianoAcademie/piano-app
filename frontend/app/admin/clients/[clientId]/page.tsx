@@ -2328,11 +2328,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const endingSubscriptions = subscriptions.filter(
     (sub) => (sub.status === "ACTIVE" || sub.status === "PAUSED") && isPendingSubscriptionCancellation(sub),
   );
+  const pendingSubscriptions = subscriptions.filter((sub) => sub.status === "PENDING");
   const archivedSubscriptions = subscriptions.filter(
-    (sub) => (sub.status !== "ACTIVE" && sub.status !== "PAUSED") || isCancellationAlreadyEffective(sub),
+    (sub) =>
+      (sub.status !== "ACTIVE" && sub.status !== "PAUSED" && sub.status !== "PENDING") ||
+      isCancellationAlreadyEffective(sub),
   );
   const hasForfaitPlan = subscriptions.some((sub) => sub.plan.kind === "FORFAIT");
-  const visibleCurrentSubscriptions = [...activeSubscriptions, ...endingSubscriptions];
+  const visibleCurrentSubscriptions = [...activeSubscriptions, ...endingSubscriptions, ...pendingSubscriptions];
   const selectedSubscriptionForModal =
     subscriptionModalId &&
     (subscriptionModalAction === "suspend" ||
@@ -3191,6 +3194,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
               <div className="row">
                 <span className="badge">{t("admin.client_detail.active_count", { count: activeSubscriptions.length })}</span>
                 <span className="badge">{t("admin.client_detail.ending_period_count", { count: endingSubscriptions.length })}</span>
+                {pendingSubscriptions.length > 0 ? (
+                  <span className="badge">
+                    {clientStatusLabel("PENDING", language)}: {pendingSubscriptions.length}
+                  </span>
+                ) : null}
               </div>
             </div>
 
