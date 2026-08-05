@@ -3757,7 +3757,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <div className="client-agenda-day-headings">
                             <h3>{day.label}</h3>
                           </div>
-                          <span className="badge">{daySessions.length}</span>
                         </div>
 
                         {daySessions.length === 0 ? <p className="muted agenda-empty">{t("client.no_course")}</p> : null}
