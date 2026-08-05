@@ -2853,16 +2853,29 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     }
   };
   const shouldRenderPlanningStateBadge = (statusCode: PlanningStatusCode | null | undefined): boolean => {
-    return new Set<PlanningStatusCode>([
-      "PAYMENT_PENDING",
-      "FULL",
-      "PAST",
-      "CLOSED",
-      "INCOMPATIBLE_PLAN",
-      "NO_PLAN",
-      "UNAVAILABLE",
-      "WAITLISTED",
-    ]).has(statusCode ?? "UNAVAILABLE");
+    return statusCode != null;
+  };
+  const planningCardStateClass = (statusCode: PlanningStatusCode | null | undefined): string => {
+    switch (statusCode) {
+      case "ALREADY_BOOKED":
+        return "client-session-state-reserved";
+      case "FULL":
+        return "client-session-state-full";
+      case "PAYMENT_PENDING":
+      case "WAITLISTED":
+        return "client-session-state-pending";
+      case "CLOSED":
+      case "PAST":
+      case "INCOMPATIBLE_PLAN":
+      case "NO_PLAN":
+      case "UNAVAILABLE":
+        return "client-session-state-closed";
+      case "BOOKABLE":
+      case "AVAILABLE":
+      case "PAYMENT_REQUIRED":
+      default:
+        return "client-session-state-available";
+    }
   };
 
   return (
@@ -3554,11 +3567,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     </span>
                     <span className="client-week-legend-item">
                       <span className="client-week-legend-swatch available" />
-                      {t("client.book_or_pay")}
+                      {t("client.planning_status_available")}
                     </span>
                     <span className="client-week-legend-item">
                       <span className="client-week-legend-swatch full" />
-                      {t("client.closed_or_full")}
+                      {t("client.planning_status_full")}
+                    </span>
+                    <span className="client-week-legend-item">
+                      <span className="client-week-legend-swatch closed" />
+                      {t("client.planning_status_closed")}
                     </span>
                   </div>
                 </div>
@@ -3788,6 +3805,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                       : t("client.reserved_short")
                                   : null;
                             const cardStatusClass = planningStatusClass(sessionState.cardStatusCode);
+                            const cardStateClass = planningCardStateClass(sessionState.cardStatusCode);
                             const showPlanningStateBadge =
                               !sessionState.alreadyReserved && shouldRenderPlanningStateBadge(sessionState.cardStatusCode);
                             const sessionCtaLabel = sessionState.alreadyReserved
@@ -3810,7 +3828,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 aria-label={t("client.open_slot_detail", { title: session.title })}
                               >
                                 <article
-                                  className={`client-session-card ${compactAgendaCard ? "client-session-card-compact" : ""} ${sessionState.alreadyReserved ? "client-session-card-booked" : ""} ${statusClass(session.status)}`}
+                                  className={`client-session-card ${compactAgendaCard ? "client-session-card-compact" : ""} ${sessionState.alreadyReserved ? "client-session-card-booked" : ""} ${cardStateClass} ${statusClass(session.status)}`}
                                 >
                                   {!compactAgendaCard ? (
                                     <div className="client-session-timebox">
