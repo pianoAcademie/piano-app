@@ -7,11 +7,15 @@ const targets = {
     appName: "Piano Academie Client",
     bundleId: "com.pianoacademie.client",
     configFile: "capacitor.client.config.json",
+    envPrefix: "PA_CLIENT",
+    defaultVersionName: "1.0",
   },
   prof: {
     appName: "Piano Academie Professeur",
     bundleId: "com.pianoacademie.professeur",
     configFile: "capacitor.prof.config.json",
+    envPrefix: "PA_PROF",
+    defaultVersionName: "1.0.0",
   },
 };
 
@@ -58,4 +62,19 @@ replaceOrFail(
 
 copyFileSync(targetConfigPath, activeConfigPath);
 
-console.log(`Prepared iOS target: ${target.appName} (${target.bundleId})`);
+const versionName = process.env[`${target.envPrefix}_VERSION_NAME`] || target.defaultVersionName;
+const versionCode = process.env[`${target.envPrefix}_VERSION_CODE`] || "1";
+replaceOrFail(
+  projectPath,
+  /MARKETING_VERSION = [^;]+;/g,
+  `MARKETING_VERSION = ${versionName};`,
+  "MARKETING_VERSION",
+);
+replaceOrFail(
+  projectPath,
+  /CURRENT_PROJECT_VERSION = [^;]+;/g,
+  `CURRENT_PROJECT_VERSION = ${versionCode};`,
+  "CURRENT_PROJECT_VERSION",
+);
+
+console.log(`Prepared iOS target: ${target.appName} (${target.bundleId}) ${versionName} (${versionCode})`);

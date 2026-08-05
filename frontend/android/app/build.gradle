@@ -1,20 +1,23 @@
 apply plugin: 'com.android.application'
 
-def releaseKeystorePath = System.getenv("PA_PROF_KEYSTORE_PATH")
-def releaseKeystorePassword = System.getenv("PA_PROF_KEYSTORE_PASSWORD")
-def releaseKeyAlias = System.getenv("PA_PROF_KEY_ALIAS")
-def releaseKeyPassword = System.getenv("PA_PROF_KEY_PASSWORD")
-def hasReleaseSigning = releaseKeystorePath && releaseKeystorePassword && releaseKeyAlias && releaseKeyPassword
+def clientKeystorePath = System.getenv("PA_CLIENT_KEYSTORE_PATH")
+def clientKeystorePassword = System.getenv("PA_CLIENT_KEYSTORE_PASSWORD")
+def clientKeyAlias = System.getenv("PA_CLIENT_KEY_ALIAS")
+def clientKeyPassword = System.getenv("PA_CLIENT_KEY_PASSWORD")
+def hasClientReleaseSigning = clientKeystorePath && clientKeystorePassword && clientKeyAlias && clientKeyPassword
+
+def professorKeystorePath = System.getenv("PA_PROF_KEYSTORE_PATH")
+def professorKeystorePassword = System.getenv("PA_PROF_KEYSTORE_PASSWORD")
+def professorKeyAlias = System.getenv("PA_PROF_KEY_ALIAS")
+def professorKeyPassword = System.getenv("PA_PROF_KEY_PASSWORD")
+def hasProfessorReleaseSigning = professorKeystorePath && professorKeystorePassword && professorKeyAlias && professorKeyPassword
 
 android {
-    namespace "com.pianoacademie.professeur"
+    namespace "com.pianoacademie.mobile"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.pianoacademie.professeur"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode Integer.parseInt(System.getenv("PA_PROF_VERSION_CODE") ?: "1")
-        versionName System.getenv("PA_PROF_VERSION_NAME") ?: "1.0.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -23,12 +26,49 @@ android {
         }
     }
     signingConfigs {
-        if (hasReleaseSigning) {
-            release {
-                storeFile file(releaseKeystorePath)
-                storePassword releaseKeystorePassword
-                keyAlias releaseKeyAlias
-                keyPassword releaseKeyPassword
+        if (hasClientReleaseSigning) {
+            clientRelease {
+                storeFile file(clientKeystorePath)
+                storePassword clientKeystorePassword
+                keyAlias clientKeyAlias
+                keyPassword clientKeyPassword
+            }
+        }
+        if (hasProfessorReleaseSigning) {
+            professorRelease {
+                storeFile file(professorKeystorePath)
+                storePassword professorKeystorePassword
+                keyAlias professorKeyAlias
+                keyPassword professorKeyPassword
+            }
+        }
+    }
+    flavorDimensions += "portal"
+    productFlavors {
+        client {
+            dimension "portal"
+            applicationId "com.pianoacademie.client"
+            versionCode Integer.parseInt(System.getenv("PA_CLIENT_VERSION_CODE") ?: "1")
+            versionName System.getenv("PA_CLIENT_VERSION_NAME") ?: "1.0"
+            resValue "string", "app_name", "Piano Academie Client"
+            resValue "string", "title_activity_main", "Piano Academie Client"
+            resValue "string", "package_name", "com.pianoacademie.client"
+            resValue "string", "custom_url_scheme", "com.pianoacademie.client"
+            if (hasClientReleaseSigning) {
+                signingConfig signingConfigs.clientRelease
+            }
+        }
+        professeur {
+            dimension "portal"
+            applicationId "com.pianoacademie.professeur"
+            versionCode Integer.parseInt(System.getenv("PA_PROF_VERSION_CODE") ?: "1")
+            versionName System.getenv("PA_PROF_VERSION_NAME") ?: "1.0.0"
+            resValue "string", "app_name", "Piano Academie Professeur"
+            resValue "string", "title_activity_main", "Piano Academie Professeur"
+            resValue "string", "package_name", "com.pianoacademie.professeur"
+            resValue "string", "custom_url_scheme", "com.pianoacademie.professeur"
+            if (hasProfessorReleaseSigning) {
+                signingConfig signingConfigs.professorRelease
             }
         }
     }
@@ -36,9 +76,6 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-            if (hasReleaseSigning) {
-                signingConfig signingConfigs.release
-            }
         }
     }
 }

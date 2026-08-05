@@ -7,9 +7,10 @@ Objectif: preparer les informations necessaires a App Store Connect pour deux ap
 ### Piano Academie Client
 
 - Bundle ID: `com.pianoacademie.client`
+- Android application ID: `com.pianoacademie.client`
 - SKU suggere: `PA-CLIENT-IOS`
-- Plateforme: iOS
-- Distribution conseillee maintenant: TestFlight interne
+- Plateformes: iOS et Android
+- Distribution conseillee maintenant: TestFlight interne et piste de test interne Google Play
 - URL de support: `https://app.piano-academie.com/support`
 - URL de confidentialite: `https://app.piano-academie.com/privacy`
 - Categorie suggeree: Education

@@ -33,6 +33,9 @@ const config: CapacitorConfig = {
     contentInset: "automatic",
     scrollEnabled: true,
   },
+  android: {
+    allowMixedContent: false,
+  },
 };
 
 export default config;

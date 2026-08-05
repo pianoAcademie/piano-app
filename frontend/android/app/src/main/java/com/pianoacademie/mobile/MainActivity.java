@@ -1,4 +1,4 @@
-package com.pianoacademie.professeur;
+package com.pianoacademie.mobile;
 
 import com.getcapacitor.BridgeActivity;
 

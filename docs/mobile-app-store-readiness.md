@@ -1,6 +1,8 @@
 # Mobile apps readiness
 
-Objectif: preparer deux apps mobiles publiques ou de test, une pour les clients et une pour les professeurs, en reutilisant les portails web existants. L'administration reste reservee au navigateur.
+Objectif: preparer les apps mobiles en reutilisant les portails web existants. La priorite actuelle est l'espace client iOS et Android. L'administration reste reservee au navigateur.
+
+La premiere version iOS client est conservee sous `com.pianoacademie.client`. La version Android client utilise maintenant le meme identifiant applicatif et la meme route `/client`. Voir `docs/client-mobile-app-release.md` et `docs/client-mobile-app-store-listing.md`.
 
 La chaîne professeur iOS, Android et installation web est maintenant documentée séparément dans `docs/professor-mobile-app-release.md`.
 
@@ -26,7 +28,7 @@ Demarrer par TestFlight jusqu'a la stabilisation fonctionnelle de septembre. Cel
 ## Suite technique conseillee
 
 1. Auditer les parcours mobiles critiques: connexion, planning, paiement, messages, feuilles professeurs, presence.
-2. Utiliser Capacitor comme wrapper natif leger. iOS conserve deux configurations (`PA Client` et `PA Prof`) et Android dispose actuellement du projet professeur.
+2. Utiliser Capacitor comme wrapper natif leger. iOS conserve deux configurations (`PA Client` et `PA Prof`) et Android dispose des variantes `client` et `professeur`.
 3. Forcer chaque configuration a ouvrir son entree dediee et a bloquer l'acces direct admin.
 4. Tester les cookies de session dans WKWebView, les liens PDF, paiements Stripe/Oney et retours depuis navigateur externe.
 5. Publier une premiere version TestFlight interne, puis externe.
@@ -53,6 +55,9 @@ npm run mobile:open:prof
 npm run mobile:sync:prof:android
 npm run mobile:open:prof:android
 npm run mobile:verify:prof
+npm run mobile:sync:client:android
+npm run mobile:bundle:client:android
+npm run mobile:verify:client
 ```
 
 Les deux apps chargent volontairement l'URL de production dediee:
@@ -62,7 +67,7 @@ Les deux apps chargent volontairement l'URL de production dediee:
 
 Cette approche evite de transformer l'app Next.js SSR en export statique. Elle est adaptee pour TestFlight et une premiere validation terrain.
 
-Etat actuel: la configuration Capacitor et les dossiers natifs `frontend/ios` et `frontend/android` sont prêts. iOS peut être basculé entre les cibles client et professeur ; le projet Android livré ici est dédié aux professeurs. L'orientation iOS est limitée au portrait et les deux plateformes utilisent l'identité Piano Academie.
+Etat actuel: la configuration Capacitor et les dossiers natifs `frontend/ios` et `frontend/android` sont prets. iOS peut etre bascule entre les cibles client et professeur; Android compile des variantes client et professeur distinctes. L'orientation iOS est limitee au portrait et les deux plateformes utilisent l'identite Piano Academie.
 
 Un manifeste de confidentialite natif est present dans `frontend/ios/App/App/PrivacyInfo.xcprivacy`. Il declare uniquement la couche native iOS: pas de tracking natif, pas de domaine de tracking natif, pas de collecte native. Les donnees collectees par le portail web doivent toujours etre renseignees dans les labels App Store Connect et rester coherentes avec la politique de confidentialite publique.
 
