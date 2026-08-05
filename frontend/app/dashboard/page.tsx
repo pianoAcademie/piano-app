@@ -5165,7 +5165,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <div className="client-offer-catalog-grid">
                       {filteredPlans.map((plan) => {
                         const categories = planOfferCategories(plan);
-                        const primaryCategory = OFFER_CATALOG_CATEGORIES.find((category) => category.key === categories[0]) ?? OFFER_CATALOG_CATEGORIES[7];
+                        const displayedCategoryKey = selectedOfferCategory !== "ALL" && categories.includes(selectedOfferCategory)
+                          ? selectedOfferCategory
+                          : categories[0];
+                        const primaryCategory = OFFER_CATALOG_CATEGORIES.find((category) => category.key === displayedCategoryKey) ?? OFFER_CATALOG_CATEGORIES[7];
                         const recurringPaymentMethods = (plan.payment_methods ?? []).filter(
                           (method) => method === "CARD_ONLINE" || method === "SEPA_DEBIT",
                         );
@@ -5229,7 +5232,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
                       {filteredOnlineProducts.map((product) => {
                         const categories = productOfferCategories(product);
-                        const primaryCategory = OFFER_CATALOG_CATEGORIES.find((category) => category.key === categories[0]) ?? OFFER_CATALOG_CATEGORIES[7];
+                        const displayedCategoryKey = selectedOfferCategory !== "ALL" && categories.includes(selectedOfferCategory)
+                          ? selectedOfferCategory
+                          : categories[0];
+                        const primaryCategory = OFFER_CATALOG_CATEGORIES.find((category) => category.key === displayedCategoryKey) ?? OFFER_CATALOG_CATEGORIES[7];
                         return (
                           <article key={product.id} className="client-catalog-offer-card client-catalog-product-card">
                             <div className="client-catalog-offer-topline">
