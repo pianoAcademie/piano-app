@@ -269,16 +269,49 @@ export default function AdminFormulaEditor({
                 </select>
               </label>
 
-              <label>
-                {signupLabel}
-                <input
-                  type="number"
-                  name="signup_fee_value"
-                  min={0}
-                  step="0.01"
-                  defaultValue={defaultSignupValue}
-                />
-              </label>
+              <section className="span-2 config-dynamic-section">
+                <h4>{t("admin.formulas.editor_first_purchase_title")}</h4>
+                <p className="muted">{t("admin.formulas.editor_first_purchase_help")}</p>
+                <div className="grid cols-2 config-form-grid">
+                  <label>
+                    <span className="checkline">
+                      <input
+                        type="checkbox"
+                        name="first_purchase_signup_fee_enabled"
+                        defaultChecked={formula?.first_purchase_signup_fee_enabled ?? false}
+                      />
+                      {t("admin.formulas.editor_first_purchase_signup_fee_enabled")}
+                    </span>
+                    <input
+                      type="number"
+                      name="signup_fee_value"
+                      min={0}
+                      step="0.01"
+                      defaultValue={defaultSignupValue}
+                      placeholder={signupLabel}
+                    />
+                    <small className="muted">{t("admin.formulas.editor_first_purchase_signup_fee_amount_help")}</small>
+                  </label>
+                  <label>
+                    <span className="checkline">
+                      <input
+                        type="checkbox"
+                        name="first_purchase_partitions_enabled"
+                        defaultChecked={formula?.first_purchase_partitions_enabled ?? false}
+                      />
+                      {t("admin.formulas.editor_first_purchase_partitions_enabled")}
+                    </span>
+                    <input
+                      type="number"
+                      name="first_purchase_partitions_price_value"
+                      min={0}
+                      step="0.01"
+                      defaultValue={formula?.first_purchase_partitions_price_value ?? ""}
+                      placeholder={t("admin.formulas.editor_first_purchase_partitions_price")}
+                    />
+                  </label>
+                </div>
+              </section>
 
               <label className="span-2">
                 {t("admin.formulas.editor_options_csv")}

@@ -1370,7 +1370,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     backendRequest<CourseTypeOut[]>("/api/v1/course-types", {}, token),
     backendRequest<LocationOut[]>("/api/v1/locations", {}, token),
     backendRequest<SessionOut[]>(`/api/v1/clients/me/sessions?${sessionQuery.toString()}`, {}, token),
-    backendRequest<PlanOut[]>("/api/v1/plans", {}, token),
+    backendRequest<PlanOut[]>(
+      `/api/v1/plans${readParam(searchParams, "purchase_user_id") ? `?purchase_user_id=${encodeURIComponent(readParam(searchParams, "purchase_user_id"))}` : ""}`,
+      {},
+      token,
+    ),
     backendRequest<ClientCatalogProductOut[]>("/api/v1/clients/catalog/products", {}, token),
     backendRequest<SubscriptionOut[]>("/api/v1/clients/me/subscriptions", {}, token),
     backendRequest<ClientBookingOut[]>("/api/v1/clients/me/bookings", {}, token),
@@ -5220,9 +5224,21 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             </div>
                             <div className="client-catalog-offer-footer">
                               <div className="client-catalog-price">
-                                <span>{t("client.price")}</span>
+                                <span>{plan.first_purchase_required ? t("client.first_purchase_payment") : t("client.price")}</span>
                                 <strong>{price != null ? toMoney(price, plan.currency_code ?? me.preferred_currency, language) : "—"}</strong>
-                                {plan.kind === "SUBSCRIPTION" ? <small>{t("client.per_month_suffix")}</small> : null}
+                                {plan.first_purchase_required && plan.kind === "SUBSCRIPTION" && plan.base_price_ttc != null ? (
+                                  <small>{t("client.then_monthly_price", { amount: toMoney(plan.base_price_ttc, plan.currency_code ?? me.preferred_currency, language) })}</small>
+                                ) : plan.kind === "SUBSCRIPTION" ? <small>{t("client.per_month_suffix")}</small> : null}
+                                {plan.first_purchase_required ? (
+                                  <ul className="client-catalog-first-purchase-lines" aria-label={t("client.first_purchase_includes")}>
+                                    {plan.first_purchase_breakdown.map((line) => (
+                                      <li key={`${plan.id}-${line.code}`}>
+                                        <span>{line.label}</span>
+                                        <strong>{toMoney(line.amount_ttc, plan.currency_code ?? me.preferred_currency, language)}</strong>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : null}
                               </div>
                               <form action={purchasePlanAction} className="client-catalog-purchase-form">
                                 <input type="hidden" name="plan_id" value={plan.id} />

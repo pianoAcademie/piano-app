@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_admin_permission_map, get_current_user, get_db, require_roles
@@ -29,6 +30,7 @@ from app.schemas.plan import (
     ClientSubscriptionOut,
     PlanMiniOut,
     PlanOut,
+    PlanFirstPurchaseLineOut,
     PlanPricePreviewOut,
     PlanPurchaseRequest,
     PublicFormulaPurchaseContextOut,
@@ -59,6 +61,34 @@ PURCHASE_LINK_OPTION_DISABLED = {
     "purchase_link_disabled",
     "buy_link_disabled",
 }
+PRIOR_PURCHASE_STATUSES = {
+    SubscriptionStatus.ACTIVE,
+    SubscriptionStatus.PAYMENT_ALERT,
+    SubscriptionStatus.PRE_TERMINATION,
+    SubscriptionStatus.PAUSED,
+    SubscriptionStatus.TERMINATED,
+    SubscriptionStatus.EXPIRED,
+}
+SUCCESSFUL_PURCHASE_PAYMENT_STATUSES = {
+    "PAID",
+    "SUCCEEDED",
+    "COMPLETED",
+    "SEPA_MANDATE_ACTIVE",
+    "PAID_PAYMENT_METHOD_MISSING",
+}
+
+
+@dataclass(frozen=True)
+class _PurchasePricing:
+    amount_excl_vat: Decimal
+    vat_amount: Decimal
+    total_incl_vat: Decimal
+    currency: str
+    base_price_ttc: Decimal
+    first_purchase_required: bool
+    first_purchase_fee_ttc: Decimal | None
+    first_purchase_partitions_price_ttc: Decimal | None
+    breakdown: list[dict[str, object]]
 
 
 def _formula_frequency_label(kind: PlanKind) -> str | None:
@@ -81,12 +111,149 @@ def _formula_purchase_link_allowed(plan: Plan) -> bool:
     return True
 
 
-def _formula_price_snapshot(plan: Plan) -> tuple[Decimal | None, str]:
-    if plan.monthly_price_value is not None:
-        return Decimal(plan.monthly_price_value).quantize(Decimal("0.01")), (plan.currency_code or "EUR").upper()
-    if plan.monthly_price_excl_vat is not None:
-        return Decimal(plan.monthly_price_excl_vat).quantize(Decimal("0.01")), (plan.currency_code or "EUR").upper()
-    return None, (plan.currency_code or "EUR").upper()
+def _has_prior_purchase_for_plan(db: Session, *, user_id: UUID, plan_id: UUID) -> bool:
+    prior = db.scalar(
+        select(ClientPlanSubscription.id)
+        .where(
+            ClientPlanSubscription.user_id == user_id,
+            ClientPlanSubscription.plan_id == plan_id,
+            or_(
+                ClientPlanSubscription.status.in_(list(PRIOR_PURCHASE_STATUSES)),
+                ClientPlanSubscription.migration_source_code.is_not(None),
+                ClientPlanSubscription.last_successful_charge_at.is_not(None),
+                func.upper(ClientPlanSubscription.last_payment_status).in_(list(SUCCESSFUL_PURCHASE_PAYMENT_STATUSES)),
+            ),
+        )
+        .limit(1)
+    )
+    return prior is not None
+
+
+def _ttc_to_tax_totals(*, total_incl_vat: Decimal, vat_rate: Decimal) -> tuple[Decimal, Decimal, Decimal]:
+    total = total_incl_vat.quantize(Decimal("0.01"))
+    divisor = Decimal("1") + (vat_rate / Decimal("100"))
+    price_excl_vat = total if divisor <= 0 else (total / divisor)
+    price_excl_vat = price_excl_vat.quantize(Decimal("0.01"))
+    vat_amount = (total - price_excl_vat).quantize(Decimal("0.01"))
+    return price_excl_vat, vat_amount, total
+
+
+def _purchase_pricing(
+    db: Session,
+    *,
+    plan: Plan,
+    country: str,
+    currency: str,
+    on_date: date,
+    has_prior_purchase: bool,
+) -> _PurchasePricing:
+    base_ttc, currency_code = _plan_amount_due_and_currency(
+        db,
+        plan=plan,
+        country=country,
+        currency=currency,
+        on_date=on_date,
+    )
+    plan_vat_rate = resolve_vat_rate(
+        db,
+        country=country,
+        service_code=plan_service_code(plan.kind.value),
+        on_date=on_date,
+    )
+    base_excl, base_vat, base_total = _ttc_to_tax_totals(total_incl_vat=base_ttc, vat_rate=plan_vat_rate)
+    breakdown: list[dict[str, object]] = [
+        {
+            "code": "FORMULA",
+            "label": plan.name,
+            "amount_excl_vat": str(base_excl),
+            "vat_rate": str(plan_vat_rate),
+            "vat_amount": str(base_vat),
+            "amount_ttc": str(base_total),
+        }
+    ]
+    amount_excl = base_excl
+    vat_amount = base_vat
+    total = base_total
+    fee_ttc: Decimal | None = None
+    partitions_ttc: Decimal | None = None
+
+    first_purchase_configured = bool(
+        (
+            plan.first_purchase_signup_fee_enabled
+            and Decimal(plan.signup_fee_value or plan.signup_fee_excl_vat or 0) > 0
+        )
+        or (
+            plan.first_purchase_partitions_enabled
+            and Decimal(plan.first_purchase_partitions_price_value or 0) > 0
+        )
+    )
+    first_purchase_required = first_purchase_configured and not has_prior_purchase
+    if first_purchase_required:
+        raw_fee = plan.signup_fee_value if plan.signup_fee_value is not None else plan.signup_fee_excl_vat
+        if plan.first_purchase_signup_fee_enabled and raw_fee is not None and Decimal(raw_fee) > 0:
+            if plan.price_tax_mode == PlanPriceTaxMode.TTC:
+                fee_excl, fee_vat, fee_total = _ttc_to_tax_totals(
+                    total_incl_vat=Decimal(raw_fee),
+                    vat_rate=plan_vat_rate,
+                )
+            else:
+                fee_excl, fee_vat, fee_total = compute_tax_totals(
+                    price_excl_vat=Decimal(raw_fee),
+                    vat_rate=plan_vat_rate,
+                )
+            fee_ttc = fee_total.quantize(Decimal("0.01"))
+            amount_excl += fee_excl
+            vat_amount += fee_vat
+            total += fee_total
+            breakdown.append(
+                {
+                    "code": "SIGNUP_FEE",
+                    "label": "Frais de dossier",
+                    "amount_excl_vat": str(fee_excl.quantize(Decimal("0.01"))),
+                    "vat_rate": str(plan_vat_rate),
+                    "vat_amount": str(fee_vat.quantize(Decimal("0.01"))),
+                    "amount_ttc": str(fee_ttc),
+                }
+            )
+
+        raw_partitions_price = Decimal(plan.first_purchase_partitions_price_value or 0)
+        if plan.first_purchase_partitions_enabled and raw_partitions_price > 0:
+            if plan.price_tax_mode == PlanPriceTaxMode.TTC:
+                partitions_excl, partitions_vat, partitions_total = _ttc_to_tax_totals(
+                    total_incl_vat=raw_partitions_price,
+                    vat_rate=plan_vat_rate,
+                )
+            else:
+                partitions_excl, partitions_vat, partitions_total = compute_tax_totals(
+                    price_excl_vat=raw_partitions_price,
+                    vat_rate=plan_vat_rate,
+                )
+            partitions_ttc = partitions_total
+            amount_excl += partitions_excl
+            vat_amount += partitions_vat
+            total += partitions_total
+            breakdown.append(
+                {
+                    "code": "FIRST_PURCHASE_PARTITIONS",
+                    "label": "Cahier de partitions",
+                    "amount_excl_vat": str(partitions_excl),
+                    "vat_rate": str(plan_vat_rate),
+                    "vat_amount": str(partitions_vat),
+                    "amount_ttc": str(partitions_total),
+                }
+            )
+
+    return _PurchasePricing(
+        amount_excl_vat=amount_excl.quantize(Decimal("0.01")),
+        vat_amount=vat_amount.quantize(Decimal("0.01")),
+        total_incl_vat=total.quantize(Decimal("0.01")),
+        currency=currency_code,
+        base_price_ttc=base_total,
+        first_purchase_required=first_purchase_required,
+        first_purchase_fee_ttc=fee_ttc,
+        first_purchase_partitions_price_ttc=partitions_ttc,
+        breakdown=breakdown,
+    )
 
 
 def _restriction_period_label(raw: str) -> str:
@@ -145,7 +312,16 @@ def _serialize_public_formula_summary(db: Session, *, plan: Plan) -> PublicFormu
         course_name_by_id = {}
     includes = [course_name_by_id.get(course_id, str(course_id)) for course_id in unique_entitlement_ids]
     restriction_labels = _formula_restriction_labels(plan, course_name_by_id=course_name_by_id)
-    price_snapshot, currency = _formula_price_snapshot(plan)
+    pricing = _purchase_pricing(
+        db,
+        plan=plan,
+        country="FR",
+        currency=(plan.currency_code or "EUR").upper(),
+        on_date=date.today(),
+        has_prior_purchase=False,
+    )
+    price_snapshot = pricing.total_incl_vat
+    currency = pricing.currency
     payment_methods = _plan_payment_methods(plan)
     return PublicFormulaPurchaseSummaryOut(
         formula_id=plan.id,
@@ -163,6 +339,9 @@ def _serialize_public_formula_summary(db: Session, *, plan: Plan) -> PublicFormu
         includes=includes,
         restriction_labels=restriction_labels,
         payment_methods=payment_methods,
+        base_price_ttc=pricing.base_price_ttc,
+        first_purchase_fee_ttc=pricing.first_purchase_fee_ttc,
+        first_purchase_partitions_price_ttc=pricing.first_purchase_partitions_price_ttc,
     )
 
 
@@ -442,6 +621,7 @@ def _forfait_period_bounds(plan: Plan) -> tuple[datetime, datetime]:
 @router.get("/plans", response_model=list[PlanOut])
 def list_plans(
     active: bool = True,
+    purchase_user_id: UUID | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[PlanOut]:
@@ -458,9 +638,30 @@ def list_plans(
     stmt = stmt.order_by(Plan.name.asc())
 
     plans = db.scalars(stmt).all()
+    pricing_owner = current_user
+    if current_user.role == UserRole.CLIENT:
+        pricing_owner = _resolve_plan_owner(
+            db,
+            current_user=current_user,
+            requested_user_id=purchase_user_id,
+        )
     _, entitlement_names_by_plan = _entitlements_by_plan(db, plan_ids=[plan.id for plan in plans])
-    return [
-        PlanOut(
+    output: list[PlanOut] = []
+    for plan in plans:
+        has_prior_purchase = (
+            _has_prior_purchase_for_plan(db, user_id=pricing_owner.id, plan_id=plan.id)
+            if current_user.role == UserRole.CLIENT
+            else True
+        )
+        pricing = _purchase_pricing(
+            db,
+            plan=plan,
+            country=(pricing_owner.residence_country or "FR").upper(),
+            currency=(pricing_owner.preferred_currency or "EUR").upper(),
+            on_date=date.today(),
+            has_prior_purchase=has_prior_purchase,
+        )
+        output.append(PlanOut(
             id=plan.id,
             code=plan.code,
             name=plan.name,
@@ -470,13 +671,25 @@ def list_plans(
             forfait_start_date=plan.forfait_start_date,
             forfait_end_date=plan.forfait_end_date,
             monthly_price_excl_vat=plan.monthly_price_excl_vat,
+            price_ttc=pricing.total_incl_vat,
+            base_price_ttc=pricing.base_price_ttc,
             currency_code=plan.currency_code,
             active=plan.active,
+            first_purchase_required=pricing.first_purchase_required,
+            first_purchase_fee_ttc=pricing.first_purchase_fee_ttc,
+            first_purchase_partitions_price_ttc=pricing.first_purchase_partitions_price_ttc,
+            first_purchase_breakdown=[
+                PlanFirstPurchaseLineOut(
+                    code=str(line.get("code") or ""),
+                    label=str(line.get("label") or ""),
+                    amount_ttc=Decimal(str(line.get("amount_ttc") or "0")),
+                )
+                for line in pricing.breakdown
+            ],
             payment_methods=_plan_payment_methods(plan),
             entitlement_course_type_names=entitlement_names_by_plan.get(plan.id, []),
-        )
-        for plan in plans
-    ]
+        ))
+    return output
 
 
 @router.get("/plans/{plan_id}/price-preview", response_model=PlanPricePreviewOut)
@@ -570,7 +783,22 @@ def public_formula_purchase_start(
     if not _formula_purchase_link_allowed(plan):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Achat par lien desactive pour cette formule")
 
-    price_snapshot, currency = _formula_price_snapshot(plan)
+    existing_client = db.scalar(
+        select(User).where(User.email == normalized_email, User.role == UserRole.CLIENT)
+    )
+    pricing = _purchase_pricing(
+        db,
+        plan=plan,
+        country=((existing_client.residence_country if existing_client is not None else None) or "FR").upper(),
+        currency=((existing_client.preferred_currency if existing_client is not None else None) or plan.currency_code or "EUR").upper(),
+        on_date=date.today(),
+        has_prior_purchase=(
+            _has_prior_purchase_for_plan(db, user_id=existing_client.id, plan_id=plan.id)
+            if existing_client is not None
+            else False
+        ),
+    )
+    price_snapshot, currency = pricing.total_incl_vat, pricing.currency
     purchase_context = _encode_purchase_context(
         plan=plan,
         email=normalized_email,
@@ -580,7 +808,7 @@ def public_formula_purchase_start(
         booking_user_id=payload.booking_user_id,
         planning_return_to=payload.planning_return_to,
     )
-    existing_user = db.scalar(select(User.id).where(User.email == normalized_email, User.role == UserRole.CLIENT)) is not None
+    existing_user = existing_client is not None
 
     return PublicFormulaPurchaseStartOut(
         existing_user=existing_user,
@@ -611,7 +839,20 @@ def public_formula_purchase_context(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Achat par lien desactive pour cette formule")
 
     summary = _serialize_public_formula_summary(db, plan=plan)
-    price_snapshot, currency = _formula_price_snapshot(plan)
+    existing_client = db.scalar(select(User).where(User.email == email, User.role == UserRole.CLIENT))
+    pricing = _purchase_pricing(
+        db,
+        plan=plan,
+        country=((existing_client.residence_country if existing_client is not None else None) or "FR").upper(),
+        currency=((existing_client.preferred_currency if existing_client is not None else None) or plan.currency_code or "EUR").upper(),
+        on_date=date.today(),
+        has_prior_purchase=(
+            _has_prior_purchase_for_plan(db, user_id=existing_client.id, plan_id=plan.id)
+            if existing_client is not None
+            else False
+        ),
+    )
+    price_snapshot, currency = pricing.total_incl_vat, pricing.currency
     return PublicFormulaPurchaseContextOut(
         purchase_context=context_token,
         email=email,
@@ -688,13 +929,17 @@ def purchase_plan(
             detail="Moyen de paiement non autorise pour cette formule",
         )
     method_code = (requested_method or _default_subscription_billing_method(plan) or "").strip().upper() or None
-    amount_due, currency_code = _plan_amount_due_and_currency(
+    has_prior_purchase = _has_prior_purchase_for_plan(db, user_id=owner.id, plan_id=plan.id)
+    pricing = _purchase_pricing(
         db,
         plan=plan,
         country=(owner.residence_country or "FR").upper(),
         currency=(owner.preferred_currency or "EUR").upper(),
         on_date=subscription_started_at.date(),
+        has_prior_purchase=has_prior_purchase,
     )
+    amount_due = pricing.total_incl_vat
+    currency_code = pricing.currency
     requires_online_checkout = amount_due > Decimal("0.00")
     if plan.kind == PlanKind.SUBSCRIPTION and requires_online_checkout and method_code not in {"CARD_ONLINE", "SEPA_DEBIT"}:
         raise HTTPException(
@@ -728,6 +973,12 @@ def purchase_plan(
         next_payment_at=ends_at if plan.kind == PlanKind.SUBSCRIPTION else None,
         current_period_start=subscription_started_at if plan.kind == PlanKind.SUBSCRIPTION else None,
         current_period_end=ends_at if plan.kind == PlanKind.SUBSCRIPTION else None,
+        initial_amount_excl_vat=pricing.amount_excl_vat,
+        initial_vat_amount=pricing.vat_amount,
+        initial_total_incl_vat=pricing.total_incl_vat,
+        initial_currency_code=pricing.currency,
+        initial_price_breakdown_json=pricing.breakdown,
+        first_purchase_charges_applied=pricing.first_purchase_required,
         forfait_loyalty_discount_per_hour_ttc=Decimal("0.00"),
         forfait_family_discount_per_hour_ttc=Decimal("0.00"),
         forfait_short_commitment_supplement_per_hour_ttc=Decimal("0.00"),
@@ -749,7 +1000,7 @@ def purchase_plan(
             CheckoutCreateRequest(
                 amount=amount_due,
                 currency=currency_code,
-                description=f"{plan.name} ({owner.email})",
+                description=" + ".join(str(line.get("label") or "") for line in pricing.breakdown),
                 customer_email=owner.email,
                 customer_first_name=owner.first_name,
                 customer_last_name=owner.last_name,
@@ -764,6 +1015,7 @@ def purchase_plan(
                     "plan_id": str(plan.id),
                     "plan_code": plan.code,
                     "requested_billing_method": method_code,
+                    "first_purchase_charges_applied": "1" if pricing.first_purchase_required else "0",
                 },
             ),
             provider_override=(PaymentProvider.STRIPE if plan.kind == PlanKind.SUBSCRIPTION else None),

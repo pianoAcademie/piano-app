@@ -8066,6 +8066,9 @@ function parseFormulaPayload(formData: FormData, t: UiTextResolver): Record<stri
   const signupFee = parseNonNegativeDecimal(
     String(formData.get("signup_fee_value") ?? formData.get("signup_fee_excl_vat") ?? ""),
   );
+  const firstPurchasePartitionsPrice = parseNonNegativeDecimal(
+    String(formData.get("first_purchase_partitions_price_value") ?? ""),
+  );
   const packValidityMonthsRaw = String(formData.get("pack_validity_months") ?? "").trim();
   const packValidityMonths = packValidityMonthsRaw ? parsePositiveInt(packValidityMonthsRaw) : null;
   const forfaitStartDateRaw = String(formData.get("forfait_start_date") ?? "").trim();
@@ -8128,6 +8131,9 @@ function parseFormulaPayload(formData: FormData, t: UiTextResolver): Record<stri
     currency_code: currency,
     signup_fee_value: signupFee,
     signup_fee_excl_vat: signupFee,
+    first_purchase_signup_fee_enabled: checkboxField(formData, "first_purchase_signup_fee_enabled"),
+    first_purchase_partitions_enabled: checkboxField(formData, "first_purchase_partitions_enabled"),
+    first_purchase_partitions_price_value: firstPurchasePartitionsPrice,
     options,
     payment_methods: paymentMethods,
     entitlement_course_type_ids: entitlementIds,

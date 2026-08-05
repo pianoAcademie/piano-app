@@ -3037,6 +3037,12 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
             vat_amount = Decimal("0.00")
             total_incl_vat = Decimal("0.00")
 
+        if sub.initial_total_incl_vat is not None:
+            price_excl_vat = Decimal(sub.initial_amount_excl_vat or 0).quantize(Decimal("0.01"))
+            vat_amount = Decimal(sub.initial_vat_amount or 0).quantize(Decimal("0.01"))
+            total_incl_vat = Decimal(sub.initial_total_incl_vat).quantize(Decimal("0.01"))
+            currency_code = (sub.initial_currency_code or currency_code or "EUR").upper()
+
         items.append(
             ClientPaymentOut(
                 id=f"plan:{sub.id}",
@@ -4465,17 +4471,47 @@ def _render_client_payment_invoice_response(
     short = compact[:8] if compact else "XXXX0000"
     invoice_number = f"FAC-{payment.occurred_at.strftime('%Y%m%d')}-{short}"
     billing_profile = resolve_billing_profile(db, payment_user)
-    line = InvoicePeriodLine(
-        date_label=payment.occurred_at.strftime("%d/%m/%Y"),
-        type_label=_payment_source_label(payment.source),
-        label=payment.label,
-        quantity=1,
-        amount_excl_vat=payment.amount_excl_vat,
-        vat_rate=payment.vat_rate,
-        vat_amount=payment.vat_amount,
-        total_incl_vat=payment.total_incl_vat,
-        currency=payment.currency,
-    )
+    invoice_lines: list[InvoicePeriodLine] = []
+    if (payment.source or "").strip().upper() == "PLAN_PURCHASE":
+        try:
+            subscription_id = UUID(raw_id)
+        except ValueError:
+            subscription_id = None
+        subscription = (
+            db.scalar(select(ClientPlanSubscription).where(ClientPlanSubscription.id == subscription_id))
+            if subscription_id is not None
+            else None
+        )
+        for snapshot in (subscription.initial_price_breakdown_json if subscription is not None else []) or []:
+            if not isinstance(snapshot, dict):
+                continue
+            invoice_lines.append(
+                InvoicePeriodLine(
+                    date_label=payment.occurred_at.strftime("%d/%m/%Y"),
+                    type_label=_payment_source_label(payment.source),
+                    label=str(snapshot.get("label") or payment.label),
+                    quantity=1,
+                    amount_excl_vat=Decimal(str(snapshot.get("amount_excl_vat") or "0")),
+                    vat_rate=Decimal(str(snapshot.get("vat_rate") or "0")),
+                    vat_amount=Decimal(str(snapshot.get("vat_amount") or "0")),
+                    total_incl_vat=Decimal(str(snapshot.get("amount_ttc") or "0")),
+                    currency=payment.currency,
+                )
+            )
+    if not invoice_lines:
+        invoice_lines.append(
+            InvoicePeriodLine(
+                date_label=payment.occurred_at.strftime("%d/%m/%Y"),
+                type_label=_payment_source_label(payment.source),
+                label=payment.label,
+                quantity=1,
+                amount_excl_vat=payment.amount_excl_vat,
+                vat_rate=payment.vat_rate,
+                vat_amount=payment.vat_amount,
+                total_incl_vat=payment.total_incl_vat,
+                currency=payment.currency,
+            )
+        )
     currency_code = (payment.currency or "EUR").upper()
     billing_entity = _billing_entity_text(payment.billing_entity)
     totals = {
@@ -4492,7 +4528,7 @@ def _render_client_payment_invoice_response(
         client_id=str(payment.owner_client_id),
         client_name=_display_name(billing_profile),
         period_label=payment.occurred_at.strftime("%d/%m/%Y"),
-        lines=[line],
+        lines=invoice_lines,
         totals_by_currency=totals,
         note=f"Reference: {payment.reference or '-'}",
         client_billing_address=_billing_address_label(billing_profile),

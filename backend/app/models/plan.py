@@ -97,6 +97,17 @@ class Plan(Base):
     )
     signup_fee_value: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     signup_fee_excl_vat: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    first_purchase_signup_fee_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+    )
+    first_purchase_partitions_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+    )
+    first_purchase_partitions_price_value: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     credit_grants_relation: Mapped[PlanCreditGrantsRelation] = mapped_column(
         Enum(
             PlanCreditGrantsRelation,
@@ -247,6 +258,20 @@ class ClientPlanSubscription(Base):
     last_payment_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_successful_charge_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_payment_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    initial_amount_excl_vat: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    initial_vat_amount: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    initial_total_incl_vat: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    initial_currency_code: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    initial_price_breakdown_json: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+    )
+    first_purchase_charges_applied: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+    )
     payment_provider_subscription_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
     payment_provider_customer_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
     payment_provider_mandate_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)

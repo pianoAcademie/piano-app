@@ -1331,6 +1331,9 @@ def _serialize_formula(
         monthly_price_excl_vat=plan.monthly_price_excl_vat,
         currency_code=plan.currency_code,
         signup_fee_excl_vat=plan.signup_fee_excl_vat,
+        first_purchase_signup_fee_enabled=bool(plan.first_purchase_signup_fee_enabled),
+        first_purchase_partitions_enabled=bool(plan.first_purchase_partitions_enabled),
+        first_purchase_partitions_price_value=plan.first_purchase_partitions_price_value,
         options=options,
         payment_methods=payment_methods,
         entitlement_course_type_ids=ent_ids,
@@ -3050,6 +3053,16 @@ def create_admin_formula(
         signup_fee_value=payload.signup_fee_value,
         signup_fee_excl_vat=payload.signup_fee_excl_vat,
     )
+    if payload.first_purchase_signup_fee_enabled and Decimal(signup_fee_value or 0) <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Le montant des frais de dossier du premier achat est obligatoire",
+        )
+    if payload.first_purchase_partitions_enabled and Decimal(payload.first_purchase_partitions_price_value or 0) <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Le tarif des partitions du premier achat est obligatoire",
+        )
     _validate_formula_payload(
         kind=payload.kind,
         credits_count=payload.credits_count,
@@ -3095,6 +3108,9 @@ def create_admin_formula(
         description=(payload.description or "").strip() or None,
         signup_fee_value=signup_fee_value,
         signup_fee_excl_vat=signup_fee_value,
+        first_purchase_signup_fee_enabled=payload.first_purchase_signup_fee_enabled,
+        first_purchase_partitions_enabled=payload.first_purchase_partitions_enabled,
+        first_purchase_partitions_price_value=payload.first_purchase_partitions_price_value,
         is_private=payload.is_private,
         options_json=options,
         payment_methods_json=payment_methods,
@@ -3136,7 +3152,6 @@ def update_admin_formula(
     updates = payload.model_dump(exclude_unset=True)
     if "credit_grants" in updates and updates["credit_grants"] is None:
         updates.pop("credit_grants")
-
     target_kind = updates.get("kind", plan.kind)
     target_monthly_price_value, target_signup_fee_value = _resolved_formula_price_values(
         monthly_price_value=updates.get("monthly_price_value", plan.monthly_price_value),
@@ -3144,6 +3159,26 @@ def update_admin_formula(
         signup_fee_value=updates.get("signup_fee_value", plan.signup_fee_value),
         signup_fee_excl_vat=updates.get("signup_fee_excl_vat", plan.signup_fee_excl_vat),
     )
+    target_signup_fee_enabled = bool(
+        updates.get("first_purchase_signup_fee_enabled", plan.first_purchase_signup_fee_enabled)
+    )
+    target_partitions_enabled = bool(
+        updates.get("first_purchase_partitions_enabled", plan.first_purchase_partitions_enabled)
+    )
+    target_partitions_price = updates.get(
+        "first_purchase_partitions_price_value",
+        plan.first_purchase_partitions_price_value,
+    )
+    if target_signup_fee_enabled and Decimal(target_signup_fee_value or 0) <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Le montant des frais de dossier du premier achat est obligatoire",
+        )
+    if target_partitions_enabled and Decimal(target_partitions_price or 0) <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Le tarif des partitions du premier achat est obligatoire",
+        )
     target_credit_grants = (
         _normalize_credit_grants(db, updates["credit_grants"])
         if "credit_grants" in updates and target_kind == PlanKind.PACK
@@ -3201,6 +3236,12 @@ def update_admin_formula(
         plan.signup_fee_excl_vat = updates["signup_fee_excl_vat"]
     if "signup_fee_value" in updates:
         plan.signup_fee_value = updates["signup_fee_value"]
+    if "first_purchase_signup_fee_enabled" in updates:
+        plan.first_purchase_signup_fee_enabled = bool(updates["first_purchase_signup_fee_enabled"])
+    if "first_purchase_partitions_enabled" in updates:
+        plan.first_purchase_partitions_enabled = bool(updates["first_purchase_partitions_enabled"])
+    if "first_purchase_partitions_price_value" in updates:
+        plan.first_purchase_partitions_price_value = updates["first_purchase_partitions_price_value"]
     if "monthly_price_excl_vat" in updates:
         plan.monthly_price_excl_vat = updates["monthly_price_excl_vat"]
     if "monthly_price_value" in updates:
@@ -3298,6 +3339,9 @@ def duplicate_admin_formula(
         description=source.description,
         signup_fee_value=source.signup_fee_value,
         signup_fee_excl_vat=source.signup_fee_excl_vat,
+        first_purchase_signup_fee_enabled=bool(source.first_purchase_signup_fee_enabled),
+        first_purchase_partitions_enabled=bool(source.first_purchase_partitions_enabled),
+        first_purchase_partitions_price_value=source.first_purchase_partitions_price_value,
         is_private=source.is_private,
         options_json=_normalize_option_values(source.options_json if isinstance(source.options_json, list) else []),
         payment_methods_json=_normalize_methods(source.payment_methods_json if isinstance(source.payment_methods_json, list) else []),

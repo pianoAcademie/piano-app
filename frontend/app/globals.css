@@ -258,6 +258,32 @@
   font-size: 12px;
 }
 
+.client-catalog-first-purchase-lines {
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  margin: 7px 0 0;
+  padding: 8px 10px;
+  list-style: none;
+  border-radius: 10px;
+  background: #fff8e9;
+  color: #5f4a2b;
+  font-size: 11px;
+}
+
+.client-catalog-first-purchase-lines li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.client-catalog-first-purchase-lines strong {
+  flex: 0 0 auto;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
 .client-catalog-purchase-form {
   min-width: 0;
   display: grid;

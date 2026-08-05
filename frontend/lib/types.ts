@@ -145,8 +145,17 @@ export type PlanOut = {
   forfait_end_date: string | null;
   monthly_price_excl_vat: string | null;
   price_ttc: string | null;
+  base_price_ttc: string | null;
   currency_code: string | null;
   active: boolean;
+  first_purchase_required: boolean;
+  first_purchase_fee_ttc: string | null;
+  first_purchase_partitions_price_ttc: string | null;
+  first_purchase_breakdown: Array<{
+    code: string;
+    label: string;
+    amount_ttc: string;
+  }>;
   payment_methods: string[];
   entitlement_course_type_names: string[];
 };
@@ -2064,6 +2073,9 @@ export type AdminFormulaOut = {
   monthly_price_excl_vat: string | null;
   currency_code: string | null;
   signup_fee_excl_vat: string | null;
+  first_purchase_signup_fee_enabled: boolean;
+  first_purchase_partitions_enabled: boolean;
+  first_purchase_partitions_price_value: string | null;
   options: string[];
   payment_methods: string[];
   entitlement_course_type_ids: string[];
@@ -2089,6 +2101,9 @@ export type PublicFormulaPurchaseSummaryOut = {
   includes: string[];
   restriction_labels: string[];
   payment_methods: string[];
+  base_price_ttc: string | null;
+  first_purchase_fee_ttc: string | null;
+  first_purchase_partitions_price_ttc: string | null;
 };
 
 export type PublicFormulaPurchaseStartOut = {

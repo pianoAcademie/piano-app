@@ -8466,6 +8466,18 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
             total_incl_vat = Decimal("0.00")
             currency_code = (plan.currency_code or billing_profile.preferred_currency or "EUR").upper()
 
+        if sub.initial_total_incl_vat is not None:
+            price_excl_vat = Decimal(sub.initial_amount_excl_vat or 0).quantize(Decimal("0.01"))
+            vat_amount = Decimal(sub.initial_vat_amount or 0).quantize(Decimal("0.01"))
+            total_incl_vat = Decimal(sub.initial_total_incl_vat).quantize(Decimal("0.01"))
+            currency_code = (sub.initial_currency_code or currency_code or "EUR").upper()
+            snapshot_rates = {
+                Decimal(str(line.get("vat_rate") or "0"))
+                for line in (sub.initial_price_breakdown_json or [])
+                if isinstance(line, dict)
+            }
+            vat_rate = next(iter(snapshot_rates)) if len(snapshot_rates) == 1 else Decimal("0.00")
+
         owner = scoped_users_by_id.get(sub.user_id)
         label = plan.name
         if owner is not None and owner.id != client.id:

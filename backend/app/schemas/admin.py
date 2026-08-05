@@ -541,6 +541,9 @@ class AdminFormulaOut(BaseModel):
     monthly_price_excl_vat: Decimal | None
     currency_code: str | None
     signup_fee_excl_vat: Decimal | None
+    first_purchase_signup_fee_enabled: bool
+    first_purchase_partitions_enabled: bool
+    first_purchase_partitions_price_value: Decimal | None
     options: list[str] = Field(default_factory=list)
     payment_methods: list[str] = Field(default_factory=list)
     entitlement_course_type_ids: list[UUID] = Field(default_factory=list)
@@ -568,6 +571,9 @@ class AdminFormulaUpsertRequest(BaseModel):
     monthly_price_excl_vat: Decimal | None = Field(default=None, ge=0)
     currency_code: str | None = Field(default=None, min_length=3, max_length=3)
     signup_fee_excl_vat: Decimal | None = Field(default=None, ge=0)
+    first_purchase_signup_fee_enabled: bool = False
+    first_purchase_partitions_enabled: bool = False
+    first_purchase_partitions_price_value: Decimal | None = Field(default=None, ge=0)
     options: list[str] = Field(default_factory=list)
     payment_methods: list[str] = Field(default_factory=list)
     entitlement_course_type_ids: list[UUID] = Field(default_factory=list)
@@ -592,6 +598,9 @@ class AdminFormulaUpdateRequest(BaseModel):
     monthly_price_excl_vat: Decimal | None = Field(default=None, ge=0)
     currency_code: str | None = Field(default=None, min_length=3, max_length=3)
     signup_fee_excl_vat: Decimal | None = Field(default=None, ge=0)
+    first_purchase_signup_fee_enabled: bool | None = None
+    first_purchase_partitions_enabled: bool | None = None
+    first_purchase_partitions_price_value: Decimal | None = Field(default=None, ge=0)
     options: list[str] | None = None
     payment_methods: list[str] | None = None
     entitlement_course_type_ids: list[UUID] | None = None

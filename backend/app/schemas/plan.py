@@ -10,6 +10,12 @@ from pydantic import BaseModel, Field
 from app.models.plan import PlanKind, SubscriptionStatus
 
 
+class PlanFirstPurchaseLineOut(BaseModel):
+    code: str
+    label: str
+    amount_ttc: Decimal
+
+
 class PlanOut(BaseModel):
     id: UUID
     code: str
@@ -20,8 +26,14 @@ class PlanOut(BaseModel):
     forfait_start_date: date | None = None
     forfait_end_date: date | None = None
     monthly_price_excl_vat: Decimal | None
+    price_ttc: Decimal | None = None
+    base_price_ttc: Decimal | None = None
     currency_code: str | None
     active: bool
+    first_purchase_required: bool = False
+    first_purchase_fee_ttc: Decimal | None = None
+    first_purchase_partitions_price_ttc: Decimal | None = None
+    first_purchase_breakdown: list[PlanFirstPurchaseLineOut] = Field(default_factory=list)
     payment_methods: list[str] = Field(default_factory=list)
     entitlement_course_type_names: list[str] = Field(default_factory=list)
 
@@ -42,6 +54,9 @@ class PublicFormulaPurchaseSummaryOut(BaseModel):
     includes: list[str] = Field(default_factory=list)
     restriction_labels: list[str] = Field(default_factory=list)
     payment_methods: list[str] = Field(default_factory=list)
+    base_price_ttc: Decimal | None = None
+    first_purchase_fee_ttc: Decimal | None = None
+    first_purchase_partitions_price_ttc: Decimal | None = None
 
 
 class PublicFormulaPurchaseStartRequest(BaseModel):
