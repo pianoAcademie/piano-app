@@ -17558,3 +17558,77 @@ export async function deleteAutomationTriggerAction(formData: FormData): Promise
   revalidatePath("/admin/triggers");
   redirect(appendQueryMessage("/admin/triggers", "ok", "Trigger supprimé"));
 }
+
+function clientNewsDateTime(formData: FormData, fieldName: string): string | null {
+  const value = String(formData.get(fieldName) ?? "").trim();
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/);
+  if (!match) {
+    return null;
+  }
+  return parseUtcFromDateAndTimeInTimezone(match[1], match[2], "Europe/Paris");
+}
+
+function clientNewsPayload(formData: FormData): Record<string, unknown> {
+  const status = String(formData.get("status") ?? "DRAFT").trim().toUpperCase() === "PUBLISHED"
+    ? "PUBLISHED"
+    : "DRAFT";
+  return {
+    title_fr: String(formData.get("title_fr") ?? "").trim(),
+    title_en: optionalField(formData, "title_en"),
+    summary_fr: optionalField(formData, "summary_fr"),
+    summary_en: optionalField(formData, "summary_en"),
+    body_fr: String(formData.get("body_fr") ?? "").trim(),
+    body_en: optionalField(formData, "body_en"),
+    link_url: optionalField(formData, "link_url"),
+    link_label_fr: optionalField(formData, "link_label_fr"),
+    link_label_en: optionalField(formData, "link_label_en"),
+    status,
+    is_pinned: checkboxField(formData, "is_pinned"),
+    published_at: status === "PUBLISHED" ? clientNewsDateTime(formData, "published_at_local") : null,
+    expires_at: clientNewsDateTime(formData, "expires_at_local"),
+  };
+}
+
+export async function createClientNewsAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) redirect("/login?error_code=session_expired");
+  const result = await backendRequest<Record<string, unknown>>(
+    "/api/v1/admin/client-news",
+    { method: "POST", body: JSON.stringify(clientNewsPayload(formData)) },
+    token,
+  );
+  if (!result.ok) redirect(appendQueryMessage("/admin/client-news", "error", result.message));
+  revalidatePath("/admin/client-news");
+  revalidatePath("/client");
+  redirect(appendQueryMessage("/admin/client-news", "ok", "Actualité créée"));
+}
+
+export async function updateClientNewsAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const articleId = String(formData.get("article_id") ?? "").trim();
+  if (!token || !articleId) redirect(appendQueryMessage("/admin/client-news", "error", "Actualité introuvable"));
+  const result = await backendRequest<Record<string, unknown>>(
+    `/api/v1/admin/client-news/${encodeURIComponent(articleId)}`,
+    { method: "PUT", body: JSON.stringify(clientNewsPayload(formData)) },
+    token,
+  );
+  if (!result.ok) redirect(appendQueryMessage("/admin/client-news", "error", result.message));
+  revalidatePath("/admin/client-news");
+  revalidatePath("/client");
+  redirect(appendQueryMessage("/admin/client-news", "ok", "Actualité mise à jour"));
+}
+
+export async function deleteClientNewsAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  const articleId = String(formData.get("article_id") ?? "").trim();
+  if (!token || !articleId) redirect(appendQueryMessage("/admin/client-news", "error", "Actualité introuvable"));
+  const result = await backendRequest<Record<string, never>>(
+    `/api/v1/admin/client-news/${encodeURIComponent(articleId)}`,
+    { method: "DELETE" },
+    token,
+  );
+  if (!result.ok) redirect(appendQueryMessage("/admin/client-news", "error", result.message));
+  revalidatePath("/admin/client-news");
+  revalidatePath("/client");
+  redirect(appendQueryMessage("/admin/client-news", "ok", "Actualité supprimée"));
+}

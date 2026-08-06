@@ -1,6 +1,7 @@
 from app.models.family import ClientFamilyLink
 from app.models.makeup import MakeupPassPurchase, MakeupRequest, MakeupRequestStatus
 from app.models.client_group import ClientGroup, ClientGroupMembership
+from app.models.client_news import ClientNewsArticle
 from app.models.client_record import (
     ClientAutoInvoiceOccurrence,
     ClientAutoInvoiceRule,
@@ -175,6 +176,7 @@ __all__ = [
     "ClientBillingAdjustment",
     "ClientGroup",
     "ClientGroupMembership",
+    "ClientNewsArticle",
     "ClientKind",
     "ClientInvoiceLine",
     "ClientLegacyInvoice",

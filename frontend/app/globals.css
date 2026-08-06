@@ -13947,6 +13947,89 @@ button.danger:focus-visible {
   background: var(--client-gold);
 }
 
+.client-news-shell {
+  display: grid;
+  gap: 16px;
+}
+
+.client-news-list {
+  display: grid;
+  gap: 14px;
+}
+
+.client-news-card {
+  border: 1px solid var(--client-card-border);
+  border-radius: 16px;
+  background: #fff;
+  padding: 18px;
+  box-shadow: 0 5px 18px rgba(15, 23, 42, 0.04);
+}
+
+.client-news-card.is-pinned {
+  border-color: var(--client-gold-border);
+  background: linear-gradient(145deg, #fffdf8, #fff);
+}
+
+.client-news-card h2 {
+  margin: 8px 0 2px;
+  font-size: 1.25rem;
+}
+
+.client-news-summary {
+  margin: 14px 0 8px;
+  font-weight: 700;
+  color: var(--client-text);
+}
+
+.client-news-body {
+  margin-top: 12px;
+  color: var(--client-text-muted);
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.client-news-link {
+  margin-top: 16px;
+}
+
+.client-contact-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.client-support-primary,
+.client-support-phone,
+.client-support-quick-button {
+  min-height: 44px;
+  border-radius: 999px;
+  padding: 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.client-support-primary,
+.client-support-quick-button {
+  border: 1px solid #28180e;
+  background: #28180e;
+  color: #fff;
+}
+
+.client-support-phone {
+  border: 1px solid var(--client-gold-border);
+  background: #fff8e8;
+  color: #5f3c13;
+}
+
+.client-support-quick-actions {
+  display: none;
+}
+
 .client-logout {
   color: var(--client-nav-text-muted);
   font-size: 12px;
@@ -14932,6 +15015,37 @@ button.danger:focus-visible {
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
     padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .client-support-quick-actions {
+    position: fixed;
+    right: 12px;
+    bottom: calc(68px + env(safe-area-inset-bottom));
+    z-index: 39;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .client-support-quick-button {
+    width: 46px;
+    min-height: 46px;
+    padding: 0;
+    font-size: 19px;
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.24);
+  }
+
+  .client-news-card {
+    padding: 14px;
+  }
+
+  .client-news-card h2 {
+    font-size: 1.08rem;
+  }
+
+  .client-contact-actions {
+    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .client-mobile-tab-label {

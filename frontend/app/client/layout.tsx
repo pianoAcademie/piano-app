@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 
+import ZendeskLoader from "../../components/client-ui/zendesk-loader";
+
 export const metadata: Metadata = {
   title: "Piano Academie Client",
   description: "Espace client Piano Academie",
@@ -12,5 +14,5 @@ export const metadata: Metadata = {
 };
 
 export default function ClientLayout({ children }: { children: React.ReactNode }): JSX.Element {
-  return <>{children}</>;
+  return <><ZendeskLoader />{children}</>;
 }

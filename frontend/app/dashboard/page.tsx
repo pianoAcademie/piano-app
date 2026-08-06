@@ -35,6 +35,7 @@ import type {
   ClientPaymentConfirmOut,
   ClientInvoiceOut,
   ClientMessageOut,
+  ClientNewsOut,
   ClientPaymentCheckoutOut,
   ClientSessionReservationMemberOptionOut,
   ClientSessionPurchaseCatalogOut,
@@ -56,6 +57,7 @@ import DrawerFilters from "../../components/client-ui/drawer-filters";
 import ListRow from "../../components/client-ui/list-row";
 import MobileHeader from "../../components/client-ui/mobile-header";
 import MobileTabs from "../../components/client-ui/mobile-tabs";
+import ClientSupportButton from "../../components/client-ui/client-support-button";
 import CopyIdButton from "../../components/client-ui/copy-id-button";
 import StatChip from "../../components/client-ui/stat-chip";
 import Toast from "../../components/client-ui/toast";
@@ -72,7 +74,7 @@ import { localeForUiLanguage, normalizeUiLanguage, resolveAuthErrorMessage, reso
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type AgendaView = "agenda" | "week" | "day";
-type DashboardTab = "home" | "planning" | "courses" | "reservations" | "offers" | "finance" | "messages" | "account";
+type DashboardTab = "home" | "planning" | "courses" | "reservations" | "offers" | "finance" | "messages" | "news" | "account";
 type MessageScope = "LAST_3_MONTHS" | "CURRENT_YEAR" | "ALL";
 type TimeBucket = "ALL" | "MORNING" | "AFTERNOON" | "EVENING";
 type PlanningSlotFilter = "ALL" | "AVAILABLE" | "ALREADY_BOOKED";
@@ -273,7 +275,7 @@ function parseTab(value: string): DashboardTab {
   if (value === "reservations") {
     return "planning";
   }
-  if (value === "planning" || value === "courses" || value === "offers" || value === "finance" || value === "messages" || value === "account") {
+  if (value === "planning" || value === "courses" || value === "offers" || value === "finance" || value === "messages" || value === "news" || value === "account") {
     return value;
   }
   return "home";
@@ -1414,6 +1416,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     familyResult,
     contentCoursesResult,
     messagesResult,
+    newsResult,
     paymentsResult,
     invoicesResult,
     makeupSummaryResult,
@@ -1432,6 +1435,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     familyResultPromise,
     backendRequest<ClientContentCourseOut[]>("/api/v1/clients/me/content-courses", {}, token),
     backendRequest<ClientMessageOut[]>(`/api/v1/clients/me/messages?scope=${messageScope}`, {}, token),
+    backendRequest<ClientNewsOut[]>("/api/v1/clients/me/news", {}, token),
     backendRequest<ClientPaymentOut[]>("/api/v1/clients/me/payments", {}, token),
     backendRequest<ClientInvoiceOut[]>("/api/v1/clients/me/invoices", {}, token),
     backendRequest<MakeupStudentSummaryOut[]>("/api/v1/clients/me/makeup-summary", {}, token),
@@ -1541,6 +1545,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     : (() => {
         errors.push(`messages: ${messagesResult.message}`);
         return [] as ClientMessageOut[];
+      })();
+
+  const newsArticles = newsResult.ok
+    ? newsResult.data
+    : (() => {
+        errors.push(`news: ${newsResult.message}`);
+        return [] as ClientNewsOut[];
       })();
 
   const payments = paymentsResult.ok
@@ -2832,6 +2843,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     offers: uiText(language, "client.offers"),
     finance: uiText(language, "client.finance"),
     messages: uiText(language, "client.messages"),
+    news: uiText(language, "client.news"),
     account: uiText(language, "client.account"),
   };
   const tabLinks: Array<{ id: DashboardTab; label: string; icon: string }> = [
@@ -2841,6 +2853,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     { id: "offers", label: tabLabels.offers, icon: "🧾" },
     { id: "finance", label: tabLabels.finance, icon: "💳" },
     { id: "messages", label: tabLabels.messages, icon: "✉️" },
+    { id: "news", label: tabLabels.news, icon: "📰" },
     { id: "account", label: tabLabels.account, icon: "👤" },
   ];
   const mobileTabLinks = [
@@ -2848,6 +2861,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     { id: "planning", label: tabLabels.planning, icon: "📅", href: withUpdatedQuery(rawParams, { tab: "planning" }) },
     { id: "offers", label: tabLabels.offers, icon: "🧾", href: withUpdatedQuery(rawParams, { tab: "offers" }) },
     { id: "finance", label: tabLabels.finance, icon: "💳", href: withUpdatedQuery(rawParams, { tab: "finance" }) },
+    { id: "news", label: tabLabels.news, icon: "📰", href: withUpdatedQuery(rawParams, { tab: "news" }) },
     { id: "account", label: tabLabels.account, icon: "👤", href: withUpdatedQuery(rawParams, { tab: "account" }) },
   ];
   const activeMobileTabId = mobileTabLinks.some((item) => item.id === tab) ? tab : "home";
@@ -2966,6 +2980,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
             <span aria-hidden="true">🎟️</span>
             <span>{language === "en" ? "Events" : "Événements"}</span>
           </Link>
+          <a className="client-nav-link" href="tel:+33186476088">
+            <span aria-hidden="true">☎️</span>
+            <span>01 86 47 60 88</span>
+          </a>
         </nav>
 
         <form action={logoutAction} className="client-logout" data-read-only-preview-allow="true">
@@ -3001,11 +3019,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>
                 {tabLabels.messages}
               </a>
+              <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "news" })}>
+                {tabLabels.news}
+              </a>
               <a className="client-mobile-menu-link" href={withUpdatedQuery(rawParams, { tab: "account" })}>
                 {tabLabels.account}
               </a>
               <a className="client-mobile-menu-link" href="/events">
                 {language === "en" ? "Events" : "Événements"}
+              </a>
+              <a className="client-mobile-menu-link" href="tel:+33186476088">
+                ☎️ {uiText(language, "client.call_school")}
               </a>
               {isImpersonating ? (
                 <form action={endPortalImpersonationAction} data-read-only-preview-allow="true">
@@ -5656,6 +5680,44 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
             </>
           ) : null}
 
+          {tab === "news" ? (
+            <section className="client-news-shell">
+              <SectionCard title={t("client.news")}>
+                {newsArticles.length === 0 ? (
+                  <p className="muted">{t("client.news_empty")}</p>
+                ) : (
+                  <div className="client-news-list">
+                    {newsArticles.map((article) => (
+                      <article className={`client-news-card ${article.is_pinned ? "is-pinned" : ""}`} key={article.id}>
+                        <header className="client-news-card-header">
+                          <div>
+                            {article.is_pinned ? <span className="badge">📌 {t("client.news_pinned")}</span> : null}
+                            <h2>{article.title}</h2>
+                            <time className="muted" dateTime={article.published_at}>{formatDate(article.published_at, language)}</time>
+                          </div>
+                        </header>
+                        {article.summary ? <p className="client-news-summary">{article.summary}</p> : null}
+                        <div className="client-news-body">{article.body}</div>
+                        {article.link_url ? (
+                          <a className="mode-link client-news-link" href={article.link_url} target="_blank" rel="noreferrer">
+                            {article.link_label || t("client.news_read_more")} →
+                          </a>
+                        ) : null}
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </SectionCard>
+              <SectionCard title={t("client.contact_school")} className="client-contact-card">
+                <p className="muted">{t("client.contact_school_help")}</p>
+                <div className="client-contact-actions">
+                  <ClientSupportButton label={t("client.contact_support")} className="client-support-primary" />
+                  <a className="client-support-phone" href="tel:+33186476088">☎️ {t("client.call_school")}</a>
+                </div>
+              </SectionCard>
+            </section>
+          ) : null}
+
           {tab === "messages" ? (
             <Card>
               <div className="row spread">
@@ -6333,6 +6395,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         </section>
       </section>
 
+        <div className="client-support-quick-actions" aria-label={t("client.contact_school")}>
+          <ClientSupportButton label={t("client.contact_support")} className="client-support-quick-button" compact />
+        </div>
         <MobileTabs items={mobileTabLinks} activeId={activeMobileTabId} ariaLabel={uiText(language, "portal.mobile_client_nav")} />
     </main>
   );

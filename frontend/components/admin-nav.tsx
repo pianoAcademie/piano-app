@@ -55,6 +55,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/admin/a-traiter", label: { fr: "A traiter", en: "To process" }, icon: "📥" },
       { href: "/admin/communications", label: { fr: "Communications", en: "Communications" }, icon: "✉️" },
+      { href: "/admin/client-news", label: { fr: "Actualités clients", en: "Client news" }, icon: "📰", permission: "can_manage_mobile_news" },
       { href: "/admin/triggers", label: { fr: "Triggers", en: "Triggers" }, icon: "⚡" },
       { href: "/admin/notifications/jobs", label: { fr: "Monitoring jobs", en: "Job monitoring" }, icon: "🧭" },
       { href: "/admin/notifications/incidents", label: { fr: "Incidents", en: "Incidents" }, icon: "🚨" },
@@ -94,6 +95,9 @@ function withUiLanguage(href: string, language: UiLanguage): string {
 
 function hasVisiblePermission(permission: string, permissions: Partial<Record<string, boolean | string | null>>): boolean {
   if (permission === "can_view_planning" && permissions.can_edit_planning) {
+    return true;
+  }
+  if (permission === "can_manage_mobile_news" && permissions.can_manage_website_and_news) {
     return true;
   }
   return Boolean(permissions[permission]);

@@ -872,6 +872,36 @@ export type ClientMessageOut = {
   content_html: string | null;
 };
 
+export type ClientNewsOut = {
+  id: string;
+  title: string;
+  summary: string | null;
+  body: string;
+  link_url: string | null;
+  link_label: string | null;
+  is_pinned: boolean;
+  published_at: string;
+};
+
+export type AdminClientNewsOut = {
+  id: string;
+  title_fr: string;
+  title_en: string | null;
+  summary_fr: string | null;
+  summary_en: string | null;
+  body_fr: string;
+  body_en: string | null;
+  link_url: string | null;
+  link_label_fr: string | null;
+  link_label_en: string | null;
+  status: "DRAFT" | "PUBLISHED";
+  is_pinned: boolean;
+  published_at: string | null;
+  expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ClientContentLessonOut = {
   id: string;
   external_id: string;
