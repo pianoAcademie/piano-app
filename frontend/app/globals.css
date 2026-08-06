@@ -21890,3 +21890,154 @@ button.danger:focus-visible {
     gap: 10px;
   }
 }
+
+/* Account creation: compact, safe-area aware mobile flow. */
+.auth-field-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
+.auth-field-label > span:first-child {
+  min-width: 0;
+}
+
+.auth-name-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 640px) {
+  .auth-page {
+    padding-top: 0;
+  }
+
+  .auth-page .auth-shell {
+    padding-top: calc(10px + env(safe-area-inset-top));
+  }
+
+  .auth-page .auth-header {
+    min-height: 70px;
+    padding: 9px 12px;
+  }
+
+  .auth-page .auth-brand-lockup .portal-brand-lockup-logo {
+    width: 46px;
+    height: 46px;
+  }
+
+  .auth-page .auth-brand-lockup .portal-brand-lockup-copy strong {
+    font-size: 18px;
+    line-height: 1.05;
+  }
+
+  .auth-page .auth-brand-lockup .portal-brand-lockup-copy small {
+    max-width: 24ch;
+    font-size: 11px;
+    line-height: 1.25;
+  }
+
+  .auth-signup-section > .auth-step-indicator {
+    display: none;
+  }
+
+  .auth-page .auth-signup-section {
+    gap: 7px;
+  }
+
+  .auth-page .auth-signup-section > h2 {
+    font-size: 21px;
+  }
+
+  .auth-page .auth-signup-section > .muted {
+    max-width: none;
+    margin: 0 0 2px;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .auth-signup-section .auth-form {
+    gap: 8px;
+  }
+
+  .auth-signup-section .auth-step-card {
+    gap: 8px;
+    padding: 11px;
+    border-radius: 15px;
+  }
+
+  .auth-signup-section .auth-step-card h3 {
+    font-size: 17px;
+    line-height: 1.2;
+  }
+
+  .auth-signup-section .auth-step-card > .muted {
+    margin: 0;
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
+  .auth-signup-section .auth-subject-help {
+    margin-top: -2px !important;
+  }
+
+  .auth-signup-section .auth-form label {
+    gap: 4px;
+    font-size: 13px;
+    line-height: 1.25;
+  }
+
+  .auth-signup-section .auth-form input,
+  .auth-signup-section .auth-form select,
+  .auth-signup-section .auth-form textarea {
+    min-height: 44px;
+    padding: 8px 10px;
+    font-size: 16px;
+  }
+
+  .auth-signup-section .auth-form input[type="file"] {
+    padding: 7px;
+  }
+
+  .auth-signup-section .auth-name-grid,
+  .auth-signup-section .config-form-grid,
+  .auth-signup-section .auth-child-details,
+  .auth-signup-section .auth-consent-group {
+    gap: 8px;
+  }
+
+  .auth-signup-section .auth-consent-card,
+  .auth-signup-section .auth-consent-copy {
+    gap: 8px;
+  }
+
+  .auth-signup-section .auth-consent-option {
+    gap: 9px;
+    padding: 10px;
+    border-radius: 12px;
+  }
+
+  .auth-signup-section .auth-consent-option strong {
+    font-size: 13px;
+    line-height: 1.25;
+  }
+
+  .auth-signup-section .auth-consent-option small {
+    font-size: 11px;
+    line-height: 1.35;
+  }
+}
+
+@media (max-width: 379px) {
+  .auth-name-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 380px) and (max-width: 640px) {
+  .auth-signup-section .config-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

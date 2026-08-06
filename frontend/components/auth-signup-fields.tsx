@@ -28,15 +28,15 @@ export default function AuthSignupFields({
   const isChildRegistration = registrationSubjectType === "child";
   const contactLabelSuffix = isChildRegistration ? uiText(language, "auth.parent_suffix") : "";
   const requiredLabel = (label: string): JSX.Element => (
-    <>
-      {label}
-      <span className="required-star" aria-label={` ${uiText(language, "auth.required_field")}`}> *</span>
-    </>
+    <span className="auth-field-label">
+      <span>{label}</span>
+      <span className="required-star" aria-label={` ${uiText(language, "auth.required_field")}`}>*</span>
+    </span>
   );
 
   return (
     <>
-      <section className="auth-step-card">
+      <section className="auth-step-card auth-details-card">
         <h3>{uiText(language, "auth.step_1")}</h3>
         <p className="muted">{uiText(language, "auth.required_fields_hint")}</p>
         <label>
@@ -51,19 +51,21 @@ export default function AuthSignupFields({
             <option value="child">{uiText(language, "auth.step_1_child")}</option>
           </select>
         </label>
-        <p className="muted">
+        <p className="muted auth-subject-help">
           {isChildRegistration
             ? uiText(language, "auth.step_1_child_help")
             : uiText(language, "auth.step_1_self_help")}
         </p>
-        <label>
-          {requiredLabel(uiText(language, "auth.first_name", { suffix: contactLabelSuffix }))}
-          <input type="text" name="first_name" required maxLength={100} autoComplete="given-name" />
-        </label>
-        <label>
-          {requiredLabel(uiText(language, "auth.last_name", { suffix: contactLabelSuffix }))}
-          <input type="text" name="last_name" required maxLength={100} autoComplete="family-name" />
-        </label>
+        <div className="auth-name-grid">
+          <label>
+            {requiredLabel(uiText(language, "auth.first_name", { suffix: contactLabelSuffix }))}
+            <input type="text" name="first_name" required maxLength={100} autoComplete="given-name" />
+          </label>
+          <label>
+            {requiredLabel(uiText(language, "auth.last_name", { suffix: contactLabelSuffix }))}
+            <input type="text" name="last_name" required maxLength={100} autoComplete="family-name" />
+          </label>
+        </div>
         <label>
           {requiredLabel(`${uiText(language, "common.email")}${contactLabelSuffix}`)}
           <input type="email" name="email" required autoComplete="email" defaultValue={emailHint} />
@@ -138,7 +140,7 @@ export default function AuthSignupFields({
         ) : null}
       </section>
 
-      <section className="auth-step-card">
+      <section className="auth-step-card auth-photo-card">
         <h3>{uiText(language, "auth.step_2")}</h3>
         <p className="muted">{uiText(language, "auth.photo_help")}</p>
         <label>

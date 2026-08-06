@@ -197,7 +197,7 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
           ) : null}
 
           {displayedMode === "signup" ? (
-            <section className="auth-section">
+            <section className="auth-section auth-signup-section">
               <h2>{uiText(language, "auth.signup_title")}</h2>
               <p className="muted">{uiText(language, "auth.signup_subtitle")}</p>
 
