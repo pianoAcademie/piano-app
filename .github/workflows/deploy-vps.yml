@@ -107,6 +107,44 @@ jobs:
             -e "ssh -i ~/.ssh/id_ed25519 -p ${VPS_PORT:-22}" \
             ./ "${VPS_USER}@${VPS_HOST}:${VPS_PATH}/"
 
+      - name: Configure native push environment
+        env:
+          PUSH_NOTIFICATIONS_ENABLED: ${{ secrets.PUSH_NOTIFICATIONS_ENABLED }}
+          APNS_TEAM_ID: ${{ secrets.APNS_TEAM_ID }}
+          APNS_KEY_ID: ${{ secrets.APNS_KEY_ID }}
+          APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
+          APNS_CLIENT_BUNDLE_ID: ${{ secrets.APNS_CLIENT_BUNDLE_ID }}
+          APNS_USE_SANDBOX: ${{ secrets.APNS_USE_SANDBOX }}
+        run: |
+          set -euo pipefail
+          for variable in PUSH_NOTIFICATIONS_ENABLED APNS_TEAM_ID APNS_KEY_ID APNS_PRIVATE_KEY APNS_CLIENT_BUNDLE_ID APNS_USE_SANDBOX; do
+            test -n "${!variable:-}" || { echo "Missing production secret: ${variable}"; exit 1; }
+          done
+
+          push_payload=$(python3 - <<'PY'
+          import base64
+          import json
+          import os
+
+          keys = (
+              "PUSH_NOTIFICATIONS_ENABLED",
+              "APNS_TEAM_ID",
+              "APNS_KEY_ID",
+              "APNS_PRIVATE_KEY",
+              "APNS_CLIENT_BUNDLE_ID",
+              "APNS_USE_SANDBOX",
+          )
+          payload = json.dumps({key: os.environ[key] for key in keys}).encode()
+          print(base64.b64encode(payload).decode())
+          PY
+          )
+          echo "::add-mask::${push_payload}"
+          printf '%s' "${push_payload}" | ssh \
+            -i ~/.ssh/id_ed25519 \
+            -p "${VPS_PORT:-22}" \
+            "${VPS_USER}@${VPS_HOST}" \
+            "cd '${VPS_PATH}' && python3 backend/scripts/configure_push_runtime.py"
+
       - name: Deploy on VPS
         run: |
           set -euo pipefail
