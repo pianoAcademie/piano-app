@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 import jwt
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import get_db, is_read_only_client_preview, require_roles
@@ -68,11 +68,13 @@ from app.models.ops import (
     EmailReminder,
     LegalEntity,
     MessageFormat,
+    PasswordResetToken,
 )
-from app.models.notification_engine import Notification
+from app.models.notification_engine import ContactDeliveryStatus, MobilePushDevice, Notification
 from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct, ProductCategory
 from app.models.quote import Quote, QuoteAcceptanceFollowup, QuoteLine
-from app.models.user import ClientKind, User, UserRole
+from app.models.user import ClientKind, ClientStatus, User, UserRole
+from app.services.security import hash_password, verify_password
 from app.schemas.catalog import SessionCourseTypeOut, SessionLocationOut, SessionOut, SessionProfessorOut
 from app.schemas.booking import BookingCreateRequest, MakeupStudentSummaryOut
 from app.schemas.user import (
@@ -94,6 +96,8 @@ from app.schemas.user import (
     ClientSessionReservationMemberOptionOut,
     ClientSessionReservationOptionsOut,
     ClientMeUpdateRequest,
+    ClientAccountDeletionOut,
+    ClientAccountDeletionRequest,
     ClientPaymentOut,
     FamilyBookingOut,
     FamilyLinkOut,
@@ -1989,6 +1993,93 @@ def _family_plan_mini_out(
 @router.get("/clients/me", response_model=UserOut)
 def get_client_me(current_user: User = Depends(require_roles(UserRole.CLIENT))) -> UserOut:
     return current_user
+
+
+@router.delete("/clients/me/account", response_model=ClientAccountDeletionOut)
+def delete_client_account(
+    payload: ClientAccountDeletionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+) -> ClientAccountDeletionOut:
+    """Delete a portal account only after every commitment has ended.
+
+    Active plans and booking rights are never cancelled by this operation.
+    Historical accounting records remain attached to an anonymized technical row.
+    """
+    if not payload.confirm_account_deletion:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ACCOUNT_DELETION_CONFIRMATION_REQUIRED")
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="CURRENT_PASSWORD_INCORRECT")
+
+    now = datetime.now(timezone.utc)
+    active_commitment_statuses = {
+        SubscriptionStatus.PENDING,
+        SubscriptionStatus.ACTIVE,
+        SubscriptionStatus.PAYMENT_ALERT,
+        SubscriptionStatus.PRE_TERMINATION,
+        SubscriptionStatus.PAUSED,
+    }
+    linked_child_ids = select(ClientFamilyLink.child_user_id).where(ClientFamilyLink.adult_user_id == current_user.id)
+    active_commitment = db.scalar(
+        select(ClientPlanSubscription.id)
+        .where(
+            or_(
+                ClientPlanSubscription.user_id == current_user.id,
+                ClientPlanSubscription.payer_contact_id == current_user.id,
+                ClientPlanSubscription.user_id.in_(linked_child_ids),
+            ),
+            ClientPlanSubscription.status.in_(active_commitment_statuses),
+        )
+        .limit(1)
+    )
+    if active_commitment is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="ACCOUNT_DELETION_ACTIVE_COMMITMENT")
+
+    db.execute(delete(MobilePushDevice).where(MobilePushDevice.user_id == current_user.id))
+    db.execute(delete(PasswordResetToken).where(PasswordResetToken.user_id == current_user.id))
+    db.execute(
+        delete(ContactDeliveryStatus).where(
+            ContactDeliveryStatus.contact_type == "USER",
+            ContactDeliveryStatus.contact_id == current_user.id,
+        )
+    )
+    db.execute(
+        delete(ClientFamilyLink).where(
+            or_(ClientFamilyLink.adult_user_id == current_user.id, ClientFamilyLink.child_user_id == current_user.id)
+        )
+    )
+
+    # Historical invoices and accounting records retain their immutable snapshots.
+    # The user row is kept only as an anonymized technical anchor for those records.
+    current_user.is_active = False
+    current_user.account_deleted_at = now
+    current_user.hashed_password = hash_password(f"deleted-account-{current_user.id}-{now.isoformat()}")
+    current_user.email = f"deleted+{current_user.id.hex}@piano-academie.invalid"
+    current_user.contact_email = None
+    current_user.first_name = None
+    current_user.last_name = None
+    current_user.address_line = None
+    current_user.postal_code = None
+    current_user.city = None
+    current_user.phone = None
+    current_user.mobile_phone_1 = None
+    current_user.mobile_phone_2 = None
+    current_user.home_phone = None
+    current_user.birth_date = None
+    current_user.important_info = None
+    current_user.private_note = None
+    current_user.student_site = None
+    current_user.client_status = ClientStatus.ARCHIVED
+    current_user.portal_contact_visible = False
+    current_user.email_opt_in = False
+    current_user.sms_opt_in = False
+    current_user.lesson_reminder_email_opt_in = False
+    current_user.lesson_reminder_sms_opt_in = False
+    current_user.updated_at = now
+
+    db.add(current_user)
+    db.commit()
+    return ClientAccountDeletionOut(message="ACCOUNT_DELETED")
 
 
 @router.get("/clients/catalog/products", response_model=list[ClientCatalogProductOut])

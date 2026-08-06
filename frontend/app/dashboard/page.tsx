@@ -8,6 +8,7 @@ import { backendRequest } from "../../lib/backend";
 import {
   cancelBookingAction,
   changePasswordAction,
+  deleteClientAccountAction,
   endPortalImpersonationAction,
   logoutAction,
   openClientPaymentCheckoutAction,
@@ -1354,6 +1355,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const confirmPlanId = readParam(searchParams, "confirm_plan_id").trim();
   const editProfile = readParam(searchParams, "edit_profile") === "1";
   const changePassword = readParam(searchParams, "change_password") === "1";
+  const deleteAccount = readParam(searchParams, "delete_account") === "1";
   const preFetchErrors: string[] = [];
   let paymentResultMessage = "";
   let paymentResultError = "";
@@ -6188,6 +6190,34 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     )}
                   </div>
                 </details>
+
+                <details className="client-account-accordion card client-account-danger" open={deleteAccount}>
+                  <summary>{t("client.delete_account")}</summary>
+                  <div className="client-account-accordion-content">
+                    <p>{t("client.delete_account_intro")}</p>
+                    <p className="client-account-danger-warning">{t("client.delete_account_commitment_rule")}</p>
+                    <p className="muted">{t("client.delete_account_not_cancellation")}</p>
+                    <p className="muted">{t("client.delete_account_legal_retention")}</p>
+                    <form action={deleteClientAccountAction} className="client-account-deletion-form">
+                      <label>
+                        {t("client.delete_account_password")}
+                        <input
+                          type="password"
+                          name="current_password"
+                          autoComplete="current-password"
+                          minLength={8}
+                          maxLength={128}
+                          required
+                        />
+                      </label>
+                      <label className="client-account-deletion-confirm">
+                        <input type="checkbox" name="confirm_account_deletion" required />
+                        <span>{t("client.delete_account_confirm_label")}</span>
+                      </label>
+                      <button type="submit" className="client-danger-button">{t("client.delete_account_submit")}</button>
+                    </form>
+                  </div>
+                </details>
               </section>
 
               <section className="grid cols-2 client-account-desktop">
@@ -6350,6 +6380,42 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     ))}
                   </div>
                 )}
+              </Card>
+
+              <Card className="client-account-desktop client-account-danger">
+                <div className="row spread">
+                  <h2>{t("client.delete_account")}</h2>
+                  <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "account", delete_account: deleteAccount ? null : "1" })}>
+                    {deleteAccount ? t("client.close_password_change") : t("client.delete_account")}
+                  </a>
+                </div>
+                <p>{t("client.delete_account_intro")}</p>
+                <p className="client-account-danger-warning">{t("client.delete_account_commitment_rule")}</p>
+                <p className="muted">{t("client.delete_account_not_cancellation")}</p>
+                <p className="muted">{t("client.delete_account_legal_retention")}</p>
+                {deleteAccount ? (
+                  <form action={deleteClientAccountAction} className="client-account-deletion-form">
+                    <label>
+                      {t("client.delete_account_password")}
+                      <input
+                        type="password"
+                        name="current_password"
+                        autoComplete="current-password"
+                        minLength={8}
+                        maxLength={128}
+                        required
+                      />
+                    </label>
+                    <label className="client-account-deletion-confirm">
+                      <input type="checkbox" name="confirm_account_deletion" required />
+                      <span>{t("client.delete_account_confirm_label")}</span>
+                    </label>
+                    <div className="row">
+                      <button type="submit" className="client-danger-button">{t("client.delete_account_submit")}</button>
+                      <a className="reset-link" href={withUpdatedQuery(rawParams, { tab: "account", delete_account: null })}>{t("common.cancel")}</a>
+                    </div>
+                  </form>
+                ) : null}
               </Card>
 
               {changePassword ? (

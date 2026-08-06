@@ -1687,6 +1687,52 @@ export async function changePasswordAction(formData: FormData): Promise<void> {
   redirect("/client?tab=account&ok_code=password_changed");
 }
 
+export async function deleteClientAccountAction(formData: FormData): Promise<void> {
+  const token = currentPortalToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+
+  const currentPassword = String(formData.get("current_password") ?? "");
+  const confirmed = formData.get("confirm_account_deletion") === "on";
+  const deletionPath = "/client?tab=account&delete_account=1";
+
+  if (!currentPassword) {
+    redirect(`${deletionPath}&error_code=account_deletion_password_required`);
+  }
+  if (!confirmed) {
+    redirect(`${deletionPath}&error_code=account_deletion_confirmation_required`);
+  }
+
+  const result = await backendRequest<{ message: string }>(
+    "/api/v1/clients/me/account",
+    {
+      method: "DELETE",
+      body: JSON.stringify({
+        current_password: currentPassword,
+        confirm_account_deletion: true,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    if (result.message === "CURRENT_PASSWORD_INCORRECT") {
+      redirect(`${deletionPath}&error_code=password_current_incorrect`);
+    }
+    if (result.message === "ACCOUNT_DELETION_ACTIVE_COMMITMENT") {
+      redirect(`${deletionPath}&error_code=account_deletion_active_commitment`);
+    }
+    if (result.message === "ACCOUNT_DELETION_CONFIRMATION_REQUIRED") {
+      redirect(`${deletionPath}&error_code=account_deletion_confirmation_required`);
+    }
+    redirect(`${deletionPath}&error=${encodeURIComponent(result.message)}`);
+  }
+
+  clearToken();
+  redirect("/login?ok_code=account_deleted");
+}
+
 export async function logoutAction(): Promise<void> {
   clearToken();
   redirect("/login?ok_code=logged_out");
