@@ -69,6 +69,7 @@ from app.models.ops import (
     LegalEntity,
     MessageFormat,
 )
+from app.models.notification_engine import Notification
 from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct, ProductCategory
 from app.models.quote import Quote, QuoteAcceptanceFollowup, QuoteLine
 from app.models.user import ClientKind, User, UserRole
@@ -2742,6 +2743,20 @@ def list_client_messages(
         if (row.provider_message_id or "").strip()
     }
 
+    push_stmt = (
+        select(Notification)
+        .where(
+            Notification.channel == "PUSH",
+            Notification.recipient_contact_id.in_(managed_client_ids),
+            Notification.scheduled_for <= now,
+        )
+        .order_by(Notification.created_at.desc())
+        .limit(max(limit * 4, limit))
+    )
+    if since is not None:
+        push_stmt = push_stmt.where(Notification.scheduled_for >= since)
+    push_rows = db.scalars(push_stmt).all()
+
     stmt = (
         select(EmailReminder, Booking, CourseSession, CourseType, Location, User)
         .join(Booking, Booking.id == EmailReminder.booking_id)
@@ -2805,6 +2820,68 @@ def list_client_messages(
             )
         )
 
+    # One administrative push creates one delivery row per registered device.
+    # The client history represents the message itself, not each technical
+    # delivery, so rows from the same job and recipient are collapsed.
+    push_groups: dict[tuple[UUID, UUID | None], Notification] = {}
+
+    def _push_delivery_rank(notification: Notification) -> int:
+        if notification.opened_at is not None:
+            return 5
+        if notification.received_at is not None:
+            return 4
+        normalized_status = str(notification.status or "").strip().upper()
+        if normalized_status == "SENT":
+            return 3
+        if normalized_status == "PENDING":
+            return 2
+        if normalized_status == "FAILED":
+            return 1
+        return 0
+
+    for notification in push_rows:
+        group_id = notification.job_run_id or notification.id
+        group_key = (group_id, notification.recipient_contact_id)
+        current = push_groups.get(group_key)
+        if current is None or _push_delivery_rank(notification) > _push_delivery_rank(current):
+            push_groups[group_key] = notification
+
+    for notification in push_groups.values():
+        related_owner = (
+            owners_by_id.get(notification.related_entity_id)
+            if notification.related_entity_type == "USER"
+            else None
+        )
+        recipient_owner = owners_by_id.get(notification.recipient_contact_id)
+        owner = related_owner or recipient_owner or current_user
+        push_status = (
+            "OPENED"
+            if notification.opened_at is not None
+            else "DELIVERED"
+            if notification.received_at is not None
+            else str(notification.status or "UNKNOWN").strip().upper()
+        )
+        payload.append(
+            ClientMessageOut(
+                id=notification.id,
+                owner_client_id=owner.id,
+                owner_display_name=_display_name(owner),
+                recipient_email=None,
+                channel="PUSH",
+                booking_id=notification.booking_id,
+                session_id=notification.slot_id,
+                session_title=None,
+                scheduled_for_utc=notification.scheduled_for,
+                sent_at=notification.sent_at or notification.failed_at,
+                status=push_status or "UNKNOWN",
+                provider_message_id=notification.provider_message_id,
+                error_message=notification.failure_reason,
+                subject_preview=(notification.subject or "").strip() or "Notification mobile",
+                content_preview=_message_preview(notification.body_snapshot),
+                content_text=notification.body_snapshot,
+                content_html=None,
+            )
+        )
     for reminder, booking, session_obj, course_type, location, owner in rows:
         provider_message_id = (reminder.provider_message_id or "").strip()
         if provider_message_id and provider_message_id in communication_provider_ids:

@@ -363,6 +363,12 @@ function sessionProfessorName(session: SessionOut): string {
 
 function statusClass(value: string): string {
   const normalized = normalizeStatus(value);
+  if (normalized === "OPENED" || normalized === "DELIVERED" || normalized === "RECEIVED" || normalized === "SENT") {
+    return "status-completed";
+  }
+  if (normalized === "FAILED" || normalized === "BOUNCED") {
+    return "status-cancelled";
+  }
   if (normalized === "BOOKED") {
     return "status-booked";
   }
@@ -389,6 +395,18 @@ function statusClass(value: string): string {
 
 function statusLabel(value: string, language: UiLanguage = "fr"): string {
   const normalized = normalizeStatus(value);
+  if (normalized === "OPENED") {
+    return uiText(language, "client.message_status_opened");
+  }
+  if (normalized === "DELIVERED" || normalized === "RECEIVED") {
+    return uiText(language, "client.message_status_delivered");
+  }
+  if (normalized === "SENT") {
+    return uiText(language, "client.message_status_sent");
+  }
+  if (normalized === "FAILED" || normalized === "BOUNCED") {
+    return uiText(language, "client.message_status_failed");
+  }
   if (normalized === "SKIPPED") {
     return uiText(language, "client.status_not_sent");
   }
@@ -436,6 +454,24 @@ function statusLabel(value: string, language: UiLanguage = "fr"): string {
     return uiText(language, "client.status_pending");
   }
   return normalized || "-";
+}
+
+function messageChannelLabel(channel: string, language: UiLanguage): string {
+  const normalized = channel.trim().toUpperCase();
+  if (normalized === "PUSH") {
+    return uiText(language, "client.message_channel_push");
+  }
+  if (normalized === "SMS") {
+    return uiText(language, "client.message_channel_sms");
+  }
+  return uiText(language, "client.message_channel_email");
+}
+
+function messageChannelIcon(channel: string): string {
+  const normalized = channel.trim().toUpperCase();
+  if (normalized === "PUSH") return "🔔";
+  if (normalized === "SMS") return "💬";
+  return "✉️";
 }
 
 function financeStatusLabel(value: string, language: UiLanguage = "fr"): string {
@@ -3350,7 +3386,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     {newsRows.map((message) => (
                       <article key={`home-news-${message.id}`} className="item">
                         <strong>{message.subject_preview || t("client.message_fallback")}</strong>
-                        <p className="muted">{formatDateTime(message.sent_at || message.scheduled_for_utc, language)} · {message.channel}</p>
+                        <p className="muted">{formatDateTime(message.sent_at || message.scheduled_for_utc, language)} · {messageChannelLabel(message.channel, language)}</p>
                       </article>
                     ))}
                   </div>
@@ -4656,17 +4692,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <option value="ALL">{t("common.all")}</option>
                   </select>
                 </label>
-                <label>
-                  {t("common.member")}
-                  <select name="member_id" defaultValue={selectedMemberFilter}>
-                    <option value="ALL">{hasMultipleVisibleMembers ? t("client.all_members") : t("client.account_self")}</option>
-                    {members.map((member) => (
-                      <option key={member.id} value={member.id}>
-                        {member.display_name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                {hasMultipleVisibleMembers ? (
+                  <label>
+                    {t("common.member")}
+                    <select name="member_id" defaultValue={selectedMemberFilter}>
+                      <option value="ALL">{t("client.all_members")}</option>
+                      {members.map((member) => (
+                        <option key={member.id} value={member.id}>
+                          {member.display_name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
                 <DrawerFilters title={t("client.advanced_filters_reservations")} className="client-reservation-drawer">
                   <label>
                     {t("common.status")}
@@ -5867,7 +5905,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         <tr key={msg.id}>
                           <td>{formatDateTime(msg.sent_at ?? msg.scheduled_for_utc, language)}</td>
                           <td>{msg.owner_display_name}</td>
-                          <td>{msg.channel}</td>
+                          <td>{messageChannelLabel(msg.channel, language)}</td>
                           <td>{msg.subject_preview}</td>
                           <td>
                             <span className={`status-pill ${statusClass(msg.status)}`}>{statusLabel(msg.status, language)}</span>
@@ -5885,17 +5923,32 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </div>
                 <div className="list client-mobile-list client-inbox-list">
                   {messageRows.map((msg) => (
-                    <a key={`${msg.id}-mobile`} href={withUpdatedQuery(rawParams, { tab: "messages", message_id: msg.id })} className="mode-link">
-                      <ListRow
-                        title={msg.subject_preview || t("client.message_without_subject")}
-                        subtitle={`${formatDateTime(msg.sent_at ?? msg.scheduled_for_utc, language)} | ${msg.owner_display_name}`}
-                        right={
-                          <div className="stack-xs">
-                            <span className="badge">{msg.channel}</span>
-                            <span className={`status-pill ${statusClass(msg.status)}`}>{statusLabel(msg.status, language)}</span>
-                          </div>
-                        }
-                      />
+                    <a
+                      key={`${msg.id}-mobile`}
+                      href={withUpdatedQuery(rawParams, { tab: "messages", message_id: msg.id })}
+                      className="client-inbox-card"
+                    >
+                      <span className="client-inbox-card-icon" aria-hidden="true">
+                        {messageChannelIcon(msg.channel)}
+                      </span>
+                      <span className="client-inbox-card-content">
+                        <strong>{msg.subject_preview || t("client.message_without_subject")}</strong>
+                        <span className="client-inbox-card-meta">
+                          <time dateTime={msg.sent_at ?? msg.scheduled_for_utc}>
+                            {formatDateTime(msg.sent_at ?? msg.scheduled_for_utc, language)}
+                          </time>
+                          {hasMultipleVisibleMembers ? <span>{msg.owner_display_name}</span> : null}
+                        </span>
+                        <span className="client-inbox-card-badges">
+                          <span className="client-channel-pill">
+                            {messageChannelLabel(msg.channel, language)}
+                          </span>
+                          <span className={`status-pill ${statusClass(msg.status)}`}>
+                            {statusLabel(msg.status, language)}
+                          </span>
+                        </span>
+                      </span>
+                      <span className="client-inbox-card-arrow" aria-hidden="true">→</span>
                     </a>
                   ))}
                 </div>
@@ -5912,7 +5965,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         </a>
                         <h3>{selectedMessage.subject_preview || t("client.message_without_subject")}</h3>
                         <p className="muted">
-                          {formatDateTime(selectedMessage.sent_at ?? selectedMessage.scheduled_for_utc, language)} · {selectedMessage.owner_display_name} · {selectedMessage.channel}
+                          {formatDateTime(selectedMessage.sent_at ?? selectedMessage.scheduled_for_utc, language)} · {selectedMessage.owner_display_name} · {messageChannelLabel(selectedMessage.channel, language)}
                         </p>
                       </header>
 
@@ -5920,7 +5973,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         <div className="client-message-meta-grid">
                           <article className="item">
                             <small className="muted">{t("client.recipient")}</small>
-                            <p>{selectedMessage.recipient_email || t("client.hidden_for_member")}</p>
+                            <p>
+                              {selectedMessage.channel.trim().toUpperCase() === "PUSH"
+                                ? t("client.mobile_application")
+                                : selectedMessage.recipient_email || t("client.hidden_for_member")}
+                            </p>
                           </article>
                           <article className="item">
                             <small className="muted">{t("common.status")}</small>
@@ -5928,11 +5985,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           </article>
                           <article className="item">
                             <small className="muted">{t("client.context")}</small>
-                            <p>{selectedMessage.session_title ?? t("client.transactional_message")}</p>
+                            <p>
+                              {selectedMessage.channel.trim().toUpperCase() === "PUSH"
+                                ? t("client.mobile_notification_context")
+                                : selectedMessage.session_title ?? t("client.transactional_message")}
+                            </p>
                           </article>
                           <article className="item">
                             <small className="muted">{t("client.channel")}</small>
-                            <p>{selectedMessage.channel}</p>
+                            <p>{messageChannelLabel(selectedMessage.channel, language)}</p>
                           </article>
                         </div>
                       </section>
@@ -6098,7 +6159,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             key={`account-message-${msg.id}`}
                             title={msg.subject_preview || t("client.message_fallback")}
                             subtitle={`${formatDateTime(msg.sent_at ?? msg.scheduled_for_utc, language)} · ${msg.owner_display_name}`}
-                            right={<span className="badge">{msg.channel}</span>}
+                            right={<span className="badge">{messageChannelLabel(msg.channel, language)}</span>}
                           />
                         ))}
                       </div>
@@ -6257,7 +6318,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <strong>{msg.subject_preview || t("client.message_fallback")}</strong>
                           <p className="muted">{formatDateTime(msg.sent_at ?? msg.scheduled_for_utc, language)} · {msg.owner_display_name}</p>
                         </div>
-                        <span className="badge">{msg.channel}</span>
+                        <span className="badge">{messageChannelLabel(msg.channel, language)}</span>
                       </article>
                     ))}
                   </div>
