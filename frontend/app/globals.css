@@ -12865,6 +12865,32 @@ button.danger:focus-visible {
   gap: 8px;
 }
 
+.client-payment-method-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.client-payment-method-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.client-payment-method-card p {
+  margin: 0;
+}
+
+.client-payment-method-action {
+  min-height: 40px;
+}
+
+.client-payment-security-note {
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+
 .client-switch-list {
   display: grid;
   gap: 8px;
@@ -13702,6 +13728,15 @@ button.danger:focus-visible {
     width: 100%;
     max-width: 100%;
     text-align: left;
+  }
+
+  .client-payment-method-card .row.spread {
+    align-items: flex-start;
+  }
+
+  .client-payment-method-action {
+    width: 100%;
+    justify-content: center;
   }
 
   .client-account-mobile .client-mobile-list .client-list-row-right {

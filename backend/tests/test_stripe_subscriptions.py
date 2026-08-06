@@ -121,7 +121,7 @@ def test_stripe_checkout_lookup_extracts_saved_card_and_customer(monkeypatch) ->
                     "payment_method": {
                         "id": "pm_test_123",
                         "type": "card",
-                        "card": {"exp_month": 7, "exp_year": 2031},
+                        "card": {"brand": "visa", "last4": "4151", "exp_month": 7, "exp_year": 2031},
                     },
                 },
             },
@@ -135,6 +135,8 @@ def test_stripe_checkout_lookup_extracts_saved_card_and_customer(monkeypatch) ->
     assert result.metadata["customer_reference"] == "cus_test_123"
     assert result.payment_method_reference == "pm_test_123"
     assert result.payment_method_type == "card"
+    assert result.payment_method_brand == "visa"
+    assert result.payment_method_last4 == "4151"
     assert result.payment_method_exp_month == 7
     assert result.payment_method_exp_year == 2031
 
@@ -154,7 +156,11 @@ def test_stripe_setup_lookup_extracts_sepa_payment_method_and_mandate(monkeypatc
                 "setup_intent": {
                     "id": "seti_test_123",
                     "mandate": "mandate_test_123",
-                    "payment_method": {"id": "pm_sepa_123", "type": "sepa_debit"},
+                    "payment_method": {
+                        "id": "pm_sepa_123",
+                        "type": "sepa_debit",
+                        "sepa_debit": {"last4": "3000"},
+                    },
                 },
             },
             "",
@@ -167,7 +173,32 @@ def test_stripe_setup_lookup_extracts_sepa_payment_method_and_mandate(monkeypatc
     assert result.paid is False
     assert result.payment_method_reference == "pm_sepa_123"
     assert result.payment_method_type == "sepa_debit"
+    assert result.payment_method_last4 == "3000"
     assert result.metadata["mandate_reference"] == "mandate_test_123"
+
+
+def test_stripe_card_setup_checkout_uses_card_payment_method(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(payment_checkout, "resolve_active_secret", lambda *_args, **_kwargs: "sk_test")
+
+    def fake_request_form(**kwargs: object) -> tuple[int, dict[str, object], str]:
+        captured.update(kwargs)
+        return 200, {"id": "cs_setup_card", "url": "https://checkout.stripe.test/card", "status": "open"}, ""
+
+    monkeypatch.setattr(payment_checkout, "_request_form", fake_request_form)
+    result = payment_checkout.create_stripe_payment_method_setup_session(
+        object(),  # type: ignore[arg-type]
+        customer_reference="cus_test_123",
+        success_return_url="https://app.example.test/success",
+        cancel_return_url="https://app.example.test/cancel",
+        metadata={"subscription_id": "sub-1"},
+        payment_method_type="card",
+    )
+
+    assert result.success is True
+    body = captured["body"]
+    assert isinstance(body, dict)
+    assert body["payment_method_types[0]"] == "card"
 
 
 def test_stripe_recurring_charge_is_off_session_and_idempotent(monkeypatch) -> None:

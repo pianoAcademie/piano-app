@@ -11,6 +11,7 @@ import {
   endPortalImpersonationAction,
   logoutAction,
   openClientPaymentCheckoutAction,
+  openClientPaymentMethodSetupAction,
   purchasePlanAction,
   startFormulaPurchaseLinkAction,
   submitPublicSessionCheckoutAction,
@@ -610,6 +611,42 @@ function paymentMethodLabel(value: string | null | undefined, language: UiLangua
     return uiText(language, "admin.client_detail.billing.check");
   }
   return normalized;
+}
+
+function paymentMethodBrandLabel(value: string | null | undefined): string {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  const labels: Record<string, string> = {
+    amex: "American Express",
+    american_express: "American Express",
+    mastercard: "Mastercard",
+    visa: "Visa",
+  };
+  return labels[normalized] ?? (normalized ? `${normalized.slice(0, 1).toUpperCase()}${normalized.slice(1)}` : "");
+}
+
+function maskedPaymentMethodLabel(
+  paymentMethod: {
+    billing_method_code: string | null;
+    payment_method_brand: string | null;
+    payment_method_last4: string | null;
+  },
+  language: UiLanguage,
+): string {
+  const last4 = /^\d{4}$/.test(paymentMethod.payment_method_last4 ?? "")
+    ? ` •••• ${paymentMethod.payment_method_last4}`
+    : "";
+  if (normalizeStatus(paymentMethod.billing_method_code ?? "") === "SEPA_DEBIT") {
+    return `${uiText(language, "client.bank_account")}${last4}`;
+  }
+  const brand = paymentMethodBrandLabel(paymentMethod.payment_method_brand);
+  return `${brand || uiText(language, "client.bank_card")}${last4}`;
+}
+
+function paymentMethodExpiryLabel(month: number | null, year: number | null): string | null {
+  if (!month || !year || month < 1 || month > 12) {
+    return null;
+  }
+  return `${String(month).padStart(2, "0")}/${year}`;
 }
 
 function formatDate(value: string | null | undefined, language: UiLanguage = "fr"): string {
@@ -1290,7 +1327,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     sessionQuery.set("location_id", selectedLocation);
   }
 
-  if (paymentSourceParam === "SEPA_SETUP" && paymentIdParam && setupSessionIdParam && paymentReturnParam === "success") {
+  if (
+    (paymentSourceParam === "SEPA_SETUP" || paymentSourceParam === "PAYMENT_METHOD_SETUP")
+    && paymentIdParam
+    && setupSessionIdParam
+    && paymentReturnParam === "success"
+  ) {
     const normalizedPaymentId = paymentIdParam.startsWith("plan:") ? paymentIdParam.slice("plan:".length) : paymentIdParam;
     const confirm = await backendRequest<ClientPaymentConfirmOut>(
       `/api/v1/clients/me/subscriptions/${normalizedPaymentId}/payment-method-setup/confirm?checkout_session_id=${encodeURIComponent(setupSessionIdParam)}`,
@@ -1299,12 +1341,22 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     );
     if (!confirm.ok || !confirm.data.paid) {
       preFetchErrors.push(`confirm-sepa-setup: ${confirm.ok ? confirm.data.message : confirm.message}`);
-      paymentResultError = t("client.sepa_mandate_pending");
+      paymentResultError = paymentSourceParam === "SEPA_SETUP"
+        ? t("client.sepa_mandate_pending")
+        : t("client.payment_method_update_pending");
     } else {
-      paymentResultMessage = t("client.sepa_mandate_activated");
+      paymentResultMessage = paymentSourceParam === "SEPA_SETUP"
+        ? t("client.sepa_mandate_activated")
+        : t("client.payment_method_updated");
     }
-  } else if (paymentSourceParam === "SEPA_SETUP" && paymentIdParam && paymentReturnParam === "cancel") {
-    paymentResultError = t("client.sepa_mandate_cancelled");
+  } else if (
+    (paymentSourceParam === "SEPA_SETUP" || paymentSourceParam === "PAYMENT_METHOD_SETUP")
+    && paymentIdParam
+    && paymentReturnParam === "cancel"
+  ) {
+    paymentResultError = paymentSourceParam === "SEPA_SETUP"
+      ? t("client.sepa_mandate_cancelled")
+      : t("client.payment_method_update_cancelled");
   } else if (paymentSourceParam === "PLAN_PURCHASE" && paymentIdParam && paymentReturnParam === "success") {
     const normalizedPaymentId = paymentIdParam.startsWith("plan:") ? paymentIdParam.slice("plan:".length) : paymentIdParam;
     const confirm = await backendRequest<ClientPaymentConfirmOut>(
@@ -1812,6 +1864,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         owner_display_name: memberDisplayName({ first_name: me.first_name, last_name: me.last_name, email: me.email }),
         owner_email: me.email,
       }));
+  const paymentMethodSubscriptions = subscriptions
+    .filter((sub) => normalizeStatus(sub.plan.kind) === "SUBSCRIPTION")
+    .filter((sub) => !["CANCELLED", "EXPIRED", "TERMINATED"].includes(normalizeStatus(sub.status)))
+    .filter((sub) => {
+      const method = normalizeStatus(sub.billing_method_code ?? "");
+      return sub.payment_method_setup_required || method.includes("CARD") || method.includes("SEPA");
+    })
+    .sort((a, b) => a.owner_display_name.localeCompare(b.owner_display_name, language));
   const subscriptionsByOwner = new Map<string, typeof subscriptions>();
   for (const sub of subscriptions) {
     const existing = subscriptionsByOwner.get(sub.owner_client_id) ?? [];
@@ -4962,7 +5022,20 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <div>
                       <p>{t("client.contract")}: {compactId(selectedOfferSubscription.id)} <CopyIdButton value={selectedOfferSubscription.id} label={t("common.copy")} /></p>
                       {selectedOfferSubscription.offer_quote_number ? <p>{t("client.quote")}: {selectedOfferSubscription.offer_quote_number}</p> : null}
-                      <p>{t("client.payment_method")}: {paymentMethodLabel(selectedOfferSubscription.billing_method_code, language)}</p>
+                      <p>
+                        {t("client.payment_method")}: {selectedOfferSubscription.payment_method_setup_required
+                          ? t("client.payment_method_to_add")
+                          : maskedPaymentMethodLabel(selectedOfferSubscription, language)}
+                        {paymentMethodExpiryLabel(
+                          selectedOfferSubscription.payment_method_exp_month,
+                          selectedOfferSubscription.payment_method_exp_year,
+                        )
+                          ? ` · ${t("client.expires_on", { date: paymentMethodExpiryLabel(
+                            selectedOfferSubscription.payment_method_exp_month,
+                            selectedOfferSubscription.payment_method_exp_year,
+                          ) ?? "" })}`
+                          : ""}
+                      </p>
                     </div>
                   </details>
                 </Card>
@@ -5788,6 +5861,52 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   </div>
                 </details>
 
+                <details className="client-account-accordion card" open>
+                  <summary>
+                    <span>{t("client.payment_methods")}</span>
+                    <span className="badge">{paymentMethodSubscriptions.length}</span>
+                  </summary>
+                  <div className="client-account-accordion-content">
+                    {paymentMethodSubscriptions.length === 0 ? (
+                      <p className="muted">{t("client.no_saved_payment_method")}</p>
+                    ) : (
+                      <div className="list client-mobile-list">
+                        {paymentMethodSubscriptions.map((sub) => {
+                          const expiry = paymentMethodExpiryLabel(sub.payment_method_exp_month, sub.payment_method_exp_year);
+                          return (
+                            <article key={`mobile-payment-method-${sub.id}`} className="item client-payment-method-card">
+                              <div className="row spread">
+                                <strong>
+                                  {sub.payment_method_setup_required
+                                    ? t("client.payment_method_to_add")
+                                    : maskedPaymentMethodLabel(sub, language)}
+                                </strong>
+                                <span className={`status-pill ${sub.payment_method_setup_required ? "status-warn" : "status-ok"}`}>
+                                  {sub.payment_method_setup_required ? t("client.to_complete") : t("client.saved")}
+                                </span>
+                              </div>
+                              <p className="muted">{sub.owner_display_name} · {sub.plan.name}</p>
+                              {expiry ? <p className="muted">{t("client.expires_on", { date: expiry })}</p> : null}
+                              {sub.payment_method_setup_required ? (
+                                <p className="muted">{t("client.payment_method_will_be_requested")}</p>
+                              ) : (
+                                <form action={openClientPaymentMethodSetupAction}>
+                                  <input type="hidden" name="subscription_id" value={sub.id} />
+                                  <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "account" })} />
+                                  <button type="submit" className="mode-link client-payment-method-action">
+                                    {t("client.replace_payment_method")}
+                                  </button>
+                                </form>
+                              )}
+                            </article>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <p className="muted client-payment-security-note">🔒 {t("client.payment_method_security_note")}</p>
+                  </div>
+                </details>
+
                 <details className="client-account-accordion card" open={linkedMembers.length > 0}>
                   <summary>
                     <span>{t("client.members")}</span>
@@ -5928,6 +6047,50 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   )}
                 </Card>
               </section>
+
+              <Card className="client-account-desktop">
+                <div className="row spread">
+                  <h2>{t("client.payment_methods")}</h2>
+                  <span className="badge">{paymentMethodSubscriptions.length}</span>
+                </div>
+                {paymentMethodSubscriptions.length === 0 ? (
+                  <p className="muted">{t("client.no_saved_payment_method")}</p>
+                ) : (
+                  <div className="client-payment-method-grid">
+                    {paymentMethodSubscriptions.map((sub) => {
+                      const expiry = paymentMethodExpiryLabel(sub.payment_method_exp_month, sub.payment_method_exp_year);
+                      return (
+                        <article key={`desktop-payment-method-${sub.id}`} className="item client-payment-method-card">
+                          <div className="row spread">
+                            <strong>
+                              {sub.payment_method_setup_required
+                                ? t("client.payment_method_to_add")
+                                : maskedPaymentMethodLabel(sub, language)}
+                            </strong>
+                            <span className={`status-pill ${sub.payment_method_setup_required ? "status-warn" : "status-ok"}`}>
+                              {sub.payment_method_setup_required ? t("client.to_complete") : t("client.saved")}
+                            </span>
+                          </div>
+                          <p className="muted">{sub.owner_display_name} · {sub.plan.name}</p>
+                          {expiry ? <p className="muted">{t("client.expires_on", { date: expiry })}</p> : null}
+                          {sub.payment_method_setup_required ? (
+                            <p className="muted">{t("client.payment_method_will_be_requested")}</p>
+                          ) : (
+                            <form action={openClientPaymentMethodSetupAction}>
+                              <input type="hidden" name="subscription_id" value={sub.id} />
+                              <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "account" })} />
+                              <button type="submit" className="mode-link client-payment-method-action">
+                                {t("client.replace_payment_method")}
+                              </button>
+                            </form>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+                <p className="muted client-payment-security-note">🔒 {t("client.payment_method_security_note")}</p>
+              </Card>
 
               <Card className="client-account-desktop">
                 <h2>{t("client.communication_preferences")}</h2>

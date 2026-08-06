@@ -2048,6 +2048,32 @@ export async function openClientPaymentCheckoutAction(formData: FormData): Promi
   redirect(result.data.checkout_url);
 }
 
+export async function openClientPaymentMethodSetupAction(formData: FormData): Promise<void> {
+  const token = currentPortalToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+
+  const returnTo = safeClientReturnPath(formData, "/client?tab=account");
+  const subscriptionId = String(formData.get("subscription_id") ?? "").trim();
+  if (!subscriptionId) {
+    redirect(appendQueryMessage(returnTo, "error_code", "payment_not_found"));
+  }
+
+  const result = await backendRequest<ClientPaymentCheckoutOut>(
+    `/api/v1/clients/me/subscriptions/${subscriptionId}/payment-method-setup`,
+    { method: "POST" },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/client");
+  revalidatePath("/dashboard");
+  redirect(result.data.checkout_url);
+}
+
 export async function bookSessionAction(formData: FormData): Promise<void> {
   const token = currentPortalToken();
   if (!token) {

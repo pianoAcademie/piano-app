@@ -118,6 +118,11 @@ class ClientSubscriptionOut(BaseModel):
     auto_renew: bool
     bookings_blocked: bool = False
     billing_method_code: str | None = None
+    payment_method_type: str | None = None
+    payment_method_brand: str | None = None
+    payment_method_last4: str | None = None
+    payment_method_exp_month: int | None = None
+    payment_method_exp_year: int | None = None
     payment_method_setup_required: bool = False
     payment_method_setup_completed_at: datetime | None = None
     last_successful_charge_at: datetime | None = None

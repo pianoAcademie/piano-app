@@ -1104,6 +1104,9 @@ def _charge_cycle(
         subscription.auto_renew = False
         if provider_status in {"CARD_EXPIRED", "MISSING_PAYMENT_METHOD", "PAYMENT_METHOD_REVOKED"}:
             subscription.payment_provider_payment_method_ref = None
+            subscription.payment_method_type = None
+            subscription.payment_method_brand = None
+            subscription.payment_method_last4 = None
             subscription.payment_method_exp_month = None
             subscription.payment_method_exp_year = None
 
@@ -1644,6 +1647,9 @@ def run_subscription_recovery_reconciliation_job(
                 if provider == PaymentProvider.PAYPLUG and lookup.payment_method_reference:
                     subscription.payment_provider_code = PaymentProvider.PAYPLUG.value
                     subscription.payment_provider_payment_method_ref = lookup.payment_method_reference
+                    subscription.payment_method_type = lookup.payment_method_type or "card"
+                    subscription.payment_method_brand = lookup.payment_method_brand
+                    subscription.payment_method_last4 = lookup.payment_method_last4
                     subscription.payment_method_exp_month = lookup.payment_method_exp_month
                     subscription.payment_method_exp_year = lookup.payment_method_exp_year
                     subscription.payment_method_setup_required = False

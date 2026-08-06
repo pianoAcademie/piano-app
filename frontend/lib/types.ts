@@ -174,6 +174,11 @@ export type SubscriptionOut = {
   auto_renew: boolean;
   bookings_blocked: boolean;
   billing_method_code: string | null;
+  payment_method_type: string | null;
+  payment_method_brand: string | null;
+  payment_method_last4: string | null;
+  payment_method_exp_month: number | null;
+  payment_method_exp_year: number | null;
   payment_method_setup_required: boolean;
   payment_method_setup_completed_at: string | null;
   last_successful_charge_at: string | null;
@@ -778,6 +783,11 @@ export type ClientFamilyOverviewOut = {
     auto_renew: boolean;
     bookings_blocked: boolean;
     billing_method_code: string | null;
+    payment_method_type: string | null;
+    payment_method_brand: string | null;
+    payment_method_last4: string | null;
+    payment_method_exp_month: number | null;
+    payment_method_exp_year: number | null;
     payment_method_setup_required: boolean;
     payment_method_setup_completed_at: string | null;
     last_successful_charge_at: string | null;

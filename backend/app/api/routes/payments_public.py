@@ -202,6 +202,11 @@ async def payment_webhook(
         ):
             sub.payment_provider_code = PaymentProvider.STRIPE.value
             sub.payment_provider_payment_method_ref = preloaded_lookup.payment_method_reference
+            sub.payment_method_type = preloaded_lookup.payment_method_type
+            sub.payment_method_brand = preloaded_lookup.payment_method_brand
+            sub.payment_method_last4 = preloaded_lookup.payment_method_last4
+            sub.payment_method_exp_month = preloaded_lookup.payment_method_exp_month
+            sub.payment_method_exp_year = preloaded_lookup.payment_method_exp_year
             sub.payment_provider_mandate_ref = (preloaded_lookup.metadata.get("mandate_reference") or "").strip() or None
             sub.payment_method_setup_required = False
             sub.payment_method_setup_completed_at = _utcnow()
@@ -264,6 +269,9 @@ async def payment_webhook(
             if provider.value == "PAYPLUG" and lookup.payment_method_reference:
                 sub.payment_provider_code = provider.value
                 sub.payment_provider_payment_method_ref = lookup.payment_method_reference
+                sub.payment_method_type = lookup.payment_method_type or "card"
+                sub.payment_method_brand = lookup.payment_method_brand
+                sub.payment_method_last4 = lookup.payment_method_last4
                 sub.payment_method_exp_month = lookup.payment_method_exp_month
                 sub.payment_method_exp_year = lookup.payment_method_exp_year
                 sub.payment_method_setup_required = False
@@ -272,6 +280,9 @@ async def payment_webhook(
             elif provider == PaymentProvider.STRIPE and lookup.payment_method_reference:
                 sub.payment_provider_code = provider.value
                 sub.payment_provider_payment_method_ref = lookup.payment_method_reference
+                sub.payment_method_type = lookup.payment_method_type
+                sub.payment_method_brand = lookup.payment_method_brand
+                sub.payment_method_last4 = lookup.payment_method_last4
                 sub.payment_method_exp_month = lookup.payment_method_exp_month
                 sub.payment_method_exp_year = lookup.payment_method_exp_year
                 if (sub.billing_method_code or "").strip().upper() == "CARD_ONLINE":

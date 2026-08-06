@@ -56,6 +56,8 @@ class PaymentLookupResult:
     metadata: dict[str, str]
     message: str
     payment_method_reference: str | None = None
+    payment_method_brand: str | None = None
+    payment_method_last4: str | None = None
     payment_method_exp_month: int | None = None
     payment_method_exp_year: int | None = None
     payment_method_type: str | None = None
@@ -69,6 +71,7 @@ def create_stripe_payment_method_setup_session(
     success_return_url: str,
     cancel_return_url: str,
     metadata: dict[str, str],
+    payment_method_type: str = "sepa_debit",
 ) -> CheckoutCreateResult:
     secret = resolve_active_secret(db, provider=PaymentProvider.STRIPE).strip()
     if not secret:
@@ -81,10 +84,21 @@ def create_stripe_payment_method_setup_session(
             message="Stripe secret is not configured",
             retryable=False,
         )
+    normalized_payment_method_type = payment_method_type.strip().lower()
+    if normalized_payment_method_type not in {"card", "sepa_debit"}:
+        return CheckoutCreateResult(
+            success=False,
+            provider=PaymentProvider.STRIPE,
+            checkout_url=None,
+            provider_reference=None,
+            status="INVALID_PAYMENT_METHOD_TYPE",
+            message="Unsupported Stripe payment method type",
+            retryable=False,
+        )
     body: dict[str, str] = {
         "mode": "setup",
         "customer": customer_reference,
-        "payment_method_types[0]": "sepa_debit",
+        "payment_method_types[0]": normalized_payment_method_type,
         "success_url": success_return_url,
         "cancel_url": cancel_return_url,
     }
@@ -122,7 +136,7 @@ def create_stripe_payment_method_setup_session(
             checkout_url=checkout_url,
             provider_reference=provider_ref or None,
             status=str(parsed.get("status") or "open"),
-            message="Stripe SEPA setup checkout created",
+            message="Stripe payment method setup checkout created",
             retryable=False,
         )
     return CheckoutCreateResult(
@@ -131,7 +145,7 @@ def create_stripe_payment_method_setup_session(
         checkout_url=None,
         provider_reference=provider_ref or None,
         status=f"HTTP_{status_code}",
-        message=message or "Stripe SEPA setup checkout creation failed",
+        message=message or "Stripe payment method setup checkout creation failed",
         retryable=500 <= status_code < 600,
     )
 
@@ -587,12 +601,20 @@ def _payplug_lookup_payment(secret: str, payment_reference: str) -> PaymentLooku
     )
     card = parsed.get("card")
     card_reference: str | None = None
+    card_brand: str | None = None
+    card_last4: str | None = None
     card_exp_month: int | None = None
     card_exp_year: int | None = None
     if isinstance(card, dict):
         raw_reference = str(card.get("id") or "").strip()
         if raw_reference.startswith("card_"):
             card_reference = raw_reference
+        raw_brand = str(card.get("brand") or "").strip().lower()
+        if raw_brand:
+            card_brand = raw_brand[:40]
+        raw_last4 = str(card.get("last4") or "").strip()
+        if len(raw_last4) == 4 and raw_last4.isdigit():
+            card_last4 = raw_last4
         try:
             parsed_month = int(card.get("exp_month"))
             if 1 <= parsed_month <= 12:
@@ -617,6 +639,8 @@ def _payplug_lookup_payment(secret: str, payment_reference: str) -> PaymentLooku
         metadata=_normalize_metadata(parsed.get("metadata")),
         message=message or "ok",
         payment_method_reference=card_reference,
+        payment_method_brand=card_brand,
+        payment_method_last4=card_last4,
         payment_method_exp_month=card_exp_month,
         payment_method_exp_year=card_exp_year,
     )
@@ -649,10 +673,27 @@ def _stripe_lookup_payment(secret: str, payment_reference: str) -> PaymentLookup
         payment_method = parsed.get("payment_method")
         payment_method_reference = ""
         payment_method_type = ""
+        payment_method_brand: str | None = None
+        payment_method_last4: str | None = None
+        exp_month: int | None = None
+        exp_year: int | None = None
         mandate_reference = str(parsed.get("mandate") or "").strip()
         if isinstance(payment_method, dict):
             payment_method_reference = str(payment_method.get("id") or "").strip()
             payment_method_type = str(payment_method.get("type") or "").strip().lower()
+            payment_method_details = payment_method.get("card") if payment_method_type == "card" else payment_method.get("sepa_debit")
+            if isinstance(payment_method_details, dict):
+                raw_brand = str(payment_method_details.get("brand") or "").strip().lower()
+                payment_method_brand = raw_brand[:40] or None
+                raw_last4 = str(payment_method_details.get("last4") or "").strip()
+                payment_method_last4 = raw_last4 if len(raw_last4) == 4 and raw_last4.isdigit() else None
+                if payment_method_type == "card":
+                    try:
+                        exp_month = int(payment_method_details.get("exp_month"))
+                        exp_year = int(payment_method_details.get("exp_year"))
+                    except (TypeError, ValueError):
+                        exp_month = None
+                        exp_year = None
         else:
             payment_method_reference = str(payment_method or "").strip()
         metadata = _normalize_metadata(parsed.get("metadata"))
@@ -672,6 +713,10 @@ def _stripe_lookup_payment(secret: str, payment_reference: str) -> PaymentLookup
             metadata=metadata,
             message=message or "ok",
             payment_method_reference=payment_method_reference or None,
+            payment_method_brand=payment_method_brand,
+            payment_method_last4=payment_method_last4,
+            payment_method_exp_month=exp_month,
+            payment_method_exp_year=exp_year,
             payment_method_type=payment_method_type or None,
         )
     status_code, parsed, message = _request_form(
@@ -718,16 +763,23 @@ def _stripe_lookup_payment(secret: str, payment_reference: str) -> PaymentLookup
         mandate_reference = str(intent.get("mandate") or "").strip()
     payment_method_reference = ""
     payment_method_type = ""
+    payment_method_brand: str | None = None
+    payment_method_last4: str | None = None
     exp_month: int | None = None
     exp_year: int | None = None
     if isinstance(payment_method, dict):
         payment_method_reference = str(payment_method.get("id") or "").strip()
         payment_method_type = str(payment_method.get("type") or "").strip().lower()
-        card = payment_method.get("card")
-        if isinstance(card, dict):
+        payment_method_details = payment_method.get("card") if payment_method_type == "card" else payment_method.get("sepa_debit")
+        if isinstance(payment_method_details, dict):
+            raw_brand = str(payment_method_details.get("brand") or "").strip().lower()
+            payment_method_brand = raw_brand[:40] or None
+            raw_last4 = str(payment_method_details.get("last4") or "").strip()
+            payment_method_last4 = raw_last4 if len(raw_last4) == 4 and raw_last4.isdigit() else None
+        if payment_method_type == "card" and isinstance(payment_method_details, dict):
             try:
-                exp_month = int(card.get("exp_month"))
-                exp_year = int(card.get("exp_year"))
+                exp_month = int(payment_method_details.get("exp_month"))
+                exp_year = int(payment_method_details.get("exp_year"))
             except (TypeError, ValueError):
                 exp_month = None
                 exp_year = None
@@ -747,6 +799,8 @@ def _stripe_lookup_payment(secret: str, payment_reference: str) -> PaymentLookup
         metadata=metadata,
         message=message or "ok",
         payment_method_reference=payment_method_reference or None,
+        payment_method_brand=payment_method_brand,
+        payment_method_last4=payment_method_last4,
         payment_method_exp_month=exp_month,
         payment_method_exp_year=exp_year,
         payment_method_type=payment_method_type or None,
