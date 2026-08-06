@@ -40,6 +40,7 @@ const variables = readRequired("android/variables.gradle");
 const manifest = readRequired("android/app/src/main/AndroidManifest.xml");
 const mainActivity = readRequired("android/app/src/main/java/com/pianoacademie/mobile/MainActivity.java");
 const iosProject = readRequired("ios/App/App.xcodeproj/project.pbxproj");
+const iosAppDelegate = readRequired("ios/App/App/AppDelegate.swift");
 const packageJson = JSON.parse(readRequired("package.json") || "{}");
 
 requireFile("android/gradlew");
@@ -76,6 +77,12 @@ const releaseConfiguration = iosProject.match(/504EC3181FED79650016851F \/\* Rel
 if (!releaseConfiguration.includes("CODE_SIGN_STYLE = Automatic;")) failures.push("iOS Release signing must be managed automatically by Xcode");
 if (releaseConfiguration.includes("CODE_SIGN_IDENTITY =") || releaseConfiguration.includes("PROVISIONING_PROFILE_SPECIFIER =")) {
   failures.push("iOS Release signing must not force a certificate or provisioning profile");
+}
+if (!iosAppDelegate.includes(".capacitorDidRegisterForRemoteNotifications")) {
+  failures.push("iOS APNs registration success must be forwarded to Capacitor");
+}
+if (!iosAppDelegate.includes(".capacitorDidFailToRegisterForRemoteNotifications")) {
+  failures.push("iOS APNs registration errors must be forwarded to Capacitor");
 }
 
 for (const dependency of ["@capacitor/android", "@capacitor/cli", "@capacitor/core", "@capacitor/ios"]) {
