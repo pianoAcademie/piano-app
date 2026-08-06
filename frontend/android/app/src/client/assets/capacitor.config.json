@@ -2,6 +2,11 @@
   "appId": "com.pianoacademie.client",
   "appName": "Piano Academie Client",
   "webDir": "public",
+  "plugins": {
+    "PushNotifications": {
+      "presentationOptions": ["badge", "sound", "alert"]
+    }
+  },
   "server": {
     "url": "https://app.piano-academie.com/client",
     "cleartext": false,

@@ -3979,6 +3979,126 @@ export async function adminSendSessionBroadcastAction(formData: FormData): Promi
   );
 }
 
+export async function adminSendClientPushAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+
+  const language = await ensureAdminAndGetLanguage(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin/clients");
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const titleFr = String(formData.get("title_fr") ?? "").trim();
+  const bodyFr = String(formData.get("body_fr") ?? "").trim();
+  const titleEn = optionalField(formData, "title_en");
+  const bodyEn = optionalField(formData, "body_en");
+  const deepLink = optionalField(formData, "deep_link") ?? "/client";
+
+  if (!clientId || !titleFr || !bodyFr) {
+    redirect(
+      appendQueryMessage(
+        returnTo,
+        "error",
+        language === "en" ? "The French title and message are required." : "Le titre et le message en francais sont obligatoires.",
+      ),
+    );
+  }
+
+  const result = await backendRequest<{
+    device_count: number;
+    sent_count: number;
+    failed_count: number;
+    skipped_count: number;
+  }>(
+    `/api/v1/admin/clients/${clientId}/messages/push`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        title_fr: titleFr,
+        body_fr: bodyFr,
+        title_en: titleEn,
+        body_en: bodyEn,
+        deep_link: deepLink,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath(`/admin/clients/${clientId}`);
+  const summary =
+    language === "en"
+      ? `Notification sent to ${result.data.sent_count} device(s).${result.data.skipped_count ? ` ${result.data.skipped_count} recipient(s) had no active device.` : ""}`
+      : `Notification envoyee sur ${result.data.sent_count} appareil(s).${result.data.skipped_count ? ` ${result.data.skipped_count} destinataire(s) sans appareil actif.` : ""}`;
+  redirect(appendQueryMessage(returnTo, result.data.failed_count > 0 ? "error" : "ok", summary));
+}
+
+export async function adminSendSessionPushAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+
+  const language = await ensureAdminAndGetLanguage(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin");
+  const sessionId = String(formData.get("session_id") ?? "").trim();
+  const includedStudentIds = parseStringList(formData.getAll("included_student_ids"));
+  const titleFr = String(formData.get("title_fr") ?? "").trim();
+  const bodyFr = String(formData.get("body_fr") ?? "").trim();
+  const titleEn = optionalField(formData, "title_en");
+  const bodyEn = optionalField(formData, "body_en");
+  const deepLink = optionalField(formData, "deep_link") ?? "/client?tab=planning";
+
+  if (!sessionId || includedStudentIds.length === 0 || !titleFr || !bodyFr) {
+    redirect(
+      appendQueryMessage(
+        returnTo,
+        "error",
+        language === "en"
+          ? "Select at least one participant and complete the French title and message."
+          : "Selectionnez au moins un participant et renseignez le titre et le message en francais.",
+      ),
+    );
+  }
+
+  const result = await backendRequest<{
+    requested_user_count: number;
+    device_count: number;
+    sent_count: number;
+    failed_count: number;
+    skipped_count: number;
+  }>(
+    `/api/v1/admin/sessions/${sessionId}/push`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        included_student_ids: includedStudentIds,
+        title_fr: titleFr,
+        body_fr: bodyFr,
+        title_en: titleEn,
+        body_en: bodyEn,
+        deep_link: deepLink,
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin");
+  const successPath = removeQueryParam(returnTo, "message");
+  const summary =
+    language === "en"
+      ? `Notification sent to ${result.data.sent_count} device(s).${result.data.skipped_count ? ` ${result.data.skipped_count} recipient(s) had no active device.` : ""}`
+      : `Notification envoyee sur ${result.data.sent_count} appareil(s).${result.data.skipped_count ? ` ${result.data.skipped_count} destinataire(s) sans appareil actif.` : ""}`;
+  redirect(appendQueryMessage(successPath, result.data.failed_count > 0 ? "error" : "ok", summary));
+}
+
 export async function updatePlanningSettingsAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

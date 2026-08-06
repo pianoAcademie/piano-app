@@ -11,6 +11,7 @@ import {
   createChildForAdultAction,
   adminFinalizeClientPurchaseAction,
   adminClientActionPlaceholder,
+  adminSendClientPushAction,
   adminOpenClientPurchaseTermsAction,
   cancelAdminClientSubscriptionAction,
   linkExistingFamilyMembersAction,
@@ -5083,14 +5084,36 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <input type="hidden" name="action_name" value={t("admin.client_detail.send_sms")} />
                 <button type="submit">{t("admin.client_detail.send_sms")}</button>
               </form>
-              <form action={adminClientActionPlaceholder}>
+              <details>
+                <summary className="mode-link">{t("admin.client_detail.send_push")}</summary>
+                <form action={adminSendClientPushAction} className="grid" style={{ marginTop: 12 }}>
                 <input type="hidden" name="client_id" value={client.id} />
-                <input type="hidden" name="language" value={language} />
-                <input type="hidden" name="action_name" value={t("admin.client_detail.send_push")} />
-                <button className="ghost" type="submit">
-                  {t("admin.client_detail.send_push")}
-                </button>
-              </form>
+                  <input type="hidden" name="return_to" value={messagesHref(client.id, { messages_months: String(messageMonths), messages_q: messageQuery })} />
+                  <input type="hidden" name="deep_link" value="/client" />
+                  <p className="muted">
+                    {language === "en"
+                      ? "Sent to this client's active app devices. For a child, the notification is sent to the billing guardian."
+                      : "Envoyee sur les appareils actifs de ce client. Pour un enfant, la notification est adressee au responsable de facturation."}
+                  </p>
+                  <label>
+                    {language === "en" ? "French title" : "Titre francais"}
+                    <input name="title_fr" type="text" maxLength={120} required />
+                  </label>
+                  <label>
+                    {language === "en" ? "French message" : "Message francais"}
+                    <textarea name="body_fr" rows={4} maxLength={1000} required />
+                  </label>
+                  <label>
+                    {language === "en" ? "English title (optional)" : "Titre anglais (optionnel)"}
+                    <input name="title_en" type="text" maxLength={120} />
+                  </label>
+                  <label>
+                    {language === "en" ? "English message (optional)" : "Message anglais (optionnel)"}
+                    <textarea name="body_en" rows={4} maxLength={1000} />
+                  </label>
+                  <button type="submit">{language === "en" ? "Send notification" : "Envoyer la notification"}</button>
+                </form>
+              </details>
             </div>
           </article>
 

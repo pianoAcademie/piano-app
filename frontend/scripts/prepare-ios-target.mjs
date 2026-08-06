@@ -9,6 +9,7 @@ const targets = {
     configFile: "capacitor.client.config.json",
     envPrefix: "PA_CLIENT",
     defaultVersionName: "1.0",
+    entitlementsPath: "App/App.entitlements",
   },
   prof: {
     appName: "Piano Academie Professeur",
@@ -16,6 +17,7 @@ const targets = {
     configFile: "capacitor.prof.config.json",
     envPrefix: "PA_PROF",
     defaultVersionName: "1.0.0",
+    entitlementsPath: '""',
   },
 };
 
@@ -58,6 +60,13 @@ replaceOrFail(
   /PRODUCT_BUNDLE_IDENTIFIER = com\.pianoacademie\.(client|professeur);/g,
   `PRODUCT_BUNDLE_IDENTIFIER = ${target.bundleId};`,
   "PRODUCT_BUNDLE_IDENTIFIER",
+);
+
+replaceOrFail(
+  projectPath,
+  /CODE_SIGN_ENTITLEMENTS = [^;]+;/g,
+  `CODE_SIGN_ENTITLEMENTS = ${target.entitlementsPath};`,
+  "CODE_SIGN_ENTITLEMENTS",
 );
 
 copyFileSync(targetConfigPath, activeConfigPath);

@@ -45,6 +45,7 @@ const packageJson = JSON.parse(readRequired("package.json") || "{}");
 requireFile("android/gradlew");
 requireFile("ios/App/App.xcworkspace/contents.xcworkspacedata");
 requireFile("ios/App/App/PrivacyInfo.xcprivacy");
+requireFile("ios/App/App/App.entitlements");
 requireFile("public/app-icons/piano-academie-512.png");
 requireFile("app/client/manifest.webmanifest");
 
@@ -79,6 +80,9 @@ if (releaseConfiguration.includes("CODE_SIGN_IDENTITY =") || releaseConfiguratio
 
 for (const dependency of ["@capacitor/android", "@capacitor/cli", "@capacitor/core", "@capacitor/ios"]) {
   if (packageJson.devDependencies?.[dependency] !== "8.4.2") failures.push(`${dependency} must be pinned to 8.4.2`);
+}
+if (packageJson.dependencies?.["@capacitor/push-notifications"] !== "8.0.0") {
+  failures.push("@capacitor/push-notifications must be pinned to 8.0.0");
 }
 
 if (failures.length > 0) {

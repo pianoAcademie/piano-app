@@ -58,6 +58,7 @@ import DrawerFilters from "../../components/client-ui/drawer-filters";
 import ListRow from "../../components/client-ui/list-row";
 import MobileHeader from "../../components/client-ui/mobile-header";
 import MobileTabs from "../../components/client-ui/mobile-tabs";
+import MobilePushRegistration from "../../components/client-ui/mobile-push-registration";
 import ClientSupportButton from "../../components/client-ui/client-support-button";
 import ZendeskLoader from "../../components/client-ui/zendesk-loader";
 import CopyIdButton from "../../components/client-ui/copy-id-button";
@@ -2995,7 +2996,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           </a>
         </nav>
 
-        <form action={logoutAction} className="client-logout" data-read-only-preview-allow="true">
+        <form action={logoutAction} className="client-logout" data-mobile-push-logout="true" data-read-only-preview-allow="true">
           <button className="ghost" type="submit">
             ⎋
           </button>
@@ -3048,7 +3049,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   </button>
                 </form>
               ) : null}
-              <form action={logoutAction} data-read-only-preview-allow="true">
+              <form action={logoutAction} data-mobile-push-logout="true" data-read-only-preview-allow="true">
                 <button className="ghost client-mobile-menu-btn" type="submit">
                   {uiText(language, "common.logout")}
                 </button>
@@ -3056,6 +3057,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
             </div>
           }
         />
+        {!isReadOnlyPreview ? <MobilePushRegistration language={language} /> : null}
 
         <header className="client-topbar">
           <div>

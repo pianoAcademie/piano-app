@@ -64,5 +64,17 @@ class Settings:
     password_reset_token_expire_minutes: int = int(os.getenv("PASSWORD_RESET_TOKEN_EXPIRE_MINUTES", "60"))
     redis_url: str = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
+    # Native mobile push notifications. iOS uses APNs directly; Android uses
+    # Firebase Cloud Messaging HTTP v1. Secrets are injected at runtime only.
+    push_notifications_enabled: bool = _as_bool(os.getenv("PUSH_NOTIFICATIONS_ENABLED"), False)
+    apns_team_id: str = os.getenv("APNS_TEAM_ID", "")
+    apns_key_id: str = os.getenv("APNS_KEY_ID", "")
+    apns_private_key: str = os.getenv("APNS_PRIVATE_KEY", "")
+    apns_client_bundle_id: str = os.getenv("APNS_CLIENT_BUNDLE_ID", "com.pianoacademie.client")
+    apns_use_sandbox: bool = _as_bool(os.getenv("APNS_USE_SANDBOX"), False)
+    firebase_project_id: str = os.getenv("FIREBASE_PROJECT_ID", "")
+    firebase_client_email: str = os.getenv("FIREBASE_CLIENT_EMAIL", "")
+    firebase_private_key: str = os.getenv("FIREBASE_PRIVATE_KEY", "")
+
 
 settings = Settings()

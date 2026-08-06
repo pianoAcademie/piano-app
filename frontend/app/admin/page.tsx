@@ -6,6 +6,7 @@ import {
   adminRemoveClientFromSessionAction,
   adminUpdateSessionBookingInternalNoteAction,
   adminSendSessionBroadcastAction,
+  adminSendSessionPushAction,
   adminUpdateSessionAttendanceAction,
   adminUpdateSessionBookingNoteAction,
   adminUpdateSessionBookingStudentTimeAction,
@@ -1016,6 +1017,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const messageModalRaw = readParam(searchParams, "message").trim().toLowerCase();
   const sessionEmailModalOpen = messageModalRaw === "email";
   const sessionSmsModalOpen = messageModalRaw === "sms";
+  const sessionPushModalOpen = messageModalRaw === "push";
   const emailAudienceRaw = readParam(searchParams, "email_audience").trim().toUpperCase();
   const emailAudience =
     emailAudienceRaw === "PARENTS" ||
@@ -1372,6 +1374,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const sessionEmailAdvancedHref = withQueryParam(sessionEmailTabHref("content"), "email_mode", "advanced");
   const sessionEmailSimpleHref = removeQueryParam(sessionEmailTabHref("content"), "email_mode");
   const sessionSmsModalHref = selectedSession ? withQueryParam(modalHref, "message", "sms") : modalHref;
+  const sessionPushModalHref = selectedSession ? withQueryParam(modalHref, "message", "push") : modalHref;
   const editSessionHref = selectedSession ? withQueryParam(modalHref, "edit", "1") : modalHref;
   const editTabHref = (tab: SlotEditTab): string => withQueryParam(editSessionHref, "edit_tab", tab);
   const notesAdvancedHref = withQueryParam(editTabHref("notes"), "notes_mode", "advanced");
@@ -2170,6 +2173,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     <a className="mode-link" href={sessionSmsModalHref}>
                       {isEnglish ? "Send SMS" : "Envoyer SMS"}
                     </a>
+                    <a className="mode-link" href={sessionPushModalHref}>
+                      {isEnglish ? "Send notification" : "Envoyer une notification"}
+                    </a>
                     <a className="mode-link" href={duplicateModalHref}>
                       {isEnglish ? "Duplicate" : "Dupliquer"}
                     </a>
@@ -2232,6 +2238,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                   </a>
                   <a className="mode-link" href={sessionSmsModalHref}>
                     {isEnglish ? "Send SMS" : "Envoyer SMS"}
+                  </a>
+                  <a className="mode-link" href={sessionPushModalHref}>
+                    {isEnglish ? "Send notification" : "Envoyer une notification"}
                   </a>
                   <a className="mode-link" href={duplicateModalHref}>
                     {isEnglish ? "Duplicate" : "Dupliquer"}
@@ -3747,6 +3756,89 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 <div className="row">
                   <button type="submit">{isEnglish ? "Send SMS" : "Envoyer le SMS"}</button>
                 </div>
+              </footer>
+            </form>
+          </article>
+        </section>
+      ) : null}
+
+      {selectedSession && sessionPushModalOpen ? (
+        <section className="modal-overlay modal-overlay-front">
+          <article className="modal-panel note-modal-shell">
+            <header className="note-modal-header">
+              <div className="note-modal-header-main">
+                <h2 className="modal-title">{isEnglish ? "Send an app notification" : "Envoyer une notification dans l’application"}</h2>
+                <p className="muted">
+                  {isEnglish
+                    ? "The notification is sent to the active devices of the selected participants. A child is routed to their billing guardian."
+                    : "La notification est envoyée aux appareils actifs des participants sélectionnés. Pour un enfant, elle est adressée au responsable de facturation."}
+                </p>
+              </div>
+              <div className="note-modal-header-meta">
+                <a className="modal-close-x" href={modalHref} aria-label={isEnglish ? "Close" : "Fermer"}>
+                  ×
+                </a>
+              </div>
+            </header>
+
+            <form action={adminSendSessionPushAction} className="note-modal-form">
+              <input type="hidden" name="session_id" value={selectedSession.id} />
+              <input type="hidden" name="return_to" value={sessionPushModalHref} />
+              <input type="hidden" name="deep_link" value="/client?tab=planning" />
+
+              <div className="note-modal-body">
+                <section className="note-modal-panel active">
+                  <div className="note-recipient-summary">
+                    <strong>{sessionRecipientStudentIds.length} {isEnglish ? "participant(s) selected" : "participant(s) sélectionné(s)"}</strong>
+                    <span className="muted">{sessionRecipientSummary || pickText(language, "Aucun participant", "No participant")}</span>
+                  </div>
+                  <SearchMultiSelect
+                    className="session-edit-span"
+                    label={isEnglish ? "Included participants" : "Participants inclus"}
+                    name="included_student_ids"
+                    options={sessionRecipientStudents}
+                    selectedIds={sessionRecipientStudentIds}
+                    placeholder={isEnglish ? "Search a participant..." : "Rechercher un participant..."}
+                    emptySelectionLabel={isEnglish ? "No participant selected." : "Aucun participant sélectionné."}
+                  />
+
+                  <div className="grid cols-2">
+                    <label>
+                      {isEnglish ? "French title" : "Titre français"}
+                      <input name="title_fr" type="text" maxLength={120} defaultValue={`Piano Académie · ${selectedSession.title}`} required />
+                    </label>
+                    <label>
+                      {isEnglish ? "English title (optional)" : "Titre anglais (optionnel)"}
+                      <input name="title_en" type="text" maxLength={120} defaultValue={`Piano Académie · ${selectedSession.title}`} />
+                    </label>
+                    <label>
+                      {isEnglish ? "French message" : "Message français"}
+                      <textarea
+                        name="body_fr"
+                        rows={5}
+                        maxLength={1000}
+                        defaultValue={`Information concernant votre cours du ${formatDate(selectedSession.start_at_utc, selectedSession.timezone, "fr")} à ${formatTime(selectedSession.start_at_utc, selectedSession.timezone, "fr")}.`}
+                        required
+                      />
+                    </label>
+                    <label>
+                      {isEnglish ? "English message (optional)" : "Message anglais (optionnel)"}
+                      <textarea
+                        name="body_en"
+                        rows={5}
+                        maxLength={1000}
+                        defaultValue={`Information about your class on ${formatDate(selectedSession.start_at_utc, selectedSession.timezone, "en")} at ${formatTime(selectedSession.start_at_utc, selectedSession.timezone, "en")}.`}
+                      />
+                    </label>
+                  </div>
+                </section>
+              </div>
+
+              <footer className="note-modal-footer">
+                <a className="reset-link" href={modalHref}>
+                  {isEnglish ? "Cancel" : "Annuler"}
+                </a>
+                <button type="submit">{isEnglish ? "Send notification" : "Envoyer la notification"}</button>
               </footer>
             </form>
           </article>

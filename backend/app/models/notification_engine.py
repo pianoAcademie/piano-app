@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -97,6 +97,11 @@ class Notification(Base):
     recipient_contact_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     recipient_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     recipient_phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    recipient_device_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("mobile_push_devices.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
     body_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     payload_snapshot: Mapped[dict[str, object]] = mapped_column(
@@ -111,6 +116,8 @@ class Notification(Base):
     provider_message_id: Mapped[str | None] = mapped_column(String(180), nullable=True)
     provider_status: Mapped[str | None] = mapped_column(String(80), nullable=True)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     skipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -120,6 +127,41 @@ class Notification(Base):
         ForeignKey("job_runs.id", ondelete="SET NULL"),
         nullable=True,
     )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+
+
+class MobilePushDevice(Base):
+    __tablename__ = "mobile_push_devices"
+    __table_args__ = (
+        UniqueConstraint("app_target", "installation_id", name="uq_mobile_push_devices_target_installation"),
+        UniqueConstraint("app_target", "push_token", name="uq_mobile_push_devices_target_token"),
+        Index("ix_mobile_push_devices_user_enabled", "user_id", "is_enabled"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    app_target: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'CLIENT'"))
+    platform: Mapped[str] = mapped_column(String(20), nullable=False)
+    installation_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    push_token: Mapped[str] = mapped_column(String(512), nullable=False)
+    permission_status: Mapped[str] = mapped_column(String(30), nullable=False, server_default=text("'GRANTED'"))
+    locale: Mapped[str] = mapped_column(String(8), nullable=False, server_default=text("'fr'"))
+    app_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    device_label: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    last_registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
 

@@ -1616,7 +1616,7 @@ class AdminClientMessageOut(BaseModel):
     booking_id: UUID | None = None
     session_id: UUID | None = None
     session_title: str | None = None
-    channel: Literal["EMAIL", "SMS"] = "EMAIL"
+    channel: Literal["EMAIL", "SMS", "PUSH"] = "EMAIL"
     source: str | None = None
     recipient: str | None = None
     scheduled_for_utc: datetime

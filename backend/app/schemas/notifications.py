@@ -7,6 +7,61 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 
+class MobilePushDeviceRegisterRequest(BaseModel):
+    installation_id: str = Field(min_length=8, max_length=128)
+    push_token: str = Field(min_length=16, max_length=512)
+    platform: str = Field(pattern="^(IOS|ANDROID)$")
+    app_target: str = Field(default="CLIENT", pattern="^(CLIENT|PROF)$")
+    permission_status: str = Field(default="GRANTED", max_length=30)
+    locale: str = Field(default="fr", max_length=8)
+    app_version: str | None = Field(default=None, max_length=40)
+    device_label: str | None = Field(default=None, max_length=120)
+
+
+class MobilePushDeviceOut(BaseModel):
+    id: UUID
+    installation_id: str
+    platform: str
+    app_target: str
+    permission_status: str
+    locale: str
+    app_version: str | None
+    device_label: str | None
+    is_enabled: bool
+    last_seen_at: datetime
+
+
+class MobilePushDeviceDisableRequest(BaseModel):
+    installation_id: str = Field(min_length=8, max_length=128)
+    app_target: str = Field(default="CLIENT", pattern="^(CLIENT|PROF)$")
+
+
+class MobilePushEventRequest(BaseModel):
+    event: str = Field(pattern="^(RECEIVED|OPENED)$")
+
+
+class AdminMobilePushRequest(BaseModel):
+    title_fr: str = Field(min_length=1, max_length=120)
+    body_fr: str = Field(min_length=1, max_length=1000)
+    title_en: str | None = Field(default=None, max_length=120)
+    body_en: str | None = Field(default=None, max_length=1000)
+    deep_link: str | None = Field(default="/client", max_length=500)
+
+
+class AdminSessionMobilePushRequest(AdminMobilePushRequest):
+    included_student_ids: list[UUID] = Field(default_factory=list)
+
+
+class AdminMobilePushOut(BaseModel):
+    requested_user_count: int
+    device_count: int
+    sent_count: int
+    failed_count: int
+    skipped_count: int
+    details: list[str] = Field(default_factory=list)
+    job_run_id: UUID
+
+
 class NotificationJobRunOut(BaseModel):
     id: UUID
     job_name: str

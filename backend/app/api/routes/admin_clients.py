@@ -63,7 +63,7 @@ from app.models.subscription_engine import SubscriptionBillingCycle
 from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct, ProductCategory
 from app.models.quote import Prospect, Quote, QuoteLine
 from app.models.referral import ReferralReward
-from app.models.notification_engine import ContactDeliveryStatus
+from app.models.notification_engine import ContactDeliveryStatus, Notification
 from app.models.user import ClientKind, ClientStatus, StudentSite, User, UserRole
 from app.schemas.admin import (
     AdminClientBulkAction,
@@ -8415,6 +8415,23 @@ def list_admin_client_messages(
         if (row.provider_message_id or "").strip()
     }
 
+    push_rows = db.scalars(
+        select(Notification)
+        .where(
+            Notification.channel == "PUSH",
+            Notification.created_at >= cutoff,
+            or_(
+                Notification.recipient_contact_id.in_(scoped_user_ids),
+                and_(
+                    Notification.related_entity_type == "USER",
+                    Notification.related_entity_id == client.id,
+                ),
+            ),
+        )
+        .order_by(Notification.created_at.desc())
+        .limit(max(limit * 4, limit))
+    ).all()
+
     reminder_stmt = (
         select(EmailReminder, Booking, CourseSession, CourseType, Location)
         .join(Booking, Booking.id == EmailReminder.booking_id)
@@ -8466,6 +8483,38 @@ def list_admin_client_messages(
                     if isinstance(row.channel, CommunicationChannel)
                     else str(row.channel or "").strip().upper() == "EMAIL"
                 ),
+            )
+        )
+
+    for notification in push_rows:
+        payload = notification.payload_snapshot or {}
+        platform = str(payload.get("platform") or "mobile").strip().upper()
+        status_value = (
+            "OPENED"
+            if notification.opened_at is not None
+            else "DELIVERED"
+            if notification.received_at is not None
+            else str(notification.status or "UNKNOWN").strip().upper()
+        )
+        items.append(
+            AdminClientMessageOut(
+                id=notification.id,
+                booking_id=notification.booking_id,
+                session_id=notification.slot_id,
+                session_title=None,
+                channel="PUSH",
+                source=_normalize_optional(notification.source),
+                recipient=f"Application {platform}",
+                scheduled_for_utc=notification.scheduled_for,
+                sent_at=notification.sent_at or notification.failed_at,
+                status=status_value,
+                provider_message_id=notification.provider_message_id,
+                error_message=notification.failure_reason,
+                subject_preview=_normalize_optional(notification.subject) or "Notification mobile",
+                body_preview=_message_preview(notification.body_snapshot),
+                body_full=_normalize_optional(notification.body_snapshot),
+                body_format="TEXT",
+                can_forward=False,
             )
         )
 

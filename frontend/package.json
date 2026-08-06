@@ -28,6 +28,7 @@
     "mobile:verify:prof": "node scripts/verify-mobile-release.mjs prof"
   },
   "dependencies": {
+    "@capacitor/push-notifications": "8.0.0",
     "@tiptap/extension-font-family": "^2.11.5",
     "@tiptap/extension-image": "^2.11.5",
     "@tiptap/extension-link": "^2.11.5",

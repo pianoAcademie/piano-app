@@ -10,6 +10,54 @@
   --border: #e7d6bf;
 }
 
+.client-push-optin {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  border: 1px solid #e4bf78;
+  border-radius: 16px;
+  background: #fff8e9;
+  color: #2d2117;
+}
+
+.client-push-optin.warning {
+  border-color: #e4a19a;
+  background: #fff2f0;
+}
+
+.client-push-optin p {
+  margin: 3px 0 0;
+  color: #6c6258;
+  font-size: 14px;
+}
+
+.client-push-optin small {
+  display: block;
+  margin-top: 4px;
+  color: #9a3e35;
+}
+
+.client-push-optin button {
+  flex: 0 0 auto;
+  min-height: 42px;
+}
+
+@media (max-width: 720px) {
+  .client-push-optin {
+    align-items: flex-start;
+    margin: 0 10px 12px;
+    padding: 12px;
+  }
+
+  .client-push-optin p {
+    font-size: 12px;
+    line-height: 1.4;
+  }
+}
+
 /* Client offer catalog: mobile-first category browsing and consistent cards. */
 .client-catalog-browser {
   margin-top: 20px;

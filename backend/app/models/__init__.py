@@ -72,6 +72,7 @@ from app.models.notification_engine import (
     JobCursor,
     JobRun,
     JobRunLog,
+    MobilePushDevice,
     Notification,
     NotificationRule,
 )
@@ -216,6 +217,7 @@ __all__ = [
     "SchoolEventStatus",
     "SchoolEventVenue",
     "Location",
+    "MobilePushDevice",
     "LegalEntity",
     "PlanningConfig",
     "PlanningCourseType",

@@ -29,6 +29,11 @@ const targetConfig: Record<MobileTarget, Pick<CapacitorConfig, "appId" | "appNam
 const config: CapacitorConfig = {
   ...targetConfig[target],
   webDir: "public",
+  plugins: {
+    PushNotifications: {
+      presentationOptions: ["badge", "sound", "alert"],
+    },
+  },
   ios: {
     contentInset: "automatic",
     scrollEnabled: true,

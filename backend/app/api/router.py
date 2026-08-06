@@ -23,6 +23,7 @@ from app.api.routes import (
     events,
     internal_jobs,
     notification_webhooks,
+    mobile_push,
     impersonation,
     payments_public,
     plans,
@@ -62,5 +63,6 @@ api_router.include_router(quotes.router, tags=["quotes"])
 api_router.include_router(typeform_intakes.router, tags=["typeform-intakes"])
 api_router.include_router(internal_jobs.router, tags=["internal-jobs"])
 api_router.include_router(notification_webhooks.router, tags=["notification-webhooks"])
+api_router.include_router(mobile_push.router, tags=["mobile-push"])
 api_router.include_router(payments_public.router, tags=["public-payments"])
 api_router.include_router(impersonation.router, tags=["impersonation"])

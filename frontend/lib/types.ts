@@ -453,7 +453,7 @@ export type AdminClientMessageOut = {
   booking_id: string | null;
   session_id: string | null;
   session_title: string | null;
-  channel: "EMAIL" | "SMS";
+  channel: "EMAIL" | "SMS" | "PUSH";
   source: string | null;
   recipient: string | null;
   scheduled_for_utc: string;
