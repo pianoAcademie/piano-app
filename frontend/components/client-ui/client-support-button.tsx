@@ -1,5 +1,7 @@
 "use client";
 
+import ClientNavigationIcon from "./navigation-icon";
+
 type ClientSupportButtonProps = {
   label: string;
   className?: string;
@@ -18,7 +20,8 @@ export default function ClientSupportButton({ label, className = "", compact = f
 
   return (
     <button type="button" className={className} onClick={openSupport} aria-label={label}>
-      {compact ? "💬" : `💬 ${label}`}
+      <ClientNavigationIcon name="chat" />
+      {compact ? null : <span>{label}</span>}
     </button>
   );
 }

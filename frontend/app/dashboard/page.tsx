@@ -59,6 +59,7 @@ import ListRow from "../../components/client-ui/list-row";
 import MobileHeader from "../../components/client-ui/mobile-header";
 import MobileTabs from "../../components/client-ui/mobile-tabs";
 import MobilePushRegistration from "../../components/client-ui/mobile-push-registration";
+import ClientNavigationIcon, { type ClientNavigationIconName } from "../../components/client-ui/navigation-icon";
 import ClientSupportButton from "../../components/client-ui/client-support-button";
 import ZendeskLoader from "../../components/client-ui/zendesk-loader";
 import CopyIdButton from "../../components/client-ui/copy-id-button";
@@ -467,11 +468,11 @@ function messageChannelLabel(channel: string, language: UiLanguage): string {
   return uiText(language, "client.message_channel_email");
 }
 
-function messageChannelIcon(channel: string): string {
+function messageChannelIcon(channel: string): ClientNavigationIconName {
   const normalized = channel.trim().toUpperCase();
-  if (normalized === "PUSH") return "🔔";
-  if (normalized === "SMS") return "💬";
-  return "✉️";
+  if (normalized === "PUSH") return "bell";
+  if (normalized === "SMS") return "chat";
+  return "mail";
 }
 
 function financeStatusLabel(value: string, language: UiLanguage = "fr"): string {
@@ -2891,23 +2892,23 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     news: uiText(language, "client.news"),
     account: uiText(language, "client.account"),
   };
-  const tabLinks: Array<{ id: DashboardTab; label: string; icon: string }> = [
-    { id: "home", label: tabLabels.home, icon: "🏠" },
-    { id: "planning", label: tabLabels.planning, icon: "📅" },
-    { id: "courses", label: tabLabels.courses, icon: "📚" },
-    { id: "offers", label: tabLabels.offers, icon: "🧾" },
-    { id: "finance", label: tabLabels.finance, icon: "💳" },
-    { id: "messages", label: tabLabels.messages, icon: "✉️" },
-    { id: "news", label: tabLabels.news, icon: "📰" },
-    { id: "account", label: tabLabels.account, icon: "👤" },
+  const tabLinks: Array<{ id: DashboardTab; label: string; icon: ClientNavigationIconName }> = [
+    { id: "home", label: tabLabels.home, icon: "home" },
+    { id: "planning", label: tabLabels.planning, icon: "calendar" },
+    { id: "courses", label: tabLabels.courses, icon: "book" },
+    { id: "offers", label: tabLabels.offers, icon: "receipt" },
+    { id: "finance", label: tabLabels.finance, icon: "card" },
+    { id: "messages", label: tabLabels.messages, icon: "mail" },
+    { id: "news", label: tabLabels.news, icon: "news" },
+    { id: "account", label: tabLabels.account, icon: "user" },
   ];
   const mobileTabLinks = [
-    { id: "home", label: tabLabels.home, icon: "🏠", href: withUpdatedQuery(rawParams, { tab: "home" }) },
-    { id: "planning", label: tabLabels.planning, icon: "📅", href: withUpdatedQuery(rawParams, { tab: "planning" }) },
-    { id: "offers", label: tabLabels.offers, icon: "🧾", href: withUpdatedQuery(rawParams, { tab: "offers" }) },
-    { id: "finance", label: tabLabels.finance, icon: "💳", href: withUpdatedQuery(rawParams, { tab: "finance" }) },
-    { id: "news", label: tabLabels.news, icon: "📰", href: withUpdatedQuery(rawParams, { tab: "news" }) },
-    { id: "account", label: tabLabels.account, icon: "👤", href: withUpdatedQuery(rawParams, { tab: "account" }) },
+    { id: "home", label: tabLabels.home, icon: <ClientNavigationIcon name="home" />, href: withUpdatedQuery(rawParams, { tab: "home" }) },
+    { id: "planning", label: tabLabels.planning, icon: <ClientNavigationIcon name="calendar" />, href: withUpdatedQuery(rawParams, { tab: "planning" }) },
+    { id: "offers", label: tabLabels.offers, icon: <ClientNavigationIcon name="receipt" />, href: withUpdatedQuery(rawParams, { tab: "offers" }) },
+    { id: "finance", label: tabLabels.finance, icon: <ClientNavigationIcon name="card" />, href: withUpdatedQuery(rawParams, { tab: "finance" }) },
+    { id: "news", label: tabLabels.news, icon: <ClientNavigationIcon name="news" />, href: withUpdatedQuery(rawParams, { tab: "news" }) },
+    { id: "account", label: tabLabels.account, icon: <ClientNavigationIcon name="user" />, href: withUpdatedQuery(rawParams, { tab: "account" }) },
   ];
   const activeMobileTabId = mobileTabLinks.some((item) => item.id === tab) ? tab : "home";
 
@@ -3017,17 +3018,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
             const href = withUpdatedQuery(rawParams, { tab: item.id });
             return (
               <Link key={item.id} className={`client-nav-link ${tab === item.id ? "active" : ""}`} href={href}>
-                <span aria-hidden="true">{item.icon}</span>
+                <span aria-hidden="true"><ClientNavigationIcon name={item.icon} /></span>
                 <span>{item.label}</span>
               </Link>
             );
           })}
           <Link className="client-nav-link" href="/events">
-            <span aria-hidden="true">🎟️</span>
+            <span aria-hidden="true"><ClientNavigationIcon name="ticket" /></span>
             <span>{language === "en" ? "Events" : "Événements"}</span>
           </Link>
           <a className="client-nav-link" href="tel:+33186476088">
-            <span aria-hidden="true">☎️</span>
+            <span aria-hidden="true"><ClientNavigationIcon name="phone" /></span>
             <span>01 86 47 60 88</span>
           </a>
         </nav>
@@ -3075,7 +3076,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 {language === "en" ? "Events" : "Événements"}
               </a>
               <a className="client-mobile-menu-link" href="tel:+33186476088">
-                ☎️ {uiText(language, "client.call_school")}
+                <ClientNavigationIcon name="phone" /> {uiText(language, "client.call_school")}
               </a>
               {isImpersonating ? (
                 <form action={endPortalImpersonationAction} data-read-only-preview-allow="true">
@@ -3189,7 +3190,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
               {latestNewsArticle && latestNewsHref ? (
                 <a className="client-home-latest-news" href={latestNewsHref} aria-label={`${t("client.news")} : ${latestNewsArticle.title}`}>
-                  <span aria-hidden="true">📰</span>
+                  <span aria-hidden="true"><ClientNavigationIcon name="news" /></span>
                   <strong>{latestNewsArticle.title}</strong>
                   <span aria-hidden="true">→</span>
                 </a>
@@ -3450,7 +3451,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
                   <div className="client-planning-hero">
                     <label className="client-planning-pill client-planning-pill-location">
-                      <span>📍 {t("client.planning")}</span>
+                      <span><ClientNavigationIcon name="location" /> {t("client.planning")}</span>
                       <AutoSubmitSelect
                         name="location_id"
                         defaultValue={selectedLocation}
@@ -3462,7 +3463,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     </label>
 
                     <label className="client-planning-pill client-planning-pill-date">
-                      <span>📅 Date</span>
+                      <span><ClientNavigationIcon name="calendar" /> Date</span>
                       <AutoSubmitInput
                         type="date"
                         name="agenda_date"
@@ -3897,7 +3898,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                       <small className="event-meta">⏱ {durationMinutes} min</small>
                                     </div>
                                     {session.professor ? <small className="event-meta event-meta-secondary">👨‍🏫 {sessionProfessorName(session)}</small> : null}
-                                    <small className="event-meta event-meta-secondary">📍 {session.location.name}</small>
+                                    <small className="event-meta event-meta-secondary"><ClientNavigationIcon name="location" /> {session.location.name}</small>
                                     {!(sessionState.alreadyReserved && bookingSummaryLabel) ? (
                                       <small className="event-meta event-meta-secondary">{sessionState.contextLine}</small>
                                     ) : null}
@@ -5798,7 +5799,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <article id={`news-${article.id}`} className={`client-news-card ${article.is_pinned ? "is-pinned" : ""}`} key={article.id}>
                         <header className="client-news-card-header">
                           <div>
-                            {article.is_pinned ? <span className="badge">📌 {t("client.news_pinned")}</span> : null}
+                            {article.is_pinned ? <span className="badge"><ClientNavigationIcon name="pin" /> {t("client.news_pinned")}</span> : null}
                             <h2>{article.title}</h2>
                             <time className="muted" dateTime={article.published_at}>{formatDate(article.published_at, language)}</time>
                           </div>
@@ -5819,7 +5820,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 <p className="muted">{t("client.contact_school_help")}</p>
                 <div className="client-contact-actions">
                   <ClientSupportButton label={t("client.contact_support")} className="client-support-primary" />
-                  <a className="client-support-phone" href="tel:+33186476088">☎️ {t("client.call_school")}</a>
+                  <a className="client-support-phone" href="tel:+33186476088"><ClientNavigationIcon name="phone" /> {t("client.call_school")}</a>
                 </div>
               </SectionCard>
             </section>
@@ -5929,7 +5930,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       className="client-inbox-card"
                     >
                       <span className="client-inbox-card-icon" aria-hidden="true">
-                        {messageChannelIcon(msg.channel)}
+                        <ClientNavigationIcon name={messageChannelIcon(msg.channel)} />
                       </span>
                       <span className="client-inbox-card-content">
                         <strong>{msg.subject_preview || t("client.message_without_subject")}</strong>

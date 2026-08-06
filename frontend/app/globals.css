@@ -9165,9 +9165,40 @@ button.danger:focus-visible {
 }
 
 .client-portal-main {
-  display: grid;
-  grid-template-rows: auto 1fr;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+}
+
+.client-navigation-icon {
+  display: block;
+  width: 1.15em;
+  height: 1.15em;
+  flex: 0 0 auto;
+}
+
+.client-nav-link > span:first-child {
+  width: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 20px;
+}
+
+.client-mobile-tab-icon .client-navigation-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.client-mobile-menu-link .client-navigation-icon,
+.client-planning-pill > span .client-navigation-icon,
+.client-support-phone .client-navigation-icon,
+.client-contact-actions button .client-navigation-icon,
+.client-news-card .badge .client-navigation-icon,
+.event-meta .client-navigation-icon {
+  display: inline-block;
+  vertical-align: -0.15em;
+  margin-right: 0.25em;
 }
 
 .client-topbar {
