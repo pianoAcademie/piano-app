@@ -21774,3 +21774,119 @@ button.danger:focus-visible {
     font-size: 20px;
   }
 }
+
+/* Client planning: compact tablet composition without changing the iPhone UI. */
+@media (min-width: 901px) and (max-width: 1200px) {
+  .client-topbar-planning {
+    display: none !important;
+  }
+
+  .client-content:has(.client-planning-shell) {
+    margin-top: 14px;
+  }
+
+  .client-planning-shell {
+    padding: 16px;
+    gap: 10px;
+  }
+
+  .client-planning-heading {
+    align-items: center;
+  }
+
+  .client-planning-heading p {
+    max-width: 680px;
+  }
+
+  .client-planning-heading .mode-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+
+  .client-planning-mode-switch {
+    gap: 8px;
+    margin-top: 6px;
+  }
+
+  .client-planning-mode-card {
+    min-height: 62px;
+    padding: 10px 14px;
+  }
+
+  .client-planning-hero {
+    grid-template-columns: minmax(0, 1.4fr) minmax(220px, 0.8fr) 48px;
+    align-items: stretch;
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .client-planning-toolbar-actions {
+    grid-column: auto;
+    width: 48px;
+    flex-wrap: nowrap;
+  }
+
+  .client-planning-toolbar-actions .client-planning-reset {
+    width: 48px;
+    min-width: 48px;
+    padding: 0;
+  }
+
+  .client-planning-advanced {
+    padding: 4px 8px;
+  }
+
+  .client-planning-advanced:not([open]) {
+    display: flex;
+    align-items: center;
+    min-height: 48px;
+  }
+
+  .client-week-toolbar {
+    margin-top: 8px;
+    padding: 12px 14px;
+  }
+
+  .client-week-toolbar-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .client-week-title-group {
+    min-width: 0;
+    justify-items: start;
+  }
+
+  .client-week-title-group .badge {
+    justify-self: start;
+    width: auto;
+    max-width: 100%;
+  }
+
+  .client-week-toolbar-actions {
+    flex: 0 0 auto;
+  }
+
+  .client-week-toolbar-actions .mode-link {
+    min-width: 112px;
+    white-space: nowrap;
+    justify-content: center;
+  }
+
+  .client-week-legend {
+    gap: 6px;
+  }
+
+  .client-week-legend-item {
+    padding: 6px 9px;
+  }
+
+  .client-agenda-grid.agenda-grid-month,
+  .client-agenda-grid.agenda-grid-week {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+}

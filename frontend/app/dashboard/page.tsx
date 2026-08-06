@@ -3096,7 +3096,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         />
         {!isReadOnlyPreview ? <MobilePushRegistration language={language} /> : null}
 
-        <header className="client-topbar">
+        <header className={`client-topbar client-topbar-${tab}`}>
           <div>
             <h1>{tabLabels[tab] ?? uiText(language, "client.default_title")}</h1>
             <p className="muted">
@@ -3424,7 +3424,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     <p className="muted">{t("client.weekly_schedule_help")}</p>
                   </div>
                   <a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers" })}>
-                    🛍️ {t("client.offers")}
+                    <ClientNavigationIcon name="receipt" /> {t("client.offers")}
                   </a>
                 </div>
 
