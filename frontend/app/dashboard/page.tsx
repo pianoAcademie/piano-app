@@ -4977,22 +4977,31 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   <div className="client-purchase-toolbar">
                     <div>
                       <h3>{t("client.offers_purchase_title")}</h3>
-                      <p className="muted">{t("client.offers_purchase_help")}</p>
+                      <p className="muted">
+                        {t(hasMultipleVisibleMembers ? "client.offers_purchase_help" : "client.offers_purchase_help_individual")}
+                      </p>
                     </div>
-                    <form method="get" className="row">
+                    <form
+                      method="get"
+                      className={`row ${hasMultipleVisibleMembers ? "client-purchase-form-family" : "client-purchase-form-single"}`}
+                    >
                       <input type="hidden" name="tab" value="offers" />
                       <input type="hidden" name="offer_category" value={selectedOfferCategory} />
-                      <label>
-                        {t("client.beneficiary")}
-                        <select name="purchase_user_id" defaultValue={selectedPurchaseOwner}>
-                          {members.map((member) => (
-                            <option key={member.id} value={member.id}>
-                              {member.display_name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
+                      {hasMultipleVisibleMembers ? (
+                        <label>
+                          {t("client.beneficiary")}
+                          <select name="purchase_user_id" defaultValue={selectedPurchaseOwner}>
+                            {members.map((member) => (
+                              <option key={member.id} value={member.id}>
+                                {member.display_name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : (
+                        <input type="hidden" name="purchase_user_id" value={selectedPurchaseOwner} />
+                      )}
+                      <label className="client-purchase-start-date">
                         {t("client.start_date_input")}
                         <input type="date" name="purchase_start_date" defaultValue={selectedPurchaseStartDate} />
                       </label>

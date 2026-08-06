@@ -367,6 +367,10 @@
     align-items: flex-end;
   }
 
+  .client-purchase-toolbar form.row.client-purchase-form-single {
+    grid-template-columns: minmax(180px, 1fr) auto;
+  }
+
   .client-offer-category-filter {
     flex-wrap: wrap;
     overflow-x: visible;
@@ -21252,6 +21256,11 @@ button.danger:focus-visible {
     font-weight: 700;
   }
 
+  .client-purchase-toolbar .client-purchase-start-date {
+    max-width: 100%;
+    overflow: hidden;
+  }
+
   .client-purchase-toolbar form.row select,
   .client-purchase-toolbar form.row input,
   .client-purchase-toolbar form.row button {
@@ -21260,6 +21269,15 @@ button.danger:focus-visible {
     min-height: 44px;
     padding: 9px 11px;
     font-size: 16px;
+  }
+
+  .client-purchase-toolbar .client-purchase-start-date input[type="date"] {
+    display: block;
+    inline-size: 100%;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    -webkit-appearance: none;
+    appearance: none;
   }
 
   .client-catalog-browser {
