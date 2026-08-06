@@ -63,7 +63,14 @@ function resolveUiLanguage(rawLanguage: string, acceptLanguage: string): UiLangu
 export default function LoginPage({ searchParams }: { searchParams: SearchParams }): JSX.Element {
   const language = resolveUiLanguage(readParam(searchParams, "lang"), headers().get("accept-language") ?? "");
   const okMessage = resolveAuthOkMessage(readParam(searchParams, "ok"), readParam(searchParams, "ok_code"), language);
-  const errorMessage = resolveAuthErrorMessage(readParam(searchParams, "error"), readParam(searchParams, "error_code"), language);
+  const errorCode = readParam(searchParams, "error_code");
+  // Reaching the sign-in screen already makes an expired session clear. Keep
+  // actionable authentication errors, but avoid showing a large warning for
+  // this routine redirect—especially in the mobile app.
+  const errorMessage =
+    errorCode === "session_expired"
+      ? null
+      : resolveAuthErrorMessage(readParam(searchParams, "error"), errorCode, language);
   const resetToken = readParam(searchParams, "reset_token");
   const emailHint = readParam(searchParams, "email");
   const purchaseContext = readParam(searchParams, "purchase_context");
