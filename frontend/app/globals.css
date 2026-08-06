@@ -14345,6 +14345,7 @@ button.danger:focus-visible {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
+  min-width: 0;
 }
 
 .client-section-card-header h2 {
@@ -14352,6 +14353,8 @@ button.danger:focus-visible {
   font-size: 16px;
   font-weight: 600;
   line-height: 22px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .client-section-card-action {
@@ -14359,6 +14362,7 @@ button.danger:focus-visible {
   align-items: center;
   gap: 8px;
   min-height: 32px;
+  flex: 0 0 auto;
 }
 
 .client-section-card-action .mode-link,
@@ -14435,6 +14439,7 @@ button.danger:focus-visible {
   display: grid;
   align-content: start;
   gap: 16px;
+  min-width: 0;
 }
 
 .client-urgent-pay-card {
@@ -14836,6 +14841,8 @@ button.danger:focus-visible {
   padding: 12px;
   display: grid;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .client-plan-card-head {
@@ -14843,6 +14850,7 @@ button.danger:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
 .client-plan-card-head h3 {
@@ -14853,6 +14861,8 @@ button.danger:focus-visible {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .client-plan-card-v2 .badge {
@@ -14863,6 +14873,7 @@ button.danger:focus-visible {
   font-size: 11px;
   line-height: 14px;
   border-radius: 999px;
+  flex: 0 0 auto;
 }
 
 .client-plan-card-v2 .muted {
@@ -15173,10 +15184,31 @@ button.danger:focus-visible {
   border: 1px dashed rgba(171, 126, 56, 0.28);
 }
 
-@media (max-width: 1024px) {
+@media (max-width: 1200px) {
   .client-home-layout {
     grid-template-columns: 1fr;
     gap: 16px;
+  }
+
+  .client-portal-sidebar .portal-brand-lockup {
+    display: grid;
+    grid-template-columns: 58px minmax(0, 1fr);
+    width: 100%;
+    gap: 10px;
+  }
+
+  .client-portal-sidebar .portal-brand-lockup-copy strong {
+    font-size: 18px;
+    line-height: 1.08;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .client-portal-sidebar .portal-brand-lockup-copy small,
+  .client-user-card strong,
+  .client-user-card small {
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   .client-kpi-grid {
