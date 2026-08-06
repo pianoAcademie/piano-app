@@ -1275,7 +1275,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const confirmPlanId = readParam(searchParams, "confirm_plan_id").trim();
   const editProfile = readParam(searchParams, "edit_profile") === "1";
   const changePassword = readParam(searchParams, "change_password") === "1";
-  const homeCalendarView = readParam(searchParams, "home_calendar_view") === "BY_MEMBER" ? "BY_MEMBER" : "FAMILY";
   const preFetchErrors: string[] = [];
   let paymentResultMessage = "";
   let paymentResultError = "";
@@ -1591,7 +1590,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         ? t("client.whole_family")
         : members[0]?.display_name ?? t("client.account_self")
       : bookingOwnerMember?.display_name ?? "-";
-  const normalizedHomeCalendarView = hasMultipleVisibleMembers ? homeCalendarView : "FAMILY";
   const filteredContentCourses = contentCourses.filter((course) =>
     contentMemberFilter === "ALL"
       ? true
@@ -1984,39 +1982,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const newsRows = [...(reminderRowsSource.length > 0 ? reminderRowsSource : messageRows)]
     .sort((a, b) => (b.sent_at || b.scheduled_for_utc).localeCompare(a.sent_at || a.scheduled_for_utc))
     .slice(0, 2);
-  const homeCalendarRows = [...upcomingBookings14].sort((a, b) => {
-    if (normalizedHomeCalendarView === "BY_MEMBER") {
-      const memberDiff = a.owner_display_name.localeCompare(b.owner_display_name, "fr");
-      if (memberDiff !== 0) {
-        return memberDiff;
-      }
-    }
-    return a.session.start_at_utc.localeCompare(b.session.start_at_utc);
-  });
-  const homeCalendarGroups =
-    normalizedHomeCalendarView === "BY_MEMBER"
-      ? Array.from(
-          homeCalendarRows.reduce((acc, row) => {
-            const existing = acc.get(row.owner_display_name) ?? [];
-            existing.push(row);
-            acc.set(row.owner_display_name, existing);
-            return acc;
-          }, new Map<string, typeof homeCalendarRows>()),
-        )
-      : [];
-  const firstHomeBooking = homeCalendarRows[0] ?? upcomingBookings[0] ?? null;
-  const homePlanningHref = withUpdatedQuery(rawParams, {
-    tab: "planning",
-    agenda_view: "week",
-    agenda_date: firstHomeBooking
-      ? dateKeyInTimezone(firstHomeBooking.session.start_at_utc, timezone)
-      : todayKeyInTimezone(timezone),
-    session_id: null,
-    session_member_id: null,
-    planning_mode: null,
-    planning_slot_filter: null,
-    booking_owner_id: FAMILY_BOOKING_OWNER,
-  });
   const planningReservationsHref = withUpdatedQuery(rawParams, {
     tab: "planning",
     planning_mode: null,
@@ -3072,13 +3037,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
           {tab === "home" ? (
             <>
-              <SectionCard
-                title={t("client.home")}
-                className="client-home-header-v2"
-                action={<Link className="mode-link" href={homePlanningHref}>{t("client.view_schedule")}</Link>}
-              >
-                <p className="muted">{t("client.hello", { name: me.first_name || displayName })}</p>
-                {linkedMembers.length > 0 ? (
+              {linkedMembers.length > 0 ? (
+                <SectionCard title={t("client.show_for")} className="client-home-member-filter">
                   <FilterChipsBar className="client-member-chips">
                     <a className={`badge ${selectedMemberFilter === "ALL" ? "active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "home", member_id: "ALL" })}>
                       {t("common.all")}
@@ -3093,8 +3053,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </a>
                     ))}
                   </FilterChipsBar>
-                ) : null}
-              </SectionCard>
+                </SectionCard>
+              ) : null}
 
               <section className="client-home-layout">
                 <div className="client-home-main">
@@ -3161,7 +3121,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     </UrgentPayCard>
                   ) : null}
 
-                  <SectionCard title={t("client.upcoming_14_days")} action={<Link className="mode-link" href={homePlanningHref}>{t("client.view_schedule")}</Link>}>
+                  <SectionCard title={t("client.upcoming_14_days")}>
                     {upcomingBookings14.length === 0 ? (
                       <p className="muted">{t("client.no_upcoming_14_days")}</p>
                     ) : (
@@ -3278,83 +3238,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   </SectionCard>
                 </aside>
               </section>
-
-              <SectionCard
-                title={hasMultipleVisibleMembers ? t("client.family_calendar") : t("client.calendar")}
-                action={
-                  hasMultipleVisibleMembers ? (
-                    <div className="row">
-                      <a className={`mode-link ${normalizedHomeCalendarView === "FAMILY" ? "active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "home", home_calendar_view: "FAMILY" })}>
-                        {t("client.family_view")}
-                      </a>
-                      <a className={`mode-link ${normalizedHomeCalendarView === "BY_MEMBER" ? "active" : ""}`} href={withUpdatedQuery(rawParams, { tab: "home", home_calendar_view: "BY_MEMBER" })}>
-                        {t("client.by_child")}
-                      </a>
-                    </div>
-                  ) : undefined
-                }
-              >
-                {homeCalendarRows.length === 0 ? (
-                  <p className="muted">{t("client.no_upcoming_14_days")}</p>
-                ) : normalizedHomeCalendarView === "BY_MEMBER" ? (
-                  <div className="client-home-calendar-groups">
-                    {homeCalendarGroups.map(([memberName, rows]) => (
-                      <article key={`home-calendar-group-${memberName}`} className="client-home-calendar-group">
-                        <h3>{memberName}</h3>
-                        <div className="client-home-calendar-list">
-                          {rows.slice(0, 3).map((booking) => (
-                            <UpcomingLessonRow
-                              key={`home-booking-group-${booking.id}`}
-                              timeLabel={formatTimeInTimezone(booking.session.start_at_utc, timezone, language)}
-                              title={booking.session.title}
-                              subtitle={`${formatDateInTimezone(booking.session.start_at_utc, timezone, language)} · ${statusLabel(booking.status, language)}`}
-                              action={
-                                <a
-                                  className="mode-link"
-                                  href={withUpdatedQuery(rawParams, {
-                                    tab: "planning",
-                                    agenda_view: "day",
-                                    agenda_date: dateKeyInTimezone(booking.session.start_at_utc, timezone),
-                                    session_id: booking.session.id,
-                                    booking_owner_id: booking.owner_client_id,
-                                  })}
-                                >
-                                  {t("common.view")}
-                                </a>
-                              }
-                            />
-                          ))}
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="client-home-calendar-list">
-                    {homeCalendarRows.slice(0, 6).map((booking) => (
-                      <UpcomingLessonRow
-                        key={`home-booking-${booking.id}`}
-                        timeLabel={formatTimeInTimezone(booking.session.start_at_utc, timezone, language)}
-                        title={booking.session.title}
-                        subtitle={`${formatDateInTimezone(booking.session.start_at_utc, timezone, language)} · ${booking.owner_display_name} · ${statusLabel(booking.status, language)}`}
-                        action={
-                          <a
-                            className="mode-link"
-                            href={withUpdatedQuery(rawParams, {
-                              tab: "planning",
-                              agenda_view: "day",
-                              agenda_date: dateKeyInTimezone(booking.session.start_at_utc, timezone),
-                              session_id: booking.session.id,
-                              booking_owner_id: booking.owner_client_id,
-                            })}
-                          >
-                            {t("common.view")}
-                          </a>
-                        }
-                      />
-                    ))}
-                  </div>
-                )}
-              </SectionCard>
 
               <SectionCard title={t("client.latest_reminders")} action={<a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "messages" })}>{t("common.view_all")}</a>}>
                 {newsRows.length === 0 ? (
