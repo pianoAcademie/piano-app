@@ -2054,6 +2054,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const newsRows = [...(reminderRowsSource.length > 0 ? reminderRowsSource : messageRows)]
     .sort((a, b) => (b.sent_at || b.scheduled_for_utc).localeCompare(a.sent_at || a.scheduled_for_utc))
     .slice(0, 2);
+  const latestNewsArticle = [...newsArticles]
+    .sort((a, b) => b.published_at.localeCompare(a.published_at))[0] ?? null;
+  const latestNewsHref = latestNewsArticle
+    ? `${withUpdatedQuery(rawParams, { tab: "news" })}#news-${latestNewsArticle.id}`
+    : null;
   const planningReservationsHref = withUpdatedQuery(rawParams, {
     tab: "planning",
     planning_mode: null,
@@ -3140,6 +3145,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     ))}
                   </FilterChipsBar>
                 </SectionCard>
+              ) : null}
+
+              {latestNewsArticle && latestNewsHref ? (
+                <a className="client-home-latest-news" href={latestNewsHref} aria-label={`${t("client.news")} : ${latestNewsArticle.title}`}>
+                  <span aria-hidden="true">📰</span>
+                  <strong>{latestNewsArticle.title}</strong>
+                  <span aria-hidden="true">→</span>
+                </a>
               ) : null}
 
               <section className="client-home-layout">
@@ -5690,7 +5703,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 ) : (
                   <div className="client-news-list">
                     {newsArticles.map((article) => (
-                      <article className={`client-news-card ${article.is_pinned ? "is-pinned" : ""}`} key={article.id}>
+                      <article id={`news-${article.id}`} className={`client-news-card ${article.is_pinned ? "is-pinned" : ""}`} key={article.id}>
                         <header className="client-news-card-header">
                           <div>
                             {article.is_pinned ? <span className="badge">📌 {t("client.news_pinned")}</span> : null}

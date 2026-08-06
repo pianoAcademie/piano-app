@@ -13952,6 +13952,31 @@ button.danger:focus-visible {
   gap: 16px;
 }
 
+.client-home-latest-news {
+  min-height: 52px;
+  border: 1px solid var(--client-gold-border);
+  border-radius: 16px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #fff9ec, #fff);
+  color: var(--client-text);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  box-shadow: 0 5px 18px rgba(15, 23, 42, 0.04);
+}
+
+.client-home-latest-news strong {
+  overflow-wrap: anywhere;
+}
+
+.client-home-latest-news:hover,
+.client-home-latest-news:focus-visible {
+  border-color: var(--client-gold);
+  background: #fff7df;
+}
+
 .client-news-list {
   display: grid;
   gap: 14px;
@@ -15037,6 +15062,12 @@ button.danger:focus-visible {
 
   .client-news-card {
     padding: 14px;
+  }
+
+  .client-home-latest-news {
+    min-height: 48px;
+    padding: 10px 12px;
+    border-radius: 14px;
   }
 
   .client-news-card h2 {
