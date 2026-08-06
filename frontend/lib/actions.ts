@@ -37,7 +37,7 @@ import {
   type QuoteTransformQuote,
   type QuoteTransformSession,
 } from "./quote-transformation";
-import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "./ui-i18n";
+import { localeForUiLanguage, normalizeUiLanguage, translateBackendMessage, type UiLanguage, uiText } from "./ui-i18n";
 import { withUiLanguage, withUiMessageCode } from "./ui-messages";
 import type {
   AdminActivityOut,
@@ -17589,46 +17589,73 @@ function clientNewsPayload(formData: FormData): Record<string, unknown> {
   };
 }
 
+const CLIENT_NEWS_ACTION_TEXT: Record<UiLanguage, Record<string, string>> = {
+  fr: {
+    created: "Actualité créée",
+    updated: "Actualité mise à jour",
+    deleted: "Actualité supprimée",
+    not_found: "Actualité introuvable",
+  },
+  en: {
+    created: "News item created",
+    updated: "News item updated",
+    deleted: "News item deleted",
+    not_found: "News item not found",
+  },
+};
+
+function clientNewsActionContext(formData: FormData): { language: UiLanguage; path: string; text: Record<string, string> } {
+  const language = normalizeUiLanguage(String(formData.get("ui_language") ?? "fr"));
+  return {
+    language,
+    path: withUiLanguage("/admin/client-news", language),
+    text: CLIENT_NEWS_ACTION_TEXT[language],
+  };
+}
+
 export async function createClientNewsAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) redirect("/login?error_code=session_expired");
+  const context = clientNewsActionContext(formData);
   const result = await backendRequest<Record<string, unknown>>(
     "/api/v1/admin/client-news",
     { method: "POST", body: JSON.stringify(clientNewsPayload(formData)) },
     token,
   );
-  if (!result.ok) redirect(appendQueryMessage("/admin/client-news", "error", result.message));
+  if (!result.ok) redirect(appendQueryMessage(context.path, "error", translateBackendMessage(context.language, result.message)));
   revalidatePath("/admin/client-news");
   revalidatePath("/client");
-  redirect(appendQueryMessage("/admin/client-news", "ok", "Actualité créée"));
+  redirect(appendQueryMessage(context.path, "ok", context.text.created));
 }
 
 export async function updateClientNewsAction(formData: FormData): Promise<void> {
   const token = currentToken();
+  const context = clientNewsActionContext(formData);
   const articleId = String(formData.get("article_id") ?? "").trim();
-  if (!token || !articleId) redirect(appendQueryMessage("/admin/client-news", "error", "Actualité introuvable"));
+  if (!token || !articleId) redirect(appendQueryMessage(context.path, "error", context.text.not_found));
   const result = await backendRequest<Record<string, unknown>>(
     `/api/v1/admin/client-news/${encodeURIComponent(articleId)}`,
     { method: "PUT", body: JSON.stringify(clientNewsPayload(formData)) },
     token,
   );
-  if (!result.ok) redirect(appendQueryMessage("/admin/client-news", "error", result.message));
+  if (!result.ok) redirect(appendQueryMessage(context.path, "error", translateBackendMessage(context.language, result.message)));
   revalidatePath("/admin/client-news");
   revalidatePath("/client");
-  redirect(appendQueryMessage("/admin/client-news", "ok", "Actualité mise à jour"));
+  redirect(appendQueryMessage(context.path, "ok", context.text.updated));
 }
 
 export async function deleteClientNewsAction(formData: FormData): Promise<void> {
   const token = currentToken();
+  const context = clientNewsActionContext(formData);
   const articleId = String(formData.get("article_id") ?? "").trim();
-  if (!token || !articleId) redirect(appendQueryMessage("/admin/client-news", "error", "Actualité introuvable"));
+  if (!token || !articleId) redirect(appendQueryMessage(context.path, "error", context.text.not_found));
   const result = await backendRequest<Record<string, never>>(
     `/api/v1/admin/client-news/${encodeURIComponent(articleId)}`,
     { method: "DELETE" },
     token,
   );
-  if (!result.ok) redirect(appendQueryMessage("/admin/client-news", "error", result.message));
+  if (!result.ok) redirect(appendQueryMessage(context.path, "error", translateBackendMessage(context.language, result.message)));
   revalidatePath("/admin/client-news");
   revalidatePath("/client");
-  redirect(appendQueryMessage("/admin/client-news", "ok", "Actualité supprimée"));
+  redirect(appendQueryMessage(context.path, "ok", context.text.deleted));
 }

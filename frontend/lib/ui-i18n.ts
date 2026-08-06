@@ -57,6 +57,14 @@ const AUTH_OK_MESSAGE_KEYS: Record<string, string> = {
 };
 
 const BACKEND_MESSAGE_TEXT: Record<string, Record<UiLanguage, string>> = {
+  "Actualité introuvable": {
+    fr: "Actualité introuvable",
+    en: "News item not found",
+  },
+  "La date d'expiration doit être postérieure à la publication": {
+    fr: "La date d'expiration doit être postérieure à la publication",
+    en: "The expiration date must be later than the publication date",
+  },
   "Le lien d'abonnement est reserve a la carte ou au prelevement SEPA": {
     fr: "Le lien d'abonnement est reserve a la carte ou au prelevement SEPA",
     en: "Subscription links are restricted to card or SEPA Direct Debit payments",

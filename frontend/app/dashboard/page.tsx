@@ -58,6 +58,7 @@ import ListRow from "../../components/client-ui/list-row";
 import MobileHeader from "../../components/client-ui/mobile-header";
 import MobileTabs from "../../components/client-ui/mobile-tabs";
 import ClientSupportButton from "../../components/client-ui/client-support-button";
+import ZendeskLoader from "../../components/client-ui/zendesk-loader";
 import CopyIdButton from "../../components/client-ui/copy-id-button";
 import StatChip from "../../components/client-ui/stat-chip";
 import Toast from "../../components/client-ui/toast";
@@ -2941,6 +2942,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
 
   return (
     <main className="client-portal-shell">
+      <ZendeskLoader language={language} />
       <aside className="client-portal-sidebar">
         <div className="client-brand">
           <PortalBrandLockup
