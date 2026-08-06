@@ -2632,8 +2632,13 @@ def get_client_family_overview(
                 direct_payment_recovery_url=sub.direct_payment_recovery_url,
                 suspension_starts_at=sub.suspension_starts_at,
                 suspension_ends_at=sub.suspension_ends_at,
+                suspension_start_date=sub.suspension_start_date,
+                suspension_end_date=sub.suspension_end_date,
                 cancellation_requested_at=sub.cancellation_requested_at,
                 cancellation_effective_at=sub.cancellation_effective_at,
+                cancellation_request_status=sub.cancellation_request_status,
+                cancellation_request_note=sub.cancellation_request_note,
+                cancellation_request_reviewed_at=sub.cancellation_request_reviewed_at,
                 plan=_family_plan_mini_out(
                     db,
                     plan=plan,

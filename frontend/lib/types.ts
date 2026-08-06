@@ -187,8 +187,13 @@ export type SubscriptionOut = {
   direct_payment_recovery_url: string | null;
   suspension_starts_at: string | null;
   suspension_ends_at: string | null;
+  suspension_start_date: string | null;
+  suspension_end_date: string | null;
   cancellation_requested_at: string | null;
   cancellation_effective_at: string | null;
+  cancellation_request_status: string | null;
+  cancellation_request_note: string | null;
+  cancellation_request_reviewed_at: string | null;
   entitlement_course_type_ids: string[];
   entitlement_course_type_names: string[];
   offer_quote_id?: string | null;
@@ -351,10 +356,15 @@ export type AdminClientSubscriptionOut = {
   last_payment_status: string | null;
   suspension_starts_at: string | null;
   suspension_ends_at: string | null;
+  suspension_start_date: string | null;
+  suspension_end_date: string | null;
   suspension_duration_value: number | null;
   suspension_duration_unit: string | null;
   cancellation_requested_at: string | null;
   cancellation_effective_at: string | null;
+  cancellation_request_status: string | null;
+  cancellation_request_note: string | null;
+  cancellation_request_reviewed_at: string | null;
   plan: {
     id: string;
     code: string;
@@ -796,8 +806,13 @@ export type ClientFamilyOverviewOut = {
     direct_payment_recovery_url: string | null;
     suspension_starts_at: string | null;
     suspension_ends_at: string | null;
+    suspension_start_date: string | null;
+    suspension_end_date: string | null;
     cancellation_requested_at: string | null;
     cancellation_effective_at: string | null;
+    cancellation_request_status: string | null;
+    cancellation_request_note: string | null;
+    cancellation_request_reviewed_at: string | null;
     entitlement_course_type_ids: string[];
     entitlement_course_type_names: string[];
     offer_quote_id: string | null;

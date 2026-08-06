@@ -26,6 +26,7 @@ import {
   updateAdminClientManualTransactionStatusAction,
   deleteAdminClientManualTransactionAction,
   dismissAdminClientBillingAdjustmentAction,
+  decideAdminClientSubscriptionCancellationAction,
   generateAdminClientBookingFinalInvoiceAction,
   refundAdminClientPaymentAction,
   refundAdminClientPaymentReceiptAction,
@@ -1485,6 +1486,9 @@ function subscriptionStatusPill(sub: AdminClientSubscriptionOut): { label: strin
   if (normalized === "CANCELLED" || normalized === "EXPIRED" || normalized === "ARCHIVED" || normalized === "INACTIVE") {
     return { label: "RESILIE", toneClass: "status-off" };
   }
+  if (sub.cancellation_request_status === "PENDING") {
+    return { label: "A VALIDER", toneClass: "status-warn" };
+  }
   if (sub.cancellation_requested_at) {
     const effectiveAt = sub.cancellation_effective_at ? Date.parse(sub.cancellation_effective_at) : Number.NaN;
     if (Number.isFinite(effectiveAt) && effectiveAt <= Date.now()) {
@@ -1642,6 +1646,9 @@ function localizedSubscriptionStatusPill(sub: AdminClientSubscriptionOut, langua
   const normalized = (sub.status ?? "").toUpperCase();
   if (normalized === "CANCELLED" || normalized === "EXPIRED" || normalized === "ARCHIVED" || normalized === "INACTIVE") {
     return { label: uiText(language, "admin.client_detail.subscription_cancelled"), toneClass: "status-off" };
+  }
+  if (sub.cancellation_request_status === "PENDING") {
+    return { label: uiText(language, "admin.client_detail.subscription_cancellation_to_review"), toneClass: "status-warn" };
   }
   if (sub.cancellation_requested_at) {
     const effectiveAt = sub.cancellation_effective_at ? Date.parse(sub.cancellation_effective_at) : Number.NaN;
@@ -3215,7 +3222,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       <div className="stack-sm">
                         <small className="muted">
                           {sub.plan.kind === "SUBSCRIPTION"
-                            ? pendingCancellation
+                            ? sub.cancellation_request_status === "PENDING"
+                              ? t("admin.client_detail.cancellation_request_pending")
+                              : pendingCancellation
                               ? t("admin.client_detail.subscription_ending_period")
                               : t("admin.client_detail.subscription_current")
                             : sub.plan.kind === "PACK"
@@ -3247,20 +3256,24 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                 >
                                   ⏸
                                 </Link>
-                                <Link
-                                  className="client-action-icon danger"
-                                  href={ficheHref(client.id, { subscription_modal: "cancel", subscription_id: sub.id })}
-                                  title={t("admin.client_detail.cancel_end_of_period")}
-                                >
-                                  ✕
-                                </Link>
-                                <Link
-                                  className="client-action-icon danger"
-                                  href={ficheHref(client.id, { subscription_modal: "cancel_now", subscription_id: sub.id })}
-                                  title={t("admin.client_detail.cancel_now")}
-                                >
-                                  ⚠
-                                </Link>
+                                {sub.cancellation_request_status !== "PENDING" ? (
+                                  <>
+                                    <Link
+                                      className="client-action-icon danger"
+                                      href={ficheHref(client.id, { subscription_modal: "cancel", subscription_id: sub.id })}
+                                      title={t("admin.client_detail.cancel_end_of_period")}
+                                    >
+                                      ✕
+                                    </Link>
+                                    <Link
+                                      className="client-action-icon danger"
+                                      href={ficheHref(client.id, { subscription_modal: "cancel_now", subscription_id: sub.id })}
+                                      title={t("admin.client_detail.cancel_now")}
+                                    >
+                                      ⚠
+                                    </Link>
+                                  </>
+                                ) : null}
                               </>
                             ) : null}
                           </>
@@ -3373,10 +3386,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                       </article>
                     </section>
 
-                    {sub.suspension_starts_at && sub.suspension_ends_at ? (
+                    {sub.suspension_starts_at && sub.suspension_ends_at && Date.parse(sub.suspension_ends_at) > Date.now() ? (
                       <p className="muted top-gap-sm">
-                        {t("admin.client_detail.suspension_active")} {t("admin.client_detail.start").toLowerCase()} {formatDateUi(sub.suspension_starts_at)} {t("admin.client_detail.end").toLowerCase()} {formatDateUi(sub.suspension_ends_at)} (
-                        {sub.suspension_duration_value ?? 0} {sub.suspension_duration_unit === "MONTH" ? t("admin.client_detail.months") : t("admin.client_detail.days")}).
+                        {t("admin.client_detail.suspension_active")} {t("admin.client_detail.start").toLowerCase()} {formatDateUi(sub.suspension_start_date || sub.suspension_starts_at)} {t("admin.client_detail.end").toLowerCase()} {formatDateUi(sub.suspension_end_date || sub.suspension_ends_at)} {sub.suspension_end_date ? t("admin.client_detail.inclusive_suffix") : ""}.
                       </p>
                     ) : null}
                     {sub.cancellation_requested_at ? (
@@ -3384,6 +3396,28 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         {t("admin.client_detail.cancellation_requested")} {formatDateUi(sub.cancellation_requested_at)} | {t("admin.client_detail.effective_end")}:{" "}
                         {sub.cancellation_effective_at ? formatDateUi(sub.cancellation_effective_at) : t("admin.client_detail.to_define")}.
                       </p>
+                    ) : null}
+                    {sub.cancellation_request_status === "PENDING" ? (
+                      <section className="flash-warn top-gap-sm">
+                        <strong>{t("admin.client_detail.cancellation_request_pending")}</strong>
+                        {sub.cancellation_request_note ? (
+                          <p>{t("admin.client_detail.cancellation_request_note")}: {sub.cancellation_request_note}</p>
+                        ) : null}
+                        <div className="row top-gap-sm">
+                          <form action={decideAdminClientSubscriptionCancellationAction}>
+                            <input type="hidden" name="client_id" value={client.id} />
+                            <input type="hidden" name="subscription_id" value={sub.id} />
+                            <input type="hidden" name="decision" value="APPROVE" />
+                            <button type="submit">{t("admin.client_detail.approve_cancellation_request")}</button>
+                          </form>
+                          <form action={decideAdminClientSubscriptionCancellationAction}>
+                            <input type="hidden" name="client_id" value={client.id} />
+                            <input type="hidden" name="subscription_id" value={sub.id} />
+                            <input type="hidden" name="decision" value="REJECT" />
+                            <button type="submit" className="ghost">{t("admin.client_detail.reject_cancellation_request")}</button>
+                          </form>
+                        </div>
+                      </section>
                     ) : null}
 
                     {sub.plan.kind === "SUBSCRIPTION" ? (
@@ -3993,27 +4027,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <input
                   type="date"
                   name="suspension_starts_at"
-                  defaultValue={formatDateForInput(selectedSubscriptionForModal.suspension_starts_at, todayInputValue)}
+                  min={todayInputValue}
+                  defaultValue={selectedSubscriptionForModal.suspension_start_date || formatDateForInput(selectedSubscriptionForModal.suspension_starts_at, todayInputValue)}
                   required
                 />
               </label>
               <label>
-                {t("admin.client_detail.suspension_duration")}
+                {t("admin.client_detail.suspension_end_inclusive")}
                 <input
-                  type="number"
-                  name="duration_value"
-                  min={1}
-                  max={30}
-                  defaultValue={selectedSubscriptionForModal.suspension_duration_value ?? 7}
+                  type="date"
+                  name="suspension_ends_at"
+                  min={todayInputValue}
+                  defaultValue={selectedSubscriptionForModal.suspension_end_date || selectedSubscriptionForModal.suspension_start_date || formatDateForInput(selectedSubscriptionForModal.suspension_starts_at, todayInputValue)}
                   required
                 />
-              </label>
-              <label>
-                {t("admin.client_detail.suspension_unit")}
-                <select name="duration_unit" defaultValue={selectedSubscriptionForModal.suspension_duration_unit ?? "DAY"}>
-                  <option value="DAY">{t("admin.client_detail.suspension_unit_days")}</option>
-                  <option value="MONTH">{t("admin.client_detail.suspension_unit_months")}</option>
-                </select>
               </label>
               <div className="row modal-actions-end">
                 <Link className="reset-link" href={tabHref(client.id, "fiche")}>

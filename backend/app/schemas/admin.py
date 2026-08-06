@@ -1172,10 +1172,15 @@ class AdminClientSubscriptionOut(BaseModel):
     last_payment_status: str | None = None
     suspension_starts_at: datetime | None = None
     suspension_ends_at: datetime | None = None
+    suspension_start_date: date | None = None
+    suspension_end_date: date | None = None
     suspension_duration_value: int | None = None
     suspension_duration_unit: str | None = None
     cancellation_requested_at: datetime | None = None
     cancellation_effective_at: datetime | None = None
+    cancellation_request_status: str | None = None
+    cancellation_request_note: str | None = None
+    cancellation_request_reviewed_at: datetime | None = None
     plan: AdminClientSubscriptionMiniOut
     estimated_price_excl_vat: Decimal | None
     estimated_vat_rate: Decimal | None
@@ -1185,9 +1190,12 @@ class AdminClientSubscriptionOut(BaseModel):
 
 
 class AdminClientSubscriptionSuspendRequest(BaseModel):
-    suspension_starts_at: datetime
-    duration_unit: str = Field(pattern="^(DAY|MONTH)$")
-    duration_value: int = Field(ge=1, le=30)
+    suspension_start_date: date
+    suspension_end_date: date
+
+
+class AdminClientSubscriptionCancellationDecisionRequest(BaseModel):
+    decision: str = Field(pattern="^(APPROVE|REJECT)$")
 
 
 class AdminClientSubscriptionCancelRequest(BaseModel):

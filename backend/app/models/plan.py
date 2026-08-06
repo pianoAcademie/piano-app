@@ -304,10 +304,15 @@ class ClientPlanSubscription(Base):
     )
     suspension_starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     suspension_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    suspension_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    suspension_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     suspension_duration_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
     suspension_duration_unit: Mapped[str | None] = mapped_column(String(10), nullable=True)
     cancellation_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cancellation_effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancellation_request_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    cancellation_request_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cancellation_request_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

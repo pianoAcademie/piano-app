@@ -986,6 +986,18 @@ def _charge_cycle(
     if subscription.status in {SubscriptionStatus.CANCELLED, SubscriptionStatus.TERMINATED, SubscriptionStatus.EXPIRED}:
         cycle.status = CYCLE_STATUS_CANCELLED
         return "skipped", "subscription_not_active"
+    if (
+        subscription.cancellation_effective_at is not None
+        and cycle.billing_date >= subscription.cancellation_effective_at
+    ):
+        cycle.status = CYCLE_STATUS_CANCELLED
+        return "skipped", "subscription_cancellation_effective"
+    if (
+        subscription.suspension_starts_at is not None
+        and subscription.suspension_ends_at is not None
+        and subscription.suspension_starts_at <= now < subscription.suspension_ends_at
+    ):
+        return "skipped", "subscription_paused"
 
     attempt_number = int(cycle.attempt_count or 0) + 1
     idempotency_key = f"subscription_charge:{cycle.id}:{attempt_number}"

@@ -156,8 +156,13 @@ class FamilySubscriptionOut(BaseModel):
     direct_payment_recovery_url: str | None = None
     suspension_starts_at: datetime | None = None
     suspension_ends_at: datetime | None = None
+    suspension_start_date: date | None = None
+    suspension_end_date: date | None = None
     cancellation_requested_at: datetime | None = None
     cancellation_effective_at: datetime | None = None
+    cancellation_request_status: str | None = None
+    cancellation_request_note: str | None = None
+    cancellation_request_reviewed_at: datetime | None = None
     plan: FamilyPlanMiniOut
     entitlement_course_type_ids: list[UUID] = Field(default_factory=list)
     entitlement_course_type_names: list[str] = Field(default_factory=list)

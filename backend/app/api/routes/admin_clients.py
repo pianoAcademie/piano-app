@@ -59,6 +59,7 @@ from app.models.plan import (
     PlanPriceTaxMode,
     SubscriptionStatus,
 )
+from app.models.subscription_engine import SubscriptionBillingCycle
 from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduct, ProductCategory
 from app.models.quote import Prospect, Quote, QuoteLine
 from app.models.referral import ReferralReward
@@ -102,6 +103,7 @@ from app.schemas.admin import (
     AdminClientSubscriptionOut,
     AdminClientSubscriptionSuspendRequest,
     AdminClientSubscriptionCancelRequest,
+    AdminClientSubscriptionCancellationDecisionRequest,
     AdminClientSubscriptionExpiryUpdateRequest,
     AdminClientSubscriptionBillingSetupRequest,
     AdminClientSubscriptionPaymentEmailRequest,
@@ -235,9 +237,14 @@ from app.services.security import create_access_token, hash_password
 from app.services.session_audience import resolve_session_booking_scopes, scopes_allow_planless_booking
 from app.services.subscriptions import (
     add_months_utc,
-    apply_suspension,
+    apply_suspension_dates,
     default_next_payment_at,
     reconcile_subscription_status,
+    shift_calendar_days_utc,
+)
+from app.services.subscription_lifecycle_notifications import (
+    send_cancellation_decision_email,
+    send_suspension_confirmation_email,
 )
 
 router = APIRouter(prefix="/admin/clients")
@@ -7277,10 +7284,15 @@ def _admin_subscription_out(
         last_payment_status=sub.last_payment_status,
         suspension_starts_at=sub.suspension_starts_at,
         suspension_ends_at=sub.suspension_ends_at,
+        suspension_start_date=sub.suspension_start_date,
+        suspension_end_date=sub.suspension_end_date,
         suspension_duration_value=sub.suspension_duration_value,
         suspension_duration_unit=sub.suspension_duration_unit,
         cancellation_requested_at=sub.cancellation_requested_at,
         cancellation_effective_at=sub.cancellation_effective_at,
+        cancellation_request_status=sub.cancellation_request_status,
+        cancellation_request_note=sub.cancellation_request_note,
+        cancellation_request_reviewed_at=sub.cancellation_request_reviewed_at,
         plan=AdminClientSubscriptionMiniOut(
             id=plan.id,
             code=plan.code,
@@ -7388,31 +7400,51 @@ def suspend_admin_client_subscription(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Only SUBSCRIPTION can be suspended")
     if sub.status == SubscriptionStatus.CANCELLED:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Subscription is already cancelled")
-
-    duration_unit = payload.duration_unit.strip().upper()
-    duration_value = int(payload.duration_value)
-    if duration_unit == "DAY" and duration_value > 30:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Suspension days must be between 1 and 30")
-    if duration_unit == "MONTH" and duration_value > 12:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Suspension months must be between 1 and 12")
-    if duration_unit not in {"DAY", "MONTH"}:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported suspension unit")
-
-    suspension_start = payload.suspension_starts_at
-    if suspension_start.tzinfo is None:
-        suspension_start = suspension_start.replace(tzinfo=timezone.utc)
-    else:
-        suspension_start = suspension_start.astimezone(timezone.utc)
-
-    normalized_unit = "MONTH" if duration_unit == "MONTH" else "DAY"
-    suspension_end = apply_suspension(
-        sub,
-        start_at=suspension_start,
-        unit=normalized_unit,
-        amount=duration_value,
-    )
-
     now = _utcnow()
+    if sub.cancellation_effective_at is not None or sub.cancellation_request_status in {"PENDING", "APPROVED"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Une pause ne peut pas etre programmee pendant une procedure de resiliation",
+        )
+    if sub.suspension_ends_at is not None and sub.suspension_ends_at > now:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Une pause est deja programmee pour cet abonnement",
+        )
+
+    if payload.suspension_end_date < payload.suspension_start_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La date de fin de pause doit etre egale ou posterieure a la date de debut",
+        )
+    if payload.suspension_start_date < datetime.now(ZoneInfo("Europe/Paris")).date():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La date de debut de pause ne peut pas etre dans le passe",
+        )
+    try:
+        suspension_start, suspension_end = apply_suspension_dates(
+            sub,
+            start_date=payload.suspension_start_date,
+            end_date=payload.suspension_end_date,
+            timezone_name="Europe/Paris",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    paused_days = (payload.suspension_end_date - payload.suspension_start_date).days + 1
+    pending_cycles = db.scalars(
+        select(SubscriptionBillingCycle).where(
+            SubscriptionBillingCycle.subscription_id == sub.id,
+            SubscriptionBillingCycle.status == "pending",
+            SubscriptionBillingCycle.billing_date >= suspension_start,
+        )
+    ).all()
+    for cycle in pending_cycles:
+        cycle.billing_date = shift_calendar_days_utc(cycle.billing_date, days=paused_days)
+        cycle.period_end = shift_calendar_days_utc(cycle.period_end, days=paused_days)
+        db.add(cycle)
+
     if suspension_start <= now < suspension_end:
         sub.status = SubscriptionStatus.PAUSED
     elif sub.status == SubscriptionStatus.PAUSED and now >= suspension_end:
@@ -7425,13 +7457,110 @@ def suspend_admin_client_subscription(
         author_user_id=actor.id,
         entry_type="AUTO",
         message=(
-            f"Suspension abonnement '{plan.name}' du {suspension_start.date().isoformat()} "
-            f"au {suspension_end.date().isoformat()} ({duration_value} {'mois' if normalized_unit == 'MONTH' else 'jours'})."
+            f"Suspension abonnement '{plan.name}' du {payload.suspension_start_date.isoformat()} "
+            f"au {payload.suspension_end_date.isoformat()} inclus ({paused_days} jours)."
         ),
+    )
+    send_suspension_confirmation_email(
+        db,
+        client=client,
+        plan=plan,
+        start_date=payload.suspension_start_date,
+        end_date=payload.suspension_end_date,
     )
     db.commit()
     db.refresh(sub)
 
+    return _admin_subscription_out(db, client=client, sub=sub, plan=plan)
+
+
+@router.post(
+    "/{client_id}/subscriptions/{subscription_id}/cancellation-request/decision",
+    response_model=AdminClientSubscriptionOut,
+)
+def decide_admin_client_subscription_cancellation_request(
+    client_id: UUID,
+    subscription_id: UUID,
+    payload: AdminClientSubscriptionCancellationDecisionRequest,
+    db: Session = Depends(get_db),
+    actor: User = Depends(require_roles(UserRole.ADMIN)),
+) -> AdminClientSubscriptionOut:
+    client = _require_client(db, client_id)
+    sub, plan = _admin_subscription_with_plan_for_client(db, client_id=client_id, subscription_id=subscription_id)
+    if plan.kind != PlanKind.SUBSCRIPTION:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Only SUBSCRIPTION can be cancelled this way")
+    if sub.cancellation_request_status != "PENDING":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cette demande de resiliation n'est plus en attente")
+
+    now = _utcnow()
+    approved = payload.decision == "APPROVE"
+    effective_at: datetime | None = None
+    if approved:
+        effective_at = sub.next_payment_at or sub.ends_at or default_next_payment_at(sub.started_at)
+        if effective_at.tzinfo is None:
+            effective_at = effective_at.replace(tzinfo=timezone.utc)
+        else:
+            effective_at = effective_at.astimezone(timezone.utc)
+        if effective_at < now:
+            effective_at = now
+        conflicts_count, conflicts_preview = _future_subscription_bookings_after(
+            db,
+            client_id=client_id,
+            subscription_id=sub.id,
+            effective_at=effective_at,
+        )
+        if conflicts_count:
+            preview_label = ", ".join(start_at.strftime("%d/%m/%Y %H:%M") for start_at in conflicts_preview)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Validation impossible: {conflicts_count} reservation(s) existent apres la date de fin"
+                    + (f" ({preview_label})" if preview_label else "")
+                    + ". Supprimez-les puis recommencez."
+                ),
+            )
+        sub.cancellation_effective_at = effective_at
+        sub.auto_renew = False
+        sub.ends_at = effective_at
+        if effective_at <= now:
+            sub.status = SubscriptionStatus.CANCELLED
+            sub.next_payment_at = None
+        for cycle in db.scalars(
+            select(SubscriptionBillingCycle).where(
+                SubscriptionBillingCycle.subscription_id == sub.id,
+                SubscriptionBillingCycle.status == "pending",
+                SubscriptionBillingCycle.billing_date >= effective_at,
+            )
+        ).all():
+            cycle.status = "cancelled"
+            db.add(cycle)
+        sub.cancellation_request_status = "APPROVED"
+    else:
+        sub.cancellation_effective_at = None
+        sub.cancellation_request_status = "REJECTED"
+
+    sub.cancellation_request_reviewed_at = now
+    db.add(sub)
+    _create_client_note(
+        db,
+        client_id=client_id,
+        author_user_id=actor.id,
+        entry_type="AUTO",
+        message=(
+            f"Demande de resiliation de '{plan.name}' validee avec effet au {effective_at.date().isoformat()}."
+            if approved and effective_at is not None
+            else f"Demande de resiliation de '{plan.name}' refusee."
+        ),
+    )
+    send_cancellation_decision_email(
+        db,
+        client=client,
+        plan=plan,
+        approved=approved,
+        effective_at=effective_at,
+    )
+    db.commit()
+    db.refresh(sub)
     return _admin_subscription_out(db, client=client, sub=sub, plan=plan)
 
 
@@ -13651,8 +13780,13 @@ def admin_purchase_plan_for_client(
         payment_method_exp_year=subscription.payment_method_exp_year,
         suspension_starts_at=subscription.suspension_starts_at,
         suspension_ends_at=subscription.suspension_ends_at,
+        suspension_start_date=subscription.suspension_start_date,
+        suspension_end_date=subscription.suspension_end_date,
         cancellation_requested_at=subscription.cancellation_requested_at,
         cancellation_effective_at=subscription.cancellation_effective_at,
+        cancellation_request_status=subscription.cancellation_request_status,
+        cancellation_request_note=subscription.cancellation_request_note,
+        cancellation_request_reviewed_at=subscription.cancellation_request_reviewed_at,
         plan=PlanMiniOut(
             id=plan.id,
             code=plan.code,

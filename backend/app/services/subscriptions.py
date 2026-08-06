@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from calendar import monthrange
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from app.models.plan import ClientPlanSubscription, PlanKind, SubscriptionStatus
 
@@ -34,6 +35,12 @@ def add_duration(value: datetime, *, unit: SuspensionUnit, amount: int) -> datet
 
 def default_next_payment_at(started_at: datetime) -> datetime:
     return add_months_utc(started_at, 1)
+
+
+def shift_calendar_days_utc(value: datetime, *, days: int, timezone_name: str = "Europe/Paris") -> datetime:
+    local_timezone = ZoneInfo(timezone_name)
+    localized = value.astimezone(local_timezone)
+    return (localized + timedelta(days=days)).astimezone(timezone.utc)
 
 
 def can_book_with_subscription(
@@ -100,6 +107,50 @@ def apply_suspension(
         subscription.ends_at = add_duration(subscription.ends_at, unit=unit, amount=amount)
 
     return end_at
+
+
+def apply_suspension_dates(
+    subscription: ClientPlanSubscription,
+    *,
+    start_date: date,
+    end_date: date,
+    timezone_name: str = "Europe/Paris",
+) -> tuple[datetime, datetime]:
+    """Apply an inclusive, calendar-date suspension.
+
+    The persisted UTC end boundary is the start of the day following ``end_date``.
+    Consequently the existing ``start <= now < end`` checks keep the advertised
+    end date fully paused and restore access on the following day.
+    """
+    if end_date < start_date:
+        raise ValueError("suspension end date must be on or after start date")
+    paused_days = (end_date - start_date).days + 1
+    if paused_days > 730:
+        raise ValueError("suspension cannot exceed 730 days")
+
+    local_timezone = ZoneInfo(timezone_name)
+    start_at = datetime.combine(start_date, time.min, tzinfo=local_timezone).astimezone(timezone.utc)
+    end_at = datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=local_timezone).astimezone(timezone.utc)
+
+    subscription.suspension_start_date = start_date
+    subscription.suspension_end_date = end_date
+    subscription.suspension_starts_at = start_at
+    subscription.suspension_ends_at = end_at
+    subscription.suspension_duration_unit = "DAY"
+    subscription.suspension_duration_value = paused_days
+
+    if subscription.next_payment_at is not None:
+        if subscription.next_payment_at >= start_at:
+            subscription.next_payment_at = shift_calendar_days_utc(subscription.next_payment_at, days=paused_days, timezone_name=timezone_name)
+    else:
+        subscription.next_payment_at = shift_calendar_days_utc(default_next_payment_at(subscription.started_at), days=paused_days, timezone_name=timezone_name)
+
+    if subscription.ends_at is not None and subscription.ends_at >= start_at:
+        subscription.ends_at = shift_calendar_days_utc(subscription.ends_at, days=paused_days, timezone_name=timezone_name)
+    if subscription.current_period_end is not None and subscription.current_period_end >= start_at:
+        subscription.current_period_end = shift_calendar_days_utc(subscription.current_period_end, days=paused_days, timezone_name=timezone_name)
+
+    return start_at, end_at
 
 
 def reconcile_subscription_status(subscription: ClientPlanSubscription, *, now: datetime, plan_kind: PlanKind) -> bool:

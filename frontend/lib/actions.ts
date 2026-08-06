@@ -4823,17 +4823,15 @@ export async function suspendAdminClientSubscriptionAction(formData: FormData): 
   const clientId = String(formData.get("client_id") ?? "").trim();
   const subscriptionId = String(formData.get("subscription_id") ?? "").trim();
   const startRaw = String(formData.get("suspension_starts_at") ?? "").trim();
-  const durationUnit = String(formData.get("duration_unit") ?? "DAY").trim().toUpperCase();
-  const durationValue = parsePositiveInt(String(formData.get("duration_value") ?? ""));
+  const endRaw = String(formData.get("suspension_ends_at") ?? "").trim();
   if (!clientId || !subscriptionId) {
     redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_subscription")));
   }
-  const startsAt = parseUtcStartOfDate(startRaw);
-  if (!startsAt) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startRaw)) {
     redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "error", t("admin.client_action.invalid_suspension_start_date")));
   }
-  if (!durationValue) {
-    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "error", t("admin.client_action.invalid_suspension_duration")));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(endRaw) || endRaw < startRaw) {
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "error", t("admin.client_action.invalid_suspension_end_date")));
   }
 
   const result = await backendRequest<{ id: string }>(
@@ -4841,9 +4839,8 @@ export async function suspendAdminClientSubscriptionAction(formData: FormData): 
     {
       method: "POST",
       body: JSON.stringify({
-        suspension_starts_at: startsAt,
-        duration_unit: durationUnit === "MONTH" ? "MONTH" : "DAY",
-        duration_value: durationValue,
+        suspension_start_date: startRaw,
+        suspension_end_date: endRaw,
       }),
     },
     token,
@@ -4855,6 +4852,63 @@ export async function suspendAdminClientSubscriptionAction(formData: FormData): 
 
   revalidatePath(`/admin/clients/${clientId}`);
   redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "ok", t("admin.client_action.subscription_suspended")));
+}
+
+export async function decideAdminClientSubscriptionCancellationAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string) => uiText(language, key);
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  const subscriptionId = String(formData.get("subscription_id") ?? "").trim();
+  const decision = String(formData.get("decision") ?? "").trim().toUpperCase();
+  if (!clientId || !subscriptionId || !["APPROVE", "REJECT"].includes(decision)) {
+    redirect(appendQueryMessage("/admin/clients", "error", t("admin.client_action.invalid_subscription")));
+  }
+  const result = await backendRequest<{ id: string }>(
+    `/api/v1/admin/clients/${clientId}/subscriptions/${subscriptionId}/cancellation-request/decision`,
+    { method: "POST", body: JSON.stringify({ decision }) },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=fiche`, "error", result.message));
+  }
+  revalidatePath(`/admin/clients/${clientId}`);
+  redirect(
+    appendQueryMessage(
+      `/admin/clients/${clientId}?tab=fiche`,
+      "ok",
+      decision === "APPROVE" ? t("admin.client_action.cancellation_approved") : t("admin.client_action.cancellation_rejected"),
+    ),
+  );
+}
+
+export async function requestClientSubscriptionCancellationAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+  const subscriptionId = String(formData.get("subscription_id") ?? "").trim();
+  const note = String(formData.get("note") ?? "").trim();
+  const requestedReturnTo = String(formData.get("return_to") ?? "/client?tab=offers").trim();
+  const returnTo = requestedReturnTo.startsWith("/") && !requestedReturnTo.startsWith("//")
+    ? requestedReturnTo
+    : "/client?tab=offers";
+  if (!subscriptionId) {
+    redirect(appendQueryMessage(returnTo, "error", "invalid_subscription"));
+  }
+  const result = await backendRequest<{ id: string }>(
+    `/api/v1/clients/me/subscriptions/${subscriptionId}/cancellation-request`,
+    { method: "POST", body: JSON.stringify({ note: note || null }) },
+    token,
+  );
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+  revalidatePath("/client");
+  redirect(appendQueryMessage(returnTo, "ok_code", "subscription_cancellation_requested"));
 }
 
 export async function updateAdminClientSubscriptionExpiryAction(formData: FormData): Promise<void> {

@@ -15,6 +15,7 @@ from app.api.deps import get_admin_permission_map, get_current_user, get_db, req
 from app.core.config import settings
 from app.models.catalog import CourseType
 from app.models.family import ClientFamilyLink
+from app.models.ops import AppSetting
 from app.models.plan import (
     ClientPlanSubscription,
     Plan,
@@ -28,6 +29,7 @@ from app.models.plan import (
 from app.models.user import ClientKind, User, UserRole
 from app.schemas.plan import (
     ClientSubscriptionOut,
+    ClientSubscriptionCancellationRequest,
     PlanMiniOut,
     PlanOut,
     PlanFirstPurchaseLineOut,
@@ -47,6 +49,7 @@ from app.services.plan_entitlements import effective_entitlements_by_plan
 from app.services.pricing import compute_tax_totals, plan_service_code, resolve_plan_price, resolve_vat_rate
 from app.services.client_status import promote_client_to_active_student
 from app.services.subscriptions import add_months_utc, reconcile_subscription_status
+from app.services.subscription_lifecycle_notifications import send_cancellation_request_admin_notifications
 
 router = APIRouter()
 
@@ -1073,8 +1076,13 @@ def purchase_plan(
         direct_payment_recovery_url=subscription.direct_payment_recovery_url,
         suspension_starts_at=subscription.suspension_starts_at,
         suspension_ends_at=subscription.suspension_ends_at,
+        suspension_start_date=subscription.suspension_start_date,
+        suspension_end_date=subscription.suspension_end_date,
         cancellation_requested_at=subscription.cancellation_requested_at,
         cancellation_effective_at=subscription.cancellation_effective_at,
+        cancellation_request_status=subscription.cancellation_request_status,
+        cancellation_request_note=subscription.cancellation_request_note,
+        cancellation_request_reviewed_at=subscription.cancellation_request_reviewed_at,
         plan=PlanMiniOut(
             id=plan.id,
             code=plan.code,
@@ -1143,8 +1151,13 @@ def list_my_subscriptions(
                 direct_payment_recovery_url=sub.direct_payment_recovery_url,
                 suspension_starts_at=sub.suspension_starts_at,
                 suspension_ends_at=sub.suspension_ends_at,
+                suspension_start_date=sub.suspension_start_date,
+                suspension_end_date=sub.suspension_end_date,
                 cancellation_requested_at=sub.cancellation_requested_at,
                 cancellation_effective_at=sub.cancellation_effective_at,
+                cancellation_request_status=sub.cancellation_request_status,
+                cancellation_request_note=sub.cancellation_request_note,
+                cancellation_request_reviewed_at=sub.cancellation_request_reviewed_at,
                 plan=PlanMiniOut(
                     id=plan.id,
                     code=plan.code,
@@ -1160,3 +1173,65 @@ def list_my_subscriptions(
     if changed:
         db.commit()
     return payload
+
+
+@router.post(
+    "/clients/me/subscriptions/{subscription_id}/cancellation-request",
+    response_model=ClientSubscriptionOut,
+)
+def request_my_subscription_cancellation(
+    subscription_id: UUID,
+    payload: ClientSubscriptionCancellationRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+) -> ClientSubscriptionOut:
+    enabled_value = db.scalar(
+        select(AppSetting.value).where(AppSetting.key == "config_subscription_online_resiliation_enabled")
+    )
+    if enabled_value is not None and enabled_value.strip().lower() not in {"1", "true", "yes", "on"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="La demande de resiliation en ligne est desactivee")
+
+    row = db.execute(
+        select(ClientPlanSubscription, Plan)
+        .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
+        .where(
+            ClientPlanSubscription.id == subscription_id,
+            ClientPlanSubscription.user_id == current_user.id,
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Abonnement introuvable")
+    subscription, plan = row
+    if plan.kind != PlanKind.SUBSCRIPTION:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Seul un abonnement mensuel peut etre resilie")
+    if subscription.status not in {
+        SubscriptionStatus.ACTIVE,
+        SubscriptionStatus.PAYMENT_ALERT,
+        SubscriptionStatus.PAUSED,
+    }:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cet abonnement ne peut pas faire l'objet d'une demande")
+    if subscription.cancellation_request_status == "PENDING":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Une demande de resiliation est deja en attente")
+    if subscription.cancellation_effective_at is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="La resiliation de cet abonnement est deja programmee")
+
+    now = datetime.now(timezone.utc)
+    note = (payload.note or "").strip() or None
+    subscription.cancellation_requested_at = now
+    subscription.cancellation_request_status = "PENDING"
+    subscription.cancellation_request_note = note
+    subscription.cancellation_request_reviewed_at = None
+    db.add(subscription)
+    db.flush()
+    send_cancellation_request_admin_notifications(
+        db,
+        client=current_user,
+        plan=plan,
+        subscription=subscription,
+        requested_at=now,
+        note=note,
+    )
+    db.commit()
+
+    refreshed = list_my_subscriptions(db=db, current_user=current_user)
+    return next(item for item in refreshed if item.id == subscription.id)

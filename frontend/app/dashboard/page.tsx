@@ -13,6 +13,7 @@ import {
   openClientPaymentCheckoutAction,
   openClientPaymentMethodSetupAction,
   purchasePlanAction,
+  requestClientSubscriptionCancellationAction,
   startFormulaPurchaseLinkAction,
   submitPublicSessionCheckoutAction,
   updateProfileAction,
@@ -1943,6 +1944,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     .filter((sub) => isSubscriptionVisibleInPortal(sub, now));
   const onlinePurchaseCount = plans.length + onlineProducts.length;
   const selectedOfferSubscription = subscriptions.find((sub) => sub.id === selectedOfferDetailId) ?? null;
+  const selectedOfferPauseEndsAt = safeDate(selectedOfferSubscription?.suspension_ends_at);
   const selectedOfferInvoices = selectedOfferSubscription
     ? baseInvoiceRows.filter(
         (invoice) => Boolean(selectedOfferSubscription.offer_quote_id) && invoice.source_quote_id === selectedOfferSubscription.offer_quote_id,
@@ -5055,6 +5057,56 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       </div>
                     ) : null}
                   </section>
+
+                  {normalizeStatus(selectedOfferSubscription.plan.kind) === "SUBSCRIPTION" ? (
+                    <section className="client-offer-detail-section">
+                      <div className="client-offer-section-heading">
+                        <div>
+                          <p className="client-offer-section-kicker">{t("client.subscription")}</p>
+                          <h3>{t("client.cancellation_request_title")}</h3>
+                        </div>
+                      </div>
+                      {selectedOfferSubscription.suspension_start_date && selectedOfferSubscription.suspension_end_date && selectedOfferPauseEndsAt && selectedOfferPauseEndsAt > now ? (
+                        <p className="flash-warn">
+                          {t("client.subscription_pause_period", {
+                            start: formatDate(selectedOfferSubscription.suspension_start_date, language),
+                            end: formatDate(selectedOfferSubscription.suspension_end_date, language),
+                          })}
+                        </p>
+                      ) : null}
+                      {selectedOfferSubscription.cancellation_request_status === "PENDING" ? (
+                        <p className="flash-warn">{t("client.cancellation_request_pending")}</p>
+                      ) : selectedOfferSubscription.cancellation_effective_at ? (
+                        <p className="flash-warn">
+                          {t("client.cancellation_scheduled", {
+                            date: formatDateInTimezone(selectedOfferSubscription.cancellation_effective_at, timezone, language),
+                          })}
+                        </p>
+                      ) : selectedOfferSubscription.owner_client_id === me.id && ["ACTIVE", "PAYMENT_ALERT", "PAUSED"].includes(normalizeStatus(selectedOfferSubscription.status)) ? (
+                        <details className="client-offer-technical">
+                          <summary>{t("client.request_cancellation")}</summary>
+                          <form action={requestClientSubscriptionCancellationAction} className="grid top-gap-sm">
+                            <input type="hidden" name="subscription_id" value={selectedOfferSubscription.id} />
+                            <input
+                              type="hidden"
+                              name="return_to"
+                              value={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: selectedOfferSubscription.id })}
+                            />
+                            <p>{t("client.cancellation_request_help")}</p>
+                            <label>
+                              {t("client.cancellation_request_note")}
+                              <textarea name="note" rows={3} maxLength={1000} />
+                            </label>
+                            <label className="checkline">
+                              <input type="checkbox" required />
+                              {t("client.cancellation_request_confirm")}
+                            </label>
+                            <button type="submit" className="danger">{t("client.request_cancellation")}</button>
+                          </form>
+                        </details>
+                      ) : null}
+                    </section>
+                  ) : null}
 
                   <details className="client-offer-technical">
                     <summary>{t("client.technical_information")}</summary>
