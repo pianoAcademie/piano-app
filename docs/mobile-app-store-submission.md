@@ -13,6 +13,7 @@ Objectif: preparer les informations necessaires a App Store Connect pour deux ap
 - Distribution conseillee maintenant: TestFlight interne et piste de test interne Google Play
 - URL de support: `https://app.piano-academie.com/support`
 - URL de confidentialite: `https://app.piano-academie.com/privacy`
+- URL de confidentialite en anglais: `https://app.piano-academie.com/privacy?lang=en`
 - Categorie suggeree: Education
 - Audience: familles, eleves adultes, responsables de compte
 
@@ -30,6 +31,7 @@ L'espace mobile des eleves et familles Piano Academie pour consulter les cours, 
 - Distribution conseillee maintenant: TestFlight interne
 - URL de support: `https://app.piano-academie.com/support`
 - URL de confidentialite: `https://app.piano-academie.com/privacy`
+- URL de confidentialite en anglais: `https://app.piano-academie.com/privacy?lang=en`
 - Categorie suggeree: Education
 - Audience: professeurs et collaborateurs pedagogiques
 
@@ -66,7 +68,7 @@ A verifier avant soumission publique:
 - Existence d'un outil analytics cote web.
 - Existence d'un outil crash reporting cote mobile.
 - Donnees exactes envoyees aux prestataires de paiement et de notification.
-- Texte final de politique de confidentialite valide juridiquement.
+- Verifier que les labels App Store restent coherents avec la politique de confidentialite bilingue publiee.
 
 ## Regles Apple a surveiller
 
