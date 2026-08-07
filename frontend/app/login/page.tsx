@@ -99,7 +99,7 @@ export default function LoginPage({ searchParams }: { searchParams: SearchParams
         <header className="auth-header">
           <PortalBrandLockup
             title={uiText(language, "common.app_name")}
-            subtitle={uiText(language, "auth.portal_subtitle")}
+            subtitle={uiText(language, portal === "prof" ? "teacher.portal_subtitle" : "auth.portal_subtitle")}
             tone="light"
             compact
             className="auth-brand-lockup"
