@@ -4511,6 +4511,7 @@ export async function sendAdminClientPasswordAction(formData: FormData): Promise
       method: "POST",
     },
     token,
+    120_000,
   );
 
   if (!result.ok) {
