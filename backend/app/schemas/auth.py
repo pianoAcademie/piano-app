@@ -29,6 +29,7 @@ class RegisterRequest(BaseModel):
     address_country: str | None = Field(default=None, min_length=2, max_length=2)
     phone: str | None = Field(default=None, min_length=3, max_length=30)
     residence_country: str = Field(default="FR", min_length=2, max_length=2)
+    preferred_language: Literal["fr", "en"] = "fr"
     preferred_currency: str = Field(default="EUR", min_length=3, max_length=3)
     timezone: str = Field(default="Europe/Paris", min_length=2, max_length=100)
 

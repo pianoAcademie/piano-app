@@ -150,9 +150,8 @@ from app.api.routes.bookings import (
 )
 from app.services.client_password_email import (
     generate_temporary_password,
-    render_client_password_email,
-    send_client_password_email,
 )
+from app.services.client_portal_access import send_client_portal_access_email
 from app.services.booking_confirmation_templates import render_booking_confirmation_email
 from app.services.client_email import (
     deliverable_client_email,
@@ -6945,45 +6944,24 @@ def send_admin_client_password_email(
     if client is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
 
-    temporary_password = generate_temporary_password()
     try:
-        template = resolve_predefined_template(
+        message_id = send_client_portal_access_email(
             db,
-            code=PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD,
-            language=normalize_language(client.preferred_language),
+            user=client,
+            password_setup_required=True,
+            source="CLIENT_PORTAL_ACCESS",
+            raise_on_failure=True,
         )
-    except KeyError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-    subject_template = str(template.get("subject") or "")
-    body_template = str(template.get("body") or "")
-    body_format = "HTML" if str(template.get("body_format") or "").strip().upper() == "HTML" else "TEXT"
-    if not subject_template or not body_template:
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Unable to send secure client portal access email to client %s", client.id)
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Client password email template is incomplete",
-        )
-    website = _get_setting_value(db, "config_account_website", "")
-    login_url = _fallback_login_url(website)
-    subject, body = render_client_password_email(
-        subject_template=subject_template,
-        body_template=body_template,
-        first_name=(client.first_name or "").strip(),
-        last_name=(client.last_name or "").strip(),
-        email=client.email,
-        temporary_password=temporary_password,
-        login_url=login_url,
-    )
-    sender = resolve_sender_profile(db, sender_kind="STUDIO")
-    message_id = send_client_password_email(
-        to_email=client.email,
-        subject=subject,
-        body=body,
-        body_format=body_format,
-        from_email=sender.from_email,
-        from_name=sender.from_name,
-        reply_to=sender.reply_to,
-        subject_prefix=sender.subject_prefix,
-    )
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Secure client access email could not be sent",
+        ) from exc
+    if not message_id:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Secure client access email was not delivered")
 
     now = _utcnow()
     _create_client_note(
@@ -6991,9 +6969,8 @@ def send_admin_client_password_email(
         client_id=client.id,
         author_user_id=actor.id,
         entry_type="EMAIL",
-        message=f"Email d'activation envoye a {client.email} (message id: {message_id}).",
+        message=f"Lien d'acces securise envoye a {client.email} (message id: {message_id}).",
     )
-    client.hashed_password = hash_password(temporary_password)
     if client.client_status in {ClientStatus.INACTIVE, ClientStatus.ARCHIVED, ClientStatus.PENDING}:
         client.client_status = ClientStatus.ACTIVE
     client.is_active = True

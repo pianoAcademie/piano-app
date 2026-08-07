@@ -35,6 +35,7 @@ from app.schemas.auth import (
 )
 from app.schemas.user import UserOut
 from app.services.email_delivery import send_email
+from app.services.client_portal_access import send_client_portal_access_email
 from app.services.i18n import normalize_language
 from app.services.shared.rate_limit import consume_rate_limit
 from app.services.messaging_templates import (
@@ -310,6 +311,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut
     residence_country = payload.residence_country.upper()
     address_country = (payload.address_country or payload.residence_country).upper()
     preferred_currency = payload.preferred_currency.upper()
+    preferred_language = normalize_language(payload.preferred_language)
     timezone_name = _validate_timezone(payload.timezone)
     parent_first_name = _normalize_optional(payload.first_name)
     parent_last_name = _normalize_optional(payload.last_name)
@@ -383,6 +385,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut
             birth_date=None,
             private_note=None,
             residence_country=residence_country,
+            preferred_language=preferred_language,
             preferred_currency=preferred_currency,
             timezone=timezone_name,
             client_kind=ClientKind.ADULT,
@@ -413,6 +416,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut
             birth_date=payload.child_birth_date,
             private_note=child_private_note,
             residence_country=residence_country,
+            preferred_language=preferred_language,
             preferred_currency=preferred_currency,
             timezone=timezone_name,
             client_kind=ClientKind.CHILD,
@@ -461,6 +465,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut
             birth_date=None,
             private_note=None,
             residence_country=residence_country,
+            preferred_language=preferred_language,
             preferred_currency=preferred_currency,
             timezone=timezone_name,
             client_kind=ClientKind.ADULT,
@@ -500,6 +505,15 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut
         ) from exc
 
     db.refresh(portal_user)
+    try:
+        send_client_portal_access_email(
+            db,
+            user=portal_user,
+            password_setup_required=False,
+            source="CLIENT_PORTAL_REGISTRATION",
+        )
+    except Exception:
+        logger.exception("Unable to send client portal welcome email for user %s", portal_user.id)
     return portal_user
 
 

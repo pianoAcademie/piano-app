@@ -1542,6 +1542,7 @@ export async function registerAction(formData: FormData): Promise<void> {
       city,
       address_country,
       residence_country,
+      preferred_language: language,
       preferred_currency,
       timezone,
     }),

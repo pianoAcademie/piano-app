@@ -90,6 +90,7 @@ LEGACY_CLIENT_PASSWORD_SUBJECT_KEY = "config_client_password_email_subject"
 LEGACY_CLIENT_PASSWORD_BODY_KEY = "config_client_password_email_body"
 
 PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD = "CLIENT_PASSWORD_SETUP"
+PREDEFINED_EMAIL_TEMPLATE_CLIENT_PORTAL_ACCESS = "CLIENT_PORTAL_ACCESS"
 PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET = "PASSWORD_RESET"
 PREDEFINED_EMAIL_TEMPLATE_TEACHER_PASSWORD = "TEACHER_PORTAL_LOGIN_SETUP"
 PREDEFINED_EMAIL_TEMPLATE_QUOTE_SEND_DEFAULT = "QUOTE_SEND_DEFAULT"
@@ -805,6 +806,36 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
             "{first_name} {last_name} {full_name} {student_name} {email} {plan_name} "
             "{activity_name} {location_name} {location_address} {session_date} {session_time} "
             "{account_url} {unsubscribe_url}"
+        ),
+        body_format="HTML",
+    ),
+    MessagingTemplateDefinition(
+        code=PREDEFINED_EMAIL_TEMPLATE_CLIENT_PORTAL_ACCESS,
+        name="Acces securise a l espace client",
+        channel="EMAIL",
+        subject="Votre acces Piano Academie est pret",
+        body=_email_layout(
+            _email_title(
+                "Bienvenue dans votre espace client",
+                "Bonjour {first_name}, {access_intro}",
+            ),
+            _email_summary(
+                [
+                    ("Identifiant", "{email}"),
+                    ("Site web", "app.piano-academie.com"),
+                ]
+            ),
+            _email_button("{primary_url}", "{primary_label}"),
+            _email_secondary(
+                "Depuis votre espace client, vous pouvez consulter vos reservations, reserver un cours ou un studio, "
+                "retrouver vos credits, factures et messages. L application mobile Piano Academie sera egalement "
+                "disponible prochainement. Ce lien de creation de mot de passe est personnel et temporaire."
+            ),
+        ),
+        description="Bienvenue et acces securise a l espace client, sans mot de passe transmis en clair.",
+        variables_hint=(
+            "{first_name} {last_name} {full_name} {email} {access_intro} "
+            "{primary_url} {primary_label} {login_url}"
         ),
         body_format="HTML",
     ),
@@ -1623,6 +1654,32 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
 )
 
 PREDEFINED_TEMPLATE_TRANSLATIONS: dict[str, dict[str, dict[str, str]]] = {
+    PREDEFINED_EMAIL_TEMPLATE_CLIENT_PORTAL_ACCESS: {
+        "subject": {"en": "Your Piano Academie access is ready"},
+        "body": {
+            "en": _email_layout(
+                _email_title(
+                    "Welcome to your client portal",
+                    "Hello {first_name}, {access_intro}",
+                ),
+                _email_summary(
+                    [
+                        ("Login", "{email}"),
+                        ("Website", "app.piano-academie.com"),
+                    ]
+                ),
+                _email_button("{primary_url}", "{primary_label}"),
+                _email_secondary(
+                    "Your client portal lets you view bookings, book a lesson or rehearsal studio, and access your "
+                    "credits, invoices and messages. The Piano Academie mobile app will also be available soon. "
+                    "This password setup link is personal and time-limited."
+                ),
+            ).replace(
+                "Besoin d aide ? Repondez simplement a cet e-mail.",
+                "Need help? Simply reply to this email.",
+            )
+        },
+    },
     PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD: {
         "subject": {"en": "Activate your Piano Academie client account"},
         "body": {

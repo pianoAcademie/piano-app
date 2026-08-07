@@ -66,6 +66,7 @@ class BookingNotificationTests(unittest.TestCase):
             location_name="Online",
             meeting_link="https://example.test/online-lesson",
             language="en",
+            account_url="https://app.example.test/client?tab=planning",
         )
 
         self.assertEqual(subject, "Lesson reminder - Private piano lesson")
@@ -76,6 +77,8 @@ class BookingNotificationTests(unittest.TestCase):
         self.assertIn("Join the Zoom lesson", body)
         self.assertIn('href="https://example.test/online-lesson"', body)
         self.assertIn("If the button does not work, copy this link", body)
+        self.assertIn("View or manage my booking", body)
+        self.assertIn('href="https://app.example.test/client?tab=planning"', body)
 
     def test_reminder_schedules_email_for_guardian_only(self) -> None:
         now = datetime(2026, 8, 1, 18, 0, tzinfo=timezone.utc)

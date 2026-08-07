@@ -22,6 +22,7 @@ from app.services.messaging_templates import (
     PREDEFINED_EMAIL_TEMPLATE_AUTO_CANCEL_PARTICIPANT,
     PREDEFINED_EMAIL_TEMPLATE_AUTO_CANCEL_TEACHER,
     render_template_content,
+    resolve_frontend_base_url,
     resolve_predefined_template,
 )
 from app.services.notifications.application.recipients import (
@@ -273,6 +274,7 @@ def _build_lesson_reminder_email(
     location_name: str,
     meeting_link: str | None,
     language: str | None,
+    account_url: str | None = None,
 ) -> tuple[str, str]:
     normalized_language = normalize_language(language)
     activity_name = _reminder_activity_name(course_type_name, language=normalized_language)
@@ -308,6 +310,7 @@ def _build_lesson_reminder_email(
         online_help = "Use the button below at the scheduled lesson time."
         button_label = "Join the Zoom lesson"
         fallback_label = "If the button does not work, copy this link:"
+        account_button_label = "View or manage my booking"
         footer = "This is an automatic reminder from Piano Academie."
         date_value = (
             f"{english_weekdays[local_start.weekday()]}, {english_months[local_start.month - 1]} "
@@ -330,6 +333,7 @@ def _build_lesson_reminder_email(
         online_help = "Utilisez le bouton ci-dessous à l'heure prévue du cours."
         button_label = "Rejoindre le cours Zoom"
         fallback_label = "Si le bouton ne fonctionne pas, copiez ce lien :"
+        account_button_label = "Voir ou gérer ma réservation"
         footer = "Ceci est un rappel automatique envoyé par Piano Academie."
         date_value = (
             f"{french_weekdays[local_start.weekday()]} {local_start.day} "
@@ -371,6 +375,20 @@ def _build_lesson_reminder_email(
             '</td></tr></table>'
         )
 
+    account_block = ""
+    if account_url:
+        raw_account_url = account_url.strip()
+        parsed_account_url = urlparse(raw_account_url)
+        if parsed_account_url.scheme.lower() in {"http", "https"} and parsed_account_url.netloc:
+            escaped_account_url = escape(raw_account_url, quote=True)
+            account_block = (
+                '<table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" '
+                'style="margin:22px auto 0 auto;"><tr><td style="border-radius:9px;background:#c98224;">'
+                f'<a href="{escaped_account_url}" style="display:inline-block;padding:13px 22px;color:#ffffff;'
+                f'text-decoration:none;font-size:15px;line-height:20px;font-weight:800;">{escape(account_button_label)}</a>'
+                '</td></tr></table>'
+            )
+
     body = (
         '<!doctype html><html><body style="margin:0;padding:0;background:#f2f4f7;">'
         '<div style="display:none;max-height:0;overflow:hidden;opacity:0;">'
@@ -403,6 +421,7 @@ def _build_lesson_reminder_email(
         f'<tr><td style="padding:8px 12px 18px 20px;font-size:13px;font-weight:700;color:#667085;">{escape(location_label)}</td>'
         f'<td style="padding:8px 20px 18px 12px;font-size:15px;color:#172033;">{escape(displayed_location)}</td></tr>'
         '</table>'
+        f'{account_block}'
         f'<p style="margin:22px 0 0 0;font-size:12px;line-height:19px;color:#7b8494;text-align:center;">{escape(footer)}</p>'
         '</td></tr></table>'
         '</td></tr></table></body></html>'
@@ -1055,6 +1074,7 @@ def schedule_reminder_notifications_for_booking(
                 location_name=location_name,
                 meeting_link=meeting_link,
                 language=language,
+                account_url=f"{resolve_frontend_base_url(db).rstrip('/')}/client?tab=planning",
             )
             idempotency_key = _idempotency_key_for_reminder(
                 notification_type=NOTIFICATION_TYPE_REMINDER_EMAIL,
