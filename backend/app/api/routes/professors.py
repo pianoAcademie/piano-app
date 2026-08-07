@@ -14,7 +14,8 @@ from app.api.deps import get_db, require_roles
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, DeliveryMode, Location
 from app.models.catalog import Professor as ProfessorModel
 from app.models.catalog import SessionStatus
-from app.models.ops import CommunicationSenderCategory, MessageFormat, ProfessorSessionMessage
+from app.models.ops import CommunicationLog, CommunicationSenderCategory, MessageFormat, ProfessorSessionMessage
+from app.models.notification_engine import Notification
 from app.models.payout import PayoutStatus, ProfessorHourlyRate, ProfessorSessionPayout
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind
 from app.models.professor_contract import ProfessorContractGrid, ProfessorContractGridLine, ProfessorContractGridLineRule
@@ -46,6 +47,7 @@ from app.schemas.professor import (
     ProfessorSessionCourseTypeOut,
     ProfessorSessionLocationOut,
     ProfessorSessionMessageCreateRequest,
+    ProfessorInboxMessageOut,
     ProfessorSessionMessageOut,
     ProfessorSessionMessageSendOut,
     ProfessorSessionOperationOut,
@@ -1384,6 +1386,74 @@ def list_my_session_messages(
         )
         for row in rows
     ]
+
+
+@router.get("/professors/me/inbox", response_model=list[ProfessorInboxMessageOut])
+def list_my_inbox_messages(
+    limit: int = Query(default=200, ge=1, le=500),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.PROF)),
+) -> list[ProfessorInboxMessageOut]:
+    professor = _resolve_professor_profile(db, current_user=current_user)
+    known_recipient_values = {(professor.email or "").strip().lower()}
+    if professor.phone:
+        known_recipient_values.add(professor.phone.strip().lower())
+    communication_rows = db.scalars(
+        select(CommunicationLog)
+        .where(
+            or_(
+                CommunicationLog.recipient_user_id == current_user.id,
+                and_(
+                    CommunicationLog.professor_id == professor.id,
+                    func.lower(CommunicationLog.recipient).in_(known_recipient_values),
+                ),
+            ),
+            or_(CommunicationLog.sender_user_id.is_(None), CommunicationLog.sender_user_id != current_user.id),
+        )
+        .order_by(CommunicationLog.occurred_at.desc())
+        .limit(limit)
+    ).all()
+    push_rows = db.scalars(
+        select(Notification)
+        .where(
+            Notification.channel == "PUSH",
+            Notification.recipient_contact_id == current_user.id,
+        )
+        .order_by(Notification.created_at.desc())
+        .limit(limit)
+    ).all()
+
+    items = [
+        ProfessorInboxMessageOut(
+            id=row.id,
+            channel=row.channel.value if hasattr(row.channel, "value") else str(row.channel),
+            subject=row.subject,
+            body=row.content,
+            body_format=row.content_format,
+            status=row.delivery_status.value if hasattr(row.delivery_status, "value") else str(row.delivery_status),
+            sent_at=row.occurred_at,
+        )
+        for row in communication_rows
+    ]
+    seen_push_runs: set[UUID] = set()
+    for row in push_rows:
+        dedupe_key = row.job_run_id or row.id
+        if dedupe_key in seen_push_runs:
+            continue
+        seen_push_runs.add(dedupe_key)
+        items.append(
+            ProfessorInboxMessageOut(
+                id=row.id,
+                channel="PUSH",
+                subject=row.subject or "Notification",
+                body=row.body_snapshot or "",
+                body_format=MessageFormat.TEXT,
+                status=row.status,
+                sent_at=row.sent_at or row.scheduled_for,
+            )
+        )
+    items.sort(key=lambda item: item.sent_at, reverse=True)
+    return items[:limit]
 
 
 @router.post("/professors/me/sessions/{session_id}/messages", response_model=ProfessorSessionMessageSendOut)

@@ -240,6 +240,16 @@ class ProfessorSessionMessageOut(BaseModel):
     sent_at: datetime
 
 
+class ProfessorInboxMessageOut(BaseModel):
+    id: UUID
+    channel: str
+    subject: str
+    body: str
+    body_format: MessageFormat
+    status: str
+    sent_at: datetime
+
+
 class ProfessorSessionMessageSendOut(BaseModel):
     message_id: UUID
     session_id: UUID

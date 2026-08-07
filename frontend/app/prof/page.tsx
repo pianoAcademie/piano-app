@@ -19,10 +19,11 @@ import DayEventsDrawer from "../../components/planning/day-events-drawer";
 import MonthDayCard from "../../components/planning/month-day-card";
 import PortalImpersonationBanner from "../../components/portal-impersonation-banner";
 import ActionCard from "../../components/teacher-ui/action-card";
-import AppInstallCard from "../../components/teacher-ui/app-install-card";
+import AppInstallCard, { AppInstallMenuLink } from "../../components/teacher-ui/app-install-card";
 import AlertCard from "../../components/teacher-ui/alert-card";
 import BottomTabs from "../../components/teacher-ui/bottom-tabs";
 import ProfessorHelpAssistant from "../../components/teacher-ui/help-assistant";
+import ProfessorMobilePushRegistration from "../../components/teacher-ui/mobile-push-registration";
 import ListRow from "../../components/teacher-ui/list-row";
 import PageHeaderMobile from "../../components/teacher-ui/page-header-mobile";
 import PortalBrandLockup from "../../components/portal-brand-lockup";
@@ -46,6 +47,7 @@ import type {
   ProfessorCatalogStudentOut,
   ProfessorPayoutOut,
   ProfessorSessionMessageOut,
+  ProfessorInboxMessageOut,
   ProfessorSessionOut,
   UserOut,
 } from "../../lib/types";
@@ -584,6 +586,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
     balanceResult,
     payoutsResult,
     messagesResult,
+    inboxResult,
     contractGridsResult,
     catalogStudentsResult,
     catalogProductsResult,
@@ -600,6 +603,9 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
     backendRequest<ProfessorBalanceOut>("/api/v1/professors/me/balance", {}, token),
     backendRequest<ProfessorPayoutOut[]>("/api/v1/professors/me/payouts?limit=200", {}, token),
     backendRequest<ProfessorSessionMessageOut[]>("/api/v1/professors/me/messages?limit=100", {}, token),
+    currentTab === "messages"
+      ? backendRequest<ProfessorInboxMessageOut[]>("/api/v1/professors/me/inbox?limit=200", {}, token)
+      : Promise.resolve({ ok: true as const, status: 200, data: [] as ProfessorInboxMessageOut[] }),
     backendRequest<ProfessorContractGridOut[]>("/api/v1/professors/me/contract-grids", {}, token),
     backendRequest<ProfessorCatalogStudentOut[]>("/api/v1/professors/me/catalog/students", {}, token),
     backendRequest<AdminCatalogProductOut[]>("/api/v1/professors/me/catalog/products", {}, token),
@@ -721,6 +727,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
   const nextAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: nextAgendaDate, dayDetails: "", planningScope });
   const todayAgendaHref = buildProfHref({ tab: "planning", agendaView, agendaDate: todayKeyUtc(), dayDetails: "", planningScope });
   const archivedMessages = messagesResult.ok ? messagesResult.data : [];
+  const inboxMessages = inboxResult.ok ? inboxResult.data : [];
   const internalNotes = notesResult.ok ? notesResult.data : [];
   const noteSearch = readParam(searchParams, "note_q").trim().toLocaleLowerCase();
   const noteTypeRaw = readParam(searchParams, "note_type").toUpperCase();
@@ -803,10 +810,11 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
             <Link className="teacher-header-menu-link" href={buildProfHref({ tab: "notes", agendaView, agendaDate })}>
               {uiText(language, "teacher.notes")}
             </Link>
-            <Link className="teacher-header-menu-link" href={`${buildProfHref({ tab: "profile", agendaView, agendaDate })}#prof-mobile-app`}>
-              {language === "en" ? "Install the app" : "Installer l’application"}
-            </Link>
-            <form action={logoutAction}>
+            <AppInstallMenuLink
+              language={language}
+              href={`${buildProfHref({ tab: "profile", agendaView, agendaDate })}#prof-mobile-app`}
+            />
+            <form action={logoutAction} data-mobile-push-logout="true">
               <button className="ghost teacher-header-menu-btn" type="submit">
                 {uiText(language, "common.logout")}
               </button>
@@ -858,6 +866,8 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
         ]}
       />
 
+      <ProfessorMobilePushRegistration language={language} />
+
       {isImpersonating ? (
         <PortalImpersonationBanner displayName={impersonationDisplayName} returnTo={impersonationReturnTo} language={language} />
       ) : null}
@@ -868,6 +878,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
       {!pendingResult.ok ? <AlertCard tone="error">{t("teacher.attendance_error")}: {pendingResult.message}</AlertCard> : null}
       {!balanceResult.ok ? <AlertCard tone="error">{t("teacher.balance_error")}: {balanceResult.message}</AlertCard> : null}
       {!messagesResult.ok ? <AlertCard tone="error">{t("teacher.messages_error")}: {messagesResult.message}</AlertCard> : null}
+      {currentTab === "messages" && !inboxResult.ok ? <AlertCard tone="error">{t("teacher.inbox_error")}: {inboxResult.message}</AlertCard> : null}
       {currentTab === "notes" && !notesResult.ok ? <AlertCard tone="error">{t("teacher.notes_error")}: {notesResult.message}</AlertCard> : null}
       {!contractGridsResult.ok ? <AlertCard tone="error">{t("teacher.statement_contract_grid_error")}: {contractGridsResult.message}</AlertCard> : null}
       {!catalogStudentsResult.ok ? <AlertCard tone="error">{t("teacher.catalog_students_error")}: {catalogStudentsResult.message}</AlertCard> : null}
@@ -1476,7 +1487,32 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
 
       {currentTab === "messages" ? (
         <section className="teacher-section-stack">
-          <ActionCard title={t("teacher.archived_messages")} subtitle={t("teacher.archived_messages_subtitle")}>
+          <ActionCard title={t("teacher.inbox_messages")} subtitle={t("teacher.inbox_messages_subtitle")}>
+            {inboxMessages.length > 0 ? (
+              <div className="list teacher-list-compact">
+                {inboxMessages.map((message) => (
+                  <details className="teacher-inbox-message item" key={`${message.channel}-${message.id}`}>
+                    <summary>
+                      <span>
+                        <strong>{message.subject}</strong>
+                        <small className="muted">{formatDateTime(message.sent_at, language)}</small>
+                      </span>
+                      <span className="badge">{message.channel === "PUSH" ? t("teacher.push_channel") : message.channel}</span>
+                    </summary>
+                    {message.body_format === "HTML" ? (
+                      <article className="teacher-inbox-message-body" dangerouslySetInnerHTML={{ __html: message.body }} />
+                    ) : (
+                      <p className="teacher-inbox-message-body">{message.body}</p>
+                    )}
+                  </details>
+                ))}
+              </div>
+            ) : (
+              <p className="muted">{t("teacher.no_inbox_message")}</p>
+            )}
+          </ActionCard>
+
+          <ActionCard title={t("teacher.sent_messages")} subtitle={t("teacher.archived_messages_subtitle")}>
           {messagesResult.ok && archivedMessages.length > 0 ? (
             <div className="list teacher-list-compact">
               {archivedMessages.map((message) => {
@@ -1515,7 +1551,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
           <AppInstallCard language={language} />
 
           <SectionAccordion title={t("teacher.my_profile")} subtitle={t("teacher.main_information")} defaultOpen={true}>
-            <div className="list teacher-list-compact">
+            <div className="list teacher-list-compact teacher-profile-list">
               <ListRow left={t("teacher.name")} right={fullName || "-"} />
               <ListRow left={uiText(language, "common.email")} right={profile.email} />
               <ListRow left={t("teacher.phone")} right={profile.phone ?? t("teacher.not_provided")} />

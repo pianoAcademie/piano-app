@@ -7630,6 +7630,68 @@ export async function sendAdminCollaboratorsMessageAction(formData: FormData): P
   );
 }
 
+export async function sendAdminCollaboratorsPushAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+
+  const language = await ensureAdminAndGetLanguage(token);
+  const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
+  const returnTo = safeAdminReturnPath(formData, "/admin/professors");
+  const collaboratorIds = parseStringList(formData.getAll("collaborator_ids"));
+  const titleFr = String(formData.get("push_title_fr") ?? "").trim();
+  const bodyFr = String(formData.get("push_body_fr") ?? "").trim();
+  const titleEn = optionalField(formData, "push_title_en");
+  const bodyEn = optionalField(formData, "push_body_en");
+
+  if (collaboratorIds.length === 0) {
+    redirect(appendQueryMessage(returnTo, "error", t("admin.professor_action.select_at_least_one_collaborator")));
+  }
+  if (!titleFr || !bodyFr) {
+    redirect(appendQueryMessage(returnTo, "error", t("admin.professor_action.push_required")));
+  }
+
+  const result = await backendRequest<{
+    requested_user_count: number;
+    device_count: number;
+    sent_count: number;
+    failed_count: number;
+    skipped_count: number;
+  }>(
+    "/api/v1/admin/collaborators/messages/push",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        collaborator_ids: collaboratorIds,
+        title_fr: titleFr,
+        body_fr: bodyFr,
+        title_en: titleEn,
+        body_en: bodyEn,
+        deep_link: "/prof?tab=messages",
+      }),
+    },
+    token,
+  );
+
+  if (!result.ok) {
+    redirect(appendQueryMessage(returnTo, "error", result.message));
+  }
+
+  revalidatePath("/admin/professors");
+  redirect(
+    appendQueryMessage(
+      returnTo,
+      result.data.failed_count > 0 ? "error" : "ok",
+      t("admin.professor_action.push_sent_summary", {
+        sent_count: result.data.sent_count,
+        device_count: result.data.device_count,
+        skipped_count: result.data.skipped_count,
+      }),
+    ),
+  );
+}
+
 function parseMoneyInput(raw: string): string | null {
   const normalized = raw.trim().replace(",", ".");
   if (!normalized) {

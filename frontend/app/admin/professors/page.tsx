@@ -2,7 +2,12 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { adminViewTeacherPortalAction, createAdminCollaboratorAction, sendAdminCollaboratorsMessageAction } from "../../../lib/actions";
+import {
+  adminViewTeacherPortalAction,
+  createAdminCollaboratorAction,
+  sendAdminCollaboratorsMessageAction,
+  sendAdminCollaboratorsPushAction,
+} from "../../../lib/actions";
 import { hasAdminPermission } from "../../../lib/admin-access";
 import { backendRequest } from "../../../lib/backend";
 import CollaboratorSelectionControls from "../../../components/collaborator-selection-controls";
@@ -151,7 +156,7 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
             </div>
           </div>
           <details className="admin-filter-disclosure">
-            <summary>{language === "en" ? "Advanced filters" : "Filtres avances"}</summary>
+            <summary>{language === "en" ? "Advanced filters" : "Filtres avancés"}</summary>
             <div className="admin-filter-disclosure-content">
               <label>
                 {t("admin.professors.name_sort")}
@@ -301,6 +306,35 @@ export default async function AdminCollaboratorsPage({ searchParams }: { searchP
                 </div>
               </div>
             </details> : null}
+
+            {canManageCollaborators ? (
+              <details>
+                <summary>{t("admin.professors.push_summary")}</summary>
+                <div className="grid cols-2" style={{ marginTop: "0.75rem" }}>
+                  <label>
+                    {t("admin.professors.push_title_fr")}
+                    <input type="text" name="push_title_fr" maxLength={180} />
+                  </label>
+                  <label>
+                    {t("admin.professors.push_title_en")}
+                    <input type="text" name="push_title_en" maxLength={180} />
+                  </label>
+                  <label>
+                    {t("admin.professors.push_body_fr")}
+                    <textarea name="push_body_fr" rows={4} maxLength={1000} />
+                  </label>
+                  <label>
+                    {t("admin.professors.push_body_en")}
+                    <textarea name="push_body_en" rows={4} maxLength={1000} />
+                  </label>
+                  <div className="span-2">
+                    <button type="submit" formAction={sendAdminCollaboratorsPushAction}>
+                      {t("admin.professors.push_action")}
+                    </button>
+                  </div>
+                </div>
+              </details>
+            ) : null}
           </form>
         ) : null}
       </section>

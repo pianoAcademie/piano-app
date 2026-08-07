@@ -11616,6 +11616,7 @@ button.danger:focus-visible {
 
 .teacher-list-row-main {
   min-width: 0;
+  flex: 1 1 auto;
   display: grid;
   gap: 3px;
 }
@@ -11634,7 +11635,44 @@ button.danger:focus-visible {
 }
 
 .teacher-list-row-right {
-  flex-shrink: 0;
+  min-width: 0;
+  max-width: 72%;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: right;
+}
+
+.teacher-inbox-message {
+  overflow: hidden;
+}
+
+.teacher-inbox-message > summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.teacher-inbox-message > summary > span:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.teacher-inbox-message > summary strong,
+.teacher-inbox-message-body {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.teacher-inbox-message-body {
+  margin: 12px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid #ead9bc;
+  white-space: pre-wrap;
 }
 
 .teacher-accordion {
@@ -11781,11 +11819,28 @@ button.danger:focus-visible {
 
 .teacher-planning-controls {
   align-items: end;
+  width: 100%;
 }
 
 .teacher-planning-controls label {
   display: grid;
   gap: 6px;
+}
+
+.teacher-planning-controls,
+.teacher-planning-controls > *,
+.teacher-planning-controls label,
+.teacher-planning-controls input,
+.teacher-planning-controls select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.teacher-planning-controls input[type="date"] {
+  display: block;
+  inline-size: 100%;
+  min-inline-size: 0;
+  max-inline-size: 100%;
 }
 
 .teacher-planning-controls-actions,
@@ -12132,6 +12187,12 @@ button.danger:focus-visible {
     gap: 8px;
   }
 
+  .teacher-planning-controls label,
+  .teacher-planning-controls input,
+  .teacher-planning-controls select {
+    width: 100%;
+  }
+
   .teacher-planning-controls-actions,
   .teacher-planning-controls-arrows {
     width: 100%;
@@ -12187,10 +12248,33 @@ button.danger:focus-visible {
 
   .teacher-list-row {
     min-height: 52px;
+    align-items: flex-start;
   }
 
   .teacher-list-row-main strong {
     font-size: 13px;
+  }
+
+  .teacher-list-row-right {
+    max-width: 68%;
+    width: auto;
+  }
+
+  .teacher-profile-list .teacher-list-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+
+  .teacher-profile-list .teacher-list-row-main,
+  .teacher-profile-list .teacher-list-row-right {
+    width: 100%;
+    max-width: none;
+    text-align: left;
+  }
+
+  .teacher-profile-list .teacher-list-row-right {
+    line-height: 1.35;
   }
 }
 

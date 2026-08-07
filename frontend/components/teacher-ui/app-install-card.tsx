@@ -14,6 +14,10 @@ type AppInstallCardProps = {
   language: "fr" | "en";
 };
 
+type AppInstallMenuLinkProps = AppInstallCardProps & {
+  href: string;
+};
+
 const copy = {
   fr: {
     eyebrow: "APPLICATION PROFESSEUR",
@@ -53,12 +57,31 @@ function isStandalone(): boolean {
   );
 }
 
+export function AppInstallMenuLink({ language, href }: AppInstallMenuLinkProps): JSX.Element | null {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    setVisible(!isStandalone());
+  }, []);
+
+  if (!visible) {
+    return null;
+  }
+
+  return (
+    <a className="teacher-header-menu-link" href={href}>
+      {language === "en" ? "Install the app" : "Installer l’application"}
+    </a>
+  );
+}
+
 export default function AppInstallCard({ language }: AppInstallCardProps): JSX.Element {
   const text = copy[language];
   const [installState, setInstallState] = useState<InstallState>("checking");
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [platform, setPlatform] = useState<"ios" | "android" | "desktop">("desktop");
   const [showInstructions, setShowInstructions] = useState(false);
+  const [visible, setVisible] = useState(false);
 
   useEffect(() => {
     const userAgent = navigator.userAgent.toLowerCase();
@@ -66,7 +89,9 @@ export default function AppInstallCard({ language }: AppInstallCardProps): JSX.E
     const android = /android/.test(userAgent);
     setPlatform(appleMobile ? "ios" : android ? "android" : "desktop");
 
-    if (isStandalone()) {
+    const standalone = isStandalone();
+    setVisible(!standalone);
+    if (standalone) {
       setInstallState("installed");
     } else {
       setInstallState("instructions");
@@ -108,6 +133,10 @@ export default function AppInstallCard({ language }: AppInstallCardProps): JSX.E
   };
 
   const platformInstructions = platform === "ios" ? text.ios : platform === "android" ? text.android : text.desktop;
+
+  if (!visible) {
+    return <></>;
+  }
 
   return (
     <section id="prof-mobile-app" className="teacher-mobile-app-card card" aria-labelledby="prof-mobile-app-title">

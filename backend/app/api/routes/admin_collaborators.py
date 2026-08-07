@@ -85,6 +85,7 @@ from app.services.professor_permissions import (
 from app.services.payouts import resolve_hourly_rate_for_session
 from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
 from app.services.session_notifications import send_session_operation_email
+from app.services.providers.sms import send_provider_sms
 from app.services.security import hash_password
 
 router = APIRouter(prefix="/admin/collaborators")
@@ -999,6 +1000,11 @@ def send_collaborators_message(
 
     professors = db.scalars(select(Professor).where(Professor.id.in_(requested_ids))).all()
     professor_by_id = {prof.id: prof for prof in professors}
+    professor_emails = {(prof.email or "").strip().lower() for prof in professors if (prof.email or "").strip()}
+    linked_users = db.scalars(
+        select(User).where(func.lower(User.email).in_(professor_emails))
+    ).all() if professor_emails else []
+    linked_user_by_email = {(row.email or "").strip().lower(): row for row in linked_users}
     sender_label = f"{(actor.first_name or '').strip()} {(actor.last_name or '').strip()}".strip() or actor.email
 
     sent_count = 0
@@ -1020,6 +1026,8 @@ def send_collaborators_message(
             details.append(f"{collaborator_id}: collaborator not found")
             continue
 
+        linked_user = linked_user_by_email.get((professor.email or "").strip().lower())
+
         if channel == "EMAIL":
             email = (professor.email or "").strip().lower()
             if not email:
@@ -1038,6 +1046,7 @@ def send_collaborators_message(
                 sender_label=sender_label,
                 sender_category=CommunicationSenderCategory.OTHER_USER,
                 professor_id=professor.id,
+                recipient_user_id=linked_user.id if linked_user is not None else None,
             )
         else:
             phone = _normalize_phone_recipient(professor.phone)
@@ -1045,21 +1054,18 @@ def send_collaborators_message(
                 skipped_count += 1
                 details.append(f"{collaborator_id}: missing phone")
                 continue
-            log_communication(
-                db=db,
-                channel=CommunicationChannel.SMS,
-                source="ADMIN_COLLABORATORS_MESSAGE_SMS",
-                communication_type=COMMUNICATION_TYPE_OPERATIONAL,
-                sender_category=CommunicationSenderCategory.OTHER_USER,
-                sender_user_id=actor.id,
-                sender_label=sender_label,
-                recipient=phone,
+            sms_result = send_provider_sms(
+                to_phone=phone,
+                message=sms_body,
+                context="ADMIN_COLLABORATORS_MESSAGE_SMS",
                 subject=subject or "SMS collaborateurs",
-                content=sms_body,
-                content_format=MessageFormat.TEXT,
-                delivery_status=CommunicationDeliveryStatus.UNKNOWN,
-                professor_id=professor.id,
+                recipient_user_id=linked_user.id if linked_user is not None else None,
+                db=db,
             )
+            if not sms_result.ok:
+                skipped_count += 1
+                details.append(f"{collaborator_id}: {sms_result.error_message or 'SMS delivery failed'}")
+                continue
         sent_count += 1
 
     if channel == "SMS":

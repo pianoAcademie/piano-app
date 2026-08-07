@@ -52,6 +52,10 @@ class AdminSessionMobilePushRequest(AdminMobilePushRequest):
     included_student_ids: list[UUID] = Field(default_factory=list)
 
 
+class AdminCollaboratorMobilePushRequest(AdminMobilePushRequest):
+    collaborator_ids: list[UUID] = Field(default_factory=list)
+
+
 class AdminMobilePushOut(BaseModel):
     requested_user_count: int
     device_count: int

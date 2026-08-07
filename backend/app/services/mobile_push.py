@@ -147,8 +147,13 @@ def send_mobile_push_to_users(
     related_entity_id: UUID,
     actor_id: UUID | None,
     slot_id: UUID | None = None,
+    app_target: str = "CLIENT",
 ) -> MobilePushSummary:
     now = _utcnow()
+    normalized_app_target = (app_target or "CLIENT").strip().upper()
+    if normalized_app_target not in {"CLIENT", "PROF"}:
+        raise ValueError("Unsupported mobile push app target")
+    fallback_deep_link = "/prof?tab=messages" if normalized_app_target == "PROF" else "/client"
     normalized_user_ids = set(user_ids)
     run = JobRun(
         job_name="admin_mobile_push",
@@ -162,6 +167,7 @@ def send_mobile_push_to_users(
             "related_entity_type": related_entity_type,
             "related_entity_id": str(related_entity_id),
             "actor_id": str(actor_id) if actor_id else None,
+            "app_target": normalized_app_target,
         },
     )
     db.add(run)
@@ -172,7 +178,7 @@ def send_mobile_push_to_users(
         .join(User, User.id == MobilePushDevice.user_id)
         .where(
             MobilePushDevice.user_id.in_(normalized_user_ids),
-            MobilePushDevice.app_target == "CLIENT",
+            MobilePushDevice.app_target == normalized_app_target,
             MobilePushDevice.is_enabled.is_(True),
             MobilePushDevice.permission_status == "GRANTED",
             User.is_active.is_(True),
@@ -208,10 +214,11 @@ def send_mobile_push_to_users(
             subject=title,
             body_snapshot=body,
             payload_snapshot={
-                "deep_link": deep_link or "/client",
+                "deep_link": deep_link or fallback_deep_link,
                 "platform": device.platform,
                 "installation_id": device.installation_id,
                 "language": normalize_language(user.preferred_language or device.locale),
+                "app_target": normalized_app_target,
             },
             idempotency_key=f"ADMIN_MOBILE_PUSH:{run.id}:{device.id}:{uuid4()}",
             scheduled_for=now,
@@ -230,7 +237,7 @@ def send_mobile_push_to_users(
             body=body,
             data={
                 "notification_id": str(notification.id),
-                "deep_link": deep_link or "/client",
+                "deep_link": deep_link or fallback_deep_link,
                 "source": source,
             },
         )

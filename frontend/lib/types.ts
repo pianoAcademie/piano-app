@@ -1375,6 +1375,16 @@ export type ProfessorSessionMessageOut = {
   sent_at: string;
 };
 
+export type ProfessorInboxMessageOut = {
+  id: string;
+  channel: "EMAIL" | "SMS" | "PUSH" | string;
+  subject: string;
+  body: string;
+  body_format: "TEXT" | "HTML" | string;
+  status: string;
+  sent_at: string;
+};
+
 export type ProfessorPayoutOut = {
   payout_id: string;
   session_id: string;
