@@ -62,6 +62,13 @@ for (const targetName of targets) {
     if (config.server?.cleartext !== false) failures.push(`${platform} ${targetName} must reject cleartext traffic`);
   }
 
+  if (!iosConfig.packageClassList?.includes("PushNotificationsPlugin")) {
+    failures.push(`iOS ${targetName} must register PushNotificationsPlugin in packageClassList`);
+  }
+  if (!Array.isArray(iosConfig.plugins?.PushNotifications?.presentationOptions)) {
+    failures.push(`iOS ${targetName} must configure foreground push presentation options`);
+  }
+
   if (!gradle.includes(`${target.flavor} {`)) failures.push(`Android flavor ${target.flavor} is missing`);
   if (!gradle.includes(`applicationId "${target.appId}"`)) failures.push(`Android applicationId must include ${target.appId}`);
   if (!gradle.includes(`${target.signingPrefix}_KEYSTORE_PATH`)) failures.push(`Android ${targetName} signing must use ${target.signingPrefix}_* variables`);

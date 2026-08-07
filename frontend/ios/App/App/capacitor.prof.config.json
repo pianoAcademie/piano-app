@@ -9,9 +9,20 @@
 		]
 	},
 	"webDir": "public",
+	"plugins": {
+		"PushNotifications": {
+			"presentationOptions": [
+				"badge",
+				"sound",
+				"alert"
+			]
+		}
+	},
 	"ios": {
 		"contentInset": "automatic",
 		"scrollEnabled": true
 	},
-	"packageClassList": []
+	"packageClassList": [
+		"PushNotificationsPlugin"
+	]
 }

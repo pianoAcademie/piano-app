@@ -22,5 +22,7 @@
 		"contentInset": "automatic",
 		"scrollEnabled": true
 	},
-	"packageClassList": []
+	"packageClassList": [
+		"PushNotificationsPlugin"
+	]
 }

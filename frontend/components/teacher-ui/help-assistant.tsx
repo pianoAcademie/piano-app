@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { UiLanguage } from "../../lib/ui-i18n";
 
@@ -406,18 +406,25 @@ export default function ProfessorHelpAssistant({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) {
       return;
     }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        searchInputRef.current?.blur();
         setOpen(false);
       }
     };
     window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+      document.body.style.overflow = previousOverflow;
+    };
   }, [open]);
 
   const filteredTopics = useMemo(() => {
@@ -435,6 +442,10 @@ export default function ProfessorHelpAssistant({
   const selectedTopic = selectedId ? topics.find((topic) => topic.id === selectedId) ?? null : null;
 
   const close = () => {
+    searchInputRef.current?.blur();
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
     setOpen(false);
     setSelectedId(null);
     setQuery("");
@@ -482,11 +493,11 @@ export default function ProfessorHelpAssistant({
                   <div>
                     <span aria-hidden="true">⌕</span>
                     <input
+                      ref={searchInputRef}
                       type="search"
                       value={query}
                       onChange={(event) => setQuery(event.target.value)}
                       placeholder={copy.searchPlaceholder}
-                      autoFocus
                     />
                   </div>
                 </label>
