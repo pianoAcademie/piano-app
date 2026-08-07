@@ -9,6 +9,18 @@ type PushState = "checking" | "available" | "registering" | "enabled" | "denied"
 
 const INSTALLATION_ID_KEY = "pa_prof_push_installation_id";
 
+function readablePushError(error: unknown, isEnglish: boolean): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/PushNotifications.*not implemented|not implemented on ios/i.test(message)) {
+    return isEnglish
+      ? "This version of the app must be updated to enable notifications."
+      : "Cette version de l’application doit être mise à jour pour activer les notifications.";
+  }
+  return isEnglish
+    ? "Notifications could not be enabled. Please try again after updating the app."
+    : "Les notifications n’ont pas pu être activées. Réessayez après avoir mis à jour l’application.";
+}
+
 function installationId(): string {
   const existing = window.localStorage.getItem(INSTALLATION_ID_KEY);
   if (existing) return existing;
@@ -72,10 +84,10 @@ export default function ProfessorMobilePushRegistration({ language }: Props): JS
       }
       await PushNotifications.register();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      setErrorMessage(readablePushError(error, isEnglish));
       setState("error");
     }
-  }, []);
+  }, [isEnglish]);
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) {
@@ -102,13 +114,13 @@ export default function ProfessorMobilePushRegistration({ language }: Props): JS
           handles.push(await PushNotifications.addListener("registration", (token) => {
             if (!active) return;
             void saveToken(token).catch((error) => {
-              setErrorMessage(error instanceof Error ? error.message : String(error));
+              setErrorMessage(readablePushError(error, isEnglish));
               setState("error");
             });
           }));
           handles.push(await PushNotifications.addListener("registrationError", (error) => {
             if (!active) return;
-            setErrorMessage(String(error.error || "Registration failed"));
+            setErrorMessage(readablePushError(error.error || "Registration failed", isEnglish));
             setState("error");
           }));
           handles.push(await PushNotifications.addListener("pushNotificationReceived", (notification: PushNotificationSchema) => {
@@ -135,7 +147,7 @@ export default function ProfessorMobilePushRegistration({ language }: Props): JS
         }
       } catch (error) {
         if (!active) return;
-        setErrorMessage(error instanceof Error ? error.message : String(error));
+        setErrorMessage(readablePushError(error, isEnglish));
         setState("error");
       }
     })();

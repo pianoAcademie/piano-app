@@ -17,7 +17,7 @@ const targets = {
     configFile: "capacitor.prof.config.json",
     envPrefix: "PA_PROF",
     defaultVersionName: "1.0.0",
-    entitlementsPath: '""',
+    entitlementsPath: "App/App.entitlements",
   },
 };
 
