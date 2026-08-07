@@ -11825,6 +11825,7 @@ button.danger:focus-visible {
 .teacher-planning-controls label {
   display: grid;
   gap: 6px;
+  overflow: hidden;
 }
 
 .teacher-planning-controls,
@@ -11841,6 +11842,13 @@ button.danger:focus-visible {
   inline-size: 100%;
   min-inline-size: 0;
   max-inline-size: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.teacher-planning-controls input[type="date"]::-webkit-date-and-time-value {
+  min-width: 0;
+  text-align: center;
 }
 
 .teacher-planning-controls-actions,
