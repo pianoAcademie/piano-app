@@ -5,6 +5,7 @@ import { Suspense } from "react";
 
 import AdminBreadcrumb from "../../components/admin-breadcrumb";
 import AdminSidebar from "../../components/admin-sidebar";
+import PresenceHeartbeat from "../../components/presence-heartbeat";
 import { getAdminToken, getPortalReturnTo, readAdminImpersonationClaims } from "../../lib/auth-cookies";
 import { endAdminImpersonationAction, logoutAction } from "../../lib/actions";
 import { adminRoleLabel, hasAnyAdminAccess } from "../../lib/admin-access";
@@ -31,6 +32,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   return (
     <div className="admin-shell" data-ui-language={language}>
+      <PresenceHeartbeat />
       <AdminSidebar
         displayName={displayName}
         email={meResult.data.email}

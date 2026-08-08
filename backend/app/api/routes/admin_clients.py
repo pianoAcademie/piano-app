@@ -5047,6 +5047,9 @@ def _client_out(
         group_names=group_names or [],
         is_active=client.is_active,
         next_session_start_at_utc=next_session_start_at_utc,
+        last_login_at=client.last_login_at,
+        last_seen_at=client.last_seen_at,
+        last_seen_channel=client.last_seen_channel,
         created_at=client.created_at,
         updated_at=client.updated_at,
     )

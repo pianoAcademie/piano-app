@@ -312,8 +312,22 @@ export type AdminClientOut = {
   timezone: string;
   is_active: boolean;
   next_session_start_at_utc: string | null;
+  last_login_at: string | null;
+  last_seen_at: string | null;
+  last_seen_channel: "WEB" | "MOBILE_APP" | string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type AdminOnlinePresenceOut = {
+  generated_at: string;
+  active_window_seconds: number;
+  total: number;
+  web: number;
+  mobile_app: number;
+  clients: number;
+  professors: number;
+  admins: number;
 };
 
 export type AdminClientGroupOut = {

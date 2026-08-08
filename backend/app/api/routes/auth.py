@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -20,7 +21,7 @@ from app.models.catalog import CourseSession, CourseType
 from app.models.client_group import ClientGroup, ClientGroupMembership
 from app.models.family import ClientFamilyLink
 from app.models.ops import AppSetting, PasswordResetToken
-from app.models.user import ClientKind, ClientStatus, User, UserRole
+from app.models.user import ClientKind, ClientStatus, User, UserPresence, UserRole
 from app.schemas.auth import (
     ChangePasswordRequest,
     EmailLookupRequest,
@@ -28,6 +29,8 @@ from app.schemas.auth import (
     ForgotPasswordRequest,
     ForgotPasswordResponse,
     LoginRequest,
+    PresenceHeartbeatOut,
+    PresenceHeartbeatRequest,
     RegisterRequest,
     ResetPasswordRequest,
     ResetPasswordResponse,
@@ -535,6 +538,15 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
             detail="User is inactive",
         )
 
+    now = datetime.now(timezone.utc)
+    try:
+        user.last_login_at = now
+        db.add(user)
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Unable to record login time for user %s", user.id)
+
     expires_minutes = (
         settings.admin_access_token_expire_minutes
         if user.role.value == "admin"
@@ -548,6 +560,35 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
     )
 
     return TokenResponse(access_token=access_token)
+
+
+@router.post("/presence", response_model=PresenceHeartbeatOut)
+def heartbeat_presence(
+    payload: PresenceHeartbeatRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PresenceHeartbeatOut:
+    now = datetime.now(timezone.utc)
+    channel = payload.channel
+    statement = (
+        pg_insert(UserPresence)
+        .values(
+            user_id=current_user.id,
+            channel=channel,
+            last_seen_at=now,
+            updated_at=now,
+        )
+        .on_conflict_do_update(
+            constraint="uq_user_presences_user_channel",
+            set_={"last_seen_at": now, "updated_at": now},
+        )
+    )
+    db.execute(statement)
+    current_user.last_seen_at = now
+    current_user.last_seen_channel = channel
+    db.add(current_user)
+    db.commit()
+    return PresenceHeartbeatOut(seen_at=now, channel=channel)
 
 
 @router.post("/email-lookup", response_model=EmailLookupResponse)

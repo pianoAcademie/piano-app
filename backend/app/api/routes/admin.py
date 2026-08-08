@@ -52,7 +52,7 @@ from app.models.ops import (
 )
 from app.models.notification_engine import Notification
 from app.models.quote import Prospect, Quote, QuoteAcceptanceFollowup
-from app.models.user import ClientStatus, User, UserRole
+from app.models.user import ClientStatus, User, UserPresence, UserRole
 from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
 from app.services.automation_triggers import schedule_trial_attended_triggers
 from app.services.invoice_documents import normalize_billing_entity
@@ -111,6 +111,7 @@ from app.schemas.admin import (
     AdminPlanningReorganizationOut,
     AdminPlanningReorganizationSessionOut,
     AdminPlanningSettingsUpdateRequest,
+    AdminOnlinePresenceOut,
     AdminClientBillingAdjustmentQueueOut,
     AdminProfessorOut,
     AdminSessionBookingCreateRequest,
@@ -2332,6 +2333,44 @@ def _send_operation_notifications(
 @router.get("/ping")
 def admin_ping(current_user: User = Depends(require_roles(UserRole.ADMIN))) -> dict[str, bool]:
     return {"ok": True}
+
+
+@router.get("/presence", response_model=AdminOnlinePresenceOut)
+def admin_online_presence(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_view_planning", "can_view_clients")),
+) -> AdminOnlinePresenceOut:
+    now = datetime.now(timezone.utc)
+    active_window_seconds = 90
+    cutoff = now - timedelta(seconds=active_window_seconds)
+    rows = db.execute(
+        select(UserPresence.user_id, UserPresence.channel, UserPresence.last_seen_at, User.role)
+        .join(User, User.id == UserPresence.user_id)
+        .where(UserPresence.last_seen_at >= cutoff, User.is_active.is_(True))
+    ).all()
+
+    latest_by_user: dict[UUID, tuple[datetime, str, UserRole]] = {}
+    for row in rows:
+        previous = latest_by_user.get(row.user_id)
+        if previous is None or row.last_seen_at > previous[0]:
+            latest_by_user[row.user_id] = (row.last_seen_at, row.channel, row.role)
+
+    web_users = {user_id for user_id, (_, channel, _) in latest_by_user.items() if channel == "WEB"}
+    mobile_users = {user_id for user_id, (_, channel, _) in latest_by_user.items() if channel == "MOBILE_APP"}
+    client_users = {user_id for user_id, (_, _, role) in latest_by_user.items() if role == UserRole.CLIENT}
+    professor_users = {user_id for user_id, (_, _, role) in latest_by_user.items() if role == UserRole.PROF}
+    admin_users = {user_id for user_id, (_, _, role) in latest_by_user.items() if role == UserRole.ADMIN}
+
+    return AdminOnlinePresenceOut(
+        generated_at=now,
+        active_window_seconds=active_window_seconds,
+        total=len(latest_by_user),
+        web=len(web_users),
+        mobile_app=len(mobile_users),
+        clients=len(client_users),
+        professors=len(professor_users),
+        admins=len(admin_users),
+    )
 
 
 @router.get("/professors", response_model=list[AdminProfessorOut])

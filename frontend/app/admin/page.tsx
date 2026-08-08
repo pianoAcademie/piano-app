@@ -29,6 +29,7 @@ import SessionVisibilityFields from "../../components/session-visibility-fields"
 import ModalA11yFrame from "../../components/modal-a11y-frame";
 import PresenceButtonsGroup from "../../components/presence-buttons-group";
 import AttendanceInternalNoteField from "../../components/attendance-internal-note-field";
+import AdminOnlinePresenceDashboard from "../../components/admin-online-presence-dashboard";
 import DayEventsDrawer from "../../components/planning/day-events-drawer";
 import SessionEditModalBridge from "../../components/planning/session-edit-modal-bridge";
 import MonthDayCard from "../../components/planning/month-day-card";
@@ -1694,6 +1695,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
           </div>
         </div>
       </section>
+
+      <AdminOnlinePresenceDashboard language={language} />
 
       <section className="card planning-filters-card">
         <form method="get" className="planning-quick-form">

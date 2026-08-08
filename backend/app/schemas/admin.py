@@ -849,8 +849,22 @@ class AdminClientOut(BaseModel):
     group_names: list[str] = Field(default_factory=list)
     is_active: bool
     next_session_start_at_utc: datetime | None = None
+    last_login_at: datetime | None = None
+    last_seen_at: datetime | None = None
+    last_seen_channel: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class AdminOnlinePresenceOut(BaseModel):
+    generated_at: datetime
+    active_window_seconds: int
+    total: int
+    web: int
+    mobile_app: int
+    clients: int
+    professors: int
+    admins: int
 
 
 class AdminLegalEntityOut(BaseModel):

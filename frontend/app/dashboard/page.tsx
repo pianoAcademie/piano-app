@@ -60,6 +60,7 @@ import ListRow from "../../components/client-ui/list-row";
 import MobileHeader from "../../components/client-ui/mobile-header";
 import MobileTabs from "../../components/client-ui/mobile-tabs";
 import MobilePushRegistration from "../../components/client-ui/mobile-push-registration";
+import PresenceHeartbeat from "../../components/presence-heartbeat";
 import ClientNavigationIcon, { type ClientNavigationIconName } from "../../components/client-ui/navigation-icon";
 import ClientSupportButton from "../../components/client-ui/client-support-button";
 import ZendeskLoader from "../../components/client-ui/zendesk-loader";
@@ -3115,7 +3116,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
             </div>
           }
         />
-        {!isReadOnlyPreview ? <MobilePushRegistration language={language} /> : null}
+        {!isReadOnlyPreview ? (
+          <>
+            <PresenceHeartbeat />
+            <MobilePushRegistration language={language} />
+          </>
+        ) : null}
 
         <header className={`client-topbar client-topbar-${tab}`}>
           <div>

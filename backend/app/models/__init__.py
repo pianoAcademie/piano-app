@@ -159,7 +159,7 @@ from app.models.quote import (
     TermsTemplateVersion,
 )
 from app.models.typeform_intake import TypeformFormConfig, TypeformIntake
-from app.models.user import ClientKind, ClientStatus, User, UserRole
+from app.models.user import ClientKind, ClientStatus, User, UserPresence, UserRole
 
 __all__ = [
     "AppSetting",
@@ -178,6 +178,7 @@ __all__ = [
     "ClientGroup",
     "ClientGroupMembership",
     "ClientNewsArticle",
+    "UserPresence",
     "ClientKind",
     "ClientInvoiceLine",
     "ClientLegacyInvoice",

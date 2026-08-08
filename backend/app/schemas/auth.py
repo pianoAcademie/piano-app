@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
@@ -37,6 +37,15 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str = Field(min_length=3, max_length=255)
     password: str = Field(min_length=8, max_length=128)
+
+
+class PresenceHeartbeatRequest(BaseModel):
+    channel: Literal["WEB", "MOBILE_APP"] = "WEB"
+
+
+class PresenceHeartbeatOut(BaseModel):
+    seen_at: datetime
+    channel: Literal["WEB", "MOBILE_APP"]
 
 
 class TokenResponse(BaseModel):

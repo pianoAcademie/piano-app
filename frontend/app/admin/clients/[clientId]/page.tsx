@@ -3114,7 +3114,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             </form>
           </div>
           <small className="muted">
-            {t("admin.client_detail.created_on")} {formatDateUi(client.created_at)} | {t("admin.client_detail.updated_on")} {formatDateUi(client.updated_at)}
+            {t("admin.client_detail.created_on")} {formatDateUi(client.created_at)} | {t("admin.client_detail.updated_on")} {formatDateUi(client.updated_at)} | {language === "en" ? "Last login" : "Dernière connexion"} {client.last_login_at ? formatDateUi(client.last_login_at) : "–"}
           </small>
         </div>
 
@@ -4290,6 +4290,22 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <article className="item row spread">
                   <span className="muted">{t("admin.client_detail.first_lesson_date")}</span>
                   <strong>{client.first_course_at ? formatDateUi(client.first_course_at) : t("admin.client_detail.no_booked_lesson")}</strong>
+                </article>
+                <article className="item row spread">
+                  <span className="muted">{language === "en" ? "Last login" : "Dernière connexion"}</span>
+                  <strong>
+                    {client.last_login_at
+                      ? formatDateUi(client.last_login_at)
+                      : (language === "en" ? "No login recorded" : "Aucune connexion enregistrée")}
+                  </strong>
+                </article>
+                <article className="item row spread">
+                  <span className="muted">{language === "en" ? "Last activity" : "Dernière activité"}</span>
+                  <strong>
+                    {client.last_seen_at
+                      ? `${formatDateUi(client.last_seen_at)} · ${client.last_seen_channel === "MOBILE_APP" ? (language === "en" ? "Mobile app" : "Application mobile") : (language === "en" ? "Website" : "Site internet")}`
+                      : (language === "en" ? "No activity recorded" : "Aucune activité enregistrée")}
+                  </strong>
                 </article>
                 <article className="item row spread">
                   <span className="muted">{t("admin.client_detail.created_on")}</span>
