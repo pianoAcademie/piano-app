@@ -42,6 +42,39 @@ class _FakeDb:
 
 
 class InvoiceRangePaymentNotificationTests(unittest.TestCase):
+    def test_postprocessing_state_survives_note_round_trip(self) -> None:
+        client_id = uuid4()
+        metadata: dict[str, object] = {
+            "kind": "INVOICE_RANGE",
+            "invoice_number": "PA26-0296",
+            "start_date": "2026-06-24",
+            "end_date": "2026-06-24",
+            "issued_date": "2026-06-24",
+            "due_date": "2026-06-24",
+            "layout": "NORMAL",
+            "totals_by_currency": {"EUR": "200.00"},
+            "billing_entity": "ENTITE_NON_DEFINIE",
+            "invoice_status": "PAID",
+            "payment_postprocessing_status": "COMPLETED",
+            "payment_postprocessing_completed_at": "2026-08-08T15:14:25+00:00",
+            "payment_postprocessing_completion_reason": "MANUAL_REPAIR_NO_NOTIFICATION_REPLAY",
+        }
+        note = ClientNoteEntry(
+            id=uuid4(),
+            user_id=client_id,
+            entry_type="AUTO",
+            message=admin_clients._build_invoice_range_note_message(metadata),
+            created_at=datetime(2026, 8, 8, tzinfo=timezone.utc),
+        )
+
+        parsed = admin_clients._parse_invoice_range_note_entry(note)
+
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed["payment_postprocessing_status"], "COMPLETED")
+        self.assertEqual(parsed["payment_postprocessing_completed_at"], "2026-08-08T15:14:25+00:00")
+        self.assertEqual(parsed["payment_postprocessing_completion_reason"], "MANUAL_REPAIR_NO_NOTIFICATION_REPLAY")
+
     def test_already_paid_reconciliation_is_idempotent(self) -> None:
         db = _FakeDb()
         client_id = uuid4()
