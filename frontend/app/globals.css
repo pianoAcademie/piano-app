@@ -4673,6 +4673,53 @@ button.danger:focus-visible {
   margin-top: 18px;
 }
 
+.embed-planning-cta-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.embed-planning-rate-choice-callout {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 16px;
+  border: 2px solid #c9872d;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #fff4d8, #fffaf0);
+  color: #3f2a12;
+  box-shadow: 0 8px 20px rgba(143, 87, 18, 0.1);
+}
+
+.embed-planning-rate-choice-icon {
+  display: inline-flex;
+  flex: 0 0 38px;
+  width: 38px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #a86412;
+  color: #fff;
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.embed-planning-rate-choice-callout strong {
+  display: block;
+  color: #55350f;
+  font-size: 17px;
+}
+
+.embed-planning-rate-choice-callout p {
+  margin: 5px 0 3px;
+  color: #3f2a12;
+  font-weight: 700;
+}
+
+.embed-planning-rate-choice-callout small {
+  color: #735a3d;
+}
+
 .embed-planning-primary-link,
 .embed-planning-book-form button {
   width: 100%;

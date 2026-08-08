@@ -455,6 +455,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
     : null;
   const selectedSessionTrialOffers =
     selectedSessionTrialOffersResult?.ok ? selectedSessionTrialOffersResult.data : [];
+  const featuredTrialOffer = selectedSessionTrialOffers[0] ?? null;
   const selectedBooking = selectedSession ? bookingsBySessionId.get(selectedSession.id) ?? null : null;
   const selectedSessionStart = selectedSession ? safeDate(selectedSession.start_at_utc) : null;
   const selectedSessionStarted = selectedSessionStart ? selectedSessionStart.getTime() <= Date.now() : false;
@@ -540,11 +541,29 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
 
       {!portalToken ? (
         <div className="embed-planning-cta-stack">
-          <p className="muted">
-            {t(selectedSessionTrialOffers.length > 0 ? "embed_planning.unauthenticated_trial_help" : "embed_planning.unauthenticated_help")}
-          </p>
+          {featuredTrialOffer ? (
+            <div className="embed-planning-rate-choice-callout">
+              <span className="embed-planning-rate-choice-icon" aria-hidden="true">€</span>
+              <div>
+                <strong>{t("embed_planning.rate_choice_title")}</strong>
+                <p>
+                  {t("embed_planning.rate_choice_body", {
+                    unitPrice: formatMoney(
+                      selectedSession.external_booking_price_ttc,
+                      selectedSession.external_booking_currency,
+                      language,
+                    ),
+                    trialPrice: formatMoney(featuredTrialOffer.price_ttc, featuredTrialOffer.currency, language),
+                  })}
+                </p>
+                <small>{t("embed_planning.rate_choice_login_note")}</small>
+              </div>
+            </div>
+          ) : (
+            <p className="muted">{t("embed_planning.unauthenticated_help")}</p>
+          )}
           <Link className="mode-link embed-planning-primary-link" href={selectedSessionRequiresCheckout ? sessionCheckoutLoginHref : loginHref}>
-            {t("embed_planning.reserve_cta")}
+            {t(featuredTrialOffer ? "embed_planning.choose_rate_cta" : "embed_planning.reserve_cta")}
           </Link>
         </div>
       ) : selectedBooking ? (
