@@ -13818,6 +13818,7 @@ def admin_purchase_plan_for_client(
             code=plan.code,
             name=plan.name,
             kind=plan.kind,
+            is_trial_offer=bool(plan.is_trial_offer),
         ),
         checkout_url=checkout_url,
         payment_reference=subscription.payment_provider_subscription_ref,

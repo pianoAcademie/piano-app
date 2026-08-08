@@ -145,7 +145,10 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
           <section className="public-buy-summary">
             <article className="public-buy-line">
               <span>{t("public_formula_checkout.formula_label")}</span>
-              <strong>{summary.name}</strong>
+              <strong>
+                {summary.name}
+                {summary.is_trial_offer ? ` · ${t("client.trial_offer_badge")}` : ""}
+              </strong>
             </article>
             <article className="public-buy-line">
               <span>{t("public_formula_checkout.amount_incl_tax")}</span>
@@ -193,7 +196,13 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
             ) : subscriptionPaymentMethods.length === 1 ? (
               <input type="hidden" name="billing_method_code" value={subscriptionPaymentMethods[0]} />
             ) : null}
-            <button type="submit">{t("public_formula_checkout.pay_formula")}</button>
+            <button type="submit">
+              {summary.is_trial_offer && summary.price_ttc
+                ? t("client.pay_trial_price", {
+                    amount: formatMoney(summary.price_ttc, summary.currency, language),
+                  })
+                : t("public_formula_checkout.pay_formula")}
+            </button>
           </form>
 
           <div className="row">

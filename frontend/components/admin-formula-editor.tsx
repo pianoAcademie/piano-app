@@ -108,6 +108,7 @@ export default function AdminFormulaEditor({
   const defaultPriceTaxMode: AdminFormulaPriceTaxMode = formula?.price_tax_mode ?? "HT";
   const defaultCreditGrantsRelation: AdminFormulaCreditGrantsRelation = formula?.credit_grants_relation ?? "OR";
   const [kind, setKind] = useState<"PACK" | "SUBSCRIPTION" | "FORFAIT">(defaultKind);
+  const [isTrialOffer, setIsTrialOffer] = useState<boolean>(formula?.is_trial_offer ?? false);
   const [priceTaxMode, setPriceTaxMode] = useState<AdminFormulaPriceTaxMode>(defaultPriceTaxMode);
   const [creditGrantsRelation, setCreditGrantsRelation] = useState<AdminFormulaCreditGrantsRelation>(defaultCreditGrantsRelation);
 
@@ -215,13 +216,46 @@ export default function AdminFormulaEditor({
                 {t("common.private")}
               </label>
 
+              <label className="checkline span-2">
+                <input
+                  type="checkbox"
+                  name="is_trial_offer"
+                  checked={isTrialOffer}
+                  onChange={(event) => {
+                    const checked = event.currentTarget.checked;
+                    setIsTrialOffer(checked);
+                    if (checked) {
+                      setKind("PACK");
+                      setCreditGrantsRelation("OR");
+                      setCreditRows((rows) => [
+                        {
+                          key: rows[0]?.key ?? newRowKey("cg", 0),
+                          creditTypeId: rows[0]?.creditTypeId ?? activeCreditTypes[0]?.id ?? "",
+                          creditsCount: "1",
+                        },
+                      ]);
+                    }
+                  }}
+                />
+                <span>
+                  {t("admin.formulas.editor_trial_offer")}
+                  <small className="muted">{t("admin.formulas.editor_trial_offer_help")}</small>
+                </span>
+              </label>
+
               <label>
                 {t("common.type")}
-                <select name="kind" value={kind} onChange={(event) => setKind(event.currentTarget.value as "PACK" | "SUBSCRIPTION" | "FORFAIT")}>
+                <select
+                  name="kind"
+                  value={kind}
+                  disabled={isTrialOffer}
+                  onChange={(event) => setKind(event.currentTarget.value as "PACK" | "SUBSCRIPTION" | "FORFAIT")}
+                >
                   <option value="PACK">{t("admin.formulas.editor_kind_pack")}</option>
                   <option value="SUBSCRIPTION">{t("admin.formulas.kind_subscription")}</option>
                   <option value="FORFAIT">{t("admin.formulas.editor_kind_forfait")}</option>
                 </select>
+                {isTrialOffer ? <input type="hidden" name="kind" value="PACK" /> : null}
               </label>
 
               <label>
@@ -328,6 +362,7 @@ export default function AdminFormulaEditor({
                 <select
                   name="entitlement_course_type_ids"
                   multiple
+                  required={isTrialOffer}
                   size={Math.max(4, Math.min(8, courseTypes.length || 4))}
                   defaultValue={selectedEntitlementIds}
                 >
@@ -358,7 +393,7 @@ export default function AdminFormulaEditor({
                         ]);
                         setCreditRowIndex((value) => value + 1);
                       }}
-                      disabled={activeCreditTypes.length === 0}
+                      disabled={isTrialOffer || activeCreditTypes.length === 0}
                     >
                       <span aria-hidden="true">＋</span> {t("admin.formulas.editor_add")}
                     </button>
@@ -440,6 +475,7 @@ export default function AdminFormulaEditor({
                                 prev.map((item) => (item.key === row.key ? { ...item, creditsCount: nextValue } : item)),
                               );
                             }}
+                            readOnly={isTrialOffer}
                           />
                         </label>
 
@@ -448,7 +484,7 @@ export default function AdminFormulaEditor({
                             type="button"
                             className="danger small-btn formula-row-delete-btn"
                             onClick={() => setCreditRows((prev) => prev.filter((item) => item.key !== row.key))}
-                            disabled={creditRows.length === 1}
+                            disabled={isTrialOffer || creditRows.length === 1}
                             title={t("admin.formulas.editor_delete_credit_line")}
                           >
                             <span className="formula-row-delete-icon" aria-hidden="true">

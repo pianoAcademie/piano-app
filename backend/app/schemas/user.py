@@ -343,6 +343,7 @@ class ClientSessionFormulaOptionOut(BaseModel):
     formula_id: UUID
     formula_code: str
     formula_type: PlanKind
+    is_trial_offer: bool = False
     name: str
     description: str | None = None
     price_ttc: Decimal | None = None

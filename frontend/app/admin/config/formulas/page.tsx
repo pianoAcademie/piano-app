@@ -327,6 +327,9 @@ export default async function AdminFormulasPage({ searchParams }: { searchParams
                     <tr key={formula.id}>
                       <td>
                         <strong>{formula.name}</strong>
+                        {formula.is_trial_offer ? (
+                          <div><span className="status-pill status-info">{t("client.trial_offer_badge")}</span></div>
+                        ) : null}
                         <div className="formula-meta-code">{formula.code}</div>
                         {formula.description ? <p className="muted">{formula.description}</p> : null}
                       </td>

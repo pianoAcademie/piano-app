@@ -121,6 +121,7 @@ class Plan(Base):
         server_default=text("'OR'::plan_credit_grants_relation"),
     )
     is_private: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    is_trial_offer: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     options_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     payment_methods_json: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     restrictions_json: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))

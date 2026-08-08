@@ -24,7 +24,7 @@ from app.models.professor_access import ProfessorPermission
 from app.models.product_catalog import CatalogProduct, ProductCategory, ProductLocationStock
 from app.models.quote import Quote
 from app.models.typeform_intake import TypeformIntake
-from app.models.user import ClientStatus, User, UserRole
+from app.models.user import User, UserRole
 from app.schemas.booking import AttendanceUpdateRequest, BookingOut
 from app.schemas.professor import (
     ProfessorAttendancePendingOut,
@@ -241,7 +241,7 @@ def _session_students(
                 last_name=user.last_name,
                 display_name=_display_name(user),
                 attendance_status=booking.status,
-                is_trial_course=bool(booking.is_trial_course or user.client_status == ClientStatus.TRIAL),
+                is_trial_course=bool(booking.is_trial_course),
                 is_first_course=is_first_course,
                 internal_note=booking.internal_note,
             )

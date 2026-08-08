@@ -19,11 +19,18 @@ from app.models.plan import Plan, PlanKind
 from app.schemas.user import ClientSessionFormulaOptionOut
 
 
-def _formula_option(*, code: str, name: str, description: str | None = None) -> ClientSessionFormulaOptionOut:
+def _formula_option(
+    *,
+    code: str,
+    name: str,
+    description: str | None = None,
+    is_trial_offer: bool = False,
+) -> ClientSessionFormulaOptionOut:
     return ClientSessionFormulaOptionOut(
         formula_id=uuid4(),
         formula_code=code,
         formula_type=PlanKind.PACK,
+        is_trial_offer=is_trial_offer,
         name=name,
         description=description,
         currency="EUR",
@@ -37,18 +44,26 @@ class ClientTrialFormulaEligibilityTests(unittest.TestCase):
         self.trial = _formula_option(
             code="PIANO_TRIAL_ONSITE",
             name="Cours d'essai de piano en présentiel",
+            is_trial_offer=True,
         )
         self.pack = _formula_option(
             code="PACK_10_PIANO_ONSITE",
             name="Carnet 10 cours piano en présentiel",
         )
 
-    def test_detects_piano_trial_formula_from_code_and_name(self) -> None:
+    def test_detects_only_explicit_trial_formula(self) -> None:
         self.assertTrue(_is_piano_trial_formula_option(self.trial))
         self.assertFalse(_is_piano_trial_formula_option(self.pack))
 
-    @patch("app.api.routes.clients._member_has_prior_piano_booking", return_value=True)
-    def test_excludes_trial_when_member_already_booked_piano(self, prior_booking: object) -> None:
+    @patch("app.api.routes.clients.has_prior_course_attendance_for_course_type", return_value=False)
+    @patch("app.api.routes.clients.has_available_trial_credit_for_course_type", return_value=False)
+    @patch("app.api.routes.clients.has_trial_booking_for_course_type", return_value=True)
+    def test_excludes_trial_when_member_already_used_trial(
+        self,
+        prior_trial: object,
+        available_credit: object,
+        prior_attendance: object,
+    ) -> None:
         result = _eligible_formula_options_for_member(
             SimpleNamespace(),
             member_id=self.member_id,
@@ -57,10 +72,19 @@ class ClientTrialFormulaEligibilityTests(unittest.TestCase):
         )
 
         self.assertEqual(result, [self.pack])
-        prior_booking.assert_called_once()
+        prior_trial.assert_called_once()
+        available_credit.assert_called_once()
+        prior_attendance.assert_called_once()
 
-    @patch("app.api.routes.clients._member_has_prior_piano_booking", return_value=False)
-    def test_keeps_trial_for_first_piano_booking(self, prior_booking: object) -> None:
+    @patch("app.api.routes.clients.has_prior_course_attendance_for_course_type", return_value=False)
+    @patch("app.api.routes.clients.has_available_trial_credit_for_course_type", return_value=False)
+    @patch("app.api.routes.clients.has_trial_booking_for_course_type", return_value=False)
+    def test_keeps_trial_for_first_trial_booking(
+        self,
+        prior_trial: object,
+        available_credit: object,
+        prior_attendance: object,
+    ) -> None:
         result = _eligible_formula_options_for_member(
             SimpleNamespace(),
             member_id=self.member_id,
@@ -69,10 +93,19 @@ class ClientTrialFormulaEligibilityTests(unittest.TestCase):
         )
 
         self.assertEqual(result, [self.trial, self.pack])
-        prior_booking.assert_called_once()
+        prior_trial.assert_called_once()
+        available_credit.assert_called_once()
+        prior_attendance.assert_called_once()
 
-    @patch("app.api.routes.clients._member_has_prior_piano_booking")
-    def test_skips_history_query_without_trial_formula(self, prior_booking: object) -> None:
+    @patch("app.api.routes.clients.has_prior_course_attendance_for_course_type")
+    @patch("app.api.routes.clients.has_available_trial_credit_for_course_type")
+    @patch("app.api.routes.clients.has_trial_booking_for_course_type")
+    def test_skips_history_query_without_trial_formula(
+        self,
+        prior_trial: object,
+        available_credit: object,
+        prior_attendance: object,
+    ) -> None:
         result = _eligible_formula_options_for_member(
             SimpleNamespace(),
             member_id=self.member_id,
@@ -81,7 +114,46 @@ class ClientTrialFormulaEligibilityTests(unittest.TestCase):
         )
 
         self.assertEqual(result, [self.pack])
-        prior_booking.assert_not_called()
+        prior_trial.assert_not_called()
+        available_credit.assert_not_called()
+        prior_attendance.assert_not_called()
+
+    @patch("app.api.routes.clients.has_prior_course_attendance_for_course_type", return_value=False)
+    @patch("app.api.routes.clients.has_available_trial_credit_for_course_type", return_value=True)
+    @patch("app.api.routes.clients.has_trial_booking_for_course_type", return_value=False)
+    def test_excludes_second_purchase_when_trial_credit_is_already_available(
+        self,
+        _prior_trial: object,
+        _available_credit: object,
+        _prior_attendance: object,
+    ) -> None:
+        result = _eligible_formula_options_for_member(
+            SimpleNamespace(),
+            member_id=self.member_id,
+            course_type=self.course_type,
+            formula_options=[self.trial, self.pack],
+        )
+
+        self.assertEqual(result, [self.pack])
+
+    @patch("app.api.routes.clients.has_prior_course_attendance_for_course_type", return_value=True)
+    @patch("app.api.routes.clients.has_available_trial_credit_for_course_type", return_value=False)
+    @patch("app.api.routes.clients.has_trial_booking_for_course_type", return_value=False)
+    def test_excludes_trial_when_member_already_followed_course_type(
+        self,
+        _prior_trial: object,
+        _available_credit: object,
+        prior_attendance: object,
+    ) -> None:
+        result = _eligible_formula_options_for_member(
+            SimpleNamespace(),
+            member_id=self.member_id,
+            course_type=self.course_type,
+            formula_options=[self.trial, self.pack],
+        )
+
+        self.assertEqual(result, [self.pack])
+        prior_attendance.assert_called_once()
 
 
 class _RowsResult:

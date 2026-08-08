@@ -155,6 +155,11 @@ from app.services.session_audience import (
     scopes_allow_planless_booking,
 )
 from app.services.subscriptions import add_months_utc, reconcile_subscription_status
+from app.services.trial_courses import (
+    has_available_trial_credit_for_course_type,
+    has_prior_course_attendance_for_course_type,
+    has_trial_booking_for_course_type,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -1434,6 +1439,7 @@ def _formula_option_out(plan: Plan, *, restriction_labels: list[str]) -> ClientS
         formula_id=plan.id,
         formula_code=plan.code,
         formula_type=plan.kind,
+        is_trial_offer=bool(getattr(plan, "is_trial_offer", False)),
         name=plan.name,
         description=plan.description,
         price_ttc=price_snapshot,
@@ -1537,55 +1543,9 @@ def _active_formula_options_for_course_type(
 
 
 def _is_piano_trial_formula_option(option: ClientSessionFormulaOptionOut) -> bool:
-    normalized = _normalize_course_access_key(
-        " ".join(
-            value
-            for value in (
-                option.formula_code,
-                option.name,
-                option.description,
-            )
-            if value
-        )
-    )
-    tokens = set(normalized.split())
-    return "piano" in tokens and bool(tokens & {"essai", "trial"})
+    """Backward-compatible helper name; trial offers are now explicit."""
 
-
-def _member_has_prior_piano_booking(
-    db: Session,
-    *,
-    user_id: UUID,
-    course_type: CourseType,
-) -> bool:
-    piano_course_conditions = [
-        func.lower(func.coalesce(CourseType.code, "")).contains("piano"),
-        func.lower(func.coalesce(CourseType.name, "")).contains("piano"),
-        func.lower(func.coalesce(CourseType.service_code, "")).contains("piano"),
-        CourseType.id == course_type.id,
-    ]
-    if course_type.credit_type_id is not None:
-        piano_course_conditions.append(CourseType.credit_type_id == course_type.credit_type_id)
-
-    prior_booking_id = db.scalar(
-        select(Booking.id)
-        .join(CourseSession, CourseSession.id == Booking.session_id)
-        .join(CourseType, CourseType.id == CourseSession.course_type_id)
-        .where(
-            Booking.user_id == user_id,
-            Booking.status.in_(
-                (
-                    BookingStatus.BOOKED,
-                    BookingStatus.ATTENDED,
-                    BookingStatus.NO_SHOW,
-                    BookingStatus.EXCUSED_ABSENCE,
-                )
-            ),
-            or_(*piano_course_conditions),
-        )
-        .limit(1)
-    )
-    return prior_booking_id is not None
+    return bool(option.is_trial_offer)
 
 
 def _eligible_formula_options_for_member(
@@ -1594,16 +1554,35 @@ def _eligible_formula_options_for_member(
     member_id: UUID,
     course_type: CourseType,
     formula_options: list[ClientSessionFormulaOptionOut],
+    trial_reference_at: datetime | None = None,
 ) -> list[ClientSessionFormulaOptionOut]:
-    if not any(_is_piano_trial_formula_option(option) for option in formula_options):
+    if not any(option.is_trial_offer for option in formula_options):
         return formula_options
-    if not _member_has_prior_piano_booking(
+    prior_trial = has_trial_booking_for_course_type(
         db,
         user_id=member_id,
-        course_type=course_type,
-    ):
-        return formula_options
-    return [option for option in formula_options if not _is_piano_trial_formula_option(option)]
+        course_type_id=course_type.id,
+    )
+    available_trial_credit = has_available_trial_credit_for_course_type(
+        db,
+        user_id=member_id,
+        course_type_id=course_type.id,
+    )
+    prior_course_attendance = has_prior_course_attendance_for_course_type(
+        db,
+        user_id=member_id,
+        course_type_id=course_type.id,
+        reference_at=trial_reference_at or datetime.now(timezone.utc),
+    )
+    eligible: list[ClientSessionFormulaOptionOut] = []
+    for option in formula_options:
+        if not option.is_trial_offer:
+            eligible.append(option)
+            continue
+        if prior_trial or available_trial_credit or prior_course_attendance:
+            continue
+        eligible.append(option)
+    return eligible
 
 
 def _session_purchase_catalog(
@@ -4016,6 +3995,14 @@ def get_client_session_reservation_options(
                 )
                 continue
 
+            member_formula_options = _eligible_formula_options_for_member(
+                db,
+                member_id=member.id,
+                course_type=course_type,
+                formula_options=formula_options,
+                trial_reference_at=session_obj.start_at_utc,
+            )
+
             selected_subscription = _select_eligible_subscription(
                 db,
                 user_id=member.id,
@@ -4027,7 +4014,11 @@ def get_client_session_reservation_options(
             )
             if selected_subscription is not None:
                 _, selected_plan = selected_subscription
-                coverage_source = selected_plan.kind.value if hasattr(selected_plan.kind, "value") else str(selected_plan.kind or "")
+                coverage_source = (
+                    "TRIAL"
+                    if selected_plan.is_trial_offer
+                    else selected_plan.kind.value if hasattr(selected_plan.kind, "value") else str(selected_plan.kind or "")
+                )
                 member_options.append(
                     ClientSessionReservationMemberOptionOut(
                         member_id=member.id,
@@ -4039,6 +4030,9 @@ def get_client_session_reservation_options(
                         reason="Cette reservation sera confirmee sans paiement supplementaire.",
                         has_credit_coverage=True,
                         coverage_source=coverage_source or None,
+                        direct_payment_amount_ttc=direct_payment_amount,
+                        direct_payment_currency=direct_payment_currency,
+                        formula_options=member_formula_options,
                     )
                 )
                 continue
@@ -4066,16 +4060,12 @@ def get_client_session_reservation_options(
                         reason="Cette reservation utilisera un credit manuel disponible.",
                         has_credit_coverage=True,
                         coverage_source="MANUAL_CREDIT",
+                        direct_payment_amount_ttc=direct_payment_amount,
+                        direct_payment_currency=direct_payment_currency,
+                        formula_options=member_formula_options,
                     )
                 )
                 continue
-
-            member_formula_options = _eligible_formula_options_for_member(
-                db,
-                member_id=member.id,
-                course_type=course_type,
-                formula_options=formula_options,
-            )
 
             if direct_payment_amount is not None and member_formula_options:
                 member_options.append(

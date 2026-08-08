@@ -1428,7 +1428,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
             `/api/v1/clients/me/sessions/${purchaseContext.data.session_id}/checkout`,
             {
               method: "POST",
-              body: JSON.stringify({ user_id: purchaseContext.data.booking_user_id }),
+              body: JSON.stringify({
+                user_id: purchaseContext.data.booking_user_id,
+                client_plan_subscription_id: normalizedPaymentId,
+              }),
             },
             token,
           );
@@ -2633,7 +2636,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     ? formatPackCreditLabel(selectedSessionPackCreditSummary, true)
     : null;
   const selectedSessionCoverageLabel =
-    selectedReservationMemberOption?.coverage_source === "MANUAL_CREDIT"
+    selectedReservationMemberOption?.coverage_source === "TRIAL"
+      ? t("client.trial_credit_available")
+      : selectedReservationMemberOption?.coverage_source === "MANUAL_CREDIT"
       ? t("client.manual_credit_available")
       : selectedReservationMemberOption?.coverage_source === "PACK"
         ? selectedSessionPackCreditLabel || t("client.compatible_pack_available")
@@ -2672,7 +2677,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       case "FINALIZE_PAYMENT":
         return t("client.finalize_payment_for", { member: option.member_display_name });
       case "BOOK_WITH_CREDIT":
-        return option.coverage_source === "PACK" ? t("client.use_your_credits") : t("client.book_without_paying");
+        return option.coverage_source === "TRIAL"
+          ? t("client.use_trial_credit")
+          : option.coverage_source === "PACK" ? t("client.use_your_credits") : t("client.book_without_paying");
       case "BUY_FORMULA_OR_PAY_UNIT":
         return t("client.choose_your_option");
       case "BUY_FORMULA":
@@ -2690,6 +2697,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       return t("client.finalize_payment_for", { member: option.member_display_name });
     }
     if (option.action_code === "BOOK_WITH_CREDIT") {
+      if (option.coverage_source === "TRIAL") {
+        return t("client.trial_credit_covers_slot", { member: option.member_display_name });
+      }
       if (option.coverage_source === "PACK") {
         const packSummary = compatiblePackCreditSummaryForMember(option.member_id);
         const credits = formatPackCreditLabel(packSummary, true);
@@ -2749,6 +2759,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       });
     }
     if (option.action_code === "BOOK_WITH_CREDIT") {
+      if (option.coverage_source === "TRIAL") {
+        return t("client.trial_credit_available");
+      }
       if (option.coverage_source === "PACK") {
         const packSummary = compatiblePackCreditSummaryForMember(option.member_id);
         if (packSummary) {
@@ -2777,7 +2790,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       : selectedSessionEffectiveActionCode === "FINALIZE_PAYMENT" && selectedReservationMemberOption
         ? t("client.finalize_payment_for", { member: selectedReservationMemberOption.member_display_name })
         : selectedSessionEffectiveActionCode === "BOOK_WITH_CREDIT" && selectedReservationMemberOption
-          ? selectedReservationMemberOption.coverage_source === "PACK"
+          ? selectedReservationMemberOption.coverage_source === "TRIAL"
+            ? t("client.use_trial_credit")
+            : selectedReservationMemberOption.coverage_source === "PACK"
             ? t("client.use_your_credits")
             : t("client.book_without_paying")
         : selectedSessionEffectiveActionCode === "BUY_FORMULA_OR_PAY_UNIT"
@@ -2795,7 +2810,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           ? t("client.pending_payment_other_member", { member: selectedReservationMemberOption.member_display_name })
           : reservationOptionReasonLabel(selectedReservationMemberOption) || selectedSessionPlanningState?.contextLine || ""
         : selectedSessionEffectiveActionCode === "BOOK_WITH_CREDIT" && selectedReservationMemberOption
-          ? selectedReservationMemberOption.coverage_source === "PACK" && selectedSessionPackCreditLabel
+          ? selectedReservationMemberOption.coverage_source === "TRIAL"
+            ? t("client.trial_credit_covers_slot", { member: selectedReservationMemberOption.member_display_name })
+            : selectedReservationMemberOption.coverage_source === "PACK" && selectedSessionPackCreditLabel
             ? t("client.pack_covers_slot", {
                 member: selectedReservationMemberOption.member_display_name,
                 credits: selectedSessionPackCreditLabel,
@@ -2814,7 +2831,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     !selectedReservationMemberOption
       ? null
       : selectedSessionEffectiveActionCode === "BOOK_WITH_CREDIT"
-        ? selectedReservationMemberOption.coverage_source === "PACK"
+        ? selectedReservationMemberOption.coverage_source === "TRIAL"
+          ? t("client.use_trial_credit")
+          : selectedReservationMemberOption.coverage_source === "PACK"
           ? t("client.use_my_credits")
           : selectedReservationMemberOption.coverage_source === "SUBSCRIPTION"
             ? t("client.use_my_subscription")
@@ -4186,7 +4205,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               <div className="client-session-formula-copy">
                                 <div className="client-session-choice-card-head">
                                   <strong>{formula.name}</strong>
-                                  <span className="badge">{t("client.plan_badge")}</span>
+                                  <span className="badge">
+                                    {formula.is_trial_offer ? t("client.trial_offer_badge") : t("client.plan_badge")}
+                                  </span>
                                 </div>
                                 {formula.description ? <p className="muted">{formula.description}</p> : null}
                                 <small className="muted">
@@ -4203,7 +4224,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 <input type="hidden" name="booking_user_id" value={selectedReservationMemberOption.member_id} />
                                 <input type="hidden" name="planning_return_to" value={selectedSessionReturnTo} />
                                 <button type="submit" className="client-session-secondary-button client-session-choice-button">
-                                  {formula.price_ttc
+                                  {formula.is_trial_offer && formula.price_ttc
+                                    ? t("client.book_trial_price", {
+                                        amount: toMoney(formula.price_ttc, formula.currency, language),
+                                      })
+                                    : formula.price_ttc
                                     ? `${t("client.buy_for_member", { member: selectedReservationMemberOption.member_display_name })} · ${toMoney(formula.price_ttc, formula.currency, language)}`
                                     : t("client.buy_plan_for_member", { member: selectedReservationMemberOption.member_display_name })}
                                 </button>
@@ -4271,7 +4296,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   <div className="client-session-formula-copy">
                                     <div className="client-session-choice-card-head">
                                       <strong>{formula.name}</strong>
-                                      <span className="badge">{t("client.plan_badge")}</span>
+                                      <span className="badge">
+                                        {formula.is_trial_offer ? t("client.trial_offer_badge") : t("client.plan_badge")}
+                                      </span>
                                     </div>
                                     {formula.description ? <p className="muted">{formula.description}</p> : null}
                                     <small className="muted">
@@ -4288,7 +4315,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                     <input type="hidden" name="booking_user_id" value={selectedReservationMemberOption.member_id} />
                                     <input type="hidden" name="planning_return_to" value={selectedSessionReturnTo} />
                                     <button type="submit" className="client-session-secondary-button client-session-choice-button">
-                                      {formula.price_ttc
+                                      {formula.is_trial_offer && formula.price_ttc
+                                        ? t("client.book_trial_price", {
+                                            amount: toMoney(formula.price_ttc, formula.currency, language),
+                                          })
+                                        : formula.price_ttc
                                         ? `${t("client.buy_for_member", { member: selectedReservationMemberOption.member_display_name })} · ${toMoney(formula.price_ttc, formula.currency, language)}`
                                         : t("client.buy_plan_for_member", { member: selectedReservationMemberOption.member_display_name })}
                                     </button>

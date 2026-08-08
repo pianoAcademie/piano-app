@@ -30,6 +30,7 @@ class PlanOut(BaseModel):
     base_price_ttc: Decimal | None = None
     currency_code: str | None
     active: bool
+    is_trial_offer: bool = False
     first_purchase_required: bool = False
     first_purchase_fee_ttc: Decimal | None = None
     first_purchase_partitions_price_ttc: Decimal | None = None
@@ -46,6 +47,7 @@ class PublicFormulaPurchaseSummaryOut(BaseModel):
     description: str | None = None
     active: bool
     is_private: bool
+    is_trial_offer: bool = False
     purchase_link_allowed: bool
     purchase_url: str
     price_ttc: Decimal | None = None
@@ -101,6 +103,7 @@ class PlanMiniOut(BaseModel):
     code: str
     name: str
     kind: PlanKind
+    is_trial_offer: bool = False
     price_ttc: Decimal | None = None
     currency_code: str | None = None
 

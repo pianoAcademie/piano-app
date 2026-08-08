@@ -87,10 +87,13 @@ function buildCheckoutHref(sessionId: string, planningReturnTo: string, bookingU
 }
 
 function memberActionLabel(option: ClientSessionReservationMemberOptionOut, language: UiLanguage): string {
+  const normalized = String(option.action_code || "").trim().toUpperCase();
+  if (normalized === "BOOK_WITH_CREDIT" && option.coverage_source === "TRIAL") {
+    return uiText(language, "client.use_trial_credit");
+  }
   if (language === "fr" && option.action_label?.trim()) {
     return option.action_label;
   }
-  const normalized = String(option.action_code || "").trim().toUpperCase();
   if (normalized === "ALREADY_BOOKED" || normalized === "ALREADY_WAITLISTED") return uiText(language, "public_session_checkout.action_view_booking");
   if (normalized === "FINALIZE_PAYMENT") return uiText(language, "public_session_checkout.action_finalize_payment");
   if (normalized === "JOIN_WAITLIST") return uiText(language, "public_session_checkout.action_join_waitlist");
@@ -126,7 +129,9 @@ function memberReasonLabel(option: ClientSessionReservationMemberOptionOut, lang
   if (normalized === "FINALIZE_PAYMENT") return uiText(language, "public_session_checkout.reason_finalize_payment");
   if (normalized === "JOIN_WAITLIST") return uiText(language, "public_session_checkout.reason_join_waitlist");
   if (normalized === "BOOK_WITH_CREDIT") {
-    return option.coverage_source === "MANUAL_CREDIT"
+    return option.coverage_source === "TRIAL"
+      ? uiText(language, "client.trial_credit_covers_slot", { member: option.member_display_name })
+      : option.coverage_source === "MANUAL_CREDIT"
       ? uiText(language, "public_session_checkout.reason_credit_manual")
       : uiText(language, "public_session_checkout.reason_credit_plan");
   }
@@ -222,8 +227,8 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
   const selectedMemberId = bookingUserId || (members.length === 1 ? members[0]?.member_id ?? "" : "");
   const selectedMember = members.find((option) => option.member_id === selectedMemberId) ?? null;
   const selectedMemberFormulaOptions =
-    (selectedMember?.formula_options?.length ?? 0) > 0
-      ? selectedMember?.formula_options ?? []
+    selectedMember != null
+      ? selectedMember.formula_options ?? []
       : purchaseCatalog?.formula_options ?? [];
   const selectedMemberDirectPaymentAmount =
     selectedMember?.direct_payment_amount_ttc ?? purchaseCatalog?.direct_payment_amount_ttc ?? null;
@@ -238,7 +243,9 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
           : "BUY_FORMULA"
         : selectedMember.action_code;
   const coverageLabel =
-    selectedMember?.coverage_source === "MANUAL_CREDIT"
+    selectedMember?.coverage_source === "TRIAL"
+      ? t("client.trial_credit_available")
+      : selectedMember?.coverage_source === "MANUAL_CREDIT"
       ? t("public_session_checkout.coverage_manual_credit")
       : selectedMember?.coverage_source === "PACK"
         ? t("public_session_checkout.coverage_pack")
@@ -358,7 +365,12 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                     {selectedMemberFormulaOptions.map((formula) => (
                       <article key={formula.formula_id} className="modal-card client-plan-card client-session-formula-card">
                         <div className="client-session-formula-copy">
-                          <strong>{formula.name}</strong>
+                          <div className="client-session-choice-card-head">
+                            <strong>{formula.name}</strong>
+                            <span className="badge">
+                              {formula.is_trial_offer ? t("client.trial_offer_badge") : t("client.plan_badge")}
+                            </span>
+                          </div>
                           {formula.description ? <p className="muted">{formula.description}</p> : null}
                           <small className="muted">
                             {[formula.formula_type, formula.frequency_label, ...formula.restriction_labels]
@@ -375,7 +387,11 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                           <input type="hidden" name="planning_return_to" value={planningReturnTo} />
                           <input type="hidden" name="language" value={language} />
                           <button type="submit" className="client-session-secondary-button">
-                            {formula.price_ttc
+                            {formula.is_trial_offer && formula.price_ttc
+                              ? t("client.book_trial_price", {
+                                  amount: formatMoney(formula.price_ttc, formula.currency, language),
+                                })
+                              : formula.price_ttc
                               ? t("public_session_checkout.buy_formula_for_member_price", {
                                   member: selectedMember.member_display_name,
                                   amount: formatMoney(formula.price_ttc, formula.currency, language),
@@ -416,7 +432,7 @@ export default async function BuySessionCheckoutPage({ searchParams }: { searchP
                       }
                     >
                       {memberActionLabel(selectedMember, language)}
-                      {selectedMemberDirectPaymentAmount
+                      {selectedMemberEffectiveActionCode !== "BOOK_WITH_CREDIT" && selectedMemberDirectPaymentAmount
                         ? ` · ${formatMoney(selectedMemberDirectPaymentAmount, selectedMemberDirectPaymentCurrency, language)}`
                         : ""}
                     </button>

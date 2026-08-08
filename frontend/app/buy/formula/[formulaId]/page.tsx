@@ -81,6 +81,9 @@ export default async function FormulaPurchaseLandingPage({
               <section className="public-buy-summary">
                 <h2>{summaryResult.data.name}</h2>
                 <div className="row public-buy-badges">
+                  {summaryResult.data.is_trial_offer ? (
+                    <span className="status-pill status-info">{t("client.trial_offer_badge")}</span>
+                  ) : null}
                   <span className="status-pill status-info">{formulaTypeLabel(summaryResult.data.formula_type, language)}</span>
                   {summaryResult.data.frequency_label ? <span className="status-pill status-ok">{summaryResult.data.frequency_label}</span> : null}
                 </div>

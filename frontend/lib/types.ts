@@ -149,6 +149,7 @@ export type PlanOut = {
   base_price_ttc: string | null;
   currency_code: string | null;
   active: boolean;
+  is_trial_offer: boolean;
   first_purchase_required: boolean;
   first_purchase_fee_ttc: string | null;
   first_purchase_partitions_price_ttc: string | null;
@@ -2129,6 +2130,7 @@ export type AdminFormulaOut = {
   kind: "PACK" | "SUBSCRIPTION" | "FORFAIT";
   active: boolean;
   is_private: boolean;
+  is_trial_offer: boolean;
   description: string | null;
   credits_count: number | null;
   pack_validity_months: number | null;
@@ -2162,6 +2164,7 @@ export type PublicFormulaPurchaseSummaryOut = {
   description: string | null;
   active: boolean;
   is_private: boolean;
+  is_trial_offer: boolean;
   purchase_link_allowed: boolean;
   purchase_url: string;
   price_ttc: string | null;
@@ -2199,6 +2202,7 @@ export type ClientSessionFormulaOptionOut = {
   formula_id: string;
   formula_code: string;
   formula_type: "PACK" | "SUBSCRIPTION" | "FORFAIT";
+  is_trial_offer: boolean;
   name: string;
   description: string | null;
   price_ttc: string | null;

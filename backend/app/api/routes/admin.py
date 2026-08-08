@@ -4176,6 +4176,8 @@ def add_admin_session_booking(
                 add_detail("Aucun abonnement actif/credit disponible pour ce client")
                 continue
 
+            is_trial_booking = bool(plan is not None and plan.is_trial_offer)
+
             price, vat_rate, vat_amount, total, currency = _resolve_booking_snapshot(
                 db,
                 session_obj=target,
@@ -4224,7 +4226,8 @@ def add_admin_session_booking(
                     currency_snapshot=currency,
                     student_start_at_utc=student_start_at_utc,
                     student_end_at_utc=student_end_at_utc,
-                    is_trial_course=client.client_status == ClientStatus.TRIAL,
+                    is_trial_course=is_trial_booking,
+                    trial_course_type_id=target.course_type_id if is_trial_booking else None,
                 )
                 db.add(booking)
                 db.flush()
@@ -4241,7 +4244,8 @@ def add_admin_session_booking(
                 existing.currency_snapshot = currency
                 existing.student_start_at_utc = student_start_at_utc
                 existing.student_end_at_utc = student_end_at_utc
-                existing.is_trial_course = bool(existing.is_trial_course or client.client_status == ClientStatus.TRIAL)
+                existing.is_trial_course = is_trial_booking
+                existing.trial_course_type_id = target.course_type_id if is_trial_booking else None
                 booking = existing
 
             if next_status == BookingStatus.BOOKED:
@@ -5242,6 +5246,10 @@ def duplicate_session_operation(
             ).all()
 
             for source_booking in source_bookings:
+                # A trial is a one-off booking and must never be propagated to a
+                # duplicated/recurring session.
+                if source_booking.is_trial_course:
+                    continue
                 duplicate_status = source_booking.status
                 if duplicate_status in (BookingStatus.ATTENDED, BookingStatus.NO_SHOW, BookingStatus.EXCUSED_ABSENCE):
                     duplicate_status = BookingStatus.BOOKED
@@ -5271,7 +5279,8 @@ def duplicate_session_operation(
                     student_note=source_booking.student_note,
                     student_start_at_utc=duplicate_student_start_at_utc,
                     student_end_at_utc=duplicate_student_end_at_utc,
-                    is_trial_course=source_booking.is_trial_course,
+                    is_trial_course=False,
+                    trial_course_type_id=None,
                 )
                 db.add(duplicate_booking)
                 db.flush()

@@ -528,6 +528,7 @@ class AdminFormulaOut(BaseModel):
     kind: PlanKind
     active: bool
     is_private: bool
+    is_trial_offer: bool
     description: str | None
     credits_count: int | None
     pack_validity_months: int | None
@@ -558,6 +559,7 @@ class AdminFormulaUpsertRequest(BaseModel):
     kind: PlanKind
     active: bool = True
     is_private: bool = False
+    is_trial_offer: bool = False
     description: str | None = None
     credits_count: int | None = Field(default=None, ge=1)
     pack_validity_months: int | None = Field(default=None, ge=1, le=12)
@@ -585,6 +587,7 @@ class AdminFormulaUpdateRequest(BaseModel):
     kind: PlanKind | None = None
     active: bool | None = None
     is_private: bool | None = None
+    is_trial_offer: bool | None = None
     description: str | None = None
     credits_count: int | None = Field(default=None, ge=1)
     pack_validity_months: int | None = Field(default=None, ge=1, le=12)

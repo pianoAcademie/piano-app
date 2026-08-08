@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_admin_permission_map, get_current_user, get_db, require_roles
 from app.core.config import settings
-from app.models.catalog import CourseType
+from app.models.catalog import CourseSession, CourseType
 from app.models.family import ClientFamilyLink
 from app.models.ops import AppSetting
 from app.models.plan import (
@@ -50,6 +50,14 @@ from app.services.pricing import compute_tax_totals, plan_service_code, resolve_
 from app.services.client_status import promote_client_to_active_student
 from app.services.subscriptions import add_months_utc, reconcile_subscription_status
 from app.services.subscription_lifecycle_notifications import send_cancellation_request_admin_notifications
+from app.services.trial_courses import (
+    has_available_trial_credit,
+    has_available_trial_credit_for_course_type,
+    has_prior_course_attendance_for_course_type,
+    has_trial_booking_for_course_type,
+    plan_supports_trial_course_type,
+    trial_plan_course_type_ids,
+)
 
 router = APIRouter()
 
@@ -334,6 +342,7 @@ def _serialize_public_formula_summary(db: Session, *, plan: Plan) -> PublicFormu
         description=plan.description,
         active=bool(plan.active),
         is_private=bool(plan.is_private),
+        is_trial_offer=bool(plan.is_trial_offer),
         purchase_link_allowed=_formula_purchase_link_allowed(plan),
         purchase_url=_purchase_url_for_plan(plan.id),
         price_ttc=price_snapshot,
@@ -678,6 +687,7 @@ def list_plans(
             base_price_ttc=pricing.base_price_ttc,
             currency_code=plan.currency_code,
             active=plan.active,
+            is_trial_offer=bool(plan.is_trial_offer),
             first_purchase_required=pricing.first_purchase_required,
             first_purchase_fee_ttc=pricing.first_purchase_fee_ttc,
             first_purchase_partitions_price_ttc=pricing.first_purchase_partitions_price_ttc,
@@ -883,10 +893,28 @@ def purchase_plan(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
 
     payload = payload or PlanPurchaseRequest()
+    context_payload: dict[str, object] = {}
+    context_booking_user_id: UUID | None = None
+    context_session_id: UUID | None = None
+    if payload.purchase_context:
+        context_payload = _decode_purchase_context(payload.purchase_context)
+        if str(context_payload.get("formula_id") or "") != str(plan.id):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Purchase context does not match this formula")
+        if str(context_payload.get("email") or "").strip().lower() != current_user.email.strip().lower():
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Purchase context does not belong to this account")
+        context_booking_user_id_raw = str(context_payload.get("booking_user_id") or "").strip()
+        context_session_id_raw = str(context_payload.get("session_id") or "").strip()
+        try:
+            context_booking_user_id = UUID(context_booking_user_id_raw) if context_booking_user_id_raw else None
+            context_session_id = UUID(context_session_id_raw) if context_session_id_raw else None
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Purchase context invalide") from exc
+        if payload.user_id is not None and context_booking_user_id is not None and payload.user_id != context_booking_user_id:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Purchase member does not match the selected participant")
     owner = _resolve_plan_owner(
         db,
         current_user=current_user,
-        requested_user_id=payload.user_id,
+        requested_user_id=payload.user_id or context_booking_user_id,
     )
 
     now = datetime.now(timezone.utc)
@@ -900,6 +928,56 @@ def purchase_plan(
         subscription_started_at = datetime.combine(payload.start_date, datetime.min.time(), tzinfo=timezone.utc)
     _lock_user_purchase_scope(db, owner.id)
 
+    if plan.is_trial_offer:
+        trial_course_type_ids = trial_plan_course_type_ids(db, plan_id=plan.id)
+        if not trial_course_type_ids:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cette offre d'essai n'est rattachee a aucun type de cours")
+        if context_session_id is not None:
+            trial_session = db.scalar(select(CourseSession).where(CourseSession.id == context_session_id))
+            if trial_session is None or not plan_supports_trial_course_type(
+                db,
+                plan_id=plan.id,
+                course_type_id=trial_session.course_type_id,
+            ):
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cette offre d'essai n'est pas compatible avec ce creneau")
+            if has_trial_booking_for_course_type(
+                db,
+                user_id=owner.id,
+                course_type_id=trial_session.course_type_id,
+            ):
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Un cours d'essai a deja ete utilise pour ce type de cours")
+            if has_prior_course_attendance_for_course_type(
+                db,
+                user_id=owner.id,
+                course_type_id=trial_session.course_type_id,
+                reference_at=trial_session.start_at_utc,
+            ):
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ce participant a deja suivi ce type de cours")
+            if has_available_trial_credit_for_course_type(
+                db,
+                user_id=owner.id,
+                course_type_id=trial_session.course_type_id,
+            ):
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Un cours d'essai achete est deja disponible pour ce type de cours")
+        elif all(
+            has_trial_booking_for_course_type(db, user_id=owner.id, course_type_id=course_type_id)
+            or has_prior_course_attendance_for_course_type(
+                db,
+                user_id=owner.id,
+                course_type_id=course_type_id,
+                reference_at=now,
+            )
+            or has_available_trial_credit_for_course_type(
+                db,
+                user_id=owner.id,
+                course_type_id=course_type_id,
+            )
+            for course_type_id in trial_course_type_ids
+        ):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Tous les cours d'essai de cette offre ont deja ete utilises ou achetes")
+        if has_available_trial_credit(db, user_id=owner.id, plan_id=plan.id):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Un cours d'essai achete est deja disponible pour ce participant")
+
     if plan.kind == PlanKind.SUBSCRIPTION and _has_same_subscription_in_current_month(
         db,
         user_id=owner.id,
@@ -911,7 +989,7 @@ def purchase_plan(
             detail="This subscription is already purchased for the current month",
         )
 
-    if plan.kind == PlanKind.PACK and not bool(payload.confirm_existing_pack_purchase) and _has_active_pack_with_remaining_credits(
+    if plan.kind == PlanKind.PACK and not plan.is_trial_offer and not bool(payload.confirm_existing_pack_purchase) and _has_active_pack_with_remaining_credits(
         db,
         user_id=owner.id,
         now=now,
@@ -948,6 +1026,11 @@ def purchase_plan(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Un abonnement payant doit utiliser la carte ou le prelevement SEPA",
+        )
+    if plan.is_trial_offer and requires_online_checkout and not _is_online_collection_method(method_code):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Une offre d'essai payante doit utiliser un moyen de paiement en ligne",
         )
     should_start_pending = requires_online_checkout and _is_online_collection_method(method_code)
 
@@ -1017,6 +1100,7 @@ def purchase_plan(
                     "subscription_id": str(subscription.id),
                     "plan_id": str(plan.id),
                     "plan_code": plan.code,
+                    "is_trial_offer": "1" if plan.is_trial_offer else "0",
                     "requested_billing_method": method_code,
                     "first_purchase_charges_applied": "1" if pricing.first_purchase_required else "0",
                 },
@@ -1088,6 +1172,7 @@ def purchase_plan(
             code=plan.code,
             name=plan.name,
             kind=plan.kind,
+            is_trial_offer=bool(plan.is_trial_offer),
             price_ttc=amount_due,
             currency_code=currency_code,
         ),
@@ -1163,6 +1248,7 @@ def list_my_subscriptions(
                     code=plan.code,
                     name=plan.name,
                     kind=plan.kind,
+                    is_trial_offer=bool(plan.is_trial_offer),
                     price_ttc=price_ttc,
                     currency_code=currency_code,
                 ),

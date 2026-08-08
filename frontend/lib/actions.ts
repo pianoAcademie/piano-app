@@ -8444,6 +8444,7 @@ function parseFormulaPayload(formData: FormData, t: UiTextResolver): Record<stri
     kind,
     active: checkboxField(formData, "active"),
     is_private: checkboxField(formData, "is_private"),
+    is_trial_offer: checkboxField(formData, "is_trial_offer"),
     description: optionalField(formData, "description"),
     credits_count: kind === "PACK" ? creditsCount : null,
     pack_validity_months: kind === "PACK" ? packValidityMonths : null,

@@ -1319,6 +1319,7 @@ def _serialize_formula(
         kind=plan.kind,
         active=plan.active,
         is_private=plan.is_private,
+        is_trial_offer=bool(plan.is_trial_offer),
         description=plan.description,
         credits_count=effective_credits_count,
         pack_validity_months=plan.pack_validity_months,
@@ -1355,7 +1356,18 @@ def _validate_formula_payload(
     monthly_price_value: Decimal | None,
     currency_code: str | None,
     credit_grants: list[tuple[UUID, int]] | None = None,
+    is_trial_offer: bool = False,
 ) -> None:
+    if is_trial_offer and kind != PlanKind.PACK:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A trial offer must be a PACK formula",
+        )
+    if is_trial_offer and credits_count != 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A trial offer must grant exactly one credit",
+        )
     if kind != PlanKind.FORFAIT and monthly_price_value is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -3122,17 +3134,32 @@ def create_admin_formula(
         monthly_price_value=monthly_price_value,
         currency_code=currency_code,
         credit_grants=_normalize_credit_grants(db, payload.credit_grants) if payload.kind == PlanKind.PACK else [],
+        is_trial_offer=payload.is_trial_offer,
     )
     entitlement_ids = _normalize_entitlement_ids(
         db,
         payload.entitlement_course_type_ids,
         require_credit_mapping=payload.kind == PlanKind.PACK,
     )
+    if payload.is_trial_offer and not entitlement_ids:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Une offre d'essai doit etre rattachee a au moins un type de cours",
+        )
     restrictions_json = _normalize_restrictions(
         payload.restrictions,
         entitlement_course_type_ids=set(entitlement_ids),
     )
     payment_methods = _normalize_methods(payload.payment_methods)
+    if (
+        payload.is_trial_offer
+        and Decimal(monthly_price_value or 0) > 0
+        and not {"CARD_ONLINE", "SEPA_DEBIT", "PAYPAL"}.intersection(payment_methods)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Une offre d'essai payante doit autoriser un moyen de paiement en ligne",
+        )
     options = _normalize_option_values(payload.options)
     credit_grants = _normalize_credit_grants(db, payload.credit_grants) if payload.kind == PlanKind.PACK else []
     effective_credits_count = (
@@ -3162,6 +3189,7 @@ def create_admin_formula(
         first_purchase_partitions_enabled=payload.first_purchase_partitions_enabled,
         first_purchase_partitions_price_value=payload.first_purchase_partitions_price_value,
         is_private=payload.is_private,
+        is_trial_offer=payload.is_trial_offer,
         options_json=options,
         payment_methods_json=payment_methods,
         restrictions_json=restrictions_json,
@@ -3245,6 +3273,7 @@ def update_admin_formula(
         else PlanCreditGrantsRelation.OR
     )
     target_credits = _effective_pack_credits_count(target_credit_grants, target_credit_relation) if target_kind == PlanKind.PACK else None
+    target_is_trial_offer = bool(updates.get("is_trial_offer", plan.is_trial_offer))
     target_pack_validity_months = (
         updates.get("pack_validity_months", plan.pack_validity_months)
         if target_kind == PlanKind.PACK
@@ -3252,6 +3281,21 @@ def update_admin_formula(
     )
     target_currency_raw = updates.get("currency_code", plan.currency_code)
     target_currency = target_currency_raw.upper() if isinstance(target_currency_raw, str) else target_currency_raw
+    target_payment_methods = _normalize_methods(
+        updates.get(
+            "payment_methods",
+            plan.payment_methods_json if isinstance(plan.payment_methods_json, list) else [],
+        )
+    )
+    if (
+        target_is_trial_offer
+        and Decimal(target_monthly_price_value or 0) > 0
+        and not {"CARD_ONLINE", "SEPA_DEBIT", "PAYPAL"}.intersection(target_payment_methods)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Une offre d'essai payante doit autoriser un moyen de paiement en ligne",
+        )
     _validate_formula_payload(
         kind=target_kind,
         credits_count=target_credits,
@@ -3263,6 +3307,7 @@ def update_admin_formula(
         monthly_price_value=target_monthly_price_value,
         currency_code=target_currency,
         credit_grants=target_credit_grants if target_kind == PlanKind.PACK else [],
+        is_trial_offer=target_is_trial_offer,
     )
 
     if "name" in updates:
@@ -3280,6 +3325,8 @@ def update_admin_formula(
         plan.active = bool(updates["active"])
     if "is_private" in updates:
         plan.is_private = bool(updates["is_private"])
+    if "is_trial_offer" in updates:
+        plan.is_trial_offer = bool(updates["is_trial_offer"])
     if "description" in updates:
         plan.description = (updates["description"] or "").strip() or None
     if "signup_fee_excl_vat" in updates:
@@ -3311,7 +3358,7 @@ def update_admin_formula(
     if "options" in updates:
         plan.options_json = _normalize_option_values(updates["options"])
     if "payment_methods" in updates:
-        plan.payment_methods_json = _normalize_methods(updates["payment_methods"])
+        plan.payment_methods_json = target_payment_methods
 
     entitlement_ids: list[UUID] | None = None
     if "entitlement_course_type_ids" in updates:
@@ -3325,6 +3372,12 @@ def update_admin_formula(
             db.add(PlanEntitlement(plan_id=plan.id, course_type_id=course_type_id))
     else:
         entitlement_ids = db.scalars(select(PlanEntitlement.course_type_id).where(PlanEntitlement.plan_id == plan.id)).all()
+
+    if target_is_trial_offer and not entitlement_ids:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Une offre d'essai doit etre rattachee a au moins un type de cours",
+        )
 
     if target_kind == PlanKind.PACK and "entitlement_course_type_ids" not in updates and "kind" in updates:
         _normalize_entitlement_ids(
@@ -3393,6 +3446,7 @@ def duplicate_admin_formula(
         first_purchase_partitions_enabled=bool(source.first_purchase_partitions_enabled),
         first_purchase_partitions_price_value=source.first_purchase_partitions_price_value,
         is_private=source.is_private,
+        is_trial_offer=bool(source.is_trial_offer),
         options_json=_normalize_option_values(source.options_json if isinstance(source.options_json, list) else []),
         payment_methods_json=_normalize_methods(source.payment_methods_json if isinstance(source.payment_methods_json, list) else []),
         restrictions_json=source.restrictions_json if isinstance(source.restrictions_json, list) else [],

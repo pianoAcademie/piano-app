@@ -37,7 +37,7 @@ from app.models.plan import (
     PlanRestrictionPeriod,
     SubscriptionStatus,
 )
-from app.models.user import ClientKind, ClientStatus, User, UserRole
+from app.models.user import ClientKind, User, UserRole
 from app.schemas.booking import BookingCreateRequest, BookingOut, ClientBookingOut, SessionMiniOut
 from app.services.makeup_passes import active_restricted_forfait_for_booking, consume_pass_and_create_makeup
 from app.services.automation_triggers import schedule_booking_created_triggers
@@ -55,6 +55,7 @@ from app.services.session_audience import (
     scopes_allow_planless_booking,
 )
 from app.services.subscriptions import can_book_with_subscription, reconcile_subscription_status
+from app.services.trial_courses import has_prior_course_attendance_for_course_type, has_trial_booking_for_course_type
 
 router = APIRouter()
 
@@ -859,6 +860,7 @@ def _select_eligible_subscription(
             Plan.active.is_(True),
         )
         .order_by(
+            case((Plan.is_trial_offer.is_(True), 0), else_=1),
             case(
                 (Plan.kind == PlanKind.PACK, 0),
                 (Plan.kind == PlanKind.FORFAIT, 1),
@@ -891,6 +893,18 @@ def _select_eligible_subscription(
             db.add(subscription)
         if plan.kind == PlanKind.PACK and (subscription.credits_remaining is None or subscription.credits_remaining <= 0):
             continue
+        if bool(getattr(plan, "is_trial_offer", False)):
+            if has_trial_booking_for_course_type(
+                db,
+                user_id=user_id,
+                course_type_id=course_type_id,
+            ) or has_prior_course_attendance_for_course_type(
+                db,
+                user_id=user_id,
+                course_type_id=course_type_id,
+                reference_at=eligibility_at,
+            ):
+                continue
         if not is_pending_preview and not _is_subscription_active(subscription, plan, eligibility_at):
             continue
         return subscription, plan
@@ -1169,6 +1183,13 @@ def _book_session_internal(
         current_user=current_user,
         requested_user_id=payload.user_id,
     )
+    locked_booking_owner = db.scalar(
+        select(User)
+        .where(User.id == booking_owner.id)
+        .with_for_update()
+    )
+    if locked_booking_owner is not None:
+        booking_owner = locked_booking_owner
 
     session_obj = db.scalar(
         select(CourseSession)
@@ -1287,6 +1308,7 @@ def _book_session_internal(
         plan=plan,
         covered_by_manual_credit=manual_credit_type_id is not None,
     )
+    is_trial_booking = bool(plan is not None and plan.is_trial_offer)
 
     should_create_payment_hold = allow_pending_payment_hold and subscription is None and total > Decimal("0.00")
     booking_status = _next_booking_status(
@@ -1338,7 +1360,8 @@ def _book_session_internal(
         booking.total_incl_vat_snapshot = total
         booking.currency_snapshot = currency
         booking.payment_hold_expires_at = payment_hold_expiration(now=now) if booking_status == BookingStatus.PENDING_PAYMENT else None
-        booking.is_trial_course = bool(booking.is_trial_course or booking_owner.client_status == ClientStatus.TRIAL)
+        booking.is_trial_course = is_trial_booking
+        booking.trial_course_type_id = session_obj.course_type_id if is_trial_booking else None
     else:
         booking = Booking(
             session_id=session_id,
@@ -1353,7 +1376,8 @@ def _book_session_internal(
             vat_amount_snapshot=vat_amount,
             total_incl_vat_snapshot=total,
             currency_snapshot=currency,
-            is_trial_course=booking_owner.client_status == ClientStatus.TRIAL,
+            is_trial_course=is_trial_booking,
+            trial_course_type_id=session_obj.course_type_id if is_trial_booking else None,
         )
         db.add(booking)
 
