@@ -1855,6 +1855,8 @@ def _client_content_courses(
     for entry in course_entries.values():
         course: ExternalContentCourse = entry["course"]  # type: ignore[assignment]
         access_map: dict[UUID, dict[str, object]] = entry["member_accesses"]  # type: ignore[assignment]
+        if not access_map:
+            continue
         section_payload = [
             ClientContentSectionOut(
                 id=section.id,
