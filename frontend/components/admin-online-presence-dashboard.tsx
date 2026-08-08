@@ -8,6 +8,26 @@ type Props = {
   language: "fr" | "en";
 };
 
+function roleLabel(role: string, english: boolean): string {
+  if (role === "client") return english ? "Client" : "Client";
+  if (role === "prof") return english ? "Teacher" : "Professeur";
+  if (role === "admin") return english ? "Admin" : "Administrateur";
+  return role;
+}
+
+function pageLabel(path: string | null, english: boolean): string {
+  if (!path) return english ? "Page not reported" : "Page non remontée";
+  const pathname = path.split("?")[0];
+  if (pathname === "/admin") return english ? "Admin planning" : "Planning admin";
+  if (pathname.startsWith("/admin/clients")) return english ? "Clients" : "Clients";
+  if (pathname.startsWith("/admin/config/formulas")) return english ? "Formulas" : "Formules";
+  if (pathname.startsWith("/admin/config")) return english ? "Configuration" : "Configuration";
+  if (pathname === "/dashboard" || pathname === "/client") return english ? "Client portal" : "Espace client";
+  if (pathname.startsWith("/prof")) return english ? "Teacher portal" : "Espace professeur";
+  if (pathname.startsWith("/embed/planning")) return english ? "Public planning" : "Planning public";
+  return path;
+}
+
 export default function AdminOnlinePresenceDashboard({ language }: Props): JSX.Element {
   const [summary, setSummary] = useState<AdminOnlinePresenceOut | null>(null);
   const [unavailable, setUnavailable] = useState(false);
@@ -67,6 +87,35 @@ export default function AdminOnlinePresenceDashboard({ language }: Props): JSX.E
           </article>
         ))}
       </div>
+      {summary?.online_users.length ? (
+        <div className="online-presence-users">
+          <h4>{english ? "People online" : "Personnes en ligne"}</h4>
+          <div className="online-presence-users-table" role="table">
+            {summary.online_users.map((user) => (
+              <article key={user.user_id} className="online-presence-user" role="row">
+                <div>
+                  <strong>{user.display_name}</strong>
+                  <span>{roleLabel(user.role, english)}</span>
+                </div>
+                <span className="online-presence-channel">
+                  {user.channel === "MOBILE_APP" ? (english ? "Mobile app" : "Application") : (english ? "Website" : "Site internet")}
+                </span>
+                <div className="online-presence-page">
+                  <strong>{pageLabel(user.current_path, english)}</strong>
+                  {user.current_path ? <code>{user.current_path}</code> : null}
+                </div>
+                <time dateTime={user.last_seen_at}>
+                  {new Date(user.last_seen_at).toLocaleTimeString(english ? "en-GB" : "fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                </time>
+              </article>
+            ))}
+          </div>
+        </div>
+      ) : summary ? (
+        <p className="muted online-presence-empty">
+          {english ? "No other user is online right now." : "Aucun autre utilisateur n’est en ligne actuellement."}
+        </p>
+      ) : null}
       {summary ? (
         <small className="muted">
           {english ? "Updated" : "Mis à jour"} {new Date(summary.generated_at).toLocaleTimeString(english ? "en-GB" : "fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}

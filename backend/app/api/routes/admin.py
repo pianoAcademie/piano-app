@@ -112,6 +112,7 @@ from app.schemas.admin import (
     AdminPlanningReorganizationSessionOut,
     AdminPlanningSettingsUpdateRequest,
     AdminOnlinePresenceOut,
+    AdminOnlinePresenceUserOut,
     AdminClientBillingAdjustmentQueueOut,
     AdminProfessorOut,
     AdminSessionBookingCreateRequest,
@@ -2338,28 +2339,63 @@ def admin_ping(current_user: User = Depends(require_roles(UserRole.ADMIN))) -> d
 @router.get("/presence", response_model=AdminOnlinePresenceOut)
 def admin_online_presence(
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_permissions("can_view_planning", "can_view_clients")),
+    current_user: User = Depends(require_admin_or_permissions("can_view_planning", "can_view_clients")),
 ) -> AdminOnlinePresenceOut:
     now = datetime.now(timezone.utc)
     active_window_seconds = 90
     cutoff = now - timedelta(seconds=active_window_seconds)
     rows = db.execute(
-        select(UserPresence.user_id, UserPresence.channel, UserPresence.last_seen_at, User.role)
+        select(
+            UserPresence.user_id,
+            UserPresence.channel,
+            UserPresence.current_path,
+            UserPresence.last_seen_at,
+            User.role,
+            User.first_name,
+            User.last_name,
+            User.email,
+        )
         .join(User, User.id == UserPresence.user_id)
-        .where(UserPresence.last_seen_at >= cutoff, User.is_active.is_(True))
+        .where(
+            UserPresence.last_seen_at >= cutoff,
+            User.is_active.is_(True),
+            UserPresence.user_id != current_user.id,
+        )
     ).all()
 
-    latest_by_user: dict[UUID, tuple[datetime, str, UserRole]] = {}
+    latest_by_user: dict[UUID, tuple[datetime, str, UserRole, str | None, str]] = {}
     for row in rows:
         previous = latest_by_user.get(row.user_id)
         if previous is None or row.last_seen_at > previous[0]:
-            latest_by_user[row.user_id] = (row.last_seen_at, row.channel, row.role)
+            display_name = f"{row.first_name or ''} {row.last_name or ''}".strip() or row.email
+            latest_by_user[row.user_id] = (
+                row.last_seen_at,
+                row.channel,
+                row.role,
+                row.current_path,
+                display_name,
+            )
 
-    web_users = {user_id for user_id, (_, channel, _) in latest_by_user.items() if channel == "WEB"}
-    mobile_users = {user_id for user_id, (_, channel, _) in latest_by_user.items() if channel == "MOBILE_APP"}
-    client_users = {user_id for user_id, (_, _, role) in latest_by_user.items() if role == UserRole.CLIENT}
-    professor_users = {user_id for user_id, (_, _, role) in latest_by_user.items() if role == UserRole.PROF}
-    admin_users = {user_id for user_id, (_, _, role) in latest_by_user.items() if role == UserRole.ADMIN}
+    web_users = {user_id for user_id, (_, channel, _, _, _) in latest_by_user.items() if channel == "WEB"}
+    mobile_users = {user_id for user_id, (_, channel, _, _, _) in latest_by_user.items() if channel == "MOBILE_APP"}
+    client_users = {user_id for user_id, (_, _, role, _, _) in latest_by_user.items() if role == UserRole.CLIENT}
+    professor_users = {user_id for user_id, (_, _, role, _, _) in latest_by_user.items() if role == UserRole.PROF}
+    admin_users = {user_id for user_id, (_, _, role, _, _) in latest_by_user.items() if role == UserRole.ADMIN}
+    online_users = [
+        AdminOnlinePresenceUserOut(
+            user_id=user_id,
+            display_name=display_name,
+            role=role,
+            channel=channel,
+            current_path=current_path,
+            last_seen_at=last_seen_at,
+        )
+        for user_id, (last_seen_at, channel, role, current_path, display_name) in sorted(
+            latest_by_user.items(),
+            key=lambda item: item[1][0],
+            reverse=True,
+        )
+    ]
 
     return AdminOnlinePresenceOut(
         generated_at=now,
@@ -2370,6 +2406,7 @@ def admin_online_presence(
         clients=len(client_users),
         professors=len(professor_users),
         admins=len(admin_users),
+        online_users=online_users,
     )
 
 

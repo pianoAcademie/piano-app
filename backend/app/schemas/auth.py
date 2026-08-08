@@ -41,11 +41,13 @@ class LoginRequest(BaseModel):
 
 class PresenceHeartbeatRequest(BaseModel):
     channel: Literal["WEB", "MOBILE_APP"] = "WEB"
+    current_path: str | None = Field(default=None, min_length=1, max_length=300)
 
 
 class PresenceHeartbeatOut(BaseModel):
     seen_at: datetime
     channel: Literal["WEB", "MOBILE_APP"]
+    current_path: str | None = None
 
 
 class TokenResponse(BaseModel):

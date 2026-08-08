@@ -856,6 +856,15 @@ class AdminClientOut(BaseModel):
     updated_at: datetime
 
 
+class AdminOnlinePresenceUserOut(BaseModel):
+    user_id: UUID
+    display_name: str
+    role: UserRole
+    channel: Literal["WEB", "MOBILE_APP"]
+    current_path: str | None = None
+    last_seen_at: datetime
+
+
 class AdminOnlinePresenceOut(BaseModel):
     generated_at: datetime
     active_window_seconds: int
@@ -865,6 +874,7 @@ class AdminOnlinePresenceOut(BaseModel):
     clients: int
     professors: int
     admins: int
+    online_users: list[AdminOnlinePresenceUserOut] = Field(default_factory=list)
 
 
 class AdminLegalEntityOut(BaseModel):

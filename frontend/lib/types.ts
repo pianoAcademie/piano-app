@@ -328,6 +328,16 @@ export type AdminOnlinePresenceOut = {
   clients: number;
   professors: number;
   admins: number;
+  online_users: AdminOnlinePresenceUserOut[];
+};
+
+export type AdminOnlinePresenceUserOut = {
+  user_id: string;
+  display_name: string;
+  role: "admin" | "prof" | "client" | string;
+  channel: "WEB" | "MOBILE_APP";
+  current_path: string | null;
+  last_seen_at: string;
 };
 
 export type AdminClientGroupOut = {
