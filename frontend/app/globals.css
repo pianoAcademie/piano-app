@@ -2319,6 +2319,157 @@ button.danger:focus-visible {
   margin: 12px 0 4px;
 }
 
+.realtime-presence-page {
+  gap: 16px;
+  min-width: 0;
+}
+
+.realtime-presence-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px;
+  background: linear-gradient(135deg, #fff 0%, #f7fbf8 100%);
+}
+
+.realtime-presence-hero h1,
+.realtime-presence-hero p,
+.realtime-presence-list-card h2,
+.realtime-presence-list-card p {
+  margin: 0;
+}
+
+.realtime-presence-hero .eyebrow {
+  margin-bottom: 5px;
+  color: #22834c;
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+}
+
+.realtime-presence-hero h1 {
+  margin-bottom: 6px;
+}
+
+.realtime-presence-metrics {
+  margin: 0;
+}
+
+.realtime-presence-list-card {
+  min-width: 0;
+  padding: 18px;
+}
+
+.realtime-presence-toolbar-heading {
+  align-items: flex-end;
+  gap: 18px;
+}
+
+.realtime-presence-toolbar-heading p {
+  margin-top: 3px;
+}
+
+.realtime-presence-filters {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(150px, 0.28fr) minmax(160px, 0.28fr);
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.realtime-presence-filters label {
+  display: grid;
+  gap: 5px;
+}
+
+.realtime-presence-filters label > span {
+  color: #596679;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.realtime-presence-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid #e0e5ec;
+  border-radius: 11px;
+}
+
+.realtime-presence-table {
+  width: 100%;
+  min-width: 1180px;
+  border-collapse: collapse;
+  background: #fff;
+}
+
+.realtime-presence-table th,
+.realtime-presence-table td {
+  padding: 11px 12px;
+  border-bottom: 1px solid #e8ebef;
+  text-align: left;
+  vertical-align: top;
+}
+
+.realtime-presence-table th {
+  position: sticky;
+  top: 0;
+  background: #f4f6f9;
+  color: #596679;
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.realtime-presence-table tbody tr:hover {
+  background: #fbfdfb;
+}
+
+.realtime-presence-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.realtime-presence-table td {
+  color: #344255;
+  font-size: 13px;
+}
+
+.realtime-presence-table td > span,
+.realtime-presence-table td > code,
+.realtime-presence-table td > strong,
+.realtime-presence-table td > a,
+.realtime-presence-table td > time {
+  display: block;
+}
+
+.realtime-presence-table td > span,
+.realtime-presence-table td > code {
+  margin-top: 3px;
+  color: #748094;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.realtime-presence-table td > a {
+  color: #1c6440;
+  text-decoration: none;
+}
+
+.realtime-presence-table td > a:hover {
+  text-decoration: underline;
+}
+
+.realtime-presence-table .online-presence-channel {
+  display: inline-flex;
+  margin-top: 0;
+}
+
+.realtime-presence-empty {
+  padding: 36px 12px;
+  text-align: center;
+}
+
 @media (max-width: 1100px) {
   .online-presence-metrics {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2336,6 +2487,16 @@ button.danger:focus-visible {
 
   .online-presence-page {
     grid-column: 1 / -1;
+  }
+
+  .realtime-presence-hero,
+  .realtime-presence-toolbar-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .realtime-presence-filters {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -4974,6 +5135,19 @@ button.danger:focus-visible {
 .modal-actions-end {
   justify-content: flex-end;
   gap: 10px;
+}
+
+.success-dialog-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 12px;
+  border-radius: 50%;
+  background: #e8f8ee;
+  color: #168044;
+  font-size: 27px;
+  font-weight: 900;
 }
 
 .manual-transaction-back-link {

@@ -571,18 +571,31 @@ def heartbeat_presence(
     now = datetime.now(timezone.utc)
     channel = payload.channel
     current_path = payload.current_path
+    origin = payload.origin
+    last_action = payload.last_action
+    device_type = payload.device_type
     statement = (
         pg_insert(UserPresence)
         .values(
             user_id=current_user.id,
             channel=channel,
             current_path=current_path,
+            origin=origin,
+            last_action=last_action,
+            device_type=device_type,
             last_seen_at=now,
             updated_at=now,
         )
         .on_conflict_do_update(
             constraint="uq_user_presences_user_channel",
-            set_={"current_path": current_path, "last_seen_at": now, "updated_at": now},
+            set_={
+                "current_path": current_path,
+                "origin": origin,
+                "last_action": last_action,
+                "device_type": device_type,
+                "last_seen_at": now,
+                "updated_at": now,
+            },
         )
     )
     db.execute(statement)
@@ -590,7 +603,14 @@ def heartbeat_presence(
     current_user.last_seen_channel = channel
     db.add(current_user)
     db.commit()
-    return PresenceHeartbeatOut(seen_at=now, channel=channel, current_path=current_path)
+    return PresenceHeartbeatOut(
+        seen_at=now,
+        channel=channel,
+        current_path=current_path,
+        origin=origin,
+        last_action=last_action,
+        device_type=device_type,
+    )
 
 
 @router.post("/email-lookup", response_model=EmailLookupResponse)

@@ -54,6 +54,9 @@ function labelForSegment(segment: string, previous: string, language: UiLanguage
   if (segment === "reporting") {
     return "Reporting";
   }
+  if (segment === "realtime") {
+    return pickText(language, "Temps réel", "Real-time");
+  }
   if (segment === "salary-payments") {
     return pickText(language, "Paiement des salaires", "Salary payments");
   }

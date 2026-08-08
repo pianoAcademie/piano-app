@@ -862,6 +862,11 @@ class AdminOnlinePresenceUserOut(BaseModel):
     role: UserRole
     channel: Literal["WEB", "MOBILE_APP"]
     current_path: str | None = None
+    origin: str | None = None
+    last_action: str | None = None
+    device_type: str | None = None
+    residence_country: str | None = None
+    student_site: StudentSite | None = None
     last_seen_at: datetime
 
 

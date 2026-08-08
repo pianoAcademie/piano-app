@@ -2349,11 +2349,16 @@ def admin_online_presence(
             UserPresence.user_id,
             UserPresence.channel,
             UserPresence.current_path,
+            UserPresence.origin,
+            UserPresence.last_action,
+            UserPresence.device_type,
             UserPresence.last_seen_at,
             User.role,
             User.first_name,
             User.last_name,
             User.email,
+            User.residence_country,
+            User.student_site,
         )
         .join(User, User.id == UserPresence.user_id)
         .where(
@@ -2363,36 +2368,46 @@ def admin_online_presence(
         )
     ).all()
 
-    latest_by_user: dict[UUID, tuple[datetime, str, UserRole, str | None, str]] = {}
+    latest_by_user: dict[UUID, dict[str, object]] = {}
     for row in rows:
         previous = latest_by_user.get(row.user_id)
-        if previous is None or row.last_seen_at > previous[0]:
+        if previous is None or row.last_seen_at > previous["last_seen_at"]:
             display_name = f"{row.first_name or ''} {row.last_name or ''}".strip() or row.email
-            latest_by_user[row.user_id] = (
-                row.last_seen_at,
-                row.channel,
-                row.role,
-                row.current_path,
-                display_name,
-            )
+            latest_by_user[row.user_id] = {
+                "last_seen_at": row.last_seen_at,
+                "channel": row.channel,
+                "role": row.role,
+                "current_path": row.current_path,
+                "origin": row.origin,
+                "last_action": row.last_action,
+                "device_type": row.device_type,
+                "display_name": display_name,
+                "residence_country": row.residence_country,
+                "student_site": row.student_site,
+            }
 
-    web_users = {user_id for user_id, (_, channel, _, _, _) in latest_by_user.items() if channel == "WEB"}
-    mobile_users = {user_id for user_id, (_, channel, _, _, _) in latest_by_user.items() if channel == "MOBILE_APP"}
-    client_users = {user_id for user_id, (_, _, role, _, _) in latest_by_user.items() if role == UserRole.CLIENT}
-    professor_users = {user_id for user_id, (_, _, role, _, _) in latest_by_user.items() if role == UserRole.PROF}
-    admin_users = {user_id for user_id, (_, _, role, _, _) in latest_by_user.items() if role == UserRole.ADMIN}
+    web_users = {user_id for user_id, presence in latest_by_user.items() if presence["channel"] == "WEB"}
+    mobile_users = {user_id for user_id, presence in latest_by_user.items() if presence["channel"] == "MOBILE_APP"}
+    client_users = {user_id for user_id, presence in latest_by_user.items() if presence["role"] == UserRole.CLIENT}
+    professor_users = {user_id for user_id, presence in latest_by_user.items() if presence["role"] == UserRole.PROF}
+    admin_users = {user_id for user_id, presence in latest_by_user.items() if presence["role"] == UserRole.ADMIN}
     online_users = [
         AdminOnlinePresenceUserOut(
             user_id=user_id,
-            display_name=display_name,
-            role=role,
-            channel=channel,
-            current_path=current_path,
-            last_seen_at=last_seen_at,
+            display_name=str(presence["display_name"]),
+            role=presence["role"],
+            channel=str(presence["channel"]),
+            current_path=presence["current_path"],
+            origin=presence["origin"],
+            last_action=presence["last_action"],
+            device_type=presence["device_type"],
+            residence_country=presence["residence_country"],
+            student_site=presence["student_site"],
+            last_seen_at=presence["last_seen_at"],
         )
-        for user_id, (last_seen_at, channel, role, current_path, display_name) in sorted(
+        for user_id, presence in sorted(
             latest_by_user.items(),
-            key=lambda item: item[1][0],
+            key=lambda item: item[1]["last_seen_at"],
             reverse=True,
         )
     ]

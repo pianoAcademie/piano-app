@@ -337,6 +337,11 @@ export type AdminOnlinePresenceUserOut = {
   role: "admin" | "prof" | "client" | string;
   channel: "WEB" | "MOBILE_APP";
   current_path: string | null;
+  origin: string | null;
+  last_action: string | null;
+  device_type: "DESKTOP" | "MOBILE" | "TABLET" | "APP" | string | null;
+  residence_country: string | null;
+  student_site: string | null;
   last_seen_at: string;
 };
 

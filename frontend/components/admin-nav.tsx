@@ -65,6 +65,7 @@ const NAV_SECTIONS: NavSection[] = [
     key: "administration",
     title: { fr: "Administration", en: "Administration" },
     items: [
+      { href: "/admin/realtime", label: { fr: "Temps réel", en: "Real-time" }, icon: "🟢", permission: "can_view_planning" },
       { href: "/admin/config", label: { fr: "Configuration", en: "Settings" }, icon: "⚙️" },
       { href: "/admin/reporting", label: { fr: "Reporting", en: "Reporting" }, icon: "📊" },
     ],

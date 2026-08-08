@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import type { AdminOnlinePresenceOut } from "../lib/types";
@@ -18,11 +19,19 @@ function roleLabel(role: string, english: boolean): string {
 function pageLabel(path: string | null, english: boolean): string {
   if (!path) return english ? "Page not reported" : "Page non remontée";
   const pathname = path.split("?")[0];
+  const parameters = new URLSearchParams(path.includes("?") ? path.split("?")[1] : "");
   if (pathname === "/admin") return english ? "Admin planning" : "Planning admin";
   if (pathname.startsWith("/admin/clients")) return english ? "Clients" : "Clients";
   if (pathname.startsWith("/admin/config/formulas")) return english ? "Formulas" : "Formules";
   if (pathname.startsWith("/admin/config")) return english ? "Configuration" : "Configuration";
-  if (pathname === "/dashboard" || pathname === "/client") return english ? "Client portal" : "Espace client";
+  if (pathname === "/dashboard" || pathname === "/client") {
+    const tab = parameters.get("tab");
+    if (tab === "planning") return english ? "Client planning" : "Planning client";
+    if (tab === "bookings") return english ? "Client bookings" : "Réservations client";
+    if (tab === "offers") return english ? "Offers" : "Offres";
+    if (tab === "news") return english ? "News" : "Actualités";
+    return english ? "Client portal" : "Espace client";
+  }
   if (pathname.startsWith("/prof")) return english ? "Teacher portal" : "Espace professeur";
   if (pathname.startsWith("/embed/planning")) return english ? "Public planning" : "Planning public";
   return path;
@@ -117,9 +126,14 @@ export default function AdminOnlinePresenceDashboard({ language }: Props): JSX.E
         </p>
       ) : null}
       {summary ? (
-        <small className="muted">
-          {english ? "Updated" : "Mis à jour"} {new Date(summary.generated_at).toLocaleTimeString(english ? "en-GB" : "fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-        </small>
+        <div className="row spread top-gap-sm">
+          <small className="muted">
+            {english ? "Updated" : "Mis à jour"} {new Date(summary.generated_at).toLocaleTimeString(english ? "en-GB" : "fr-FR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+          </small>
+          <Link className="ghost" href={english ? "/admin/realtime?lang=en" : "/admin/realtime"}>
+            {english ? "Open detailed view" : "Ouvrir la vue détaillée"}
+          </Link>
+        </div>
       ) : null}
     </section>
   );

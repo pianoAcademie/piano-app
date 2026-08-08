@@ -167,6 +167,9 @@ class UserPresence(Base):
     )
     channel: Mapped[str] = mapped_column(String(20), nullable=False)
     current_path: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    origin: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    last_action: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    device_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
