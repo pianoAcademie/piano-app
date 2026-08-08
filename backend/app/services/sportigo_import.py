@@ -447,7 +447,7 @@ def run_sportigo_import(
                 portal_contact_visible=True,
                 email_opt_in=False,
                 sms_opt_in=False,
-                lesson_reminder_email_opt_in=False,
+                lesson_reminder_email_opt_in=True,
                 lesson_reminder_sms_opt_in=False,
                 private_note=_sportigo_note(row.member_id, batch_reference),
                 updated_at=now,
