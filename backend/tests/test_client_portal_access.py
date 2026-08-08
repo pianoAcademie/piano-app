@@ -98,6 +98,7 @@ class ClientPortalAccessTests(unittest.TestCase):
         self.assertEqual(message_id, "mail-test")
         sent = send_email_mock.call_args.kwargs
         self.assertEqual(sent["recipient_user_id"], user.id)
+        self.assertIs(sent["db"], db)
         self.assertEqual(sent["body_format"], "HTML")
         self.assertIn("Choisir mon mot de passe", sent["body"])
         self.assertIn("reset_token=private", sent["body"])

@@ -123,6 +123,7 @@ def send_client_portal_access_email(
         subject_prefix=sender.subject_prefix,
         recipient_user_id=user.id,
         raise_on_failure=raise_on_failure,
+        db=db,
     )
 
 

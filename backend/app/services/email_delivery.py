@@ -9,6 +9,8 @@ from typing import Iterable
 from uuid import uuid4
 from uuid import UUID
 
+from sqlalchemy.orm import Session
+
 from app.models.ops import CommunicationChannel, CommunicationDeliveryStatus, CommunicationSenderCategory, MessageFormat
 from app.services.communication_journal import infer_communication_type, log_communication
 from app.services.messaging_templates import MessagingDeliveryConfig, messaging_delivery_disabled_reason, resolve_messaging_delivery_config
@@ -115,6 +117,7 @@ def send_email(
     recipient_user_id: UUID | None = None,
     communication_type: str | None = None,
     raise_on_failure: bool = False,
+    db: Session | None = None,
 ) -> str | None:
     message_id = f"mail-{uuid4()}"
     delivery_config = resolve_messaging_delivery_config()
@@ -160,6 +163,7 @@ def send_email(
             delivery_status=CommunicationDeliveryStatus.SKIPPED,
             provider=provider,
             provider_message_id=message_id,
+            db=db,
         )
         if raise_on_failure:
             raise EmailDeliveryError("Email delivery skipped (LOG mode)")
@@ -194,6 +198,7 @@ def send_email(
             provider=provider,
             provider_message_id=message_id,
             error_message="Missing SMTP host",
+            db=db,
         )
         if raise_on_failure:
             raise EmailDeliveryError("Missing SMTP host")
@@ -224,6 +229,7 @@ def send_email(
             provider=provider,
             provider_message_id=message_id,
             error_message="Missing SMTP credentials",
+            db=db,
         )
         if raise_on_failure:
             raise EmailDeliveryError("Missing SMTP credentials")
@@ -287,6 +293,7 @@ def send_email(
             provider=provider,
             provider_message_id=message_id,
             error_message="SMTP send exception",
+            db=db,
         )
         if raise_on_failure:
             raise EmailDeliveryError("SMTP send exception")
@@ -316,5 +323,6 @@ def send_email(
         delivery_status=CommunicationDeliveryStatus.SENT,
         provider=provider,
         provider_message_id=message_id,
+        db=db,
     )
     return message_id

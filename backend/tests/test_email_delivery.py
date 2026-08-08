@@ -93,17 +93,20 @@ class EmailDeliveryTests(unittest.TestCase):
         ), patch(
             "app.services.email_delivery.log_communication",
             return_value=None,
-        ):
+        ) as log_communication_mock:
+            db = object()
             result = send_email(
                 to_email="sandra.baes@gmail.com",
                 subject="Test",
                 body="Hello",
                 body_format="TEXT",
                 context="QUOTE_APPROVED",
+                db=db,
             )
 
         self.assertIsInstance(result, str)
         self.assertTrue(result.startswith("mail-"))
+        self.assertIs(log_communication_mock.call_args.kwargs["db"], db)
 
     def test_send_email_can_raise_on_failure_when_requested(self) -> None:
         with patch(
