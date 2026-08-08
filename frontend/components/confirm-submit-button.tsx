@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useFormStatus } from "react-dom";
 
 import { normalizeUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
 
@@ -17,6 +18,7 @@ type ConfirmSubmitButtonProps = {
   className?: string;
   disabled?: boolean;
   disabledReason?: string;
+  pendingLabel?: string;
 };
 
 export default function ConfirmSubmitButton({
@@ -32,12 +34,14 @@ export default function ConfirmSubmitButton({
   className,
   disabled = false,
   disabledReason = "",
+  pendingLabel,
 }: ConfirmSubmitButtonProps): JSX.Element {
   const language = normalizeUiLanguage(languageProp);
   const resolvedConfirmLabel = confirmLabel ?? uiText(language, "common.confirm");
   const resolvedCancelLabel = cancelLabel ?? uiText(language, "common.cancel");
   const resolvedCloseAriaLabel = closeAriaLabel ?? uiText(language, "common.close");
   const resolvedMissingFormError = missingFormError ?? uiText(language, "common.form_not_found");
+  const { pending } = useFormStatus();
   const [open, setOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -65,9 +69,12 @@ export default function ConfirmSubmitButton({
       <button
         type="button"
         className={className}
-        disabled={disabled && !disabledReason}
-        aria-disabled={disabled || undefined}
+        disabled={pending || (disabled && !disabledReason)}
+        aria-disabled={pending || disabled || undefined}
         onClick={() => {
+          if (pending) {
+            return;
+          }
           if (disabled) {
             if (disabledReason) {
               setOpen(true);
@@ -79,12 +86,12 @@ export default function ConfirmSubmitButton({
           setErrorMessage("");
         }}
       >
-        {label}
+        {pending ? pendingLabel ?? label : label}
       </button>
 
       {open ? (
         <section className="modal-overlay">
-          <article className="modal-panel modal-compact">
+          <article className="modal-panel modal-compact" role="dialog" aria-modal="true" aria-label={title}>
             <button className="modal-close-x" type="button" onClick={close} aria-label={resolvedCloseAriaLabel}>
               ×
             </button>

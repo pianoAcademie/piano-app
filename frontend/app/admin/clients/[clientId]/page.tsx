@@ -64,6 +64,7 @@ import RichMessageEditor from "../../../../components/rich-message-editor";
 import ModalFirstErrorFocus from "../../../../components/modal-first-error-focus";
 import SearchMultiSelect from "../../../../components/search-multi-select";
 import ClientActionSubmitButton from "../../../../components/client-action-submit-button";
+import ConfirmSubmitButton from "../../../../components/confirm-submit-button";
 import InvoiceLineSelection from "../../../../components/invoice-line-selection";
 import type {
   AdminClientBookingOut,
@@ -4405,10 +4406,18 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
 
             <article className="card">
               <h3>{t("admin.client_detail.profile_operations")}</h3>
-              <form action={sendAdminClientPasswordAction} className="grid">
+              <form id={`send-client-access-link-${client.id}`} action={sendAdminClientPasswordAction} className="grid">
                 <input type="hidden" name="client_id" value={client.id} />
                 <input type="hidden" name="return_tab" value="infos" />
-                <button type="submit">{t("admin.client_detail.generate_send_password")}</button>
+                <ConfirmSubmitButton
+                  formId={`send-client-access-link-${client.id}`}
+                  label={t("admin.client_detail.generate_send_password")}
+                  title={t("admin.client_detail.password_confirm_title")}
+                  description={t("admin.client_detail.password_confirm_description", { email: client.email })}
+                  confirmLabel={t("admin.client_detail.password_confirm_send")}
+                  pendingLabel={t("admin.client_detail.password_sending")}
+                  language={language}
+                />
                 <p className="muted">
                   {t("admin.client_detail.password_help")}
                 </p>
