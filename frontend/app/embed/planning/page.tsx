@@ -5,7 +5,7 @@ import PortalBrandLockup from "../../../components/portal-brand-lockup";
 import { getPortalToken } from "../../../lib/auth-cookies";
 import { backendRequest } from "../../../lib/backend";
 import { localeForUiLanguage, normalizeUiLanguage, resolveAuthErrorMessage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
-import type { ClientBookingOut, CourseTypeOut, LocationOut, SessionOut } from "../../../lib/types";
+import type { ClientBookingOut, ClientSessionFormulaOptionOut, CourseTypeOut, LocationOut, SessionOut } from "../../../lib/types";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -448,6 +448,13 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   }));
 
   const selectedSession = sessions.find((session) => session.id === selectedSessionId) ?? null;
+  const selectedSessionTrialOffersResult = selectedSession
+    ? await backendRequest<ClientSessionFormulaOptionOut[]>(
+        `/api/v1/public/sessions/${encodeURIComponent(selectedSession.id)}/trial-offers`,
+      )
+    : null;
+  const selectedSessionTrialOffers =
+    selectedSessionTrialOffersResult?.ok ? selectedSessionTrialOffersResult.data : [];
   const selectedBooking = selectedSession ? bookingsBySessionId.get(selectedSession.id) ?? null : null;
   const selectedSessionStart = selectedSession ? safeDate(selectedSession.start_at_utc) : null;
   const selectedSessionStarted = selectedSessionStart ? selectedSessionStart.getTime() <= Date.now() : false;
@@ -512,6 +519,13 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
           <small className="muted">{t("embed_planning.external_rate")}</small>
           <p>{formatMoney(selectedSession.external_booking_price_ttc, selectedSession.external_booking_currency, language)}</p>
         </article>
+        {selectedSessionTrialOffers.map((trialOffer) => (
+          <article className="item embed-planning-trial-offer" key={trialOffer.formula_id}>
+            <small className="muted">{t("embed_planning.trial_rate")}</small>
+            <p>{formatMoney(trialOffer.price_ttc, trialOffer.currency, language)}</p>
+            <small className="muted">{t("embed_planning.trial_eligibility_notice")}</small>
+          </article>
+        ))}
         <article className="item">
           <small className="muted">{t("embed_planning.availability_label")}</small>
           <p>{externalAvailabilityLabel(selectedSession, language)}</p>
@@ -526,7 +540,9 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
 
       {!portalToken ? (
         <div className="embed-planning-cta-stack">
-          <p className="muted">{t("embed_planning.unauthenticated_help")}</p>
+          <p className="muted">
+            {t(selectedSessionTrialOffers.length > 0 ? "embed_planning.unauthenticated_trial_help" : "embed_planning.unauthenticated_help")}
+          </p>
           <Link className="mode-link embed-planning-primary-link" href={selectedSessionRequiresCheckout ? sessionCheckoutLoginHref : loginHref}>
             {t("embed_planning.reserve_cta")}
           </Link>

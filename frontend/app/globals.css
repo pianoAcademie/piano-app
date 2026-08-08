@@ -4658,6 +4658,16 @@ button.danger:focus-visible {
   margin: 14px 0;
 }
 
+.embed-planning-trial-offer {
+  border-color: #d8ad65;
+  background: #fff8e8;
+}
+
+.embed-planning-trial-offer p {
+  color: #9a5a0a;
+  font-weight: 800;
+}
+
 .embed-planning-cta-stack,
 .embed-planning-book-form {
   margin-top: 18px;
@@ -4686,7 +4696,7 @@ button.danger:focus-visible {
 
 @media (min-width: 900px) {
   .embed-planning-detail-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   }
 }
 

@@ -4190,6 +4190,45 @@ def get_client_session_purchase_catalog(
     )
 
 
+@router.get("/public/sessions/{session_id}/trial-offers", response_model=list[ClientSessionFormulaOptionOut])
+def get_public_session_trial_offers(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+) -> list[ClientSessionFormulaOptionOut]:
+    """Expose configured trial prices before login, without deciding member eligibility."""
+
+    row = db.execute(
+        select(CourseSession, CourseType)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .where(CourseSession.id == session_id)
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    session_obj, course_type = row
+
+    if not bool(course_type.allows_student_bookings):
+        return []
+    if not scopes_allow_external_visibility(resolve_session_visibility_scopes(session_obj)):
+        return []
+
+    formula_options, _, _, booking_scopes = _session_purchase_catalog(
+        db,
+        session_obj=session_obj,
+        course_type=course_type,
+    )
+    if SessionAudienceScope.EXTERNAL not in booking_scopes:
+        return []
+
+    return sorted(
+        (option for option in formula_options if option.is_trial_offer),
+        key=lambda option: (
+            option.price_ttc is None,
+            option.price_ttc if option.price_ttc is not None else Decimal("0.00"),
+            option.name.casefold(),
+        ),
+    )
+
+
 @router.post("/clients/me/payments/{payment_id}/confirm", response_model=ClientPaymentConfirmOut)
 def confirm_client_payment(
     payment_id: UUID,

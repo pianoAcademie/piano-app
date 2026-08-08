@@ -13,8 +13,9 @@ from app.api.routes.clients import (
     _active_formula_options_for_course_type,
     _eligible_formula_options_for_member,
     _is_piano_trial_formula_option,
+    get_public_session_trial_offers,
 )
-from app.models.catalog import DeliveryMode
+from app.models.catalog import DeliveryMode, SessionAudienceScope
 from app.models.plan import Plan, PlanKind
 from app.schemas.user import ClientSessionFormulaOptionOut
 
@@ -75,6 +76,31 @@ class ClientTrialFormulaEligibilityTests(unittest.TestCase):
         prior_trial.assert_called_once()
         available_credit.assert_called_once()
         prior_attendance.assert_called_once()
+
+    @patch("app.api.routes.clients.resolve_session_visibility_scopes", return_value=[])
+    @patch("app.api.routes.clients.scopes_allow_external_visibility", return_value=True)
+    @patch("app.api.routes.clients._session_purchase_catalog")
+    def test_public_session_catalog_exposes_only_trial_price(
+        self,
+        purchase_catalog: object,
+        _external_visibility: object,
+        _visibility_scopes: object,
+    ) -> None:
+        purchase_catalog.return_value = (
+            [self.pack, self.trial],
+            None,
+            None,
+            [SessionAudienceScope.EXTERNAL],
+        )
+        session = SimpleNamespace(id=uuid4())
+        course_type = SimpleNamespace(allows_student_bookings=True)
+        db = SimpleNamespace(
+            execute=lambda _query: SimpleNamespace(first=lambda: (session, course_type))
+        )
+
+        result = get_public_session_trial_offers(session.id, db)
+
+        self.assertEqual(result, [self.trial])
 
     @patch("app.api.routes.clients.has_prior_course_attendance_for_course_type", return_value=False)
     @patch("app.api.routes.clients.has_available_trial_credit_for_course_type", return_value=False)
