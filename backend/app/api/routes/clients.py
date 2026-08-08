@@ -9,6 +9,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import unicodedata
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -1684,6 +1685,28 @@ def _client_content_lesson_out(lesson: ExternalContentLesson) -> ClientContentLe
     )
 
 
+def _is_child_solfege_content_course_type(course_type: CourseType) -> bool:
+    raw_value = " ".join(
+        str(value or "")
+        for value in (course_type.code, course_type.name, course_type.service_code)
+    )
+    normalized = "".join(
+        character
+        for character in unicodedata.normalize("NFKD", raw_value)
+        if not unicodedata.combining(character)
+    ).lower()
+    return "solfege" in normalized and bool(
+        re.search(r"\bniveau[\s_-]*[1-5]\b", normalized)
+        or re.search(r"\blevel[\s_-]*[1-5]\b", normalized)
+    )
+
+
+def _member_can_access_content_course_type(member: User, course_type: CourseType) -> bool:
+    if member.client_kind == ClientKind.ADULT and _is_child_solfege_content_course_type(course_type):
+        return False
+    return True
+
+
 def _client_content_courses(
     db: Session,
     *,
@@ -1811,7 +1834,7 @@ def _client_content_courses(
 
         for member_uuid in entitled_member_ids:
             member = members_by_id.get(member_uuid)
-            if member is None:
+            if member is None or not _member_can_access_content_course_type(member, course_type):
                 continue
             access_entry = access_map.get(member_uuid)
             if access_entry is None:
