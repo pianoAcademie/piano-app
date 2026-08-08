@@ -58,6 +58,7 @@ def main() -> None:
             client_id=client_id,
             note_id=note_id,
             provider_reference=payment_reference,
+            defer_postprocessing=True,
         )
         print(f"result={result}")
     finally:

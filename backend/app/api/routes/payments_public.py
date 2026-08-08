@@ -8,13 +8,14 @@ from decimal import Decimal
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import SessionLocal, get_db
 from app.api.routes.admin_clients import (
+    _postprocess_invoice_range_public_payment,
     handle_admin_client_payment_receipt_public_payment_webhook,
     handle_admin_client_range_invoice_public_payment_webhook,
     reconcile_admin_client_range_invoice_public_payment_by_provider_reference,
@@ -129,6 +130,7 @@ def _verify_stripe_webhook_signature(
 @router.post("/webhook")
 async def payment_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     client_id: UUID | None = Query(default=None),
     subscription_id: UUID | None = Query(default=None),
     cycle_id: UUID | None = Query(default=None),
@@ -176,12 +178,20 @@ async def payment_webhook(
             invoice_client_id = _metadata_uuid(lookup.metadata, "client_id")
             invoice_note_id = _metadata_uuid(lookup.metadata, "note_id")
             if invoice_client_id is not None and invoice_note_id is not None:
-                return reconcile_admin_client_range_invoice_public_payment_by_provider_reference(
+                result = reconcile_admin_client_range_invoice_public_payment_by_provider_reference(
                     db,
                     client_id=invoice_client_id,
                     note_id=invoice_note_id,
                     provider_reference=lookup.provider_reference or payment_reference,
+                    defer_postprocessing=True,
                 )
+                if bool(result.get("paid")):
+                    background_tasks.add_task(
+                        _postprocess_invoice_range_public_payment,
+                        client_id=invoice_client_id,
+                        note_id=invoice_note_id,
+                    )
+                return result
             subscription_id = _metadata_uuid(lookup.metadata, "subscription_id")
             client_id = client_id or _metadata_uuid(lookup.metadata, "client_id")
             cycle_id = cycle_id or _metadata_uuid(lookup.metadata, "cycle_id")
@@ -413,7 +423,7 @@ async def payment_webhook(
 
 
 @router.post("/stripe-webhook")
-async def stripe_payment_webhook(request: Request) -> dict[str, object]:
+async def stripe_payment_webhook(request: Request, background_tasks: BackgroundTasks) -> dict[str, object]:
     """Stripe-only webhook secured by Stripe's signing secret.
 
     The shared reconciliation endpoint also has an application token for PSPs
@@ -427,6 +437,7 @@ async def stripe_payment_webhook(request: Request) -> dict[str, object]:
         db.close()
     return await payment_webhook(
         request=request,
+        background_tasks=background_tasks,
         client_id=None,
         subscription_id=None,
         cycle_id=None,
@@ -452,6 +463,7 @@ def start_invoice_range_public_payment(
 @router.post("/invoices/range/{client_id}/{note_id}/webhook")
 def handle_invoice_range_public_payment_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     client_id: UUID,
     note_id: UUID,
     token: str = Query(min_length=24, max_length=4096),
@@ -462,6 +474,7 @@ def handle_invoice_range_public_payment_webhook(
         client_id=client_id,
         note_id=note_id,
         request=request,
+        background_tasks=background_tasks,
         token=token,
         secret=secret,
         db=db,
@@ -502,6 +515,7 @@ def start_invoice_range_public_bank_transfer(
 def return_invoice_range_public_payment(
     client_id: UUID,
     note_id: UUID,
+    background_tasks: BackgroundTasks,
     token: str = Query(min_length=24, max_length=4096),
     state: str = Query(default="success"),
     db: Session = Depends(get_db),
@@ -509,6 +523,7 @@ def return_invoice_range_public_payment(
     return return_admin_client_range_invoice_public_payment(
         client_id=client_id,
         note_id=note_id,
+        background_tasks=background_tasks,
         token=token,
         state=state,
         db=db,

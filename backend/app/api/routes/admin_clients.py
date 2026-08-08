@@ -14,7 +14,7 @@ from urllib.parse import urlencode
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 import jwt
 from jwt import PyJWTError
@@ -22,6 +22,7 @@ from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import get_admin_permission_map, get_db, require_admin_or_permissions, require_roles
+from app.db.session import SessionLocal
 from app.core.config import settings
 from app.models.client_group import ClientGroup, ClientGroupMembership
 from app.models.client_record import (
@@ -1801,6 +1802,132 @@ def _invoice_range_paid_amount(metadata: dict[str, object]) -> tuple[Decimal, st
     return _invoice_range_primary_total(metadata)
 
 
+def _run_invoice_range_payment_notifications(
+    db: Session,
+    *,
+    client_id: UUID,
+    note: ClientNoteEntry,
+    metadata: dict[str, object],
+    paid_at: datetime,
+) -> None:
+    if not _normalize_optional(str(metadata.get("booking_confirmation_emails_sent_at") or "")):
+        try:
+            booking_ids_for_confirmation = _invoice_range_booking_ids_for_payment(metadata)
+            if len(booking_ids_for_confirmation) > 1:
+                metadata["booking_confirmation_emails_sent_at"] = paid_at.isoformat()
+                metadata["booking_confirmation_emails_suppressed_reason"] = "MULTI_BOOKING_INVOICE_RANGE_PAYMENT"
+            elif _send_invoice_range_booking_confirmation_emails(db, metadata=metadata):
+                metadata["booking_confirmation_emails_sent_at"] = paid_at.isoformat()
+        except Exception:
+            logger.exception(
+                "Unable to send booking confirmation emails for invoice-range payment client=%s note=%s",
+                client_id,
+                note.id,
+            )
+    if not _normalize_optional(str(metadata.get("payment_confirmation_emails_sent_at") or "")):
+        try:
+            client = db.scalar(select(User).where(User.id == client_id, User.role == UserRole.CLIENT))
+            if client is not None and _send_invoice_range_payment_success_emails(
+                db,
+                client=client,
+                note_id=note.id,
+                metadata=metadata,
+                paid_at=paid_at,
+            ):
+                metadata["payment_confirmation_emails_sent_at"] = paid_at.isoformat()
+        except Exception:
+            logger.exception(
+                "Unable to send payment success emails for invoice-range payment client=%s note=%s",
+                client_id,
+                note.id,
+            )
+    if not _normalize_optional(str(metadata.get("admin_payment_confirmation_emails_sent_at") or "")):
+        try:
+            client = db.scalar(select(User).where(User.id == client_id, User.role == UserRole.CLIENT))
+            if client is not None and _send_invoice_range_payment_admin_emails(
+                db,
+                client=client,
+                note_id=note.id,
+                metadata=metadata,
+                paid_at=paid_at,
+            ):
+                metadata["admin_payment_confirmation_emails_sent_at"] = paid_at.isoformat()
+        except Exception:
+            logger.exception(
+                "Unable to send admin payment success emails for invoice-range payment client=%s note=%s",
+                client_id,
+                note.id,
+            )
+
+
+def _postprocess_invoice_range_public_payment(*, client_id: UUID, note_id: UUID) -> None:
+    """Run non-critical payment notifications after the PSP response has been sent."""
+
+    db = SessionLocal()
+    try:
+        note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+        if str(metadata.get("invoice_status") or "").strip().upper() != "PAID":
+            return
+        postprocessing_status = str(metadata.get("payment_postprocessing_status") or "").strip().upper()
+        if postprocessing_status == "COMPLETED":
+            return
+        started_at = _parse_optional_datetime(metadata.get("payment_postprocessing_started_at"))
+        if (
+            postprocessing_status == "IN_PROGRESS"
+            and started_at is not None
+            and started_at >= _utcnow() - timedelta(minutes=15)
+        ):
+            return
+
+        metadata["payment_postprocessing_status"] = "IN_PROGRESS"
+        metadata["payment_postprocessing_started_at"] = _utcnow().isoformat()
+        note.message = _build_invoice_range_note_message(metadata)
+        db.add(note)
+        db.commit()
+
+        paid_at = _parse_optional_datetime(metadata.get("paid_at")) or _utcnow()
+        _run_invoice_range_payment_notifications(
+            db,
+            client_id=client_id,
+            note=note,
+            metadata=metadata,
+            paid_at=paid_at,
+        )
+        metadata["payment_postprocessing_status"] = "COMPLETED"
+        metadata["payment_postprocessing_completed_at"] = _utcnow().isoformat()
+        metadata.pop("payment_postprocessing_error", None)
+        note.message = _build_invoice_range_note_message(metadata)
+        db.add(note)
+        db.commit()
+
+        try:
+            evaluate_referrals_for_invoice(db, client_id=client_id, note=note, metadata=metadata)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception(
+                "Unable to evaluate referrals after invoice-range payment client=%s note=%s",
+                client_id,
+                note_id,
+            )
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Unable to postprocess invoice-range payment client=%s note=%s", client_id, note_id)
+        try:
+            note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
+            metadata["payment_postprocessing_status"] = "FAILED"
+            metadata["payment_postprocessing_failed_at"] = _utcnow().isoformat()
+            metadata["payment_postprocessing_error"] = type(exc).__name__
+            note.message = _build_invoice_range_note_message(metadata)
+            db.add(note)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Unable to persist invoice-range postprocessing failure client=%s note=%s", client_id, note_id)
+    finally:
+        db.close()
+
+
 def _record_invoice_range_public_payment(
     db: Session,
     *,
@@ -1814,6 +1941,7 @@ def _record_invoice_range_public_payment(
     transaction_category: str = "INVOICE_RANGE_PUBLIC_PAYMENT",
     public_note_reference_label: str = "Transaction paiement en ligne",
     actor_user_id: UUID | None = None,
+    defer_postprocessing: bool = False,
 ) -> tuple[UUID, datetime]:
     now = _utcnow()
     invoice_number = _normalize_optional(str(metadata.get("invoice_number") or "")) or str(note.id)
@@ -1892,54 +2020,21 @@ def _record_invoice_range_public_payment(
         label=public_note_reference_label,
         reference=provider_reference,
     )
-    if not _normalize_optional(str(metadata.get("booking_confirmation_emails_sent_at") or "")):
-        try:
-            booking_ids_for_confirmation = _invoice_range_booking_ids_for_payment(metadata)
-            if len(booking_ids_for_confirmation) > 1:
-                metadata["booking_confirmation_emails_sent_at"] = now.isoformat()
-                metadata["booking_confirmation_emails_suppressed_reason"] = "MULTI_BOOKING_INVOICE_RANGE_PAYMENT"
-            elif _send_invoice_range_booking_confirmation_emails(db, metadata=metadata):
-                metadata["booking_confirmation_emails_sent_at"] = now.isoformat()
-        except Exception:
-            logger.exception(
-                "Unable to send booking confirmation emails for invoice-range payment client=%s note=%s",
-                client_id,
-                note.id,
-            )
-    if not _normalize_optional(str(metadata.get("payment_confirmation_emails_sent_at") or "")):
-        try:
-            client = db.scalar(select(User).where(User.id == client_id, User.role == UserRole.CLIENT))
-            if client is not None and _send_invoice_range_payment_success_emails(
-                db,
-                client=client,
-                note_id=note.id,
-                metadata=metadata,
-                paid_at=now,
-            ):
-                metadata["payment_confirmation_emails_sent_at"] = now.isoformat()
-        except Exception:
-            logger.exception(
-                "Unable to send payment success emails for invoice-range payment client=%s note=%s",
-                client_id,
-                note.id,
-            )
-    if not _normalize_optional(str(metadata.get("admin_payment_confirmation_emails_sent_at") or "")):
-        try:
-            client = db.scalar(select(User).where(User.id == client_id, User.role == UserRole.CLIENT))
-            if client is not None and _send_invoice_range_payment_admin_emails(
-                db,
-                client=client,
-                note_id=note.id,
-                metadata=metadata,
-                paid_at=now,
-            ):
-                metadata["admin_payment_confirmation_emails_sent_at"] = now.isoformat()
-        except Exception:
-            logger.exception(
-                "Unable to send admin payment success emails for invoice-range payment client=%s note=%s",
-                client_id,
-                note.id,
-            )
+    if defer_postprocessing:
+        metadata["payment_postprocessing_status"] = "PENDING"
+        metadata["payment_postprocessing_requested_at"] = now.isoformat()
+        note.message = _build_invoice_range_note_message(metadata)
+        db.add(note)
+        db.commit()
+        return transaction_id, now
+
+    _run_invoice_range_payment_notifications(
+        db,
+        client_id=client_id,
+        note=note,
+        metadata=metadata,
+        paid_at=now,
+    )
     note.message = _build_invoice_range_note_message(metadata)
     db.add(note)
     evaluate_referrals_for_invoice(db, client_id=client_id, note=note, metadata=metadata)
@@ -1953,6 +2048,7 @@ def reconcile_admin_client_range_invoice_public_payment_by_provider_reference(
     client_id: UUID,
     note_id: UUID,
     provider_reference: str,
+    defer_postprocessing: bool = False,
 ) -> dict[str, object]:
     _require_client(db, client_id)
     note, metadata = _load_range_invoice_note(db, client_id=client_id, note_id=note_id, for_update=True)
@@ -1963,6 +2059,17 @@ def reconcile_admin_client_range_invoice_public_payment_by_provider_reference(
         note_created_at=note.created_at,
         metadata=metadata,
     )
+    if str(metadata.get("invoice_status") or "").strip().upper() == "PAID":
+        db.commit()
+        return {
+            "ok": True,
+            "processed": False,
+            "paid": True,
+            "reason": "already_reconciled",
+            "invoice_number": str(metadata.get("invoice_number") or ""),
+            "transaction_id": str(metadata.get("payment_transaction_id") or ""),
+            "paid_at": str(metadata.get("paid_at") or ""),
+        }
     provider = detect_provider_from_reference(provider_reference)
     if provider is None:
         provider = parse_provider(str(metadata.get("payment_provider") or ""))
@@ -2001,6 +2108,7 @@ def reconcile_admin_client_range_invoice_public_payment_by_provider_reference(
         metadata=metadata,
         provider_reference=lookup.provider_reference or provider_reference,
         seller_legal_entity_id=seller_legal_entity_id,
+        defer_postprocessing=defer_postprocessing,
     )
     return {
         "ok": True,
@@ -12954,6 +13062,7 @@ def handle_admin_client_range_invoice_public_payment_webhook(
     client_id: UUID,
     note_id: UUID,
     request: Request,
+    background_tasks: BackgroundTasks,
     token: str = Query(min_length=24, max_length=4096),
     secret: str | None = Query(default=None),
     db: Session = Depends(get_db),
@@ -12984,6 +13093,18 @@ def handle_admin_client_range_invoice_public_payment_webhook(
         metadata=metadata,
     )
 
+    if str(metadata.get("invoice_status") or "").strip().upper() == "PAID":
+        db.commit()
+        if str(metadata.get("payment_postprocessing_status") or "").strip().upper() != "COMPLETED":
+            background_tasks.add_task(_postprocess_invoice_range_public_payment, client_id=client_id, note_id=note_id)
+        return {
+            "ok": True,
+            "processed": False,
+            "paid": True,
+            "reason": "already_reconciled",
+            "invoice_number": str(metadata.get("invoice_number") or ""),
+        }
+
     provider_reference = _normalize_optional(str(metadata.get("payment_provider_reference") or ""))
     if not provider_reference:
         return {"ok": True, "processed": False, "reason": "missing_provider_reference"}
@@ -13012,7 +13133,9 @@ def handle_admin_client_range_invoice_public_payment_webhook(
             metadata=metadata,
             provider_reference=lookup.provider_reference,
             seller_legal_entity_id=seller_legal_entity_id,
+            defer_postprocessing=True,
         )
+        background_tasks.add_task(_postprocess_invoice_range_public_payment, client_id=client_id, note_id=note_id)
         return {
             "ok": True,
             "processed": True,
@@ -13032,6 +13155,7 @@ def handle_admin_client_range_invoice_public_payment_webhook(
 def return_admin_client_range_invoice_public_payment(
     client_id: UUID,
     note_id: UUID,
+    background_tasks: BackgroundTasks,
     token: str = Query(min_length=24, max_length=4096),
     state: str = Query(default="success"),
     db: Session = Depends(get_db),
@@ -13059,6 +13183,19 @@ def return_admin_client_range_invoice_public_payment(
             title="Paiement annule",
             subtitle="Aucun debit n'a ete valide. Vous pouvez relancer le paiement via le lien de facture.",
             invoice_number=invoice_number,
+        )
+
+    if str(metadata.get("invoice_status") or "").strip().upper() == "PAID":
+        db.commit()
+        if str(metadata.get("payment_postprocessing_status") or "").strip().upper() != "COMPLETED":
+            background_tasks.add_task(_postprocess_invoice_range_public_payment, client_id=client_id, note_id=note_id)
+        return _public_payment_result_html(
+            title="Paiement confirme",
+            subtitle="Votre paiement a bien ete enregistre. La facture est marquee comme payee.",
+            invoice_number=invoice_number,
+            transaction_reference=_normalize_optional(str(metadata.get("payment_provider_reference") or "")),
+            action_href=f"{_frontend_base_url()}/client?tab=finance&finance_view=transactions&invoice_number={invoice_number}",
+            action_label="Aller vers mon compte",
         )
 
     provider_reference = _normalize_optional(str(metadata.get("payment_provider_reference") or ""))
@@ -13103,7 +13240,9 @@ def return_admin_client_range_invoice_public_payment(
         metadata=metadata,
         provider_reference=lookup.provider_reference,
         seller_legal_entity_id=seller_legal_entity_id,
+        defer_postprocessing=True,
     )
+    background_tasks.add_task(_postprocess_invoice_range_public_payment, client_id=client_id, note_id=note_id)
 
     return _public_payment_result_html(
         title="Paiement confirme",
