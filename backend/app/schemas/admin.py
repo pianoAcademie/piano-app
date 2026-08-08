@@ -657,6 +657,8 @@ class AdminActivityOut(BaseModel):
     default_capacity: int
     default_hourly_rate: Decimal | None
     default_course_rate_ttc: Decimal | None
+    trial_course_enabled: bool
+    trial_course_price_ttc: Decimal | None
     email_reminder_hours_before_start: int | None
     sms_reminder_hours_before_start: int | None
     min_booking_notice_hours_override: int | None
@@ -688,6 +690,8 @@ class AdminActivityUpsertRequest(BaseModel):
     default_capacity: int = Field(default=8, ge=0, le=500)
     default_hourly_rate: Decimal | None = Field(default=None, ge=0)
     default_course_rate_ttc: Decimal | None = Field(default=None, ge=0)
+    trial_course_enabled: bool = False
+    trial_course_price_ttc: Decimal | None = Field(default=None, ge=0)
     email_reminder_hours_before_start: int | None = Field(default=None, ge=0)
     sms_reminder_hours_before_start: int | None = Field(default=None, ge=0)
     min_booking_notice_hours_override: int | None = Field(default=None, ge=0)
@@ -717,6 +721,8 @@ class AdminActivityUpdateRequest(BaseModel):
     default_capacity: int | None = Field(default=None, ge=0, le=500)
     default_hourly_rate: Decimal | None = Field(default=None, ge=0)
     default_course_rate_ttc: Decimal | None = Field(default=None, ge=0)
+    trial_course_enabled: bool | None = None
+    trial_course_price_ttc: Decimal | None = Field(default=None, ge=0)
     email_reminder_hours_before_start: int | None = Field(default=None, ge=0)
     sms_reminder_hours_before_start: int | None = Field(default=None, ge=0)
     min_booking_notice_hours_override: int | None = Field(default=None, ge=0)

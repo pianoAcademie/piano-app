@@ -2283,6 +2283,8 @@ export type AdminActivityOut = {
   default_capacity: number;
   default_hourly_rate: string | null;
   default_course_rate_ttc: string | null;
+  trial_course_enabled: boolean;
+  trial_course_price_ttc: string | null;
   email_reminder_hours_before_start: number | null;
   sms_reminder_hours_before_start: number | null;
   min_booking_notice_hours_override: number | null;

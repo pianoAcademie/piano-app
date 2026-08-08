@@ -317,6 +317,84 @@ def _normalize_activity_capacity(*, allows_student_bookings: bool, capacity: int
     return capacity
 
 
+def _validate_activity_trial_configuration(
+    *,
+    allows_student_bookings: bool,
+    trial_course_enabled: bool,
+    trial_course_price_ttc: Decimal | None,
+) -> None:
+    if not trial_course_enabled:
+        return
+    if not allows_student_bookings:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Trial lessons require student bookings to be enabled",
+        )
+    if trial_course_price_ttc is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="trial_course_price_ttc is required when trial lessons are enabled",
+        )
+
+
+def _ensure_activity_trial_entitlement(db: Session, *, activity: CourseType) -> None:
+    if not bool(activity.trial_course_enabled):
+        return
+
+    plan = db.scalar(
+        select(Plan)
+        .where(
+            Plan.is_trial_offer.is_(True),
+            Plan.kind == PlanKind.PACK,
+            Plan.active.is_(True),
+            Plan.is_private.is_(False),
+        )
+        .order_by(Plan.created_at.asc())
+        .limit(1)
+    )
+    if plan is None:
+        trial_price = Decimal(activity.trial_course_price_ttc or 0).quantize(Decimal("0.01"))
+        plan = Plan(
+            code=_new_plan_code("Cours d'essai"),
+            name="Cours d'essai",
+            kind=PlanKind.PACK,
+            credits_count=1,
+            pack_validity_months=12,
+            monthly_price_value=trial_price,
+            price_tax_mode=PlanPriceTaxMode.TTC,
+            monthly_price_excl_vat=None,
+            currency_code="EUR",
+            description="Offre technique pilotee par le tarif d'essai de chaque activite.",
+            is_private=False,
+            is_trial_offer=True,
+            options_json=[],
+            payment_methods_json=["CARD_ONLINE"],
+            restrictions_json=[],
+            active=True,
+            updated_at=datetime.now(timezone.utc),
+        )
+        db.add(plan)
+        db.flush()
+        if activity.credit_type_id is not None:
+            db.add(
+                PlanCreditGrant(
+                    plan_id=plan.id,
+                    credit_type_id=activity.credit_type_id,
+                    credits_count=1,
+                    updated_at=datetime.now(timezone.utc),
+                )
+            )
+
+    entitlement_exists = db.scalar(
+        select(PlanEntitlement.id).where(
+            PlanEntitlement.plan_id == plan.id,
+            PlanEntitlement.course_type_id == activity.id,
+        )
+    )
+    if entitlement_exists is None:
+        db.add(PlanEntitlement(plan_id=plan.id, course_type_id=activity.id))
+
+
 def _serialize_activity(
     activity: CourseType,
     *,
@@ -353,6 +431,8 @@ def _serialize_activity(
         default_capacity=activity.default_capacity,
         default_hourly_rate=activity.default_hourly_rate,
         default_course_rate_ttc=activity.default_course_rate_ttc,
+        trial_course_enabled=bool(activity.trial_course_enabled),
+        trial_course_price_ttc=activity.trial_course_price_ttc,
         email_reminder_hours_before_start=activity.email_reminder_hours_before_start,
         sms_reminder_hours_before_start=activity.sms_reminder_hours_before_start,
         min_booking_notice_hours_override=activity.min_booking_notice_hours_override,
@@ -1902,6 +1982,12 @@ def create_admin_activity(
             detail="Automatic cancellation requires a minimum attendee count and a check delay",
         )
 
+    _validate_activity_trial_configuration(
+        allows_student_bookings=bool(payload.allows_student_bookings),
+        trial_course_enabled=bool(payload.trial_course_enabled),
+        trial_course_price_ttc=payload.trial_course_price_ttc,
+    )
+
     activity = CourseType(
         code=code,
         name=name,
@@ -1925,6 +2011,8 @@ def create_admin_activity(
         ),
         default_hourly_rate=payload.default_hourly_rate,
         default_course_rate_ttc=payload.default_course_rate_ttc,
+        trial_course_enabled=bool(payload.trial_course_enabled),
+        trial_course_price_ttc=payload.trial_course_price_ttc,
         email_reminder_hours_before_start=payload.email_reminder_hours_before_start,
         sms_reminder_hours_before_start=payload.sms_reminder_hours_before_start,
         min_booking_notice_hours_override=payload.min_booking_notice_hours_override,
@@ -1937,6 +2025,8 @@ def create_admin_activity(
         active=bool(payload.active),
     )
     db.add(activity)
+    db.flush()
+    _ensure_activity_trial_entitlement(db, activity=activity)
     db.commit()
     db.refresh(activity)
     return _serialize_activity(
@@ -2070,6 +2160,21 @@ def update_admin_activity(
     if "default_course_rate_ttc" in changes:
         activity.default_course_rate_ttc = changes["default_course_rate_ttc"]
 
+    if "trial_course_enabled" in changes:
+        activity.trial_course_enabled = bool(changes["trial_course_enabled"])
+
+    if "trial_course_price_ttc" in changes:
+        activity.trial_course_price_ttc = changes["trial_course_price_ttc"]
+
+    if not activity.allows_student_bookings:
+        activity.trial_course_enabled = False
+
+    _validate_activity_trial_configuration(
+        allows_student_bookings=bool(activity.allows_student_bookings),
+        trial_course_enabled=bool(activity.trial_course_enabled),
+        trial_course_price_ttc=activity.trial_course_price_ttc,
+    )
+
     if "email_reminder_hours_before_start" in changes:
         activity.email_reminder_hours_before_start = changes["email_reminder_hours_before_start"]
 
@@ -2136,6 +2241,8 @@ def update_admin_activity(
             )
 
     db.add(activity)
+    db.flush()
+    _ensure_activity_trial_entitlement(db, activity=activity)
     db.commit()
     db.refresh(activity)
     return _serialize_activity(

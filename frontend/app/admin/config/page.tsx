@@ -3756,6 +3756,14 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                   })
                                 : t("admin.activities.rate_not_defined")}
                           </span>
+                          <span className={`status-pill ${activity.trial_course_enabled ? "status-info" : "status-warn"}`}>
+                            {activity.trial_course_enabled && activity.trial_course_price_ttc
+                              ? t("admin.activities.trial_rate_badge", {
+                                  amount: activity.trial_course_price_ttc,
+                                  currency: accountDefaultCurrency,
+                                })
+                              : t("admin.activities.trial_disabled_badge")}
+                          </span>
                           <span className={`status-pill ${activity.active ? "status-ok" : "status-warn"}`}>
                             {activity.active ? t("admin.activities.status_active") : t("admin.activities.status_inactive")}
                           </span>
@@ -4081,6 +4089,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                   title={t("admin.activity_modal.pricing_title")}
                                   description={t("admin.activity_modal.pricing_desc")}
                                 >
+                                  <div className="activity-toggle-grid">
+                                    <ActivityToggleCard
+                                      name="trial_course_enabled"
+                                      label={t("admin.activity_modal.trial_course_enabled")}
+                                      description={t("admin.activity_modal.trial_course_enabled_desc")}
+                                    />
+                                  </div>
                                   <div className="grid cols-2 config-form-grid">
                                     <label>
                                       {t("admin.activity_modal.hourly_rate_ttc")}
@@ -4101,6 +4116,17 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                         step="0.01"
                                         placeholder="ex: 200.00"
                                       />
+                                    </label>
+                                    <label>
+                                      {t("admin.activity_modal.trial_course_price_ttc")}
+                                      <input
+                                        type="number"
+                                        name="trial_course_price_ttc"
+                                        min={0}
+                                        step="0.01"
+                                        placeholder="ex: 20.00"
+                                      />
+                                      <small className="muted">{t("admin.activity_modal.trial_course_price_help")}</small>
                                     </label>
                                     <label className="span-2">
                                       {t("admin.activity_modal.color")}
@@ -4470,6 +4496,14 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                   title={t("admin.activity_modal.pricing_title")}
                                   description={t("admin.activity_modal.pricing_desc")}
                                 >
+                                  <div className="activity-toggle-grid">
+                                    <ActivityToggleCard
+                                      name="trial_course_enabled"
+                                      label={t("admin.activity_modal.trial_course_enabled")}
+                                      description={t("admin.activity_modal.trial_course_enabled_desc")}
+                                      defaultChecked={selectedActivity.trial_course_enabled}
+                                    />
+                                  </div>
                                   <div className="grid cols-2 config-form-grid">
                                     <label>
                                       {t("admin.activity_modal.hourly_rate_ttc")}
@@ -4492,6 +4526,18 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                         defaultValue={selectedActivity.default_course_rate_ttc ?? ""}
                                         placeholder="ex: 200.00"
                                       />
+                                    </label>
+                                    <label>
+                                      {t("admin.activity_modal.trial_course_price_ttc")}
+                                      <input
+                                        type="number"
+                                        name="trial_course_price_ttc"
+                                        min={0}
+                                        step="0.01"
+                                        defaultValue={selectedActivity.trial_course_price_ttc ?? ""}
+                                        placeholder="ex: 20.00"
+                                      />
+                                      <small className="muted">{t("admin.activity_modal.trial_course_price_help")}</small>
                                     </label>
                                     <label className="span-2">
                                       {t("admin.activity_modal.color")}

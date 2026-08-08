@@ -1606,6 +1606,19 @@ def _session_purchase_catalog(
         credit_type_id=course_type.credit_type_id,
         allowed_plan_kinds=allowed_plan_kinds,
     )
+    trial_course_enabled = bool(getattr(course_type, "trial_course_enabled", False))
+    trial_course_price = getattr(course_type, "trial_course_price_ttc", None)
+    normalized_formula_options: list[ClientSessionFormulaOptionOut] = []
+    for option in formula_options:
+        if not option.is_trial_offer:
+            normalized_formula_options.append(option)
+            continue
+        if not trial_course_enabled or trial_course_price is None:
+            continue
+        normalized_formula_options.append(
+            option.model_copy(update={"price_ttc": Decimal(trial_course_price).quantize(Decimal("0.01"))})
+        )
+    formula_options = normalized_formula_options
     direct_payment_amount = None
     if allows_planless_booking and session_obj.external_booking_price_ttc is not None:
         duration_seconds = int(max((session_obj.end_at_utc - session_obj.start_at_utc).total_seconds(), 0))

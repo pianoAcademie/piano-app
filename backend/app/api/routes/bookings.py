@@ -894,6 +894,12 @@ def _select_eligible_subscription(
         if plan.kind == PlanKind.PACK and (subscription.credits_remaining is None or subscription.credits_remaining <= 0):
             continue
         if bool(getattr(plan, "is_trial_offer", False)):
+            if (
+                course_type is None
+                or not bool(getattr(course_type, "trial_course_enabled", False))
+                or getattr(course_type, "trial_course_price_ttc", None) is None
+            ):
+                continue
             if has_trial_booking_for_course_type(
                 db,
                 user_id=user_id,

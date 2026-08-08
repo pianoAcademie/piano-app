@@ -157,7 +157,47 @@ def _purchase_pricing(
     currency: str,
     on_date: date,
     has_prior_purchase: bool,
+    trial_course_type: CourseType | None = None,
 ) -> _PurchasePricing:
+    if trial_course_type is not None:
+        trial_price = getattr(trial_course_type, "trial_course_price_ttc", None)
+        if not bool(getattr(trial_course_type, "trial_course_enabled", False)) or trial_price is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Les cours d'essai ne sont pas autorises pour cette activite",
+            )
+        currency_code = (plan.currency_code or currency or "EUR").upper()
+        vat_rate = resolve_vat_rate(
+            db,
+            country=country,
+            service_code=trial_course_type.service_code,
+            on_date=on_date,
+        )
+        amount_excl, vat_amount, total = _ttc_to_tax_totals(
+            total_incl_vat=Decimal(trial_price),
+            vat_rate=vat_rate,
+        )
+        return _PurchasePricing(
+            amount_excl_vat=amount_excl,
+            vat_amount=vat_amount,
+            total_incl_vat=total,
+            currency=currency_code,
+            base_price_ttc=total,
+            first_purchase_required=False,
+            first_purchase_fee_ttc=None,
+            first_purchase_partitions_price_ttc=None,
+            breakdown=[
+                {
+                    "code": "TRIAL_COURSE",
+                    "label": f"Cours d'essai - {trial_course_type.name}",
+                    "amount_excl_vat": str(amount_excl),
+                    "vat_rate": str(vat_rate),
+                    "vat_amount": str(vat_amount),
+                    "amount_ttc": str(total),
+                }
+            ],
+        )
+
     base_ttc, currency_code = _plan_amount_due_and_currency(
         db,
         plan=plan,
@@ -265,6 +305,37 @@ def _purchase_pricing(
         first_purchase_partitions_price_ttc=partitions_ttc,
         breakdown=breakdown,
     )
+
+
+def _trial_session_and_course_type(
+    db: Session,
+    *,
+    plan: Plan,
+    session_id: UUID,
+) -> tuple[CourseSession, CourseType]:
+    row = db.execute(
+        select(CourseSession, CourseType)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .where(CourseSession.id == session_id)
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Creneau introuvable")
+    session_obj, course_type = row
+    if not plan_supports_trial_course_type(
+        db,
+        plan_id=plan.id,
+        course_type_id=course_type.id,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cette offre d'essai n'est pas compatible avec ce creneau",
+        )
+    if not bool(course_type.trial_course_enabled) or course_type.trial_course_price_ttc is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Les cours d'essai ne sont pas autorises pour cette activite",
+        )
+    return session_obj, course_type
 
 
 def _restriction_period_label(raw: str) -> str:
@@ -799,6 +870,13 @@ def public_formula_purchase_start(
     existing_client = db.scalar(
         select(User).where(User.email == normalized_email, User.role == UserRole.CLIENT)
     )
+    trial_course_type: CourseType | None = None
+    if plan.is_trial_offer and payload.session_id is not None:
+        _, trial_course_type = _trial_session_and_course_type(
+            db,
+            plan=plan,
+            session_id=payload.session_id,
+        )
     pricing = _purchase_pricing(
         db,
         plan=plan,
@@ -810,6 +888,7 @@ def public_formula_purchase_start(
             if existing_client is not None
             else False
         ),
+        trial_course_type=trial_course_type,
     )
     price_snapshot, currency = pricing.total_incl_vat, pricing.currency
     purchase_context = _encode_purchase_context(
@@ -853,6 +932,18 @@ def public_formula_purchase_context(
 
     summary = _serialize_public_formula_summary(db, plan=plan)
     existing_client = db.scalar(select(User).where(User.email == email, User.role == UserRole.CLIENT))
+    context_session_id_raw = str(payload.get("session_id") or "").strip()
+    try:
+        context_session_id = UUID(context_session_id_raw) if context_session_id_raw else None
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Purchase context invalide") from exc
+    trial_course_type: CourseType | None = None
+    if plan.is_trial_offer and context_session_id is not None:
+        _, trial_course_type = _trial_session_and_course_type(
+            db,
+            plan=plan,
+            session_id=context_session_id,
+        )
     pricing = _purchase_pricing(
         db,
         plan=plan,
@@ -864,8 +955,19 @@ def public_formula_purchase_context(
             if existing_client is not None
             else False
         ),
+        trial_course_type=trial_course_type,
     )
     price_snapshot, currency = pricing.total_incl_vat, pricing.currency
+    if trial_course_type is not None:
+        summary = summary.model_copy(
+            update={
+                "price_ttc": pricing.total_incl_vat,
+                "base_price_ttc": pricing.base_price_ttc,
+                "currency": pricing.currency,
+                "first_purchase_fee_ttc": None,
+                "first_purchase_partitions_price_ttc": None,
+            }
+        )
     return PublicFormulaPurchaseContextOut(
         purchase_context=context_token,
         email=email,
@@ -874,7 +976,7 @@ def public_formula_purchase_context(
         formula_type=plan.kind,
         price_snapshot=price_snapshot,
         currency=currency,
-        session_id=str(payload.get("session_id") or "").strip() or None,
+        session_id=context_session_id,
         booking_user_id=str(payload.get("booking_user_id") or "").strip() or None,
         planning_return_to=str(payload.get("planning_return_to") or "").strip() or None,
         summary=summary,
@@ -896,6 +998,7 @@ def purchase_plan(
     context_payload: dict[str, object] = {}
     context_booking_user_id: UUID | None = None
     context_session_id: UUID | None = None
+    trial_course_type: CourseType | None = None
     if payload.purchase_context:
         context_payload = _decode_purchase_context(payload.purchase_context)
         if str(context_payload.get("formula_id") or "") != str(plan.id):
@@ -933,13 +1036,11 @@ def purchase_plan(
         if not trial_course_type_ids:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cette offre d'essai n'est rattachee a aucun type de cours")
         if context_session_id is not None:
-            trial_session = db.scalar(select(CourseSession).where(CourseSession.id == context_session_id))
-            if trial_session is None or not plan_supports_trial_course_type(
+            trial_session, trial_course_type = _trial_session_and_course_type(
                 db,
-                plan_id=plan.id,
-                course_type_id=trial_session.course_type_id,
-            ):
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cette offre d'essai n'est pas compatible avec ce creneau")
+                plan=plan,
+                session_id=context_session_id,
+            )
             if has_trial_booking_for_course_type(
                 db,
                 user_id=owner.id,
@@ -1018,6 +1119,7 @@ def purchase_plan(
         currency=(owner.preferred_currency or "EUR").upper(),
         on_date=subscription_started_at.date(),
         has_prior_purchase=has_prior_purchase,
+        trial_course_type=trial_course_type,
     )
     amount_due = pricing.total_incl_vat
     currency_code = pricing.currency

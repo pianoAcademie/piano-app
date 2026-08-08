@@ -191,6 +191,14 @@ class CourseType(Base):
             name="ck_course_types_default_course_rate_non_negative",
         ),
         CheckConstraint(
+            "trial_course_price_ttc IS NULL OR trial_course_price_ttc >= 0",
+            name="ck_course_types_trial_price_non_negative",
+        ),
+        CheckConstraint(
+            "NOT trial_course_enabled OR (allows_student_bookings AND trial_course_price_ttc IS NOT NULL)",
+            name="ck_course_types_trial_configuration_complete",
+        ),
+        CheckConstraint(
             "email_reminder_hours_before_start IS NULL OR email_reminder_hours_before_start >= 0",
             name="ck_course_types_email_reminder_hours_non_negative",
         ),
@@ -265,6 +273,8 @@ class CourseType(Base):
     default_capacity: Mapped[int] = mapped_column(Integer, nullable=False)
     default_hourly_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     default_course_rate_ttc: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    trial_course_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    trial_course_price_ttc: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     email_reminder_hours_before_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sms_reminder_hours_before_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     min_booking_notice_hours_override: Mapped[int | None] = mapped_column(Integer, nullable=True)

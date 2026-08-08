@@ -8493,6 +8493,9 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   const defaultHourlyRate = parseNonNegativeDecimal(defaultHourlyRateRaw);
   const defaultCourseRateRaw = String(formData.get("default_course_rate_ttc") ?? "").trim();
   const defaultCourseRate = parseNonNegativeDecimal(defaultCourseRateRaw);
+  const trialCourseEnabled = checkboxField(formData, "trial_course_enabled");
+  const trialCoursePriceRaw = String(formData.get("trial_course_price_ttc") ?? "").trim();
+  const trialCoursePrice = parseNonNegativeDecimal(trialCoursePriceRaw);
   const colorHex = String(formData.get("color_hex") ?? "#94C973").trim();
   const modeRaw = String(formData.get("mode") ?? "ANY").trim().toUpperCase();
   const mode = modeRaw === "ONLINE" || modeRaw === "ONSITE" ? modeRaw : "ANY";
@@ -8539,6 +8542,12 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   if (defaultCourseRateRaw && defaultCourseRate === null) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_default_course_rate")));
   }
+  if ((trialCoursePriceRaw && trialCoursePrice === null) || (trialCourseEnabled && trialCoursePrice === null)) {
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_trial_course_price")));
+  }
+  if (trialCourseEnabled && !allowsStudentBookings) {
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.trial_requires_students")));
+  }
   if (emailReminderHours === "INVALID") {
     redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_email_reminder")));
   }
@@ -8581,6 +8590,8 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
     default_capacity: allowsStudentBookings ? defaultCapacity : 0,
     default_hourly_rate: defaultHourlyRateRaw ? defaultHourlyRate : null,
     default_course_rate_ttc: defaultCourseRateRaw ? defaultCourseRate : null,
+    trial_course_enabled: trialCourseEnabled,
+    trial_course_price_ttc: trialCoursePriceRaw ? trialCoursePrice : null,
     email_reminder_hours_before_start: emailReminderHours,
     sms_reminder_hours_before_start: smsReminderHours,
     min_booking_notice_hours_override: minBookingNoticeHoursOverride,
@@ -8677,6 +8688,9 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   const defaultHourlyRate = parseNonNegativeDecimal(defaultHourlyRateRaw);
   const defaultCourseRateRaw = String(formData.get("default_course_rate_ttc") ?? "").trim();
   const defaultCourseRate = parseNonNegativeDecimal(defaultCourseRateRaw);
+  const trialCourseEnabled = checkboxField(formData, "trial_course_enabled");
+  const trialCoursePriceRaw = String(formData.get("trial_course_price_ttc") ?? "").trim();
+  const trialCoursePrice = parseNonNegativeDecimal(trialCoursePriceRaw);
   const colorHex = String(formData.get("color_hex") ?? "#94C973").trim();
   const modeRaw = String(formData.get("mode") ?? "ANY").trim().toUpperCase();
   const mode = modeRaw === "ONLINE" || modeRaw === "ONSITE" ? modeRaw : "ANY";
@@ -8723,6 +8737,12 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   if (defaultCourseRateRaw && defaultCourseRate === null) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_default_course_rate")));
   }
+  if ((trialCoursePriceRaw && trialCoursePrice === null) || (trialCourseEnabled && trialCoursePrice === null)) {
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_trial_course_price")));
+  }
+  if (trialCourseEnabled && !allowsStudentBookings) {
+    redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.trial_requires_students")));
+  }
   if (emailReminderHours === "INVALID") {
     redirect(appendQueryMessage(returnTo, "error", t("admin.activity_action.invalid_email_reminder")));
   }
@@ -8766,6 +8786,8 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
     default_capacity: allowsStudentBookings ? defaultCapacity : 0,
     default_hourly_rate: defaultHourlyRateRaw ? defaultHourlyRate : null,
     default_course_rate_ttc: defaultCourseRateRaw ? defaultCourseRate : null,
+    trial_course_enabled: trialCourseEnabled,
+    trial_course_price_ttc: trialCoursePriceRaw ? trialCoursePrice : null,
     email_reminder_hours_before_start: emailReminderHours,
     sms_reminder_hours_before_start: smsReminderHours,
     min_booking_notice_hours_override: minBookingNoticeHoursOverride,

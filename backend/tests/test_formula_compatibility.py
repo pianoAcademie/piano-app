@@ -222,6 +222,51 @@ class FormulaCompatibilityTests(unittest.TestCase):
 
         self.assertEqual(selected, (subscription, plan))
 
+    def test_trial_credit_is_not_eligible_when_activity_disallows_trials(self) -> None:
+        subscription = SimpleNamespace(
+            id=uuid4(),
+            user_id=uuid4(),
+            plan_id=uuid4(),
+            status=SubscriptionStatus.ACTIVE,
+            started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            ends_at=None,
+            credits_remaining=1,
+            created_at=datetime(2026, 8, 8, tzinfo=timezone.utc),
+        )
+        plan = SimpleNamespace(
+            id=subscription.plan_id,
+            kind=PlanKind.PACK,
+            active=True,
+            is_trial_offer=True,
+        )
+        course_type = SimpleNamespace(
+            id=uuid4(),
+            credit_type_id=uuid4(),
+            name="Cours collectif",
+            service_code="COURSE",
+            trial_course_enabled=False,
+            trial_course_price_ttc=Decimal("20.00"),
+        )
+        fake_db = _FakeSession(
+            scalar_values=[course_type],
+            execute_rows=[(subscription, plan)],
+        )
+
+        with (
+            patch("app.api.routes.bookings._plan_supports_course_access", return_value=True),
+            patch("app.api.routes.bookings.reconcile_subscription_status", return_value=False),
+        ):
+            selected = _select_eligible_subscription(
+                fake_db,
+                user_id=subscription.user_id,
+                course_type_id=course_type.id,
+                now=datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc),
+                requested_subscription_id=None,
+                allowed_plan_kinds={PlanKind.PACK},
+            )
+
+        self.assertIsNone(selected)
+
     def test_formula_options_include_entitlement_with_same_activity_name(self) -> None:
         plan = SimpleNamespace(
             id=uuid4(),
@@ -330,6 +375,100 @@ class FormulaCompatibilityTests(unittest.TestCase):
         self.assertEqual(str(direct_payment_amount), "15.00")
         self.assertEqual(direct_payment_currency, "EUR")
         self.assertEqual([scope.value for scope in session_booking_scopes], ["EXTERNAL"])
+
+    def test_session_purchase_catalog_uses_activity_trial_price(self) -> None:
+        trial_plan = SimpleNamespace(
+            id=uuid4(),
+            code="FORM-TRIAL",
+            kind=PlanKind.PACK,
+            is_trial_offer=True,
+            name="Cours d'essai",
+            description=None,
+            options_json=[],
+            payment_methods_json=["CARD_ONLINE"],
+            monthly_price_value=20,
+            monthly_price_excl_vat=None,
+            currency_code="EUR",
+        )
+        course_type_id = uuid4()
+        fake_db = _FakeSession(
+            execute_rows=[(trial_plan, course_type_id, "Cours collectif", "COURSE", DeliveryMode.ONSITE, None)],
+        )
+        session_obj = SimpleNamespace(
+            visibility_scope="EXTERNAL",
+            booking_scope="EXTERNAL",
+            is_private=False,
+            allow_online_booking=True,
+            external_booking_price_ttc=None,
+            start_at_utc=datetime(2026, 9, 14, 19, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 14, 20, 0, tzinfo=timezone.utc),
+        )
+        course_type = SimpleNamespace(
+            id=course_type_id,
+            name="Cours collectif",
+            service_code="COURSE",
+            mode=DeliveryMode.ONSITE,
+            credit_type_id=None,
+            allows_student_bookings=True,
+            trial_course_enabled=True,
+            trial_course_price_ttc=Decimal("27.50"),
+        )
+
+        formula_options, _, _, _ = _session_purchase_catalog(
+            fake_db,
+            session_obj=session_obj,
+            course_type=course_type,
+        )
+
+        self.assertEqual(len(formula_options), 1)
+        self.assertTrue(formula_options[0].is_trial_offer)
+        self.assertEqual(formula_options[0].price_ttc, Decimal("27.50"))
+
+    def test_session_purchase_catalog_hides_trial_when_activity_disallows_it(self) -> None:
+        trial_plan = SimpleNamespace(
+            id=uuid4(),
+            code="FORM-TRIAL",
+            kind=PlanKind.PACK,
+            is_trial_offer=True,
+            name="Cours d'essai",
+            description=None,
+            options_json=[],
+            payment_methods_json=["CARD_ONLINE"],
+            monthly_price_value=20,
+            monthly_price_excl_vat=None,
+            currency_code="EUR",
+        )
+        course_type_id = uuid4()
+        fake_db = _FakeSession(
+            execute_rows=[(trial_plan, course_type_id, "Cours collectif", "COURSE", DeliveryMode.ONSITE, None)],
+        )
+        session_obj = SimpleNamespace(
+            visibility_scope="EXTERNAL",
+            booking_scope="EXTERNAL",
+            is_private=False,
+            allow_online_booking=True,
+            external_booking_price_ttc=None,
+            start_at_utc=datetime(2026, 9, 14, 19, 0, tzinfo=timezone.utc),
+            end_at_utc=datetime(2026, 9, 14, 20, 0, tzinfo=timezone.utc),
+        )
+        course_type = SimpleNamespace(
+            id=course_type_id,
+            name="Cours collectif",
+            service_code="COURSE",
+            mode=DeliveryMode.ONSITE,
+            credit_type_id=None,
+            allows_student_bookings=True,
+            trial_course_enabled=False,
+            trial_course_price_ttc=Decimal("20.00"),
+        )
+
+        formula_options, _, _, _ = _session_purchase_catalog(
+            fake_db,
+            session_obj=session_obj,
+            course_type=course_type,
+        )
+
+        self.assertEqual(formula_options, [])
 
 
 if __name__ == "__main__":
