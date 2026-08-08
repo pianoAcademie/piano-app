@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 import jwt
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import get_db, is_read_only_client_preview, require_roles
@@ -1701,10 +1701,37 @@ def _is_child_solfege_content_course_type(course_type: CourseType) -> bool:
     )
 
 
-def _member_can_access_content_course_type(member: User, course_type: CourseType) -> bool:
+def _member_can_access_content_course_type(
+    member: User,
+    course_type: CourseType,
+    *,
+    assigned_child_solfege_course_type_ids: set[UUID] | None = None,
+) -> bool:
     if member.client_kind == ClientKind.ADULT and _is_child_solfege_content_course_type(course_type):
         return False
+    if member.client_kind == ClientKind.CHILD and _is_child_solfege_content_course_type(course_type):
+        return course_type.id in (assigned_child_solfege_course_type_ids or set())
     return True
+
+
+def _solfege_lesson_number(value: str | None) -> int | None:
+    normalized = _clean_external_content_text(value)
+    if normalized is None:
+        return None
+    ascii_value = "".join(
+        character
+        for character in unicodedata.normalize("NFKD", normalized)
+        if not unicodedata.combining(character)
+    ).lower()
+    match = re.search(r"\blecon\s*(?:n\s*[o°º]?\s*)?(\d+)\b", ascii_value)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def _solfege_content_item_is_unlocked(value: str | None, *, started_session_count: int) -> bool:
+    lesson_number = _solfege_lesson_number(value)
+    return lesson_number is not None and lesson_number <= started_session_count
 
 
 def _client_content_courses(
@@ -1779,6 +1806,104 @@ def _client_content_courses(
     if not mapping_rows:
         return []
 
+    child_solfege_course_type_ids = {
+        course_type.id
+        for _, _, course_type in mapping_rows
+        if _is_child_solfege_content_course_type(course_type)
+    }
+    child_solfege_progress: dict[tuple[UUID, UUID], int] = {}
+    if child_solfege_course_type_ids:
+        assigned_solfege_series = (
+            select(
+                Booking.user_id.label("user_id"),
+                CourseSession.course_type_id.label("course_type_id"),
+                CourseSession.recurrence_group_id.label("recurrence_group_id"),
+                CourseSession.id.label("booked_session_id"),
+                ClientPlanSubscription.started_at.label("subscription_started_at"),
+                ClientPlanSubscription.ends_at.label("subscription_ends_at"),
+            )
+            .join(CourseSession, CourseSession.id == Booking.session_id)
+            .join(
+                ClientPlanSubscription,
+                and_(
+                    ClientPlanSubscription.user_id == Booking.user_id,
+                    ClientPlanSubscription.status.in_([
+                        SubscriptionStatus.ACTIVE,
+                        SubscriptionStatus.PAYMENT_ALERT,
+                        SubscriptionStatus.PAUSED,
+                    ]),
+                    ClientPlanSubscription.started_at <= now,
+                    or_(ClientPlanSubscription.ends_at.is_(None), ClientPlanSubscription.ends_at > now),
+                    CourseSession.start_at_utc >= ClientPlanSubscription.started_at,
+                    or_(
+                        ClientPlanSubscription.ends_at.is_(None),
+                        CourseSession.start_at_utc < ClientPlanSubscription.ends_at,
+                    ),
+                ),
+            )
+            .join(
+                PlanEntitlement,
+                and_(
+                    PlanEntitlement.plan_id == ClientPlanSubscription.plan_id,
+                    PlanEntitlement.course_type_id == CourseSession.course_type_id,
+                ),
+            )
+            .join(Plan, Plan.id == ClientPlanSubscription.plan_id)
+            .where(
+                Booking.user_id.in_(target_member_ids),
+                CourseSession.course_type_id.in_(child_solfege_course_type_ids),
+                Booking.status.in_([
+                    BookingStatus.BOOKED,
+                    BookingStatus.ATTENDED,
+                    BookingStatus.NO_SHOW,
+                    BookingStatus.EXCUSED_ABSENCE,
+                ]),
+                CourseSession.status != SessionStatus.CANCELLED,
+                Plan.active.is_(True),
+            )
+            .distinct()
+            .subquery()
+        )
+        series_session = aliased(CourseSession)
+        started_session_count = func.count(func.distinct(series_session.id)).filter(series_session.start_at_utc <= now)
+        progress_rows = db.execute(
+            select(
+                assigned_solfege_series.c.user_id,
+                assigned_solfege_series.c.course_type_id,
+                started_session_count,
+            )
+            .join(
+                series_session,
+                or_(
+                    and_(
+                        assigned_solfege_series.c.recurrence_group_id.is_not(None),
+                        series_session.recurrence_group_id == assigned_solfege_series.c.recurrence_group_id,
+                    ),
+                    and_(
+                        assigned_solfege_series.c.recurrence_group_id.is_(None),
+                        series_session.id == assigned_solfege_series.c.booked_session_id,
+                    ),
+                ),
+            )
+            .where(
+                series_session.course_type_id == assigned_solfege_series.c.course_type_id,
+                series_session.status != SessionStatus.CANCELLED,
+                series_session.start_at_utc >= assigned_solfege_series.c.subscription_started_at,
+                or_(
+                    assigned_solfege_series.c.subscription_ends_at.is_(None),
+                    series_session.start_at_utc < assigned_solfege_series.c.subscription_ends_at,
+                ),
+            )
+            .group_by(
+                assigned_solfege_series.c.user_id,
+                assigned_solfege_series.c.course_type_id,
+            )
+        ).all()
+        child_solfege_progress = {
+            (owner_id, course_type_id): int(unlocked_count or 0)
+            for owner_id, course_type_id, unlocked_count in progress_rows
+        }
+
     course_ids = [course.id for _, course, _ in mapping_rows]
     section_rows = db.scalars(
         select(ExternalContentSection)
@@ -1834,7 +1959,27 @@ def _client_content_courses(
 
         for member_uuid in entitled_member_ids:
             member = members_by_id.get(member_uuid)
-            if member is None or not _member_can_access_content_course_type(member, course_type):
+            assigned_child_solfege_course_type_ids = {
+                assigned_course_type_id
+                for (owner_id, assigned_course_type_id), _ in child_solfege_progress.items()
+                if owner_id == member_uuid
+            }
+            if member is None or not _member_can_access_content_course_type(
+                member,
+                course_type,
+                assigned_child_solfege_course_type_ids=assigned_child_solfege_course_type_ids,
+            ):
+                continue
+            is_gated_child_solfege = (
+                member.client_kind == ClientKind.CHILD
+                and _is_child_solfege_content_course_type(course_type)
+            )
+            unlocked_lesson_count = (
+                child_solfege_progress.get((member_uuid, mapping.course_type_id), 0)
+                if is_gated_child_solfege
+                else None
+            )
+            if is_gated_child_solfege and not unlocked_lesson_count:
                 continue
             access_entry = access_map.get(member_uuid)
             if access_entry is None:
@@ -1842,8 +1987,16 @@ def _client_content_courses(
                     "member": member,
                     "course_type_ids": [],
                     "course_type_names": [],
+                    "unlocked_lesson_count": unlocked_lesson_count,
                 }
                 access_map[member_uuid] = access_entry
+            elif unlocked_lesson_count is None:
+                access_entry["unlocked_lesson_count"] = None
+            elif access_entry.get("unlocked_lesson_count") is not None:
+                access_entry["unlocked_lesson_count"] = max(
+                    int(access_entry.get("unlocked_lesson_count") or 0),
+                    unlocked_lesson_count,
+                )
             course_type_ids_list: list[UUID] = access_entry["course_type_ids"]  # type: ignore[assignment]
             course_type_names_list: list[str] = access_entry["course_type_names"]  # type: ignore[assignment]
             if mapping.course_type_id not in course_type_ids_list:
@@ -1857,6 +2010,56 @@ def _client_content_courses(
         access_map: dict[UUID, dict[str, object]] = entry["member_accesses"]  # type: ignore[assignment]
         if not access_map:
             continue
+        unrestricted_access = any(
+            access_entry.get("unlocked_lesson_count") is None
+            for access_entry in access_map.values()
+        )
+        maximum_unlocked_lesson_count = max(
+            (
+                int(access_entry.get("unlocked_lesson_count") or 0)
+                for access_entry in access_map.values()
+            ),
+            default=0,
+        )
+        visible_sections = sections_by_course.get(course.id, [])
+        visible_standalone_lessons = standalone_lessons_by_course.get(course.id, [])
+        if not unrestricted_access:
+            visible_sections = [
+                section
+                for section in visible_sections
+                if _solfege_content_item_is_unlocked(
+                    section.title,
+                    started_session_count=maximum_unlocked_lesson_count,
+                )
+            ]
+            visible_standalone_lessons = [
+                lesson
+                for lesson in visible_standalone_lessons
+                if _solfege_content_item_is_unlocked(
+                    lesson.title,
+                    started_session_count=maximum_unlocked_lesson_count,
+                )
+            ]
+            access_map = {
+                member_uuid: access_entry
+                for member_uuid, access_entry in access_map.items()
+                if any(
+                    _solfege_content_item_is_unlocked(
+                        section.title,
+                        started_session_count=int(access_entry.get("unlocked_lesson_count") or 0),
+                    )
+                    for section in sections_by_course.get(course.id, [])
+                )
+                or any(
+                    _solfege_content_item_is_unlocked(
+                        lesson.title,
+                        started_session_count=int(access_entry.get("unlocked_lesson_count") or 0),
+                    )
+                    for lesson in standalone_lessons_by_course.get(course.id, [])
+                )
+            }
+            if not access_map or (not visible_sections and not visible_standalone_lessons):
+                continue
         section_payload = [
             ClientContentSectionOut(
                 id=section.id,
@@ -1865,7 +2068,7 @@ def _client_content_courses(
                 position=section.position,
                 lessons=[_client_content_lesson_out(lesson) for lesson in lessons_by_section.get(section.id, [])],
             )
-            for section in sections_by_course.get(course.id, [])
+            for section in visible_sections
         ]
         member_accesses = sorted(
             [
@@ -1894,7 +2097,7 @@ def _client_content_courses(
                 last_synced_at=course.last_synced_at,
                 member_accesses=member_accesses,
                 sections=section_payload,
-                standalone_lessons=[_client_content_lesson_out(lesson) for lesson in standalone_lessons_by_course.get(course.id, [])],
+                standalone_lessons=[_client_content_lesson_out(lesson) for lesson in visible_standalone_lessons],
             )
         )
 

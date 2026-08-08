@@ -1479,7 +1479,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     backendRequest<SubscriptionOut[]>("/api/v1/clients/me/subscriptions", {}, token),
     backendRequest<ClientBookingOut[]>("/api/v1/clients/me/bookings", {}, token),
     familyResultPromise,
-    backendRequest<ClientContentCourseOut[]>("/api/v1/clients/me/content-courses", {}, token),
+    backendRequest<ClientContentCourseOut[]>(
+      `/api/v1/clients/me/content-courses${
+        selectedContentMemberFilter !== "ALL"
+          ? `?member_id=${encodeURIComponent(selectedContentMemberFilter)}`
+          : ""
+      }`,
+      {},
+      token,
+    ),
     backendRequest<ClientMessageOut[]>(`/api/v1/clients/me/messages?scope=${messageScope}`, {}, token),
     backendRequest<ClientNewsOut[]>("/api/v1/clients/me/news", {}, token),
     backendRequest<ClientPaymentOut[]>("/api/v1/clients/me/payments", {}, token),
