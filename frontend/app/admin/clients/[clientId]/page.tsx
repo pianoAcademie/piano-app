@@ -2475,6 +2475,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     }
     return acc + Number(sub.credits_remaining ?? 0);
   }, 0);
+  const subscribedMakeupSummaries = makeupSummaries.filter((summary) => summary.credits_initial > 0);
 
   const activeMonthlySubscriptions = activeSubscriptions.filter((sub) => sub.plan.kind === "SUBSCRIPTION").length;
   const bookedReservations = bookings.filter((row) => row.status === "BOOKED" || row.status === "WAITLISTED");
@@ -3226,6 +3227,33 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <h3>{t("admin.client_detail.member_balance")}</h3>
             <p className="client-balance-main">{totalRemainingCredits}</p>
             <p className="muted">{t("admin.client_detail.remaining_credits_active_packs")}</p>
+            {subscribedMakeupSummaries.length > 0 ? (
+              <div className="client-makeup-pass-overview">
+                {subscribedMakeupSummaries.map((summary) => (
+                  <article key={summary.user_id}>
+                    <div className="row spread">
+                      <div>
+                        <strong>{t("admin.client_detail.makeup_pass_subscribed")}</strong>
+                        <small>{summary.display_name}</small>
+                      </div>
+                      <span className="status-pill status-ok">{t("admin.client_detail.active")}</span>
+                    </div>
+                    <p>
+                      {t("admin.client_detail.makeup_pass_balance", {
+                        remaining: summary.credits_remaining,
+                        initial: summary.credits_initial,
+                      })}
+                    </p>
+                    <small>
+                      {t("admin.client_detail.makeup_pending_count", { count: summary.pending_makeups.length })}
+                    </small>
+                  </article>
+                ))}
+                <Link href={tabHref(client.id, "reservations")}>
+                  {t("admin.client_detail.makeup_pass_view_details")}
+                </Link>
+              </div>
+            ) : null}
             <div className="client-summary-stats">
               <span className="badge">{t("admin.client_detail.active_subscriptions_count", { count: activeMonthlySubscriptions })}</span>
               <span className="badge">{t("admin.client_detail.current_bookings_count", { count: bookedReservations.length })}</span>

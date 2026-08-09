@@ -3148,6 +3148,44 @@ button.danger:focus-visible {
   flex-wrap: wrap;
 }
 
+.client-makeup-pass-overview {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid rgb(30 54 13 / 18%);
+  border-radius: 11px;
+  background: rgb(255 255 255 / 58%);
+}
+
+.client-makeup-pass-overview article {
+  display: grid;
+  gap: 5px;
+}
+
+.client-makeup-pass-overview article > p,
+.client-makeup-pass-overview article > small {
+  margin: 0;
+}
+
+.client-makeup-pass-overview article > p {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.client-makeup-pass-overview .row small {
+  display: block;
+  margin-top: 2px;
+}
+
+.client-makeup-pass-overview > a {
+  width: fit-content;
+  color: #1e360d;
+  font-size: 12px;
+  font-weight: 750;
+  text-decoration: underline;
+}
+
 .subscription-stack {
   display: grid;
   gap: 12px;
