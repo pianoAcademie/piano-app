@@ -614,6 +614,45 @@ function isReceivedManualPaymentMovement(row: AdminClientPaymentOut): boolean {
   return PAID_PAYMENT_STATUSES.has(status) || status === "CHECK_RECEIVED" || status === "CHECK_DEPOSITED";
 }
 
+function isReceivedClientPayment(row: AdminClientPaymentOut): boolean {
+  const source = (row.source || "").trim().toUpperCase();
+  const status = normalizePaymentStatus(row.status);
+  const total = Number(row.total_incl_vat || "0");
+  if (!Number.isFinite(total) || total <= 0) {
+    return false;
+  }
+  if (source === "BOOKING") {
+    // Booking receipts are counted from AdminClientBookingOut to avoid
+    // counting the same payment twice in the consolidated overview.
+    return false;
+  }
+  if (source === "MANUAL") {
+    return isReceivedManualPaymentMovement(row);
+  }
+  return PAID_PAYMENT_STATUSES.has(status);
+}
+
+function isRecordedClientRefund(row: AdminClientPaymentOut): boolean {
+  return Boolean(row.refunded_at) || normalizePaymentStatus(row.status) === "REFUNDED";
+}
+
+function paymentNeedsFinalInvoice(row: AdminClientPaymentOut): boolean {
+  const source = (row.source || "").trim().toUpperCase();
+  if (source === "BOOKING" || source === "BOOKING_CREDIT" || source === "LEGACY_INVOICE") {
+    return false;
+  }
+  if (row.invoice_number || row.invoice_note_id) {
+    return false;
+  }
+  if (isManualChargeAwaitingInvoice(row)) {
+    return true;
+  }
+  if (source === "MANUAL") {
+    return false;
+  }
+  return isReceivedClientPayment(row);
+}
+
 function isPaidPreRegistrationDepositCharge(row: AdminClientPaymentOut): boolean {
   if ((row.source || "").trim().toUpperCase() !== "MANUAL") {
     return false;
@@ -2541,13 +2580,8 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     .filter((row) => Date.parse(row.session_start_at_utc) < Date.now())
     .sort((a, b) => b.session_start_at_utc.localeCompare(a.session_start_at_utc));
   const reservationRows = [...upcomingBookings, ...pastBookings];
-  const paymentsReceivedCount = bookings.filter((row) => row.payment_received).length;
   const includedPlanBookingsCount = bookings.filter((row) => bookingIsIncludedInPlan(row)).length;
   const receiptsSentCount = bookings.filter((row) => Boolean(row.payment_receipt_sent_at)).length;
-  const refundsRecordedCount = bookings.filter((row) => row.payment_refunded).length;
-  const finalInvoicesGeneratedCount = bookings.filter((row) => row.final_invoice_generated).length;
-  const finalInvoicesReadyCount = bookings.filter((row) => canGenerateFinalInvoiceForBooking(row)).length;
-  const finalInvoicesWaitingCount = bookings.filter((row) => waitsForServiceCompletion(row) && row.payment_received).length;
 
   const paymentsAsOfDate = payments.filter((row) => {
     const occurredAtMs = Date.parse(row.occurred_at);
@@ -2748,6 +2782,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
   const invoices = [...generatedRangeInvoices, ...paymentInvoices, ...historicalInvoices].sort(
     (a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt),
   );
+  const bookingPaymentsReceivedCount = bookings.filter((row) => row.payment_received).length;
+  const otherPaymentsReceivedCount = payments.filter((row) => isReceivedClientPayment(row)).length;
+  const paymentsReceivedCount = bookingPaymentsReceivedCount + otherPaymentsReceivedCount;
+  const bookingRefundsRecordedCount = bookings.filter((row) => row.payment_refunded).length;
+  const otherRefundsRecordedCount = payments.filter((row) => isRecordedClientRefund(row)).length;
+  const refundsRecordedCount = bookingRefundsRecordedCount + otherRefundsRecordedCount;
+  const finalInvoicesGeneratedCount = invoices.filter((row) => {
+    const status = (row.status || "").trim().toUpperCase();
+    return status !== "CANCELLED" && status !== "CREDIT_NOTE";
+  }).length;
+  const bookingInvoicesReadyCount = bookings.filter((row) => canGenerateFinalInvoiceForBooking(row)).length;
+  const otherInvoicesReadyCount = payments.filter((row) => paymentNeedsFinalInvoice(row)).length;
+  const finalInvoicesReadyCount = bookingInvoicesReadyCount + otherInvoicesReadyCount;
+  const finalInvoicesWaitingCount = bookings.filter((row) => waitsForServiceCompletion(row) && row.payment_received).length;
   const reconcilableRangeInvoices = generatedRangeInvoices.filter((row) => (row.status || "").trim().toUpperCase() === "ISSUED");
   const manualTransactionLegalEntities = legalEntities.map((row) => ({ id: row.id, name: row.name }));
   const manualTransactionPaymentMethods = enabledPaymentMethods.map((row) => ({
