@@ -1152,6 +1152,7 @@ export type AdminProfessorDetailOut = {
   created_at: string;
   updated_at: string;
   last_activation_email_sent_at: string | null;
+  last_login_at: string | null;
 };
 
 export type AdminProfessorUpdateResult = {

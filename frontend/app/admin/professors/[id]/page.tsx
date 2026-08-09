@@ -197,6 +197,7 @@ function formatDate(value: string, language: UiLanguage): string {
   return parsed.toLocaleString(localeForUiLanguage(language), {
     dateStyle: "medium",
     timeStyle: "short",
+    timeZone: "Europe/Paris",
   });
 }
 
@@ -784,6 +785,10 @@ export default async function AdminCollaboratorDetailPage({ params, searchParams
               <article className="item row spread">
                 <span className="muted">{t("admin.professor_detail.field_last_activation")}</span>
                 <strong>{professor.last_activation_email_sent_at ? formatDate(professor.last_activation_email_sent_at, language) : t("admin.professor_detail.never")}</strong>
+              </article>
+              <article className="item row spread">
+                <span className="muted">{t("admin.professor_detail.field_last_login")}</span>
+                <strong>{professor.last_login_at ? formatDate(professor.last_login_at, language) : t("admin.professor_detail.no_login_recorded")}</strong>
               </article>
             </div>
             {canManageCollaborators ? (

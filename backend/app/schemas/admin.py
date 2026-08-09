@@ -2026,6 +2026,7 @@ class AdminProfessorDetailOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_activation_email_sent_at: datetime | None
+    last_login_at: datetime | None
 
 
 class AdminProfessorCreateRequest(BaseModel):

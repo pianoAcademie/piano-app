@@ -776,6 +776,7 @@ def _to_detail(
         created_at=professor.created_at,
         updated_at=professor.updated_at,
         last_activation_email_sent_at=professor.last_activation_email_sent_at,
+        last_login_at=linked_user.last_login_at if linked_user is not None else None,
     )
 
 
