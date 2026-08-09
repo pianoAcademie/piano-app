@@ -409,7 +409,14 @@ function paymentSourceLabel(source: string, language: UiLanguage = "fr"): string
   if (normalized === "MANUAL") {
     return uiText(language, "admin.client_detail.payment_source.manual");
   }
+  if (normalized === "LEGACY_INVOICE") {
+    return uiText(language, "admin.client_detail.payment_source.legacy_invoice");
+  }
   return normalized || uiText(language, "admin.client_detail.payment_source.payment");
+}
+
+function isLegacyInvoicePayment(row: AdminClientPaymentOut): boolean {
+  return (row.source || "").trim().toUpperCase() === "LEGACY_INVOICE";
 }
 
 function invoicePaymentKey(row: AdminClientPaymentOut): string {
@@ -423,6 +430,9 @@ function paymentStatusLabel(status: string, language: UiLanguage = "fr"): string
   }
   if (normalized === "PAID") {
     return uiText(language, "admin.client_detail.payment_status.paid");
+  }
+  if (normalized === "CREDIT_NOTE") {
+    return uiText(language, "admin.client_detail.payment_status.credit_note");
   }
   if (normalized === "CHECK_RECEIVED") {
     return uiText(language, "admin.client_detail.payment_status.check_received");
@@ -552,6 +562,9 @@ function normalizePaymentStatus(status: string): string {
 }
 
 function shouldCountInClientBalance(row: AdminClientPaymentOut): boolean {
+  if (isLegacyInvoicePayment(row)) {
+    return false;
+  }
   const status = normalizePaymentStatus(row.status);
   if (status === "NOT_BILLABLE" || status === "INCLUDED_PLAN" || status === "REFUNDED" || CANCELLED_PAYMENT_STATUSES.has(status)) {
     return false;
@@ -1493,6 +1506,9 @@ function paymentStatusClass(status: string): string {
     return "status-off";
   }
   if (PAID_PAYMENT_STATUSES.has(normalized)) {
+    return "status-ok";
+  }
+  if (normalized === "CREDIT_NOTE") {
     return "status-ok";
   }
   return "status-warn";
@@ -2523,6 +2539,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     ? Date.parse(`${invoiceEndDateInputValue}T23:59:59.999Z`)
     : Number.NaN;
   const invoiceCandidatePayments = payments.filter((row) => {
+    if (isLegacyInvoicePayment(row)) {
+      return false;
+    }
     const occurredAtMs = Date.parse(row.occurred_at);
     if (!Number.isFinite(invoicePeriodStartMs) || !Number.isFinite(invoicePeriodEndMs) || !Number.isFinite(occurredAtMs)) {
       return false;
@@ -6055,13 +6074,17 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         <td>
                           <div className="stack-xs">
                             <span>{formatMoney(row.total_incl_vat, row.currency, language)}</span>
-                            <small className="muted">
-                              {t("admin.client_detail.price_breakdown", {
-                                excl: formatMoney(row.amount_excl_vat, row.currency, language),
-                                vat: formatMoney(row.vat_amount, row.currency, language),
-                                rate: formatVatRateLabel(row.vat_rate, language),
-                              })}
-                            </small>
+                            {isLegacyInvoicePayment(row) ? (
+                              <small className="muted">{t("admin.client_detail.legacy_invoice_total_only")}</small>
+                            ) : (
+                              <small className="muted">
+                                {t("admin.client_detail.price_breakdown", {
+                                  excl: formatMoney(row.amount_excl_vat, row.currency, language),
+                                  vat: formatMoney(row.vat_amount, row.currency, language),
+                                  rate: formatVatRateLabel(row.vat_rate, language),
+                                })}
+                              </small>
+                            )}
                           </div>
                         </td>
                         <td>
@@ -6072,6 +6095,26 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                         <td>{formatMoney(row.total_incl_vat, row.currency, language)}</td>
                         <td>
                           <div className="row payment-row-actions">
+                            {isLegacyInvoicePayment(row) ? (
+                              <>
+                                <a
+                                  className="client-action-icon"
+                                  href={`/admin/clients/${client.id}/invoices/legacy/${row.id}/pdf?inline=true`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title={t("admin.client_detail.view_invoice")}
+                                >
+                                  V
+                                </a>
+                                <a
+                                  className="client-action-icon"
+                                  href={`/admin/clients/${client.id}/invoices/legacy/${row.id}/pdf`}
+                                  title={t("admin.client_detail.download_invoice")}
+                                >
+                                  ↓
+                                </a>
+                              </>
+                            ) : null}
                             {row.source.toUpperCase() === "MANUAL" ? (
                               <>
                                 {row.can_edit ? (

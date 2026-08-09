@@ -254,6 +254,7 @@ from app.services.subscription_lifecycle_notifications import (
 router = APIRouter(prefix="/admin/clients")
 
 LEGACY_INVOICE_UPLOAD_DIR = Path(os.getenv("LEGACY_INVOICE_UPLOAD_DIR", "/app/uploads/legacy-invoices"))
+SPORTIGO_OPENING_BALANCE_SOURCE_CODE = "SPORTIGO_2026_OPENING_BALANCE"
 
 PAID_PAYMENT_STATUSES = {"PAID", "SUCCEEDED", "COMPLETED"}
 CHECK_TRACKING_STATUSES = {"CHECK_RECEIVED", "CHECK_DEPOSITED", "CHECK_REFUSED", "PAID"}
@@ -3957,11 +3958,12 @@ def download_admin_client_legacy_invoice(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin_or_permissions("can_view_clients")),
 ) -> Response:
-    _require_client(db, client_id)
+    client = _require_client(db, client_id)
+    scoped_user_ids = list(_payment_scope_users(db, client=client).keys())
     invoice = db.scalar(
         select(ClientLegacyInvoice).where(
             ClientLegacyInvoice.id == invoice_id,
-            ClientLegacyInvoice.user_id == client_id,
+            ClientLegacyInvoice.user_id.in_(scoped_user_ids),
         )
     )
     if invoice is None:
@@ -4336,6 +4338,7 @@ def _payment_source_label(source: str, *, language: str | None = None) -> str:
             "BOOKING": "Booking",
             "PAYMENT_RECEIPT": "Booking payment receipt",
             "MANUAL": "Manual transaction",
+            "LEGACY_INVOICE": "Sportigo history",
         }.get(normalized, normalized or "Payment")
     if normalized == "PLAN_PURCHASE":
         return "Achat formule"
@@ -4345,6 +4348,8 @@ def _payment_source_label(source: str, *, language: str | None = None) -> str:
         return "Justificatif paiement reservation"
     if normalized == "MANUAL":
         return "Transaction manuelle"
+    if normalized == "LEGACY_INVOICE":
+        return "Historique Sportigo"
     return normalized or "Paiement"
 
 
@@ -4594,6 +4599,8 @@ def _apply_invoice_presentation_to_payment_item(
 
 
 def _should_count_in_client_balance(row: AdminClientPaymentOut) -> bool:
+    if (row.source or "").strip().upper() == "LEGACY_INVOICE":
+        return False
     status_value = (row.status or "").strip().upper()
     if status_value == "CHECK_REFUSED":
         return False
@@ -4987,6 +4994,24 @@ def _subscription_payment_status(subscription: ClientPlanSubscription) -> str:
     if billing_method:
         return "PAID"
     return "PENDING"
+
+
+def _sportigo_opening_balance_has_new_app_payment(subscription: ClientPlanSubscription) -> bool:
+    if (subscription.migration_source_code or "").strip().upper() != SPORTIGO_OPENING_BALANCE_SOURCE_CODE:
+        return True
+    if subscription.last_payment_at is None:
+        return False
+    return subscription.last_payment_at > subscription.created_at
+
+
+def _subscription_payment_occurred_at(subscription: ClientPlanSubscription) -> datetime:
+    if _sportigo_opening_balance_has_new_app_payment(subscription):
+        if (
+            (subscription.migration_source_code or "").strip().upper() == SPORTIGO_OPENING_BALANCE_SOURCE_CODE
+            and subscription.last_payment_at is not None
+        ):
+            return subscription.last_payment_at
+    return subscription.started_at
 
 
 def _effective_pack_credits_for_plan(db: Session, *, plan: Plan) -> int:
@@ -8810,6 +8835,9 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
     manual_rows = db.scalars(
         select(ClientManualTransaction).where(ClientManualTransaction.user_id.in_(scoped_user_ids))
     ).all()
+    legacy_invoice_rows = db.scalars(
+        select(ClientLegacyInvoice).where(ClientLegacyInvoice.user_id.in_(scoped_user_ids))
+    ).all()
     manual_student_ids = {row.student_user_id for row in manual_rows if row.student_user_id is not None}
     manual_students_by_id: dict[UUID, User] = {}
     if manual_student_ids:
@@ -8835,6 +8863,13 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
 
     for sub, plan in rows_subs:
         if plan.kind == PlanKind.FORFAIT:
+            continue
+        is_sportigo_opening_balance = (
+            (sub.migration_source_code or "").strip().upper() == SPORTIGO_OPENING_BALANCE_SOURCE_CODE
+        )
+        if plan.kind == PlanKind.PACK and is_sportigo_opening_balance:
+            continue
+        if not _sportigo_opening_balance_has_new_app_payment(sub):
             continue
 
         pricing = _estimate_subscription_pricing(
@@ -8875,7 +8910,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
             AdminClientPaymentOut(
                 id=sub.id,
                 source="PLAN_PURCHASE",
-                occurred_at=sub.started_at,
+                occurred_at=_subscription_payment_occurred_at(sub),
                 label=label,
                 status=_subscription_payment_status(sub),
                 amount_excl_vat=price_excl_vat,
@@ -9053,6 +9088,36 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
 
         lock = invoice_locks_by_payment_key.get(_payment_key(source=item.source, payment_id=item.id))
         _apply_invoice_presentation_to_payment_item(item, lock=lock)
+
+    for invoice in legacy_invoice_rows:
+        total_incl_vat = _quantize_money(Decimal(invoice.total_incl_vat))
+        is_credit_note = total_incl_vat < Decimal("0.00")
+        owner = scoped_users_by_id.get(invoice.user_id)
+        label = invoice.label
+        if owner is not None and owner.id != client.id:
+            label = f"{label} - {_display_name(owner.first_name, owner.last_name, owner.email)}"
+        items.append(
+            AdminClientPaymentOut(
+                id=invoice.id,
+                source="LEGACY_INVOICE",
+                occurred_at=invoice.issued_at,
+                label=label,
+                status="CREDIT_NOTE" if is_credit_note else "PAID",
+                # The legacy archive only contains the invoice total. Keep the
+                # required monetary fields neutral and let the UI display the
+                # historical total without inventing a VAT breakdown.
+                amount_excl_vat=total_incl_vat,
+                vat_rate=Decimal("0.00"),
+                vat_amount=Decimal("0.00"),
+                total_incl_vat=total_incl_vat,
+                currency=_normalize_currency(invoice.currency, fallback=billing_profile.preferred_currency or "EUR"),
+                reference=invoice.external_reference,
+                invoice_number=invoice.external_reference,
+                invoice_status="CREDIT_NOTE" if is_credit_note else "PAID",
+                payment_method_label="Sportigo",
+                student_user_id=invoice.user_id,
+            )
+        )
 
     items.sort(key=lambda item: item.occurred_at, reverse=True)
     return items
@@ -11065,6 +11130,7 @@ def create_admin_client_range_invoice(
         row
         for row in all_payments
         if start_at <= row.occurred_at < end_at_exclusive
+        and (row.source or "").strip().upper() != "LEGACY_INVOICE"
     ]
     if not payload.include_pending:
         payments = [row for row in payments if _invoice_status_from_payment_status(row.status) != "PENDING"]

@@ -23,6 +23,7 @@ from app.api.routes.admin_clients import (
     _select_reusable_pre_registration_deposit_payment_ids,
     _resolve_public_payment_webhook_query_credentials,
     _should_count_in_client_balance,
+    _sportigo_opening_balance_has_new_app_payment,
     send_admin_client_range_invoice_email,
     download_admin_client_payment_invoice,
 )
@@ -65,6 +66,35 @@ class _FakeQueryParams:
 
 
 class AdminClientPaymentDocumentTests(unittest.TestCase):
+    def test_legacy_invoice_never_counts_in_client_balance(self) -> None:
+        row = AdminClientPaymentOut(
+            id=uuid4(),
+            source="LEGACY_INVOICE",
+            occurred_at=datetime(2026, 8, 6, 1, 37, tzinfo=timezone.utc),
+            label="Facture Sportigo",
+            status="PENDING",
+            amount_excl_vat=Decimal("125.00"),
+            vat_rate=Decimal("0.00"),
+            vat_amount=Decimal("0.00"),
+            total_incl_vat=Decimal("125.00"),
+            currency="EUR",
+            reference="FA-PIANO-2026-857",
+        )
+
+        self.assertFalse(_should_count_in_client_balance(row))
+
+    def test_sportigo_opening_balance_is_hidden_until_a_new_app_payment_exists(self) -> None:
+        created_at = datetime(2026, 8, 5, 10, 0, tzinfo=timezone.utc)
+        subscription = SimpleNamespace(
+            migration_source_code="SPORTIGO_2026_OPENING_BALANCE",
+            created_at=created_at,
+            last_payment_at=datetime(2026, 8, 4, 10, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertFalse(_sportigo_opening_balance_has_new_app_payment(subscription))
+        subscription.last_payment_at = datetime(2026, 8, 6, 10, 0, tzinfo=timezone.utc)
+        self.assertTrue(_sportigo_opening_balance_has_new_app_payment(subscription))
+
     def test_legacy_credit_note_is_not_presented_as_paid_invoice(self) -> None:
         invoice = SimpleNamespace(
             id=uuid4(),
