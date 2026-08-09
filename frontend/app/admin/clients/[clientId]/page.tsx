@@ -2779,7 +2779,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     currency: row.currency,
   }));
 
-  const invoices = [...generatedRangeInvoices, ...paymentInvoices, ...historicalInvoices].sort(
+  const invoicesByIdentity = new Map<string, InvoiceListRow>();
+  for (const row of [...generatedRangeInvoices, ...paymentInvoices, ...historicalInvoices]) {
+    const normalizedInvoiceNumber = (row.invoiceNumber || "").trim().toUpperCase();
+    const identity = normalizedInvoiceNumber ? `invoice:${normalizedInvoiceNumber}` : row.key;
+    invoicesByIdentity.set(identity, row);
+  }
+  const invoices = Array.from(invoicesByIdentity.values()).sort(
     (a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt),
   );
   const bookingPaymentsReceivedCount = bookings.filter((row) => row.payment_received).length;
