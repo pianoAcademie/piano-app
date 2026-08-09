@@ -4753,6 +4753,8 @@ def list_client_invoices(
     ).all()
     for legacy in legacy_rows:
         owner = users_by_id.get(legacy.user_id)
+        legacy_amount = Decimal(legacy.total_incl_vat)
+        is_credit_note = legacy_amount < Decimal("0.00")
         invoices.append(
             ClientInvoiceOut(
                 id=f"legacy:{legacy.id}",
@@ -4761,13 +4763,14 @@ def list_client_invoices(
                 invoice_number=legacy.external_reference,
                 issued_at=legacy.issued_at,
                 source=legacy.source,
-                status="PAID",
+                status="CREDIT_NOTE" if is_credit_note else "PAID",
                 label=f"Historique {legacy.source.title()} · {legacy.label}",
-                total_incl_vat=Decimal(legacy.total_incl_vat),
+                total_incl_vat=legacy_amount,
                 currency=legacy.currency,
                 reference=legacy.external_reference,
                 download_url=f"/client/invoices/legacy:{legacy.id}/download",
                 payment_url=None,
+                invoice_kind="CREDIT_NOTE" if is_credit_note else "INVOICE",
             )
         )
 

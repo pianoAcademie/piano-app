@@ -88,7 +88,11 @@ def _parse_manifest(raw: bytes) -> tuple[list[LegacyInvoiceRow], list[str]]:
             continue
         label = str(raw_row.get("label") or "").strip()
         currency = str(raw_row.get("currency") or "EUR").strip().upper()
-        if not label or len(currency) != 3 or amount < Decimal("0.00"):
+        # A signed amount is intentional here: Sportigo exports credit notes in
+        # the same archive as invoices.  Keeping the amount negative lets every
+        # consumer distinguish an avoir from a paid invoice without relying on
+        # wording in the PDF or label.
+        if not label or len(currency) != 3 or amount == Decimal("0.00"):
             errors.append(f"Ligne {row_number}: libelle, devise ou montant invalide.")
             continue
         rows.append(LegacyInvoiceRow(row_number, member_id, invoice_number, issued_at, label, amount, currency, file_name))

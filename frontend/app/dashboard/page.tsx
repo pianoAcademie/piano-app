@@ -366,6 +366,9 @@ function sessionProfessorName(session: SessionOut): string {
 
 function statusClass(value: string): string {
   const normalized = normalizeStatus(value);
+  if (normalized === "CREDIT_NOTE") {
+    return "status-completed";
+  }
   if (normalized === "OPENED" || normalized === "DELIVERED" || normalized === "RECEIVED" || normalized === "SENT") {
     return "status-completed";
   }
@@ -479,6 +482,9 @@ function messageChannelIcon(channel: string): ClientNavigationIconName {
 
 function financeStatusLabel(value: string, language: UiLanguage = "fr"): string {
   const normalized = normalizeStatus(value);
+  if (normalized === "CREDIT_NOTE") {
+    return uiText(language, "client.finance_status_credit_note");
+  }
   if (normalized === "PAID") {
     return uiText(language, "client.finance_status_paid");
   }
