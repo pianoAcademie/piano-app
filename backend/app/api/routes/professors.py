@@ -769,7 +769,9 @@ def _require_assigned_local_intake(
         )
     )
     if lock:
-        stmt = stmt.with_for_update()
+        # The quote is joined only to decide whether the intake remains actionable.
+        # Locking the nullable side of this outer join is rejected by PostgreSQL.
+        stmt = stmt.with_for_update(of=TypeformIntake)
     intake = db.scalar(stmt)
     if intake is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Local intake confirmation not found")
