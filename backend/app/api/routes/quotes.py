@@ -740,25 +740,65 @@ def _quote_line_is_per_course_discount(line: QuoteLine) -> bool:
     return False
 
 
-def _quote_per_course_discounts_by_activity(lines: list[QuoteLine]) -> dict[str, list[QuoteLine]]:
+def _quote_line_is_second_course(line: QuoteLine) -> bool:
+    meta = _json_object(line.meta)
+    return bool(meta.get("typeform_second_course")) or _is_second_course_discount_token(
+        str(meta.get("typeform_automatic_line") or "")
+    )
+
+
+def _quote_discount_target_service_line(
+    discount: QuoteLine,
+    service_lines: list[QuoteLine],
+) -> QuoteLine | None:
+    positive_services = [
+        line for line in service_lines if _quote_line_decimal(line.amount_ttc) > Decimal("0.00")
+    ]
+    if not positive_services:
+        return None
+
+    meta = _json_object(discount.meta)
+    normalized_label = _normalize_discount_label(discount.title)
+    normalized_code = _normalize_discount_label(meta.get("discount_rule_code"))
+    targets_second_course = _is_second_course_discount_token(
+        normalized_label
+    ) or _is_second_course_discount_token(normalized_code)
+    preferred = [
+        line
+        for line in positive_services
+        if _quote_line_is_second_course(line) == targets_second_course
+    ]
+    if len(preferred) == 1:
+        return preferred[0]
+
+    matching_quantity = [
+        line
+        for line in positive_services
+        if _quote_line_decimal(line.quantity) == _quote_line_decimal(discount.quantity)
+    ]
+    if len(matching_quantity) == 1:
+        return matching_quantity[0]
+    if len(positive_services) == 1:
+        return positive_services[0]
+    return None
+
+
+def _quote_per_course_discounts_by_schedule_key(
+    lines: list[QuoteLine],
+    duplicate_activity_ids: set[str],
+) -> dict[str, list[QuoteLine]]:
     service_lines = [line for line in lines if _quote_line_is_service_item(line)]
     discount_lines = [line for line in lines if _quote_line_is_per_course_discount(line)]
-    service_lines_by_quantity: dict[Decimal, list[QuoteLine]] = {}
-    for line in service_lines:
-        if _quote_line_decimal(line.amount_ttc) <= Decimal("0.00"):
-            continue
-        service_lines_by_quantity.setdefault(_quote_line_decimal(line.quantity), []).append(line)
-
-    discounts_by_activity: dict[str, list[QuoteLine]] = {}
+    discounts_by_schedule_key: dict[str, list[QuoteLine]] = {}
     for discount in discount_lines:
-        matching_services = service_lines_by_quantity.get(_quote_line_decimal(discount.quantity), [])
-        if len(matching_services) != 1:
+        service_line = _quote_discount_target_service_line(discount, service_lines)
+        if service_line is None:
             continue
-        service_line = matching_services[0]
-        if service_line.activity_id is None:
+        schedule_key = _quote_line_schedule_key(service_line, duplicate_activity_ids)
+        if not schedule_key:
             continue
-        discounts_by_activity.setdefault(str(service_line.activity_id), []).append(discount)
-    return discounts_by_activity
+        discounts_by_schedule_key.setdefault(schedule_key, []).append(discount)
+    return discounts_by_schedule_key
 
 
 def _build_payment_terms_snapshot_from_plan(
@@ -9755,29 +9795,20 @@ def _apply_followup_forfait_discount_rows(
         source_meta = _json_object(source_line.meta if source_line is not None else None)
         discount_code = _normalize_discount_label(source_meta.get("discount_rule_code"))
         normalized_label = _normalize_discount_label(source_line.title if source_line is not None else row.get("label"))
-        if "famille" in normalized_label or "family" in discount_code or "famille" in discount_code:
+        if _is_second_course_discount_token(normalized_label) or _is_second_course_discount_token(discount_code):
+            target_bucket = "second_course"
+        elif "famille" in normalized_label or "family" in discount_code or "famille" in discount_code:
             target_bucket = "family"
         elif "fidel" in normalized_label or "loyal" in discount_code or "fidel" in discount_code:
             target_bucket = "loyalty"
-        elif _is_second_course_discount_token(normalized_label) or _is_second_course_discount_token(discount_code):
-            target_bucket = "second_course"
         else:
             continue
 
-        target_service_line: QuoteLine | None = None
-        if source_line is not None and source_line.activity_id is not None:
-            target_service_line = next((line for line in service_lines if line.activity_id == source_line.activity_id), None)
-        if target_service_line is None and source_line is not None:
-            source_quantity = _q2(Decimal(source_line.quantity or 0))
-            quantity_matches = [
-                line
-                for line in service_lines
-                if _q2(Decimal(line.quantity or 0)) == source_quantity
-            ]
-            if len(quantity_matches) == 1:
-                target_service_line = quantity_matches[0]
-        if target_service_line is None and len(service_lines) == 1:
-            target_service_line = service_lines[0]
+        target_service_line = (
+            _quote_discount_target_service_line(source_line, service_lines)
+            if source_line is not None
+            else None
+        )
         if target_service_line is None or target_service_line.activity_id is None:
             continue
 
@@ -9930,6 +9961,57 @@ def _create_followup_manual_transactions(
         db.add(transaction)
         db.flush()
         created_transaction_ids.append(transaction.id)
+
+
+def _assert_quote_followup_generated_total(
+    db: Session,
+    *,
+    quote: Quote,
+    created_booking_ids: list[UUID],
+    created_transaction_ids: list[UUID],
+) -> None:
+    booking_total = Decimal("0.00")
+    if created_booking_ids:
+        booking_total = _q2(
+            sum(
+                (
+                    Decimal(value or 0)
+                    for value in db.scalars(
+                        select(Booking.total_incl_vat_snapshot).where(Booking.id.in_(created_booking_ids))
+                    ).all()
+                ),
+                Decimal("0.00"),
+            )
+        )
+
+    transaction_total = Decimal("0.00")
+    if created_transaction_ids:
+        transaction_total = _q2(
+            sum(
+                (
+                    Decimal(value or 0)
+                    for value in db.scalars(
+                        select(ClientManualTransaction.total_incl_vat).where(
+                            ClientManualTransaction.id.in_(created_transaction_ids)
+                        )
+                    ).all()
+                ),
+                Decimal("0.00"),
+            )
+        )
+
+    expected_total = _q2(Decimal(quote.total_ttc or 0))
+    generated_total = _q2(booking_total + transaction_total)
+    delta = _q2(generated_total - expected_total)
+    if abs(delta) > Decimal("0.01"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Transformation bloquee : le total genere ne correspond pas au devis "
+                f"(devis {expected_total:.2f} EUR, integration {generated_total:.2f} EUR, "
+                f"ecart {delta:+.2f} EUR)."
+            ),
+        )
 
 
 def _create_followup_makeup_pass_purchases(
@@ -10423,7 +10505,10 @@ def _execute_quote_followup_transformation(
     session_limit_by_key: dict[str, int] = {}
     service_lines_by_schedule_key: dict[str, list[QuoteLine]] = {}
     service_lines_by_activity_id: dict[str, list[QuoteLine]] = {}
-    discount_lines_by_activity_id = _quote_per_course_discounts_by_activity(quote_lines)
+    discount_lines_by_schedule_key = _quote_per_course_discounts_by_schedule_key(
+        quote_lines,
+        duplicate_service_activity_ids,
+    )
     for line in quote_lines:
         if _quote_line_is_service_item(line):
             line_schedule_key = _quote_line_schedule_key(line, duplicate_service_activity_ids)
@@ -10556,7 +10641,7 @@ def _execute_quote_followup_transformation(
             or service_lines_by_activity_id.get(str(activity_id))
             or []
         )
-        quote_discount_lines = discount_lines_by_activity_id.get(str(activity_id), [])
+        quote_discount_lines = discount_lines_by_schedule_key.get(schedule_key, [])
         quote_pricing_lines = [*quote_service_lines, *quote_discount_lines]
         pricing_overrides: list[tuple[Decimal, Decimal, Decimal, Decimal, str] | None] = [None for _ in live_sessions]
         if quote_pricing_lines and live_sessions:
@@ -10611,6 +10696,12 @@ def _execute_quote_followup_transformation(
         subscription=subscription,
         actor_user_id=current_user.id,
         created_purchase_ids=created_makeup_pass_purchase_ids,
+    )
+    _assert_quote_followup_generated_total(
+        db,
+        quote=quote,
+        created_booking_ids=created_booking_ids,
+        created_transaction_ids=created_transaction_ids,
     )
     _create_followup_deposit_invoice(
         db,
