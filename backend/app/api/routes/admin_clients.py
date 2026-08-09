@@ -5,11 +5,13 @@ import html
 import io
 import json
 import logging
+import os
 import re
 import unicodedata
 from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from urllib.parse import urlencode
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -30,6 +32,7 @@ from app.models.client_record import (
     ClientAutoInvoiceRule,
     ClientBillingAdjustment,
     ClientInvoiceLine,
+    ClientLegacyInvoice,
     ClientManualCreditBalance,
     ClientManualTransaction,
     ClientNoteEntry,
@@ -131,6 +134,7 @@ from app.schemas.admin import (
     AdminRangeInvoiceEmailPreviewOut,
     AdminRangeInvoiceEmailRequest,
     AdminRangeInvoiceReferenceOut,
+    AdminLegacyInvoiceOut,
     AdminRangeInvoiceOut,
     AdminRangeInvoiceStatusUpdateRequest,
     AdminClientUpdateRequest,
@@ -248,6 +252,8 @@ from app.services.subscription_lifecycle_notifications import (
 )
 
 router = APIRouter(prefix="/admin/clients")
+
+LEGACY_INVOICE_UPLOAD_DIR = Path(os.getenv("LEGACY_INVOICE_UPLOAD_DIR", "/app/uploads/legacy-invoices"))
 
 PAID_PAYMENT_STATUSES = {"PAID", "SUCCEEDED", "COMPLETED"}
 CHECK_TRACKING_STATUSES = {"CHECK_RECEIVED", "CHECK_DEPOSITED", "CHECK_REFUSED", "PAID"}
@@ -3673,6 +3679,21 @@ def _range_invoice_metadatas_for_client(db: Session, *, client_id: UUID) -> list
     return out
 
 
+def _admin_legacy_invoice_out(invoice: ClientLegacyInvoice) -> AdminLegacyInvoiceOut:
+    amount = Decimal(invoice.total_incl_vat)
+    return AdminLegacyInvoiceOut(
+        id=invoice.id,
+        invoice_number=invoice.external_reference,
+        issued_at=invoice.issued_at,
+        source=invoice.source,
+        status="CREDIT_NOTE" if amount < Decimal("0.00") else "PAID",
+        label=invoice.label,
+        total_incl_vat=amount,
+        currency=invoice.currency,
+        original_file_name=invoice.original_file_name,
+    )
+
+
 def _invoice_lines_for_note(db: Session, *, note_id: UUID) -> list[ClientInvoiceLine]:
     return db.scalars(
         select(ClientInvoiceLine)
@@ -3911,6 +3932,54 @@ def list_admin_client_range_invoices(
         )
     invoices.sort(key=lambda row: (row.issued_date, row.invoice_number.casefold()), reverse=True)
     return invoices
+
+
+@router.get("/{client_id}/invoices/legacy", response_model=list[AdminLegacyInvoiceOut])
+def list_admin_client_legacy_invoices(
+    client_id: UUID,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_view_clients")),
+) -> list[AdminLegacyInvoiceOut]:
+    _require_client(db, client_id)
+    invoices = db.scalars(
+        select(ClientLegacyInvoice)
+        .where(ClientLegacyInvoice.user_id == client_id)
+        .order_by(ClientLegacyInvoice.issued_at.desc(), ClientLegacyInvoice.external_reference.desc())
+    ).all()
+    return [_admin_legacy_invoice_out(invoice) for invoice in invoices]
+
+
+@router.get("/{client_id}/invoices/legacy/{invoice_id}/download")
+def download_admin_client_legacy_invoice(
+    client_id: UUID,
+    invoice_id: UUID,
+    inline: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_view_clients")),
+) -> Response:
+    _require_client(db, client_id)
+    invoice = db.scalar(
+        select(ClientLegacyInvoice).where(
+            ClientLegacyInvoice.id == invoice_id,
+            ClientLegacyInvoice.user_id == client_id,
+        )
+    )
+    if invoice is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Facture historique introuvable")
+    file_path = (LEGACY_INVOICE_UPLOAD_DIR / invoice.pdf_storage_key).resolve()
+    storage_root = LEGACY_INVOICE_UPLOAD_DIR.resolve()
+    if storage_root not in file_path.parents or not file_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document de facture historique introuvable")
+    file_name = re.sub(r"[^A-Za-z0-9._-]", "_", invoice.original_file_name) or "facture-sportigo.pdf"
+    disposition = "inline" if inline else "attachment"
+    return Response(
+        content=file_path.read_bytes(),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'{disposition}; filename="{file_name}"',
+            "Cache-Control": "private, no-store",
+        },
+    )
 
 
 def _manual_transaction_lock_info(

@@ -1500,6 +1500,18 @@ class AdminRangeInvoiceReferenceOut(BaseModel):
     split_part_count: int = 1
 
 
+class AdminLegacyInvoiceOut(BaseModel):
+    id: UUID
+    invoice_number: str
+    issued_at: datetime
+    source: str
+    status: Literal["PAID", "CREDIT_NOTE"]
+    label: str
+    total_incl_vat: Decimal
+    currency: str
+    original_file_name: str
+
+
 class AdminRangeInvoiceOut(BaseModel):
     note_id: UUID
     invoice_number: str

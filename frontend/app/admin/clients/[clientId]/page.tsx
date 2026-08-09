@@ -78,6 +78,7 @@ import type {
   AdminConfigAccountOut,
   AdminFormulaOut,
   AdminLegalEntityOut,
+  AdminLegacyInvoiceOut,
   AdminRangeInvoiceOut,
   AdminRangeInvoiceEmailPreviewOut,
   AdminClientSubscriptionOut,
@@ -622,6 +623,9 @@ function isManualDiscountMovement(row: AdminClientPaymentOut): boolean {
 
 function invoiceStatusLabel(status: string | null, language: UiLanguage = "fr"): string {
   const normalized = (status ?? "").trim().toUpperCase();
+  if (normalized === "CREDIT_NOTE") {
+    return uiText(language, "admin.client_detail.invoice_status.credit_note");
+  }
   if (normalized === "PAID") {
     return uiText(language, "admin.client_detail.invoice_status.paid");
   }
@@ -932,6 +936,18 @@ type InvoiceListRow =
       source: string;
       paymentId: string;
       paymentStatus: string;
+    }
+  | {
+      kind: "legacy";
+      key: string;
+      invoiceId: string;
+      occurredAt: string;
+      invoiceNumber: string;
+      typeLabel: string;
+      label: string;
+      status: "PAID" | "CREDIT_NOTE";
+      total: string;
+      currency: string;
     }
   | {
       kind: "range";
@@ -1781,6 +1797,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     messagesResult,
     paymentsResult,
     rangeInvoicesResult,
+    legacyInvoicesResult,
     productCategoriesResult,
     catalogProductsResult,
     paymentMethodsResult,
@@ -1804,6 +1821,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     backendRequest<AdminClientMessageOut[]>(messagesApiPath, {}, token),
     backendRequest<AdminClientPaymentOut[]>(`/api/v1/admin/clients/${params.clientId}/payments`, {}, token),
     backendRequest<AdminRangeInvoiceOut[]>(`/api/v1/admin/clients/${params.clientId}/invoices/range`, {}, token),
+    backendRequest<AdminLegacyInvoiceOut[]>(`/api/v1/admin/clients/${params.clientId}/invoices/legacy`, {}, token),
     backendRequest<AdminProductCategoriesOut>("/api/v1/admin/config/product-categories", {}, token),
     backendRequest<AdminCatalogProductOut[]>("/api/v1/admin/config/catalog/products?include_inactive=false", {}, token),
     backendRequest<AdminPaymentMethodsOut>("/api/v1/admin/config/payment-methods", {}, token),
@@ -1939,6 +1957,12 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     : (() => {
         errors.push(`range_invoices: ${rangeInvoicesResult.message}`);
         return [] as AdminRangeInvoiceOut[];
+      })();
+  const legacyInvoices = legacyInvoicesResult.ok
+    ? legacyInvoicesResult.data
+    : (() => {
+        errors.push(`legacy_invoices: ${legacyInvoicesResult.message}`);
+        return [] as AdminLegacyInvoiceOut[];
       })();
   const defaultBalanceDate =
     accountConfig?.client_balance_default_date_mode === "PACKAGE_END"
@@ -2640,7 +2664,20 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       billingEntity: row.billing_entity ?? null,
     }));
 
-  const invoices = [...generatedRangeInvoices, ...paymentInvoices].sort(
+  const historicalInvoices: InvoiceListRow[] = legacyInvoices.map((row) => ({
+    kind: "legacy",
+    key: `legacy-${row.id}`,
+    invoiceId: row.id,
+    occurredAt: row.issued_at,
+    invoiceNumber: row.invoice_number,
+    typeLabel: t("admin.client_detail.invoice_generation_type_legacy", { source: row.source }),
+    label: row.label,
+    status: row.status,
+    total: row.total_incl_vat,
+    currency: row.currency,
+  }));
+
+  const invoices = [...generatedRangeInvoices, ...paymentInvoices, ...historicalInvoices].sort(
     (a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt),
   );
   const reconcilableRangeInvoices = generatedRangeInvoices.filter((row) => (row.status || "").trim().toUpperCase() === "ISSUED");
@@ -5817,6 +5854,25 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                   </button>
                                 </form>
                               ) : null}
+                            </div>
+                          ) : row.kind === "legacy" ? (
+                            <div className="row payment-row-actions">
+                              <a
+                                className="client-action-icon"
+                                href={`/admin/clients/${client.id}/invoices/legacy/${row.invoiceId}/pdf?inline=true`}
+                                target="_blank"
+                                rel="noreferrer"
+                                title={t("admin.client_detail.view_invoice")}
+                              >
+                                V
+                              </a>
+                              <a
+                                className="client-action-icon"
+                                href={`/admin/clients/${client.id}/invoices/legacy/${row.invoiceId}/pdf`}
+                                title={t("admin.client_detail.download_invoice")}
+                              >
+                                ↓
+                              </a>
                             </div>
                           ) : (
                             <div className="row payment-row-actions">

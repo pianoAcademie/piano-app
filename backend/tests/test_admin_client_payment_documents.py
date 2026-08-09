@@ -12,6 +12,7 @@ from uuid import uuid4
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.admin_clients import (
+    _admin_legacy_invoice_out,
     _apply_invoice_presentation_to_payment_item,
     _build_range_invoice_email_defaults,
     _forfait_booking_amounts_from_activity,
@@ -64,6 +65,23 @@ class _FakeQueryParams:
 
 
 class AdminClientPaymentDocumentTests(unittest.TestCase):
+    def test_legacy_credit_note_is_not_presented_as_paid_invoice(self) -> None:
+        invoice = SimpleNamespace(
+            id=uuid4(),
+            external_reference="FA-PIANO-2026-849",
+            issued_at=datetime(2026, 8, 3, 7, 16, tzinfo=timezone.utc),
+            source="SPORTIGO",
+            label="Avoir intégral de la facture FA-PIANO-2026-306",
+            total_incl_vat=Decimal("-125.00"),
+            currency="EUR",
+            original_file_name="FA-PIANO-2026-849.pdf",
+        )
+
+        row = _admin_legacy_invoice_out(invoice)
+
+        self.assertEqual(row.status, "CREDIT_NOTE")
+        self.assertEqual(row.total_incl_vat, Decimal("-125.00"))
+
     def test_planless_booking_amount_uses_session_external_price_before_activity_default(self) -> None:
         booking = SimpleNamespace(id=uuid4(), currency_snapshot="EUR")
         session = SimpleNamespace(

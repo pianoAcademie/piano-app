@@ -710,6 +710,18 @@ export type AdminRangeInvoiceOut = {
   related_invoices: AdminRangeInvoiceReferenceOut[];
 };
 
+export type AdminLegacyInvoiceOut = {
+  id: string;
+  invoice_number: string;
+  issued_at: string;
+  source: string;
+  status: "PAID" | "CREDIT_NOTE";
+  label: string;
+  total_incl_vat: string;
+  currency: string;
+  original_file_name: string;
+};
+
 export type AdminClientAutoInvoiceRuleOut = {
   id: string;
   client_id: string;
