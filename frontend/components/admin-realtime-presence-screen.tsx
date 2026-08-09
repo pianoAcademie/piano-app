@@ -136,6 +136,10 @@ export default function AdminRealtimePresenceScreen({ language }: Props): JSX.El
     { label: english ? "Teachers" : "Professeurs", value: summary?.professors ?? "–" },
     { label: english ? "Admins" : "Administrateurs", value: summary?.admins ?? "–" },
   ];
+  const hourlyHistory = summary?.hourly_history ?? [];
+  const historyMaximum = Math.max(1, ...hourlyHistory.map((bucket) => bucket.total));
+  const historyPeak = Math.max(0, ...hourlyHistory.map((bucket) => bucket.total));
+  const nowTimestamp = summary ? new Date(summary.generated_at).getTime() : Date.now();
 
   return (
     <section className="admin-page-grid realtime-presence-page" aria-live="polite">
@@ -165,6 +169,64 @@ export default function AdminRealtimePresenceScreen({ language }: Props): JSX.El
           </article>
         ))}
       </div>
+
+      <article className="card realtime-presence-history-card">
+        <div className="row spread realtime-presence-history-heading">
+          <div>
+            <h2>{english ? "Today’s connection history" : "Historique des connexions aujourd’hui"}</h2>
+            <p className="muted">
+              {english
+                ? "Unique active users per hour. Hover or focus a bar for the website and mobile app breakdown."
+                : "Utilisateurs uniques actifs par heure. Survolez une barre pour le détail site internet et application mobile."}
+            </p>
+          </div>
+          <div className="realtime-presence-history-peak">
+            <span>{english ? "Daily peak" : "Pic de la journée"}</span>
+            <strong>{historyPeak}</strong>
+          </div>
+        </div>
+
+        {hourlyHistory.length ? (
+          <div className="realtime-presence-histogram-scroll">
+            <div
+              className="realtime-presence-histogram"
+              role="group"
+              aria-label={english ? "Hourly histogram of unique active users today" : "Histogramme horaire des utilisateurs uniques actifs aujourd’hui"}
+            >
+              {hourlyHistory.map((bucket, index) => {
+                const bucketStart = new Date(bucket.hour_started_at).getTime();
+                const isCurrentHour = nowTimestamp >= bucketStart && nowTimestamp < bucketStart + 3_600_000;
+                const details = english
+                  ? `${bucket.hour_label}: ${bucket.total} unique user(s), ${bucket.web} website, ${bucket.mobile_app} mobile app`
+                  : `${bucket.hour_label} : ${bucket.total} utilisateur(s) unique(s), ${bucket.web} site internet, ${bucket.mobile_app} application mobile`;
+                const showLabel = index % 2 === 0 || index === hourlyHistory.length - 1;
+                return (
+                  <div key={bucket.hour_started_at} className={`realtime-presence-hour ${isCurrentHour ? "is-current" : ""}`}>
+                    <span className="realtime-presence-hour-value" aria-hidden="true">{bucket.total || ""}</span>
+                    <span className="realtime-presence-hour-track" title={details} tabIndex={0} aria-label={details}>
+                      <span
+                        className={`realtime-presence-hour-bar ${bucket.total ? "has-value" : ""}`}
+                        style={{ height: bucket.total ? `${Math.max(8, (bucket.total / historyMaximum) * 100)}%` : "2px" }}
+                      />
+                    </span>
+                    <span className="realtime-presence-hour-label" aria-hidden="true">{showLabel ? bucket.hour_label.slice(0, 2) : ""}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <p className="muted realtime-presence-empty">{english ? "Connection history is loading…" : "Chargement de l’historique des connexions…"}</p>
+        )}
+        <div className="realtime-presence-history-footer">
+          <span><i aria-hidden="true" />{english ? "Unique active users" : "Utilisateurs uniques actifs"}</span>
+          <small className="muted">
+            {english
+              ? `Time zone: ${summary?.history_timezone ?? "Europe/Paris"}. History is collected from feature activation.`
+              : `Fuseau : ${summary?.history_timezone ?? "Europe/Paris"}. L’historique est collecté depuis l’activation de cette fonctionnalité.`}
+          </small>
+        </div>
+      </article>
 
       <article className="card realtime-presence-list-card">
         <div className="row spread realtime-presence-toolbar-heading">

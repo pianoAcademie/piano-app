@@ -2356,6 +2356,157 @@ button.danger:focus-visible {
   margin: 0;
 }
 
+.realtime-presence-history-card {
+  min-width: 0;
+  padding: 18px 20px 16px;
+}
+
+.realtime-presence-history-card h2,
+.realtime-presence-history-card p {
+  margin: 0;
+}
+
+.realtime-presence-history-heading {
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.realtime-presence-history-heading p {
+  margin-top: 3px;
+}
+
+.realtime-presence-history-peak {
+  display: grid;
+  min-width: 112px;
+  padding: 8px 12px;
+  border: 1px solid #dbe9df;
+  border-radius: 10px;
+  background: #f1faf4;
+  text-align: right;
+}
+
+.realtime-presence-history-peak span {
+  color: #617268;
+  font-size: 11px;
+}
+
+.realtime-presence-history-peak strong {
+  color: #1e7f49;
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.realtime-presence-histogram-scroll {
+  width: 100%;
+  margin-top: 16px;
+  overflow-x: auto;
+}
+
+.realtime-presence-histogram {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(22px, 1fr);
+  align-items: end;
+  gap: 6px;
+  min-width: 720px;
+  height: 190px;
+  padding: 10px 4px 0;
+  border-bottom: 1px solid #dce3dd;
+  background: repeating-linear-gradient(
+    to top,
+    transparent 0,
+    transparent 44px,
+    #edf1ee 45px
+  );
+}
+
+.realtime-presence-hour {
+  display: grid;
+  grid-template-rows: 18px minmax(0, 1fr) 22px;
+  align-items: end;
+  height: 100%;
+  text-align: center;
+}
+
+.realtime-presence-hour-value {
+  align-self: center;
+  min-height: 16px;
+  color: #52645a;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.realtime-presence-hour-track {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  outline: none;
+}
+
+.realtime-presence-hour-track:focus-visible {
+  border-radius: 6px;
+  box-shadow: 0 0 0 2px #c68429;
+}
+
+.realtime-presence-hour-bar {
+  display: block;
+  width: min(24px, 72%);
+  border-radius: 6px 6px 2px 2px;
+  background: #dce7df;
+  transition: height 180ms ease, background 180ms ease;
+}
+
+.realtime-presence-hour-bar.has-value {
+  background: linear-gradient(180deg, #43b873 0%, #23834d 100%);
+  box-shadow: 0 4px 10px rgb(35 131 77 / 18%);
+}
+
+.realtime-presence-hour.is-current .realtime-presence-hour-bar.has-value {
+  background: linear-gradient(180deg, #e2a44d 0%, #c77818 100%);
+}
+
+.realtime-presence-hour.is-current .realtime-presence-hour-label {
+  color: #a45d0d;
+  font-weight: 850;
+}
+
+.realtime-presence-hour-label {
+  align-self: end;
+  color: #7c887f;
+  font-size: 10px;
+}
+
+.realtime-presence-history-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 10px;
+}
+
+.realtime-presence-history-footer > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #4d5d53;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.realtime-presence-history-footer i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: #2c985a;
+}
+
+.realtime-presence-history-footer small {
+  text-align: right;
+}
+
 .realtime-presence-list-card {
   min-width: 0;
   padding: 18px;
@@ -2490,9 +2641,15 @@ button.danger:focus-visible {
   }
 
   .realtime-presence-hero,
-  .realtime-presence-toolbar-heading {
+  .realtime-presence-toolbar-heading,
+  .realtime-presence-history-heading,
+  .realtime-presence-history-footer {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .realtime-presence-history-peak {
+    text-align: left;
   }
 
   .realtime-presence-filters {

@@ -21,7 +21,7 @@ from app.models.catalog import CourseSession, CourseType
 from app.models.client_group import ClientGroup, ClientGroupMembership
 from app.models.family import ClientFamilyLink
 from app.models.ops import AppSetting, PasswordResetToken
-from app.models.user import ClientKind, ClientStatus, User, UserPresence, UserRole
+from app.models.user import ClientKind, ClientStatus, User, UserPresence, UserPresenceHour, UserRole
 from app.schemas.auth import (
     ChangePasswordRequest,
     EmailLookupRequest,
@@ -599,6 +599,28 @@ def heartbeat_presence(
         )
     )
     db.execute(statement)
+    hour_started_at_utc = now.replace(minute=0, second=0, microsecond=0)
+    hourly_statement = (
+        pg_insert(UserPresenceHour)
+        .values(
+            user_id=current_user.id,
+            channel=channel,
+            hour_started_at_utc=hour_started_at_utc,
+            first_seen_at=now,
+            last_seen_at=now,
+            heartbeat_count=1,
+            updated_at=now,
+        )
+        .on_conflict_do_update(
+            constraint="uq_user_presence_hours_user_channel_hour",
+            set_={
+                "last_seen_at": now,
+                "heartbeat_count": UserPresenceHour.heartbeat_count + 1,
+                "updated_at": now,
+            },
+        )
+    )
+    db.execute(hourly_statement)
     current_user.last_seen_at = now
     current_user.last_seen_channel = channel
     db.add(current_user)

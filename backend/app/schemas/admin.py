@@ -870,6 +870,17 @@ class AdminOnlinePresenceUserOut(BaseModel):
     last_seen_at: datetime
 
 
+class AdminPresenceHourlyBucketOut(BaseModel):
+    hour_started_at: datetime
+    hour_label: str
+    total: int
+    web: int
+    mobile_app: int
+    clients: int
+    professors: int
+    admins: int
+
+
 class AdminOnlinePresenceOut(BaseModel):
     generated_at: datetime
     active_window_seconds: int
@@ -879,6 +890,9 @@ class AdminOnlinePresenceOut(BaseModel):
     clients: int
     professors: int
     admins: int
+    history_timezone: str
+    history_date: date
+    hourly_history: list[AdminPresenceHourlyBucketOut] = Field(default_factory=list)
     online_users: list[AdminOnlinePresenceUserOut] = Field(default_factory=list)
 
 

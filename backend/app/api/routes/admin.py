@@ -52,7 +52,7 @@ from app.models.ops import (
 )
 from app.models.notification_engine import Notification
 from app.models.quote import Prospect, Quote, QuoteAcceptanceFollowup
-from app.models.user import ClientStatus, User, UserPresence, UserRole
+from app.models.user import ClientStatus, User, UserPresence, UserPresenceHour, UserRole
 from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
 from app.services.automation_triggers import schedule_trial_attended_triggers
 from app.services.invoice_documents import normalize_billing_entity
@@ -112,6 +112,7 @@ from app.schemas.admin import (
     AdminPlanningReorganizationSessionOut,
     AdminPlanningSettingsUpdateRequest,
     AdminOnlinePresenceOut,
+    AdminPresenceHourlyBucketOut,
     AdminOnlinePresenceUserOut,
     AdminClientBillingAdjustmentQueueOut,
     AdminProfessorOut,
@@ -2391,6 +2392,77 @@ def admin_online_presence(
     client_users = {user_id for user_id, presence in latest_by_user.items() if presence["role"] == UserRole.CLIENT}
     professor_users = {user_id for user_id, presence in latest_by_user.items() if presence["role"] == UserRole.PROF}
     admin_users = {user_id for user_id, presence in latest_by_user.items() if presence["role"] == UserRole.ADMIN}
+
+    history_timezone = (current_user.timezone or "Europe/Paris").strip()
+    try:
+        history_zone = ZoneInfo(history_timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        history_timezone = "Europe/Paris"
+        history_zone = ZoneInfo(history_timezone)
+    local_now = now.astimezone(history_zone)
+    history_date = local_now.date()
+    history_start_local = datetime.combine(history_date, time.min, tzinfo=history_zone)
+    history_end_local = datetime.combine(history_date + timedelta(days=1), time.min, tzinfo=history_zone)
+    history_start_utc = history_start_local.astimezone(timezone.utc)
+    history_end_utc = history_end_local.astimezone(timezone.utc)
+    history_rows = db.execute(
+        select(
+            UserPresenceHour.hour_started_at_utc,
+            UserPresenceHour.channel,
+            UserPresenceHour.user_id,
+            User.role,
+        )
+        .join(User, User.id == UserPresenceHour.user_id)
+        .where(
+            UserPresenceHour.hour_started_at_utc >= history_start_utc,
+            UserPresenceHour.hour_started_at_utc < history_end_utc,
+            User.is_active.is_(True),
+            UserPresenceHour.user_id != current_user.id,
+        )
+    ).all()
+    history_by_hour: dict[datetime, dict[str, set[UUID]]] = {}
+    for row in history_rows:
+        bucket = history_by_hour.setdefault(
+            row.hour_started_at_utc,
+            {
+                "total": set(),
+                "web": set(),
+                "mobile_app": set(),
+                "clients": set(),
+                "professors": set(),
+                "admins": set(),
+            },
+        )
+        bucket["total"].add(row.user_id)
+        if row.channel == "WEB":
+            bucket["web"].add(row.user_id)
+        elif row.channel == "MOBILE_APP":
+            bucket["mobile_app"].add(row.user_id)
+        if row.role == UserRole.CLIENT:
+            bucket["clients"].add(row.user_id)
+        elif row.role == UserRole.PROF:
+            bucket["professors"].add(row.user_id)
+        elif row.role == UserRole.ADMIN:
+            bucket["admins"].add(row.user_id)
+
+    hourly_history: list[AdminPresenceHourlyBucketOut] = []
+    hour_cursor = history_start_utc
+    while hour_cursor < history_end_utc:
+        bucket = history_by_hour.get(hour_cursor)
+        hourly_history.append(
+            AdminPresenceHourlyBucketOut(
+                hour_started_at=hour_cursor,
+                hour_label=hour_cursor.astimezone(history_zone).strftime("%H:%M"),
+                total=len(bucket["total"]) if bucket else 0,
+                web=len(bucket["web"]) if bucket else 0,
+                mobile_app=len(bucket["mobile_app"]) if bucket else 0,
+                clients=len(bucket["clients"]) if bucket else 0,
+                professors=len(bucket["professors"]) if bucket else 0,
+                admins=len(bucket["admins"]) if bucket else 0,
+            )
+        )
+        hour_cursor += timedelta(hours=1)
+
     online_users = [
         AdminOnlinePresenceUserOut(
             user_id=user_id,
@@ -2421,6 +2493,9 @@ def admin_online_presence(
         clients=len(client_users),
         professors=len(professor_users),
         admins=len(admin_users),
+        history_timezone=history_timezone,
+        history_date=history_date,
+        hourly_history=hourly_history,
         online_users=online_users,
     )
 

@@ -328,7 +328,21 @@ export type AdminOnlinePresenceOut = {
   clients: number;
   professors: number;
   admins: number;
+  history_timezone: string;
+  history_date: string;
+  hourly_history: AdminPresenceHourlyBucketOut[];
   online_users: AdminOnlinePresenceUserOut[];
+};
+
+export type AdminPresenceHourlyBucketOut = {
+  hour_started_at: string;
+  hour_label: string;
+  total: number;
+  web: number;
+  mobile_app: number;
+  clients: number;
+  professors: number;
+  admins: number;
 };
 
 export type AdminOnlinePresenceUserOut = {
