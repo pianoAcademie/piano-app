@@ -697,9 +697,23 @@ function normalizedSessionStatus(row: AdminClientBookingOut): string {
   return (row.session_status || "").trim().toUpperCase();
 }
 
+function bookingHasNoCharge(row: AdminClientBookingOut): boolean {
+  const total = Number(row.total_incl_vat_snapshot || "0");
+  return Number.isFinite(total) && Math.abs(total) < 0.01;
+}
+
+function bookingIsIncludedInPlan(row: AdminClientBookingOut): boolean {
+  return bookingHasNoCharge(row) && Boolean(row.client_plan_subscription_id);
+}
+
 function bookingCannotGenerateFinalInvoice(row: AdminClientBookingOut): boolean {
   const bookingStatus = normalizedBookingStatus(row);
-  return bookingStatus === "CANCELLED" || bookingStatus === "EXCUSED_ABSENCE" || row.payment_refunded;
+  return (
+    bookingStatus === "CANCELLED" ||
+    bookingStatus === "EXCUSED_ABSENCE" ||
+    row.payment_refunded ||
+    bookingHasNoCharge(row)
+  );
 }
 
 function canGenerateFinalInvoiceForBooking(row: AdminClientBookingOut): boolean {
@@ -713,6 +727,8 @@ function waitsForServiceCompletion(row: AdminClientBookingOut): boolean {
 function bookingWorkflowSteps(row: AdminClientBookingOut, language: UiLanguage = "fr"): BookingWorkflowStep[] {
   const bookingStatus = normalizedBookingStatus(row);
   const sessionStatus = normalizedSessionStatus(row);
+  const hasNoCharge = bookingHasNoCharge(row);
+  const includedInPlan = bookingIsIncludedInPlan(row);
   const receiptStatus = (row.payment_receipt_status || "").trim().toUpperCase();
   const finalInvoiceStatus = (row.final_invoice_status || "").trim().toUpperCase();
   const paymentLabel = uiText(language, "admin.client_detail.booking_workflow.payment");
@@ -750,6 +766,37 @@ function bookingWorkflowSteps(row: AdminClientBookingOut, language: UiLanguage =
         value: uiText(language, "admin.client_detail.booking_workflow.value_not_invoiced"),
         toneClass: "status-off",
         helper: uiText(language, "admin.client_detail.booking_workflow.helper_cancelled_refunded"),
+      },
+    ];
+  }
+
+  if (hasNoCharge && bookingStatus !== "CANCELLED") {
+    return [
+      {
+        label: paymentLabel,
+        value: includedInPlan
+          ? uiText(language, "admin.client_detail.booking_workflow.value_included_plan")
+          : uiText(language, "admin.client_detail.booking_workflow.value_no_charge"),
+        toneClass: "status-ok",
+        helper: includedInPlan
+          ? uiText(language, "admin.client_detail.booking_workflow.helper_included_plan", {
+              plan: row.plan_name || uiText(language, "admin.client_detail.booking_workflow.plan_fallback"),
+            })
+          : uiText(language, "admin.client_detail.booking_workflow.helper_no_charge"),
+      },
+      {
+        label: receiptLabel,
+        value: uiText(language, "admin.client_detail.booking_workflow.value_not_applicable"),
+        toneClass: "status-off",
+        helper: uiText(language, "admin.client_detail.booking_workflow.helper_no_receipt_required"),
+      },
+      {
+        label: finalInvoiceLabel,
+        value: uiText(language, "admin.client_detail.booking_workflow.value_not_invoiced"),
+        toneClass: "status-off",
+        helper: includedInPlan
+          ? uiText(language, "admin.client_detail.booking_workflow.helper_plan_already_invoiced")
+          : uiText(language, "admin.client_detail.booking_workflow.helper_no_invoice_required"),
       },
     ];
   }
@@ -2495,6 +2542,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
     .sort((a, b) => b.session_start_at_utc.localeCompare(a.session_start_at_utc));
   const reservationRows = [...upcomingBookings, ...pastBookings];
   const paymentsReceivedCount = bookings.filter((row) => row.payment_received).length;
+  const includedPlanBookingsCount = bookings.filter((row) => bookingIsIncludedInPlan(row)).length;
   const receiptsSentCount = bookings.filter((row) => Boolean(row.payment_receipt_sent_at)).length;
   const refundsRecordedCount = bookings.filter((row) => row.payment_refunded).length;
   const finalInvoicesGeneratedCount = bookings.filter((row) => row.final_invoice_generated).length;
@@ -7432,6 +7480,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <strong>{paymentsReceivedCount}</strong>
                 </article>
                 <article className="item row spread">
+                  <span className="muted">{t("admin.client_detail.bookings_included_plan_count")}</span>
+                  <strong>{includedPlanBookingsCount}</strong>
+                </article>
+                <article className="item row spread">
                   <span className="muted">{t("admin.client_detail.bookings_final_invoices_generated_count")}</span>
                   <strong>{finalInvoicesGeneratedCount}</strong>
                 </article>
@@ -7498,6 +7550,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <span className="booking-billing-card-label">{t("admin.client_detail.booking_overview_payments_received")}</span>
                 <strong className="booking-billing-card-value">{paymentsReceivedCount}</strong>
                 <small className="muted">{t("admin.client_detail.booking_overview_payments_received_help")}</small>
+              </article>
+              <article className="booking-billing-card">
+                <span className="booking-billing-card-label">{t("admin.client_detail.booking_overview_included_plan")}</span>
+                <strong className="booking-billing-card-value">{includedPlanBookingsCount}</strong>
+                <small className="muted">{t("admin.client_detail.booking_overview_included_plan_help")}</small>
               </article>
               <article className="booking-billing-card">
                 <span className="booking-billing-card-label">{t("admin.client_detail.booking_overview_receipts_sent")}</span>
