@@ -91,6 +91,7 @@ class SubscriptionLifecycleTests(unittest.TestCase):
         self.assertEqual(message_id, "message-1")
         self.assertIn("No new payment will be collected", send_email.call_args.kwargs["body"])
         self.assertIn("Cancellation confirmed", send_email.call_args.kwargs["subject"])
+        self.assertEqual(send_email.call_args.kwargs["body_format"], "HTML")
 
     @patch("app.services.subscription_lifecycle_notifications.resolve_sender_profile")
     @patch("app.services.subscription_lifecycle_notifications.send_email")
@@ -115,8 +116,12 @@ class SubscriptionLifecycleTests(unittest.TestCase):
         )
 
         body = send_email.call_args.kwargs["body"]
-        self.assertIn("prendra effet le 08/09/2026", body)
-        self.assertIn("jusqu'au 07/09/2026 inclus", body)
+        self.assertIn("Confirmation de résiliation", body)
+        self.assertIn("7 septembre 2026 inclus", body)
+        self.assertIn("Aucun nouveau prélèvement", body)
+        self.assertIn("PIANO ACADÉMIE", body)
+        self.assertEqual(send_email.call_args.kwargs["subject"], "Confirmation de résiliation - Abonnement mensuel")
+        self.assertEqual(send_email.call_args.kwargs["body_format"], "HTML")
 
     @patch("app.services.subscription_lifecycle_notifications.resolve_sender_profile")
     @patch("app.services.subscription_lifecycle_notifications.send_email")
