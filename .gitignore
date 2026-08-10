@@ -3,6 +3,10 @@ welcome-to-docker/
 frontend/node_modules/
 frontend/.next/
 frontend/*.tsbuildinfo
+frontend/build/
+frontend/android/.idea/
+**/__pycache__/
+*.py[cod]
 
 .DS_Store
 **/.DS_Store

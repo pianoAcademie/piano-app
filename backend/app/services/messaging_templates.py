@@ -1139,7 +1139,8 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
             _email_summary(
                 [
                     ("Élève", "{student_name}"),
-                    ("Activité", "{activity_name}"),
+                    ("Type", "{booking_type_label}"),
+                    ("Activité", "{course_activity_name}"),
                     ("Date", "{session_date}"),
                     ("Horaire", "{session_time}"),
                     ("Fuseau horaire", "{session_timezone}"),
@@ -1154,7 +1155,7 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         ),
         description="Confirmation de reservation envoyee au client ou au responsable legal.",
         variables_hint=(
-            "{recipient_name} {student_name} {activity_name} {session_date} {session_time} "
+            "{recipient_name} {student_name} {activity_name} {course_activity_name} {booking_type_label} {session_date} {session_time} "
             "{session_start_local} {session_timezone} {location_name} {teacher_name} {account_url}"
         ),
         body_format="HTML",
@@ -1163,12 +1164,13 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code=PREDEFINED_EMAIL_TEMPLATE_ADMIN_BOOKING_CONFIRMATION,
         name="Reservation - Confirmation admin",
         channel="EMAIL",
-        subject="Nouvelle reservation confirmee - {activity_name}",
+        subject="Nouvelle réservation confirmée – {activity_name}",
         body=(
-            "<p>Une reservation a ete confirmee.</p>"
+            "<p>Une réservation a été confirmée.</p>"
             "<ul>"
-            "<li><strong>Eleve :</strong> {student_name}</li>"
-            "<li><strong>Activite :</strong> {activity_name}</li>"
+            "<li><strong>Élève :</strong> {student_name}</li>"
+            "<li><strong>Type :</strong> {booking_type_label}</li>"
+            "<li><strong>Activité :</strong> {course_activity_name}</li>"
             "<li><strong>Date :</strong> {session_date}</li>"
             "<li><strong>Heure :</strong> {session_time}</li>"
             "<li><strong>Fuseau horaire :</strong> {session_timezone}</li>"
@@ -1178,7 +1180,7 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
             "<p>Piano Academie</p>"
         ),
         description="Confirmation de reservation envoyee aux administrateurs.",
-        variables_hint="{student_name} {activity_name} {session_date} {session_time} {session_start_local} {session_timezone} {location_name} {teacher_name}",
+        variables_hint="{student_name} {activity_name} {course_activity_name} {booking_type_label} {session_date} {session_time} {session_start_local} {session_timezone} {location_name} {teacher_name}",
         body_format="HTML",
     ),
     MessagingTemplateDefinition(
@@ -1457,23 +1459,24 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code="PLAN_PURCHASE_ADMIN",
         name="Plan Purchase Admin",
         channel="EMAIL",
-        subject="Nouvel achat confirme - {plan_name}",
+        subject="Nouvel achat confirmé – {plan_name}",
         body=(
-            "Un achat vient d etre confirme dans l espace client.\n\n"
-            "Client: {client_name}\n"
-            "Email client: {client_email}\n"
-            "Formule: {plan_name}\n"
-            "Montant regle: {amount_paid} {currency}\n"
-            "Date de paiement: {paid_at}\n"
-            "Moyen de paiement: {payment_method}\n"
-            "Reference PSP: {payment_reference}\n"
-            "Reference abonnement / carnet: {subscription_reference}\n\n"
-            "Fiche client: {client_url}\n\n"
-            "Piano Academie"
+            "Un achat vient d’être confirmé dans l’espace client.\n\n"
+            "Élève / bénéficiaire : {student_name}\n"
+            "Responsable / payeur : {client_name}\n"
+            "E-mail du responsable : {client_email}\n"
+            "Prestation achetée : {plan_name}\n"
+            "Montant réglé : {amount_paid} {currency}\n"
+            "Date de paiement : {paid_at}\n"
+            "Moyen de paiement : {payment_method}\n"
+            "Référence PSP : {payment_reference}\n"
+            "Référence abonnement / carnet : {subscription_reference}\n\n"
+            "Fiche de l’élève : {client_url}\n\n"
+            "Piano Académie"
         ),
         description="Notification interne envoyee apres la confirmation d un achat de formule dans l espace client.",
         variables_hint=(
-            "{client_name} {client_email} {plan_name} {amount_paid} {currency} "
+            "{client_name} {client_email} {student_name} {plan_name} {amount_paid} {currency} "
             "{paid_at} {payment_method} {payment_reference} {subscription_reference} {client_url}"
         ),
     ),

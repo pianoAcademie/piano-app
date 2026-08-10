@@ -31,10 +31,12 @@ from app.models.plan import ClientPlanSubscription, Plan, PlanKind, Subscription
 from app.models.subscription_engine import SubscriptionBillingCycle
 from app.models.user import User
 from app.services.client_purchase_notifications import (
+    plan_purchase_notification_label,
     send_client_payment_success_notifications,
     send_plan_purchase_admin_notifications,
 )
 from app.services.automation_triggers import schedule_plan_purchase_triggers
+from app.services.family_billing import resolve_billing_profile
 from app.services.notifications.application.orchestrator import enqueue_notifications
 from app.services.payment_checkout import lookup_payment
 from app.services.payment_provider import (
@@ -363,7 +365,16 @@ async def payment_webhook(
 
         if lookup.paid and not was_paid_before:
             owner = db.scalar(select(User).where(User.id == sub.user_id))
-            if owner is not None and owner.email:
+            if owner is not None:
+                billing_profile = resolve_billing_profile(db, owner)
+                purchase_label = plan_purchase_notification_label(
+                    plan_name=plan.name,
+                    price_breakdown=sub.initial_price_breakdown_json,
+                )
+                student_name = (
+                    f"{(owner.first_name or '').strip()} {(owner.last_name or '').strip()}".strip()
+                    or owner.email
+                )
                 amount_paid: Decimal | None = None
                 if sub.initial_total_incl_vat is not None:
                     amount_paid = Decimal(sub.initial_total_incl_vat).quantize(Decimal("0.01"))
@@ -372,32 +383,34 @@ async def payment_webhook(
                 currency_code = (
                     sub.initial_currency_code
                     or plan.currency_code
-                    or owner.preferred_currency
+                    or billing_profile.preferred_currency
                     or "EUR"
                 )
-                try:
-                    send_client_payment_success_notifications(
-                        db,
-                        to_email=owner.email,
-                        first_name=owner.first_name,
-                        last_name=owner.last_name,
-                        plan_name=plan.name,
-                        subscription_id=sub.id,
-                        paid_at=sub.last_payment_at or _utcnow(),
-                        amount_paid=amount_paid,
-                        currency=currency_code,
-                        language=owner.preferred_language,
-                    )
-                except Exception:
-                    logger.exception("Unable to send paid confirmation emails for subscription=%s", sub.id)
+                if billing_profile.email:
+                    try:
+                        send_client_payment_success_notifications(
+                            db,
+                            to_email=billing_profile.email,
+                            first_name=billing_profile.first_name,
+                            last_name=billing_profile.last_name,
+                            plan_name=purchase_label,
+                            subscription_id=sub.id,
+                            paid_at=sub.last_payment_at or _utcnow(),
+                            amount_paid=amount_paid,
+                            currency=currency_code,
+                            language=billing_profile.preferred_language,
+                        )
+                    except Exception:
+                        logger.exception("Unable to send paid confirmation emails for subscription=%s", sub.id)
                 try:
                     send_plan_purchase_admin_notifications(
                         db,
                         client_id=owner.id,
-                        client_email=owner.email,
-                        first_name=owner.first_name,
-                        last_name=owner.last_name,
-                        plan_name=plan.name,
+                        client_email=billing_profile.email or owner.email,
+                        first_name=billing_profile.first_name,
+                        last_name=billing_profile.last_name,
+                        student_name=student_name,
+                        plan_name=purchase_label,
                         subscription_id=sub.id,
                         payment_reference=lookup.provider_reference or reference,
                         payment_method=lookup.provider.value,

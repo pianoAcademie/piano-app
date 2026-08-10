@@ -67,11 +67,12 @@ def _default_rendered_email(
                 f"Location: {context['location_name']}\n"
             )
         else:
-            subject = f"Nouvelle reservation confirmee - {context['activity_name']}"
+            subject = f"Nouvelle réservation confirmée – {context['activity_name']}"
             body = (
-                "Une reservation a ete confirmee.\n\n"
-                f"Eleve: {context['student_name']}\n"
-                f"Activite: {context['activity_name']}\n"
+                "Une réservation a été confirmée.\n\n"
+                f"Élève : {context['student_name']}\n"
+                f"Type : {context['booking_type_label']}\n"
+                f"Activité : {context['course_activity_name']}\n"
                 f"Date: {context['session_date']}\n"
                 f"Heure: {context['session_time']}\n"
                 f"Fuseau horaire: {context['session_timezone']}\n"
@@ -102,12 +103,13 @@ def _default_rendered_email(
                 1,
             )
     else:
-        subject = f"Confirmation de votre reservation - {context['activity_name']}"
+        subject = f"Confirmation de votre réservation – {context['activity_name']}"
         body = (
             f"Bonjour {context['recipient_name']},\n\n"
-            "Votre reservation est confirmee.\n\n"
-            f"Eleve: {context['student_name']}\n"
-            f"Activite: {context['activity_name']}\n"
+            "Votre réservation est confirmée.\n\n"
+            f"Élève : {context['student_name']}\n"
+            f"Type : {context['booking_type_label']}\n"
+            f"Activité : {context['course_activity_name']}\n"
             f"Date: {context['session_date']}\n"
             f"Heure: {context['session_time']}\n"
             f"Fuseau horaire: {context['session_timezone']}\n"
@@ -127,8 +129,22 @@ def _default_rendered_email(
 def _normalize_teacher_name(teacher_name: str | None) -> str:
     candidate = (teacher_name or "").strip()
     lowered = candidate.casefold()
-    if lowered in {"", "a confirmer", "à confirmer", "sans professeur"}:
+    if lowered in {
+        "",
+        "a confirmer",
+        "à confirmer",
+        "sans professeur",
+        "service administration",
+        "administration service",
+    }:
         return ""
+    return candidate
+
+
+def _localized_activity_name(activity_name: str, *, language: str) -> str:
+    candidate = activity_name.strip() or "-"
+    if language == "fr":
+        candidate = re.sub(r"\bEveil\b", "Éveil", candidate, flags=re.IGNORECASE)
     return candidate
 
 
@@ -164,6 +180,7 @@ def render_booking_confirmation_email(
     location_name: str | None,
     teacher_name: str | None,
     language: str | None = None,
+    is_trial_course: bool = False,
 ) -> RenderedBookingConfirmationEmail | None:
     normalized_language = normalize_language(language)
     resolved_timezone_name = (timezone_name or "").strip() or "Europe/Paris"
@@ -173,11 +190,20 @@ def render_booking_confirmation_email(
         resolved_timezone_name = "Europe/Paris"
     localized_start = _localized_start_at(start_at, resolved_timezone_name)
     normalized_teacher_name = _normalize_teacher_name(teacher_name)
+    course_activity_name = _localized_activity_name(activity_name, language=normalized_language)
+    if is_trial_course:
+        booking_type_label = "Trial lesson" if normalized_language == "en" else "Cours d’essai"
+        activity_display_name = f"{booking_type_label} – {course_activity_name}"
+    else:
+        booking_type_label = "Standard lesson" if normalized_language == "en" else "Cours standard"
+        activity_display_name = course_activity_name
     context = {
         "recipient_name": (recipient_name or "").strip()
         or ("Administration" if audience == "ADMIN" else ("Customer" if normalized_language == "en" else "Client")),
         "student_name": student_name.strip() or "-",
-        "activity_name": activity_name.strip() or "-",
+        "activity_name": activity_display_name,
+        "course_activity_name": course_activity_name,
+        "booking_type_label": booking_type_label,
         "session_date": localized_start.strftime("%d/%m/%Y"),
         "session_time": localized_start.strftime("%H:%M"),
         "session_start_local": localized_start.strftime("%d/%m/%Y %H:%M"),

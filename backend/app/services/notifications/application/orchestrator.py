@@ -545,6 +545,7 @@ def schedule_booking_created_notifications(
             location_name=location_label,
             teacher_name=teacher_label,
             language=client_contact.preferred_language if client_contact is not None else None,
+            is_trial_course=bool(getattr(booking, "is_trial_course", False)),
         )
     else:
         rendered = None
@@ -594,6 +595,7 @@ def schedule_booking_created_notifications(
             location_name=location_label,
             teacher_name=teacher_label,
             language="fr",
+            is_trial_course=bool(getattr(booking, "is_trial_course", False)),
         )
         if rendered is not None:
             created = create_notification_if_new(
@@ -640,6 +642,7 @@ def schedule_booking_created_notifications(
             location_name=location_label,
             teacher_name=teacher_label,
             language="fr",
+            is_trial_course=bool(getattr(booking, "is_trial_course", False)),
         )
         if rendered is None:
             continue

@@ -64,7 +64,9 @@ PA_CLIENT_KEY_ALIAS=...
 PA_CLIENT_KEY_PASSWORD=...
 ```
 
-Le bundle est cree dans `frontend/android/app/build/outputs/bundle/clientRelease/`. Le workflow GitHub `Build client mobile apps` compile egalement un AAB de controle sans exiger les outils Android sur le Mac.
+Le bundle est cree dans `frontend/android/app/build/outputs/bundle/clientRelease/`.
+
+Un téléphone Android physique n'est pas nécessaire pour préparer la publication. Android Studio fournit un émulateur avec lequel contrôler l'interface, la connexion, le planning et les achats. Après dépôt du bundle, le rapport de pré-lancement Google Play complète ce contrôle sur plusieurs appareils Android.
 
 ## Tests avant diffusion
 

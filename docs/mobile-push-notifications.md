@@ -18,7 +18,7 @@ Dans Apple Developer, l’identifiant `com.pianoacademie.client` doit avoir la c
 
 ## Android / Firebase Cloud Messaging
 
-- Ajouter le vrai fichier Firebase `google-services.json` dans `frontend/android/app/` sans le versionner.
+- Ajouter le vrai fichier Firebase `google-services.json` dans `frontend/android/app/`. Ce fichier est ignoré par Git et ne doit jamais être versionné.
 - `FIREBASE_PROJECT_ID` : identifiant du projet Firebase.
 - `FIREBASE_CLIENT_EMAIL` et `FIREBASE_PRIVATE_KEY` : compte de service autorisé à envoyer via FCM HTTP v1.
 

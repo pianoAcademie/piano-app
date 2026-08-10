@@ -2896,6 +2896,7 @@ def _send_invoice_range_booking_confirmation_emails(
                 location_name=location_label,
                 teacher_name=teacher_label,
                 language=recipient_user.preferred_language if recipient_user is not None else None,
+                is_trial_course=booking.is_trial_course,
             )
         else:
             rendered = None
@@ -2929,6 +2930,7 @@ def _send_invoice_range_booking_confirmation_emails(
                 location_name=location_label,
                 teacher_name=teacher_label,
                 language="fr",
+                is_trial_course=booking.is_trial_course,
             )
             if rendered is None:
                 continue

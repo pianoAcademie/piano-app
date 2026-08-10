@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 import logging
+import re
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -31,6 +32,25 @@ def _frontend_url(path: str) -> str:
     if not candidate.startswith("http://") and not candidate.startswith("https://"):
         candidate = "https://" + candidate
     return candidate.rstrip("/") + path
+
+
+def plan_purchase_notification_label(*, plan_name: str, price_breakdown: object) -> str:
+    """Return the activity-specific label stored for a trial purchase."""
+
+    candidate = ""
+    if isinstance(price_breakdown, list):
+        for row in price_breakdown:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("code") or "").strip().upper() != "TRIAL_COURSE":
+                continue
+            candidate = str(row.get("label") or "").strip()
+            if candidate:
+                break
+
+    label = candidate or plan_name.strip() or "Formule Piano Académie"
+    label = re.sub(r"^Cours d'essai\s*-\s*", "Cours d’essai – ", label, flags=re.IGNORECASE)
+    return re.sub(r"\bEveil\b", "Éveil", label, flags=re.IGNORECASE)
 
 
 def _invoice_number_for_subscription(subscription_id: UUID, occurred_at: datetime) -> str:
@@ -212,6 +232,7 @@ def send_plan_purchase_admin_notifications(
     paid_at: datetime,
     amount_paid: Decimal | None = None,
     currency: str | None = None,
+    student_name: str | None = None,
 ) -> list[str]:
     client_name = f"{(first_name or '').strip()} {(last_name or '').strip()}".strip() or client_email
     normalized_currency = (currency or "EUR").strip().upper() or "EUR"
@@ -225,7 +246,8 @@ def send_plan_purchase_admin_notifications(
     context = {
         "client_name": client_name,
         "client_email": client_email,
-        "plan_name": plan_name.strip() or "Formule Piano Academie",
+        "student_name": (student_name or "").strip() or client_name,
+        "plan_name": plan_name.strip() or "Formule Piano Académie",
         "amount_paid": amount_text,
         "currency": normalized_currency,
         "paid_at": local_paid_at.strftime("%d/%m/%Y %H:%M"),
@@ -255,6 +277,7 @@ def send_plan_purchase_admin_notifications(
 
 
 __all__ = [
+    "plan_purchase_notification_label",
     "send_client_payment_success_notifications",
     "send_payment_success_notifications",
     "send_plan_purchase_admin_notifications",

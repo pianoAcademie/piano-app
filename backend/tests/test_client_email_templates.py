@@ -13,6 +13,7 @@ from app.services.booking_confirmation_templates import render_booking_confirmat
 from uuid import uuid4
 
 from app.services.client_purchase_notifications import (
+    plan_purchase_notification_label,
     send_client_payment_success_notifications,
     send_payment_success_notifications,
     send_plan_purchase_admin_notifications,
@@ -21,6 +22,20 @@ from app.services.messaging_templates import PREDEFINED_TEMPLATE_DEFINITIONS, re
 
 
 class ClientEmailTemplateTests(unittest.TestCase):
+    def test_trial_purchase_notification_uses_activity_specific_label(self) -> None:
+        label = plan_purchase_notification_label(
+            plan_name="Cours d'essai de piano en présentiel",
+            price_breakdown=[
+                {
+                    "code": "TRIAL_COURSE",
+                    "label": "Cours d'essai - Eveil musical",
+                    "amount_ttc": "25.00",
+                }
+            ],
+        )
+
+        self.assertEqual(label, "Cours d’essai – Éveil musical")
+
     def test_external_predefined_email_templates_use_html_branding(self) -> None:
         external_codes = {
             "PASSWORD_RESET",
@@ -161,6 +176,7 @@ class ClientEmailTemplateTests(unittest.TestCase):
                 paid_at=datetime(2026, 8, 5, 18, 15, tzinfo=timezone.utc),
                 amount_paid=Decimal("280.00"),
                 currency="EUR",
+                student_name="Gabriel Souza",
             )
 
         self.assertEqual(result, ["msg-admin"])
@@ -171,6 +187,7 @@ class ClientEmailTemplateTests(unittest.TestCase):
         self.assertEqual(kwargs["context"]["paid_at"], "05/08/2026 20:15")
         self.assertEqual(kwargs["context"]["amount_paid"], "280.00")
         self.assertEqual(kwargs["context"]["payment_method"], "STRIPE")
+        self.assertEqual(kwargs["context"]["student_name"], "Gabriel Souza")
         self.assertIn(str(client_id), kwargs["context"]["client_url"])
 
     def test_booking_confirmation_uses_client_planning_link(self) -> None:
@@ -234,6 +251,46 @@ class ClientEmailTemplateTests(unittest.TestCase):
         self.assertIsNotNone(rendered)
         assert rendered is not None
         self.assertEqual(rendered.body, "03/08/2026 18:00 (Asia/Riyadh)")
+
+    def test_trial_booking_confirmation_is_explicit_and_hides_technical_teacher(self) -> None:
+        template = {
+            "active": True,
+            "subject": "Nouvelle réservation confirmée – {activity_name}",
+            "body": (
+                "<p>Type : {booking_type_label}</p>"
+                "<p>Activité : {course_activity_name}</p>"
+                "<li><strong>Professeur :</strong> {teacher_name}</li>"
+            ),
+            "body_format": "HTML",
+        }
+        with patch(
+            "app.services.booking_confirmation_templates.resolve_predefined_template",
+            return_value=template,
+        ), patch(
+            "app.services.booking_confirmation_templates._frontend_url",
+            return_value="https://app.piano-academie.com/client?tab=planning",
+        ):
+            rendered = render_booking_confirmation_email(
+                db=object(),
+                audience="ADMIN",
+                recipient_name="Administration",
+                student_name="Noa Lewinger",
+                activity_name="Eveil musical",
+                start_at=datetime(2026, 9, 19, 8, 0, tzinfo=timezone.utc),
+                timezone_name="Europe/Paris",
+                location_name="Rue de la Pompe",
+                teacher_name="Service Administration",
+                language="fr",
+                is_trial_course=True,
+            )
+
+        self.assertIsNotNone(rendered)
+        assert rendered is not None
+        self.assertEqual(rendered.subject, "Nouvelle réservation confirmée – Cours d’essai – Éveil musical")
+        self.assertIn("Type : Cours d’essai", rendered.body)
+        self.assertIn("Activité : Éveil musical", rendered.body)
+        self.assertNotIn("Professeur", rendered.body)
+        self.assertNotIn("Service Administration", rendered.body)
 
     def test_booking_confirmation_omits_teacher_row_when_absent(self) -> None:
         template = {
