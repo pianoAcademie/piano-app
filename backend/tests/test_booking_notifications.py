@@ -17,12 +17,16 @@ from app.services.notifications.application.orchestrator import (
     _refresh_pending_email_reminder,
     schedule_booking_created_notifications,
     schedule_reminder_notifications_for_booking,
+    schedule_waitlist_joined_notification,
+    schedule_waitlist_promoted_notification,
 )
 from app.services.notifications.application.recipients import ResolvedRecipient
 from app.services.notifications.domain.constants import (
     NOTIFICATION_STATUS_PENDING,
     NOTIFICATION_TYPE_REMINDER_EMAIL,
     NOTIFICATION_TYPE_TEACHER_BOOKING_CONFIRMATION,
+    NOTIFICATION_TYPE_CLIENT_WAITLIST_JOINED,
+    NOTIFICATION_TYPE_CLIENT_WAITLIST_PROMOTED,
     QUEUE_NOTIFICATIONS_IMMEDIATE,
     QUEUE_NOTIFICATIONS_SCHEDULED,
 )
@@ -203,6 +207,81 @@ class BookingNotificationTests(unittest.TestCase):
         self.assertTrue(notification.payload_snapshot["meeting_link_included"])
         self.assertEqual(notification.updated_at, now)
         self.assertEqual(db.added, [notification])
+
+    def test_waitlist_emails_explain_join_and_automatic_promotion(self) -> None:
+        now = datetime(2026, 8, 10, 10, 0, tzinfo=timezone.utc)
+        session_id = uuid4()
+        student_id = uuid4()
+        recipient_id = uuid4()
+        booking = SimpleNamespace(id=uuid4(), session_id=session_id, user_id=student_id)
+        session_obj = SimpleNamespace(
+            id=session_id,
+            location_id=uuid4(),
+            start_at_utc=datetime(2026, 8, 14, 17, 0, tzinfo=timezone.utc),
+            timezone="Europe/Paris",
+        )
+        course_type = SimpleNamespace(id=uuid4(), name="Cours collectif")
+        student = SimpleNamespace(first_name="Gabrielle", last_name="Partula", email="student@example.test")
+        location = SimpleNamespace(name="Rue de Richelieu", timezone="Europe/Paris")
+        recipient_contact = SimpleNamespace(preferred_language="fr", timezone="Europe/Paris")
+        recipient = ResolvedRecipient(
+            contact_type="USER",
+            contact_id=recipient_id,
+            email="parent@example.test",
+            phone=None,
+        )
+
+        for promoted in (False, True):
+            with self.subTest(promoted=promoted):
+                fake_db = _FakeSession([student, location, recipient_contact])
+                created_notification_id = uuid4()
+                with patch(
+                    "app.services.notifications.application.orchestrator._booking_context",
+                    return_value=(session_obj, course_type),
+                ), patch(
+                    "app.services.notifications.application.orchestrator.resolve_client_booking_notification_recipient",
+                    return_value=recipient,
+                ), patch(
+                    "app.services.notifications.application.orchestrator.create_domain_event",
+                    return_value=SimpleNamespace(id=uuid4()),
+                ), patch(
+                    "app.services.notifications.application.orchestrator.create_notification_if_new",
+                    return_value=SimpleNamespace(id=created_notification_id),
+                ) as create_notification:
+                    if promoted:
+                        queued = schedule_waitlist_promoted_notification(
+                            fake_db,
+                            booking=booking,
+                            occurred_at=now,
+                        )
+                    else:
+                        queued = schedule_waitlist_joined_notification(
+                            fake_db,
+                            booking=booking,
+                            actor_user_id=student_id,
+                            occurred_at=now,
+                            waitlist_position=2,
+                        )
+
+                kwargs = create_notification.call_args.kwargs
+                expected_type = (
+                    NOTIFICATION_TYPE_CLIENT_WAITLIST_PROMOTED
+                    if promoted
+                    else NOTIFICATION_TYPE_CLIENT_WAITLIST_JOINED
+                )
+                self.assertEqual(kwargs["notification_type"], expected_type)
+                self.assertEqual(kwargs["recipient_email"], "parent@example.test")
+                self.assertIn("Gabrielle Partula", kwargs["body_snapshot"])
+                self.assertIn("Rue de Richelieu", kwargs["body_snapshot"])
+                if promoted:
+                    self.assertIn("Votre place est confirmée", kwargs["subject"])
+                    self.assertIn("Une place s’est libérée", kwargs["body_snapshot"])
+                else:
+                    self.assertIn("Inscription sur liste d’attente", kwargs["subject"])
+                    self.assertIn("Position sur la liste", kwargs["body_snapshot"])
+                    self.assertIn(">2<", kwargs["body_snapshot"])
+                self.assertEqual(len(queued), 1)
+                self.assertEqual(queued[0].notification_id, created_notification_id)
 
     def test_confirmed_booking_notifies_session_teacher(self) -> None:
         now = datetime(2026, 6, 15, 13, 30, tzinfo=timezone.utc)

@@ -6306,6 +6306,18 @@ button.danger:focus-visible {
   display: none;
 }
 
+.session-slot-waitlist {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #edf0f5;
+}
+
+.session-slot-waitlist h4 {
+  margin: 0 0 10px;
+  color: #5f461f;
+  font-size: 15px;
+}
+
 .session-slot-section-body {
   padding: 12px;
   display: grid;

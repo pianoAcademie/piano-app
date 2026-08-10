@@ -46,6 +46,8 @@ from app.services.notifications.application.orchestrator import (
     enqueue_notifications,
     schedule_booking_cancelled_notifications,
     schedule_booking_created_notifications,
+    schedule_waitlist_joined_notification,
+    schedule_waitlist_promoted_notification,
 )
 from app.services.pricing import resolve_vat_rate
 from app.services.reminders import ensure_booking_reminder, skip_pending_reminders_for_booking
@@ -1019,7 +1021,8 @@ def _promote_waitlist_if_possible(
     now: datetime,
     *,
     allow_planless_promotion: bool = False,
-) -> None:
+) -> list[object]:
+    notifications: list[object] = []
     course_type = db.scalar(select(CourseType).where(CourseType.id == session_obj.course_type_id))
     credit_type_id = course_type.credit_type_id if course_type is not None else None
     course_type_name = course_type.name if course_type is not None else None
@@ -1028,7 +1031,7 @@ def _promote_waitlist_if_possible(
     while True:
         booked_count = _count_booked(db, session_obj.id)
         if booked_count >= session_obj.capacity_max:
-            return
+            return notifications
 
         next_waitlisted = db.scalar(
             select(Booking)
@@ -1042,8 +1045,43 @@ def _promote_waitlist_if_possible(
         )
 
         if next_waitlisted is None:
-            return
+            return notifications
 
+        promoted_user = db.scalar(
+            select(User)
+            .where(User.id == next_waitlisted.user_id)
+            .with_for_update()
+        )
+        if promoted_user is None:
+            next_waitlisted.status = BookingStatus.CANCELLED
+            next_waitlisted.cancelled_at = now
+            next_waitlisted.cancellation_reason = "WAITLIST_PROMOTION_USER_MISSING"
+            db.flush()
+            continue
+
+        def confirm_promotion() -> None:
+            next_waitlisted.status = BookingStatus.BOOKED
+            next_waitlisted.booked_at = now
+            next_waitlisted.cancelled_at = None
+            next_waitlisted.cancellation_reason = None
+            notifications.extend(
+                _activate_confirmed_booking(
+                    db,
+                    booking=next_waitlisted,
+                    booking_owner=promoted_user,
+                    session_obj=session_obj,
+                    actor_user_id=None,
+                    occurred_at=now,
+                )
+            )
+            db.flush()
+            notifications.extend(
+                schedule_waitlist_promoted_notification(
+                    db,
+                    booking=next_waitlisted,
+                    occurred_at=now,
+                )
+            )
         if next_waitlisted.client_plan_subscription_id is None:
             if next_waitlisted.manual_credit_type_id is not None:
                 manual_credit_balance = _load_manual_credit_balance_for_update(
@@ -1057,44 +1095,10 @@ def _promote_waitlist_if_possible(
                     next_waitlisted.cancellation_reason = "WAITLIST_PROMOTION_NO_MANUAL_CREDIT"
                     db.flush()
                     continue
-                next_waitlisted.status = BookingStatus.BOOKED
-                next_waitlisted.booked_at = now
-                next_waitlisted.cancelled_at = None
-                next_waitlisted.cancellation_reason = None
-                promoted_user = db.scalar(
-                    select(User)
-                    .where(User.id == next_waitlisted.user_id)
-                    .with_for_update()
-                )
-                if promoted_user is not None:
-                    _mark_first_course_if_needed(promoted_user, session_obj)
-                ensure_booking_reminder(
-                    db,
-                    booking=next_waitlisted,
-                    session_obj=session_obj,
-                    now=now,
-                )
-                db.flush()
+                confirm_promotion()
                 continue
             if allow_planless_promotion:
-                next_waitlisted.status = BookingStatus.BOOKED
-                next_waitlisted.booked_at = now
-                next_waitlisted.cancelled_at = None
-                next_waitlisted.cancellation_reason = None
-                promoted_user = db.scalar(
-                    select(User)
-                    .where(User.id == next_waitlisted.user_id)
-                    .with_for_update()
-                )
-                if promoted_user is not None:
-                    _mark_first_course_if_needed(promoted_user, session_obj)
-                ensure_booking_reminder(
-                    db,
-                    booking=next_waitlisted,
-                    session_obj=session_obj,
-                    now=now,
-                )
-                db.flush()
+                confirm_promotion()
                 continue
             next_waitlisted.status = BookingStatus.CANCELLED
             next_waitlisted.cancelled_at = now
@@ -1153,24 +1157,7 @@ def _promote_waitlist_if_possible(
             db.flush()
             continue
 
-        next_waitlisted.status = BookingStatus.BOOKED
-        next_waitlisted.booked_at = now
-        next_waitlisted.cancelled_at = None
-        next_waitlisted.cancellation_reason = None
-        promoted_user = db.scalar(
-            select(User)
-            .where(User.id == next_waitlisted.user_id)
-            .with_for_update()
-        )
-        if promoted_user is not None:
-            _mark_first_course_if_needed(promoted_user, session_obj)
-        ensure_booking_reminder(
-            db,
-            booking=next_waitlisted,
-            session_obj=session_obj,
-            now=now,
-        )
-        db.flush()
+        confirm_promotion()
 
 
 def _book_session_internal(
@@ -1237,11 +1224,13 @@ def _book_session_internal(
             detail="Booking deadline reached for this activity",
         )
 
-    _promote_waitlist_if_possible(
-        db,
-        session_obj,
-        now,
-        allow_planless_promotion=allows_planless_booking,
+    orchestrated_notifications.extend(
+        _promote_waitlist_if_possible(
+            db,
+            session_obj,
+            now,
+            allow_planless_promotion=allows_planless_booking,
+        )
     )
 
     existing = db.scalar(
@@ -1402,6 +1391,18 @@ def _book_session_internal(
     else:
         if reusable_existing is None:
             db.flush()
+        if booking_status == BookingStatus.WAITLISTED:
+            waitlist_position = _waitlist_position(db, booking)
+            if waitlist_position is not None:
+                orchestrated_notifications.extend(
+                    schedule_waitlist_joined_notification(
+                        db,
+                        booking=booking,
+                        actor_user_id=current_user.id,
+                        occurred_at=now,
+                        waitlist_position=waitlist_position,
+                    )
+                )
         skip_pending_reminders_for_booking(
             db,
             booking_id=booking.id,
@@ -1578,6 +1579,17 @@ def cancel_booking(
         actor_user_id=current_user.id,
         occurred_at=now,
     )
+    if previous_status in BOOKING_STATUSES_CONSUMING_CAPACITY and session_obj.start_at_utc > now:
+        orchestrated_notifications.extend(
+            _promote_waitlist_if_possible(
+                db,
+                session_obj,
+                now,
+                allow_planless_promotion=scopes_allow_planless_booking(
+                    resolve_session_booking_scopes(session_obj)
+                ),
+            )
+        )
     db.commit()
     if orchestrated_notifications:
         enqueue_notifications(orchestrated_notifications)

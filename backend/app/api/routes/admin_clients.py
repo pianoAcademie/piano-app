@@ -206,6 +206,7 @@ from app.services.notifications.application.recipients import (
     resolve_admin_booking_notification_recipients,
     resolve_client_booking_notification_recipient,
 )
+from app.services.notifications.application.orchestrator import enqueue_notifications
 from app.services.payment_receipts import (
     assert_payment_receipt_public_token,
     build_booking_receipt_snapshot,
@@ -1486,6 +1487,24 @@ def _booking_payment_hold_expired(booking: Booking, *, now: datetime) -> bool:
         booking.status == BookingStatus.PENDING_PAYMENT
         and booking.payment_hold_expires_at is not None
         and booking.payment_hold_expires_at <= now
+    )
+
+
+def _promote_waitlist_after_payment_hold_expiry(
+    db: Session,
+    *,
+    session_obj: CourseSession,
+    now: datetime,
+) -> list[object]:
+    if session_obj.status != SessionStatus.SCHEDULED or session_obj.start_at_utc <= now:
+        return []
+    return _promote_waitlist_if_possible(
+        db,
+        session_obj,
+        now,
+        allow_planless_promotion=scopes_allow_planless_booking(
+            resolve_session_booking_scopes(session_obj)
+        ),
     )
 
 
@@ -11985,6 +12004,7 @@ def refund_admin_client_payment_receipt(
         refunded_at=now,
     )
 
+    promotion_notifications = []
     if booking.status != BookingStatus.CANCELLED:
         booking.status = BookingStatus.CANCELLED
         booking.cancelled_at = now
@@ -11996,11 +12016,13 @@ def refund_admin_client_payment_receipt(
             reason="Reservation annulee apres remboursement",
             now=now,
         )
-        _promote_waitlist_if_possible(
-            db,
-            session_obj,
-            now,
-            allow_planless_promotion=scopes_allow_planless_booking(resolve_session_booking_scopes(session_obj)),
+        promotion_notifications.extend(
+            _promote_waitlist_if_possible(
+                db,
+                session_obj,
+                now,
+                allow_planless_promotion=scopes_allow_planless_booking(resolve_session_booking_scopes(session_obj)),
+            )
         )
 
     snapshot = build_booking_receipt_snapshot(
@@ -12040,6 +12062,8 @@ def refund_admin_client_payment_receipt(
         ),
     )
     db.commit()
+    if promotion_notifications:
+        enqueue_notifications(promotion_notifications)
     return AdminClientPaymentRefundOut(
         client_id=client_id,
         source="PAYMENT_RECEIPT",
@@ -13436,6 +13460,7 @@ def start_admin_client_payment_receipt_public_payment(
 
     now = _utcnow()
     if _booking_payment_hold_expired(booking, now=now):
+        promotion_notifications = []
         booking.status = BookingStatus.CANCELLED
         booking.cancelled_at = now
         booking.cancellation_reason = PAYMENT_TIMEOUT_CANCELLATION_REASON
@@ -13447,7 +13472,16 @@ def start_admin_client_payment_receipt_public_payment(
         receipt.updated_at = now
         db.add(booking)
         db.add(receipt)
+        promotion_notifications.extend(
+            _promote_waitlist_after_payment_hold_expiry(
+                db,
+                session_obj=session_obj,
+                now=now,
+            )
+        )
         db.commit()
+        if promotion_notifications:
+            enqueue_notifications(promotion_notifications)
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Ce lien de paiement a expire")
 
     if receipt.status == "EXPIRED" or (
@@ -13553,12 +13587,20 @@ def handle_admin_client_payment_receipt_public_payment_webhook(
     receipt.receipt_metadata = metadata
     booking, session_obj, course_type, location, owner = _booking_context_for_receipt(db, booking_id=receipt.booking_id)
     hold_expired = False
+    promotion_notifications = []
     if _booking_payment_hold_expired(booking, now=now):
         hold_expired = True
         booking.status = BookingStatus.CANCELLED
         booking.cancelled_at = now
         booking.cancellation_reason = PAYMENT_TIMEOUT_CANCELLATION_REASON
         booking.payment_hold_expires_at = None
+        promotion_notifications.extend(
+            _promote_waitlist_after_payment_hold_expiry(
+                db,
+                session_obj=session_obj,
+                now=now,
+            )
+        )
     elif booking.status == BookingStatus.CANCELLED and (booking.cancellation_reason or "").strip().upper() == PAYMENT_TIMEOUT_CANCELLATION_REASON:
         hold_expired = True
     if not lookup.paid:
@@ -13569,6 +13611,8 @@ def handle_admin_client_payment_receipt_public_payment_webhook(
             db.add(booking)
         db.add(receipt)
         db.commit()
+        if promotion_notifications:
+            enqueue_notifications(promotion_notifications)
         return {"ok": True, "processed": True, "paid": False, "status": lookup.status}
 
     snapshot = build_booking_receipt_snapshot(
@@ -13626,6 +13670,8 @@ def handle_admin_client_payment_receipt_public_payment_webhook(
     db.add(booking)
     db.add(receipt)
     db.commit()
+    if promotion_notifications:
+        enqueue_notifications(promotion_notifications)
     return {
         "ok": True,
         "processed": True,
@@ -13684,12 +13730,20 @@ def return_admin_client_payment_receipt_public_payment(
     receipt.receipt_metadata = metadata
     booking, session_obj, course_type, location, owner = _booking_context_for_receipt(db, booking_id=receipt.booking_id)
     hold_expired = False
+    promotion_notifications = []
     if _booking_payment_hold_expired(booking, now=now):
         hold_expired = True
         booking.status = BookingStatus.CANCELLED
         booking.cancelled_at = now
         booking.cancellation_reason = PAYMENT_TIMEOUT_CANCELLATION_REASON
         booking.payment_hold_expires_at = None
+        promotion_notifications.extend(
+            _promote_waitlist_after_payment_hold_expiry(
+                db,
+                session_obj=session_obj,
+                now=now,
+            )
+        )
     elif booking.status == BookingStatus.CANCELLED and (booking.cancellation_reason or "").strip().upper() == PAYMENT_TIMEOUT_CANCELLATION_REASON:
         hold_expired = True
     if not lookup.paid:
@@ -13700,6 +13754,8 @@ def return_admin_client_payment_receipt_public_payment(
             db.add(booking)
         db.add(receipt)
         db.commit()
+        if promotion_notifications:
+            enqueue_notifications(promotion_notifications)
         return _public_payment_result_html(
             title="Paiement en cours",
             subtitle="Le PSP n'a pas encore confirme le paiement. Merci de verifier a nouveau dans quelques minutes.",
@@ -13763,6 +13819,8 @@ def return_admin_client_payment_receipt_public_payment(
     db.add(booking)
     db.add(receipt)
     db.commit()
+    if promotion_notifications:
+        enqueue_notifications(promotion_notifications)
 
     booking_confirmed = booking.status == BookingStatus.BOOKED
     return _public_payment_result_html(

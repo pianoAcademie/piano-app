@@ -29,6 +29,7 @@ from app.api.routes.bookings import (
 )
 from app.api.deps import get_admin_permission_map, get_db, require_admin_or_permissions, require_roles
 from app.models.catalog import (
+    BOOKING_STATUSES_CONSUMING_CAPACITY,
     Booking,
     BookingStatus,
     CourseSession,
@@ -56,13 +57,18 @@ from app.models.user import ClientStatus, User, UserPresence, UserPresenceHour, 
 from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
 from app.services.automation_triggers import schedule_trial_attended_triggers
 from app.services.invoice_documents import normalize_billing_entity
-from app.services.notifications.application.orchestrator import enqueue_notifications, schedule_slot_cancelled_notifications
+from app.services.notifications.application.orchestrator import (
+    enqueue_notifications,
+    schedule_slot_cancelled_notifications,
+    schedule_waitlist_joined_notification,
+)
 from app.services.notifications.domain.constants import (
     NOTIFICATION_STATUS_CANCELLED,
     NOTIFICATION_STATUS_PENDING,
     NOTIFICATION_STATUS_QUEUED,
     NOTIFICATION_TYPE_REMINDER_EMAIL,
     NOTIFICATION_TYPE_REMINDER_SMS,
+    SOURCE_ADMIN_BO,
 )
 from app.services.payment_receipts import (
     FINAL_INVOICE_ELIGIBLE_BOOKING_STATUSES,
@@ -78,6 +84,7 @@ from app.services.session_audience import (
     primary_session_audience_scope,
     resolve_session_booking_scopes,
     resolve_session_visibility_scopes,
+    scopes_allow_planless_booking,
     serialize_session_audience_scopes,
 )
 from app.services.session_teachers import (
@@ -3292,6 +3299,7 @@ def move_planning_reorganization_booking(
     _: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> AdminPlanningReorganizationMoveOut:
     now = _utcnow()
+    orchestrated_notifications = []
     source_booking = db.scalar(select(Booking).where(Booking.id == payload.booking_id).with_for_update())
     if source_booking is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
@@ -3313,6 +3321,7 @@ def move_planning_reorganization_booking(
         or source_session.recurrence_group_id is None
         or target_session.recurrence_group_id is None
     ):
+        source_status = source_booking.status
         moved, detail = _move_planning_reorganization_booking_occurrence(
             db,
             booking=source_booking,
@@ -3324,7 +3333,25 @@ def move_planning_reorganization_booking(
         skipped_count += 0 if moved else 1
         if detail:
             details.append(detail)
+        if (
+            moved
+            and source_status in BOOKING_STATUSES_CONSUMING_CAPACITY
+            and source_session.status == SessionStatus.SCHEDULED
+            and source_session.start_at_utc > now
+        ):
+            orchestrated_notifications.extend(
+                _promote_waitlist_if_possible(
+                    db,
+                    source_session,
+                    now,
+                    allow_planless_promotion=scopes_allow_planless_booking(
+                        resolve_session_booking_scopes(source_session)
+                    ),
+                )
+            )
         db.commit()
+        if orchestrated_notifications:
+            enqueue_notifications(orchestrated_notifications)
         return AdminPlanningReorganizationMoveOut(
             moved_count=moved_count,
             skipped_count=skipped_count,
@@ -3367,6 +3394,7 @@ def move_planning_reorganization_booking(
             if len(details) < 8:
                 details.append(f"Aucun creneau cible le {source_day.isoformat()}")
             continue
+        source_status = booking.status
         moved, detail = _move_planning_reorganization_booking_occurrence(
             db,
             booking=booking,
@@ -3378,8 +3406,26 @@ def move_planning_reorganization_booking(
         skipped_count += 0 if moved else 1
         if detail and len(details) < 8:
             details.append(detail)
+        if (
+            moved
+            and source_status in BOOKING_STATUSES_CONSUMING_CAPACITY
+            and current_source_session.status == SessionStatus.SCHEDULED
+            and current_source_session.start_at_utc > now
+        ):
+            orchestrated_notifications.extend(
+                _promote_waitlist_if_possible(
+                    db,
+                    current_source_session,
+                    now,
+                    allow_planless_promotion=scopes_allow_planless_booking(
+                        resolve_session_booking_scopes(current_source_session)
+                    ),
+                )
+            )
 
     db.commit()
+    if orchestrated_notifications:
+        enqueue_notifications(orchestrated_notifications)
     return AdminPlanningReorganizationMoveOut(
         moved_count=moved_count,
         skipped_count=skipped_count,
@@ -4243,8 +4289,9 @@ def add_admin_session_booking(
     scope: BookingScope | None = Query(default=None),
     apply_scope: ApplyScope | None = Query(default=None),
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
+    current_user: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> AdminSessionBookingOperationOut:
+    orchestrated_notifications = []
     try:
         resolved_scope = _resolve_booking_scope(scope=scope, apply_scope=apply_scope)
         anchor_session = db.scalar(select(CourseSession).where(CourseSession.id == session_id).with_for_update())
@@ -4426,6 +4473,19 @@ def add_admin_session_booking(
                 )
             else:
                 waitlisted_count += 1
+                waitlist_position = _waitlist_position(db, booking)
+                if waitlist_position is not None:
+                    orchestrated_notifications.extend(
+                        schedule_waitlist_joined_notification(
+                            db,
+                            booking=booking,
+                            actor_user_id=current_user.id,
+                            occurred_at=now,
+                            waitlist_position=waitlist_position,
+                            source=SOURCE_ADMIN_BO,
+                            actor_type="admin",
+                        )
+                    )
                 skip_pending_reminders_for_booking(
                     db,
                     booking_id=booking.id,
@@ -4436,6 +4496,8 @@ def add_admin_session_booking(
             processed_count += 1
 
         db.commit()
+        if orchestrated_notifications:
+            enqueue_notifications(orchestrated_notifications)
     except OperationalError as exc:
         db.rollback()
         if _is_retryable_lock_error(exc):
@@ -4463,6 +4525,7 @@ def cancel_admin_session_booking(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> Response:
+    orchestrated_notifications = []
     session_obj = db.scalar(
         select(CourseSession)
         .where(CourseSession.id == session_id)
@@ -4539,9 +4602,21 @@ def cancel_admin_session_booking(
             reason="Booking cancelled by admin",
             now=now,
         )
-        _promote_waitlist_if_possible(db, target_session, now)
+        if previous_status in BOOKING_STATUSES_CONSUMING_CAPACITY and is_future_scheduled_session:
+            orchestrated_notifications.extend(
+                _promote_waitlist_if_possible(
+                    db,
+                    target_session,
+                    now,
+                    allow_planless_promotion=scopes_allow_planless_booking(
+                        resolve_session_booking_scopes(target_session)
+                    ),
+                )
+            )
 
     db.commit()
+    if orchestrated_notifications:
+        enqueue_notifications(orchestrated_notifications)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -4553,6 +4628,7 @@ def update_session(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> AdminSessionOut:
+    orchestrated_notifications = []
     session_obj = db.scalar(select(CourseSession).where(CourseSession.id == session_id).with_for_update())
     if session_obj is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
@@ -5042,7 +5118,16 @@ def update_session(
             and target.status == SessionStatus.SCHEDULED
             and target.capacity_max > 0
         ):
-            _promote_waitlist_if_possible(db, target, now)
+            orchestrated_notifications.extend(
+                _promote_waitlist_if_possible(
+                    db,
+                    target,
+                    now,
+                    allow_planless_promotion=scopes_allow_planless_booking(
+                        resolve_session_booking_scopes(target)
+                    ),
+                )
+            )
 
     if has_substitute_teacher_update:
         session_obj.substitute_teacher_id = substitute_teacher_id
@@ -5274,6 +5359,8 @@ def update_session(
                 )
 
     db.commit()
+    if orchestrated_notifications:
+        enqueue_notifications(orchestrated_notifications)
     db.refresh(session_obj)
 
     booked_count = _booked_count_by_session(db, session_id)

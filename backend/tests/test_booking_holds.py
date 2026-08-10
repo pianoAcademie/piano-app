@@ -13,6 +13,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from app.api.routes.bookings import (
     PAYMENT_TIMEOUT_CANCELLATION_REASON,
     _next_booking_status,
+    _promote_waitlist_if_possible,
     promote_pending_payment_booking,
 )
 from app.models.catalog import BookingStatus, SessionStatus
@@ -50,6 +51,9 @@ class _FakeSession:
 
     def add(self, obj: object) -> None:
         self.added.append(obj)
+
+    def flush(self) -> None:
+        return None
 
 
 class BookingHoldTests(unittest.TestCase):
@@ -105,6 +109,9 @@ class BookingHoldTests(unittest.TestCase):
             "app.api.routes.bookings.schedule_booking_created_notifications",
             return_value=[],
         ) as schedule_notifications, patch(
+            "app.api.routes.bookings.schedule_booking_created_triggers",
+            return_value=[],
+        ), patch(
             "app.api.routes.bookings.enqueue_notifications",
         ) as enqueue_notifications:
             promoted = promote_pending_payment_booking(
@@ -123,6 +130,54 @@ class BookingHoldTests(unittest.TestCase):
         ensure_booking_reminder.assert_called_once()
         schedule_notifications.assert_called_once()
         enqueue_notifications.assert_not_called()
+
+    def test_waitlist_promotion_confirms_first_person_and_schedules_notification(self) -> None:
+        now = datetime(2026, 8, 10, 10, 0, tzinfo=timezone.utc)
+        user_id = uuid4()
+        session_obj = SimpleNamespace(
+            id=uuid4(),
+            course_type_id=uuid4(),
+            capacity_max=1,
+            start_at_utc=now + timedelta(days=1),
+        )
+        course_type = SimpleNamespace(
+            id=session_obj.course_type_id,
+            name="Cours collectif",
+            credit_type_id=uuid4(),
+            service_code="COLLECTIF",
+        )
+        waitlisted = SimpleNamespace(
+            id=uuid4(),
+            user_id=user_id,
+            status=BookingStatus.WAITLISTED,
+            booked_at=now - timedelta(hours=1),
+            client_plan_subscription_id=None,
+            manual_credit_type_id=course_type.credit_type_id,
+            cancelled_at=None,
+            cancellation_reason=None,
+        )
+        user = SimpleNamespace(id=user_id)
+        balance = SimpleNamespace(credits_count=1)
+        queued_notification = SimpleNamespace(notification_id=uuid4())
+        fake_db = _FakeSession(scalar_values=[course_type, waitlisted, user, None])
+
+        with patch("app.api.routes.bookings._count_booked", side_effect=[0, 1]), patch(
+            "app.api.routes.bookings._load_manual_credit_balance_for_update",
+            return_value=balance,
+        ), patch(
+            "app.api.routes.bookings._activate_confirmed_booking",
+            return_value=[],
+        ), patch(
+            "app.api.routes.bookings.schedule_waitlist_promoted_notification",
+            return_value=[queued_notification],
+        ) as schedule_promoted:
+            notifications = _promote_waitlist_if_possible(fake_db, session_obj, now)
+
+        self.assertEqual(waitlisted.status, BookingStatus.BOOKED)
+        self.assertEqual(waitlisted.booked_at, now)
+        self.assertEqual(balance.credits_count, 0)
+        self.assertEqual(notifications, [queued_notification])
+        schedule_promoted.assert_called_once_with(fake_db, booking=waitlisted, occurred_at=now)
 
     def test_expire_pending_payment_bookings_cancels_booking_and_receipt(self) -> None:
         now = datetime(2026, 3, 31, 10, 30, tzinfo=timezone.utc)

@@ -39,6 +39,8 @@ from app.services.notifications.domain.constants import (
     DISPATCH_MODE_SCHEDULED,
     EVENT_BOOKING_CANCELLED_FROM_CLIENT_PORTAL,
     EVENT_BOOKING_CREATED_FROM_CLIENT_PORTAL,
+    EVENT_BOOKING_WAITLISTED,
+    EVENT_BOOKING_WAITLIST_PROMOTED,
     EVENT_BOOKING_REMINDER_DUE,
     EVENT_SLOT_CANCELLED,
     EVENT_SLOT_AUTO_CANCELLED_LOW_ATTENDANCE,
@@ -53,6 +55,8 @@ from app.services.notifications.domain.constants import (
     NOTIFICATION_TYPE_AUTO_CANCEL_TEACHER,
     NOTIFICATION_TYPE_CLIENT_BOOKING_CANCELLATION,
     NOTIFICATION_TYPE_CLIENT_BOOKING_CONFIRMATION,
+    NOTIFICATION_TYPE_CLIENT_WAITLIST_JOINED,
+    NOTIFICATION_TYPE_CLIENT_WAITLIST_PROMOTED,
     NOTIFICATION_TYPE_REMINDER_EMAIL,
     NOTIFICATION_TYPE_REMINDER_SMS,
     NOTIFICATION_TYPE_TEACHER_BOOKING_CONFIRMATION,
@@ -60,6 +64,7 @@ from app.services.notifications.domain.constants import (
     QUEUE_NOTIFICATIONS_SCHEDULED,
     SOURCE_CLIENT_PORTAL,
     SOURCE_SCHEDULER,
+    SOURCE_SYSTEM,
 )
 from app.services.notifications.infrastructure.repository import (
     create_domain_event,
@@ -668,6 +673,197 @@ def schedule_booking_created_notifications(
         if created is not None:
             out.append(OrchestratedNotification(notification_id=created.id, queue_name=QUEUE_NOTIFICATIONS_IMMEDIATE))
     return out
+
+
+def _schedule_client_waitlist_notification(
+    db: Session,
+    *,
+    booking: Booking,
+    occurred_at: datetime,
+    promoted: bool,
+    actor_user_id: UUID | None = None,
+    source: str = SOURCE_CLIENT_PORTAL,
+    actor_type: str = "client",
+    waitlist_position: int | None = None,
+) -> list[OrchestratedNotification]:
+    session_obj, course_type = _booking_context(db, booking=booking)
+    student = db.scalar(select(User).where(User.id == booking.user_id))
+    student_label = (
+        f"{(student.first_name or '').strip()} {(student.last_name or '').strip()}".strip()
+        if student is not None
+        else ""
+    ) or (student.email if student is not None else str(booking.user_id))
+    location = db.scalar(select(Location).where(Location.id == session_obj.location_id))
+    location_label = (location.name or "").strip() if location is not None else ""
+    recipient = resolve_client_booking_notification_recipient(db, booking=booking)
+    if recipient is None or recipient.email is None:
+        return []
+
+    recipient_contact = (
+        db.scalar(select(User).where(User.id == recipient.contact_id))
+        if recipient.contact_id is not None
+        else None
+    )
+    language = normalize_language(
+        recipient_contact.preferred_language if recipient_contact is not None else None
+    )
+    timezone_name = _recipient_course_timezone_name(recipient_contact, session_obj, location)
+    local_start, resolved_timezone = localize_datetime(session_obj.start_at_utc, timezone_name)
+    date_label = f"{local_start.strftime('%d/%m/%Y %H:%M')} ({resolved_timezone})"
+
+    notification_type = (
+        NOTIFICATION_TYPE_CLIENT_WAITLIST_PROMOTED
+        if promoted
+        else NOTIFICATION_TYPE_CLIENT_WAITLIST_JOINED
+    )
+    event_type = EVENT_BOOKING_WAITLIST_PROMOTED if promoted else EVENT_BOOKING_WAITLISTED
+    source = SOURCE_SYSTEM if promoted else source
+    event = create_domain_event(
+        db,
+        event_type=event_type,
+        source=source,
+        actor_type="system" if promoted else actor_type,
+        actor_id=None if promoted else actor_user_id,
+        related_entity_type="booking",
+        related_entity_id=booking.id,
+        occurred_at=occurred_at,
+        payload_json={
+            "booking_id": str(booking.id),
+            "session_id": str(session_obj.id),
+            "course_type_id": str(course_type.id),
+            "waitlist_position": waitlist_position,
+        },
+    )
+
+    if language == "en":
+        if promoted:
+            subject = f"Your place is confirmed - {course_type.name}"
+            preview = f"A place is now confirmed for {student_label}."
+            title = "Your place is confirmed"
+            intro = "A place has become available. Your booking is now confirmed."
+            message = "You no longer need to take any action for this booking."
+        else:
+            subject = f"Waitlist registration - {course_type.name}"
+            preview = f"{student_label} has been added to the waitlist."
+            title = "Waitlist registration"
+            intro = "The class is currently full. We have added you to the waitlist."
+            message = "We will email you automatically if a place becomes available."
+        rows = [
+            ("Student", student_label),
+            ("Activity", course_type.name),
+            ("Date and time", date_label),
+        ]
+        if location_label:
+            rows.append(("Location", location_label))
+        if not promoted and waitlist_position is not None:
+            rows.append(("Waitlist position", str(waitlist_position)))
+        greeting = "Hello,"
+        footer = "This email was sent automatically by Piano Académie."
+    else:
+        if promoted:
+            subject = f"Votre place est confirmée - {course_type.name}"
+            preview = f"Une place est maintenant confirmée pour {student_label}."
+            title = "Votre place est confirmée"
+            intro = "Une place s’est libérée. Votre réservation est désormais confirmée."
+            message = "Vous n’avez aucune action supplémentaire à effectuer pour cette réservation."
+        else:
+            subject = f"Inscription sur liste d’attente - {course_type.name}"
+            preview = f"{student_label} a été ajouté(e) à la liste d’attente."
+            title = "Inscription sur liste d’attente"
+            intro = "Le cours est actuellement complet. Nous vous avons inscrit(e) sur la liste d’attente."
+            message = "Nous vous préviendrons automatiquement par e-mail si une place se libère."
+        rows = [
+            ("Élève", student_label),
+            ("Activité", course_type.name),
+            ("Date et horaire", date_label),
+        ]
+        if location_label:
+            rows.append(("Lieu", location_label))
+        if not promoted and waitlist_position is not None:
+            rows.append(("Position sur la liste", str(waitlist_position)))
+        greeting = "Bonjour,"
+        footer = "Cet e-mail a été envoyé automatiquement par Piano Académie."
+
+    body = render_branded_email(
+        preview=preview,
+        eyebrow="LISTE D’ATTENTE" if language != "en" else "WAITLIST",
+        title=title,
+        greeting=greeting,
+        intro=intro,
+        rows=rows,
+        message=message,
+        footer=footer,
+    )
+    created = create_notification_if_new(
+        db,
+        notification_type=notification_type,
+        channel=CHANNEL_EMAIL,
+        dispatch_mode=DISPATCH_MODE_IMMEDIATE,
+        source_event_id=event.id,
+        source=source,
+        related_entity_type="booking",
+        related_entity_id=booking.id,
+        booking_id=booking.id,
+        slot_id=session_obj.id,
+        recipient_type=recipient.contact_type,
+        recipient_contact_id=recipient.contact_id,
+        recipient_email=recipient.email,
+        recipient_phone=None,
+        subject=subject,
+        body_snapshot=body,
+        payload_snapshot={
+            "booking_id": str(booking.id),
+            "body_format": "HTML",
+            "waitlist_position": waitlist_position,
+        },
+        idempotency_key=_idempotency_key_for_booking_notification(
+            notification_type=notification_type,
+            booking_id=booking.id,
+            recipient_value=recipient.email,
+            source_event_id=event.id,
+        ),
+        scheduled_for=occurred_at,
+        status=NOTIFICATION_STATUS_PENDING,
+    )
+    if created is None:
+        return []
+    return [OrchestratedNotification(notification_id=created.id, queue_name=QUEUE_NOTIFICATIONS_IMMEDIATE)]
+
+
+def schedule_waitlist_joined_notification(
+    db: Session,
+    *,
+    booking: Booking,
+    actor_user_id: UUID,
+    occurred_at: datetime,
+    waitlist_position: int,
+    source: str = SOURCE_CLIENT_PORTAL,
+    actor_type: str = "client",
+) -> list[OrchestratedNotification]:
+    return _schedule_client_waitlist_notification(
+        db,
+        booking=booking,
+        actor_user_id=actor_user_id,
+        source=source,
+        actor_type=actor_type,
+        occurred_at=occurred_at,
+        promoted=False,
+        waitlist_position=waitlist_position,
+    )
+
+
+def schedule_waitlist_promoted_notification(
+    db: Session,
+    *,
+    booking: Booking,
+    occurred_at: datetime,
+) -> list[OrchestratedNotification]:
+    return _schedule_client_waitlist_notification(
+        db,
+        booking=booking,
+        occurred_at=occurred_at,
+        promoted=True,
+    )
 
 
 def schedule_booking_cancelled_notifications(

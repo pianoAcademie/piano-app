@@ -1311,6 +1311,12 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
       errors.push(`session-bookings: ${sessionBookingsResult.message}`);
     }
   }
+  const selectedSessionWaitlistedBookings = selectedSessionBookings.filter(
+    (booking) => booking.status === "WAITLISTED",
+  );
+  const selectedSessionConfirmedBookings = selectedSessionBookings.filter(
+    (booking) => booking.status !== "WAITLISTED",
+  );
 
   const clientsSorted = [...clients]
     .filter((client) => client.is_active)
@@ -1330,7 +1336,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   }));
   const sessionRecipientStudents = Array.from(
     new Map(
-      selectedSessionBookings
+      selectedSessionConfirmedBookings
         .filter((booking) => Boolean(booking.client_id))
         .map((booking) => [
           booking.client_id,
@@ -1393,11 +1399,11 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const cancelConfirmHref = selectedSession ? withQueryParam(withSessionInHref(baseHref, selectedSession.id), "confirm_action", "cancel") : baseHref;
   const deleteConfirmHref = selectedSession ? withQueryParam(withSessionInHref(baseHref, selectedSession.id), "confirm_action", "delete") : baseHref;
   const attendanceBookings = attendanceFilter === "missing"
-    ? selectedSessionBookings.filter((booking) => bookingPresenceLabel(booking.status, language) === null)
-    : selectedSessionBookings;
+    ? selectedSessionConfirmedBookings.filter((booking) => bookingPresenceLabel(booking.status, language) === null)
+    : selectedSessionConfirmedBookings;
   const focusedAttendanceBooking =
     attendanceBookings.find((booking) => booking.id === bookingFocusId) ?? attendanceBookings[0] ?? null;
-  const selectedSessionHasBookings = selectedSessionBookings.length > 0;
+  const selectedSessionHasBookings = selectedSessionConfirmedBookings.length > 0;
   const isGroupNoteStudentAudience =
     groupNoteDestination === "STUDENTS" ||
     groupNoteDestination === "PARENTS" ||
@@ -1413,8 +1419,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     focusedAttendanceIndex >= 0 && focusedAttendanceIndex < attendanceBookings.length - 1
       ? attendanceBookings[focusedAttendanceIndex + 1]
       : null;
-  const attendanceMissingCount = selectedSessionBookings.filter((booking) => bookingPresenceLabel(booking.status, language) === null).length;
-  const attendanceCompletedCount = selectedSessionBookings.length - attendanceMissingCount;
+  const attendanceMissingCount = selectedSessionConfirmedBookings.filter((booking) => bookingPresenceLabel(booking.status, language) === null).length;
+  const attendanceCompletedCount = selectedSessionConfirmedBookings.length - attendanceMissingCount;
   const selectedCourseTypeName = selectedSession ? courseTypeById.get(selectedSession.course_type_id)?.name ?? pickText(language, "Type non defini", "Undefined type") : "";
   const selectedLocationName = selectedSession ? locationById.get(selectedSession.location_id)?.name ?? pickText(language, "Lieu non defini", "Undefined location") : "";
   const selectedHabitualProfessorDetail =
@@ -1497,12 +1503,20 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     ? ""
     : !selectedSessionAllowsStudentBookings
       ? pickText(language, "Aucune inscription possible", "Bookings disabled")
-      : selectedSessionBookings.length === 0
-        ? pickText(language, "Aucun eleve inscrit", "No student booked")
+      : selectedSessionConfirmedBookings.length === 0
+        ? pickText(
+            language,
+            selectedSessionWaitlistedBookings.length > 0
+              ? `Aucun élève inscrit · ${selectedSessionWaitlistedBookings.length} en liste d’attente`
+              : "Aucun élève inscrit",
+            selectedSessionWaitlistedBookings.length > 0
+              ? `No attendee booked · ${selectedSessionWaitlistedBookings.length} waitlisted`
+              : "No attendee booked",
+          )
         : pickText(
             language,
-            `${selectedSessionBookings.length} eleve${selectedSessionBookings.length > 1 ? "s" : ""} inscrit${selectedSessionBookings.length > 1 ? "s" : ""}`,
-            `${selectedSessionBookings.length} attendee${selectedSessionBookings.length > 1 ? "s" : ""}`,
+            `${selectedSessionConfirmedBookings.length} élève${selectedSessionConfirmedBookings.length > 1 ? "s" : ""} inscrit${selectedSessionConfirmedBookings.length > 1 ? "s" : ""}${selectedSessionWaitlistedBookings.length > 0 ? ` · ${selectedSessionWaitlistedBookings.length} en liste d’attente` : ""}`,
+            `${selectedSessionConfirmedBookings.length} attendee${selectedSessionConfirmedBookings.length > 1 ? "s" : ""}${selectedSessionWaitlistedBookings.length > 0 ? ` · ${selectedSessionWaitlistedBookings.length} waitlisted` : ""}`,
           );
   const sessionTimezoneValues = new Set<string>([
     ...PLANNING_TIMEZONES.map((option) => option.value),
@@ -2300,13 +2314,13 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
             <div className="session-slot-body">
               <details className="session-slot-section session-slot-section-attendees" open>
-                <summary>{isEnglish ? "Attendees" : "Inscrits"} ({selectedSessionBookings.length})</summary>
+                <summary>{isEnglish ? "Attendees" : "Inscrits"} ({selectedSessionConfirmedBookings.length})</summary>
                 <div className="session-slot-section-body">
-                  {selectedSessionBookings.length === 0 ? (
-                    <p className="muted session-slot-empty-state">{isEnglish ? "No student booked." : "Aucun eleve inscrit."}</p>
+                  {selectedSessionConfirmedBookings.length === 0 ? (
+                    <p className="muted session-slot-empty-state">{isEnglish ? "No student booked." : "Aucun élève inscrit."}</p>
                   ) : (
                     <div className="session-bookings-summary-list session-slot-attendees-list">
-                      {selectedSessionBookings.map((booking, index) => {
+                      {selectedSessionConfirmedBookings.map((booking, index) => {
                         const presence = bookingPresenceLabel(booking.status, language);
                         const enrollment = bookingEnrollmentLabel(booking.status, language);
                         const studentTime = bookingStudentTimeRangeLabel(booking, selectedSession, language);
@@ -2453,6 +2467,58 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       })}
                     </div>
                   )}
+                  {selectedSessionWaitlistedBookings.length > 0 ? (
+                    <div className="session-slot-waitlist">
+                      <h4>{isEnglish ? "Waitlist" : "Liste d’attente"} ({selectedSessionWaitlistedBookings.length})</h4>
+                      <div className="session-bookings-summary-list session-slot-attendees-list">
+                        {selectedSessionWaitlistedBookings.map((booking, index) => (
+                          <article key={booking.id} className="session-slot-attendee-row">
+                            <div className="session-slot-attendee-identity">
+                              {booking.client_id ? (
+                                <Link
+                                  className="client-name-link"
+                                  href={`/admin/clients/${booking.client_id}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  {booking.client_display_name || `${pickText(language, "Participant", "Attendee")} ${index + 1}`}
+                                </Link>
+                              ) : (
+                                <strong>{booking.client_display_name || `${pickText(language, "Participant", "Attendee")} ${index + 1}`}</strong>
+                              )}
+                              <small className="muted">{booking.client_email}</small>
+                            </div>
+                            <div className="session-slot-attendee-badges">
+                              <span className={`status-pill ${statusClass(booking.status)}`}>
+                                {isEnglish ? "Waitlisted" : "En attente"}
+                                {booking.waitlist_position ? ` · position ${booking.waitlist_position}` : ""}
+                              </span>
+                            </div>
+                            <div className="session-slot-attendee-actions">
+                              <details className="session-slot-inline-confirm">
+                                <summary
+                                  className="session-slot-delete-icon"
+                                  aria-label={isEnglish ? "Remove from waitlist" : "Retirer de la liste d’attente"}
+                                  title={isEnglish ? "Remove from waitlist" : "Retirer de la liste d’attente"}
+                                >
+                                  🗑
+                                </summary>
+                                <form action={adminRemoveClientFromSessionAction} className="session-slot-inline-confirm-panel">
+                                  <input type="hidden" name="session_id" value={selectedSession.id} />
+                                  <input type="hidden" name="booking_id" value={booking.id} />
+                                  <input type="hidden" name="return_to" value={modalHref} />
+                                  <input type="hidden" name="scope" value="OCCURRENCE" />
+                                  <button className="danger" type="submit">
+                                    {isEnglish ? "Confirm" : "Confirmer"}
+                                  </button>
+                                </form>
+                              </details>
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </details>
 
@@ -3168,7 +3234,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     <div className="attendance-v2-main-head">
                       <div>
                         <h3>{focusedAttendanceBooking.client_display_name || pickText(language, "Participant", "Student")}</h3>
-                        <p className="muted">{isEnglish ? "Completed" : "Completes"}: {attendanceCompletedCount} / {selectedSessionBookings.length}</p>
+                        <p className="muted">{isEnglish ? "Completed" : "Complétés"}: {attendanceCompletedCount} / {selectedSessionConfirmedBookings.length}</p>
                       </div>
                       <div className="attendance-v2-nav-links">
                         {previousAttendanceBooking ? (
