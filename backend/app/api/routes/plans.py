@@ -537,6 +537,61 @@ def _has_active_pack_with_remaining_credits(db: Session, *, user_id: UUID, now: 
     return existing is not None
 
 
+def _covering_current_plan_name(
+    db: Session,
+    *,
+    user_id: UUID,
+    requested_plan_id: UUID,
+    reference_at: datetime,
+) -> str | None:
+    """Return a current formula that already grants every requested entitlement."""
+    rows = db.execute(
+        select(Plan.id, Plan.name)
+        .join(ClientPlanSubscription, ClientPlanSubscription.plan_id == Plan.id)
+        .where(
+            ClientPlanSubscription.user_id == user_id,
+            ClientPlanSubscription.status.in_(
+                [
+                    SubscriptionStatus.PENDING,
+                    SubscriptionStatus.ACTIVE,
+                    SubscriptionStatus.PAYMENT_ALERT,
+                    SubscriptionStatus.PRE_TERMINATION,
+                ]
+            ),
+            ClientPlanSubscription.started_at <= reference_at,
+            or_(
+                ClientPlanSubscription.cancellation_effective_at.is_(None),
+                ClientPlanSubscription.cancellation_effective_at > reference_at,
+            ),
+            or_(
+                ClientPlanSubscription.ends_at.is_(None),
+                ClientPlanSubscription.ends_at > reference_at,
+            ),
+            ClientPlanSubscription.bookings_blocked.is_(False),
+            Plan.active.is_(True),
+            Plan.kind.in_([PlanKind.SUBSCRIPTION, PlanKind.FORFAIT]),
+            Plan.id != requested_plan_id,
+        )
+        .with_for_update()
+    ).all()
+    if not rows:
+        return None
+
+    covering_names = {plan_id: plan_name for plan_id, plan_name in rows}
+    entitlement_ids, _ = effective_entitlements_by_plan(
+        db,
+        plan_ids=[requested_plan_id, *covering_names],
+    )
+    requested_entitlements = set(entitlement_ids.get(requested_plan_id, []))
+    if not requested_entitlements:
+        return None
+
+    for plan_id, plan_name in rows:
+        if requested_entitlements.issubset(set(entitlement_ids.get(plan_id, []))):
+            return str(plan_name)
+    return None
+
+
 def _resolve_plan_owner(
     db: Session,
     *,
@@ -1089,6 +1144,22 @@ def purchase_plan(
             status_code=status.HTTP_409_CONFLICT,
             detail="This subscription is already purchased for the current month",
         )
+
+    if not plan.is_trial_offer:
+        covering_plan_name = _covering_current_plan_name(
+            db,
+            user_id=owner.id,
+            requested_plan_id=plan.id,
+            reference_at=subscription_started_at,
+        )
+        if covering_plan_name is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Cet achat est déjà inclus dans votre formule actuelle "
+                    f'« {covering_plan_name} ». Aucun paiement supplémentaire n\'est nécessaire.'
+                ),
+            )
 
     if plan.kind == PlanKind.PACK and not plan.is_trial_offer and not bool(payload.confirm_existing_pack_purchase) and _has_active_pack_with_remaining_credits(
         db,
