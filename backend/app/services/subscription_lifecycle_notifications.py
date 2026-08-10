@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime, timedelta
-from html import escape
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -10,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models.plan import ClientPlanSubscription, Plan
 from app.models.user import User
+from app.services.email_branding import render_branded_email
 from app.services.email_delivery import send_email
 from app.services.i18n import normalize_language
 from app.services.messaging_templates import resolve_frontend_base_url, resolve_sender_profile
@@ -60,55 +60,6 @@ def _send_client_email(
     except Exception:
         logger.exception("Unable to send subscription lifecycle email context=%s client=%s", context, client.id)
         return None
-
-
-def _branded_email(
-    *,
-    preview: str,
-    eyebrow: str,
-    title: str,
-    greeting: str,
-    intro: str,
-    rows: list[tuple[str, str]],
-    message: str,
-    footer: str,
-) -> str:
-    summary_rows = "".join(
-        (
-            '<tr>'
-            f'<td style="padding:8px 12px 8px 20px;width:40%;font-size:13px;font-weight:700;color:#667085;">{escape(label)}</td>'
-            f'<td style="padding:8px 20px 8px 12px;font-size:15px;font-weight:700;color:#172033;">{escape(value)}</td>'
-            '</tr>'
-        )
-        for label, value in rows
-    )
-    return (
-        '<!doctype html><html><body style="margin:0;padding:0;background:#f2f4f7;">'
-        '<div style="display:none;max-height:0;overflow:hidden;opacity:0;">'
-        f'{escape(preview)}</div>'
-        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f2f4f7;">'
-        '<tr><td align="center" style="padding:24px 12px;">'
-        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
-        'style="max-width:620px;background:#ffffff;border:1px solid #e3e7ee;border-radius:16px;overflow:hidden;">'
-        '<tr><td style="padding:28px 30px;background:#172033;">'
-        '<div style="font-size:13px;line-height:18px;font-weight:800;letter-spacing:1.5px;color:#e4b85d;">PIANO ACADÉMIE</div>'
-        f'<div style="margin-top:8px;font-size:12px;line-height:18px;font-weight:700;letter-spacing:1px;color:#e4b85d;">{escape(eyebrow)}</div>'
-        f'<div style="margin-top:5px;font-size:28px;line-height:35px;font-weight:800;color:#ffffff;">{escape(title)}</div>'
-        '</td></tr>'
-        '<tr><td style="padding:28px 30px 30px 30px;">'
-        f'<p style="margin:0 0 10px 0;font-size:17px;line-height:25px;color:#172033;">{escape(greeting)}</p>'
-        f'<p style="margin:0 0 22px 0;font-size:15px;line-height:23px;color:#5f6673;">{escape(intro)}</p>'
-        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
-        'style="margin:0;background:#f8fafc;border:1px solid #e3e7ee;border-radius:12px;">'
-        f'{summary_rows}'
-        '</table>'
-        '<div style="margin:22px 0 0;padding:18px 20px;background:#fff7e6;border:1px solid #edd7b3;border-radius:12px;">'
-        f'<p style="margin:0;font-size:15px;line-height:23px;color:#5f4a2d;">{escape(message)}</p>'
-        '</div>'
-        f'<p style="margin:22px 0 0;font-size:12px;line-height:19px;color:#7b8494;text-align:center;">{escape(footer)}</p>'
-        '</td></tr></table>'
-        '</td></tr></table></body></html>'
-    )
 
 
 def _french_date(value: date) -> str:
@@ -212,7 +163,7 @@ def send_cancellation_decision_email(
             client=client,
             subject_fr=f"Confirmation de résiliation - {plan.name}",
             subject_en=f"Cancellation confirmed - {plan.name}",
-            body_fr=_branded_email(
+            body_fr=render_branded_email(
                 preview=f"Votre résiliation est confirmée. Accès maintenu jusqu’au {last_access_fr}.",
                 eyebrow="ABONNEMENT",
                 title="Confirmation de résiliation",
@@ -227,7 +178,7 @@ def send_cancellation_decision_email(
                 message=access_fr,
                 footer="Cet e-mail de confirmation a été envoyé automatiquement par Piano Académie.",
             ),
-            body_en=_branded_email(
+            body_en=render_branded_email(
                 preview=f"Your cancellation is confirmed. Access remains available through {last_access_en}.",
                 eyebrow="SUBSCRIPTION",
                 title="Cancellation confirmed",
@@ -250,17 +201,27 @@ def send_cancellation_decision_email(
         client=client,
         subject_fr=f"Suivi de votre demande de résiliation - {plan.name}",
         subject_en=f"Update on your cancellation request - {plan.name}",
-        body_fr=(
-            f"Bonjour {name},\n\nVotre demande de résiliation de l’abonnement « {plan.name} » n’a pas été validée. "
-            "Votre abonnement reste actif. Pour toute question, contactez l’école au 01 86 47 60 88.\n\n"
-            "Cordialement,\nL’équipe Piano Académie"
+        body_fr=render_branded_email(
+            preview="Votre abonnement reste actif.",
+            eyebrow="ABONNEMENT",
+            title="Votre demande de résiliation",
+            greeting=f"Bonjour {name},",
+            intro=f"Votre demande de résiliation de l’abonnement « {plan.name} » n’a pas été validée.",
+            rows=[("Abonnement", plan.name), ("Statut", "Actif")],
+            message="Pour toute question, contactez l’école au 01 86 47 60 88.",
         ),
-        body_en=(
-            f"Hello {name},\n\nYour request to cancel the “{plan.name}” subscription was not approved. "
-            "Your subscription remains active. If you have any questions, contact the school on +33 1 86 47 60 88.\n\n"
-            "Kind regards,\nThe Piano Academie team"
+        body_en=render_branded_email(
+            preview="Your subscription remains active.",
+            eyebrow="SUBSCRIPTION",
+            title="Update on your cancellation request",
+            greeting=f"Hello {name},",
+            intro=f"Your request to cancel the “{plan.name}” subscription was not approved.",
+            rows=[("Subscription", plan.name), ("Status", "Active")],
+            message="If you have any questions, contact the school on +33 1 86 47 60 88.",
+            footer="This email was sent automatically by Piano Academie.",
         ),
         context="SUBSCRIPTION_CANCELLATION_REJECTED_CLIENT",
+        body_format="HTML",
     )
 
 
@@ -279,17 +240,35 @@ def send_suspension_confirmation_email(
         client=client,
         subject_fr=f"Confirmation de mise en pause - {plan.name}",
         subject_en=f"Subscription pause confirmed - {plan.name}",
-        body_fr=(
-            f"Bonjour {name},\n\nVotre abonnement « {plan.name} » sera mis en pause du {start_date.strftime('%d/%m/%Y')} "
-            f"au {end_date.strftime('%d/%m/%Y')} inclus. Vous pourrez reprendre vos cours dès le {resume_date.strftime('%d/%m/%Y')}.\n\n"
-            "Votre prochaine échéance a été décalée de la durée de la pause.\n\nCordialement,\nL’équipe Piano Académie"
+        body_fr=render_branded_email(
+            preview="La mise en pause de votre abonnement est confirmée.",
+            eyebrow="ABONNEMENT",
+            title="Mise en pause confirmée",
+            greeting=f"Bonjour {name},",
+            intro=f"Votre abonnement « {plan.name} » sera temporairement mis en pause.",
+            rows=[
+                ("Début de la pause", start_date.strftime("%d/%m/%Y")),
+                ("Fin de la pause", f"{end_date.strftime('%d/%m/%Y')} inclus"),
+                ("Reprise des cours", resume_date.strftime("%d/%m/%Y")),
+            ],
+            message="Votre prochaine échéance a été décalée de la durée de la pause.",
         ),
-        body_en=(
-            f"Hello {name},\n\nYour “{plan.name}” subscription will be paused from {start_date.strftime('%Y-%m-%d')} "
-            f"through {end_date.strftime('%Y-%m-%d')}, inclusive. You can resume lessons on {resume_date.strftime('%Y-%m-%d')}.\n\n"
-            "Your next renewal has been postponed by the length of the pause.\n\nKind regards,\nThe Piano Academie team"
+        body_en=render_branded_email(
+            preview="Your subscription pause is confirmed.",
+            eyebrow="SUBSCRIPTION",
+            title="Subscription pause confirmed",
+            greeting=f"Hello {name},",
+            intro=f"Your “{plan.name}” subscription will be temporarily paused.",
+            rows=[
+                ("Pause starts", start_date.strftime("%Y-%m-%d")),
+                ("Pause ends", end_date.strftime("%Y-%m-%d")),
+                ("Lessons resume", resume_date.strftime("%Y-%m-%d")),
+            ],
+            message="Your next renewal has been postponed by the length of the pause.",
+            footer="This email was sent automatically by Piano Academie.",
         ),
         context="SUBSCRIPTION_PAUSE_CONFIRMED_CLIENT",
+        body_format="HTML",
     )
 
 

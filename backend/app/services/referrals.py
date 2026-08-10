@@ -20,6 +20,7 @@ from app.models.referral import ReferralReward
 from app.models.typeform_intake import TypeformIntake
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.services.email_delivery import send_email
+from app.services.email_branding import render_branded_email
 from app.services.messaging_templates import resolve_sender_profile
 
 logger = logging.getLogger(__name__)
@@ -1030,28 +1031,33 @@ def send_referral_announcement_email(db: Session, *, reward: ReferralReward) -> 
     if language == "en":
         referred_name = _display_name(referred) or "a family"
         subject = "Your referral has been recorded"
-        body = (
-            f"Hello {referrer_name},\n\n"
-            f"The {referred_name} family indicated that they discovered Piano Academie thanks to you.\n\n"
-            f"Your referral has been recorded. A credit of {amount:.2f} {reward.currency} will be added "
-            "to your account once your referred family reaches the required payment threshold.\n\n"
-            "Thank you for your trust."
+        body = render_branded_email(
+            preview="Your referral has been recorded.",
+            eyebrow="REFERRAL",
+            title="Thank you for your referral",
+            greeting=f"Hello {referrer_name},",
+            intro=f"The {referred_name} family indicated that they discovered Piano Academie thanks to you.",
+            rows=[("Future credit", f"{amount:.2f} {reward.currency}")],
+            message="The credit will be added to your account once the referred family reaches the required payment threshold.",
+            footer="This email was sent automatically by Piano Academie.",
         )
     else:
         referred_name = _display_name(referred) or "une famille"
-        subject = "Votre parrainage a bien ete enregistre"
-        body = (
-            f"Bonjour {referrer_name},\n\n"
-            f"La famille {referred_name} a indique avoir decouvert Piano Academie grace a vous.\n\n"
-            f"Votre parrainage est bien enregistre. Un avoir de {amount:.2f} {reward.currency} sera credite "
-            "sur votre compte lorsque le seuil de reglement prevu aura ete atteint par votre filleul.\n\n"
-            "Merci pour votre confiance."
+        subject = "Votre parrainage a bien été enregistré"
+        body = render_branded_email(
+            preview="Votre parrainage a bien été enregistré.",
+            eyebrow="PARRAINAGE",
+            title="Merci pour votre recommandation",
+            greeting=f"Bonjour {referrer_name},",
+            intro=f"La famille {referred_name} a indiqué avoir découvert Piano Académie grâce à vous.",
+            rows=[("Avoir à venir", f"{amount:.2f} {reward.currency}")],
+            message="L’avoir sera crédité sur votre compte lorsque le seuil de règlement prévu aura été atteint par votre filleul.",
         )
     message_id = send_email(
         to_email=referrer.email,
         subject=subject,
         body=body,
-        body_format="TEXT",
+        body_format="HTML",
         context="REFERRAL_RECORDED",
         recipient_user_id=referrer.id,
         from_email=sender.from_email,
@@ -1079,28 +1085,33 @@ def send_referral_credit_email(db: Session, *, reward: ReferralReward) -> str | 
     if language == "en":
         referred_name = _display_name(referred) or "your referred family"
         subject = "Your referral credit is available"
-        body = (
-            f"Hello {referrer_name},\n\n"
-            f"Your referral for {referred_name} is now validated.\n\n"
-            f"A credit of {amount:.2f} {reward.currency} has been added to your account. "
-            "It can be used on a future Piano Academie invoice.\n\n"
-            "Thank you again for your recommendation."
+        body = render_branded_email(
+            preview="Your referral credit is now available.",
+            eyebrow="REFERRAL",
+            title="Your credit is available",
+            greeting=f"Hello {referrer_name},",
+            intro=f"Your referral for {referred_name} is now validated.",
+            rows=[("Credit available", f"{amount:.2f} {reward.currency}")],
+            message="This credit has been added to your account and can be used on a future Piano Academie invoice.",
+            footer="This email was sent automatically by Piano Academie.",
         )
     else:
         referred_name = _display_name(referred) or "votre filleul"
         subject = "Votre avoir parrainage est disponible"
-        body = (
-            f"Bonjour {referrer_name},\n\n"
-            f"Votre parrainage de {referred_name} est desormais valide.\n\n"
-            f"Un avoir de {amount:.2f} {reward.currency} vient d etre credite sur votre compte. "
-            "Il pourra etre utilise sur une prochaine facture Piano Academie.\n\n"
-            "Merci encore pour votre recommandation."
+        body = render_branded_email(
+            preview="Votre avoir de parrainage est disponible.",
+            eyebrow="PARRAINAGE",
+            title="Votre avoir est disponible",
+            greeting=f"Bonjour {referrer_name},",
+            intro=f"Votre parrainage de {referred_name} est désormais validé.",
+            rows=[("Avoir disponible", f"{amount:.2f} {reward.currency}")],
+            message="Cet avoir a été crédité sur votre compte et pourra être utilisé sur une prochaine facture Piano Académie.",
         )
     message_id = send_email(
         to_email=referrer.email,
         subject=subject,
         body=body,
-        body_format="TEXT",
+        body_format="HTML",
         context="REFERRAL_CREDIT_GRANTED",
         recipient_user_id=referrer.id,
         from_email=sender.from_email,

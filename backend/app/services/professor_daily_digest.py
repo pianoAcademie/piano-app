@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
 from app.models.user import User
+from app.services.email_branding import render_branded_email
 from app.services.email_delivery import send_email
 from app.services.session_teachers import effective_teacher_filter_for_professor
 
@@ -42,11 +43,11 @@ def _parse_hhmm(value: str) -> time | None:
 
 def _attendance_label(status: BookingStatus) -> str:
     labels = {
-        BookingStatus.BOOKED: "PREVU",
-        BookingStatus.WAITLISTED: "LISTE_ATTENTE",
-        BookingStatus.ATTENDED: "PRESENT",
-        BookingStatus.NO_SHOW: "ABSENT_NON_EXCUSE",
-        BookingStatus.EXCUSED_ABSENCE: "ABSENT_EXCUSE",
+        BookingStatus.BOOKED: "Prévu",
+        BookingStatus.WAITLISTED: "Liste d’attente",
+        BookingStatus.ATTENDED: "Présent",
+        BookingStatus.NO_SHOW: "Absent non excusé",
+        BookingStatus.EXCUSED_ABSENCE: "Absent excusé",
     }
     return labels.get(status, status.value)
 
@@ -74,9 +75,19 @@ def _build_digest_body(
 
     subject = f"Planning du jour - {digest_date.strftime('%d/%m/%Y')}"
     if not sessions:
-        return subject, "Bonjour,\n\nAucun cours programme aujourd'hui.\n", 0
+        return (
+            subject,
+            render_branded_email(
+                preview="Votre planning Piano Académie du jour.",
+                eyebrow="ESPACE PROFESSEUR",
+                title="Votre planning du jour",
+                greeting=f"Bonjour {professor.first_name},",
+                intro="Vous n’avez aucun cours programmé aujourd’hui.",
+            ),
+            0,
+        )
 
-    lines: list[str] = ["Bonjour,", "", "Voici vos cours du jour:", ""]
+    digest_rows: list[tuple[str, str]] = []
     session_count = len(sessions)
 
     roster_statuses = (
@@ -90,10 +101,6 @@ def _build_digest_body(
     for session_obj, course_type, location in sessions:
         local_start = session_obj.start_at_utc.astimezone(PARIS_TIMEZONE)
         local_end = session_obj.end_at_utc.astimezone(PARIS_TIMEZONE)
-        lines.append(
-            f"- {local_start.strftime('%H:%M')} - {local_end.strftime('%H:%M')} | {session_obj.title} | {course_type.name} | {location.name}"
-        )
-
         roster_rows = db.execute(
             select(Booking, User)
             .join(User, User.id == Booking.user_id)
@@ -104,16 +111,32 @@ def _build_digest_body(
             .order_by(User.last_name.asc(), User.first_name.asc(), User.email.asc())
         ).all()
 
-        if not roster_rows:
-            lines.append("  * Aucun eleve inscrit")
-            continue
+        roster = "Aucun élève inscrit"
+        if roster_rows:
+            roster_labels: list[str] = []
+            for booking, user in roster_rows:
+                display_name = f"{(user.first_name or '').strip()} {(user.last_name or '').strip()}".strip() or user.email
+                roster_labels.append(f"{display_name} ({_attendance_label(booking.status)})")
+            roster = ", ".join(roster_labels)
+        digest_rows.append(
+            (
+                f"{local_start.strftime('%H:%M')}–{local_end.strftime('%H:%M')}",
+                f"{session_obj.title} · {course_type.name} · {location.name} · {roster}",
+            )
+        )
 
-        for booking, user in roster_rows:
-            display_name = f"{(user.first_name or '').strip()} {(user.last_name or '').strip()}".strip() or user.email
-            lines.append(f"  * {display_name} - {_attendance_label(booking.status)}")
-        lines.append("")
-
-    return subject, "\n".join(lines), session_count
+    return (
+        subject,
+        render_branded_email(
+            preview=f"Votre planning du {digest_date.strftime('%d/%m/%Y')}.",
+            eyebrow="ESPACE PROFESSEUR",
+            title="Votre planning du jour",
+            greeting=f"Bonjour {professor.first_name},",
+            intro=f"Voici vos {session_count} cours programmés aujourd’hui.",
+            rows=digest_rows,
+        ),
+        session_count,
+    )
 
 
 def run_send_professor_daily_digest_job(
@@ -177,7 +200,7 @@ def run_send_professor_daily_digest_job(
                 to_email=professor.email,
                 subject=subject,
                 body=body,
-                body_format="TEXT",
+                body_format="HTML",
                 context="PROFESSOR_DAILY_DIGEST",
             )
             if not message_id:

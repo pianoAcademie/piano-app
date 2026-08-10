@@ -176,6 +176,7 @@ from app.services.client_payment_email import (
 from app.services.client_purchase_notifications import send_payment_success_notifications
 from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
 from app.services.email_delivery import send_email
+from app.services.email_branding import render_branded_email
 from app.services.family_billing import resolve_billing_profile
 from app.services.i18n import normalize_language
 from app.services.local_time import resolve_timezone_name
@@ -2300,19 +2301,22 @@ def _send_bank_transfer_order_email(
         email=billing_profile.email or client.email,
         fallback="Client",
     )
-    bic_line = bic or "Non renseigne"
-    body = (
-        f"Bonjour {recipient_name},\n\n"
-        f"Votre demande de paiement par virement pour la facture {invoice_number} a ete enregistree.\n\n"
-        f"Montant a regler: {Decimal(order.amount_incl_vat):.2f} {order.currency}\n"
-        f"Titulaire du compte: {account_holder}\n"
-        f"IBAN: {iban}\n"
-        f"BIC: {bic_line}\n"
-        f"Reference a indiquer dans le libelle du virement: {order.order_reference}\n"
-        f"Expiration de la commande: {order.expires_at.strftime('%d/%m/%Y %H:%M')}\n\n"
-        "La facture sera marquee comme payee apres validation du virement par l'administration.\n\n"
-        "Bien cordialement,\n"
-        "Piano Academie"
+    bic_line = bic or "Non renseigné"
+    body = render_branded_email(
+        preview=f"Instructions de virement pour la facture {invoice_number}.",
+        eyebrow="PAIEMENT PAR VIREMENT",
+        title="Votre demande est enregistrée",
+        greeting=f"Bonjour {recipient_name},",
+        intro=f"Votre demande de paiement par virement pour la facture {invoice_number} a bien été enregistrée.",
+        rows=[
+            ("Montant à régler", f"{Decimal(order.amount_incl_vat):.2f} {order.currency}"),
+            ("Titulaire du compte", account_holder),
+            ("IBAN", iban),
+            ("BIC", bic_line),
+            ("Référence du virement", order.order_reference),
+            ("Expiration", order.expires_at.strftime("%d/%m/%Y %H:%M")),
+        ],
+        message="La facture sera marquée comme payée après validation du virement par l’administration.",
     )
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
     message_ids = [
@@ -2320,7 +2324,7 @@ def _send_bank_transfer_order_email(
             to_email=recipient,
             subject=f"Instructions de virement - facture {invoice_number}",
             body=body,
-            body_format="TEXT",
+            body_format="HTML",
             context="INVOICE_BANK_TRANSFER_ORDER",
             from_email=sender.from_email,
             from_name=sender.from_name,
@@ -2397,33 +2401,33 @@ def _send_check_received_notification_email(
         amount_label = f"{amount:.2f}".replace(".", ",") + " €"
     normalized_deposit_label = _normalize_optional(check_deposit_label)
     deposit_sentence = (
-        f"Ce message confirme uniquement la reception du cheque. L'encaissement interviendra lors du depot en banque prevu durant {normalized_deposit_label}."
+        f"Ce message confirme uniquement la réception du chèque. L’encaissement interviendra lors du dépôt en banque prévu durant {normalized_deposit_label}."
         if normalized_deposit_label
-        else "Ce message confirme uniquement la reception du cheque. L'encaissement interviendra lors du depot en banque."
+        else "Ce message confirme uniquement la réception du chèque. L’encaissement interviendra lors du dépôt en banque."
     )
-    body_lines = [
-        f"Bonjour {client_name},",
-        "",
-        f"Nous confirmons la bonne reception de votre cheque de {amount_label}.",
-        f"Date de reception: {received_label}.",
-        "",
-        deposit_sentence,
-    ]
     normalized_description = _normalize_optional(description)
+    rows = [("Montant du chèque", amount_label), ("Date de réception", received_label)]
     if normalized_description:
-        body_lines.extend(["", f"Information de suivi: {normalized_description}"])
-    body_lines.extend(["", "Cordialement,"])
+        rows.append(("Information de suivi", normalized_description))
 
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
-    subject = f"Reception de votre cheque - {client_name}"
-    body = "\n".join(body_lines).strip()
+    subject = f"Réception de votre chèque - {client_name}"
+    body = render_branded_email(
+        preview=f"Nous confirmons la réception de votre chèque de {amount_label}.",
+        eyebrow="PAIEMENT",
+        title="Chèque bien reçu",
+        greeting=f"Bonjour {client_name},",
+        intro="Nous confirmons la bonne réception de votre chèque.",
+        rows=rows,
+        message=deposit_sentence,
+    )
     try:
         message_ids = [
             send_email(
                 to_email=recipient,
                 subject=subject,
                 body=body,
-                body_format="TEXT",
+                body_format="HTML",
                 context="CHECK_RECEIVED_NOTIFICATION",
                 recipient_user_id=client.id,
                 from_email=sender.from_email,
@@ -9836,41 +9840,45 @@ def create_admin_client_manual_transaction(
             payment_method_label = _payment_method_label_client(payment_method_code) if payment_method_code else "Paiement manuel"
             client_name = _display_name(billing_profile.first_name, billing_profile.last_name, client.email)
             invoice_numbers = [invoice_number for _, _, _, invoice_number in reconciled_invoices]
-            receipt_lines = [
-                f"Bonjour {client_name},",
-                "",
-                f"Nous confirmons la reception de votre paiement de {total_abs:.2f} {currency}.",
-                f"Date du paiement: {occurred_at.strftime('%d/%m/%Y')}.",
-                f"Mode de paiement: {payment_method_label}.",
+            receipt_links = []
+            for note, metadata, _, invoice_number in reconciled_invoices:
+                receipt_links.append(
+                    (
+                        f"Consulter la facture {invoice_number}",
+                        _invoice_range_download_url(
+                            client_id=client.id,
+                            note_id=note.id,
+                            metadata=metadata,
+                            inline=True,
+                        ),
+                    )
+                )
+            sender = resolve_sender_profile(db, sender_kind="STUDIO")
+            subject = f"Reçu de paiement - {client_name}"
+            rows = [
+                ("Montant reçu", f"{total_abs:.2f} {currency}"),
+                ("Date du paiement", occurred_at.strftime("%d/%m/%Y")),
+                ("Mode de paiement", payment_method_label),
             ]
             if invoice_numbers:
-                receipt_lines.append(f"Facture(s) rapprochee(s): {', '.join(invoice_numbers)}.")
-                receipt_lines.append("")
-                receipt_lines.append("Acces facture(s):")
-                for note, metadata, _, invoice_number in reconciled_invoices:
-                    invoice_url = _invoice_range_download_url(
-                        client_id=client.id,
-                        note_id=note.id,
-                        metadata=metadata,
-                        inline=True,
-                    )
-                    receipt_lines.append(f"- {invoice_number}: {invoice_url}")
-            receipt_lines.extend(
-                [
-                    "",
-                    "Ce message tient lieu de recu.",
-                ]
+                rows.append(("Facture(s) rapprochée(s)", ", ".join(invoice_numbers)))
+            body = render_branded_email(
+                preview=f"Nous confirmons la réception de votre paiement de {total_abs:.2f} {currency}.",
+                eyebrow="PAIEMENT",
+                title="Paiement bien reçu",
+                greeting=f"Bonjour {client_name},",
+                intro="Nous confirmons la réception de votre paiement.",
+                rows=rows,
+                message="Ce message tient lieu de reçu.",
+                links=receipt_links,
             )
-            sender = resolve_sender_profile(db, sender_kind="STUDIO")
-            subject = f"Recu de paiement - {client_name}"
-            body = "\n".join(receipt_lines).strip()
             try:
                 message_ids = [
                     send_email(
                         to_email=recipient,
                         subject=subject,
                         body=body,
-                        body_format="TEXT",
+                        body_format="HTML",
                         context="MANUAL_PAYMENT_RECEIPT",
                         recipient_user_id=client.id,
                         from_email=sender.from_email,

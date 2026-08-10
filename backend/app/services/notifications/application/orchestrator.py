@@ -15,6 +15,7 @@ from app.models.notification_engine import Notification
 from app.models.ops import AppSetting
 from app.models.user import User, UserRole
 from app.services.booking_confirmation_templates import render_booking_confirmation_email
+from app.services.email_branding import render_branded_email
 from app.services.i18n import normalize_language
 from app.services.local_time import localize_datetime, resolve_timezone_name
 from app.services.messaging_templates import (
@@ -129,20 +130,32 @@ def _body_for_booking_notification(
     local_start, resolved_timezone = localize_datetime(start_at, timezone_name)
     date_label = f"{local_start.strftime('%d/%m/%Y %H:%M')} ({resolved_timezone})"
     if is_cancellation:
-        subject = f"Annulation de reservation - {course_type_name}"
-        body = (
-            f"Reservation annulee.\n"
-            f"Eleve: {student_label}\n"
-            f"Activite: {course_type_name}\n"
-            f"Debut: {date_label}\n"
+        subject = f"Annulation de réservation - {course_type_name}"
+        body = render_branded_email(
+            preview=f"La réservation de {student_label} a été annulée.",
+            eyebrow="RÉSERVATION",
+            title="Réservation annulée",
+            greeting="Bonjour,",
+            intro="Nous vous confirmons l’annulation de la réservation ci-dessous.",
+            rows=[
+                ("Élève", student_label),
+                ("Activité", course_type_name),
+                ("Date et horaire", date_label),
+            ],
         )
         return subject, body
-    subject = f"Confirmation de reservation - {course_type_name}"
-    body = (
-        f"Reservation confirmee.\n"
-        f"Eleve: {student_label}\n"
-        f"Activite: {course_type_name}\n"
-        f"Debut: {date_label}\n"
+    subject = f"Confirmation de réservation - {course_type_name}"
+    body = render_branded_email(
+        preview=f"La réservation de {student_label} est confirmée.",
+        eyebrow="RÉSERVATION",
+        title="Réservation confirmée",
+        greeting="Bonjour,",
+        intro="Nous vous confirmons la réservation ci-dessous.",
+        rows=[
+            ("Élève", student_label),
+            ("Activité", course_type_name),
+            ("Date et horaire", date_label),
+        ],
     )
     return subject, body
 
@@ -719,7 +732,7 @@ def schedule_booking_cancelled_notifications(
             recipient_phone=None,
             subject=client_subject,
             body_snapshot=client_body,
-            payload_snapshot={"booking_id": str(booking.id)},
+            payload_snapshot={"booking_id": str(booking.id), "body_format": "HTML"},
             idempotency_key=_idempotency_key_for_booking_notification(
                 notification_type=NOTIFICATION_TYPE_CLIENT_BOOKING_CANCELLATION,
                 booking_id=booking.id,
@@ -759,7 +772,7 @@ def schedule_booking_cancelled_notifications(
             recipient_phone=None,
             subject=admin_subject,
             body_snapshot=admin_body,
-            payload_snapshot={"booking_id": str(booking.id)},
+            payload_snapshot={"booking_id": str(booking.id), "body_format": "HTML"},
             idempotency_key=_idempotency_key_for_booking_notification(
                 notification_type=NOTIFICATION_TYPE_ADMIN_BOOKING_CANCELLATION,
                 booking_id=booking.id,

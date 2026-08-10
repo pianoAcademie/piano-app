@@ -17,10 +17,31 @@ from app.services.client_purchase_notifications import (
     send_payment_success_notifications,
     send_plan_purchase_admin_notifications,
 )
-from app.services.messaging_templates import recipient_display_name, render_template_content
+from app.services.messaging_templates import PREDEFINED_TEMPLATE_DEFINITIONS, recipient_display_name, render_template_content
 
 
 class ClientEmailTemplateTests(unittest.TestCase):
+    def test_external_predefined_email_templates_use_html_branding(self) -> None:
+        external_codes = {
+            "PASSWORD_RESET",
+            "TEACHER_PORTAL_LOGIN_SETUP",
+            "EVENT_REMINDER",
+            "EVENT_CANCELLED",
+            "AUTOMATIC_PAYMENT_FAILED",
+            "BANK_TRANSFER_FAILED",
+            "BIRTHDAY_EMAIL",
+            "LESSON_NOTES",
+            "NEW_FILE_ADDED",
+        }
+        definitions = {item.code: item for item in PREDEFINED_TEMPLATE_DEFINITIONS}
+
+        self.assertTrue(external_codes.issubset(definitions))
+        for code in external_codes:
+            with self.subTest(code=code):
+                definition = definitions[code]
+                self.assertEqual(definition.body_format, "HTML")
+                self.assertIn("PIANO ACADÉMIE", definition.body)
+
     def test_recipient_display_name_prefers_civility_first_and_last_name(self) -> None:
         self.assertEqual(
             recipient_display_name(civility="Madame", first_name="Nora", last_name="Martin", email="nora@example.com"),

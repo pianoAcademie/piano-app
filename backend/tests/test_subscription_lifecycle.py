@@ -148,6 +148,8 @@ class SubscriptionLifecycleTests(unittest.TestCase):
         body = send_email.call_args.kwargs["body"]
         self.assertIn("08/08/2026 inclus", body)
         self.assertIn("09/08/2026", body)
+        self.assertIn("PIANO ACADÉMIE", body)
+        self.assertEqual(send_email.call_args.kwargs["body_format"], "HTML")
 
 
 if __name__ == "__main__":

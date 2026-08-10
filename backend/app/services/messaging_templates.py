@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.ops import AppSetting
+from app.services.email_branding import render_branded_email
 from app.services.i18n import (
     DEFAULT_LANGUAGE,
     build_translations_payload,
@@ -634,19 +635,21 @@ def render_template_content(template: str, context: dict[str, object] | None = N
 
 def _email_layout(*sections: str) -> str:
     return (
-        "<div style=\"margin:0;padding:0;background:#f8fafc;\">"
-        "<div style=\"max-width:680px;margin:0 auto;padding:24px 16px;"
-        "font-family:Arial,'Helvetica Neue',sans-serif;color:#172033;line-height:1.6;\">"
-        "<div style=\"background:#ffffff;border:1px solid #e5e7eb;border-radius:18px;padding:28px;\">"
-        "<p style=\"margin:0 0 8px;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;"
-        "font-weight:700;color:#b7791f;\">Piano Academie</p>"
+        '<!doctype html><html><body style="margin:0;padding:0;background:#f2f4f7;">'
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f2f4f7;">'
+        '<tr><td align="center" style="padding:24px 12px;">'
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
+        'style="max-width:620px;background:#ffffff;border:1px solid #e3e7ee;border-radius:16px;overflow:hidden;">'
+        '<tr><td style="padding:28px 30px;background:#172033;">'
+        '<div style="font-size:13px;line-height:18px;font-weight:800;letter-spacing:1.5px;color:#e4b85d;">PIANO ACADÉMIE</div>'
+        '</td></tr>'
+        '<tr><td style="padding:28px 30px 30px 30px;font-family:Arial,\'Helvetica Neue\',sans-serif;color:#172033;line-height:1.6;">'
         + "".join(sections)
-        + "<p style=\"margin:28px 0 0;font-size:14px;color:#6b7280;\">"
-        "Besoin d aide ? Repondez simplement a cet e-mail."
-        "</p>"
-        "</div>"
-        "</div>"
-        "</div>"
+        + '<p style="margin:28px 0 0;font-size:13px;color:#7b8494;text-align:center;">'
+        'Besoin d’aide ? Répondez simplement à cet e-mail.'
+        '</p>'
+        '</td></tr></table>'
+        '</td></tr></table></body></html>'
     )
 
 
@@ -700,23 +703,23 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         subject="Annulation de votre cours du {session_date} - {activity_name}",
         body=_email_layout(
             _email_title(
-                "Votre cours est annule",
-                "Bonjour {recipient_name}, le nombre minimum de participants requis n a pas ete atteint.",
+                "Votre cours est annulé",
+                "Bonjour {recipient_name}, le nombre minimum de participants requis n’a pas été atteint.",
             ),
             _email_summary(
                 [
                     ("Participant", "{student_name}"),
-                    ("Activite", "{activity_name}"),
-                    ("Date et heure", "{session_date} a {session_time} ({timezone})"),
+                    ("Activité", "{activity_name}"),
+                    ("Date et heure", "{session_date} à {session_time} ({timezone})"),
                     ("Lieu", "{location_name}"),
                     ("Inscriptions", "{booked_count} / minimum {minimum_attendees}"),
                 ]
             ),
             _email_secondary(
-                "Le creneau a donc ete annule conformement aux conditions generales. "
-                "Votre reservation ne sera pas comptee comme un cours suivi."
+                "Le créneau a donc été annulé conformément aux conditions générales. "
+                "Votre réservation ne sera pas comptée comme un cours suivi."
             ),
-            _email_secondary("Notre equipe reste a votre disposition pour vous aider a choisir un autre creneau."),
+            _email_secondary("Notre équipe reste à votre disposition pour vous aider à choisir un autre créneau."),
         ),
         description="Envoye a chaque participant lorsqu un creneau est annule faute d inscrits.",
         variables_hint=(
@@ -729,21 +732,21 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code=PREDEFINED_EMAIL_TEMPLATE_AUTO_CANCEL_TEACHER,
         name="Annulation automatique - professeur",
         channel="EMAIL",
-        subject="Cours annule faute d inscrits - {activity_name} du {session_date}",
+        subject="Cours annulé faute d’inscrits - {activity_name} du {session_date}",
         body=_email_layout(
             _email_title(
-                "Cours annule automatiquement",
-                "Bonjour {recipient_name}, le seuil minimum d inscriptions n a pas ete atteint.",
+                "Cours annulé automatiquement",
+                "Bonjour {recipient_name}, le seuil minimum d’inscriptions n’a pas été atteint.",
             ),
             _email_summary(
                 [
-                    ("Activite", "{activity_name}"),
-                    ("Date et heure", "{session_date} a {session_time} ({timezone})"),
+                    ("Activité", "{activity_name}"),
+                    ("Date et heure", "{session_date} à {session_time} ({timezone})"),
                     ("Lieu", "{location_name}"),
                     ("Inscriptions", "{booked_count} / minimum {minimum_attendees}"),
                 ]
             ),
-            _email_secondary("Le creneau a ete retire du planning et les participants ont ete avertis."),
+            _email_secondary("Le créneau a été retiré du planning et les participants ont été avertis."),
         ),
         description="Envoye au professeur assigne lors d une annulation automatique faute d inscrits.",
         variables_hint=(
@@ -759,19 +762,19 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         subject="Annulation automatique - {activity_name} du {session_date}",
         body=_email_layout(
             _email_title(
-                "Un creneau a ete annule automatiquement",
-                "La regle de frequentation configuree a ete appliquee.",
+                "Un créneau a été annulé automatiquement",
+                "La règle de fréquentation configurée a été appliquée.",
             ),
             _email_summary(
                 [
-                    ("Activite", "{activity_name}"),
-                    ("Date et heure", "{session_date} a {session_time} ({timezone})"),
+                    ("Activité", "{activity_name}"),
+                    ("Date et heure", "{session_date} à {session_time} ({timezone})"),
                     ("Lieu", "{location_name}"),
                     ("Professeur", "{teacher_name}"),
                     ("Inscriptions", "{booked_count} / minimum {minimum_attendees}"),
                 ]
             ),
-            _email_secondary("Les participants et le professeur assigne ont ete avertis automatiquement."),
+            _email_secondary("Les participants et le professeur assigné ont été avertis automatiquement."),
         ),
         description="Envoye a l administration lors d une annulation automatique faute d inscrits.",
         variables_hint=(
@@ -784,22 +787,22 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code=PREDEFINED_EMAIL_TEMPLATE_TRIAL_ADULT_GUIDE,
         name="Cours d'essai adulte - livret de preparation",
         channel="EMAIL",
-        subject="Preparez votre cours d'essai Piano Academie",
+        subject="Préparez votre cours d’essai Piano Académie",
         body=(
             "<p>Bonjour {first_name},</p>"
-            "<p>Nous vous remercions d'avoir reserve un cours d'essai a l'ecole. "
-            "Afin de vous assurer le plus grand confort et la meilleure experience possible, "
-            "nous vous invitons a consulter ce livret contenant les informations utiles :</p>"
-            "<p><a href=\"https://piano-academie.com/livret-cours-dessai/\">Consulter le livret du cours d'essai</a></p>"
+            "<p>Nous vous remercions d’avoir réservé un cours d’essai à l’école. "
+            "Afin de vous assurer le plus grand confort et la meilleure expérience possible, "
+            "nous vous invitons à consulter ce livret contenant les informations utiles :</p>"
+            "<p><a href=\"https://piano-academie.com/livret-cours-dessai/\">Consulter le livret du cours d’essai</a></p>"
             "<p>Vous y trouverez :</p>"
-            "<ul><li>ce qu'il faut apporter et ce qui est fourni par l'ecole ;</li>"
-            "<li>le deroule type de la seance ;</li>"
-            "<li>des reperes visuels (clavier, cles, doigtes) ;</li>"
-            "<li>quelques conseils pour adopter le bon etat d'esprit.</li></ul>"
-            "<p>Si vous avez la moindre question (acces, materiel, etc.), n'hesitez pas a nous contacter.</p>"
-            "<p>En esperant vous accueillir tres bientot,<br>Cordialement,<br>L'equipe PIANO ACADEMIE</p>"
+            "<ul><li>ce qu’il faut apporter et ce qui est fourni par l’école ;</li>"
+            "<li>le déroulé type de la séance ;</li>"
+            "<li>des repères visuels (clavier, clés, doigtés) ;</li>"
+            "<li>quelques conseils pour adopter le bon état d’esprit.</li></ul>"
+            "<p>Si vous avez la moindre question (accès, matériel, etc.), n’hésitez pas à nous contacter.</p>"
+            "<p>En espérant vous accueillir très bientôt,<br>Cordialement,<br>L’équipe PIANO ACADÉMIE</p>"
             "<p>1 RUE DE RICHELIEU, 75001 PARIS</p>"
-            "<p><a href=\"{unsubscribe_url}\">Cliquez ici pour ne plus recevoir d'emails.</a></p>"
+            "<p><a href=\"{unsubscribe_url}\">Cliquez ici pour ne plus recevoir d’e-mails.</a></p>"
         ),
         description="Message envoye apres l'achat d'un cours d'essai adulte.",
         variables_hint=(
@@ -811,9 +814,9 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
     ),
     MessagingTemplateDefinition(
         code=PREDEFINED_EMAIL_TEMPLATE_CLIENT_PORTAL_ACCESS,
-        name="Acces securise a l espace client",
+        name="Accès sécurisé à l’espace client",
         channel="EMAIL",
-        subject="Votre acces Piano Academie est pret",
+        subject="Votre accès Piano Académie est prêt",
         body=_email_layout(
             _email_title(
                 "Bienvenue dans votre espace client",
@@ -827,9 +830,9 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
             ),
             _email_button("{primary_url}", "{primary_label}"),
             _email_secondary(
-                "Depuis votre espace client, vous pouvez consulter vos reservations, reserver un cours ou un studio, "
-                "retrouver vos credits, factures et messages. L application mobile Piano Academie sera egalement "
-                "disponible prochainement. Ce lien de creation de mot de passe est personnel et temporaire."
+                "Depuis votre espace client, vous pouvez consulter vos réservations, réserver un cours ou un studio, "
+                "retrouver vos crédits, factures et messages. L’application mobile Piano Académie sera également "
+                "disponible prochainement. Ce lien de création de mot de passe est personnel et temporaire."
             ),
         ),
         description="Bienvenue et acces securise a l espace client, sans mot de passe transmis en clair.",
@@ -843,11 +846,11 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code=PREDEFINED_EMAIL_TEMPLATE_CLIENT_PASSWORD,
         name="Student Portal Login Setup",
         channel="EMAIL",
-        subject="Activation de votre compte client Piano Academie",
+        subject="Activation de votre compte client Piano Académie",
         body=_email_layout(
             _email_title(
-                "Votre espace client est pret",
-                "Bonjour {first_name}, votre acces Piano Academie est maintenant active.",
+                "Votre espace client est prêt",
+                "Bonjour {first_name}, votre accès Piano Académie est maintenant activé.",
             ),
             _email_summary(
                 [
@@ -855,9 +858,9 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
                     ("Mot de passe temporaire", "{temporary_password}"),
                 ]
             ),
-            _email_button("{login_url}", "Acceder a mon espace client"),
+            _email_button("{login_url}", "Accéder à mon espace client"),
             _email_secondary(
-                "Lors de votre premiere connexion, nous vous invitons a modifier ce mot de passe afin de securiser votre compte."
+                "Lors de votre première connexion, nous vous invitons à modifier ce mot de passe afin de sécuriser votre compte."
             ),
         ),
         description="Activation du portail client et envoi du mot de passe temporaire.",
@@ -868,51 +871,57 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code=PREDEFINED_EMAIL_TEMPLATE_PASSWORD_RESET,
         name="Password Reset",
         channel="EMAIL",
-        subject="Reinitialisez votre mot de passe Piano Academie",
-        body=(
-            "Bonjour {first_name},\n\n"
-            "Vous avez demande la reinitialisation de votre mot de passe pour votre espace Piano Academie.\n\n"
-            "Pour choisir un nouveau mot de passe, cliquez sur le lien ci-dessous :\n"
-            "{reset_url}\n\n"
-            "Par mesure de securite, ce lien est personnel et valable pendant une duree limitee.\n\n"
-            "Si vous n etes pas a l origine de cette demande, vous pouvez simplement ignorer cet email. "
-            "Aucun changement ne sera effectue sur votre compte.\n\n"
-            "Bien a vous,\n\n"
-            "L equipe Piano Academie"
+        subject="Réinitialisez votre mot de passe Piano Académie",
+        body=render_branded_email(
+            preview="Choisissez un nouveau mot de passe pour votre espace Piano Académie.",
+            eyebrow="SÉCURITÉ DU COMPTE",
+            title="Réinitialisation du mot de passe",
+            greeting="Bonjour {first_name},",
+            intro="Vous avez demandé la réinitialisation du mot de passe de votre espace Piano Académie.",
+            message="Par mesure de sécurité, ce lien est personnel et valable pendant une durée limitée. Si vous n’êtes pas à l’origine de cette demande, vous pouvez ignorer cet e-mail.",
+            button_url="{reset_url}",
+            button_label="Choisir un nouveau mot de passe",
         ),
         description="Lien de reinitialisation de mot de passe client.",
         variables_hint="{first_name} {last_name} {full_name} {email} {reset_url} {login_url}",
+        body_format="HTML",
     ),
     MessagingTemplateDefinition(
         code=PREDEFINED_EMAIL_TEMPLATE_TEACHER_PASSWORD,
         name="Teacher Portal Login Setup",
         channel="EMAIL",
-        subject="Activation de votre compte professeur Piano Academie",
-        body=(
-            "Bonjour {full_name},\n\n"
-            "Votre compte professeur est active.\n"
-            "Identifiant: {email}\n"
-            "Mot de passe temporaire: {temporary_password}\n"
-            "Connexion: {login_url}\n\n"
-            "Merci de vous connecter puis de changer ce mot de passe.\n\n"
-            "Piano Academie"
+        subject="Activation de votre compte professeur Piano Académie",
+        body=render_branded_email(
+            preview="Votre compte professeur Piano Académie est prêt.",
+            eyebrow="ESPACE PROFESSEUR",
+            title="Votre compte est activé",
+            greeting="Bonjour {full_name},",
+            intro="Votre accès à l’espace professeur est maintenant disponible.",
+            rows=[
+                ("Identifiant", "{email}"),
+                ("Mot de passe temporaire", "{temporary_password}"),
+            ],
+            message="Lors de votre première connexion, modifiez ce mot de passe afin de sécuriser votre compte.",
+            button_url="{login_url}",
+            button_label="Accéder à mon espace professeur",
         ),
         description="Activation du portail professeur et envoi du mot de passe temporaire.",
         variables_hint="{first_name} {last_name} {full_name} {email} {temporary_password} {login_url}",
+        body_format="HTML",
     ),
     MessagingTemplateDefinition(
         code=PREDEFINED_EMAIL_TEMPLATE_QUOTE_SEND_DEFAULT,
         name="Devis - Envoi / renvoi",
         channel="EMAIL",
-        subject="Votre devis {quote_number} Piano Academie",
+        subject="Votre devis {quote_number} Piano Académie",
         body=(
             "<p>Bonjour {recipient_name},</p>"
             "<p>Votre devis <strong>{quote_number}</strong> est disponible.</p>"
             "<p><strong>Total TTC :</strong> {total_ttc} {currency}<br>"
             "<strong>Expiration :</strong> {expires_at_local}</p>"
             "<p><a href=\"{quote_public_url}\">Consulter et agir sur le devis</a><br>"
-            "<a href=\"{quote_pdf_url}\">Telecharger le PDF</a></p>"
-            "<p>Piano Academie</p>"
+            "<a href=\"{quote_pdf_url}\">Télécharger le PDF</a></p>"
+            "<p>Piano Académie</p>"
         ),
         description="Envoi initial et renvoi manuel d un devis.",
         variables_hint=(
@@ -926,11 +935,11 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code=PREDEFINED_EMAIL_TEMPLATE_QUOTE_REMINDER_DEFAULT,
         name="Devis - Rappel avant expiration",
         channel="EMAIL",
-        subject="Rappel : votre devis {quote_number} expire bientot",
+        subject="Rappel : votre devis {quote_number} expire bientôt",
         body=_email_layout(
             _email_title(
-                "Votre devis arrive bientot a expiration",
-                "Bonjour {recipient_name}, voici un rappel avant l expiration de votre devis Piano Academie.",
+                "Votre devis arrive bientôt à expiration",
+                "Bonjour {recipient_name}, voici un rappel avant l’expiration de votre devis Piano Académie.",
             ),
             _email_summary(
                 [
@@ -942,10 +951,10 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
             _email_button("{quote_public_url}", "Consulter le devis"),
             _email_secondary(
                 "Vous pouvez aussi retrouver votre document en version PDF : "
-                "<a href=\"{quote_pdf_url}\">telecharger le PDF</a>."
+                "<a href=\"{quote_pdf_url}\">télécharger le PDF</a>."
             ),
             _email_secondary(
-                "Si vous avez besoin d un ajustement ou d un nouvel echange, notre equipe reste a votre disposition."
+                "Si vous avez besoin d’un ajustement ou d’un nouvel échange, notre équipe reste à votre disposition."
             ),
         ),
         description="Rappel automatique avant expiration d un devis.",
@@ -960,21 +969,21 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code=PREDEFINED_EMAIL_TEMPLATE_QUOTE_CANCEL_DEFAULT,
         name="Devis - Annulation",
         channel="EMAIL",
-        subject="Votre devis {quote_number} n est plus valable",
+        subject="Votre devis {quote_number} n’est plus valable",
         body=_email_layout(
             _email_title(
-                "Votre devis n est plus valable",
-                "Bonjour {recipient_name}, le devis ci-dessous a ete annule et n est plus disponible a la validation.",
+                "Votre devis n’est plus valable",
+                "Bonjour {recipient_name}, le devis ci-dessous a été annulé et n’est plus disponible à la validation.",
             ),
             _email_summary(
                 [
                     ("Devis", "{quote_number}"),
                     ("Statut", "{quote_status_label}"),
-                    ("Date d annulation", "{cancelled_at_local}"),
+                    ("Date d’annulation", "{cancelled_at_local}"),
                 ]
             ),
             _email_secondary(
-                "Si vous souhaitez poursuivre votre inscription, notre equipe peut vous preparer une nouvelle proposition."
+                "Si vous souhaitez poursuivre votre inscription, notre équipe peut vous préparer une nouvelle proposition."
             ),
         ),
         description="Notification d annulation manuelle ou automatique d un devis.",
@@ -986,13 +995,13 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code=PREDEFINED_EMAIL_TEMPLATE_QUOTE_EXPIRED_DEFAULT,
         name="Devis - Expiration client",
         channel="EMAIL",
-        subject="Votre devis {quote_number} est expire",
+        subject="Votre devis {quote_number} est expiré",
         body=_email_layout(
             _email_title(
-                "Votre devis est arrive a expiration",
+                "Votre devis est arrivé à expiration",
                 (
-                    "Bonjour {recipient_name}, votre devis Piano Academie est desormais expire "
-                    "car il n a pas ete valide dans les delais."
+                    "Bonjour {recipient_name}, votre devis Piano Académie est désormais expiré "
+                    "car il n’a pas été validé dans les délais."
                 ),
             ),
             _email_summary(
@@ -1003,10 +1012,10 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
                 ]
             ),
             _email_secondary(
-                "Le creneau qui avait ete reserve pour ce devis est donc maintenant libere."
+                "Le créneau qui avait été réservé pour ce devis est donc maintenant libéré."
             ),
             _email_secondary(
-                "Si vous souhaitez poursuivre votre inscription, notre equipe peut vous preparer une nouvelle proposition."
+                "Si vous souhaitez poursuivre votre inscription, notre équipe peut vous préparer une nouvelle proposition."
             ),
         ),
         description="Notification envoyee au client a J+1 apres expiration faute de validation du devis.",
@@ -1018,13 +1027,13 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code=PREDEFINED_EMAIL_TEMPLATE_QUOTE_APPROVED_DEFAULT,
         name="Devis - Confirmation d approbation",
         channel="EMAIL",
-        subject="Votre approbation du devis {quote_number} est bien enregistree",
+        subject="Votre approbation du devis {quote_number} est bien enregistrée",
         body=(
             "<p>Bonjour {recipient_name},</p>"
-            "<p>Nous vous confirmons que votre approbation du devis <strong>{quote_number}</strong> a bien ete prise en compte.</p>"
+            "<p>Nous vous confirmons que votre approbation du devis <strong>{quote_number}</strong> a bien été prise en compte.</p>"
             "<p><strong>Statut :</strong> {quote_status_label}</p>"
-            "<p>Vous pouvez conserver votre lien d acces si besoin : <a href=\"{quote_public_url}\">consulter le devis</a>.</p>"
-            "<p>Piano Academie</p>"
+            "<p>Vous pouvez conserver votre lien d’accès si besoin : <a href=\"{quote_public_url}\">consulter le devis</a>.</p>"
+            "<p>Piano Académie</p>"
         ),
         description="Confirmation envoyee au prospect apres approbation du devis depuis l interface publique.",
         variables_hint="{quote_number} {recipient_name} {quote_status_label} {quote_public_url} {approved_at_local}",
@@ -1035,13 +1044,13 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code=PREDEFINED_EMAIL_TEMPLATE_QUOTE_REJECTED_DEFAULT,
         name="Devis - Confirmation de refus",
         channel="EMAIL",
-        subject="Votre refus du devis {quote_number} est bien enregistre",
+        subject="Votre refus du devis {quote_number} est bien enregistré",
         body=(
             "<p>Bonjour {recipient_name},</p>"
-            "<p>Nous vous confirmons que votre refus du devis <strong>{quote_number}</strong> a bien ete pris en compte.</p>"
+            "<p>Nous vous confirmons que votre refus du devis <strong>{quote_number}</strong> a bien été pris en compte.</p>"
             "<p><strong>Statut :</strong> {quote_status_label}</p>"
-            "<p>Si votre situation evolue, notre equipe pourra vous preparer une nouvelle proposition.</p>"
-            "<p>Piano Academie</p>"
+            "<p>Si votre situation évolue, notre équipe pourra vous préparer une nouvelle proposition.</p>"
+            "<p>Piano Académie</p>"
         ),
         description="Confirmation envoyee au prospect apres refus du devis depuis l interface publique.",
         variables_hint="{quote_number} {recipient_name} {quote_status_label} {rejected_at_local}",
@@ -1052,13 +1061,13 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code=PREDEFINED_EMAIL_TEMPLATE_QUOTE_CHANGE_REQUESTED_DEFAULT,
         name="Devis - Confirmation de demande de modification",
         channel="EMAIL",
-        subject="Votre demande de modification du devis {quote_number} a bien ete recue",
+        subject="Votre demande de modification du devis {quote_number} a bien été reçue",
         body=(
             "<p>Bonjour {recipient_name},</p>"
-            "<p>Nous vous confirmons que votre demande de modification du devis <strong>{quote_number}</strong> a bien ete prise en compte.</p>"
-            "<p>Notre equipe reviendra vers vous apres analyse de votre demande.</p>"
+            "<p>Nous vous confirmons que votre demande de modification du devis <strong>{quote_number}</strong> a bien été prise en compte.</p>"
+            "<p>Notre équipe reviendra vers vous après analyse de votre demande.</p>"
             "<p>Vous pouvez relire le devis ici : <a href=\"{quote_public_url}\">consulter le devis</a>.</p>"
-            "<p>Piano Academie</p>"
+            "<p>Piano Académie</p>"
         ),
         description="Confirmation envoyee au prospect apres demande de modification depuis l interface publique.",
         variables_hint="{quote_number} {recipient_name} {quote_status_label} {quote_public_url}",
@@ -1119,18 +1128,18 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
     ),
     MessagingTemplateDefinition(
         code=PREDEFINED_EMAIL_TEMPLATE_CLIENT_BOOKING_CONFIRMATION,
-        name="Reservation - Confirmation client",
+        name="Réservation - Confirmation client",
         channel="EMAIL",
-        subject="Confirmation de votre reservation - {activity_name}",
+        subject="Confirmation de votre réservation - {activity_name}",
         body=_email_layout(
             _email_title(
-                "Reservation confirmee",
-                "Bonjour {recipient_name}, nous avons bien enregistre votre reservation.",
+                "Réservation confirmée",
+                "Bonjour {recipient_name}, nous avons bien enregistré votre réservation.",
             ),
             _email_summary(
                 [
-                    ("Eleve", "{student_name}"),
-                    ("Activite", "{activity_name}"),
+                    ("Élève", "{student_name}"),
+                    ("Activité", "{activity_name}"),
                     ("Date", "{session_date}"),
                     ("Horaire", "{session_time}"),
                     ("Fuseau horaire", "{session_timezone}"),
@@ -1138,9 +1147,9 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
                     ("Professeur", "{teacher_name}"),
                 ]
             ),
-            _email_button("{account_url}", "Acceder a mon espace client"),
+            _email_button("{account_url}", "Accéder à mon espace client"),
             _email_secondary(
-                "Vous y retrouverez vos reservations et toutes les informations utiles avant le cours."
+                "Vous y retrouverez vos réservations et toutes les informations utiles avant le cours."
             ),
         ),
         description="Confirmation de reservation envoyee au client ou au responsable legal.",
@@ -1177,23 +1186,39 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         name="Event Reminder",
         channel="EMAIL",
         subject="Rappel de votre cours",
-        body=(
-            "Bonjour {first_name},\n\n"
-            "Ceci est un rappel pour votre cours {session_title} le {session_start_human}.\n"
-            "Lieu: {location_label}\n\n"
-            "Piano Academie"
+        body=render_branded_email(
+            preview="Rappel de votre prochain cours Piano Académie.",
+            eyebrow="RAPPEL DE COURS",
+            title="Votre cours approche",
+            greeting="Bonjour {first_name},",
+            intro="Voici les informations de votre prochain cours.",
+            rows=[
+                ("Cours", "{session_title}"),
+                ("Date et horaire", "{session_start_human}"),
+                ("Lieu", "{location_label}"),
+            ],
         ),
         description="Rappel automatique avant un cours.",
         variables_hint="{first_name} {session_title} {session_start_human} {location_label}",
+        body_format="HTML",
     ),
     MessagingTemplateDefinition(
         code="EVENT_CANCELLED",
         name="Event Cancelled",
         channel="EMAIL",
-        subject="Votre cours a ete annule",
-        body="Bonjour {first_name},\n\nLe cours {session_title} a ete annule.\n\nPiano Academie",
+        subject="Votre cours a été annulé",
+        body=render_branded_email(
+            preview="Votre cours a été annulé.",
+            eyebrow="INFORMATION DE COURS",
+            title="Cours annulé",
+            greeting="Bonjour {first_name},",
+            intro="Nous vous informons que le cours ci-dessous a été annulé.",
+            rows=[("Cours", "{session_title}")],
+            message="Votre espace client a été mis à jour automatiquement.",
+        ),
         description="Information d annulation d un cours.",
         variables_hint="{first_name} {session_title}",
+        body_format="HTML",
     ),
     MessagingTemplateDefinition(
         code="INVOICE",
@@ -1203,25 +1228,25 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         body=_email_layout(
             _email_title(
                 "Votre facture est disponible",
-                "Bonjour {recipient_name}, vous pouvez consulter votre facture et proceder au reglement en ligne.",
+                "Bonjour {recipient_name}, vous pouvez consulter votre facture et procéder au règlement en ligne.",
             ),
             _email_summary(
                 [
                     ("Facture", "{invoice_number}"),
-                    ("Date d emission", "{issued_date}"),
-                    ("Echeance", "{due_date}"),
-                    ("Montant a regler", "{amount_due} {currency}"),
+                    ("Date d’émission", "{issued_date}"),
+                    ("Échéance", "{due_date}"),
+                    ("Montant à régler", "{amount_due} {currency}"),
                 ]
             ),
-            _email_button("{payment_url}", "Consulter et regler la facture"),
+            _email_button("{payment_url}", "Consulter et régler la facture"),
             _email_secondary(
                 "Pour payer par virement bancaire, cliquez sur le bouton puis choisissez Virement bancaire. "
-                "Une reference unique vous sera communiquee afin de suivre votre paiement."
+                "Une référence unique vous sera communiquée afin de suivre votre paiement."
             ),
             _email_secondary(
-                "Lien direct vers la facture : <a href=\"{invoice_url}\">telecharger la facture</a>. "
+                "Lien direct vers la facture : <a href=\"{invoice_url}\">télécharger la facture</a>. "
                 "Vous pouvez aussi la retrouver dans votre espace client : "
-                "<a href=\"{account_url}\">acceder a mon compte</a>."
+                "<a href=\"{account_url}\">accéder à mon compte</a>."
             ),
         ),
         description="Envoi de facture.",
@@ -1237,24 +1262,24 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code="INVOICE_PAID",
         name="Invoice Paid",
         channel="EMAIL",
-        subject="Votre facture {invoice_number} est disponible et deja reglee",
+        subject="Votre facture {invoice_number} est disponible et déjà réglée",
         body=_email_layout(
             _email_title(
                 "Votre facture est disponible",
-                "Bonjour {recipient_name}, cette facture est deja reglee. Aucun paiement supplementaire n est attendu.",
+                "Bonjour {recipient_name}, cette facture est déjà réglée. Aucun paiement supplémentaire n’est attendu.",
             ),
             _email_summary(
                 [
                     ("Facture", "{invoice_number}"),
-                    ("Date d emission", "{issued_date}"),
+                    ("Date d’émission", "{issued_date}"),
                     ("Montant TTC", "{total_incl_vat} {currency}"),
-                    ("Paiement deja recu", "{amount_paid} {currency}"),
+                    ("Paiement déjà reçu", "{amount_paid} {currency}"),
                 ]
             ),
-            _email_button("{invoice_url}", "Telecharger la facture"),
+            _email_button("{invoice_url}", "Télécharger la facture"),
             _email_secondary(
-                "Retrouvez egalement cette facture dans votre espace client : "
-                "<a href=\"{account_url}\">acceder a mon compte</a>."
+                "Retrouvez également cette facture dans votre espace client : "
+                "<a href=\"{account_url}\">accéder à mon compte</a>."
             ),
         ),
         description="Envoi de facture deja integralement reglee.",
@@ -1274,25 +1299,25 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         body=_email_layout(
             _email_title(
                 "Rappel de facture",
-                "Bonjour {recipient_name}, votre facture est toujours disponible et reste a regler avant son echeance.",
+                "Bonjour {recipient_name}, votre facture est toujours disponible et reste à régler avant son échéance.",
             ),
             _email_summary(
                 [
                     ("Facture", "{invoice_number}"),
-                    ("Date d emission", "{issued_date}"),
-                    ("Echeance", "{due_date}"),
-                    ("Montant restant du", "{amount_due} {currency}"),
+                    ("Date d’émission", "{issued_date}"),
+                    ("Échéance", "{due_date}"),
+                    ("Montant restant dû", "{amount_due} {currency}"),
                 ]
             ),
-            _email_button("{payment_url}", "Regler ma facture"),
+            _email_button("{payment_url}", "Régler ma facture"),
             _email_secondary(
                 "Pour payer par virement bancaire, cliquez sur le bouton puis choisissez Virement bancaire. "
-                "Une reference unique vous sera communiquee afin de suivre votre paiement."
+                "Une référence unique vous sera communiquée afin de suivre votre paiement."
             ),
             _email_secondary(
-                "Lien direct vers la facture : <a href=\"{invoice_url}\">telecharger la facture</a>. "
-                "Vous pouvez egalement la retrouver dans votre espace client : "
-                "<a href=\"{account_url}\">acceder a mon compte</a>."
+                "Lien direct vers la facture : <a href=\"{invoice_url}\">télécharger la facture</a>. "
+                "Vous pouvez également la retrouver dans votre espace client : "
+                "<a href=\"{account_url}\">accéder à mon compte</a>."
             ),
         ),
         description="Relance de facture.",
@@ -1310,20 +1335,20 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         subject="Finalisez votre paiement - {plan_name}",
         body=_email_layout(
             _email_title(
-                "Votre paiement est pret",
-                "Bonjour {first_name}, vous pouvez finaliser votre reglement en ligne pour confirmer votre achat.",
+                "Votre paiement est prêt",
+                "Bonjour {first_name}, vous pouvez finaliser votre règlement en ligne pour confirmer votre achat.",
             ),
             _email_summary(
                 [
-                    ("Offre concernee", "{plan_name}"),
-                    ("Montant a regler", "{amount_due} {currency}"),
+                    ("Offre concernée", "{plan_name}"),
+                    ("Montant à régler", "{amount_due} {currency}"),
                     ("Mode de paiement", "{payment_method}"),
-                    ("Reference", "{subscription_reference}"),
+                    ("Référence", "{subscription_reference}"),
                 ]
             ),
             _email_button("{payment_url}", "Payer en ligne"),
             _email_secondary(
-                "Les conditions generales de vente sont disponibles ici : "
+                "Les conditions générales de vente sont disponibles ici : "
                 "<a href=\"{legal_terms_url}\">consulter les CGV</a>."
             ),
         ),
@@ -1338,24 +1363,24 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code="PAYMENT_CONFIRMED",
         name="Payment Confirmed",
         channel="EMAIL",
-        subject="Confirmation de reception de votre paiement - {payment_label}",
+        subject="Confirmation de réception de votre paiement - {payment_label}",
         body=_email_layout(
             _email_title(
-                "Paiement confirme",
-                "Bonjour {first_name}, nous confirmons la reception de votre paiement.",
+                "Paiement confirmé",
+                "Bonjour {first_name}, nous confirmons la réception de votre paiement.",
             ),
             _email_summary(
                 [
                     ("Prestation / offre", "{payment_label}"),
-                    ("Montant regle", "{amount_paid} {currency}"),
+                    ("Montant réglé", "{amount_paid} {currency}"),
                     ("Date de paiement", "{paid_at}"),
-                    ("Reference", "{payment_reference}"),
+                    ("Référence", "{payment_reference}"),
                 ]
             ),
             _email_button("{transactions_url}", "Voir mes transactions"),
             _email_secondary(
                 "Votre facture {invoice_number} est disponible ici : "
-                "<a href=\"{invoice_url}\">telecharger la facture</a>."
+                "<a href=\"{invoice_url}\">télécharger la facture</a>."
             ),
         ),
         description="Confirmation apres paiement valide.",
@@ -1371,28 +1396,28 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code="PAYMENT_RECEIPT",
         name="Payment Receipt",
         channel="EMAIL",
-        subject="Confirmation de reception de votre paiement",
+        subject="Confirmation de réception de votre paiement",
         body=_email_layout(
             _email_title(
                 "Justificatif de paiement",
-                "Bonjour {first_name}, nous confirmons la reception de votre paiement pour une prestation prevue ulterieurement.",
+                "Bonjour {first_name}, nous confirmons la réception de votre paiement pour une prestation prévue ultérieurement.",
             ),
             _email_summary(
                 [
-                    ("Beneficiaire", "{student_name}"),
+                    ("Bénéficiaire", "{student_name}"),
                     ("Prestation", "{reservation_label}"),
-                    ("Date prevue", "{scheduled_service_date}"),
+                    ("Date prévue", "{scheduled_service_date}"),
                     ("Horaire", "{session_time_label}"),
                     ("Lieu", "{location_label}"),
-                    ("Montant recu", "{amount_paid} {currency}"),
-                    ("Reference de paiement", "{payment_reference}"),
-                    ("Reference du justificatif", "{receipt_number}"),
+                    ("Montant reçu", "{amount_paid} {currency}"),
+                    ("Référence de paiement", "{payment_reference}"),
+                    ("Référence du justificatif", "{receipt_number}"),
                 ]
             ),
-            _email_button("{account_url}", "Acceder a mon espace client"),
+            _email_button("{account_url}", "Accéder à mon espace client"),
             _email_secondary(
-                "Ce document confirme la reception de votre paiement. Il ne constitue pas une facture de prestation. "
-                "La facture definitive sera emise a la realisation de la prestation."
+                "Ce document confirme la réception de votre paiement. Il ne constitue pas une facture de prestation. "
+                "La facture définitive sera émise à la réalisation de la prestation."
             ),
         ),
         description="Justificatif de paiement envoye immediatement apres paiement d une prestation future.",
@@ -1479,29 +1504,29 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code="REFUND_ISSUED",
         name="Refund Issued",
         channel="EMAIL",
-        subject="Confirmation de votre remboursement Piano Academie",
+        subject="Confirmation de votre remboursement Piano Académie",
         body=_email_layout(
             _email_title(
-                "Remboursement confirme",
-                "Bonjour {first_name}, nous confirmons l enregistrement de votre remboursement.",
+                "Remboursement confirmé",
+                "Bonjour {first_name}, nous confirmons l’enregistrement de votre remboursement.",
             ),
             _email_summary(
                 [
-                    ("Beneficiaire", "{student_name}"),
+                    ("Bénéficiaire", "{student_name}"),
                     ("Prestation", "{reservation_label}"),
-                    ("Date prevue", "{scheduled_service_date}"),
+                    ("Date prévue", "{scheduled_service_date}"),
                     ("Horaire", "{session_time_label}"),
                     ("Lieu", "{location_label}"),
-                    ("Montant rembourse", "{refund_amount} {currency}"),
+                    ("Montant remboursé", "{refund_amount} {currency}"),
                     ("Date du remboursement", "{refund_date}"),
-                    ("Reference du paiement", "{payment_reference}"),
+                    ("Référence du paiement", "{payment_reference}"),
                     ("Motif", "{refund_reason}"),
                 ]
             ),
-            _email_button("{account_url}", "Acceder a mon espace client"),
+            _email_button("{account_url}", "Accéder à mon espace client"),
             _email_secondary(
-                "Votre reservation est desormais cloturee sur le plan financier. "
-                "Vous pouvez retrouver le detail dans votre espace client."
+                "Votre réservation est désormais clôturée sur le plan financier. "
+                "Vous pouvez retrouver le détail dans votre espace client."
             ),
         ),
         description="Confirmation de remboursement d une reservation ou d un paiement client.",
@@ -1541,50 +1566,86 @@ PREDEFINED_TEMPLATE_DEFINITIONS: tuple[MessagingTemplateDefinition, ...] = (
         code="AUTOMATIC_PAYMENT_FAILED",
         name="Automatic Payment Failed",
         channel="EMAIL",
-        subject="Echec du paiement automatique",
-        body="Bonjour {first_name},\n\nLe dernier paiement automatique a echoue.\n\nPiano Academie",
+        subject="Échec du paiement automatique",
+        body=render_branded_email(
+            preview="Une action est nécessaire concernant votre paiement.",
+            eyebrow="PAIEMENT",
+            title="Le paiement n’a pas abouti",
+            greeting="Bonjour {first_name},",
+            intro="Le dernier paiement automatique de votre abonnement a échoué.",
+            message="Veuillez vérifier votre moyen de paiement dans votre espace client ou contacter l’école afin de régulariser la situation.",
+        ),
         description="Notification d echec de prelevement automatique.",
         variables_hint="{first_name}",
+        body_format="HTML",
     ),
     MessagingTemplateDefinition(
         code="BANK_TRANSFER_FAILED",
         name="Bank Transfer Failed",
         channel="EMAIL",
-        subject="Echec du virement",
-        body="Bonjour {first_name},\n\nLe dernier virement n a pas pu etre valide.\n\nPiano Academie",
+        subject="Échec du virement",
+        body=render_branded_email(
+            preview="Votre virement n’a pas pu être validé.",
+            eyebrow="PAIEMENT",
+            title="Virement non validé",
+            greeting="Bonjour {first_name},",
+            intro="Le dernier virement associé à votre compte n’a pas pu être validé.",
+            message="Merci de vérifier les informations du virement ou de contacter l’école pour obtenir de l’aide.",
+        ),
         description="Notification d echec de virement.",
         variables_hint="{first_name}",
+        body_format="HTML",
     ),
     MessagingTemplateDefinition(
         code="BIRTHDAY_EMAIL",
         name="Birthday Email",
         channel="EMAIL",
         subject="Joyeux anniversaire",
-        body=(
-            "Bonjour {first_name},\n\n"
-            "Toute l equipe de Piano Academie vous souhaite un tres bon anniversaire.\n\n"
-            "Piano Academie"
+        body=render_branded_email(
+            preview="Toute l’équipe Piano Académie vous souhaite un joyeux anniversaire.",
+            eyebrow="PIANO ACADÉMIE",
+            title="Joyeux anniversaire !",
+            greeting="Bonjour {first_name},",
+            intro="Toute l’équipe de Piano Académie vous souhaite un très bel anniversaire.",
+            message="Nous espérons que cette nouvelle année sera remplie de musique et de beaux projets.",
         ),
         description="Email automatique d anniversaire.",
         variables_hint="{first_name}",
+        body_format="HTML",
     ),
     MessagingTemplateDefinition(
         code="LESSON_NOTES",
         name="Lesson Notes",
         channel="EMAIL",
         subject="Notes de cours",
-        body="Bonjour {first_name},\n\nVous trouverez ci-dessous les notes du cours.\n\nPiano Academie",
+        body=render_branded_email(
+            preview="De nouvelles notes de cours sont disponibles.",
+            eyebrow="SUIVI PÉDAGOGIQUE",
+            title="Notes de cours",
+            greeting="Bonjour {first_name},",
+            intro="De nouvelles notes relatives à votre cours sont disponibles.",
+            message="Vous pouvez les consulter depuis votre espace Piano Académie.",
+        ),
         description="Envoi des notes de cours.",
         variables_hint="{first_name}",
+        body_format="HTML",
     ),
     MessagingTemplateDefinition(
         code="NEW_FILE_ADDED",
         name="New File Added",
         channel="EMAIL",
         subject="Nouveau document disponible",
-        body="Bonjour {first_name},\n\nUn nouveau document a ete ajoute a votre espace.\n\nPiano Academie",
+        body=render_branded_email(
+            preview="Un nouveau document est disponible dans votre espace.",
+            eyebrow="DOCUMENT",
+            title="Nouveau document disponible",
+            greeting="Bonjour {first_name},",
+            intro="Un nouveau document a été ajouté à votre espace Piano Académie.",
+            message="Connectez-vous à votre espace pour le consulter.",
+        ),
         description="Notification d ajout de fichier.",
         variables_hint="{first_name}",
+        body_format="HTML",
     ),
     MessagingTemplateDefinition(
         code="SMS_AUTOMATIC_PAYMENT_FAILED",

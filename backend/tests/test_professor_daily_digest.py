@@ -63,6 +63,7 @@ class ProfessorDailyDigestTests(unittest.TestCase):
         self.assertEqual(before.sent, 0)
         self.assertEqual(at_seven.sent, 1)
         send_email.assert_called_once()
+        self.assertEqual(send_email.call_args.kwargs["body_format"], "HTML")
         self.assertEqual(
             build_body.call_args.kwargs["day_start_utc"],
             datetime(2026, 8, 1, 22, 0, tzinfo=timezone.utc),

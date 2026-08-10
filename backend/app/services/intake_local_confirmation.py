@@ -11,6 +11,7 @@ from app.models.catalog import Professor
 from app.models.ops import CommunicationSenderCategory
 from app.models.typeform_intake import TypeformFormConfig, TypeformIntake
 from app.models.user import User
+from app.services.email_branding import render_branded_email
 from app.services.email_delivery import send_email
 from app.services.messaging_templates import resolve_frontend_base_url, resolve_sender_profile
 
@@ -100,12 +101,16 @@ def notify_local_confirmation_assignee(
     )
     person = child_name or parent_name or "un nouvel élève"
     task_url = f"{resolve_frontend_base_url(db).rstrip('/')}/prof/intakes/{intake.id}"
-    body = (
-        f"Bonjour {professor.first_name},\n\n"
-        f"Un nouvel intake Bar-le-Duc est arrivé pour {person}. "
-        "Merci de confirmer le créneau de cours et la partition à prévoir.\n\n"
-        f"Ouvrir la demande : {task_url}\n\n"
-        "Cette demande restera affichée dans votre espace professeur jusqu'à sa confirmation."
+    body = render_branded_email(
+        preview=f"Un nouvel intake Bar-le-Duc est arrivé pour {person}.",
+        eyebrow="ACTION REQUISE",
+        title="Nouvel intake Bar-le-Duc",
+        greeting=f"Bonjour {professor.first_name},",
+        intro="Merci de confirmer le créneau de cours et la partition à prévoir.",
+        rows=[("Élève", person), ("Statut", "À confirmer")],
+        message="Cette demande restera affichée dans votre espace professeur jusqu’à sa confirmation.",
+        button_url=task_url,
+        button_label="Ouvrir la demande",
     )
     sender = resolve_sender_profile(db, sender_kind="STUDIO")
     recipient = db.scalar(select(User).where(func.lower(User.email) == professor.email.lower()).limit(1))
@@ -113,7 +118,7 @@ def notify_local_confirmation_assignee(
         to_email=professor.email,
         subject=f"Action requise – intake Bar-le-Duc – {person}",
         body=body,
-        body_format="TEXT",
+        body_format="HTML",
         context=f"INTAKE_LOCAL_CONFIRMATION:{intake.id}",
         from_email=sender.from_email,
         from_name=sender.from_name,

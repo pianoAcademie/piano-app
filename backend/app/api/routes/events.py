@@ -60,6 +60,7 @@ from app.schemas.event import (
     SchoolEventVenueOut,
 )
 from app.services.client_email import deliverable_client_email
+from app.services.email_branding import render_branded_email
 from app.services.email_delivery import send_email
 from app.services.event_reminders import school_event_reminder_hours
 from app.services.messaging_templates import resolve_frontend_base_url
@@ -503,19 +504,28 @@ def _send_registration_confirmation(
         else f"Inscription confirmée - {title}"
     )
     custom_message = event.confirmation_message_en if is_english else event.confirmation_message_fr
-    body = (
-        f"Your registration for {title} is {'on the waiting list' if waiting else 'confirmed'}.\n"
-        f"Date: {when}\nParticipants: {', '.join(participant_names)}"
-        if is_english
-        else f"Votre inscription à {title} est {'sur liste d’attente' if waiting else 'confirmée'}.\n"
-        f"Date : {when}\nParticipants : {', '.join(participant_names)}"
+    body = render_branded_email(
+        preview=f"{'Waiting list' if is_english and waiting else 'Registration confirmed' if is_english else 'Liste d’attente' if waiting else 'Inscription confirmée'} - {title}",
+        eyebrow="EVENT" if is_english else "ÉVÉNEMENT",
+        title="Waiting list" if is_english and waiting else "Registration confirmed" if is_english else "Liste d’attente" if waiting else "Inscription confirmée",
+        greeting="Hello," if is_english else "Bonjour,",
+        intro=(
+            f"Your registration for {title} is {'on the waiting list' if waiting else 'confirmed'}."
+            if is_english
+            else f"Votre inscription à {title} est {'sur liste d’attente' if waiting else 'confirmée'}."
+        ),
+        rows=[
+            ("Date", when),
+            ("Participants", ", ".join(participant_names)),
+        ],
+        message=custom_message.strip() if custom_message and custom_message.strip() else None,
+        footer="This email was sent automatically by Piano Academie." if is_english else "Cet e-mail a été envoyé automatiquement par Piano Académie.",
     )
-    if custom_message and custom_message.strip():
-        body = f"{body}\n\n{custom_message.strip()}"
     send_email(
         to_email=email,
         subject=subject,
         body=body,
+        body_format="HTML",
         context="SCHOOL_EVENT_REGISTRATION",
         recipient_user_id=booker.id,
         communication_type="EVENT_REGISTRATION",
@@ -544,17 +554,24 @@ def _send_public_registration_confirmation(
         else f"Liste d'attente - {title}" if waiting
         else f"Inscription confirmée - {title}"
     )
-    body = (
-        f"Hello {first_name},\n\nYour registration for {title} is {'on the waiting list' if waiting else 'confirmed'}.\n"
-        f"Date: {when}\nTickets: {', '.join(participant_names)}"
-        if is_english
-        else f"Bonjour {first_name},\n\nVotre réservation pour {title} est {'sur liste d’attente' if waiting else 'confirmée'}.\n"
-        f"Date : {when}\nBillets : {', '.join(participant_names)}"
+    body = render_branded_email(
+        preview=f"{'Waiting list' if is_english and waiting else 'Registration confirmed' if is_english else 'Liste d’attente' if waiting else 'Inscription confirmée'} - {title}",
+        eyebrow="EVENT" if is_english else "ÉVÉNEMENT",
+        title="Waiting list" if is_english and waiting else "Registration confirmed" if is_english else "Liste d’attente" if waiting else "Inscription confirmée",
+        greeting=f"Hello {first_name}," if is_english else f"Bonjour {first_name},",
+        intro=(
+            f"Your registration for {title} is {'on the waiting list' if waiting else 'confirmed'}."
+            if is_english
+            else f"Votre réservation pour {title} est {'sur liste d’attente' if waiting else 'confirmée'}."
+        ),
+        rows=[("Date", when), ("Tickets" if is_english else "Billets", ", ".join(participant_names))],
+        footer="This email was sent automatically by Piano Academie." if is_english else "Cet e-mail a été envoyé automatiquement par Piano Académie.",
     )
     send_email(
         to_email=email,
         subject=subject,
         body=body,
+        body_format="HTML",
         context="SCHOOL_EVENT_PUBLIC_REGISTRATION",
         communication_type="EVENT_REGISTRATION",
     )
@@ -578,19 +595,23 @@ def _send_payment_required(
     base_url = resolve_frontend_base_url(db).rstrip("/")
     payment_url = f"{base_url}/events/{event.slug}"
     subject = f"Payment required - {title}" if is_english else f"Paiement requis - {title}"
-    body = (
-        f"A place is available for {title}.\n"
-        f"Date: {when}\nParticipants: {', '.join(participant_names)}\n\n"
-        f"Complete payment within 20 minutes: {payment_url}"
-        if is_english
-        else f"Une place est disponible pour {title}.\n"
-        f"Date : {when}\nParticipants : {', '.join(participant_names)}\n\n"
-        f"Finalisez le paiement sous 20 minutes : {payment_url}"
+    body = render_branded_email(
+        preview=f"{'Payment required' if is_english else 'Paiement requis'} - {title}",
+        eyebrow="EVENT PAYMENT" if is_english else "PAIEMENT DE L’ÉVÉNEMENT",
+        title="A place is available" if is_english else "Une place est disponible",
+        greeting="Hello," if is_english else "Bonjour,",
+        intro=f"Complete your registration for {title}." if is_english else f"Finalisez votre inscription à {title}.",
+        rows=[("Date", when), ("Participants", ", ".join(participant_names))],
+        message="Payment must be completed within 20 minutes." if is_english else "Le paiement doit être finalisé sous 20 minutes.",
+        button_url=payment_url,
+        button_label="Complete payment" if is_english else "Finaliser le paiement",
+        footer="This email was sent automatically by Piano Academie." if is_english else "Cet e-mail a été envoyé automatiquement par Piano Académie.",
     )
     send_email(
         to_email=email,
         subject=subject,
         body=body,
+        body_format="HTML",
         context="SCHOOL_EVENT_PAYMENT_REQUIRED",
         recipient_user_id=booker.id,
         communication_type="EVENT_PAYMENT_REQUIRED",
@@ -613,24 +634,28 @@ def _send_event_cancellation(
     title = event.title_en if is_english and event.title_en else event.title_fr
     when = _event_datetime_for_booker(slot=slot, booker=booker)
     payment_note = (
-        "\nThe school will contact you separately regarding the paid registration."
+        "The school will contact you separately regarding the paid registration."
         if is_english and paid
-        else "\nL’école vous contactera séparément concernant l’inscription réglée."
+        else "L’école vous contactera séparément concernant l’inscription réglée."
         if paid
         else ""
     )
     subject = f"Event cancelled - {title}" if is_english else f"Événement annulé - {title}"
-    body = (
-        f"The event {title}, scheduled for {when}, has been cancelled.\n"
-        f"Participants: {', '.join(participant_names)}{payment_note}"
-        if is_english
-        else f"L’événement {title}, prévu le {when}, est annulé.\n"
-        f"Participants : {', '.join(participant_names)}{payment_note}"
+    body = render_branded_email(
+        preview=f"{'Event cancelled' if is_english else 'Événement annulé'} - {title}",
+        eyebrow="EVENT" if is_english else "ÉVÉNEMENT",
+        title="Event cancelled" if is_english else "Événement annulé",
+        greeting="Hello," if is_english else "Bonjour,",
+        intro=f"The event {title} has been cancelled." if is_english else f"L’événement {title} a été annulé.",
+        rows=[("Date", when), ("Participants", ", ".join(participant_names))],
+        message=payment_note or None,
+        footer="This email was sent automatically by Piano Academie." if is_english else "Cet e-mail a été envoyé automatiquement par Piano Académie.",
     )
     send_email(
         to_email=email,
         subject=subject,
         body=body,
+        body_format="HTML",
         context="SCHOOL_EVENT_CANCELLED",
         recipient_user_id=booker.id,
         communication_type="EVENT_CANCELLED",
@@ -653,20 +678,26 @@ def _send_public_event_cancellation(
     timezone_name = resolve_timezone_name(None, slot.timezone)
     when = f"{slot.start_at_utc.astimezone(ZoneInfo(timezone_name)).strftime('%d/%m/%Y %H:%M')} ({timezone_name})"
     payment_note = (
-        "\nThe school will contact you separately regarding your payment." if is_english and paid
-        else "\nL’école vous contactera séparément concernant votre règlement." if paid
+        "The school will contact you separately regarding your payment." if is_english and paid
+        else "L’école vous contactera séparément concernant votre règlement." if paid
         else ""
     )
     subject = f"Event cancelled - {title}" if is_english else f"Événement annulé - {title}"
-    body = (
-        f"The event {title}, scheduled for {when}, has been cancelled.\nTickets: {', '.join(participant_names)}{payment_note}"
-        if is_english
-        else f"L’événement {title}, prévu le {when}, est annulé.\nBillets : {', '.join(participant_names)}{payment_note}"
+    body = render_branded_email(
+        preview=f"{'Event cancelled' if is_english else 'Événement annulé'} - {title}",
+        eyebrow="EVENT" if is_english else "ÉVÉNEMENT",
+        title="Event cancelled" if is_english else "Événement annulé",
+        greeting="Hello," if is_english else "Bonjour,",
+        intro=f"The event {title} has been cancelled." if is_english else f"L’événement {title} a été annulé.",
+        rows=[("Date", when), ("Tickets" if is_english else "Billets", ", ".join(participant_names))],
+        message=payment_note or None,
+        footer="This email was sent automatically by Piano Academie." if is_english else "Cet e-mail a été envoyé automatiquement par Piano Académie.",
     )
     send_email(
         to_email=registration.public_booker_email,
         subject=subject,
         body=body,
+        body_format="HTML",
         context="SCHOOL_EVENT_PUBLIC_CANCELLED",
         communication_type="EVENT_CANCELLED",
     )
