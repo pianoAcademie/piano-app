@@ -7822,6 +7822,13 @@ def cancel_admin_client_subscription(
 
     db.add(sub)
     admin_message_id: str | None = None
+    client_message_id = send_cancellation_decision_email(
+        db,
+        client=client,
+        plan=plan,
+        approved=True,
+        effective_at=effective_at,
+    )
     if immediate:
         admin_message_id = _send_admin_subscription_immediate_cancellation_email(
             db,
@@ -7851,6 +7858,11 @@ def cancel_admin_client_subscription(
                 )
             )
             + (f" Notification email admin envoyee ({admin_message_id})." if immediate and admin_message_id else "")
+            + (
+                f" Notification email client envoyee ({client_message_id})."
+                if client_message_id
+                else " Notification email client non envoyee."
+            )
         ),
     )
     db.commit()

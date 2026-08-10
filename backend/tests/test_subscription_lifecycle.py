@@ -94,9 +94,35 @@ class SubscriptionLifecycleTests(unittest.TestCase):
 
     @patch("app.services.subscription_lifecycle_notifications.resolve_sender_profile")
     @patch("app.services.subscription_lifecycle_notifications.send_email")
-    def test_french_pause_confirmation_states_inclusive_end_and_resume_date(self, send_email, sender_profile) -> None:
+    def test_french_cancellation_confirmation_states_last_access_day(self, send_email, sender_profile) -> None:
         sender_profile.return_value = SimpleNamespace(from_email="school@example.test", from_name="School", reply_to=None, subject_prefix=None)
         send_email.return_value = "message-2"
+        client = SimpleNamespace(
+            id="client-2",
+            email="client@example.test",
+            first_name="Esther",
+            last_name="Honegger",
+            preferred_language="fr",
+        )
+        plan = SimpleNamespace(name="Abonnement mensuel")
+
+        send_cancellation_decision_email(
+            object(),  # type: ignore[arg-type]
+            client=client,  # type: ignore[arg-type]
+            plan=plan,  # type: ignore[arg-type]
+            approved=True,
+            effective_at=datetime(2026, 9, 7, 22, 0, tzinfo=timezone.utc),
+        )
+
+        body = send_email.call_args.kwargs["body"]
+        self.assertIn("prendra effet le 08/09/2026", body)
+        self.assertIn("jusqu'au 07/09/2026 inclus", body)
+
+    @patch("app.services.subscription_lifecycle_notifications.resolve_sender_profile")
+    @patch("app.services.subscription_lifecycle_notifications.send_email")
+    def test_french_pause_confirmation_states_inclusive_end_and_resume_date(self, send_email, sender_profile) -> None:
+        sender_profile.return_value = SimpleNamespace(from_email="school@example.test", from_name="School", reply_to=None, subject_prefix=None)
+        send_email.return_value = "message-3"
         client = SimpleNamespace(
             id="client-2",
             email="client@example.test",

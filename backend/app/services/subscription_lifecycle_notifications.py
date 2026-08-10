@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -119,6 +119,23 @@ def send_cancellation_decision_email(
         local_effective_at = effective_at.astimezone(ZoneInfo("Europe/Paris"))
         effective_fr = local_effective_at.strftime("%d/%m/%Y")
         effective_en = local_effective_at.strftime("%Y-%m-%d")
+        effective_at_local_midnight = not any(
+            (
+                local_effective_at.hour,
+                local_effective_at.minute,
+                local_effective_at.second,
+                local_effective_at.microsecond,
+            )
+        )
+        if effective_at_local_midnight:
+            last_access_date = local_effective_at.date() - timedelta(days=1)
+            access_fr = f"Vous conservez vos acces jusqu'au {last_access_date.strftime('%d/%m/%Y')} inclus."
+            access_en = f"You retain access through {last_access_date.strftime('%Y-%m-%d')}, inclusive."
+        else:
+            effective_time_fr = local_effective_at.strftime("%d/%m/%Y a %H:%M")
+            effective_time_en = local_effective_at.strftime("%Y-%m-%d at %H:%M")
+            access_fr = f"Vous conservez vos acces jusqu'au {effective_time_fr}."
+            access_en = f"You retain access until {effective_time_en}."
         return _send_client_email(
             db,
             client=client,
@@ -126,13 +143,13 @@ def send_cancellation_decision_email(
             subject_en=f"Cancellation confirmed - {plan.name}",
             body_fr=(
                 f"Bonjour {name},\n\nVotre demande de resiliation de l'abonnement « {plan.name} » a ete validee. "
-                f"Elle prendra effet juste avant l'echeance du {effective_fr}. Aucun nouveau paiement ne sera preleve a cette echeance.\n\n"
-                "Vous conservez vos acces jusqu'a cette date.\n\nCordialement,\nL'equipe Piano Academie"
+                f"Elle prendra effet le {effective_fr}. Aucun nouveau paiement ne sera preleve a cette echeance.\n\n"
+                f"{access_fr}\n\nCordialement,\nL'equipe Piano Academie"
             ),
             body_en=(
                 f"Hello {name},\n\nYour request to cancel the “{plan.name}” subscription has been approved. "
-                f"It will take effect immediately before the {effective_en} renewal. No new payment will be collected on that date.\n\n"
-                "You retain access until then.\n\nKind regards,\nThe Piano Academie team"
+                f"It will take effect on {effective_en}. No new payment will be collected on that date.\n\n"
+                f"{access_en}\n\nKind regards,\nThe Piano Academie team"
             ),
             context="SUBSCRIPTION_CANCELLATION_APPROVED_CLIENT",
         )
