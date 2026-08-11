@@ -35,6 +35,7 @@ import SessionEditModalBridge from "../../components/planning/session-edit-modal
 import MonthDayCard from "../../components/planning/month-day-card";
 import SessionCreateMainFields from "../../components/planning/session-create-main-fields";
 import SessionCreateSubmitButton from "../../components/planning/session-create-submit-button";
+import GroupNoteComposer from "../../components/planning/group-note-composer";
 import { localeForUiLanguage, normalizeUiLanguage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
 import { resolveUiFlashMessage, withUiLanguage } from "../../lib/ui-messages";
 import type {
@@ -1000,8 +1001,6 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const attendanceFilter = parseAttendanceFilter(readParam(searchParams, "attendance_filter").trim().toLowerCase());
   const notesModal = readParam(searchParams, "notes").toLowerCase();
   const groupNotesModalOpen = notesModal === "group";
-  const groupNoteTab = parseComposerTab(readParam(searchParams, "note_tab").trim().toLowerCase());
-  const groupNoteAdvancedMode = readParam(searchParams, "group_note_mode").trim().toLowerCase() === "advanced";
   const groupNoteTemplateId = readParam(searchParams, "group_note_template_id");
   const groupNoteDestinationRaw = readParam(searchParams, "note_destination").trim().toUpperCase();
   const groupNoteDestination =
@@ -1362,13 +1361,6 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const attendanceModalBaseHref = removeQueryParam(removeQueryParam(attendanceModalHref, "booking_focus"), "attendance_filter");
   const attendanceFilteredHref = (filter: AttendanceFilter): string => withQueryParam(attendanceModalBaseHref, "attendance_filter", filter);
   const groupNotesModalHref = selectedSession ? withQueryParam(modalHref, "notes", "group") : modalHref;
-  const groupNotesModalBaseHref = removeQueryParam(
-    removeQueryParam(removeQueryParam(groupNotesModalHref, "group_note_template_id"), "note_tab"),
-    "group_note_mode",
-  );
-  const groupNoteTabHref = (tab: ComposerTab): string => withQueryParam(groupNotesModalBaseHref, "note_tab", tab);
-  const groupNoteAdvancedHref = withQueryParam(groupNoteTabHref("content"), "group_note_mode", "advanced");
-  const groupNoteSimpleHref = removeQueryParam(groupNoteTabHref("content"), "group_note_mode");
   const selectedGroupNoteTemplate =
     groupNoteTemplateId && groupNoteTemplates.length > 0
       ? groupNoteTemplates.find((template) => template.id === groupNoteTemplateId) ?? null
@@ -1404,12 +1396,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const focusedAttendanceBooking =
     attendanceBookings.find((booking) => booking.id === bookingFocusId) ?? attendanceBookings[0] ?? null;
   const selectedSessionHasBookings = selectedSessionConfirmedBookings.length > 0;
-  const isGroupNoteStudentAudience =
-    groupNoteDestination === "STUDENTS" ||
-    groupNoteDestination === "PARENTS" ||
-    groupNoteDestination === "STUDENTS_AND_PARENTS";
   const groupNotePrefill = selectedGroupNoteTemplate?.body ?? selectedSession?.group_note ?? "";
-  const groupNotesModalClearTemplateHref = groupNotesModalBaseHref;
   const focusedAttendanceIndex = focusedAttendanceBooking
     ? attendanceBookings.findIndex((booking) => booking.id === focusedAttendanceBooking.id)
     : -1;
@@ -3408,7 +3395,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
 
       {selectedSession && groupNotesModalOpen ? (
         <section className="modal-overlay modal-overlay-front">
-          <article className="modal-panel note-modal-shell">
+          <article className="modal-panel note-modal-shell group-note-modal-shell">
             <header className="note-modal-header">
               <div className="note-modal-header-main">
                 <h2 className="modal-title">{isEnglish ? "Group note" : "Note de groupe"}</h2>
@@ -3417,182 +3404,33 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                 </p>
               </div>
               <div className="note-modal-header-meta">
-                <a className="modal-close-x" href={modalHref} aria-label={isEnglish ? "Close" : "Fermer"}>
+                <a className="modal-close-x" href={modalHref} data-group-note-close aria-label={isEnglish ? "Close" : "Fermer"}>
                   ×
                 </a>
               </div>
             </header>
 
-            <form action={adminUpdateSessionGroupNoteAction} className="note-modal-form">
-              <input type="hidden" name="session_id" value={selectedSession.id} />
-              <input type="hidden" name="session_title" value={selectedSession.title} />
-              <input type="hidden" name="return_to" value={groupNoteTabHref(groupNoteTab)} />
-
-              <nav className="note-modal-tabs">
-                <a className={`note-modal-tab ${groupNoteTab === "content" ? "active" : ""}`} href={groupNoteTabHref("content")}>
-                  {isEnglish ? "Content" : "Contenu"}
-                </a>
-                <a className={`note-modal-tab ${groupNoteTab === "recipients" ? "active" : ""}`} href={groupNoteTabHref("recipients")}>
-                  {isEnglish ? "Recipients" : "Destinataires"}
-                </a>
-                <a className={`note-modal-tab ${groupNoteTab === "send" ? "active" : ""}`} href={groupNoteTabHref("send")}>
-                  {isEnglish ? "Send" : "Envoi"}
-                </a>
-              </nav>
-
-              <div className="note-modal-body">
-                <section className={`note-modal-panel ${groupNoteTab === "content" ? "active" : ""}`}>
-                  {groupNoteTemplates.length > 0 ? (
-                    <label className="session-edit-span">
-                      {isEnglish ? "Template" : "Modele"}
-                      <div className="note-template-row">
-                        <select name="group_note_template_id" defaultValue={selectedGroupNoteTemplate?.id ?? ""}>
-                          <option value="">{isEnglish ? "No template" : "Aucun modele"}</option>
-                          {groupNoteTemplates.map((template) => (
-                            <option key={template.id} value={template.id}>
-                              {template.name}
-                            </option>
-                          ))}
-                        </select>
-                        {selectedGroupNoteTemplate ? (
-                          <a className="mode-link" href={groupNotesModalClearTemplateHref}>
-                            {isEnglish ? "Remove" : "Retirer"}
-                          </a>
-                        ) : null}
-                      </div>
-                    </label>
-                  ) : (
-                    <div className="session-edit-alert">
-                      {isEnglish ? "No template configured. Add one in Settings > Messaging." : "Aucun modele configure. Ajoutez-en un dans Configuration > Messagerie."}
-                    </div>
-                  )}
-                  <div className="row spread">
-                    <p className="muted">{isEnglish ? "Note content" : "Contenu de la note"}</p>
-                    {groupNoteAdvancedMode ? (
-                      <a className="mode-link" href={groupNoteSimpleHref}>
-                        {isEnglish ? "Simple mode" : "Mode simple"}
-                      </a>
-                    ) : (
-                      <a className="mode-link" href={groupNoteAdvancedHref}>
-                        {isEnglish ? "Advanced mode" : "Mode avance"}
-                      </a>
-                    )}
-                  </div>
-                  {groupNoteAdvancedMode ? (
-                    <RichMessageEditor
-                      name="group_note"
-                      formatName="group_note_format"
-                      rows={10}
-                      maxLength={12000}
-                      placeholder={isEnglish ? "Enter a group note..." : "Saisir une note de groupe..."}
-                      defaultValue={groupNotePrefill}
-                    />
-                  ) : (
-                    <label className="session-edit-span">
-                      {isEnglish ? "Message" : "Message"}
-                      <input type="hidden" name="group_note_format" value="TEXT" />
-                      <textarea name="group_note" rows={8} defaultValue={stripHtml(groupNotePrefill)} />
-                    </label>
-                  )}
-                </section>
-
-                <section className={`note-modal-panel ${groupNoteTab === "recipients" ? "active" : ""}`}>
-                  <fieldset className="note-destination-radios">
-                    <legend>{isEnglish ? "Destination" : "Destination"}</legend>
-                    <label className="checkline">
-                      <input type="radio" name="note_destination" value="PRIVATE" defaultChecked={groupNoteDestination === "PRIVATE"} />
-                      {isEnglish ? "Internal" : "Interne"}
-                    </label>
-                    <label className="checkline">
-                      <input
-                        type="radio"
-                        name="note_destination"
-                        value="STUDENTS_AND_PARENTS"
-                        defaultChecked={groupNoteDestination === "STUDENTS_AND_PARENTS"}
-                      />
-                      {isEnglish ? "Parents / students" : "Parents / eleves"}
-                    </label>
-                    <label className="checkline">
-                      <input type="radio" name="note_destination" value="PARENTS" defaultChecked={groupNoteDestination === "PARENTS"} />
-                      {isEnglish ? "Parents only" : "Parents uniquement"}
-                    </label>
-                    <label className="checkline">
-                      <input type="radio" name="note_destination" value="STUDENTS" defaultChecked={groupNoteDestination === "STUDENTS"} />
-                      {isEnglish ? "Students only" : "Eleves uniquement"}
-                    </label>
-                    <label className="checkline">
-                      <input type="radio" name="note_destination" value="PROFESSOR" defaultChecked={groupNoteDestination === "PROFESSOR"} />
-                      {isEnglish ? "Teacher" : "Professeur"}
-                    </label>
-                    <label className="checkline">
-                      <input type="radio" name="note_destination" value="ADMINS" defaultChecked={groupNoteDestination === "ADMINS"} />
-                      {isEnglish ? "Administration" : "Administration"}
-                    </label>
-                    <label className="checkline">
-                      <input type="radio" name="note_destination" value="SELF" defaultChecked={groupNoteDestination === "SELF"} />
-                      {isEnglish ? "Myself" : "Moi-meme"}
-                    </label>
-                  </fieldset>
-
-                  <div className="note-recipient-summary">
-                    <strong>{sessionRecipientStudentIds.length} {isEnglish ? "student(s) selected" : "eleve(s) selectionne(s)"}</strong>
-                    <span className="muted">{sessionRecipientSummary || pickText(language, "Aucun eleve", "No student")}</span>
-                  </div>
-                  <details className="note-recipient-picker" open={isGroupNoteStudentAudience}>
-                    <summary>{isEnglish ? "Edit selection" : "Modifier la selection"}</summary>
-                    <SearchMultiSelect
-                      className="session-edit-span"
-                      label={isEnglish ? "Included students" : "Eleves inclus"}
-                      name="included_student_ids"
-                      options={sessionRecipientStudents}
-                      selectedIds={sessionRecipientStudentIds}
-                      placeholder={isEnglish ? "Search a student..." : "Rechercher un eleve..."}
-                      emptySelectionLabel={selectedSessionHasBookings ? pickText(language, "Aucun eleve selectionne.", "No student selected.") : pickText(language, "Aucun eleve inscrit sur ce creneau.", "No student booked on this slot.")}
-                    />
-                  </details>
-                  {!selectedSessionHasBookings && isGroupNoteStudentAudience ? (
-                    <p className="flash-err">{isEnglish ? "No student is booked on this slot for a Students/Parents send." : "Aucun eleve inscrit sur ce creneau pour un envoi Eleves/Parents."}</p>
-                  ) : null}
-                </section>
-
-                <section className={`note-modal-panel ${groupNoteTab === "send" ? "active" : ""}`}>
-                  {groupNoteDestination === "PRIVATE" ? (
-                    <p className="muted">{isEnglish ? "Internal destination: no external send will be performed." : "Destination interne: aucun envoi externe n est effectue."}</p>
-                  ) : (
-                    <>
-                      <label className="checkline">
-                        <input type="checkbox" name="send_to_self" />
-                        {isEnglish ? "Send myself a copy too" : "M envoyer aussi une copie"}
-                      </label>
-                      <label>
-                        {isEnglish ? "Email subject (optional)" : "Sujet email (optionnel)"}
-                        <input type="text" name="subject" defaultValue={`${isEnglish ? "Group note" : "Note de groupe"} - ${selectedSession.title}`} maxLength={255} />
-                      </label>
-                      <label className="checkline">
-                        <input type="checkbox" name="confirm_send" />
-                        {isEnglish ? `Confirm send (${sessionRecipientStudentIds.length} potential recipient(s))` : `Confirmer l envoi (${sessionRecipientStudentIds.length} destinataire(s) potentiels)`}
-                      </label>
-                    </>
-                  )}
-                </section>
-              </div>
-
-              <footer className="note-modal-footer">
-                <a className="reset-link" href={modalHref}>
-                  {isEnglish ? "Close" : "Fermer"}
-                </a>
-                <div className="row">
-                  <button type="submit" name="note_action" value="SAVE_ONLY" className="ghost">
-                    {isEnglish ? "Save" : "Enregistrer"}
-                  </button>
-                  {groupNoteDestination !== "PRIVATE" ? (
-                    <button type="submit" name="note_action" value="SEND_EMAIL">
-                      {isEnglish ? "Send" : "Envoyer"}
-                    </button>
-                  ) : null}
-                </div>
-              </footer>
-            </form>
+            <GroupNoteComposer
+              action={adminUpdateSessionGroupNoteAction}
+              sessionId={selectedSession.id}
+              sessionTitle={selectedSession.title}
+              closeHref={modalHref}
+              returnTo={groupNotesModalHref}
+              language={language}
+              initialNote={groupNotePrefill}
+              initialTemplateId={selectedGroupNoteTemplate?.id}
+              initialDestination={groupNoteDestination}
+              templates={groupNoteTemplates.map((template) => ({
+                id: template.id,
+                name: template.name,
+                body: template.body,
+                body_format: template.body_format === "TEXT" ? "TEXT" : "HTML",
+              }))}
+              students={sessionRecipientStudents}
+              selectedStudentIds={sessionRecipientStudentIds}
+              successMessage={okMessage}
+              errorMessage={errorMessage}
+            />
           </article>
         </section>
       ) : null}

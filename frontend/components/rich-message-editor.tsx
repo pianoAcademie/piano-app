@@ -39,6 +39,7 @@ type RichMessageEditorProps = {
   maxLength?: number;
   language?: UiLanguage | string;
   labels?: Partial<RichMessageEditorLabels>;
+  onValueChange?: (value: string) => void;
 };
 
 function defaultLabels(language: UiLanguage): RichMessageEditorLabels {
@@ -144,6 +145,7 @@ export default function RichMessageEditor({
   maxLength,
   language: languageProp = "fr",
   labels,
+  onValueChange,
 }: RichMessageEditorProps) {
   const language = normalizeUiLanguage(languageProp);
   const ui = { ...defaultLabels(language), ...labels };
@@ -173,10 +175,13 @@ export default function RichMessageEditor({
 
   const updateValue = (next: string) => {
     if (maxLength && next.length > maxLength) {
-      setValue(next.slice(0, maxLength));
+      const limitedValue = next.slice(0, maxLength);
+      setValue(limitedValue);
+      onValueChange?.(limitedValue);
       return;
     }
     setValue(next);
+    onValueChange?.(next);
   };
 
   const switchToTextMode = () => {
