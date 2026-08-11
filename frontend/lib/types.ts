@@ -1716,7 +1716,17 @@ export type AdminConfigAccountOut = {
   bank_transfer_iban: string;
   bank_transfer_bic: string;
   legal_terms: string;
+  legal_terms_en: string;
   logo_data_url: string;
+};
+
+export type PublicLegalTermsOut = {
+  language: "fr" | "en";
+  content: string;
+  content_hash: string;
+  version: string;
+  updated_at: string | null;
+  used_fallback: boolean;
 };
 
 export type AdminSubscriptionSettingsOut = {

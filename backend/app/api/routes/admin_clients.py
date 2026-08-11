@@ -8157,8 +8157,9 @@ def send_admin_client_subscription_payment_email(
         )
 
     website = _get_setting_value(db, "config_account_website", "")
-    legal_terms_url = _get_setting_value(db, "config_account_legal_terms", "")
-    resolved_legal_terms_url = legal_terms_url or _frontend_url(website, path="/cgv")
+    preferred_language = str(client.preferred_language or "").strip().lower()
+    legal_terms_path = "/cgv?lang=en" if preferred_language.startswith("en") else "/cgv?lang=fr"
+    resolved_legal_terms_url = _frontend_url(website, path=legal_terms_path)
     payment_url = _fallback_dashboard_transactions_url(website)
     checkout_url = _create_checkout_for_subscription(
         db,

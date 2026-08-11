@@ -108,6 +108,7 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
   const language = normalizeUiLanguage(readParam(params, "lang") || authResult.data.preferred_language);
   const t = (key: string, values?: Record<string, string | number>) => uiText(language, key, values);
   const summary = contextResult.data.summary;
+  const requiresLegalTerms = summary.formula_type === "PACK" || summary.formula_type === "SUBSCRIPTION";
   const returnTo = `/buy/checkout?purchase_context=${encodeURIComponent(purchaseContext)}${language === "en" ? "&lang=en" : ""}`;
   const isSessionReservationFlow = Boolean(contextResult.data.session_id);
   const subscriptionPaymentMethods = summary.formula_type === "SUBSCRIPTION"
@@ -179,6 +180,7 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
           <form action={submitFormulaCheckoutAction} className="grid public-buy-form">
             <input type="hidden" name="purchase_context" value={purchaseContext} />
             <input type="hidden" name="return_to" value={returnTo} />
+            <input type="hidden" name="ui_language" value={language} />
             {confirmExistingPackPurchase ? <input type="hidden" name="confirm_existing_pack_purchase" value="1" /> : null}
             {subscriptionPaymentMethods.length > 1 ? (
               <fieldset>
@@ -195,6 +197,18 @@ export default async function BuyCheckoutPage({ searchParams }: { searchParams?:
               </fieldset>
             ) : subscriptionPaymentMethods.length === 1 ? (
               <input type="hidden" name="billing_method_code" value={subscriptionPaymentMethods[0]} />
+            ) : null}
+            {requiresLegalTerms ? (
+              <label className="row legal-terms-consent">
+                <input type="checkbox" name="legal_terms_accepted" value="1" required />
+                <span>
+                  {t("legal.terms.accept_prefix")} {" "}
+                  <Link href={`/cgv?lang=${language}`} target="_blank" rel="noreferrer">
+                    {t("legal.terms.link")}
+                  </Link>
+                  {t("legal.terms.accept_suffix")}
+                </span>
+              </label>
             ) : null}
             <button type="submit">
               {summary.is_trial_offer && summary.price_ttc

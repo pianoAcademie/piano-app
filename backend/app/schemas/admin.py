@@ -48,6 +48,7 @@ class AdminConfigAccountOut(BaseModel):
     bank_transfer_iban: str = ""
     bank_transfer_bic: str = ""
     legal_terms: str
+    legal_terms_en: str = ""
     logo_data_url: str = ""
 
 
@@ -73,6 +74,7 @@ class AdminConfigAccountUpdateRequest(BaseModel):
     bank_transfer_iban: str = Field(default="", max_length=80)
     bank_transfer_bic: str = Field(default="", max_length=40)
     legal_terms: str = Field(default="")
+    legal_terms_en: str = Field(default="")
     logo_data_url: str = Field(default="", max_length=2000000)
 
 

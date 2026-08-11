@@ -4939,6 +4939,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <input type="hidden" name="purchase_user_id" value={selectedPurchaseOwner} />
                       <input type="hidden" name="start_date" value={selectedPurchaseStartDate} />
                       <input type="hidden" name="confirm_existing_pack_purchase" value="1" />
+                      <input type="hidden" name="ui_language" value={language} />
+                      {confirmPlan.kind === "PACK" || confirmPlan.kind === "SUBSCRIPTION" ? (
+                        <label className="row legal-terms-consent">
+                          <input type="checkbox" name="legal_terms_accepted" value="1" required />
+                          <span>
+                            {t("legal.terms.accept_prefix")} {" "}
+                            <Link href={`/cgv?lang=${language}`} target="_blank" rel="noreferrer">
+                              {t("legal.terms.link")}
+                            </Link>
+                            {t("legal.terms.accept_suffix")}
+                          </span>
+                        </label>
+                      ) : null}
                       <button type="submit">
                         {Number(planDisplayPrice(confirmPlan) ?? "0") > 0 ? t("client.confirm_and_pay_online") : t("client.confirm_purchase")}
                       </button>
@@ -5394,6 +5407,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                 <input type="hidden" name="plan_id" value={plan.id} />
                                 <input type="hidden" name="purchase_user_id" value={selectedPurchaseOwner} />
                                 <input type="hidden" name="start_date" value={selectedPurchaseStartDate} />
+                                <input type="hidden" name="ui_language" value={language} />
                                 {plan.kind === "SUBSCRIPTION" && recurringPaymentMethods.length > 1 ? (
                                   <label>
                                     <span>{t("client.catalog_renewal_method")}</span>
@@ -5406,6 +5420,18 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                                   </label>
                                 ) : plan.kind === "SUBSCRIPTION" && recurringPaymentMethods.length === 1 ? (
                                   <input type="hidden" name="billing_method_code" value={recurringPaymentMethods[0]} />
+                                ) : null}
+                                {plan.kind === "PACK" || plan.kind === "SUBSCRIPTION" ? (
+                                  <label className="row legal-terms-consent">
+                                    <input type="checkbox" name="legal_terms_accepted" value="1" required />
+                                    <span>
+                                      {t("legal.terms.accept_prefix")} {" "}
+                                      <Link href={`/cgv?lang=${language}`} target="_blank" rel="noreferrer">
+                                        {t("legal.terms.link")}
+                                      </Link>
+                                      {t("legal.terms.accept_suffix")}
+                                    </span>
+                                  </label>
                                 ) : null}
                                 <button type="submit" title={t("client.subscribe_offer_title")}>{t("common.choose")}</button>
                               </form>

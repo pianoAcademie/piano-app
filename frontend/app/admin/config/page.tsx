@@ -1358,6 +1358,11 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                     {t("admin.config.account.legal_terms")}
                     <textarea name="legal_terms" defaultValue={account.legal_terms} rows={8} />
                   </label>
+                  <label className="span-2">
+                    {t("admin.config.account.legal_terms_en")}
+                    <textarea name="legal_terms_en" defaultValue={account.legal_terms_en} rows={8} lang="en" />
+                    <small className="muted">{t("admin.config.account.legal_terms_help")}</small>
+                  </label>
 
                   <div className="row span-2">
                     <button type="submit">{t("common.save")}</button>

@@ -314,6 +314,12 @@ class ClientPlanSubscription(Base):
     cancellation_request_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     cancellation_request_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     cancellation_request_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    legal_terms_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    legal_terms_language: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    legal_terms_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    legal_terms_content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    legal_terms_content_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    legal_terms_acceptance_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

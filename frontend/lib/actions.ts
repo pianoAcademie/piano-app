@@ -1806,7 +1806,12 @@ export async function purchasePlanAction(formData: FormData): Promise<void> {
   const startDateRaw = String(formData.get("start_date") ?? "").trim();
   const billingMethodCode = String(formData.get("billing_method_code") ?? "").trim().toUpperCase();
   const confirmExistingPackPurchase = String(formData.get("confirm_existing_pack_purchase") ?? "").trim() === "1";
-  const payload: Record<string, string> = {};
+  const legalTermsAccepted = checkboxField(formData, "legal_terms_accepted");
+  const legalTermsLanguage = normalizeUiLanguage(String(formData.get("ui_language") ?? "fr"));
+  const payload: Record<string, string | boolean> = {
+    legal_terms_accepted: legalTermsAccepted,
+    legal_terms_language: legalTermsLanguage,
+  };
   if (purchaseUserId) {
     payload.user_id = purchaseUserId;
   }
@@ -1910,6 +1915,7 @@ export async function submitFormulaCheckoutAction(formData: FormData): Promise<v
   const language = publicActionLanguage(returnTo);
   const confirmExistingPackPurchase = String(formData.get("confirm_existing_pack_purchase") ?? "").trim() === "1";
   const billingMethodCode = String(formData.get("billing_method_code") ?? "").trim().toUpperCase();
+  const legalTermsAccepted = checkboxField(formData, "legal_terms_accepted");
 
   if (!purchaseContext) {
     redirect(appendQueryMessage(returnTo, "error", uiText(language, "public_formula_checkout.invalid_context_error")));
@@ -1941,6 +1947,8 @@ export async function submitFormulaCheckoutAction(formData: FormData): Promise<v
         purchase_context: purchaseContext,
         confirm_existing_pack_purchase: confirmExistingPackPurchase,
         billing_method_code: billingMethodCode || null,
+        legal_terms_accepted: legalTermsAccepted,
+        legal_terms_language: language,
       }),
     },
     token,
@@ -9205,6 +9213,7 @@ export async function updateAdminConfigAccountAction(formData: FormData): Promis
     bank_transfer_iban: String(formData.get("bank_transfer_iban") ?? "").trim(),
     bank_transfer_bic: String(formData.get("bank_transfer_bic") ?? "").trim(),
     legal_terms: String(formData.get("legal_terms") ?? "").trim(),
+    legal_terms_en: String(formData.get("legal_terms_en") ?? "").trim(),
     logo_data_url: logoDataUrl,
   };
 

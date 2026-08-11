@@ -154,6 +154,17 @@ class PlanPurchaseRequest(BaseModel):
     purchase_context: str | None = None
     confirm_existing_pack_purchase: bool = False
     billing_method_code: str | None = Field(default=None, max_length=40)
+    legal_terms_accepted: bool = False
+    legal_terms_language: Literal["fr", "en"] = "fr"
+
+
+class PublicLegalTermsOut(BaseModel):
+    language: Literal["fr", "en"]
+    content: str
+    content_hash: str
+    version: str
+    updated_at: datetime | None = None
+    used_fallback: bool = False
 
 
 class ClientSubscriptionCancellationRequest(BaseModel):

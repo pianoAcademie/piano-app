@@ -7,7 +7,7 @@ from decimal import Decimal
 from uuid import UUID
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -39,6 +39,7 @@ from app.schemas.plan import (
     PublicFormulaPurchaseStartOut,
     PublicFormulaPurchaseStartRequest,
     PublicFormulaPurchaseSummaryOut,
+    PublicLegalTermsOut,
 )
 from app.services.payment_checkout import CheckoutCreateRequest, create_checkout_session, with_webhook_secret
 from app.services.automation_triggers import schedule_plan_purchase_triggers
@@ -58,6 +59,7 @@ from app.services.trial_courses import (
     plan_supports_trial_course_type,
     trial_plan_course_type_ids,
 )
+from app.services.legal_terms import resolve_legal_terms
 
 router = APIRouter()
 
@@ -87,6 +89,33 @@ SUCCESSFUL_PURCHASE_PAYMENT_STATUSES = {
     "SEPA_MANDATE_ACTIVE",
     "PAID_PAYMENT_METHOD_MISSING",
 }
+
+
+def _request_ip(request: Request) -> str | None:
+    forwarded = str(request.headers.get("x-forwarded-for") or "").split(",", 1)[0].strip()
+    value = forwarded or (request.client.host if request.client is not None else "")
+    return value[:64] or None
+
+
+@router.get("/public/legal-terms", response_model=PublicLegalTermsOut)
+def get_public_legal_terms(
+    language: str = Query(default="fr", max_length=8),
+    db: Session = Depends(get_db),
+) -> PublicLegalTermsOut:
+    terms = resolve_legal_terms(db, language)
+    if terms is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Les conditions générales de vente ne sont pas encore publiées.",
+        )
+    return PublicLegalTermsOut(
+        language=terms.language,
+        content=terms.content,
+        content_hash=terms.content_hash,
+        version=terms.version,
+        updated_at=terms.updated_at,
+        used_fallback=terms.used_fallback,
+    )
 
 
 @dataclass(frozen=True)
@@ -1041,6 +1070,7 @@ def public_formula_purchase_context(
 @router.post("/plans/{plan_id}/purchase", response_model=ClientSubscriptionOut, status_code=status.HTTP_201_CREATED)
 def purchase_plan(
     plan_id: UUID,
+    request: Request,
     payload: PlanPurchaseRequest | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.CLIENT)),
@@ -1050,6 +1080,19 @@ def purchase_plan(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
 
     payload = payload or PlanPurchaseRequest()
+    accepted_terms = None
+    if plan.kind in {PlanKind.PACK, PlanKind.SUBSCRIPTION}:
+        if not payload.legal_terms_accepted:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Vous devez accepter les conditions générales de vente avant de poursuivre.",
+            )
+        accepted_terms = resolve_legal_terms(db, payload.legal_terms_language)
+        if accepted_terms is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Les conditions générales de vente ne sont pas configurées.",
+            )
     context_payload: dict[str, object] = {}
     context_booking_user_id: UUID | None = None
     context_session_id: UUID | None = None
@@ -1241,6 +1284,12 @@ def purchase_plan(
         forfait_loyalty_discount_per_hour_ttc=Decimal("0.00"),
         forfait_family_discount_per_hour_ttc=Decimal("0.00"),
         forfait_short_commitment_supplement_per_hour_ttc=Decimal("0.00"),
+        legal_terms_accepted_at=now if accepted_terms is not None else None,
+        legal_terms_language=accepted_terms.language if accepted_terms is not None else None,
+        legal_terms_version=accepted_terms.version if accepted_terms is not None else None,
+        legal_terms_content_hash=accepted_terms.content_hash if accepted_terms is not None else None,
+        legal_terms_content_snapshot=accepted_terms.content if accepted_terms is not None else None,
+        legal_terms_acceptance_ip=_request_ip(request) if accepted_terms is not None else None,
     )
     db.add(subscription)
     db.flush()

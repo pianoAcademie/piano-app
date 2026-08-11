@@ -199,6 +199,7 @@ ACCOUNT_SETTING_MAP = {
     "bank_transfer_iban": "bank_transfer_iban",
     "bank_transfer_bic": "bank_transfer_bic",
     "legal_terms": "config_account_legal_terms",
+    "legal_terms_en": "config_account_legal_terms_en",
     "logo_data_url": "config_account_logo_data_url",
 }
 
@@ -2339,6 +2340,7 @@ def get_admin_config_account(
         bank_transfer_iban=_get_setting_value(db, ACCOUNT_SETTING_MAP["bank_transfer_iban"], "FR76 1020 7000 9822 2117 9625 586"),
         bank_transfer_bic=_get_setting_value(db, ACCOUNT_SETTING_MAP["bank_transfer_bic"], "CCBPFRPPMTG"),
         legal_terms=_get_setting_value(db, ACCOUNT_SETTING_MAP["legal_terms"], ""),
+        legal_terms_en=_get_setting_value(db, ACCOUNT_SETTING_MAP["legal_terms_en"], ""),
         logo_data_url=_get_setting_value(db, ACCOUNT_SETTING_MAP["logo_data_url"], ""),
     )
 
