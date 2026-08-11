@@ -34,7 +34,13 @@ class PaymentHoldExpirationResult:
 PAYMENT_TIMEOUT_CANCELLATION_REASON = "PAYMENT_TIMEOUT"
 
 
-def _restore_cancelled_booking_credit(db: Session, *, booking: Booking) -> None:
+def restore_cancelled_booking_credit(db: Session, *, booking: Booking) -> bool:
+    """Restore a credit consumed by a booking and report whether it changed.
+
+    Subscription and forfait bookings do not consume a unit credit. Pack and
+    manual-credit bookings do, so only those balances are incremented.
+    """
+    restored = False
     if booking.client_plan_subscription_id is not None:
         row = db.execute(
             select(ClientPlanSubscription, Plan)
@@ -48,6 +54,7 @@ def _restore_cancelled_booking_credit(db: Session, *, booking: Booking) -> None:
                 current = int(subscription.credits_remaining or 0)
                 cap = int(subscription.credits_initial) if subscription.credits_initial is not None else current + 1
                 subscription.credits_remaining = min(current + 1, cap)
+                restored = int(subscription.credits_remaining or 0) > current
     if booking.manual_credit_type_id is not None:
         balance = db.scalar(
             select(ClientManualCreditBalance)
@@ -59,6 +66,13 @@ def _restore_cancelled_booking_credit(db: Session, *, booking: Booking) -> None:
         )
         if balance is not None:
             balance.credits_count = int(balance.credits_count or 0) + 1
+            restored = True
+    return restored
+
+
+# Kept for compatibility with existing imports/tests while callers migrate to
+# the public helper above.
+_restore_cancelled_booking_credit = restore_cancelled_booking_credit
 
 
 def _effective_auto_cancel_threshold(db: Session, *, session_obj: CourseSession) -> int | None:
@@ -144,7 +158,7 @@ def run_auto_cancel_empty_sessions_job(db: Session, *, now: datetime, limit: int
 
         for booking in bookings:
             if booking.status == BookingStatus.BOOKED:
-                _restore_cancelled_booking_credit(db, booking=booking)
+                restore_cancelled_booking_credit(db, booking=booking)
             booking.status = BookingStatus.CANCELLED
             booking.cancelled_at = now
             booking.cancellation_reason = "AUTO_SESSION_CANCELLED"

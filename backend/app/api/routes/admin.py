@@ -43,7 +43,7 @@ from app.models.catalog import (
     SessionStatus,
 )
 from app.models.family import ClientFamilyLink
-from app.models.client_record import ClientBillingAdjustment, StudentQuoteChange
+from app.models.client_record import ClientBillingAdjustment, PaymentReceipt, StudentQuoteChange
 from app.models.ops import (
     AppSetting,
     CommunicationChannel,
@@ -76,6 +76,7 @@ from app.services.payment_receipts import (
     send_final_invoice_email,
 )
 from app.services.reminders import ensure_booking_reminder, skip_pending_reminders_for_booking
+from app.services.session_automation import restore_cancelled_booking_credit
 from app.services.makeup_passes import grant_makeup_for_excused_absence, revoke_pending_makeup_for_corrected_absence
 from app.services.session_audience import (
     coerce_session_scope_sets,
@@ -741,6 +742,65 @@ def _cancel_pending_notification_reminders_for_booking(
         notification.updated_at = now
 
     return len(notifications)
+
+
+def _cancel_booking_for_cancelled_session(
+    db: Session,
+    *,
+    booking: Booking,
+    session_obj: CourseSession,
+    now: datetime,
+    cancellation_reason: str,
+) -> bool:
+    """Cancel one booking after an administrator cancels its whole session.
+
+    Returns True when a consumed pack/manual credit was restored. Waitlisted
+    and pending-payment bookings never consume a credit and are only closed.
+    """
+    if booking.status == BookingStatus.CANCELLED:
+        return False
+
+    previous_status = booking.status
+    refundable_statuses = (
+        BookingStatus.BOOKED,
+        BookingStatus.ATTENDED,
+        BookingStatus.NO_SHOW,
+        BookingStatus.EXCUSED_ABSENCE,
+    )
+    restored = False
+    if previous_status in refundable_statuses and session_obj.start_at_utc > now:
+        restored = restore_cancelled_booking_credit(db, booking=booking)
+
+    booking.status = BookingStatus.CANCELLED
+    booking.cancelled_at = now
+    booking.cancellation_reason = cancellation_reason
+    booking.payment_hold_expires_at = None
+
+    skip_pending_reminders_for_booking(
+        db,
+        booking_id=booking.id,
+        reason="Session cancelled by admin",
+        now=now,
+    )
+    _cancel_pending_notification_reminders_for_booking(
+        db,
+        booking_id=booking.id,
+        reason="Session cancelled by admin",
+        now=now,
+    )
+
+    if previous_status == BookingStatus.PENDING_PAYMENT:
+        pending_receipts = db.scalars(
+            select(PaymentReceipt).where(
+                PaymentReceipt.booking_id == booking.id,
+                PaymentReceipt.status == "PENDING",
+            )
+        ).all()
+        for receipt in pending_receipts:
+            receipt.status = "EXPIRED"
+            receipt.updated_at = now
+
+    return restored
 
 
 def _move_planning_reorganization_booking_occurrence(
@@ -4582,21 +4642,20 @@ def cancel_admin_session_booking(
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Closed booking cannot be removed")
             continue
 
-        if previous_status in refundable_statuses and target_booking.client_plan_subscription_id is not None and target_session.start_at_utc > now:
-            sub_and_plan = _load_subscription_with_plan_for_update(
-                db,
-                subscription_id=target_booking.client_plan_subscription_id,
-            )
-            if sub_and_plan is not None:
-                subscription, plan = sub_and_plan
-                if subscription.user_id == target_booking.user_id:
-                    _restore_pack_credit(subscription, plan)
+        if previous_status in refundable_statuses and target_session.start_at_utc > now:
+            restore_cancelled_booking_credit(db, booking=target_booking)
 
         target_booking.status = BookingStatus.CANCELLED
         target_booking.cancelled_at = now
         target_booking.cancellation_reason = "ADMIN_REMOVED"
 
         skip_pending_reminders_for_booking(
+            db,
+            booking_id=target_booking.id,
+            reason="Booking cancelled by admin",
+            now=now,
+        )
+        _cancel_pending_notification_reminders_for_booking(
             db,
             booking_id=target_booking.id,
             reason="Booking cancelled by admin",
@@ -5588,9 +5647,29 @@ def cancel_session_operation(
     now = _utcnow()
     cancel_reason = _normalize_message_field(payload.cancel_reason) or "ADMIN_CANCELLED"
     target_ids = [target.id for target in targets]
+    # Capture recipients before bookings become inactive. This preserves the
+    # optional cancellation message selected by the administrator.
+    student_emails = _session_student_emails(db, session_ids=target_ids)
     orchestrated_notifications = []
 
     for target in targets:
+        bookings = db.scalars(
+            select(Booking)
+            .where(
+                Booking.session_id == target.id,
+                Booking.status != BookingStatus.CANCELLED,
+            )
+            .with_for_update()
+        ).all()
+        for booking in bookings:
+            _cancel_booking_for_cancelled_session(
+                db,
+                booking=booking,
+                session_obj=target,
+                now=now,
+                cancellation_reason="ADMIN_SESSION_CANCELLED",
+            )
+
         target.status = SessionStatus.CANCELLED
         target.cancel_reason = cancel_reason
         target.updated_at = now
@@ -5614,6 +5693,7 @@ def cancel_session_operation(
         fallback_session_title=session_obj.title,
         notifications=payload.notifications,
         operation="CANCEL",
+        student_emails=student_emails,
     )
     return AdminSessionOperationOut(
         processed_sessions=len(target_ids),
@@ -5643,13 +5723,6 @@ def delete_session_operation(
     student_emails = _session_student_emails(db, session_ids=target_ids)
     professor_emails = _session_professor_emails(db, session_ids=target_ids)
 
-    refundable_statuses = (
-        BookingStatus.BOOKED,
-        BookingStatus.ATTENDED,
-        BookingStatus.NO_SHOW,
-        BookingStatus.EXCUSED_ABSENCE,
-    )
-
     for target in targets:
         bookings = db.scalars(
             select(Booking)
@@ -5658,19 +5731,13 @@ def delete_session_operation(
         ).all()
 
         for booking in bookings:
-            if (
-                booking.status in refundable_statuses
-                and booking.client_plan_subscription_id is not None
-                and target.start_at_utc > now
-            ):
-                sub_and_plan = _load_subscription_with_plan_for_update(
-                    db,
-                    subscription_id=booking.client_plan_subscription_id,
-                )
-                if sub_and_plan is not None:
-                    subscription, plan = sub_and_plan
-                    if subscription.user_id == booking.user_id:
-                        _restore_pack_credit(subscription, plan)
+            _cancel_booking_for_cancelled_session(
+                db,
+                booking=booking,
+                session_obj=target,
+                now=now,
+                cancellation_reason="ADMIN_SESSION_DELETED",
+            )
 
         db.delete(target)
 
