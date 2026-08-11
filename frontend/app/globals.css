@@ -2512,6 +2512,28 @@ button.danger:focus-visible {
   padding: 18px;
 }
 
+.realtime-presence-daily-card {
+  border-color: #dbe9df;
+}
+
+.realtime-presence-visitor-count {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 8px 11px;
+  border: 1px solid #dbe9df;
+  border-radius: 10px;
+  background: #f1faf4;
+  color: #52645a;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.realtime-presence-visitor-count strong {
+  color: #1e7f49;
+  font-size: 18px;
+}
+
 .realtime-presence-toolbar-heading {
   align-items: flex-end;
   gap: 18px;
@@ -2552,6 +2574,23 @@ button.danger:focus-visible {
   min-width: 1180px;
   border-collapse: collapse;
   background: #fff;
+}
+
+.realtime-presence-daily-table {
+  min-width: 880px;
+}
+
+.realtime-presence-channel-list {
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 0 !important;
+}
+
+.realtime-presence-active-hours {
+  color: #52645a !important;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
 }
 
 .realtime-presence-table th,

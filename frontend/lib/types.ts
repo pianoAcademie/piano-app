@@ -331,6 +331,7 @@ export type AdminOnlinePresenceOut = {
   history_timezone: string;
   history_date: string;
   hourly_history: AdminPresenceHourlyBucketOut[];
+  daily_visitors: AdminDailyPresenceUserOut[];
   online_users: AdminOnlinePresenceUserOut[];
 };
 
@@ -357,6 +358,16 @@ export type AdminOnlinePresenceUserOut = {
   residence_country: string | null;
   student_site: string | null;
   last_seen_at: string;
+};
+
+export type AdminDailyPresenceUserOut = {
+  user_id: string;
+  display_name: string;
+  role: "admin" | "prof" | "client" | string;
+  channels: ("WEB" | "MOBILE_APP")[];
+  first_seen_at: string;
+  last_seen_at: string;
+  active_hour_labels: string[];
 };
 
 export type AdminClientGroupOut = {

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-import type { AdminOnlinePresenceOut, AdminOnlinePresenceUserOut } from "../lib/types";
+import type { AdminDailyPresenceUserOut, AdminOnlinePresenceOut, AdminOnlinePresenceUserOut } from "../lib/types";
 
 type Props = {
   language: "fr" | "en";
@@ -88,6 +88,13 @@ function searchableText(user: AdminOnlinePresenceUserOut): string {
   ].filter(Boolean).join(" ").toLocaleLowerCase();
 }
 
+function searchableDailyVisitor(visitor: AdminDailyPresenceUserOut): string {
+  return [visitor.display_name, visitor.role, ...visitor.channels, ...visitor.active_hour_labels]
+    .filter(Boolean)
+    .join(" ")
+    .toLocaleLowerCase();
+}
+
 export default function AdminRealtimePresenceScreen({ language }: Props): JSX.Element {
   const english = language === "en";
   const [summary, setSummary] = useState<AdminOnlinePresenceOut | null>(null);
@@ -95,6 +102,9 @@ export default function AdminRealtimePresenceScreen({ language }: Props): JSX.El
   const [search, setSearch] = useState("");
   const [role, setRole] = useState<RoleFilter>("ALL");
   const [channel, setChannel] = useState<ChannelFilter>("ALL");
+  const [dailySearch, setDailySearch] = useState("");
+  const [dailyRole, setDailyRole] = useState<RoleFilter>("ALL");
+  const [dailyChannel, setDailyChannel] = useState<ChannelFilter>("ALL");
 
   useEffect(() => {
     let stopped = false;
@@ -127,6 +137,15 @@ export default function AdminRealtimePresenceScreen({ language }: Props): JSX.El
       && (!query || searchableText(user).includes(query))
     ));
   }, [channel, role, search, summary]);
+
+  const filteredDailyVisitors = useMemo(() => {
+    const query = dailySearch.trim().toLocaleLowerCase();
+    return (summary?.daily_visitors ?? []).filter((visitor) => (
+      (dailyRole === "ALL" || visitor.role === dailyRole)
+      && (dailyChannel === "ALL" || visitor.channels.includes(dailyChannel))
+      && (!query || searchableDailyVisitor(visitor).includes(query))
+    ));
+  }, [dailyChannel, dailyRole, dailySearch, summary]);
 
   const metrics = [
     { label: english ? "Online now" : "En ligne maintenant", value: summary?.total ?? "–", primary: true },
@@ -226,6 +245,95 @@ export default function AdminRealtimePresenceScreen({ language }: Props): JSX.El
               : `Fuseau : ${summary?.history_timezone ?? "Europe/Paris"}. L’historique est collecté depuis l’activation de cette fonctionnalité.`}
           </small>
         </div>
+      </article>
+
+      <article className="card realtime-presence-list-card realtime-presence-daily-card">
+        <div className="row spread realtime-presence-toolbar-heading">
+          <div>
+            <h2>{english ? "Today’s visitors" : "Visiteurs aujourd’hui"}</h2>
+            <p className="muted">
+              {english
+                ? "People who used the website or mobile app since midnight. Your own admin session is excluded."
+                : "Personnes ayant utilisé le site ou l’application depuis minuit. Votre propre session admin est exclue."}
+            </p>
+          </div>
+          <span className="realtime-presence-visitor-count">
+            <strong>{summary ? (summary.daily_visitors ?? []).length : "–"}</strong>
+            {english ? " unique visitor(s)" : " visiteur(s) unique(s)"}
+          </span>
+        </div>
+
+        <div className="realtime-presence-filters">
+          <label>
+            <span>{english ? "Search" : "Recherche"}</span>
+            <input value={dailySearch} onChange={(event) => setDailySearch(event.target.value)} placeholder={english ? "Name or active hour…" : "Nom ou heure d’activité…"} />
+          </label>
+          <label>
+            <span>{english ? "Profile" : "Profil"}</span>
+            <select value={dailyRole} onChange={(event) => setDailyRole(event.target.value as RoleFilter)}>
+              <option value="ALL">{english ? "All profiles" : "Tous les profils"}</option>
+              <option value="client">{english ? "Clients" : "Clients"}</option>
+              <option value="prof">{english ? "Teachers" : "Professeurs"}</option>
+              <option value="admin">{english ? "Admins" : "Administrateurs"}</option>
+            </select>
+          </label>
+          <label>
+            <span>{english ? "Channel" : "Canal"}</span>
+            <select value={dailyChannel} onChange={(event) => setDailyChannel(event.target.value as ChannelFilter)}>
+              <option value="ALL">{english ? "All channels" : "Tous les canaux"}</option>
+              <option value="WEB">{english ? "Website" : "Site internet"}</option>
+              <option value="MOBILE_APP">{english ? "Mobile app" : "Application mobile"}</option>
+            </select>
+          </label>
+        </div>
+
+        {filteredDailyVisitors.length ? (
+          <div className="realtime-presence-table-wrap">
+            <table className="realtime-presence-table realtime-presence-daily-table">
+              <thead>
+                <tr>
+                  <th>{english ? "Person" : "Personne"}</th>
+                  <th>{english ? "Profile" : "Profil"}</th>
+                  <th>{english ? "Channel" : "Canal"}</th>
+                  <th>{english ? "First activity" : "Première activité"}</th>
+                  <th>{english ? "Latest activity" : "Dernière activité"}</th>
+                  <th>{english ? "Active hours" : "Heures actives"}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredDailyVisitors.map((visitor) => {
+                  const profile = visitor.role === "client" ? (english ? `/admin/clients/${visitor.user_id}?lang=en` : `/admin/clients/${visitor.user_id}`) : null;
+                  return (
+                    <tr key={visitor.user_id}>
+                      <td>{profile ? <Link href={profile}><strong>{visitor.display_name}</strong></Link> : <strong>{visitor.display_name}</strong>}</td>
+                      <td>{roleLabel(visitor.role, english)}</td>
+                      <td>
+                        <span className="realtime-presence-channel-list">
+                          {visitor.channels.map((visitorChannel) => (
+                            <span key={visitorChannel} className="online-presence-channel">
+                              {visitorChannel === "MOBILE_APP" ? (english ? "App" : "Application") : (english ? "Website" : "Site")}
+                            </span>
+                          ))}
+                        </span>
+                      </td>
+                      <td><time dateTime={visitor.first_seen_at}>{new Date(visitor.first_seen_at).toLocaleTimeString(english ? "en-GB" : "fr-FR", { hour: "2-digit", minute: "2-digit" })}</time></td>
+                      <td><time dateTime={visitor.last_seen_at}>{new Date(visitor.last_seen_at).toLocaleTimeString(english ? "en-GB" : "fr-FR", { hour: "2-digit", minute: "2-digit" })}</time></td>
+                      <td><span className="realtime-presence-active-hours">{visitor.active_hour_labels.join(" · ")}</span></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : summary ? (
+          <p className="muted realtime-presence-empty">
+            {dailySearch || dailyRole !== "ALL" || dailyChannel !== "ALL"
+              ? (english ? "No visitor matches these filters." : "Aucun visiteur ne correspond à ces filtres.")
+              : (english ? "No other visitor has used the app today." : "Aucun autre visiteur n’a utilisé l’application aujourd’hui.")}
+          </p>
+        ) : (
+          <p className="muted realtime-presence-empty">{english ? "Loading today’s visitors…" : "Chargement des visiteurs du jour…"}</p>
+        )}
       </article>
 
       <article className="card realtime-presence-list-card">

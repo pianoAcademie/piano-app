@@ -119,6 +119,7 @@ from app.schemas.admin import (
     AdminPlanningReorganizationOut,
     AdminPlanningReorganizationSessionOut,
     AdminPlanningSettingsUpdateRequest,
+    AdminDailyPresenceUserOut,
     AdminOnlinePresenceOut,
     AdminPresenceHourlyBucketOut,
     AdminOnlinePresenceUserOut,
@@ -2477,7 +2478,12 @@ def admin_online_presence(
             UserPresenceHour.hour_started_at_utc,
             UserPresenceHour.channel,
             UserPresenceHour.user_id,
+            UserPresenceHour.first_seen_at,
+            UserPresenceHour.last_seen_at,
             User.role,
+            User.first_name,
+            User.last_name,
+            User.email,
         )
         .join(User, User.id == UserPresenceHour.user_id)
         .where(
@@ -2488,6 +2494,7 @@ def admin_online_presence(
         )
     ).all()
     history_by_hour: dict[datetime, dict[str, set[UUID]]] = {}
+    daily_by_user: dict[UUID, dict[str, object]] = {}
     for row in history_rows:
         bucket = history_by_hour.setdefault(
             row.hour_started_at_utc,
@@ -2512,6 +2519,25 @@ def admin_online_presence(
         elif row.role == UserRole.ADMIN:
             bucket["admins"].add(row.user_id)
 
+        visitor = daily_by_user.get(row.user_id)
+        if visitor is None:
+            display_name = f"{row.first_name or ''} {row.last_name or ''}".strip() or row.email
+            visitor = {
+                "display_name": display_name,
+                "role": row.role,
+                "channels": set(),
+                "first_seen_at": row.first_seen_at,
+                "last_seen_at": row.last_seen_at,
+                "active_hours": set(),
+            }
+            daily_by_user[row.user_id] = visitor
+        visitor["channels"].add(row.channel)
+        visitor["active_hours"].add(row.hour_started_at_utc)
+        if row.first_seen_at < visitor["first_seen_at"]:
+            visitor["first_seen_at"] = row.first_seen_at
+        if row.last_seen_at > visitor["last_seen_at"]:
+            visitor["last_seen_at"] = row.last_seen_at
+
     hourly_history: list[AdminPresenceHourlyBucketOut] = []
     hour_cursor = history_start_utc
     while hour_cursor < history_end_utc:
@@ -2529,6 +2555,26 @@ def admin_online_presence(
             )
         )
         hour_cursor += timedelta(hours=1)
+
+    daily_visitors = [
+        AdminDailyPresenceUserOut(
+            user_id=user_id,
+            display_name=str(visitor["display_name"]),
+            role=visitor["role"],
+            channels=sorted(visitor["channels"], key=lambda value: (value != "WEB", value)),
+            first_seen_at=visitor["first_seen_at"],
+            last_seen_at=visitor["last_seen_at"],
+            active_hour_labels=[
+                active_hour.astimezone(history_zone).strftime("%H:%M")
+                for active_hour in sorted(visitor["active_hours"])
+            ],
+        )
+        for user_id, visitor in sorted(
+            daily_by_user.items(),
+            key=lambda item: item[1]["last_seen_at"],
+            reverse=True,
+        )
+    ]
 
     online_users = [
         AdminOnlinePresenceUserOut(
@@ -2563,6 +2609,7 @@ def admin_online_presence(
         history_timezone=history_timezone,
         history_date=history_date,
         hourly_history=hourly_history,
+        daily_visitors=daily_visitors,
         online_users=online_users,
     )
 

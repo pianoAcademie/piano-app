@@ -881,6 +881,16 @@ class AdminPresenceHourlyBucketOut(BaseModel):
     admins: int
 
 
+class AdminDailyPresenceUserOut(BaseModel):
+    user_id: UUID
+    display_name: str
+    role: UserRole
+    channels: list[Literal["WEB", "MOBILE_APP"]] = Field(default_factory=list)
+    first_seen_at: datetime
+    last_seen_at: datetime
+    active_hour_labels: list[str] = Field(default_factory=list)
+
+
 class AdminOnlinePresenceOut(BaseModel):
     generated_at: datetime
     active_window_seconds: int
@@ -893,6 +903,7 @@ class AdminOnlinePresenceOut(BaseModel):
     history_timezone: str
     history_date: date
     hourly_history: list[AdminPresenceHourlyBucketOut] = Field(default_factory=list)
+    daily_visitors: list[AdminDailyPresenceUserOut] = Field(default_factory=list)
     online_users: list[AdminOnlinePresenceUserOut] = Field(default_factory=list)
 
 
