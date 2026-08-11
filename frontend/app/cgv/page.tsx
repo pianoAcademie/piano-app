@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import type { ReactNode } from "react";
 
 import { backendRequest } from "../../lib/backend";
 import type { PublicLegalTermsOut } from "../../lib/types";
@@ -10,8 +11,11 @@ type LegalTermsLanguage = "fr" | "en";
 
 type LegalSection = {
   title: string;
-  body: string[];
-  items?: string[];
+  body: ReactNode[];
+  blocks: Array<
+    | { kind: "paragraph"; content: ReactNode }
+    | { kind: "list"; items: ReactNode[] }
+  >;
 };
 
 export const dynamic = "force-dynamic";
@@ -34,7 +38,34 @@ function resolveLanguage(rawLanguage: string, acceptLanguage: string): LegalTerm
   return "fr";
 }
 
-function stripMarkdownEmphasis(value: string): string {
+function renderInlineMarkdown(value: string): ReactNode {
+  const tokenPattern = /(\*\*.+?\*\*|\[[^\]]+\]\((?:https?:\/\/|mailto:)[^)]+\))/g;
+  const parts = value.split(tokenPattern).filter(Boolean);
+
+  return parts.map((part, index) => {
+    const strong = part.match(/^\*\*(.+)\*\*$/);
+    if (strong) {
+      return <strong key={index}>{renderInlineMarkdown(strong[1])}</strong>;
+    }
+    const link = part.match(/^\[([^\]]+)\]\(((?:https?:\/\/|mailto:)[^)]+)\)$/);
+    if (link) {
+      const external = link[2].startsWith("http");
+      return (
+        <a
+          key={index}
+          href={link[2]}
+          {...(external ? { target: "_blank", rel: "noreferrer" } : {})}
+          style={{ color: "#8a5a16", fontWeight: 600 }}
+        >
+          {link[1]}
+        </a>
+      );
+    }
+    return part;
+  });
+}
+
+function stripHeadingMarkup(value: string): string {
   return value.replace(/^\*\*(.+)\*\*$/, "$1").trim();
 }
 
@@ -43,24 +74,31 @@ function parseLegalTerms(content: string, language: LegalTermsLanguage): LegalSe
   let current: LegalSection = {
     title: language === "en" ? "Terms" : "Dispositions générales",
     body: [],
-    items: [],
+    blocks: [],
   };
   let paragraph: string[] = [];
+  let listItems: string[] = [];
 
   const flushParagraph = () => {
     const value = paragraph.join(" ").trim();
     if (value) {
-      current.body.push(value);
+      const contentNode = renderInlineMarkdown(value);
+      current.body.push(contentNode);
+      current.blocks.push({ kind: "paragraph", content: contentNode });
     }
     paragraph = [];
   };
+  const flushList = () => {
+    if (listItems.length > 0) {
+      current.blocks.push({ kind: "list", items: listItems.map(renderInlineMarkdown) });
+    }
+    listItems = [];
+  };
   const flushSection = () => {
     flushParagraph();
-    if (current.body.length > 0 || (current.items?.length ?? 0) > 0) {
-      sections.push({
-        ...current,
-        items: current.items?.length ? current.items : undefined,
-      });
+    flushList();
+    if (current.blocks.length > 0) {
+      sections.push(current);
     }
   };
 
@@ -68,27 +106,35 @@ function parseLegalTerms(content: string, language: LegalTermsLanguage): LegalSe
     const line = rawLine.trim();
     if (!line) {
       flushParagraph();
+      flushList();
       continue;
     }
     const heading = line.match(/^#{1,6}\s+(.+)$/);
     if (heading) {
       flushSection();
-      current = { title: stripMarkdownEmphasis(heading[1]), body: [], items: [] };
+      current = { title: stripHeadingMarkup(heading[1]), body: [], blocks: [] };
       continue;
     }
     const bullet = line.match(/^[-*•]\s+(.+)$/);
     if (bullet) {
       flushParagraph();
-      current.items?.push(stripMarkdownEmphasis(bullet[1]));
+      listItems.push(bullet[1]);
       continue;
     }
-    paragraph.push(stripMarkdownEmphasis(line));
+    flushList();
+    paragraph.push(line);
   }
   flushSection();
 
   return sections.length > 0
     ? sections
-    : [{ title: language === "en" ? "Terms" : "Conditions générales de vente", body: [content] }];
+    : [
+        {
+          title: language === "en" ? "Terms" : "Conditions générales de vente",
+          body: [renderInlineMarkdown(content)],
+          blocks: [{ kind: "paragraph", content: renderInlineMarkdown(content) }],
+        },
+      ];
 }
 
 function formatUpdatedAt(value: string | null, language: LegalTermsLanguage): string | undefined {

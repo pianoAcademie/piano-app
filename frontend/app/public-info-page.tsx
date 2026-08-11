@@ -9,6 +9,10 @@ type PublicInfoPageProps = {
     title: string;
     body: ReactNode[];
     items?: ReactNode[];
+    blocks?: Array<
+      | { kind: "paragraph"; content: ReactNode }
+      | { kind: "list"; items: ReactNode[] }
+    >;
   }>;
   languageLinks?: Array<{
     href: string;
@@ -102,23 +106,49 @@ export function PublicInfoPage({
           {sections.map((section) => (
             <section key={section.title}>
               <h2 style={{ margin: "0 0 10px", fontSize: 20 }}>{section.title}</h2>
-              {section.body.map((paragraph, index) => (
-                <p
-                  key={index}
-                  style={{ margin: "8px 0", color: "#4b5563", lineHeight: 1.65, overflowWrap: "anywhere" }}
-                >
-                  {paragraph}
-                </p>
-              ))}
-              {section.items?.length ? (
-                <ul style={{ margin: "10px 0 0", paddingLeft: 24, color: "#4b5563", lineHeight: 1.65 }}>
-                  {section.items.map((item, index) => (
-                    <li key={index} style={{ margin: "6px 0" }}>
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
+              {section.blocks
+                ? section.blocks.map((block, index) =>
+                    block.kind === "paragraph" ? (
+                      <p
+                        key={index}
+                        style={{ margin: "8px 0", color: "#4b5563", lineHeight: 1.65, overflowWrap: "anywhere" }}
+                      >
+                        {block.content}
+                      </p>
+                    ) : (
+                      <ul
+                        key={index}
+                        style={{ margin: "10px 0", paddingLeft: 24, color: "#4b5563", lineHeight: 1.65 }}
+                      >
+                        {block.items.map((item, itemIndex) => (
+                          <li key={itemIndex} style={{ margin: "6px 0" }}>
+                            {item}
+                          </li>
+                        ))}
+                      </ul>
+                    ),
+                  )
+                : (
+                  <>
+                    {section.body.map((paragraph, index) => (
+                      <p
+                        key={index}
+                        style={{ margin: "8px 0", color: "#4b5563", lineHeight: 1.65, overflowWrap: "anywhere" }}
+                      >
+                        {paragraph}
+                      </p>
+                    ))}
+                    {section.items?.length ? (
+                      <ul style={{ margin: "10px 0 0", paddingLeft: 24, color: "#4b5563", lineHeight: 1.65 }}>
+                        {section.items.map((item, index) => (
+                          <li key={index} style={{ margin: "6px 0" }}>
+                            {item}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </>
+                )}
             </section>
           ))}
         </div>
