@@ -3,6 +3,7 @@ from __future__ import annotations
 from calendar import monthrange
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
+from html import unescape
 import json
 import logging
 import re
@@ -47,14 +48,11 @@ from app.models.client_record import ClientBillingAdjustment, PaymentReceipt, St
 from app.models.ops import (
     AppSetting,
     CommunicationChannel,
-    CommunicationDeliveryStatus,
     CommunicationSenderCategory,
-    MessageFormat,
 )
 from app.models.notification_engine import Notification
 from app.models.quote import Prospect, Quote, QuoteAcceptanceFollowup
 from app.models.user import ClientStatus, User, UserPresence, UserPresenceHour, UserRole
-from app.services.communication_journal import COMMUNICATION_TYPE_OPERATIONAL, log_communication
 from app.services.automation_triggers import schedule_trial_attended_triggers
 from app.services.invoice_documents import normalize_billing_entity
 from app.services.notifications.application.orchestrator import (
@@ -93,6 +91,7 @@ from app.services.session_teachers import (
     professor_display_name,
 )
 from app.services.session_notifications import send_session_operation_email
+from app.services.providers.sms import send_provider_sms
 from app.schemas.admin import (
     AdminInternalNoteUpdateRequest,
     AdminSessionBroadcastAudience,
@@ -4209,26 +4208,31 @@ def broadcast_admin_session_message(
     sms_body = body
     if payload.body_format == AdminSessionMessageFormat.HTML:
         sms_body = re.sub(r"<[^>]+>", " ", sms_body)
+        sms_body = unescape(sms_body)
     sms_body = re.sub(r"\s{2,}", " ", sms_body).strip()
     if not sms_body:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="SMS vide apres normalisation")
 
+    sent_count = 0
     for phone_number, recipient_user_id in sorted(recipients.items()):
-        log_communication(
-            db=db,
-            channel=CommunicationChannel.SMS,
-            source="ADMIN_SESSION_BROADCAST_SMS",
-            communication_type=COMMUNICATION_TYPE_OPERATIONAL,
+        sms_result = send_provider_sms(
+            to_phone=phone_number,
+            message=sms_body,
+            context="ADMIN_SESSION_BROADCAST_SMS",
+            subject=sms_subject,
+            recipient_user_id=recipient_user_id,
             sender_category=CommunicationSenderCategory.OTHER_USER,
             sender_user_id=current_user.id,
             sender_label=sender_label,
-            recipient_user_id=recipient_user_id,
-            recipient=phone_number,
-            subject=sms_subject,
-            content=sms_body,
-            content_format=MessageFormat.TEXT,
-            delivery_status=CommunicationDeliveryStatus.UNKNOWN,
             professor_id=session_obj.professor_id,
+            db=db,
+        )
+        if sms_result.ok:
+            sent_count += 1
+            continue
+        skipped_count += 1
+        details.append(
+            f"SMS non envoye a {phone_number}: {sms_result.error_message or 'erreur fournisseur inconnue'}"
         )
 
     cc_phones: set[str] = set()
@@ -4242,30 +4246,39 @@ def broadcast_admin_session_message(
             continue
         cc_phones.add(normalized)
 
+    sent_cc_count = 0
     for cc_phone in sorted(cc_phones):
-        log_communication(
-            db=db,
-            channel=CommunicationChannel.SMS,
-            source="ADMIN_SESSION_BROADCAST_SMS",
-            communication_type=COMMUNICATION_TYPE_OPERATIONAL,
+        sms_result = send_provider_sms(
+            to_phone=cc_phone,
+            message=sms_body,
+            context="ADMIN_SESSION_BROADCAST_SMS",
+            subject=sms_subject,
+            recipient_user_id=None,
             sender_category=CommunicationSenderCategory.OTHER_USER,
             sender_user_id=current_user.id,
             sender_label=sender_label,
-            recipient_user_id=None,
-            recipient=cc_phone,
-            subject=sms_subject,
-            content=sms_body,
-            content_format=MessageFormat.TEXT,
-            delivery_status=CommunicationDeliveryStatus.UNKNOWN,
             professor_id=session_obj.professor_id,
+            db=db,
+        )
+        if sms_result.ok:
+            sent_cc_count += 1
+            continue
+        skipped_count += 1
+        details.append(
+            f"Copie SMS non envoyee a {cc_phone}: {sms_result.error_message or 'erreur fournisseur inconnue'}"
         )
     db.commit()
-    cc_count = len(cc_phones)
+
+    if sent_count == 0 and sent_cc_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="; ".join(details) or "Le fournisseur SMS n a accepte aucun message",
+        )
 
     return AdminSessionBroadcastOut(
         channel=payload.channel,
-        recipient_count=len(recipients),
-        cc_count=cc_count,
+        recipient_count=sent_count,
+        cc_count=sent_cc_count,
         skipped_count=skipped_count,
         details=details,
     )
