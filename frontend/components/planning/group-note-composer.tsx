@@ -16,6 +16,8 @@ type Destination =
   | "ADMINS"
   | "SELF";
 
+type SendChannel = "EMAIL" | "SMS";
+
 type GroupNoteTemplate = {
   id: string;
   name: string;
@@ -95,6 +97,7 @@ export default function GroupNoteComposer({
   const defaultSubject = `${isEnglish ? "Group note" : "Note de groupe"} - ${sessionTitle}`;
   const [subject, setSubject] = useState(defaultSubject);
   const [sendToSelf, setSendToSelf] = useState(false);
+  const [sendChannels, setSendChannels] = useState<SendChannel[]>(["EMAIL"]);
 
   const dirty = useMemo(() => {
     const initialIds = [...selectedStudentIds].sort();
@@ -102,7 +105,12 @@ export default function GroupNoteComposer({
     return editorValue !== initialEditorValue
       || destination !== initialDestination
       || initialIds.join("|") !== currentIds.join("|")
-      || (destination !== "PRIVATE" && (subject !== defaultSubject || sendToSelf));
+      || (destination !== "PRIVATE" && (
+        subject !== defaultSubject
+        || sendToSelf
+        || sendChannels.length !== 1
+        || sendChannels[0] !== "EMAIL"
+      ));
   }, [
     defaultSubject,
     destination,
@@ -111,6 +119,7 @@ export default function GroupNoteComposer({
     initialEditorValue,
     selectedIds,
     selectedStudentIds,
+    sendChannels,
     sendToSelf,
     subject,
   ]);
@@ -120,6 +129,15 @@ export default function GroupNoteComposer({
     [selectedIds, students],
   );
   const studentAudience = STUDENT_DESTINATIONS.has(destination);
+  const sendsEmail = sendChannels.includes("EMAIL");
+
+  const toggleSendChannel = (channel: SendChannel): void => {
+    setSendChannels((current) => (
+      current.includes(channel)
+        ? current.filter((item) => item !== channel)
+        : [...current, channel]
+    ));
+  };
 
   useEffect(() => {
     const warnBeforeLeaving = (event: BeforeUnloadEvent): void => {
@@ -196,13 +214,16 @@ export default function GroupNoteComposer({
       className="note-modal-form group-note-composer"
       onSubmit={(event) => {
         const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
-        if (submitter?.value !== "SEND_EMAIL") {
+        if (submitter?.value !== "SEND") {
           return;
         }
+        const selectedChannelLabels = sendChannels.map((channel) => (
+          channel === "EMAIL" ? (isEnglish ? "email" : "e-mail") : "SMS"
+        ));
         const confirmed = window.confirm(
           isEnglish
-            ? "Save this note and send it to the selected recipients?"
-            : "Enregistrer cette note et l’envoyer aux destinataires sélectionnés ?",
+            ? `Save this note and send it by ${selectedChannelLabels.join(" and ")} to the selected recipients?`
+            : `Enregistrer cette note et l’envoyer par ${selectedChannelLabels.join(" et ")} aux destinataires sélectionnés ?`,
         );
         if (!confirmed) {
           event.preventDefault();
@@ -341,7 +362,7 @@ export default function GroupNoteComposer({
               <p>
                 {destination === "PRIVATE"
                   ? (isEnglish ? "This note will remain internal." : "Cette note restera interne.")
-                  : (isEnglish ? "Review the email options before sending." : "Vérifiez les options de l’e-mail avant l’envoi.")}
+                  : (isEnglish ? "Choose email, SMS, or both before sending." : "Choisissez l’e-mail, le SMS ou les deux avant l’envoi.")}
               </p>
             </div>
           </div>
@@ -353,16 +374,52 @@ export default function GroupNoteComposer({
             </div>
           ) : (
             <div className="group-note-send-options">
-              <label>
-                {isEnglish ? "Email subject" : "Objet de l’e-mail"}
-                <input
-                  type="text"
-                  name="subject"
-                  value={subject}
-                  onChange={(event) => setSubject(event.target.value)}
-                  maxLength={255}
-                />
-              </label>
+              <fieldset className="group-note-channel-fieldset">
+                <legend>{isEnglish ? "Sending channels" : "Canaux d’envoi"}</legend>
+                <div className="group-note-channel-grid">
+                  {(["EMAIL", "SMS"] as const).map((channel) => {
+                    const selected = sendChannels.includes(channel);
+                    return (
+                      <label key={channel} className={`group-note-channel-card ${selected ? "is-selected" : ""}`}>
+                        <input
+                          type="checkbox"
+                          name="send_channels"
+                          value={channel}
+                          checked={selected}
+                          onChange={() => toggleSendChannel(channel)}
+                        />
+                        <span>
+                          <strong>{channel === "EMAIL" ? (isEnglish ? "Email" : "E-mail") : "SMS"}</strong>
+                          <small>
+                            {channel === "EMAIL"
+                              ? (isEnglish ? "Keep the formatting and subject." : "Conserve la mise en forme et l’objet.")
+                              : (isEnglish ? "Send a plain-text version to mobile numbers." : "Envoie une version texte aux numéros mobiles.")}
+                          </small>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                {sendChannels.length === 0 ? (
+                  <span className="field-error" role="alert">
+                    {isEnglish ? "Select at least one sending channel." : "Sélectionnez au moins un canal d’envoi."}
+                  </span>
+                ) : null}
+              </fieldset>
+              {sendsEmail ? (
+                <label>
+                  {isEnglish ? "Email subject" : "Objet de l’e-mail"}
+                  <input
+                    type="text"
+                    name="subject"
+                    value={subject}
+                    onChange={(event) => setSubject(event.target.value)}
+                    maxLength={255}
+                  />
+                </label>
+              ) : (
+                <input type="hidden" name="subject" value={subject} />
+              )}
               <label className="checkline">
                 <input
                   type="checkbox"
@@ -373,12 +430,21 @@ export default function GroupNoteComposer({
                 {isEnglish ? "Send me a copy" : "M’envoyer une copie"}
               </label>
               <div className="group-note-send-summary">
-                <strong>{isEnglish ? "Ready to send" : "Prêt pour l’envoi"}</strong>
+                <strong>
+                  {sendChannels.length > 0
+                    ? (isEnglish ? "Ready to send" : "Prêt pour l’envoi")
+                    : (isEnglish ? "Choose a channel" : "Choisissez un canal")}
+                </strong>
                 <span>
                   {studentAudience
                     ? `${selectedIds.length} ${isEnglish ? "selected student(s)" : "élève(s) sélectionné(s)"}`
                     : destinations.find((item) => item.value === destination)?.title}
                 </span>
+                {sendChannels.length > 0 ? (
+                  <span className="muted">
+                    {sendChannels.map((channel) => channel === "EMAIL" ? (isEnglish ? "Email" : "E-mail") : "SMS").join(" + ")}
+                  </span>
+                ) : null}
               </div>
             </div>
           )}
@@ -397,7 +463,12 @@ export default function GroupNoteComposer({
             {isEnglish ? "Save note" : "Enregistrer la note"}
           </button>
           {destination !== "PRIVATE" ? (
-            <button type="submit" name="note_action" value="SEND_EMAIL" disabled={studentAudience && selectedIds.length === 0}>
+            <button
+              type="submit"
+              name="note_action"
+              value="SEND"
+              disabled={sendChannels.length === 0 || (studentAudience && selectedIds.length === 0)}
+            >
               {isEnglish ? "Save and send" : "Enregistrer et envoyer"}
             </button>
           ) : null}

@@ -3725,6 +3725,18 @@ export async function adminUpdateSessionGroupNoteAction(formData: FormData): Pro
   const groupNoteFormat = String(formData.get("group_note_format") ?? "TEXT").trim().toUpperCase() === "HTML" ? "HTML" : "TEXT";
   const includedStudentIds = parseStringList(formData.getAll("included_student_ids"));
   const sendToSelf = checkboxField(formData, "send_to_self");
+  const requestedSendChannels = parseStringList(formData.getAll("send_channels"))
+    .map((value) => value.trim().toUpperCase())
+    .filter((value): value is "EMAIL" | "SMS" => value === "EMAIL" || value === "SMS");
+  const sendChannels = Array.from(new Set<"EMAIL" | "SMS">(
+    requestedSendChannels.length > 0
+      ? requestedSendChannels
+      : noteAction === "SEND_EMAIL"
+        ? ["EMAIL"]
+        : noteAction === "SEND_SMS"
+          ? ["SMS"]
+          : [],
+  ));
   const subject = optionalField(formData, "subject") ?? t("admin.planning_action.group_note_subject", { title: sessionTitle || t("admin.planning_action.slot_fallback") });
   if (!sessionId) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.invalid_session")));
@@ -3743,9 +3755,13 @@ export async function adminUpdateSessionGroupNoteAction(formData: FormData): Pro
     redirect(appendQueryMessage(returnTo, "error", result.message));
   }
 
-  if (noteAction === "SEND_EMAIL" && noteDestination !== "PRIVATE") {
+  const shouldSend = noteAction === "SEND" || noteAction === "SEND_EMAIL" || noteAction === "SEND_SMS";
+  if (shouldSend && noteDestination !== "PRIVATE") {
     if (!groupNote) {
       redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.group_note_required_for_send")));
+    }
+    if (sendChannels.length === 0) {
+      redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.group_note_send_channel_required")));
     }
     if (
       (noteDestination === "STUDENTS" || noteDestination === "PARENTS" || noteDestination === "STUDENTS_AND_PARENTS") &&
@@ -3754,37 +3770,81 @@ export async function adminUpdateSessionGroupNoteAction(formData: FormData): Pro
       redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.select_at_least_one_student")));
     }
 
-    const broadcastResult = await backendRequest<{
-      channel: "EMAIL";
+    type GroupNoteBroadcastResult = {
+      channel: "EMAIL" | "SMS";
       recipient_count: number;
       cc_count: number;
       skipped_count: number;
       details: string[];
-    }>(
-      `/api/v1/admin/sessions/${sessionId}/broadcast`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          channel: "EMAIL",
-          audience: noteDestination,
-          included_student_ids: includedStudentIds,
-          send_to_self: sendToSelf,
-          subject,
-          body: groupNote,
-          body_format: groupNoteFormat,
-          cc_emails: [],
-          cc_phone_numbers: [],
-        }),
-      },
-      token,
+    };
+    const broadcastResults = await Promise.all(sendChannels.map(async (channel) => ({
+      channel,
+      result: await backendRequest<GroupNoteBroadcastResult>(
+        `/api/v1/admin/sessions/${sessionId}/broadcast`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            channel,
+            audience: noteDestination,
+            included_student_ids: includedStudentIds,
+            send_to_self: sendToSelf,
+            subject,
+            body: groupNote,
+            body_format: groupNoteFormat,
+            cc_emails: [],
+            cc_phone_numbers: [],
+          }),
+        },
+        token,
+      ),
+    })));
+    const channelLabel = (channel: "EMAIL" | "SMS"): string => (
+      channel === "SMS"
+        ? t("admin.planning_action.group_note_channel_sms")
+        : t("admin.planning_action.group_note_channel_email")
     );
+    const successfulResults = broadcastResults.filter(
+      (item) => item.result.ok && item.result.data.recipient_count > 0,
+    );
+    const resultsWithIssues = broadcastResults.filter(
+      (item) => !item.result.ok || item.result.data.skipped_count > 0,
+    );
+    const sentSummary = broadcastResults
+      .flatMap((item) => item.result.ok && item.result.data.recipient_count > 0 ? [t("admin.planning_action.group_note_channel_result", {
+        channel: channelLabel(item.channel),
+        count: item.result.data.recipient_count,
+      })] : [])
+      .join(" · ");
+    const failedSummary = broadcastResults
+      .flatMap((item) => {
+        if (!item.result.ok) {
+          return [t("admin.planning_action.group_note_channel_failure", {
+            channel: channelLabel(item.channel),
+            message: item.result.message,
+          })];
+        }
+        if (item.result.data.skipped_count > 0) {
+          return [t("admin.planning_action.group_note_channel_failure", {
+            channel: channelLabel(item.channel),
+            message: item.result.data.details.join("; ") || t("admin.planning_action.group_note_skipped_count", {
+              count: item.result.data.skipped_count,
+            }),
+          })];
+        }
+        return [];
+      })
+      .join(" · ");
 
-    if (!broadcastResult.ok) {
-      redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.group_note_saved_send_failed", { message: broadcastResult.message })));
+    if (resultsWithIssues.length > 0) {
+      const message = successfulResults.length > 0
+        ? t("admin.planning_action.group_note_saved_partial_send", { sent: sentSummary, failed: failedSummary })
+        : t("admin.planning_action.group_note_saved_send_failed", { message: failedSummary });
+      revalidatePath("/admin");
+      redirect(appendQueryMessage(returnTo, "error", message));
     }
 
     revalidatePath("/admin");
-    redirect(appendQueryMessage(returnTo, "ok", t("admin.planning_action.group_note_saved_sent", { count: broadcastResult.data.recipient_count })));
+    redirect(appendQueryMessage(returnTo, "ok", t("admin.planning_action.group_note_saved_sent", { count: sentSummary })));
   }
 
   revalidatePath("/admin");

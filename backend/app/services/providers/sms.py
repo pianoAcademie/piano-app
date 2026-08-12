@@ -81,14 +81,19 @@ def _log_sms(
     subject: str | None,
     error_message: str | None = None,
     recipient_user_id: UUID | None = None,
+    sender_category: CommunicationSenderCategory = CommunicationSenderCategory.SYSTEM,
+    sender_user_id: UUID | None = None,
+    sender_label: str = "Systeme",
+    professor_id: UUID | None = None,
     db: Session | None = None,
 ) -> None:
     log_communication(
         channel=CommunicationChannel.SMS,
         source=context,
         communication_type=COMMUNICATION_TYPE_OPERATIONAL,
-        sender_category=CommunicationSenderCategory.SYSTEM,
-        sender_label="Systeme",
+        sender_category=sender_category,
+        sender_user_id=sender_user_id,
+        sender_label=sender_label,
         recipient_user_id=recipient_user_id,
         recipient=to_phone,
         subject=(subject or "").strip() or "Notification SMS",
@@ -98,6 +103,7 @@ def _log_sms(
         provider=provider_name,
         provider_message_id=provider_message_id,
         error_message=error_message,
+        professor_id=professor_id,
         db=db,
     )
 
@@ -109,6 +115,10 @@ def send_provider_sms(
     context: str,
     subject: str | None = None,
     recipient_user_id: UUID | None = None,
+    sender_category: CommunicationSenderCategory = CommunicationSenderCategory.SYSTEM,
+    sender_user_id: UUID | None = None,
+    sender_label: str = "Systeme",
+    professor_id: UUID | None = None,
     db: Session | None = None,
 ) -> SmsProviderSendResult:
     normalized_phone = normalize_sms_recipient_number(to_phone)
@@ -145,6 +155,10 @@ def send_provider_sms(
                 delivery_status=CommunicationDeliveryStatus.SKIPPED,
                 subject=subject,
                 recipient_user_id=recipient_user_id,
+                sender_category=sender_category,
+                sender_user_id=sender_user_id,
+                sender_label=sender_label,
+                professor_id=professor_id,
                 db=db,
             )
         except Exception as exc:  # pragma: no cover - defensive safety net
@@ -197,6 +211,10 @@ def send_provider_sms(
             subject=subject,
             error_message=error_message,
             recipient_user_id=recipient_user_id,
+            sender_category=sender_category,
+            sender_user_id=sender_user_id,
+            sender_label=sender_label,
+            professor_id=professor_id,
             db=db,
         )
         return SmsProviderSendResult(
@@ -219,6 +237,10 @@ def send_provider_sms(
             subject=subject,
             error_message=error_message,
             recipient_user_id=recipient_user_id,
+            sender_category=sender_category,
+            sender_user_id=sender_user_id,
+            sender_label=sender_label,
+            professor_id=professor_id,
             db=db,
         )
         return SmsProviderSendResult(
@@ -239,6 +261,10 @@ def send_provider_sms(
         delivery_status=CommunicationDeliveryStatus.SENT,
         subject=subject,
         recipient_user_id=recipient_user_id,
+        sender_category=sender_category,
+        sender_user_id=sender_user_id,
+        sender_label=sender_label,
+        professor_id=professor_id,
         db=db,
     )
     return SmsProviderSendResult(
