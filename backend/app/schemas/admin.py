@@ -2730,6 +2730,39 @@ class AdminPlanningSimulationSummaryOut(BaseModel):
     quote_only_slot_count: int
 
 
+class AdminPlanningSimulationTeacherActivityNeedOut(BaseModel):
+    course_type_id: UUID | None = None
+    course_type_name: str
+    course_type_color_hex: str | None = None
+    slot_count: int
+    teaching_minutes: int
+    peak_concurrent_teachers: int
+
+
+class AdminPlanningSimulationTeacherDayNeedOut(BaseModel):
+    weekday: int
+    weekday_label: str
+    slot_count: int
+    teaching_minutes: int
+    peak_concurrent_teachers: int
+    first_start_time: str | None = None
+    last_end_time: str | None = None
+    activities: list[AdminPlanningSimulationTeacherActivityNeedOut] = Field(default_factory=list)
+
+
+class AdminPlanningSimulationTeacherNeedSummaryOut(BaseModel):
+    active_day_count: int
+    slot_count: int
+    teaching_minutes: int
+    peak_concurrent_teachers: int
+
+
+class AdminPlanningSimulationTeacherNeedsOut(BaseModel):
+    summary: AdminPlanningSimulationTeacherNeedSummaryOut
+    days: list[AdminPlanningSimulationTeacherDayNeedOut] = Field(default_factory=list)
+    activities: list[AdminPlanningSimulationTeacherActivityNeedOut] = Field(default_factory=list)
+
+
 class AdminPlanningSimulationOut(BaseModel):
     school_year_label: str
     available_school_years: list[str] = Field(default_factory=list)
@@ -2738,4 +2771,5 @@ class AdminPlanningSimulationOut(BaseModel):
     activity_group_filter: str | None = None
     generated_at: datetime
     summary: AdminPlanningSimulationSummaryOut
+    teacher_needs: AdminPlanningSimulationTeacherNeedsOut
     slots: list[AdminPlanningSimulationSlotOut] = Field(default_factory=list)

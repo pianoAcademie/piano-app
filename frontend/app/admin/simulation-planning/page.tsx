@@ -8,6 +8,7 @@ import { hasAdminPermission } from "../../../lib/admin-access";
 import type {
   AdminPlanningSimulationOut,
   AdminPlanningSimulationSlotOut,
+  AdminPlanningSimulationTeacherNeedsOut,
   CourseTypeOut,
   LocationOut,
   UserOut,
@@ -43,6 +44,8 @@ type PositionedCalendarSlot = {
   columns: number;
 };
 
+type SimulationView = "capacity" | "teacher_needs";
+
 const VACATION_COURSE_TYPE_CODE = "VACATION_DAY";
 const DEFAULT_SIMULATION_SCHOOL_YEAR = "2026-2027";
 const DEFAULT_SIMULATION_ACTIVITY_FILTER = "__collective_piano__";
@@ -62,7 +65,11 @@ function readParam(params: SearchParams, key: string): string {
   return raw ?? "";
 }
 
-function activityFilterFromParams(params: SearchParams): string {
+function simulationViewFromParams(params: SearchParams): SimulationView {
+  return readParam(params, "view").trim() === "teacher_needs" ? "teacher_needs" : "capacity";
+}
+
+function activityFilterFromParams(params: SearchParams, view: SimulationView): string {
   const requestedFilter = readParam(params, "activity_filter").trim();
   if (requestedFilter) {
     return requestedFilter;
@@ -71,7 +78,7 @@ function activityFilterFromParams(params: SearchParams): string {
   if (legacyActivityId) {
     return `${ACTIVITY_FILTER_PREFIX}${legacyActivityId}`;
   }
-  return DEFAULT_SIMULATION_ACTIVITY_FILTER;
+  return view === "teacher_needs" ? ALL_SIMULATION_ACTIVITY_FILTER : DEFAULT_SIMULATION_ACTIVITY_FILTER;
 }
 
 async function loadPlanningSimulationLocations(
@@ -115,6 +122,145 @@ function formatDateTime(value: string | null, language: UiLanguage): string {
     dateStyle: "medium",
     timeStyle: "short",
   });
+}
+
+function formatTeachingMinutes(minutes: number, language: UiLanguage): string {
+  const safeMinutes = Math.max(0, Math.floor(minutes));
+  const hours = Math.floor(safeMinutes / 60);
+  const remainingMinutes = safeMinutes % 60;
+  if (hours === 0) {
+    return `${remainingMinutes} min`;
+  }
+  if (remainingMinutes === 0) {
+    return `${hours} h`;
+  }
+  return `${hours} h ${String(remainingMinutes).padStart(2, "0")}`;
+}
+
+function TeacherNeedsDashboard({
+  needs,
+  language,
+}: {
+  needs: AdminPlanningSimulationTeacherNeedsOut;
+  language: UiLanguage;
+}): JSX.Element {
+  return (
+    <div className="simulation-teacher-needs-shell">
+      <section className="card simulation-teacher-needs-hero">
+        <div>
+          <span className="simulation-teacher-needs-eyebrow">
+            {text(language, "Besoin global hebdomadaire", "Overall weekly requirement")}
+          </span>
+          <strong>{needs.summary.peak_concurrent_teachers}</strong>
+          <p>
+            {text(
+              language,
+              "professeur(s) minimum au pic de cours simultanes",
+              "minimum teacher(s) at the concurrent-course peak",
+            )}
+          </p>
+        </div>
+        <dl className="simulation-teacher-needs-metrics">
+          <div>
+            <dt>{text(language, "Cours / semaine", "Courses / week")}</dt>
+            <dd>{needs.summary.slot_count}</dd>
+          </div>
+          <div>
+            <dt>{text(language, "Heures prof / semaine", "Teacher hours / week")}</dt>
+            <dd>{formatTeachingMinutes(needs.summary.teaching_minutes, language)}</dd>
+          </div>
+          <div>
+            <dt>{text(language, "Jours actifs", "Active days")}</dt>
+            <dd>{needs.summary.active_day_count}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section className="card simulation-teacher-needs-weekly">
+        <div className="simulation-teacher-needs-section-head">
+          <div>
+            <h3>{text(language, "Besoin global par type de cours", "Overall requirement by course type")}</h3>
+            <p className="muted">
+              {text(
+                language,
+                "Le pic indique le nombre de professeurs de ce type a mobiliser simultanement.",
+                "The peak is the number of teachers for this course type needed at the same time.",
+              )}
+            </p>
+          </div>
+        </div>
+        <div className="table-wrap">
+          <table className="simulation-teacher-needs-table">
+            <thead>
+              <tr>
+                <th>{text(language, "Type de cours", "Course type")}</th>
+                <th>{text(language, "Cours / semaine", "Courses / week")}</th>
+                <th>{text(language, "Heures prof", "Teacher hours")}</th>
+                <th>{text(language, "Pic simultane", "Concurrent peak")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {needs.activities.map((activity) => (
+                <tr key={activity.course_type_id || activity.course_type_name}>
+                  <td>
+                    <span className="simulation-teacher-activity-name">
+                      <i style={{ backgroundColor: activity.course_type_color_hex || "#94C973" }} />
+                      {activity.course_type_name}
+                    </span>
+                  </td>
+                  <td>{activity.slot_count}</td>
+                  <td>{formatTeachingMinutes(activity.teaching_minutes, language)}</td>
+                  <td>
+                    <strong>{activity.peak_concurrent_teachers}</strong>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="simulation-teacher-day-grid">
+        {needs.days.map((day) => (
+          <article className="card simulation-teacher-day-card" key={day.weekday}>
+            <header>
+              <div>
+                <span>{day.weekday_label}</span>
+                <small>
+                  {day.first_start_time && day.last_end_time ? `${day.first_start_time} - ${day.last_end_time}` : "-"}
+                </small>
+              </div>
+              <div className="simulation-teacher-day-peak">
+                <strong>{day.peak_concurrent_teachers}</strong>
+                <span>{text(language, "prof. au pic", "teachers at peak")}</span>
+              </div>
+            </header>
+            <div className="simulation-teacher-day-summary">
+              <span>
+                <strong>{day.slot_count}</strong> {text(language, "cours", "courses")}
+              </span>
+              <span>
+                <strong>{formatTeachingMinutes(day.teaching_minutes, language)}</strong> {text(language, "d enseignement", "of teaching")}
+              </span>
+            </div>
+            <div className="simulation-teacher-day-activities">
+              {day.activities.map((activity) => (
+                <div key={activity.course_type_id || activity.course_type_name}>
+                  <span className="simulation-teacher-activity-name">
+                    <i style={{ backgroundColor: activity.course_type_color_hex || "#94C973" }} />
+                    {activity.course_type_name}
+                  </span>
+                  <span>{activity.slot_count} {text(language, "cours", "courses")}</span>
+                  <span>{formatTeachingMinutes(activity.teaching_minutes, language)}</span>
+                  <b>{text(language, "pic", "peak")} {activity.peak_concurrent_teachers}</b>
+                </div>
+              ))}
+            </div>
+          </article>
+        ))}
+      </section>
+    </div>
+  );
 }
 
 function formatSeasonWindow(slot: AdminPlanningSimulationSlotOut, language: UiLanguage): string {
@@ -408,11 +554,12 @@ export default async function AdminSimulationPlanningPage({
   }
 
   const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const requestedView = simulationViewFromParams(searchParams ?? {});
   const requestedSchoolYear = readParam(searchParams ?? {}, "school_year").trim() || DEFAULT_SIMULATION_SCHOOL_YEAR;
   const scopedLocationId = String(meResult.data.admin_permissions?.planning_simulation_location_id ?? "").trim();
   const rawRequestedLocationId = readParam(searchParams ?? {}, "location_id").trim();
   const requestedLocationId = scopedLocationId || rawRequestedLocationId;
-  const requestedActivityFilter = activityFilterFromParams(searchParams ?? {});
+  const requestedActivityFilter = activityFilterFromParams(searchParams ?? {}, requestedView);
   const requestedActivityId = requestedActivityFilter.startsWith(ACTIVITY_FILTER_PREFIX)
     ? requestedActivityFilter.slice(ACTIVITY_FILTER_PREFIX.length)
     : "";
@@ -478,8 +625,26 @@ export default async function AdminSimulationPlanningPage({
         </div>
       </section>
 
+      <nav className="simulation-planning-tabs" aria-label={text(language, "Vues de simulation", "Simulation views")}>
+        <Link
+          className={`simulation-planning-tab ${requestedView === "capacity" ? "active" : ""}`}
+          href={`/admin/simulation-planning?view=capacity&school_year=${encodeURIComponent(requestedSchoolYear)}${requestedLocationId ? `&location_id=${encodeURIComponent(requestedLocationId)}` : ""}&activity_filter=${encodeURIComponent(requestedActivityFilter)}`}
+        >
+          <strong>{text(language, "Capacite des cours", "Course capacity")}</strong>
+          <span>{text(language, "Remplissage et pression devis", "Occupancy and quote pressure")}</span>
+        </Link>
+        <Link
+          className={`simulation-planning-tab ${requestedView === "teacher_needs" ? "active" : ""}`}
+          href={`/admin/simulation-planning?view=teacher_needs&school_year=${encodeURIComponent(requestedSchoolYear)}${requestedLocationId ? `&location_id=${encodeURIComponent(requestedLocationId)}` : ""}&activity_filter=${encodeURIComponent(requestedView === "capacity" && requestedActivityFilter === DEFAULT_SIMULATION_ACTIVITY_FILTER ? ALL_SIMULATION_ACTIVITY_FILTER : requestedActivityFilter)}`}
+        >
+          <strong>{text(language, "Besoin professeurs", "Teacher requirements")}</strong>
+          <span>{text(language, "Par jour et type de cours", "By day and course type")}</span>
+        </Link>
+      </nav>
+
       <section className="card">
         <SimulationPlanningFilterForm className="simulation-planning-toolbar">
+          <input type="hidden" name="view" value={requestedView} />
           <label>
             <span>{text(language, "Saison", "Season")}</span>
             <select name="school_year" defaultValue={effectiveSchoolYear}>
@@ -528,7 +693,7 @@ export default async function AdminSimulationPlanningPage({
             <button type="submit" className="simulation-planning-submit">
               {text(language, "Mettre a jour", "Refresh")}
             </button>
-            <Link className="ghost" href="/admin/simulation-planning">
+            <Link className="ghost" href={`/admin/simulation-planning?view=${requestedView}`}>
               {text(language, "Reinitialiser", "Reset")}
             </Link>
           </div>
@@ -554,6 +719,21 @@ export default async function AdminSimulationPlanningPage({
           {text(language, "Impossible de charger la simulation : ", "Unable to load the simulation: ")}
           {simulationError}
         </section>
+      ) : requestedView === "teacher_needs" ? (
+        simulation.teacher_needs.days.length === 0 ? (
+          <section className="card">
+            <h3>{text(language, "Aucun besoin professeur visible", "No visible teacher requirement")}</h3>
+            <p className="muted">
+              {text(
+                language,
+                "Aucun cours n entre dans les filtres de cette saison. Elargissez le filtre lieu ou type de cours.",
+                "No course matches the current filters for this season. Broaden the location or course type filter.",
+              )}
+            </p>
+          </section>
+        ) : (
+          <TeacherNeedsDashboard needs={simulation.teacher_needs} language={language} />
+        )
       ) : (
         <>
           <section className="card simulation-planning-overview">

@@ -18,12 +18,33 @@ from app.api.routes.admin import (
     _planning_simulation_resolve_live_slot_for_quote,
     _planning_simulation_search_text,
     _planning_simulation_select_live_slot_for_quote,
+    _planning_simulation_teacher_needs,
     _safe_zoneinfo,
 )
 from app.models.catalog import DeliveryMode
 
 
 class AdminPlanningSimulationTests(unittest.TestCase):
+    @staticmethod
+    def _teacher_need_slot(
+        *,
+        activity_id: object,
+        activity_name: str,
+        weekday: int,
+        weekday_label: str,
+        start_time: str,
+        end_time: str,
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            course_type_id=activity_id,
+            course_type_name=activity_name,
+            course_type_color_hex="#94C973",
+            weekday=weekday,
+            weekday_label=weekday_label,
+            start_time=start_time,
+            end_time=end_time,
+        )
+
     def test_parse_school_year_bounds_accepts_standard_label(self) -> None:
         self.assertEqual(
             _parse_school_year_bounds("2026-2027"),
@@ -144,6 +165,84 @@ class AdminPlanningSimulationTests(unittest.TestCase):
         prospect = SimpleNamespace(linked_client_id="linked-client-id")
 
         self.assertEqual(_planning_simulation_quote_person_key(quote, prospect), "client:linked-client-id")
+
+    def test_teacher_needs_include_daily_global_and_activity_peaks(self) -> None:
+        piano_id = uuid4()
+        solfege_id = uuid4()
+        slots = [
+            self._teacher_need_slot(
+                activity_id=piano_id,
+                activity_name="Piano collectif",
+                weekday=0,
+                weekday_label="Lundi",
+                start_time="16:00",
+                end_time="17:00",
+            ),
+            self._teacher_need_slot(
+                activity_id=piano_id,
+                activity_name="Piano collectif",
+                weekday=0,
+                weekday_label="Lundi",
+                start_time="16:30",
+                end_time="17:30",
+            ),
+            self._teacher_need_slot(
+                activity_id=solfege_id,
+                activity_name="Solfège",
+                weekday=0,
+                weekday_label="Lundi",
+                start_time="17:00",
+                end_time="18:00",
+            ),
+            self._teacher_need_slot(
+                activity_id=piano_id,
+                activity_name="Piano collectif",
+                weekday=1,
+                weekday_label="Mardi",
+                start_time="16:00",
+                end_time="17:00",
+            ),
+        ]
+
+        needs = _planning_simulation_teacher_needs(slots)  # type: ignore[arg-type]
+
+        self.assertEqual(needs.summary.active_day_count, 2)
+        self.assertEqual(needs.summary.slot_count, 4)
+        self.assertEqual(needs.summary.teaching_minutes, 240)
+        self.assertEqual(needs.summary.peak_concurrent_teachers, 2)
+        self.assertEqual(needs.days[0].weekday_label, "Lundi")
+        self.assertEqual(needs.days[0].peak_concurrent_teachers, 2)
+        self.assertEqual(needs.days[0].first_start_time, "16:00")
+        self.assertEqual(needs.days[0].last_end_time, "18:00")
+        self.assertEqual(needs.activities[0].course_type_name, "Piano collectif")
+        self.assertEqual(needs.activities[0].slot_count, 3)
+        self.assertEqual(needs.activities[0].peak_concurrent_teachers, 2)
+
+    def test_teacher_needs_do_not_overlap_adjacent_courses(self) -> None:
+        activity_id = uuid4()
+        needs = _planning_simulation_teacher_needs(  # type: ignore[arg-type]
+            [
+                self._teacher_need_slot(
+                    activity_id=activity_id,
+                    activity_name="Cours particulier",
+                    weekday=2,
+                    weekday_label="Mercredi",
+                    start_time="14:00",
+                    end_time="14:30",
+                ),
+                self._teacher_need_slot(
+                    activity_id=activity_id,
+                    activity_name="Cours particulier",
+                    weekday=2,
+                    weekday_label="Mercredi",
+                    start_time="14:30",
+                    end_time="15:00",
+                ),
+            ]
+        )
+
+        self.assertEqual(needs.summary.peak_concurrent_teachers, 1)
+        self.assertEqual(needs.summary.teaching_minutes, 60)
 
 
 if __name__ == "__main__":

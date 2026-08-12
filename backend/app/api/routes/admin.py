@@ -112,6 +112,10 @@ from app.schemas.admin import (
     AdminPlanningSimulationOut,
     AdminPlanningSimulationSlotOut,
     AdminPlanningSimulationSummaryOut,
+    AdminPlanningSimulationTeacherActivityNeedOut,
+    AdminPlanningSimulationTeacherDayNeedOut,
+    AdminPlanningSimulationTeacherNeedsOut,
+    AdminPlanningSimulationTeacherNeedSummaryOut,
     AdminPlanningReorganizationBookingOut,
     AdminPlanningReorganizationLocationOut,
     AdminPlanningReorganizationMoveOut,
@@ -2806,6 +2810,124 @@ def update_planning_settings(
     return _to_planning_settings_out(config, location_name=location.name)
 
 
+def _planning_simulation_minutes(value: str) -> int | None:
+    try:
+        hours_raw, minutes_raw = str(value).strip().split(":", 1)
+        hours = int(hours_raw)
+        minutes = int(minutes_raw)
+    except (TypeError, ValueError):
+        return None
+    if hours < 0 or hours > 23 or minutes < 0 or minutes > 59:
+        return None
+    return hours * 60 + minutes
+
+
+def _planning_simulation_peak_teachers(slots: list[AdminPlanningSimulationSlotOut]) -> int:
+    events: list[tuple[int, int]] = []
+    for slot in slots:
+        start = _planning_simulation_minutes(slot.start_time)
+        end = _planning_simulation_minutes(slot.end_time)
+        if start is None or end is None or end <= start:
+            continue
+        events.append((start, 1))
+        events.append((end, -1))
+
+    current = 0
+    peak = 0
+    for _, delta in sorted(events, key=lambda item: (item[0], item[1])):
+        current += delta
+        peak = max(peak, current)
+    return peak
+
+
+def _planning_simulation_teaching_minutes(slots: list[AdminPlanningSimulationSlotOut]) -> int:
+    total = 0
+    for slot in slots:
+        start = _planning_simulation_minutes(slot.start_time)
+        end = _planning_simulation_minutes(slot.end_time)
+        if start is not None and end is not None and end > start:
+            total += end - start
+    return total
+
+
+def _planning_simulation_activity_need(
+    slots: list[AdminPlanningSimulationSlotOut],
+) -> AdminPlanningSimulationTeacherActivityNeedOut:
+    representative = slots[0]
+    slots_by_weekday: dict[int, list[AdminPlanningSimulationSlotOut]] = {}
+    for slot in slots:
+        slots_by_weekday.setdefault(slot.weekday, []).append(slot)
+    return AdminPlanningSimulationTeacherActivityNeedOut(
+        course_type_id=representative.course_type_id,
+        course_type_name=representative.course_type_name,
+        course_type_color_hex=representative.course_type_color_hex,
+        slot_count=len(slots),
+        teaching_minutes=_planning_simulation_teaching_minutes(slots),
+        peak_concurrent_teachers=max(
+            (_planning_simulation_peak_teachers(day_slots) for day_slots in slots_by_weekday.values()),
+            default=0,
+        ),
+    )
+
+
+def _planning_simulation_teacher_needs(
+    slots: list[AdminPlanningSimulationSlotOut],
+) -> AdminPlanningSimulationTeacherNeedsOut:
+    slots_by_weekday: dict[int, list[AdminPlanningSimulationSlotOut]] = {}
+    slots_by_activity: dict[str, list[AdminPlanningSimulationSlotOut]] = {}
+    for slot in slots:
+        slots_by_weekday.setdefault(slot.weekday, []).append(slot)
+        activity_key = str(slot.course_type_id or f"name:{slot.course_type_name.casefold()}")
+        slots_by_activity.setdefault(activity_key, []).append(slot)
+
+    days: list[AdminPlanningSimulationTeacherDayNeedOut] = []
+    for weekday, day_slots in sorted(slots_by_weekday.items()):
+        day_activity_groups: dict[str, list[AdminPlanningSimulationSlotOut]] = {}
+        for slot in day_slots:
+            activity_key = str(slot.course_type_id or f"name:{slot.course_type_name.casefold()}")
+            day_activity_groups.setdefault(activity_key, []).append(slot)
+        starts = [
+            (minute, slot.start_time)
+            for slot in day_slots
+            if (minute := _planning_simulation_minutes(slot.start_time)) is not None
+        ]
+        ends = [
+            (minute, slot.end_time)
+            for slot in day_slots
+            if (minute := _planning_simulation_minutes(slot.end_time)) is not None
+        ]
+        days.append(
+            AdminPlanningSimulationTeacherDayNeedOut(
+                weekday=weekday,
+                weekday_label=day_slots[0].weekday_label,
+                slot_count=len(day_slots),
+                teaching_minutes=_planning_simulation_teaching_minutes(day_slots),
+                peak_concurrent_teachers=_planning_simulation_peak_teachers(day_slots),
+                first_start_time=min(starts)[1] if starts else None,
+                last_end_time=max(ends)[1] if ends else None,
+                activities=sorted(
+                    (_planning_simulation_activity_need(group) for group in day_activity_groups.values()),
+                    key=lambda item: (-item.peak_concurrent_teachers, -item.slot_count, item.course_type_name.casefold()),
+                ),
+            )
+        )
+
+    activities = sorted(
+        (_planning_simulation_activity_need(group) for group in slots_by_activity.values()),
+        key=lambda item: (-item.peak_concurrent_teachers, -item.slot_count, item.course_type_name.casefold()),
+    )
+    return AdminPlanningSimulationTeacherNeedsOut(
+        summary=AdminPlanningSimulationTeacherNeedSummaryOut(
+            active_day_count=len(days),
+            slot_count=len(slots),
+            teaching_minutes=_planning_simulation_teaching_minutes(slots),
+            peak_concurrent_teachers=max((day.peak_concurrent_teachers for day in days), default=0),
+        ),
+        days=days,
+        activities=activities,
+    )
+
+
 @router.get("/plannings/simulation", response_model=AdminPlanningSimulationOut)
 def get_planning_simulation(
     school_year_label: str | None = Query(default=None),
@@ -3269,6 +3391,7 @@ def get_planning_simulation(
             draft_quotes_count=total_draft,
             quote_only_slot_count=quote_only_slot_count,
         ),
+        teacher_needs=_planning_simulation_teacher_needs(slot_payloads),
         slots=slot_payloads,
     )
 

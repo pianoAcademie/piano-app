@@ -2556,6 +2556,37 @@ export type AdminPlanningSimulationSummaryOut = {
   quote_only_slot_count: number;
 };
 
+export type AdminPlanningSimulationTeacherActivityNeedOut = {
+  course_type_id: string | null;
+  course_type_name: string;
+  course_type_color_hex: string | null;
+  slot_count: number;
+  teaching_minutes: number;
+  peak_concurrent_teachers: number;
+};
+
+export type AdminPlanningSimulationTeacherDayNeedOut = {
+  weekday: number;
+  weekday_label: string;
+  slot_count: number;
+  teaching_minutes: number;
+  peak_concurrent_teachers: number;
+  first_start_time: string | null;
+  last_end_time: string | null;
+  activities: AdminPlanningSimulationTeacherActivityNeedOut[];
+};
+
+export type AdminPlanningSimulationTeacherNeedsOut = {
+  summary: {
+    active_day_count: number;
+    slot_count: number;
+    teaching_minutes: number;
+    peak_concurrent_teachers: number;
+  };
+  days: AdminPlanningSimulationTeacherDayNeedOut[];
+  activities: AdminPlanningSimulationTeacherActivityNeedOut[];
+};
+
 export type AdminPlanningSimulationOut = {
   school_year_label: string;
   available_school_years: string[];
@@ -2564,6 +2595,7 @@ export type AdminPlanningSimulationOut = {
   activity_group_filter: string | null;
   generated_at: string;
   summary: AdminPlanningSimulationSummaryOut;
+  teacher_needs: AdminPlanningSimulationTeacherNeedsOut;
   slots: AdminPlanningSimulationSlotOut[];
 };
 
