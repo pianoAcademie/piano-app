@@ -169,6 +169,7 @@ const SESSION_ACCENT_COLORS = [
 ];
 const FINANCE_PAGE_SIZES = [20, 30] as const;
 const FINANCE_PENDING_STATUSES = new Set(["PENDING", "OPEN", "CREATED", "PROCESSING", "WAITING_PAYMENT"]);
+const FINANCE_PAID_STATUSES = new Set(["PAID", "COMPLETED", "SUCCEEDED", "SUCCESS"]);
 const FINANCE_CANCELLED_STATUSES = new Set(["CANCELLED", "CANCELED", "NOT_BILLABLE", "REFUNDED"]);
 const FINANCE_FAILED_STATUSES = new Set(["FAILED", "ERROR", "DECLINED", "NETWORK_ERROR", "UNEXPECTED_ERROR"]);
 const FAMILY_BOOKING_OWNER = "FAMILY";
@@ -486,7 +487,7 @@ function financeStatusLabel(value: string, language: UiLanguage = "fr"): string 
   if (normalized === "CREDIT_NOTE") {
     return uiText(language, "client.finance_status_credit_note");
   }
-  if (normalized === "PAID") {
+  if (FINANCE_PAID_STATUSES.has(normalized)) {
     return uiText(language, "client.finance_status_paid");
   }
   if (FINANCE_PENDING_STATUSES.has(normalized)) {
@@ -514,7 +515,7 @@ function statusMatchesFinanceFilter(statusValue: string, filter: FinanceStatusFi
     return FINANCE_PENDING_STATUSES.has(normalized);
   }
   if (filter === "PAID") {
-    return normalized === "PAID";
+    return FINANCE_PAID_STATUSES.has(normalized);
   }
   if (filter === "CANCELLED") {
     return FINANCE_CANCELLED_STATUSES.has(normalized);
@@ -2909,9 +2910,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       && sub.plan.kind === "PACK"
       && (sub.credits_remaining ?? 0) > 0,
   );
+  const homePositivePackSubscriptions = positivePackSubscriptions.filter(
+    (sub) => selectedMemberFilter === "ALL" || sub.owner_client_id === selectedMemberFilter,
+  );
+  const homeManualCredits = manualCredits.filter(
+    (credit) => selectedMemberFilter === "ALL" || credit.owner_client_id === selectedMemberFilter,
+  );
 
   const paidTotal = paymentRows
-    .filter((row) => normalizeStatus(row.status) === "PAID")
+    .filter((row) => FINANCE_PAID_STATUSES.has(normalizeStatus(row.status)))
     .reduce((sum, row) => sum + Number(row.total_incl_vat || "0"), 0);
   const pendingTransactionsTotal = paymentRows
     .filter((row) => FINANCE_PENDING_STATUSES.has(normalizeStatus(row.status)))
@@ -3347,6 +3354,38 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 </div>
 
                 <aside className="client-home-side">
+                  <SectionCard title={t("client.available_credits")} action={<a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "account" })}>{t("common.view_all")}</a>}>
+                    {homePositivePackSubscriptions.length === 0 && homeManualCredits.length === 0 ? (
+                      <p className="muted">{t("client.no_positive_credit")}</p>
+                    ) : (
+                      <div className="client-forfait-preview-list">
+                        {homePositivePackSubscriptions.map((sub) => (
+                          <article key={`home-pack-credit-${sub.id}`} className="item">
+                            <div className="row spread">
+                              <strong>{sub.plan.name}</strong>
+                              <span className="badge">{sub.owner_display_name}</span>
+                            </div>
+                            <p className="muted">
+                              {t("client.credit_line", {
+                                remaining: sub.credits_remaining ?? 0,
+                                initial: sub.credits_initial ?? sub.credits_remaining ?? 0,
+                              })}
+                            </p>
+                          </article>
+                        ))}
+                        {homeManualCredits.map((credit) => (
+                          <article key={`home-manual-credit-${credit.id}`} className="item">
+                            <div className="row spread">
+                              <strong>{credit.credit_type_name}</strong>
+                              <span className="badge">{credit.credits_count}</span>
+                            </div>
+                            <p className="muted">{credit.owner_display_name}</p>
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                  </SectionCard>
+
                   <SectionCard title={t("client.my_plans")} action={<a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers" })}>{t("common.view_all")}</a>}>
                     {homeSubscriptionsPreview.length === 0 ? (
                       <p className="muted">{t("client.no_active_subscription_preview")}</p>

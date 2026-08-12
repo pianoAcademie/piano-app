@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
+from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -32,6 +33,72 @@ class PaymentHoldExpirationResult:
 
 
 PAYMENT_TIMEOUT_CANCELLATION_REASON = "PAYMENT_TIMEOUT"
+DIRECT_BOOKING_CREDIT_RESTORED_AT_KEY = "cancelled_booking_credit_restored_at"
+
+
+def _restore_fully_paid_direct_booking_credit(db: Session, *, booking: Booking) -> bool:
+    """Turn a retained payment for a cancelled direct booking into one reusable credit."""
+    if booking.client_plan_subscription_id is not None or booking.manual_credit_type_id is not None:
+        return False
+
+    booking_total = Decimal(booking.total_incl_vat_snapshot or 0).quantize(Decimal("0.01"))
+    if booking_total <= Decimal("0.00"):
+        return False
+
+    receipts = db.scalars(
+        select(PaymentReceipt)
+        .where(
+            PaymentReceipt.booking_id == booking.id,
+            PaymentReceipt.status.in_(["COMPLETED", "PAID"]),
+        )
+        .order_by(PaymentReceipt.created_at.asc())
+        .with_for_update()
+    ).all()
+    if not receipts:
+        return False
+    if any(DIRECT_BOOKING_CREDIT_RESTORED_AT_KEY in dict(receipt.receipt_metadata or {}) for receipt in receipts):
+        return False
+
+    paid_total = sum((Decimal(receipt.amount_paid or 0) for receipt in receipts), Decimal("0.00")).quantize(Decimal("0.01"))
+    if paid_total < booking_total:
+        return False
+
+    credit_type_id = db.scalar(
+        select(CourseType.credit_type_id)
+        .join(CourseSession, CourseSession.course_type_id == CourseType.id)
+        .where(CourseSession.id == booking.session_id)
+    )
+    if credit_type_id is None:
+        return False
+
+    balance = db.scalar(
+        select(ClientManualCreditBalance)
+        .where(
+            ClientManualCreditBalance.user_id == booking.user_id,
+            ClientManualCreditBalance.credit_type_id == credit_type_id,
+        )
+        .with_for_update()
+    )
+    now = datetime.now(timezone.utc)
+    if balance is None:
+        balance = ClientManualCreditBalance(
+            user_id=booking.user_id,
+            credit_type_id=credit_type_id,
+            credits_count=1,
+            updated_at=now,
+        )
+        db.add(balance)
+    else:
+        balance.credits_count = int(balance.credits_count or 0) + 1
+        balance.updated_at = now
+
+    marker_receipt = receipts[-1]
+    metadata = dict(marker_receipt.receipt_metadata or {})
+    metadata[DIRECT_BOOKING_CREDIT_RESTORED_AT_KEY] = now.isoformat()
+    metadata["cancelled_booking_credit_type_id"] = str(credit_type_id)
+    marker_receipt.receipt_metadata = metadata
+    marker_receipt.updated_at = now
+    return True
 
 
 def restore_cancelled_booking_credit(db: Session, *, booking: Booking) -> bool:
@@ -67,6 +134,8 @@ def restore_cancelled_booking_credit(db: Session, *, booking: Booking) -> bool:
         if balance is not None:
             balance.credits_count = int(balance.credits_count or 0) + 1
             restored = True
+    if not restored:
+        restored = _restore_fully_paid_direct_booking_credit(db, booking=booking)
     return restored
 
 

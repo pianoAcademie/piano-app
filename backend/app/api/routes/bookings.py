@@ -51,6 +51,7 @@ from app.services.notifications.application.orchestrator import (
 )
 from app.services.pricing import resolve_vat_rate
 from app.services.reminders import ensure_booking_reminder, skip_pending_reminders_for_booking
+from app.services.session_automation import restore_cancelled_booking_credit
 from app.services.session_audience import (
     allowed_plan_kinds_for_scopes,
     resolve_session_booking_scopes,
@@ -1545,23 +1546,8 @@ def cancel_booking(
                     ) from exc
                 raise
 
-    if previous_status == BookingStatus.BOOKED and booking.client_plan_subscription_id is not None and session_obj.start_at_utc > now:
-        sub_and_plan = _load_subscription_with_plan_for_update(
-            db,
-            subscription_id=booking.client_plan_subscription_id,
-        )
-        if sub_and_plan is not None:
-            subscription, plan = sub_and_plan
-            if subscription.user_id == booking.user_id:
-                _restore_pack_credit(subscription, plan)
-    if previous_status == BookingStatus.BOOKED and booking.manual_credit_type_id is not None and session_obj.start_at_utc > now:
-        manual_credit_balance = _load_manual_credit_balance_for_update(
-            db,
-            user_id=booking.user_id,
-            credit_type_id=booking.manual_credit_type_id,
-        )
-        if manual_credit_balance is not None:
-            _restore_manual_credit(manual_credit_balance)
+    if previous_status == BookingStatus.BOOKED and session_obj.start_at_utc > now:
+        restore_cancelled_booking_credit(db, booking=booking)
 
     booking.status = BookingStatus.CANCELLED
     booking.cancelled_at = now
