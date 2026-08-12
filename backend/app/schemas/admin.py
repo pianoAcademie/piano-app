@@ -2515,6 +2515,24 @@ class AdminPlanningReorganizationMoveRequest(BaseModel):
     booking_id: UUID
     target_session_id: UUID
     scope: Literal["single", "series_future"] = "single"
+    price_policy: Literal["keep_source", "apply_target"] | None = None
+
+
+class AdminPlanningReorganizationMovePreviewRequest(BaseModel):
+    booking_id: UUID
+    target_session_id: UUID
+    scope: Literal["single", "series_future"] = "single"
+
+
+class AdminPlanningReorganizationMovePreviewOut(BaseModel):
+    price_change: bool
+    affected_bookings: int
+    price_change_count: int
+    source_price_min: Decimal
+    source_price_max: Decimal
+    target_price_min: Decimal
+    target_price_max: Decimal
+    currency: str
 
 
 class AdminPlanningReorganizationMoveOut(BaseModel):

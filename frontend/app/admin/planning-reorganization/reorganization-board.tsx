@@ -2,7 +2,11 @@
 
 import { useState, useTransition } from "react";
 
-import { movePlanningReorganizationBookingAction } from "../../../lib/actions";
+import {
+  movePlanningReorganizationBookingAction,
+  previewPlanningReorganizationBookingMoveAction,
+  type PlanningReorganizationMovePreview,
+} from "../../../lib/actions";
 
 export type PlanningReorganizationBooking = {
   id: string;
@@ -42,6 +46,13 @@ type PlanningReorganizationBoardProps = {
   language?: "fr" | "en";
 };
 
+type PendingPriceConfirmation = {
+  booking: DraggedBooking;
+  targetSessionId: string;
+  targetLabel: string;
+  preview: PlanningReorganizationMovePreview;
+};
+
 function formatTime(value: string, timezone: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
@@ -58,6 +69,14 @@ function sessionTimeLabel(session: PlanningReorganizationSession): string {
   return `${formatTime(session.start_at_utc, session.timezone)} - ${formatTime(session.end_at_utc, session.timezone)}`;
 }
 
+function formatPriceRange(minimum: number, maximum: number, currency: string, language: "fr" | "en"): string {
+  const formatter = new Intl.NumberFormat(language === "en" ? "en-GB" : "fr-FR", {
+    style: "currency",
+    currency: currency || "EUR",
+  });
+  return minimum === maximum ? formatter.format(minimum) : `${formatter.format(minimum)} - ${formatter.format(maximum)}`;
+}
+
 export function PlanningReorganizationBoard({
   sessions,
   returnTo,
@@ -67,21 +86,53 @@ export function PlanningReorganizationBoard({
   const [selected, setSelected] = useState<DraggedBooking | null>(null);
   const [dragOverSessionId, setDragOverSessionId] = useState<string | null>(null);
   const [scope, setScope] = useState<"single" | "series_future">("single");
+  const [priceConfirmation, setPriceConfirmation] = useState<PendingPriceConfirmation | null>(null);
+  const [interactionError, setInteractionError] = useState("");
   const [isPending, startTransition] = useTransition();
+
+  function submitMove(
+    bookingToMove: DraggedBooking,
+    targetSessionId: string,
+    pricePolicy: "keep_source" | "apply_target",
+  ): void {
+    const formData = new FormData();
+    formData.set("booking_id", bookingToMove.bookingId);
+    formData.set("target_session_id", targetSessionId);
+    formData.set("scope", scope);
+    formData.set("price_policy", pricePolicy);
+    formData.set("return_to", returnTo);
+    setSelected(null);
+    setPriceConfirmation(null);
+    void movePlanningReorganizationBookingAction(formData);
+  }
 
   function moveToSession(targetSessionId: string): void {
     const bookingToMove = dragged ?? selected;
     if (!bookingToMove || bookingToMove.sourceSessionId === targetSessionId || isPending) {
       return;
     }
-    const formData = new FormData();
-    formData.set("booking_id", bookingToMove.bookingId);
-    formData.set("target_session_id", targetSessionId);
-    formData.set("scope", scope);
-    formData.set("return_to", returnTo);
-    startTransition(() => {
-      setSelected(null);
-      void movePlanningReorganizationBookingAction(formData);
+    setInteractionError("");
+    startTransition(async () => {
+      const previewResult = await previewPlanningReorganizationBookingMoveAction({
+        bookingId: bookingToMove.bookingId,
+        targetSessionId,
+        scope,
+      });
+      if (!previewResult.ok) {
+        setInteractionError(previewResult.message);
+        return;
+      }
+      if (previewResult.data.price_change) {
+        const targetSession = sessions.find((session) => session.id === targetSessionId);
+        setPriceConfirmation({
+          booking: bookingToMove,
+          targetSessionId,
+          targetLabel: targetSession ? sessionTimeLabel(targetSession) : "",
+          preview: previewResult.data,
+        });
+        return;
+      }
+      submitMove(bookingToMove, targetSessionId, "keep_source");
     });
   }
 
@@ -118,6 +169,7 @@ export function PlanningReorganizationBoard({
           ? "Silent reorganization: no change email or SMS is sent to students or parents. Regular course reminders remain scheduled."
           : "Reorganisation silencieuse : aucun email ni SMS de changement n'est envoye aux eleves ou aux parents. Les rappels habituels des cours restent programmes."}
       </p>
+      {interactionError ? <p className="form-feedback error">{interactionError}</p> : null}
       {isPending ? <p className="form-feedback success">{language === "en" ? "Moving..." : "Deplacement en cours..."}</p> : null}
       <div className="reorg-board" aria-live="polite">
         {sessions.map((session) => {
@@ -210,6 +262,61 @@ export function PlanningReorganizationBoard({
           );
         })}
       </div>
+      {priceConfirmation ? (
+        <section className="modal-overlay" role="dialog" aria-modal="true" aria-label={language === "en" ? "Price change" : "Changement tarifaire"}>
+          <article className="modal-panel modal-compact reorg-price-modal">
+            <button
+              className="modal-close-x"
+              type="button"
+              onClick={() => setPriceConfirmation(null)}
+              aria-label={language === "en" ? "Close" : "Fermer"}
+            >
+              ×
+            </button>
+            <h3 className="modal-title">{language === "en" ? "Price change detected" : "Changement tarifaire detecte"}</h3>
+            <p>
+              {language === "en"
+                ? `${priceConfirmation.booking.label} will be moved to ${priceConfirmation.targetLabel}. Which price should apply?`
+                : `${priceConfirmation.booking.label} sera deplace vers ${priceConfirmation.targetLabel}. Quel tarif souhaitez-vous appliquer ?`}
+            </p>
+            <div className="reorg-price-comparison">
+              <div>
+                <span>{language === "en" ? "Current course price" : "Tarif du cours actuel"}</span>
+                <strong>{formatPriceRange(priceConfirmation.preview.source_price_min, priceConfirmation.preview.source_price_max, priceConfirmation.preview.currency, language)}</strong>
+              </div>
+              <div>
+                <span>{language === "en" ? "New course price" : "Tarif du nouveau cours"}</span>
+                <strong>{formatPriceRange(priceConfirmation.preview.target_price_min, priceConfirmation.preview.target_price_max, priceConfirmation.preview.currency, language)}</strong>
+              </div>
+            </div>
+            {scope === "series_future" ? (
+              <p className="reorg-price-scope-note">
+                {language === "en"
+                  ? `This choice will apply to ${priceConfirmation.preview.price_change_count} future booking(s) with a price difference.`
+                  : `Ce choix sera applique aux ${priceConfirmation.preview.price_change_count} reservation(s) futures avec un ecart de tarif.`}
+              </p>
+            ) : null}
+            <div className="row gap-sm reorg-price-actions">
+              <button
+                type="button"
+                className="button secondary"
+                disabled={isPending}
+                onClick={() => startTransition(() => submitMove(priceConfirmation.booking, priceConfirmation.targetSessionId, "keep_source"))}
+              >
+                {language === "en" ? "Keep current price" : "Conserver le tarif actuel"}
+              </button>
+              <button
+                type="button"
+                className="button primary"
+                disabled={isPending}
+                onClick={() => startTransition(() => submitMove(priceConfirmation.booking, priceConfirmation.targetSessionId, "apply_target"))}
+              >
+                {language === "en" ? "Apply new price" : "Appliquer le nouveau tarif"}
+              </button>
+            </div>
+          </article>
+        </section>
+      ) : null}
     </section>
   );
 }

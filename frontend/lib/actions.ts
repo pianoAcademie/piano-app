@@ -3624,6 +3624,8 @@ export async function movePlanningReorganizationBookingAction(formData: FormData
   const targetSessionId = String(formData.get("target_session_id") ?? "").trim();
   const scopeRaw = String(formData.get("scope") ?? "single").trim();
   const scope = scopeRaw === "series_future" ? "series_future" : "single";
+  const pricePolicyRaw = String(formData.get("price_policy") ?? "").trim();
+  const pricePolicy = pricePolicyRaw === "apply_target" ? "apply_target" : pricePolicyRaw === "keep_source" ? "keep_source" : null;
 
   if (!bookingId || !targetSessionId) {
     redirect(appendQueryMessage(returnTo, "error", "Deplacement impossible : eleve ou creneau manquant."));
@@ -3641,6 +3643,7 @@ export async function movePlanningReorganizationBookingAction(formData: FormData
         booking_id: bookingId,
         target_session_id: targetSessionId,
         scope,
+        price_policy: pricePolicy,
       }),
     },
     token,
@@ -3655,6 +3658,44 @@ export async function movePlanningReorganizationBookingAction(formData: FormData
   const details = result.data.details.length ? ` (${result.data.details.join(" ; ")})` : "";
   const message = `${result.data.moved_count} deplacement(s), ${result.data.skipped_count} ignore(s)${details}`;
   redirect(appendQueryMessage(returnTo, result.data.moved_count > 0 ? "ok" : "error", message));
+}
+
+export type PlanningReorganizationMovePreview = {
+  price_change: boolean;
+  affected_bookings: number;
+  price_change_count: number;
+  source_price_min: number;
+  source_price_max: number;
+  target_price_min: number;
+  target_price_max: number;
+  currency: string;
+};
+
+export async function previewPlanningReorganizationBookingMoveAction(params: {
+  bookingId: string;
+  targetSessionId: string;
+  scope: "single" | "series_future";
+}): Promise<{ ok: true; data: PlanningReorganizationMovePreview } | { ok: false; message: string }> {
+  const token = currentToken();
+  if (!token) {
+    return { ok: false, message: "Session expiree. Reconnectez-vous." };
+  }
+  const result = await backendRequest<PlanningReorganizationMovePreview>(
+    "/api/v1/admin/planning-reorganization/move-booking/preview",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        booking_id: params.bookingId,
+        target_session_id: params.targetSessionId,
+        scope: params.scope,
+      }),
+    },
+    token,
+  );
+  if (!result.ok) {
+    return { ok: false, message: result.message };
+  }
+  return { ok: true, data: result.data };
 }
 
 export async function adminUpdateSessionAttendanceAction(formData: FormData): Promise<void> {

@@ -121,6 +121,8 @@ from app.schemas.admin import (
     AdminPlanningReorganizationBookingOut,
     AdminPlanningReorganizationLocationOut,
     AdminPlanningReorganizationMoveOut,
+    AdminPlanningReorganizationMovePreviewOut,
+    AdminPlanningReorganizationMovePreviewRequest,
     AdminPlanningReorganizationMoveRequest,
     AdminPlanningReorganizationOut,
     AdminPlanningReorganizationSessionOut,
@@ -812,6 +814,7 @@ def _move_planning_reorganization_booking_occurrence(
     source_session: CourseSession,
     target_session: CourseSession,
     now: datetime,
+    target_price_snapshot: tuple[Decimal, Decimal, Decimal, Decimal, str] | None = None,
 ) -> tuple[bool, str | None]:
     if source_session.id == target_session.id:
         return False, "Eleve deja sur ce creneau"
@@ -891,6 +894,15 @@ def _move_planning_reorganization_booking_occurrence(
             now=now,
         )
         moved_booking = target_booking
+
+    if target_price_snapshot is not None:
+        (
+            moved_booking.price_excl_vat_snapshot,
+            moved_booking.vat_rate_snapshot,
+            moved_booking.vat_amount_snapshot,
+            moved_booking.total_incl_vat_snapshot,
+            moved_booking.currency_snapshot,
+        ) = target_price_snapshot
 
     if moved_booking.status == BookingStatus.BOOKED:
         _cancel_pending_notification_reminders_for_booking(
@@ -3793,56 +3805,51 @@ def get_planning_reorganization_day(
     )
 
 
-@router.post("/planning-reorganization/move-booking", response_model=AdminPlanningReorganizationMoveOut)
-def move_planning_reorganization_booking(
-    payload: AdminPlanningReorganizationMoveRequest,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
-) -> AdminPlanningReorganizationMoveOut:
-    # This workspace is intentionally silent: moving a booking must not emit a
-    # change notification or auto-promote (and notify) somebody on the waitlist.
-    now = _utcnow()
-    source_booking = db.scalar(select(Booking).where(Booking.id == payload.booking_id).with_for_update())
+def _planning_reorganization_load_move(
+    db: Session,
+    *,
+    booking_id: UUID,
+    target_session_id: UUID,
+) -> tuple[Booking, CourseSession, CourseSession]:
+    source_booking = db.scalar(select(Booking).where(Booking.id == booking_id).with_for_update())
     if source_booking is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
     source_session = db.scalar(
         select(CourseSession).where(CourseSession.id == source_booking.session_id).with_for_update()
     )
     target_session = db.scalar(
-        select(CourseSession).where(CourseSession.id == payload.target_session_id).with_for_update()
+        select(CourseSession).where(CourseSession.id == target_session_id).with_for_update()
     )
     if source_session is None or target_session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return source_booking, source_session, target_session
 
-    moved_count = 0
-    skipped_count = 0
-    details: list[str] = []
 
+def _planning_reorganization_move_pairs(
+    db: Session,
+    *,
+    source_booking: Booking,
+    source_session: CourseSession,
+    target_session: CourseSession,
+    scope: Literal["single", "series_future"],
+) -> tuple[list[tuple[Booking, CourseSession, CourseSession]], int, list[str]]:
     if (
-        payload.scope == "single"
+        scope == "single"
         or source_session.recurrence_group_id is None
         or target_session.recurrence_group_id is None
     ):
-        moved, detail = _move_planning_reorganization_booking_occurrence(
-            db,
-            booking=source_booking,
-            source_session=source_session,
-            target_session=target_session,
-            now=now,
-        )
-        moved_count += 1 if moved else 0
-        skipped_count += 0 if moved else 1
-        if detail:
-            details.append(detail)
-        db.commit()
-        return AdminPlanningReorganizationMoveOut(
-            moved_count=moved_count,
-            skipped_count=skipped_count,
-            details=details[:8],
-        )
+        return [(source_booking, source_session, target_session)], 0, []
 
-    source_sessions = _target_sessions_for_scope(db, source_session, "SERIES_FUTURE")
-    target_sessions = _target_sessions_for_scope(db, target_session, "SERIES_FUTURE")
+    source_sessions = _target_sessions_for_scope(
+        db,
+        session_obj=source_session,
+        apply_scope="SERIES_FUTURE",
+    )
+    target_sessions = _target_sessions_for_scope(
+        db,
+        session_obj=target_session,
+        apply_scope="SERIES_FUTURE",
+    )
     source_session_by_id = {session_obj.id: session_obj for session_obj in source_sessions}
     target_by_day = {
         _local_date_in_timezone(
@@ -3851,7 +3858,6 @@ def move_planning_reorganization_booking(
         ): session_obj
         for session_obj in target_sessions
     }
-
     recurring_bookings = db.scalars(
         select(Booking)
         .where(
@@ -3862,6 +3868,10 @@ def move_planning_reorganization_booking(
         .order_by(Booking.booked_at.asc())
         .with_for_update()
     ).all()
+
+    pairs: list[tuple[Booking, CourseSession, CourseSession]] = []
+    skipped_count = 0
+    details: list[str] = []
     for booking in recurring_bookings:
         current_source_session = source_session_by_id.get(booking.session_id)
         if current_source_session is None:
@@ -3877,12 +3887,145 @@ def move_planning_reorganization_booking(
             if len(details) < 8:
                 details.append(f"Aucun creneau cible le {source_day.isoformat()}")
             continue
+        pairs.append((booking, current_source_session, current_target_session))
+    return pairs, skipped_count, details
+
+
+def _planning_reorganization_target_price_snapshot(
+    db: Session,
+    *,
+    booking: Booking,
+    target_session: CourseSession,
+    now: datetime,
+) -> tuple[Decimal, Decimal, Decimal, Decimal, str]:
+    client = db.scalar(select(User).where(User.id == booking.user_id))
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
+    subscription = None
+    plan = None
+    if booking.client_plan_subscription_id is not None:
+        loaded = _load_subscription_with_plan_for_update(
+            db,
+            subscription_id=booking.client_plan_subscription_id,
+        )
+        if loaded is not None:
+            subscription, plan = loaded
+    return _resolve_booking_snapshot(
+        db,
+        session_obj=target_session,
+        user=client,
+        now=now,
+        subscription=subscription,
+        plan=plan,
+        covered_by_manual_credit=booking.manual_credit_type_id is not None,
+    )
+
+
+def _planning_reorganization_price_rows(
+    db: Session,
+    *,
+    pairs: list[tuple[Booking, CourseSession, CourseSession]],
+    now: datetime,
+) -> list[tuple[Booking, tuple[Decimal, Decimal, Decimal, Decimal, str], bool]]:
+    rows: list[tuple[Booking, tuple[Decimal, Decimal, Decimal, Decimal, str], bool]] = []
+    for booking, _, target_session in pairs:
+        target_snapshot = _planning_reorganization_target_price_snapshot(
+            db,
+            booking=booking,
+            target_session=target_session,
+            now=now,
+        )
+        price_changed = (
+            Decimal(booking.total_incl_vat_snapshot) != target_snapshot[3]
+            or str(booking.currency_snapshot).upper() != target_snapshot[4].upper()
+        )
+        rows.append((booking, target_snapshot, price_changed))
+    return rows
+
+
+@router.post(
+    "/planning-reorganization/move-booking/preview",
+    response_model=AdminPlanningReorganizationMovePreviewOut,
+)
+def preview_planning_reorganization_booking_move(
+    payload: AdminPlanningReorganizationMovePreviewRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
+) -> AdminPlanningReorganizationMovePreviewOut:
+    now = _utcnow()
+    source_booking, source_session, target_session = _planning_reorganization_load_move(
+        db,
+        booking_id=payload.booking_id,
+        target_session_id=payload.target_session_id,
+    )
+    pairs, _, _ = _planning_reorganization_move_pairs(
+        db,
+        source_booking=source_booking,
+        source_session=source_session,
+        target_session=target_session,
+        scope=payload.scope,
+    )
+    price_rows = _planning_reorganization_price_rows(db, pairs=pairs, now=now)
+    source_prices = [Decimal(booking.total_incl_vat_snapshot) for booking, _, _ in price_rows]
+    target_prices = [snapshot[3] for _, snapshot, _ in price_rows]
+    currency = price_rows[0][1][4] if price_rows else str(source_booking.currency_snapshot or "EUR")
+    return AdminPlanningReorganizationMovePreviewOut(
+        price_change=any(changed for _, _, changed in price_rows),
+        affected_bookings=len(pairs),
+        price_change_count=sum(1 for _, _, changed in price_rows if changed),
+        source_price_min=min(source_prices, default=Decimal("0.00")),
+        source_price_max=max(source_prices, default=Decimal("0.00")),
+        target_price_min=min(target_prices, default=Decimal("0.00")),
+        target_price_max=max(target_prices, default=Decimal("0.00")),
+        currency=currency,
+    )
+
+
+@router.post("/planning-reorganization/move-booking", response_model=AdminPlanningReorganizationMoveOut)
+def move_planning_reorganization_booking(
+    payload: AdminPlanningReorganizationMoveRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin_or_permissions("can_edit_planning")),
+) -> AdminPlanningReorganizationMoveOut:
+    # This workspace is intentionally silent: moving a booking must not emit a
+    # change notification or auto-promote (and notify) somebody on the waitlist.
+    now = _utcnow()
+    source_booking, source_session, target_session = _planning_reorganization_load_move(
+        db,
+        booking_id=payload.booking_id,
+        target_session_id=payload.target_session_id,
+    )
+    pairs, skipped_count, details = _planning_reorganization_move_pairs(
+        db,
+        source_booking=source_booking,
+        source_session=source_session,
+        target_session=target_session,
+        scope=payload.scope,
+    )
+    price_rows = _planning_reorganization_price_rows(db, pairs=pairs, now=now)
+    if any(changed for _, _, changed in price_rows) and payload.price_policy is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Un changement tarifaire doit etre confirme avant le deplacement",
+        )
+    target_snapshot_by_booking_id = {
+        booking.id: target_snapshot
+        for booking, target_snapshot, _ in price_rows
+    }
+
+    moved_count = 0
+    for booking, current_source_session, current_target_session in pairs:
         moved, detail = _move_planning_reorganization_booking_occurrence(
             db,
             booking=booking,
             source_session=current_source_session,
             target_session=current_target_session,
             now=now,
+            target_price_snapshot=(
+                target_snapshot_by_booking_id.get(booking.id)
+                if payload.price_policy == "apply_target"
+                else None
+            ),
         )
         moved_count += 1 if moved else 0
         skipped_count += 0 if moved else 1

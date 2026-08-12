@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 import sys
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 from uuid import uuid4
+
+from fastapi import HTTPException
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -59,6 +62,9 @@ class AdminPlanningReorganizationTests(unittest.TestCase):
         )
 
         with patch(
+            "app.api.routes.admin._planning_reorganization_price_rows",
+            return_value=[(source_booking, (Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), "EUR"), False)],
+        ), patch(
             "app.api.routes.admin._move_planning_reorganization_booking_occurrence",
             return_value=(True, None),
         ) as move_occurrence, patch(
@@ -114,6 +120,9 @@ class AdminPlanningReorganizationTests(unittest.TestCase):
         with patch(
             "app.api.routes.admin._target_sessions_for_scope",
             side_effect=[[source_session], [target_session]],
+        ) as target_sessions_for_scope, patch(
+            "app.api.routes.admin._planning_reorganization_price_rows",
+            return_value=[(source_booking, (Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"), "EUR"), False)],
         ), patch(
             "app.api.routes.admin._move_planning_reorganization_booking_occurrence",
             return_value=(True, None),
@@ -132,8 +141,84 @@ class AdminPlanningReorganizationTests(unittest.TestCase):
         self.assertEqual(result.skipped_count, 0)
         self.assertEqual(db.commit_count, 1)
         move_occurrence.assert_called_once()
+        target_sessions_for_scope.assert_any_call(
+            db,
+            session_obj=source_session,
+            apply_scope="SERIES_FUTURE",
+        )
+        target_sessions_for_scope.assert_any_call(
+            db,
+            session_obj=target_session,
+            apply_scope="SERIES_FUTURE",
+        )
         promote_waitlist.assert_not_called()
         enqueue_notifications.assert_not_called()
+
+    def test_price_change_requires_an_explicit_choice(self) -> None:
+        source_booking = SimpleNamespace(id=uuid4(), session_id=uuid4())
+        source_session = SimpleNamespace(id=source_booking.session_id, recurrence_group_id=None)
+        target_session = SimpleNamespace(id=uuid4(), recurrence_group_id=None)
+        db = _FakeSession([source_booking, source_session, target_session])
+        target_snapshot = (Decimal("100"), Decimal("20"), Decimal("20"), Decimal("120"), "EUR")
+        payload = AdminPlanningReorganizationMoveRequest(
+            booking_id=source_booking.id,
+            target_session_id=target_session.id,
+            scope="single",
+        )
+
+        with patch(
+            "app.api.routes.admin._planning_reorganization_price_rows",
+            return_value=[(source_booking, target_snapshot, True)],
+        ), patch(
+            "app.api.routes.admin._move_planning_reorganization_booking_occurrence",
+        ) as move_occurrence:
+            with self.assertRaises(HTTPException) as raised:
+                move_planning_reorganization_booking(
+                    payload,
+                    db=db,  # type: ignore[arg-type]
+                    _=SimpleNamespace(),  # type: ignore[arg-type]
+                )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(db.commit_count, 0)
+        move_occurrence.assert_not_called()
+
+    def test_apply_target_price_passes_the_new_snapshot_to_the_move(self) -> None:
+        source_booking = SimpleNamespace(id=uuid4(), session_id=uuid4())
+        source_session = SimpleNamespace(id=source_booking.session_id, recurrence_group_id=None)
+        target_session = SimpleNamespace(id=uuid4(), recurrence_group_id=None)
+        db = _FakeSession([source_booking, source_session, target_session])
+        target_snapshot = (Decimal("100"), Decimal("20"), Decimal("20"), Decimal("120"), "EUR")
+        payload = AdminPlanningReorganizationMoveRequest(
+            booking_id=source_booking.id,
+            target_session_id=target_session.id,
+            scope="single",
+            price_policy="apply_target",
+        )
+
+        with patch(
+            "app.api.routes.admin._planning_reorganization_price_rows",
+            return_value=[(source_booking, target_snapshot, True)],
+        ), patch(
+            "app.api.routes.admin._move_planning_reorganization_booking_occurrence",
+            return_value=(True, None),
+        ) as move_occurrence:
+            result = move_planning_reorganization_booking(
+                payload,
+                db=db,  # type: ignore[arg-type]
+                _=SimpleNamespace(),  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(result.moved_count, 1)
+        self.assertEqual(db.commit_count, 1)
+        move_occurrence.assert_called_once_with(
+            db,
+            booking=source_booking,
+            source_session=source_session,
+            target_session=target_session,
+            now=ANY,
+            target_price_snapshot=target_snapshot,
+        )
 
 
 if __name__ == "__main__":

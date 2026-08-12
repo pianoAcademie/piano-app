@@ -21827,6 +21827,58 @@ button.danger:focus-visible {
   font-weight: 700;
 }
 
+.reorg-price-modal {
+  display: grid;
+  gap: 16px;
+  width: min(560px, calc(100vw - 28px));
+}
+
+.reorg-price-modal > p {
+  margin: 0;
+  color: #5f5145;
+}
+
+.reorg-price-comparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.reorg-price-comparison > div {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid #e5d4bc;
+  border-radius: 10px;
+  background: #fffaf2;
+}
+
+.reorg-price-comparison span,
+.reorg-price-scope-note {
+  color: #766554;
+  font-size: 0.9rem;
+}
+
+.reorg-price-comparison strong {
+  color: #2f251c;
+  font-size: 1.2rem;
+}
+
+.reorg-price-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .reorg-price-comparison {
+    grid-template-columns: 1fr;
+  }
+
+  .reorg-price-actions .button {
+    width: 100%;
+  }
+}
+
 .reorg-board {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
