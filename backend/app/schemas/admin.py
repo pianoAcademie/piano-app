@@ -2698,6 +2698,7 @@ class AdminPlanningSimulationSlotOut(BaseModel):
     end_time: str
     first_date: date | None = None
     last_date: date | None = None
+    occurrence_dates: list[date] = Field(default_factory=list, exclude=True)
     occurrence_count: int = 0
     live_session_count: int = 0
     capacity: int | None = None

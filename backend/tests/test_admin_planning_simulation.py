@@ -38,6 +38,7 @@ class AdminPlanningSimulationTests(unittest.TestCase):
         end_time: str,
         location_id: object | None = None,
         location_name: str = "Site principal",
+        occurrence_dates: list[date] | None = None,
     ) -> SimpleNamespace:
         return SimpleNamespace(
             course_type_id=activity_id,
@@ -49,6 +50,7 @@ class AdminPlanningSimulationTests(unittest.TestCase):
             weekday_label=weekday_label,
             start_time=start_time,
             end_time=end_time,
+            occurrence_dates=occurrence_dates or [],
         )
 
     def test_parse_school_year_bounds_accepts_standard_label(self) -> None:
@@ -324,6 +326,57 @@ class AdminPlanningSimulationTests(unittest.TestCase):
             [bucket.total_teachers for bucket in needs.days[0].time_buckets],
             [1, 1],
         )
+
+    def test_teacher_needs_do_not_overlap_successive_series_at_same_time(self) -> None:
+        activity_id = uuid4()
+        common = {
+            "activity_id": activity_id,
+            "activity_name": "Cours collectifs ado/adultes",
+            "weekday": 1,
+            "weekday_label": "Mardi",
+            "start_time": "19:00",
+            "end_time": "20:00",
+            "location_name": "Rue d'Assas",
+        }
+        needs = _planning_simulation_teacher_needs(  # type: ignore[arg-type]
+            [
+                self._teacher_need_slot(
+                    **common,
+                    occurrence_dates=[date(2026, 9, 1)],
+                ),
+                self._teacher_need_slot(
+                    **common,
+                    occurrence_dates=[date(2026, 9, 8), date(2026, 9, 15)],
+                ),
+            ]
+        )
+
+        self.assertEqual(needs.summary.peak_concurrent_teachers, 1)
+        self.assertEqual(needs.summary.mobilized_teachers, 1)
+        self.assertEqual(needs.days[0].time_buckets[0].total_teachers, 1)
+        self.assertEqual(needs.days[0].timeline_rows[0].bucket_teachers, [1])
+
+    def test_teacher_needs_count_series_that_really_overlap(self) -> None:
+        activity_id = uuid4()
+        overlap_date = date(2026, 9, 8)
+        slots = [
+            self._teacher_need_slot(
+                activity_id=activity_id,
+                activity_name="Cours collectifs ado/adultes",
+                weekday=1,
+                weekday_label="Mardi",
+                start_time="19:00",
+                end_time="20:00",
+                location_name="Rue d'Assas",
+                occurrence_dates=[overlap_date],
+            )
+            for _ in range(2)
+        ]
+
+        needs = _planning_simulation_teacher_needs(slots)  # type: ignore[arg-type]
+
+        self.assertEqual(needs.summary.peak_concurrent_teachers, 2)
+        self.assertEqual(needs.summary.mobilized_teachers, 2)
 
 
 if __name__ == "__main__":

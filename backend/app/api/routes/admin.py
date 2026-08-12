@@ -2824,22 +2824,43 @@ def _planning_simulation_minutes(value: str) -> int | None:
     return hours * 60 + minutes
 
 
-def _planning_simulation_peak_teachers(slots: list[AdminPlanningSimulationSlotOut]) -> int:
-    events: list[tuple[int, int]] = []
-    for slot in slots:
-        start = _planning_simulation_minutes(slot.start_time)
-        end = _planning_simulation_minutes(slot.end_time)
-        if start is None or end is None or end <= start:
-            continue
-        events.append((start, 1))
-        events.append((end, -1))
+def _planning_simulation_slot_occurrence_dates(slot: AdminPlanningSimulationSlotOut) -> set[date]:
+    exact_dates = {
+        value
+        for value in (getattr(slot, "occurrence_dates", None) or [])
+        if isinstance(value, date)
+    }
+    if exact_dates:
+        return exact_dates
 
-    current = 0
-    peak = 0
-    for _, delta in sorted(events, key=lambda item: (item[0], item[1])):
-        current += delta
-        peak = max(peak, current)
-    return peak
+    first_date = getattr(slot, "first_date", None)
+    last_date = getattr(slot, "last_date", None)
+    if isinstance(first_date, date) and isinstance(last_date, date) and first_date <= last_date:
+        current_date = first_date + timedelta(days=(int(slot.weekday) - first_date.weekday()) % 7)
+        dates: set[date] = set()
+        while current_date <= last_date:
+            dates.add(current_date)
+            current_date += timedelta(days=7)
+        if dates:
+            return dates
+
+    # Les objets historiques et les tests sans calendrier exact restent comparables
+    # dans une même semaine de référence.
+    return {date(2000, 1, 3) + timedelta(days=int(slot.weekday))}
+
+
+def _planning_simulation_slots_by_date(
+    slots: list[AdminPlanningSimulationSlotOut],
+) -> dict[date, list[AdminPlanningSimulationSlotOut]]:
+    slots_by_date: dict[date, list[AdminPlanningSimulationSlotOut]] = {}
+    for slot in slots:
+        for occurrence_date in _planning_simulation_slot_occurrence_dates(slot):
+            slots_by_date.setdefault(occurrence_date, []).append(slot)
+    return slots_by_date
+
+
+def _planning_simulation_peak_teachers(slots: list[AdminPlanningSimulationSlotOut]) -> int:
+    return _planning_simulation_peak_teachers_between(slots, 0, 24 * 60)
 
 
 def _planning_simulation_teaching_minutes(slots: list[AdminPlanningSimulationSlotOut]) -> int:
@@ -2867,24 +2888,25 @@ def _planning_simulation_peak_teachers_between(
     range_start: int,
     range_end: int,
 ) -> int:
-    events: list[tuple[int, int]] = []
-    for slot in slots:
-        start = _planning_simulation_minutes(slot.start_time)
-        end = _planning_simulation_minutes(slot.end_time)
-        if start is None or end is None or end <= start:
-            continue
-        clipped_start = max(start, range_start)
-        clipped_end = min(end, range_end)
-        if clipped_end <= clipped_start:
-            continue
-        events.append((clipped_start, 1))
-        events.append((clipped_end, -1))
-
-    current = 0
     peak = 0
-    for _, delta in sorted(events, key=lambda item: (item[0], item[1])):
-        current += delta
-        peak = max(peak, current)
+    for dated_slots in _planning_simulation_slots_by_date(slots).values():
+        events: list[tuple[int, int]] = []
+        for slot in dated_slots:
+            start = _planning_simulation_minutes(slot.start_time)
+            end = _planning_simulation_minutes(slot.end_time)
+            if start is None or end is None or end <= start:
+                continue
+            clipped_start = max(start, range_start)
+            clipped_end = min(end, range_end)
+            if clipped_end <= clipped_start:
+                continue
+            events.append((clipped_start, 1))
+            events.append((clipped_end, -1))
+
+        current = 0
+        for _, delta in sorted(events, key=lambda item: (item[0], item[1])):
+            current += delta
+            peak = max(peak, current)
     return peak
 
 
@@ -2897,12 +2919,8 @@ def _planning_simulation_activity_key(slot: AdminPlanningSimulationSlotOut) -> s
 
 
 def _planning_simulation_activity_mobilized_teachers(slots: list[AdminPlanningSimulationSlotOut]) -> int:
-    slots_by_weekday: dict[int, list[AdminPlanningSimulationSlotOut]] = {}
-    for slot in slots:
-        slots_by_weekday.setdefault(slot.weekday, []).append(slot)
-
     daily_needs: list[int] = []
-    for day_slots in slots_by_weekday.values():
+    for day_slots in _planning_simulation_slots_by_date(slots).values():
         slots_by_location: dict[str, list[AdminPlanningSimulationSlotOut]] = {}
         for slot in day_slots:
             slots_by_location.setdefault(_planning_simulation_location_key(slot), []).append(slot)
@@ -2919,6 +2937,21 @@ def _planning_simulation_activity_mobilized_teachers(slots: list[AdminPlanningSi
             for location_slots in slots_by_location.values()
         )
         daily_needs.append(max(morning_need, afternoon_need))
+    return max(daily_needs, default=0)
+
+
+def _planning_simulation_day_mobilized_teachers(slots: list[AdminPlanningSimulationSlotOut]) -> int:
+    daily_needs: list[int] = []
+    for day_slots in _planning_simulation_slots_by_date(slots).values():
+        slots_by_activity: dict[str, list[AdminPlanningSimulationSlotOut]] = {}
+        for slot in day_slots:
+            slots_by_activity.setdefault(_planning_simulation_activity_key(slot), []).append(slot)
+        daily_needs.append(
+            sum(
+                _planning_simulation_activity_mobilized_teachers(activity_slots)
+                for activity_slots in slots_by_activity.values()
+            )
+        )
     return max(daily_needs, default=0)
 
 
@@ -3065,7 +3098,7 @@ def _planning_simulation_teacher_needs(
                 slot_count=len(day_slots),
                 teaching_minutes=_planning_simulation_teaching_minutes(day_slots),
                 peak_concurrent_teachers=_planning_simulation_peak_teachers(day_slots),
-                mobilized_teachers=sum(activity.mobilized_teachers for activity in day_activities),
+                mobilized_teachers=_planning_simulation_day_mobilized_teachers(day_slots),
                 first_start_time=min(starts)[1] if starts else None,
                 last_end_time=max(ends)[1] if ends else None,
                 activities=day_activities,
@@ -3224,6 +3257,7 @@ def get_planning_simulation(
             "end_time": end_time,
             "first_date": None,
             "last_date": None,
+            "_occurrence_dates": set(),
             "occurrence_count": 0,
             "live_session_count": 0,
             "capacity_min": None,
@@ -3315,6 +3349,7 @@ def get_planning_simulation(
 
         entry["occurrence_count"] = int(entry["occurrence_count"]) + 1
         entry["live_session_count"] = int(entry["live_session_count"]) + 1
+        entry["_occurrence_dates"].add(local_day)
         if entry["first_date"] is None or local_day < entry["first_date"]:
             entry["first_date"] = local_day
         if entry["last_date"] is None or local_day > entry["last_date"]:
@@ -3487,6 +3522,15 @@ def get_planning_simulation(
                 entry["first_date"] = block_start_date
             if entry["last_date"] is None and block_end_date is not None:
                 entry["last_date"] = block_end_date
+            if bool(entry["quote_only"]):
+                occurrence_start = max(block_start_date or season_start, season_start)
+                occurrence_end = min(block_end_date or season_end, season_end)
+                occurrence_date = occurrence_start + timedelta(
+                    days=(block_weekday - occurrence_start.weekday()) % 7
+                )
+                while occurrence_date <= occurrence_end:
+                    entry["_occurrence_dates"].add(occurrence_date)
+                    occurrence_date += timedelta(days=7)
             entry[bucket_name].add(str(quote.id))
             entry[bucket_people_name][str(quote.id)] = _planning_simulation_quote_student_name(
                 quote=quote,
@@ -3556,6 +3600,7 @@ def get_planning_simulation(
                 end_time=str(entry["end_time"]),
                 first_date=entry["first_date"] if isinstance(entry["first_date"], date) else None,
                 last_date=entry["last_date"] if isinstance(entry["last_date"], date) else None,
+                occurrence_dates=sorted(entry["_occurrence_dates"]),
                 occurrence_count=int(entry["occurrence_count"]),
                 live_session_count=int(entry["live_session_count"]),
                 capacity=capacity_value,
