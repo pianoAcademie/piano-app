@@ -3549,7 +3549,7 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                 vat_amount=Decimal("0.00") if not is_billable else vat_amount,
                 total_incl_vat=Decimal("0.00") if not is_billable else total_incl_vat,
                 currency=currency,
-                reference=(retained_receipts[-1].provider_transaction_ref if has_fully_paid_cancelled_booking else str(session_obj.id)),
+                reference=(retained_receipts[-1].payment_transaction_reference if has_fully_paid_cancelled_booking else str(session_obj.id)),
                 seller_legal_entity_id=seller_legal_entity_id,
                 billing_entity=_billing_entity_from_seller_id(
                     legal_entities_by_id=legal_entities_by_id,
