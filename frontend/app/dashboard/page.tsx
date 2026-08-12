@@ -3229,22 +3229,30 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           ) : null}
           {paymentMethodSetupSubscriptions.length > 0 ? (
             <section className="flash-warn">
-              <p>{t("client.payment_method_required_at_renewal")}</p>
-              <div className="row">
-                {paymentMethodSetupSubscriptions.map((sub) => (
-                  <form action={openClientPaymentCheckoutAction} key={`payment-method-setup-${sub.id}`}>
-                    {sub.direct_payment_recovery_url ? (
-                      <input type="hidden" name="payment_url" value={sub.direct_payment_recovery_url} />
-                    ) : (
-                      <input type="hidden" name="payment_id" value={`plan:${sub.id}`} />
-                    )}
-                    <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: sub.id })} />
-                    <button type="submit" className="client-pay-cta">
-                      {t("client.enter_payment_method")} · {sub.owner_display_name}
-                    </button>
-                  </form>
-                ))}
-              </div>
+              {paymentMethodSetupSubscriptions.map((sub) => {
+                const isSepaSetup = normalizeStatus(sub.billing_method_code || "") === "SEPA_DEBIT";
+                const renewalDate = formatDate(sub.next_payment_at || sub.current_period_end, language);
+                return (
+                  <div key={`payment-method-setup-${sub.id}`}>
+                    <p>
+                      {isSepaSetup
+                        ? t("client.sepa_mandate_required_for_renewal", { date: renewalDate })
+                        : t("client.payment_method_required_at_renewal")}
+                    </p>
+                    <form action={openClientPaymentCheckoutAction}>
+                      {sub.direct_payment_recovery_url ? (
+                        <input type="hidden" name="payment_url" value={sub.direct_payment_recovery_url} />
+                      ) : (
+                        <input type="hidden" name="payment_id" value={`plan:${sub.id}`} />
+                      )}
+                      <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: sub.id })} />
+                      <button type="submit" className="client-pay-cta">
+                        {t(isSepaSetup ? "client.register_sepa_mandate" : "client.enter_payment_method")} · {sub.owner_display_name}
+                      </button>
+                    </form>
+                  </div>
+                );
+              })}
             </section>
           ) : null}
 
