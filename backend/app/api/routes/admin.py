@@ -3799,8 +3799,9 @@ def move_planning_reorganization_booking(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin_or_permissions("can_edit_planning")),
 ) -> AdminPlanningReorganizationMoveOut:
+    # This workspace is intentionally silent: moving a booking must not emit a
+    # change notification or auto-promote (and notify) somebody on the waitlist.
     now = _utcnow()
-    orchestrated_notifications = []
     source_booking = db.scalar(select(Booking).where(Booking.id == payload.booking_id).with_for_update())
     if source_booking is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
@@ -3822,7 +3823,6 @@ def move_planning_reorganization_booking(
         or source_session.recurrence_group_id is None
         or target_session.recurrence_group_id is None
     ):
-        source_status = source_booking.status
         moved, detail = _move_planning_reorganization_booking_occurrence(
             db,
             booking=source_booking,
@@ -3834,33 +3834,15 @@ def move_planning_reorganization_booking(
         skipped_count += 0 if moved else 1
         if detail:
             details.append(detail)
-        if (
-            moved
-            and source_status in BOOKING_STATUSES_CONSUMING_CAPACITY
-            and source_session.status == SessionStatus.SCHEDULED
-            and source_session.start_at_utc > now
-        ):
-            orchestrated_notifications.extend(
-                _promote_waitlist_if_possible(
-                    db,
-                    source_session,
-                    now,
-                    allow_planless_promotion=scopes_allow_planless_booking(
-                        resolve_session_booking_scopes(source_session)
-                    ),
-                )
-            )
         db.commit()
-        if orchestrated_notifications:
-            enqueue_notifications(orchestrated_notifications)
         return AdminPlanningReorganizationMoveOut(
             moved_count=moved_count,
             skipped_count=skipped_count,
             details=details[:8],
         )
 
-    source_sessions = _target_sessions_for_scope(db, source_session, ApplyScope.SERIES_FUTURE)
-    target_sessions = _target_sessions_for_scope(db, target_session, ApplyScope.SERIES_FUTURE)
+    source_sessions = _target_sessions_for_scope(db, source_session, "SERIES_FUTURE")
+    target_sessions = _target_sessions_for_scope(db, target_session, "SERIES_FUTURE")
     source_session_by_id = {session_obj.id: session_obj for session_obj in source_sessions}
     target_by_day = {
         _local_date_in_timezone(
@@ -3895,7 +3877,6 @@ def move_planning_reorganization_booking(
             if len(details) < 8:
                 details.append(f"Aucun creneau cible le {source_day.isoformat()}")
             continue
-        source_status = booking.status
         moved, detail = _move_planning_reorganization_booking_occurrence(
             db,
             booking=booking,
@@ -3907,26 +3888,7 @@ def move_planning_reorganization_booking(
         skipped_count += 0 if moved else 1
         if detail and len(details) < 8:
             details.append(detail)
-        if (
-            moved
-            and source_status in BOOKING_STATUSES_CONSUMING_CAPACITY
-            and current_source_session.status == SessionStatus.SCHEDULED
-            and current_source_session.start_at_utc > now
-        ):
-            orchestrated_notifications.extend(
-                _promote_waitlist_if_possible(
-                    db,
-                    current_source_session,
-                    now,
-                    allow_planless_promotion=scopes_allow_planless_booking(
-                        resolve_session_booking_scopes(current_source_session)
-                    ),
-                )
-            )
-
     db.commit()
-    if orchestrated_notifications:
-        enqueue_notifications(orchestrated_notifications)
     return AdminPlanningReorganizationMoveOut(
         moved_count=moved_count,
         skipped_count=skipped_count,

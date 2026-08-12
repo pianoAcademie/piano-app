@@ -113,6 +113,11 @@ export function PlanningReorganizationBoard({
           </select>
         </label>
       </div>
+      <p className="reorg-silent-notice">
+        {language === "en"
+          ? "Silent reorganization: no change email or SMS is sent to students or parents. Regular course reminders remain scheduled."
+          : "Reorganisation silencieuse : aucun email ni SMS de changement n'est envoye aux eleves ou aux parents. Les rappels habituels des cours restent programmes."}
+      </p>
       {isPending ? <p className="form-feedback success">{language === "en" ? "Moving..." : "Deplacement en cours..."}</p> : null}
       <div className="reorg-board" aria-live="polite">
         {sessions.map((session) => {
