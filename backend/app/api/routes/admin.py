@@ -715,6 +715,7 @@ def _copy_booking_payload(source: Booking, target: Booking) -> None:
     target.vat_amount_snapshot = source.vat_amount_snapshot
     target.total_incl_vat_snapshot = source.total_incl_vat_snapshot
     target.currency_snapshot = source.currency_snapshot
+    target.pricing_snapshot_locked = source.pricing_snapshot_locked
     target.student_note = source.student_note
     target.internal_note = source.internal_note
 
@@ -815,6 +816,7 @@ def _move_planning_reorganization_booking_occurrence(
     target_session: CourseSession,
     now: datetime,
     target_price_snapshot: tuple[Decimal, Decimal, Decimal, Decimal, str] | None = None,
+    lock_price_snapshot: bool = False,
 ) -> tuple[bool, str | None]:
     if source_session.id == target_session.id:
         return False, "Eleve deja sur ce creneau"
@@ -903,6 +905,8 @@ def _move_planning_reorganization_booking_occurrence(
             moved_booking.total_incl_vat_snapshot,
             moved_booking.currency_snapshot,
         ) = target_price_snapshot
+    if lock_price_snapshot:
+        moved_booking.pricing_snapshot_locked = True
 
     if moved_booking.status == BookingStatus.BOOKED:
         _cancel_pending_notification_reminders_for_booking(
@@ -4026,6 +4030,7 @@ def move_planning_reorganization_booking(
                 if payload.price_policy == "apply_target"
                 else None
             ),
+            lock_price_snapshot=payload.price_policy is not None,
         )
         moved_count += 1 if moved else 0
         skipped_count += 0 if moved else 1

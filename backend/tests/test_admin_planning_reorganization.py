@@ -218,6 +218,45 @@ class AdminPlanningReorganizationTests(unittest.TestCase):
             target_session=target_session,
             now=ANY,
             target_price_snapshot=target_snapshot,
+            lock_price_snapshot=True,
+        )
+
+    def test_keep_source_price_locks_the_existing_snapshot(self) -> None:
+        source_booking = SimpleNamespace(id=uuid4(), session_id=uuid4())
+        source_session = SimpleNamespace(id=source_booking.session_id, recurrence_group_id=None)
+        target_session = SimpleNamespace(id=uuid4(), recurrence_group_id=None)
+        db = _FakeSession([source_booking, source_session, target_session])
+        target_snapshot = (Decimal("26.67"), Decimal("20"), Decimal("5.33"), Decimal("32"), "EUR")
+        payload = AdminPlanningReorganizationMoveRequest(
+            booking_id=source_booking.id,
+            target_session_id=target_session.id,
+            scope="single",
+            price_policy="keep_source",
+        )
+
+        with patch(
+            "app.api.routes.admin._planning_reorganization_price_rows",
+            return_value=[(source_booking, target_snapshot, True)],
+        ), patch(
+            "app.api.routes.admin._move_planning_reorganization_booking_occurrence",
+            return_value=(True, None),
+        ) as move_occurrence:
+            result = move_planning_reorganization_booking(
+                payload,
+                db=db,  # type: ignore[arg-type]
+                _=SimpleNamespace(),  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(result.moved_count, 1)
+        self.assertEqual(db.commit_count, 1)
+        move_occurrence.assert_called_once_with(
+            db,
+            booking=source_booking,
+            source_session=source_session,
+            target_session=target_session,
+            now=ANY,
+            target_price_snapshot=None,
+            lock_price_snapshot=True,
         )
 
 

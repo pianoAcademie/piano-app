@@ -4710,6 +4710,13 @@ def _forfait_booking_amounts_from_activity(
     return amount_excl_vat, vat_rate, vat_amount, total_incl_vat, currency
 
 
+def _should_recompute_forfait_booking_amount(*, booking: Booking, plan: Plan | None) -> bool:
+    return (
+        not booking.pricing_snapshot_locked
+        and (plan is None or plan.kind == PlanKind.FORFAIT)
+    )
+
+
 def _forfait_adjustments_grouped_by_type(
     db: Session,
     *,
@@ -9025,7 +9032,7 @@ def _build_admin_client_payments(db: Session, *, client_id: UUID) -> list[AdminC
                 )
                 if not is_billable:
                     status_value = "NOT_BILLABLE"
-                else:
+                elif _should_recompute_forfait_booking_amount(booking=booking, plan=plan):
                     computed = _forfait_booking_amounts_from_activity(
                         booking=booking,
                         session_obj=session_obj,

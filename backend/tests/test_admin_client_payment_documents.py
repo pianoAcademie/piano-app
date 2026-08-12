@@ -19,6 +19,7 @@ from app.api.routes.admin_clients import (
     _normalize_invoice_range_metadata,
     _send_invoice_range_payment_admin_emails,
     _send_invoice_range_payment_success_emails,
+    _should_recompute_forfait_booking_amount,
     _select_reusable_pre_registration_deposit_reconciliation,
     _select_reusable_pre_registration_deposit_payment_ids,
     _resolve_public_payment_webhook_query_credentials,
@@ -28,6 +29,7 @@ from app.api.routes.admin_clients import (
     download_admin_client_payment_invoice,
 )
 from app.schemas.admin import AdminClientPaymentOut
+from app.models.plan import PlanKind
 from app.services.payment_checkout import with_webhook_secret
 
 
@@ -66,6 +68,22 @@ class _FakeQueryParams:
 
 
 class AdminClientPaymentDocumentTests(unittest.TestCase):
+    def test_locked_booking_price_snapshot_is_not_recomputed_for_a_forfait(self) -> None:
+        booking = SimpleNamespace(pricing_snapshot_locked=True)
+        plan = SimpleNamespace(kind=PlanKind.FORFAIT)
+
+        should_recompute = _should_recompute_forfait_booking_amount(booking=booking, plan=plan)
+
+        self.assertFalse(should_recompute)
+
+    def test_unlocked_forfait_booking_price_can_still_use_configured_activity_pricing(self) -> None:
+        booking = SimpleNamespace(pricing_snapshot_locked=False)
+        plan = SimpleNamespace(kind=PlanKind.FORFAIT)
+
+        should_recompute = _should_recompute_forfait_booking_amount(booking=booking, plan=plan)
+
+        self.assertTrue(should_recompute)
+
     def test_legacy_invoice_never_counts_in_client_balance(self) -> None:
         row = AdminClientPaymentOut(
             id=uuid4(),

@@ -490,6 +490,7 @@ class Booking(Base):
     vat_amount_snapshot: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
     total_incl_vat_snapshot: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, server_default=text("0"))
     currency_snapshot: Mapped[str] = mapped_column(String(3), nullable=False, server_default=text("'EUR'"))
+    pricing_snapshot_locked: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     student_start_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     student_end_at_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     student_note: Mapped[str | None] = mapped_column(Text, nullable=True)
