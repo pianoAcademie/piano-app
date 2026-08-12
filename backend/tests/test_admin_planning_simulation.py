@@ -14,6 +14,7 @@ from app.api.routes.admin import (
     _planning_simulation_clean_location_label,
     _planning_simulation_live_slot_key,
     _planning_simulation_location_name_key,
+    _planning_simulation_is_online_solfege,
     _planning_simulation_quote_person_key,
     _planning_simulation_quote_location_name,
     _planning_simulation_resolve_live_slot_for_quote,
@@ -81,6 +82,23 @@ class AdminPlanningSimulationTests(unittest.TestCase):
     def test_planning_simulation_location_name_key_matches_bar_le_duc_variants(self) -> None:
         self.assertEqual(_planning_simulation_location_name_key("Bar-le-Duc"), "bar le duc")
         self.assertEqual(_planning_simulation_location_name_key("  BAR LE DUC  "), "bar le duc")
+
+    def test_planning_simulation_excludes_only_online_solfege(self) -> None:
+        self.assertTrue(
+            _planning_simulation_is_online_solfege(
+                SimpleNamespace(mode=DeliveryMode.ONLINE, code="SOLFEGE_ONLINE", name="Solfège en ligne")
+            )
+        )
+        self.assertFalse(
+            _planning_simulation_is_online_solfege(
+                SimpleNamespace(mode=DeliveryMode.ONSITE, code="SOLFEGE", name="Solfège en présentiel")
+            )
+        )
+        self.assertFalse(
+            _planning_simulation_is_online_solfege(
+                SimpleNamespace(mode=DeliveryMode.ONLINE, code="PIANO_ONLINE", name="Piano en ligne")
+            )
+        )
 
     def test_planning_simulation_groups_recurrent_orphan_sessions_by_signature(self) -> None:
         signature = "richelieu|solfege|2|18:05|18:35"

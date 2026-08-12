@@ -82,6 +82,14 @@ function activityFilterFromParams(params: SearchParams, view: SimulationView): s
   return view === "teacher_needs" ? ALL_SIMULATION_ACTIVITY_FILTER : DEFAULT_SIMULATION_ACTIVITY_FILTER;
 }
 
+function isOnlineSolfegeCourseType(courseType: CourseTypeOut): boolean {
+  const searchable = `${courseType.code} ${courseType.name}`
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("fr");
+  return courseType.mode.toUpperCase() === "ONLINE" && searchable.includes("solfege");
+}
+
 async function loadPlanningSimulationLocations(
   token: string,
 ): Promise<{ ok: true; data: LocationOut[] } | { ok: false; message: string }> {
@@ -186,8 +194,8 @@ function TeacherNeedsDashboard({
         <span>
           {text(
             language,
-            "Chaque type de cours est traite comme une competence distincte, un professeur reste sur le meme site pendant une demi-journee et Bar-le-Duc est exclu.",
-            "Each course type is treated as a separate skill, a teacher remains at the same location for a half-day, and Bar-le-Duc is excluded.",
+            "Chaque type de cours est traite comme une competence distincte, un professeur reste sur le meme site pendant une demi-journee, Bar-le-Duc et le solfege en ligne sont exclus.",
+            "Each course type is treated as a separate skill, a teacher remains at the same location for a half-day, and Bar-le-Duc and online music theory are excluded.",
           )}
         </span>
       </section>
@@ -684,6 +692,7 @@ export default async function AdminSimulationPlanningPage({
   if (requestedActivityGroup) simulationQuery.set("activity_group", requestedActivityGroup);
   if (requestedView === "teacher_needs") {
     simulationQuery.append("exclude_location_name", TEACHER_NEEDS_EXCLUDED_LOCATION_NAME);
+    simulationQuery.set("exclude_online_solfege", "true");
   }
   const simulationPath = simulationQuery.size
     ? `/api/v1/admin/plannings/simulation?${simulationQuery.toString()}`
@@ -707,7 +716,11 @@ export default async function AdminSimulationPlanningPage({
         )
       : permittedLocations;
   const courseTypes = courseTypesResult.ok
-    ? courseTypesResult.data.filter((courseType) => courseType.code.toUpperCase() !== VACATION_COURSE_TYPE_CODE)
+    ? courseTypesResult.data.filter(
+        (courseType) =>
+          courseType.code.toUpperCase() !== VACATION_COURSE_TYPE_CODE &&
+          (requestedView !== "teacher_needs" || !isOnlineSolfegeCourseType(courseType)),
+      )
     : [];
   const simulation = simulationResult.ok ? simulationResult.data : null;
   const locationsError = locationsResult.ok ? null : locationsResult.message;

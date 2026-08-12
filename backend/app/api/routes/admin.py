@@ -3095,6 +3095,13 @@ def _planning_simulation_location_name_key(value: object | None) -> str:
     return " ".join(_planning_simulation_search_text(str(value or "")).replace("-", " ").split())
 
 
+def _planning_simulation_is_online_solfege(course_type: CourseType | None) -> bool:
+    if course_type is None or course_type.mode != DeliveryMode.ONLINE:
+        return False
+    searchable = _planning_simulation_search_text(f"{course_type.code or ''} {course_type.name or ''}")
+    return "solfege" in searchable
+
+
 @router.get("/plannings/simulation", response_model=AdminPlanningSimulationOut)
 def get_planning_simulation(
     school_year_label: str | None = Query(default=None),
@@ -3102,6 +3109,7 @@ def get_planning_simulation(
     activity_id: UUID | None = Query(default=None),
     activity_group: str | None = Query(default=None),
     exclude_location_name: list[str] | None = Query(default=None),
+    exclude_online_solfege: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin_or_permissions("can_view_planning_simulation")),
 ) -> AdminPlanningSimulationOut:
@@ -3247,6 +3255,8 @@ def get_planning_simulation(
     session_rows = db.execute(session_stmt).all()
     for session_obj, course_type, location in session_rows:
         if _planning_simulation_location_name_key(location.name) in excluded_location_name_keys:
+            continue
+        if exclude_online_solfege and _planning_simulation_is_online_solfege(course_type):
             continue
         zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
         local_start = session_obj.start_at_utc.astimezone(zone)
@@ -3396,6 +3406,8 @@ def get_planning_simulation(
                         select(CourseType).where(CourseType.id == block_activity_id).limit(1)
                     )
                 block_course_type = quote_course_type_by_id.get(block_activity_id)
+            if exclude_online_solfege and _planning_simulation_is_online_solfege(block_course_type):
+                continue
             resolved_location_name = ""
             if block_location_id is not None:
                 if block_location_id not in quote_location_name_by_id:
