@@ -116,6 +116,8 @@ from app.schemas.admin import (
     AdminPlanningSimulationTeacherDayNeedOut,
     AdminPlanningSimulationTeacherNeedsOut,
     AdminPlanningSimulationTeacherNeedSummaryOut,
+    AdminPlanningSimulationTeacherTimeBucketOut,
+    AdminPlanningSimulationTeacherTimelineRowOut,
     AdminPlanningReorganizationBookingOut,
     AdminPlanningReorganizationLocationOut,
     AdminPlanningReorganizationMoveOut,
@@ -2850,6 +2852,76 @@ def _planning_simulation_teaching_minutes(slots: list[AdminPlanningSimulationSlo
     return total
 
 
+_PLANNING_SIMULATION_BUCKET_MINUTES = 30
+_PLANNING_SIMULATION_AFTERNOON_START = 13 * 60
+
+
+def _planning_simulation_time_label(minutes: int) -> str:
+    safe_minutes = max(0, min(24 * 60, minutes))
+    hours, remaining = divmod(safe_minutes, 60)
+    return f"{hours:02d}:{remaining:02d}"
+
+
+def _planning_simulation_peak_teachers_between(
+    slots: list[AdminPlanningSimulationSlotOut],
+    range_start: int,
+    range_end: int,
+) -> int:
+    events: list[tuple[int, int]] = []
+    for slot in slots:
+        start = _planning_simulation_minutes(slot.start_time)
+        end = _planning_simulation_minutes(slot.end_time)
+        if start is None or end is None or end <= start:
+            continue
+        clipped_start = max(start, range_start)
+        clipped_end = min(end, range_end)
+        if clipped_end <= clipped_start:
+            continue
+        events.append((clipped_start, 1))
+        events.append((clipped_end, -1))
+
+    current = 0
+    peak = 0
+    for _, delta in sorted(events, key=lambda item: (item[0], item[1])):
+        current += delta
+        peak = max(peak, current)
+    return peak
+
+
+def _planning_simulation_location_key(slot: AdminPlanningSimulationSlotOut) -> str:
+    return str(slot.location_id or f"name:{slot.location_name.casefold()}")
+
+
+def _planning_simulation_activity_key(slot: AdminPlanningSimulationSlotOut) -> str:
+    return str(slot.course_type_id or f"name:{slot.course_type_name.casefold()}")
+
+
+def _planning_simulation_activity_mobilized_teachers(slots: list[AdminPlanningSimulationSlotOut]) -> int:
+    slots_by_weekday: dict[int, list[AdminPlanningSimulationSlotOut]] = {}
+    for slot in slots:
+        slots_by_weekday.setdefault(slot.weekday, []).append(slot)
+
+    daily_needs: list[int] = []
+    for day_slots in slots_by_weekday.values():
+        slots_by_location: dict[str, list[AdminPlanningSimulationSlotOut]] = {}
+        for slot in day_slots:
+            slots_by_location.setdefault(_planning_simulation_location_key(slot), []).append(slot)
+        morning_need = sum(
+            _planning_simulation_peak_teachers_between(location_slots, 0, _PLANNING_SIMULATION_AFTERNOON_START)
+            for location_slots in slots_by_location.values()
+        )
+        afternoon_need = sum(
+            _planning_simulation_peak_teachers_between(
+                location_slots,
+                _PLANNING_SIMULATION_AFTERNOON_START,
+                24 * 60,
+            )
+            for location_slots in slots_by_location.values()
+        )
+        daily_needs.append(max(morning_need, afternoon_need))
+    return max(daily_needs, default=0)
+
+
 def _planning_simulation_activity_need(
     slots: list[AdminPlanningSimulationSlotOut],
 ) -> AdminPlanningSimulationTeacherActivityNeedOut:
@@ -2867,7 +2939,94 @@ def _planning_simulation_activity_need(
             (_planning_simulation_peak_teachers(day_slots) for day_slots in slots_by_weekday.values()),
             default=0,
         ),
+        mobilized_teachers=_planning_simulation_activity_mobilized_teachers(slots),
     )
+
+
+def _planning_simulation_day_timeline(
+    day_slots: list[AdminPlanningSimulationSlotOut],
+) -> tuple[
+    list[AdminPlanningSimulationTeacherTimeBucketOut],
+    list[AdminPlanningSimulationTeacherTimelineRowOut],
+]:
+    valid_ranges = [
+        (start, end)
+        for slot in day_slots
+        if (start := _planning_simulation_minutes(slot.start_time)) is not None
+        and (end := _planning_simulation_minutes(slot.end_time)) is not None
+        and end > start
+    ]
+    if not valid_ranges:
+        return [], []
+
+    bucket_start = min(start for start, _ in valid_ranges)
+    bucket_start -= bucket_start % _PLANNING_SIMULATION_BUCKET_MINUTES
+    latest_end = max(end for _, end in valid_ranges)
+    bucket_end = (
+        (latest_end + _PLANNING_SIMULATION_BUCKET_MINUTES - 1)
+        // _PLANNING_SIMULATION_BUCKET_MINUTES
+        * _PLANNING_SIMULATION_BUCKET_MINUTES
+    )
+    bucket_ranges = list(
+        range(bucket_start, bucket_end, _PLANNING_SIMULATION_BUCKET_MINUTES)
+    )
+    time_buckets = [
+        AdminPlanningSimulationTeacherTimeBucketOut(
+            start_time=_planning_simulation_time_label(start),
+            end_time=_planning_simulation_time_label(start + _PLANNING_SIMULATION_BUCKET_MINUTES),
+            total_teachers=_planning_simulation_peak_teachers_between(
+                day_slots,
+                start,
+                start + _PLANNING_SIMULATION_BUCKET_MINUTES,
+            ),
+        )
+        for start in bucket_ranges
+    ]
+
+    row_groups: dict[tuple[str, str], list[AdminPlanningSimulationSlotOut]] = {}
+    for slot in day_slots:
+        row_groups.setdefault(
+            (_planning_simulation_location_key(slot), _planning_simulation_activity_key(slot)),
+            [],
+        ).append(slot)
+
+    timeline_rows: list[AdminPlanningSimulationTeacherTimelineRowOut] = []
+    for row_slots in row_groups.values():
+        representative = row_slots[0]
+        timeline_rows.append(
+            AdminPlanningSimulationTeacherTimelineRowOut(
+                location_id=representative.location_id,
+                location_name=representative.location_name,
+                course_type_id=representative.course_type_id,
+                course_type_name=representative.course_type_name,
+                course_type_color_hex=representative.course_type_color_hex,
+                morning_peak_teachers=_planning_simulation_peak_teachers_between(
+                    row_slots,
+                    0,
+                    _PLANNING_SIMULATION_AFTERNOON_START,
+                ),
+                afternoon_peak_teachers=_planning_simulation_peak_teachers_between(
+                    row_slots,
+                    _PLANNING_SIMULATION_AFTERNOON_START,
+                    24 * 60,
+                ),
+                bucket_teachers=[
+                    _planning_simulation_peak_teachers_between(
+                        row_slots,
+                        start,
+                        start + _PLANNING_SIMULATION_BUCKET_MINUTES,
+                    )
+                    for start in bucket_ranges
+                ],
+            )
+        )
+    timeline_rows.sort(
+        key=lambda item: (
+            item.location_name.casefold(),
+            item.course_type_name.casefold(),
+        )
+    )
+    return time_buckets, timeline_rows
 
 
 def _planning_simulation_teacher_needs(
@@ -2877,15 +3036,18 @@ def _planning_simulation_teacher_needs(
     slots_by_activity: dict[str, list[AdminPlanningSimulationSlotOut]] = {}
     for slot in slots:
         slots_by_weekday.setdefault(slot.weekday, []).append(slot)
-        activity_key = str(slot.course_type_id or f"name:{slot.course_type_name.casefold()}")
-        slots_by_activity.setdefault(activity_key, []).append(slot)
+        slots_by_activity.setdefault(_planning_simulation_activity_key(slot), []).append(slot)
 
     days: list[AdminPlanningSimulationTeacherDayNeedOut] = []
     for weekday, day_slots in sorted(slots_by_weekday.items()):
         day_activity_groups: dict[str, list[AdminPlanningSimulationSlotOut]] = {}
         for slot in day_slots:
-            activity_key = str(slot.course_type_id or f"name:{slot.course_type_name.casefold()}")
-            day_activity_groups.setdefault(activity_key, []).append(slot)
+            day_activity_groups.setdefault(_planning_simulation_activity_key(slot), []).append(slot)
+        day_activities = sorted(
+            (_planning_simulation_activity_need(group) for group in day_activity_groups.values()),
+            key=lambda item: (-item.mobilized_teachers, -item.slot_count, item.course_type_name.casefold()),
+        )
+        time_buckets, timeline_rows = _planning_simulation_day_timeline(day_slots)
         starts = [
             (minute, slot.start_time)
             for slot in day_slots
@@ -2903,18 +3065,18 @@ def _planning_simulation_teacher_needs(
                 slot_count=len(day_slots),
                 teaching_minutes=_planning_simulation_teaching_minutes(day_slots),
                 peak_concurrent_teachers=_planning_simulation_peak_teachers(day_slots),
+                mobilized_teachers=sum(activity.mobilized_teachers for activity in day_activities),
                 first_start_time=min(starts)[1] if starts else None,
                 last_end_time=max(ends)[1] if ends else None,
-                activities=sorted(
-                    (_planning_simulation_activity_need(group) for group in day_activity_groups.values()),
-                    key=lambda item: (-item.peak_concurrent_teachers, -item.slot_count, item.course_type_name.casefold()),
-                ),
+                activities=day_activities,
+                time_buckets=time_buckets,
+                timeline_rows=timeline_rows,
             )
         )
 
     activities = sorted(
         (_planning_simulation_activity_need(group) for group in slots_by_activity.values()),
-        key=lambda item: (-item.peak_concurrent_teachers, -item.slot_count, item.course_type_name.casefold()),
+        key=lambda item: (-item.mobilized_teachers, -item.slot_count, item.course_type_name.casefold()),
     )
     return AdminPlanningSimulationTeacherNeedsOut(
         summary=AdminPlanningSimulationTeacherNeedSummaryOut(
@@ -2922,6 +3084,7 @@ def _planning_simulation_teacher_needs(
             slot_count=len(slots),
             teaching_minutes=_planning_simulation_teaching_minutes(slots),
             peak_concurrent_teachers=max((day.peak_concurrent_teachers for day in days), default=0),
+            mobilized_teachers=max((day.mobilized_teachers for day in days), default=0),
         ),
         days=days,
         activities=activities,

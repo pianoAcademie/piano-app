@@ -34,11 +34,15 @@ class AdminPlanningSimulationTests(unittest.TestCase):
         weekday_label: str,
         start_time: str,
         end_time: str,
+        location_id: object | None = None,
+        location_name: str = "Site principal",
     ) -> SimpleNamespace:
         return SimpleNamespace(
             course_type_id=activity_id,
             course_type_name=activity_name,
             course_type_color_hex="#94C973",
+            location_id=location_id,
+            location_name=location_name,
             weekday=weekday,
             weekday_label=weekday_label,
             start_time=start_time,
@@ -210,6 +214,7 @@ class AdminPlanningSimulationTests(unittest.TestCase):
         self.assertEqual(needs.summary.slot_count, 4)
         self.assertEqual(needs.summary.teaching_minutes, 240)
         self.assertEqual(needs.summary.peak_concurrent_teachers, 2)
+        self.assertEqual(needs.summary.mobilized_teachers, 3)
         self.assertEqual(needs.days[0].weekday_label, "Lundi")
         self.assertEqual(needs.days[0].peak_concurrent_teachers, 2)
         self.assertEqual(needs.days[0].first_start_time, "16:00")
@@ -217,6 +222,8 @@ class AdminPlanningSimulationTests(unittest.TestCase):
         self.assertEqual(needs.activities[0].course_type_name, "Piano collectif")
         self.assertEqual(needs.activities[0].slot_count, 3)
         self.assertEqual(needs.activities[0].peak_concurrent_teachers, 2)
+        self.assertEqual(needs.days[0].time_buckets[0].start_time, "16:00")
+        self.assertEqual(needs.days[0].time_buckets[0].total_teachers, 1)
 
     def test_teacher_needs_do_not_overlap_adjacent_courses(self) -> None:
         activity_id = uuid4()
@@ -243,6 +250,45 @@ class AdminPlanningSimulationTests(unittest.TestCase):
 
         self.assertEqual(needs.summary.peak_concurrent_teachers, 1)
         self.assertEqual(needs.summary.teaching_minutes, 60)
+        self.assertEqual(needs.summary.mobilized_teachers, 1)
+
+    def test_teacher_needs_keep_same_activity_on_separate_sites_during_half_day(self) -> None:
+        activity_id = uuid4()
+        first_location_id = uuid4()
+        second_location_id = uuid4()
+        needs = _planning_simulation_teacher_needs(  # type: ignore[arg-type]
+            [
+                self._teacher_need_slot(
+                    activity_id=activity_id,
+                    activity_name="Piano collectif",
+                    weekday=5,
+                    weekday_label="Samedi",
+                    start_time="09:00",
+                    end_time="10:00",
+                    location_id=first_location_id,
+                    location_name="Site A",
+                ),
+                self._teacher_need_slot(
+                    activity_id=activity_id,
+                    activity_name="Piano collectif",
+                    weekday=5,
+                    weekday_label="Samedi",
+                    start_time="10:00",
+                    end_time="11:00",
+                    location_id=second_location_id,
+                    location_name="Site B",
+                ),
+            ]
+        )
+
+        self.assertEqual(needs.summary.peak_concurrent_teachers, 1)
+        self.assertEqual(needs.summary.mobilized_teachers, 2)
+        self.assertEqual(needs.days[0].mobilized_teachers, 2)
+        self.assertEqual(len(needs.days[0].timeline_rows), 2)
+        self.assertEqual(
+            [bucket.total_teachers for bucket in needs.days[0].time_buckets],
+            [1, 1, 1, 1],
+        )
 
 
 if __name__ == "__main__":

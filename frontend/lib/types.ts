@@ -2563,6 +2563,24 @@ export type AdminPlanningSimulationTeacherActivityNeedOut = {
   slot_count: number;
   teaching_minutes: number;
   peak_concurrent_teachers: number;
+  mobilized_teachers: number;
+};
+
+export type AdminPlanningSimulationTeacherTimeBucketOut = {
+  start_time: string;
+  end_time: string;
+  total_teachers: number;
+};
+
+export type AdminPlanningSimulationTeacherTimelineRowOut = {
+  location_id: string | null;
+  location_name: string;
+  course_type_id: string | null;
+  course_type_name: string;
+  course_type_color_hex: string | null;
+  morning_peak_teachers: number;
+  afternoon_peak_teachers: number;
+  bucket_teachers: number[];
 };
 
 export type AdminPlanningSimulationTeacherDayNeedOut = {
@@ -2571,9 +2589,12 @@ export type AdminPlanningSimulationTeacherDayNeedOut = {
   slot_count: number;
   teaching_minutes: number;
   peak_concurrent_teachers: number;
+  mobilized_teachers: number;
   first_start_time: string | null;
   last_end_time: string | null;
   activities: AdminPlanningSimulationTeacherActivityNeedOut[];
+  time_buckets: AdminPlanningSimulationTeacherTimeBucketOut[];
+  timeline_rows: AdminPlanningSimulationTeacherTimelineRowOut[];
 };
 
 export type AdminPlanningSimulationTeacherNeedsOut = {
@@ -2582,6 +2603,7 @@ export type AdminPlanningSimulationTeacherNeedsOut = {
     slot_count: number;
     teaching_minutes: number;
     peak_concurrent_teachers: number;
+    mobilized_teachers: number;
   };
   days: AdminPlanningSimulationTeacherDayNeedOut[];
   activities: AdminPlanningSimulationTeacherActivityNeedOut[];

@@ -2737,6 +2737,24 @@ class AdminPlanningSimulationTeacherActivityNeedOut(BaseModel):
     slot_count: int
     teaching_minutes: int
     peak_concurrent_teachers: int
+    mobilized_teachers: int
+
+
+class AdminPlanningSimulationTeacherTimeBucketOut(BaseModel):
+    start_time: str
+    end_time: str
+    total_teachers: int
+
+
+class AdminPlanningSimulationTeacherTimelineRowOut(BaseModel):
+    location_id: UUID | None = None
+    location_name: str
+    course_type_id: UUID | None = None
+    course_type_name: str
+    course_type_color_hex: str | None = None
+    morning_peak_teachers: int
+    afternoon_peak_teachers: int
+    bucket_teachers: list[int] = Field(default_factory=list)
 
 
 class AdminPlanningSimulationTeacherDayNeedOut(BaseModel):
@@ -2745,9 +2763,12 @@ class AdminPlanningSimulationTeacherDayNeedOut(BaseModel):
     slot_count: int
     teaching_minutes: int
     peak_concurrent_teachers: int
+    mobilized_teachers: int
     first_start_time: str | None = None
     last_end_time: str | None = None
     activities: list[AdminPlanningSimulationTeacherActivityNeedOut] = Field(default_factory=list)
+    time_buckets: list[AdminPlanningSimulationTeacherTimeBucketOut] = Field(default_factory=list)
+    timeline_rows: list[AdminPlanningSimulationTeacherTimelineRowOut] = Field(default_factory=list)
 
 
 class AdminPlanningSimulationTeacherNeedSummaryOut(BaseModel):
@@ -2755,6 +2776,7 @@ class AdminPlanningSimulationTeacherNeedSummaryOut(BaseModel):
     slot_count: int
     teaching_minutes: int
     peak_concurrent_teachers: int
+    mobilized_teachers: int
 
 
 class AdminPlanningSimulationTeacherNeedsOut(BaseModel):

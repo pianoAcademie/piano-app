@@ -149,14 +149,14 @@ function TeacherNeedsDashboard({
       <section className="card simulation-teacher-needs-hero">
         <div>
           <span className="simulation-teacher-needs-eyebrow">
-            {text(language, "Besoin global hebdomadaire", "Overall weekly requirement")}
+            {text(language, "Besoin prudent maximal", "Maximum conservative requirement")}
           </span>
-          <strong>{needs.summary.peak_concurrent_teachers}</strong>
+          <strong>{needs.summary.mobilized_teachers}</strong>
           <p>
             {text(
               language,
-              "professeur(s) minimum au pic de cours simultanes",
-              "minimum teacher(s) at the concurrent-course peak",
+              "professeur(s) a mobiliser sur la journee la plus chargee",
+              "teacher(s) to mobilize on the busiest day",
             )}
           </p>
         </div>
@@ -164,6 +164,10 @@ function TeacherNeedsDashboard({
           <div>
             <dt>{text(language, "Cours / semaine", "Courses / week")}</dt>
             <dd>{needs.summary.slot_count}</dd>
+          </div>
+          <div>
+            <dt>{text(language, "Pic simultane", "Concurrent peak")}</dt>
+            <dd>{needs.summary.peak_concurrent_teachers}</dd>
           </div>
           <div>
             <dt>{text(language, "Heures prof / semaine", "Teacher hours / week")}</dt>
@@ -176,6 +180,17 @@ function TeacherNeedsDashboard({
         </dl>
       </section>
 
+      <section className="simulation-teacher-rule-note" aria-label={text(language, "Regle de calcul", "Calculation rule")}>
+        <strong>{text(language, "Calcul prudent", "Conservative calculation")}</strong>
+        <span>
+          {text(
+            language,
+            "Chaque type de cours est traite comme une competence distincte et un professeur reste sur le meme site pendant une demi-journee.",
+            "Each course type is treated as a separate skill and a teacher remains at the same location for a half-day.",
+          )}
+        </span>
+      </section>
+
       <section className="card simulation-teacher-needs-weekly">
         <div className="simulation-teacher-needs-section-head">
           <div>
@@ -183,8 +198,8 @@ function TeacherNeedsDashboard({
             <p className="muted">
               {text(
                 language,
-                "Le pic indique le nombre de professeurs de ce type a mobiliser simultanement.",
-                "The peak is the number of teachers for this course type needed at the same time.",
+                "Le besoin a mobiliser tient compte des sites et separe chaque type de cours.",
+                "The mobilization requirement accounts for locations and separates each course type.",
               )}
             </p>
           </div>
@@ -196,6 +211,7 @@ function TeacherNeedsDashboard({
                 <th>{text(language, "Type de cours", "Course type")}</th>
                 <th>{text(language, "Cours / semaine", "Courses / week")}</th>
                 <th>{text(language, "Heures prof", "Teacher hours")}</th>
+                <th>{text(language, "A mobiliser", "To mobilize")}</th>
                 <th>{text(language, "Pic simultane", "Concurrent peak")}</th>
               </tr>
             </thead>
@@ -211,6 +227,9 @@ function TeacherNeedsDashboard({
                   <td>{activity.slot_count}</td>
                   <td>{formatTeachingMinutes(activity.teaching_minutes, language)}</td>
                   <td>
+                    <strong>{activity.mobilized_teachers}</strong>
+                  </td>
+                  <td>
                     <strong>{activity.peak_concurrent_teachers}</strong>
                   </td>
                 </tr>
@@ -218,21 +237,50 @@ function TeacherNeedsDashboard({
             </tbody>
           </table>
         </div>
+        <div className="simulation-teacher-weekly-mobile">
+          {needs.activities.map((activity) => (
+            <article key={activity.course_type_id || activity.course_type_name}>
+              <span className="simulation-teacher-activity-name">
+                <i style={{ backgroundColor: activity.course_type_color_hex || "#94C973" }} />
+                {activity.course_type_name}
+              </span>
+              <strong>{activity.mobilized_teachers} {text(language, "a mobiliser", "to mobilize")}</strong>
+              <small>
+                {activity.slot_count} {text(language, "cours", "courses")} · {formatTeachingMinutes(activity.teaching_minutes, language)} · {text(language, "pic", "peak")} {activity.peak_concurrent_teachers}
+              </small>
+            </article>
+          ))}
+        </div>
       </section>
 
-      <section className="simulation-teacher-day-grid">
+      <nav className="simulation-teacher-day-nav" aria-label={text(language, "Acces rapide par jour", "Quick access by day")}>
         {needs.days.map((day) => (
-          <article className="card simulation-teacher-day-card" key={day.weekday}>
-            <header>
+          <a href={`#teacher-day-${day.weekday}`} key={day.weekday}>
+            <span>{day.weekday_label}</span>
+            <strong>{day.mobilized_teachers}</strong>
+          </a>
+        ))}
+      </nav>
+
+      <section className="simulation-teacher-day-list">
+        {needs.days.map((day) => (
+          <article className="card simulation-teacher-day-detail" id={`teacher-day-${day.weekday}`} key={day.weekday}>
+            <header className="simulation-teacher-day-detail-head">
               <div>
-                <span>{day.weekday_label}</span>
+                <span className="simulation-teacher-day-title">{day.weekday_label}</span>
                 <small>
                   {day.first_start_time && day.last_end_time ? `${day.first_start_time} - ${day.last_end_time}` : "-"}
                 </small>
               </div>
-              <div className="simulation-teacher-day-peak">
-                <strong>{day.peak_concurrent_teachers}</strong>
-                <span>{text(language, "prof. au pic", "teachers at peak")}</span>
+              <div className="simulation-teacher-day-kpis">
+                <div className="primary">
+                  <strong>{day.mobilized_teachers}</strong>
+                  <span>{text(language, "a mobiliser", "to mobilize")}</span>
+                </div>
+                <div>
+                  <strong>{day.peak_concurrent_teachers}</strong>
+                  <span>{text(language, "au pic", "at peak")}</span>
+                </div>
               </div>
             </header>
             <div className="simulation-teacher-day-summary">
@@ -243,18 +291,80 @@ function TeacherNeedsDashboard({
                 <strong>{formatTeachingMinutes(day.teaching_minutes, language)}</strong> {text(language, "d enseignement", "of teaching")}
               </span>
             </div>
-            <div className="simulation-teacher-day-activities">
-              {day.activities.map((activity) => (
-                <div key={activity.course_type_id || activity.course_type_name}>
-                  <span className="simulation-teacher-activity-name">
-                    <i style={{ backgroundColor: activity.course_type_color_hex || "#94C973" }} />
-                    {activity.course_type_name}
-                  </span>
-                  <span>{activity.slot_count} {text(language, "cours", "courses")}</span>
-                  <span>{formatTeachingMinutes(activity.teaching_minutes, language)}</span>
-                  <b>{text(language, "pic", "peak")} {activity.peak_concurrent_teachers}</b>
-                </div>
-              ))}
+
+            <div className="simulation-teacher-timeline-desktop">
+              <div className="simulation-teacher-timeline-scroll">
+                <table style={{ minWidth: `${340 + day.time_buckets.length * 58}px` }}>
+                  <thead>
+                    <tr>
+                      <th>{text(language, "Site et type de cours", "Location and course type")}</th>
+                      {day.time_buckets.map((bucket) => (
+                        <th key={bucket.start_time}>{bucket.start_time}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {day.timeline_rows.map((row) => (
+                      <tr key={`${row.location_id || row.location_name}:${row.course_type_id || row.course_type_name}`}>
+                        <th>
+                          <small>{row.location_name}</small>
+                          <span className="simulation-teacher-activity-name">
+                            <i style={{ backgroundColor: row.course_type_color_hex || "#94C973" }} />
+                            {row.course_type_name}
+                          </span>
+                        </th>
+                        {row.bucket_teachers.map((teacherCount, index) => (
+                          <td
+                            className={teacherCount > 0 ? `need need-${Math.min(teacherCount, 4)}` : ""}
+                            key={`${day.time_buckets[index]?.start_time || index}`}
+                          >
+                            {teacherCount || ""}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <th>{text(language, "Total simultane", "Concurrent total")}</th>
+                      {day.time_buckets.map((bucket) => (
+                        <td className={bucket.total_teachers > 0 ? "need total" : ""} key={bucket.start_time}>
+                          {bucket.total_teachers || ""}
+                        </td>
+                      ))}
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            <div className="simulation-teacher-timeline-mobile">
+              {day.time_buckets.map((bucket, bucketIndex) => {
+                const activeRows = day.timeline_rows.filter((row) => (row.bucket_teachers[bucketIndex] || 0) > 0);
+                if (activeRows.length === 0) {
+                  return null;
+                }
+                return (
+                  <section className="simulation-teacher-mobile-hour" key={bucket.start_time}>
+                    <header>
+                      <time>{bucket.start_time}–{bucket.end_time}</time>
+                      <strong>{bucket.total_teachers} {text(language, "prof.", "teachers")}</strong>
+                    </header>
+                    <div>
+                      {activeRows.map((row) => (
+                        <article key={`${row.location_id || row.location_name}:${row.course_type_id || row.course_type_name}`}>
+                          <span>{row.location_name}</span>
+                          <span className="simulation-teacher-activity-name">
+                            <i style={{ backgroundColor: row.course_type_color_hex || "#94C973" }} />
+                            {row.course_type_name}
+                          </span>
+                          <b>{row.bucket_teachers[bucketIndex]}</b>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+                );
+              })}
             </div>
           </article>
         ))}
