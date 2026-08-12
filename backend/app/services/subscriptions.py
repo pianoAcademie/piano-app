@@ -153,6 +153,94 @@ def apply_suspension_dates(
     return start_at, end_at
 
 
+def suspension_shift_details(
+    subscription: ClientPlanSubscription,
+    *,
+    timezone_name: str = "Europe/Paris",
+) -> tuple[datetime, SuspensionUnit, int] | None:
+    """Return the billing shift represented by the current suspension."""
+    start_at = subscription.suspension_starts_at
+    if start_at is None:
+        return None
+
+    start_date = subscription.suspension_start_date
+    end_date = subscription.suspension_end_date
+    if start_date is not None and end_date is not None and end_date >= start_date:
+        return start_at, "DAY", (end_date - start_date).days + 1
+
+    unit = (subscription.suspension_duration_unit or "").upper()
+    amount = int(subscription.suspension_duration_value or 0)
+    if unit == "DAY" and amount >= 1:
+        return start_at, "DAY", amount
+    if unit == "MONTH" and amount >= 1:
+        return start_at, "MONTH", amount
+
+    end_at = subscription.suspension_ends_at
+    if end_at is None or end_at <= start_at:
+        return None
+    local_timezone = ZoneInfo(timezone_name)
+    fallback_days = (end_at.astimezone(local_timezone).date() - start_at.astimezone(local_timezone).date()).days
+    if fallback_days < 1:
+        return None
+    return start_at, "DAY", fallback_days
+
+
+def shift_by_suspension_duration(
+    value: datetime,
+    *,
+    unit: SuspensionUnit,
+    amount: int,
+    timezone_name: str = "Europe/Paris",
+) -> datetime:
+    if unit == "DAY":
+        return shift_calendar_days_utc(value, days=amount, timezone_name=timezone_name)
+    return add_duration(value, unit=unit, amount=amount)
+
+
+def restore_suspension_billing_schedule(
+    subscription: ClientPlanSubscription,
+    *,
+    timezone_name: str = "Europe/Paris",
+) -> tuple[datetime, SuspensionUnit, int] | None:
+    """Undo the billing shift of a current pause before replacing its dates."""
+    shift_details = suspension_shift_details(subscription, timezone_name=timezone_name)
+    if shift_details is None:
+        return None
+
+    start_at, unit, amount = shift_details
+    for field_name in ("next_payment_at", "ends_at", "current_period_end"):
+        value = getattr(subscription, field_name, None)
+        if value is not None and value >= start_at:
+            setattr(
+                subscription,
+                field_name,
+                shift_by_suspension_duration(
+                    value,
+                    unit=unit,
+                    amount=-amount,
+                    timezone_name=timezone_name,
+                ),
+            )
+    return shift_details
+
+
+def replace_suspension_dates(
+    subscription: ClientPlanSubscription,
+    *,
+    start_date: date,
+    end_date: date,
+    timezone_name: str = "Europe/Paris",
+) -> tuple[datetime, datetime]:
+    """Replace a current pause without applying its billing delay twice."""
+    restore_suspension_billing_schedule(subscription, timezone_name=timezone_name)
+    return apply_suspension_dates(
+        subscription,
+        start_date=start_date,
+        end_date=end_date,
+        timezone_name=timezone_name,
+    )
+
+
 def reconcile_subscription_status(subscription: ClientPlanSubscription, *, now: datetime, plan_kind: PlanKind) -> bool:
     changed = False
 

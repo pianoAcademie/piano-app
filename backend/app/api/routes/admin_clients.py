@@ -246,7 +246,10 @@ from app.services.subscriptions import (
     apply_suspension_dates,
     default_next_payment_at,
     reconcile_subscription_status,
+    replace_suspension_dates,
+    shift_by_suspension_duration,
     shift_calendar_days_utc,
+    suspension_shift_details,
 )
 from app.services.subscription_lifecycle_notifications import (
     send_cancellation_decision_email,
@@ -7620,48 +7623,76 @@ def suspend_admin_client_subscription(
             status_code=status.HTTP_409_CONFLICT,
             detail="Une pause ne peut pas etre programmee pendant une procedure de resiliation",
         )
-    if sub.suspension_ends_at is not None and sub.suspension_ends_at > now:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Une pause est deja programmee pour cet abonnement",
-        )
+    replaces_existing_pause = sub.suspension_ends_at is not None and sub.suspension_ends_at > now
+    existing_shift = suspension_shift_details(sub) if replaces_existing_pause else None
 
     if payload.suspension_end_date < payload.suspension_start_date:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="La date de fin de pause doit etre egale ou posterieure a la date de debut",
         )
-    if payload.suspension_start_date < datetime.now(ZoneInfo("Europe/Paris")).date():
+    if not replaces_existing_pause and payload.suspension_start_date < datetime.now(ZoneInfo("Europe/Paris")).date():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="La date de debut de pause ne peut pas etre dans le passe",
         )
+
+    pending_cycles = db.scalars(
+        select(SubscriptionBillingCycle).where(
+            SubscriptionBillingCycle.subscription_id == sub.id,
+            SubscriptionBillingCycle.status == "pending",
+        )
+    ).all()
+
+    if existing_shift is not None:
+        existing_start, existing_unit, existing_amount = existing_shift
+        for cycle in pending_cycles:
+            if cycle.billing_date < existing_start:
+                continue
+            cycle.billing_date = shift_by_suspension_duration(
+                cycle.billing_date,
+                unit=existing_unit,
+                amount=-existing_amount,
+                timezone_name="Europe/Paris",
+            )
+            cycle.period_end = shift_by_suspension_duration(
+                cycle.period_end,
+                unit=existing_unit,
+                amount=-existing_amount,
+                timezone_name="Europe/Paris",
+            )
+
     try:
-        suspension_start, suspension_end = apply_suspension_dates(
-            sub,
-            start_date=payload.suspension_start_date,
-            end_date=payload.suspension_end_date,
-            timezone_name="Europe/Paris",
+        suspension_start, suspension_end = (
+            replace_suspension_dates(
+                sub,
+                start_date=payload.suspension_start_date,
+                end_date=payload.suspension_end_date,
+                timezone_name="Europe/Paris",
+            )
+            if replaces_existing_pause
+            else apply_suspension_dates(
+                sub,
+                start_date=payload.suspension_start_date,
+                end_date=payload.suspension_end_date,
+                timezone_name="Europe/Paris",
+            )
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
     paused_days = (payload.suspension_end_date - payload.suspension_start_date).days + 1
-    pending_cycles = db.scalars(
-        select(SubscriptionBillingCycle).where(
-            SubscriptionBillingCycle.subscription_id == sub.id,
-            SubscriptionBillingCycle.status == "pending",
-            SubscriptionBillingCycle.billing_date >= suspension_start,
-        )
-    ).all()
     for cycle in pending_cycles:
+        if cycle.billing_date < suspension_start:
+            db.add(cycle)
+            continue
         cycle.billing_date = shift_calendar_days_utc(cycle.billing_date, days=paused_days)
         cycle.period_end = shift_calendar_days_utc(cycle.period_end, days=paused_days)
         db.add(cycle)
 
     if suspension_start <= now < suspension_end:
         sub.status = SubscriptionStatus.PAUSED
-    elif sub.status == SubscriptionStatus.PAUSED and now >= suspension_end:
+    elif sub.status == SubscriptionStatus.PAUSED:
         sub.status = SubscriptionStatus.ACTIVE
 
     db.add(sub)
@@ -7671,7 +7702,8 @@ def suspend_admin_client_subscription(
         author_user_id=actor.id,
         entry_type="AUTO",
         message=(
-            f"Suspension abonnement '{plan.name}' du {payload.suspension_start_date.isoformat()} "
+            f"{'Modification suspension' if replaces_existing_pause else 'Suspension'} abonnement "
+            f"'{plan.name}' du {payload.suspension_start_date.isoformat()} "
             f"au {payload.suspension_end_date.isoformat()} inclus ({paused_days} jours)."
         ),
     )

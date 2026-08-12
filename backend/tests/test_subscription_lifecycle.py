@@ -9,7 +9,7 @@ from app.services.subscription_lifecycle_notifications import (
     send_cancellation_decision_email,
     send_suspension_confirmation_email,
 )
-from app.services.subscriptions import apply_suspension_dates
+from app.services.subscriptions import apply_suspension_dates, replace_suspension_dates
 
 
 def _subscription() -> SimpleNamespace:
@@ -65,6 +65,43 @@ class SubscriptionLifecycleTests(unittest.TestCase):
         )
 
         self.assertEqual(subscription.next_payment_at, datetime(2026, 10, 27, 9, 0, tzinfo=timezone.utc))
+
+    def test_replacing_pause_dates_recalculates_from_original_billing_schedule(self) -> None:
+        subscription = _subscription()
+        apply_suspension_dates(
+            subscription,  # type: ignore[arg-type]
+            start_date=date(2026, 8, 6),
+            end_date=date(2026, 8, 8),
+        )
+
+        replace_suspension_dates(
+            subscription,  # type: ignore[arg-type]
+            start_date=date(2026, 8, 7),
+            end_date=date(2026, 8, 10),
+        )
+
+        self.assertEqual(subscription.suspension_duration_value, 4)
+        self.assertEqual(subscription.next_payment_at, datetime(2026, 8, 14, 8, 0, tzinfo=timezone.utc))
+        self.assertEqual(subscription.ends_at, datetime(2026, 9, 14, 8, 0, tzinfo=timezone.utc))
+        self.assertEqual(subscription.current_period_end, datetime(2026, 8, 14, 8, 0, tzinfo=timezone.utc))
+
+    def test_replacing_pause_after_next_payment_restores_unaffected_due_date(self) -> None:
+        subscription = _subscription()
+        apply_suspension_dates(
+            subscription,  # type: ignore[arg-type]
+            start_date=date(2026, 8, 6),
+            end_date=date(2026, 8, 8),
+        )
+
+        replace_suspension_dates(
+            subscription,  # type: ignore[arg-type]
+            start_date=date(2026, 8, 20),
+            end_date=date(2026, 8, 22),
+        )
+
+        self.assertEqual(subscription.next_payment_at, datetime(2026, 8, 10, 8, 0, tzinfo=timezone.utc))
+        self.assertEqual(subscription.current_period_end, datetime(2026, 8, 10, 8, 0, tzinfo=timezone.utc))
+        self.assertEqual(subscription.ends_at, datetime(2026, 9, 13, 8, 0, tzinfo=timezone.utc))
 
     @patch("app.services.subscription_lifecycle_notifications.resolve_sender_profile")
     @patch("app.services.subscription_lifecycle_notifications.send_email")

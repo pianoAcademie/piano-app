@@ -2480,6 +2480,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
       subscriptionModalAction === "forfait_pricing")
       ? subscriptions.find((sub) => sub.id === subscriptionModalId) ?? null
       : null;
+  const selectedSubscriptionHasEditablePause = Boolean(
+    selectedSubscriptionForModal?.suspension_ends_at &&
+      Date.parse(selectedSubscriptionForModal.suspension_ends_at) > Date.now(),
+  );
   const selectedCreditForModal = openManualCreditModal
     ? manualCredits.find((row) => row.credit_type_id === creditTypeModalId) ?? null
     : null;
@@ -3403,6 +3407,9 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 {visibleCurrentSubscriptions.map((sub) => {
                   const statusPill = localizedSubscriptionStatusPill(sub, language);
                   const pendingCancellation = isPendingSubscriptionCancellation(sub);
+                  const hasEditablePause = Boolean(
+                    sub.suspension_ends_at && Date.parse(sub.suspension_ends_at) > Date.now(),
+                  );
                   return (
                     <article key={sub.id} className="subscription-detail-card">
                     <header className="row spread subscription-head">
@@ -3439,7 +3446,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                                 <Link
                                   className="client-action-icon"
                                   href={ficheHref(client.id, { subscription_modal: "suspend", subscription_id: sub.id })}
-                                  title={t("admin.client_detail.suspend_subscription")}
+                                  title={t(
+                                    hasEditablePause
+                                      ? "admin.client_detail.edit_subscription_pause"
+                                      : "admin.client_detail.suspend_subscription",
+                                  )}
                                 >
                                   ⏸
                                 </Link>
@@ -4204,7 +4215,13 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
             <Link className="modal-close-x" href={tabHref(client.id, "fiche")} aria-label={t("common.close")}>
               ×
             </Link>
-            <h3 className="modal-title">{t("admin.client_detail.suspend_subscription_title")}</h3>
+            <h3 className="modal-title">
+              {t(
+                selectedSubscriptionHasEditablePause
+                  ? "admin.client_detail.edit_subscription_pause"
+                  : "admin.client_detail.suspend_subscription_title",
+              )}
+            </h3>
             <p className="muted">{selectedSubscriptionForModal.plan.name}</p>
             <form action={suspendAdminClientSubscriptionAction} className="grid top-gap-sm">
               <input type="hidden" name="client_id" value={client.id} />
@@ -4214,7 +4231,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <input
                   type="date"
                   name="suspension_starts_at"
-                  min={todayInputValue}
+                  min={selectedSubscriptionHasEditablePause ? undefined : todayInputValue}
                   defaultValue={selectedSubscriptionForModal.suspension_start_date || formatDateForInput(selectedSubscriptionForModal.suspension_starts_at, todayInputValue)}
                   required
                 />
@@ -4224,7 +4241,7 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                 <input
                   type="date"
                   name="suspension_ends_at"
-                  min={todayInputValue}
+                  min={selectedSubscriptionHasEditablePause ? undefined : todayInputValue}
                   defaultValue={selectedSubscriptionForModal.suspension_end_date || selectedSubscriptionForModal.suspension_start_date || formatDateForInput(selectedSubscriptionForModal.suspension_starts_at, todayInputValue)}
                   required
                 />
@@ -4234,7 +4251,11 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   {t("common.cancel")}
                 </Link>
                 <button type="submit" className="ghost">
-                  {t("admin.client_detail.suspend_subscription")}
+                  {t(
+                    selectedSubscriptionHasEditablePause
+                      ? "admin.client_detail.save_subscription_pause"
+                      : "admin.client_detail.suspend_subscription",
+                  )}
                 </button>
               </div>
             </form>
