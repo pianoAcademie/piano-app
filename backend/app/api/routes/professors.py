@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -78,6 +79,8 @@ BOOKING_STATUSES_COUNTED_AS_RESERVED = (
     BookingStatus.EXCUSED_ABSENCE,
 )
 
+_PROFESSOR_HIDDEN_BOOKING_NOTE_PATTERN = re.compile(r"^migration\s+sportigo\s*:", re.IGNORECASE)
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -92,6 +95,39 @@ def _deserialize_languages(raw: str | None) -> list[str]:
 def _display_name(user: User) -> str:
     full_name = f"{(user.first_name or '').strip()} {(user.last_name or '').strip()}".strip()
     return full_name or user.email
+
+
+def _split_professor_booking_note(value: str | None) -> tuple[str | None, str | None]:
+    """Separate professor-facing notes from migration audit markers."""
+    normalized = (value or "").strip()
+    if not normalized:
+        return None, None
+
+    visible_lines: list[str] = []
+    hidden_lines: list[str] = []
+    for line in normalized.splitlines():
+        stripped = line.strip()
+        if stripped and _PROFESSOR_HIDDEN_BOOKING_NOTE_PATTERN.match(stripped):
+            hidden_lines.append(stripped)
+        else:
+            visible_lines.append(line.rstrip())
+
+    visible = "\n".join(visible_lines).strip() or None
+    hidden = "\n".join(hidden_lines).strip() or None
+    return visible, hidden
+
+
+def _professor_visible_booking_note(value: str | None) -> str | None:
+    visible, _hidden = _split_professor_booking_note(value)
+    return visible
+
+
+def _merge_professor_booking_note(existing: str | None, professor_note: str | None) -> str | None:
+    """Replace the professor note without deleting hidden migration audit markers."""
+    _visible, hidden = _split_professor_booking_note(existing)
+    normalized_professor_note = _normalize_internal_note(professor_note)
+    parts = [part for part in (hidden, normalized_professor_note) if part]
+    return "\n\n".join(parts) or None
 
 
 def _resolve_professor_profile(db: Session, *, current_user: User) -> ProfessorModel:
@@ -243,7 +279,7 @@ def _session_students(
                 attendance_status=booking.status,
                 is_trial_course=bool(booking.is_trial_course),
                 is_first_course=is_first_course,
-                internal_note=booking.internal_note,
+                internal_note=_professor_visible_booking_note(booking.internal_note),
             )
         )
     return out
@@ -1064,24 +1100,27 @@ def list_my_internal_notes(
         )
         for session_obj, course_type, location in session_note_rows
     ]
-    notes.extend(
-        ProfessorInternalNoteListOut(
-            id=f"STUDENT:{booking.id}",
-            note_type="STUDENT",
-            body=booking.internal_note or "",
-            session_id=session_obj.id,
-            booking_id=booking.id,
-            student_id=student.id,
-            student_display_name=_display_name(student),
-            session_title=session_obj.title,
-            session_start_at_utc=session_obj.start_at_utc,
-            session_timezone=session_obj.timezone,
-            course_type_name=course_type.name,
-            location_id=location.id,
-            location_name=location.name,
+    for booking, session_obj, course_type, location, student in student_note_rows:
+        visible_note = _professor_visible_booking_note(booking.internal_note)
+        if not visible_note:
+            continue
+        notes.append(
+            ProfessorInternalNoteListOut(
+                id=f"STUDENT:{booking.id}",
+                note_type="STUDENT",
+                body=visible_note,
+                session_id=session_obj.id,
+                booking_id=booking.id,
+                student_id=student.id,
+                student_display_name=_display_name(student),
+                session_title=session_obj.title,
+                session_start_at_utc=session_obj.start_at_utc,
+                session_timezone=session_obj.timezone,
+                course_type_name=course_type.name,
+                location_id=location.id,
+                location_name=location.name,
+            )
         )
-        for booking, session_obj, course_type, location, student in student_note_rows
-    )
     notes.sort(key=lambda note: note.session_start_at_utc, reverse=True)
     return notes[:limit]
 
@@ -1145,13 +1184,13 @@ def update_my_booking_internal_note(
     )
     if booking is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
-    booking.internal_note = _normalize_internal_note(payload.internal_note)
+    booking.internal_note = _merge_professor_booking_note(booking.internal_note, payload.internal_note)
     db.commit()
     db.refresh(booking)
     return ProfessorInternalNoteOut(
         session_id=session_obj.id,
         booking_id=booking.id,
-        internal_note=booking.internal_note,
+        internal_note=_professor_visible_booking_note(booking.internal_note),
     )
 
 
