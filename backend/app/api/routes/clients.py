@@ -120,6 +120,7 @@ from app.services.client_purchase_notifications import (
 from app.services.notifications.application.orchestrator import enqueue_notifications
 from app.services.i18n import normalize_language
 from app.services.makeup_passes import makeup_summaries
+from app.services.subscription_credit_allocations import subscription_credit_allocations
 from app.services.invoice_documents import (
     InvoiceAppliedPaymentLine,
     InvoicePeriodLine,
@@ -2811,6 +2812,10 @@ def get_client_family_overview(
         db,
         plan_ids=plan_ids,
     )
+    credit_allocations_by_subscription = subscription_credit_allocations(
+        db,
+        subscriptions=[(sub, plan) for sub, plan, _ in rows_subscriptions],
+    )
 
     subscription_ids = {sub.id for sub, _, _ in rows_subscriptions}
     quote_by_subscription_id: dict[UUID, Quote] = {}
@@ -2943,6 +2948,7 @@ def get_client_family_overview(
                 current_period_end=sub.current_period_end,
                 credits_initial=sub.credits_initial,
                 credits_remaining=sub.credits_remaining,
+                credit_allocations=credit_allocations_by_subscription.get(sub.id, []),
                 auto_renew=sub.auto_renew,
                 bookings_blocked=bool(sub.bookings_blocked),
                 billing_method_code=sub.billing_method_code,
@@ -3423,6 +3429,9 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
             (sub.migration_source_code or "").strip().upper() == SPORTIGO_OPENING_BALANCE_SOURCE_CODE
         )
         if plan.kind == PlanKind.PACK and is_sportigo_opening_balance:
+            continue
+        if (sub.billing_method_code or "").strip().upper() == "GIFT_CARD":
+            # The beneficiary received the product but is not the purchaser or invoice recipient.
             continue
         if not _sportigo_opening_balance_has_new_app_payment(sub):
             continue

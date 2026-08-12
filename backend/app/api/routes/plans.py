@@ -51,6 +51,7 @@ from app.services.pricing import compute_tax_totals, plan_service_code, resolve_
 from app.services.client_status import promote_client_to_active_student
 from app.services.subscriptions import add_months_utc, reconcile_subscription_status
 from app.services.subscription_lifecycle_notifications import send_cancellation_request_admin_notifications
+from app.services.subscription_credit_allocations import subscription_credit_allocations
 from app.services.trial_courses import (
     has_available_trial_credit,
     has_available_trial_credit_for_course_type,
@@ -1355,6 +1356,7 @@ def purchase_plan(
     db.refresh(subscription)
 
     entitlement_ids_map, entitlement_names_map = _entitlements_by_plan(db, plan_ids=[plan.id])
+    credit_allocations_map = subscription_credit_allocations(db, subscriptions=[(subscription, plan)])
 
     return ClientSubscriptionOut(
         id=subscription.id,
@@ -1366,6 +1368,7 @@ def purchase_plan(
         current_period_end=subscription.current_period_end,
         credits_initial=subscription.credits_initial,
         credits_remaining=subscription.credits_remaining,
+        credit_allocations=credit_allocations_map.get(subscription.id, []),
         auto_renew=subscription.auto_renew,
         bookings_blocked=bool(subscription.bookings_blocked),
         billing_method_code=subscription.billing_method_code,
@@ -1418,6 +1421,7 @@ def list_my_subscriptions(
     ).all()
     plan_ids = list({plan.id for _, plan in rows})
     entitlement_ids_map, entitlement_names_map = _entitlements_by_plan(db, plan_ids=plan_ids)
+    credit_allocations_map = subscription_credit_allocations(db, subscriptions=rows)
     now = datetime.now(timezone.utc)
     changed = False
     payload: list[ClientSubscriptionOut] = []
@@ -1442,6 +1446,7 @@ def list_my_subscriptions(
                 current_period_end=sub.current_period_end,
                 credits_initial=sub.credits_initial,
                 credits_remaining=sub.credits_remaining,
+                credit_allocations=credit_allocations_map.get(sub.id, []),
                 auto_renew=sub.auto_renew,
                 bookings_blocked=bool(sub.bookings_blocked),
                 billing_method_code=sub.billing_method_code,

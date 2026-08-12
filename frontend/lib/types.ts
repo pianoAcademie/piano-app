@@ -173,6 +173,13 @@ export type SubscriptionOut = {
   current_period_end: string | null;
   credits_initial: number | null;
   credits_remaining: number | null;
+  credit_allocations: Array<{
+    credit_type_id: string;
+    credit_type_code: string;
+    credit_type_name: string;
+    credits_initial: number;
+    credits_remaining: number;
+  }>;
   auto_renew: boolean;
   bookings_blocked: boolean;
   billing_method_code: string | null;
@@ -869,6 +876,13 @@ export type ClientFamilyOverviewOut = {
     current_period_end: string | null;
     credits_initial: number | null;
     credits_remaining: number | null;
+    credit_allocations: Array<{
+      credit_type_id: string;
+      credit_type_code: string;
+      credit_type_name: string;
+      credits_initial: number;
+      credits_remaining: number;
+    }>;
     auto_renew: boolean;
     bookings_blocked: boolean;
     billing_method_code: string | null;

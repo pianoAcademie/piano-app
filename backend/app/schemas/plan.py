@@ -108,6 +108,14 @@ class PlanMiniOut(BaseModel):
     currency_code: str | None = None
 
 
+class ClientCreditAllocationOut(BaseModel):
+    credit_type_id: UUID
+    credit_type_code: str
+    credit_type_name: str
+    credits_initial: int
+    credits_remaining: int
+
+
 class ClientSubscriptionOut(BaseModel):
     id: UUID
     status: SubscriptionStatus
@@ -118,6 +126,7 @@ class ClientSubscriptionOut(BaseModel):
     current_period_end: datetime | None = None
     credits_initial: int | None
     credits_remaining: int | None
+    credit_allocations: list[ClientCreditAllocationOut] = Field(default_factory=list)
     auto_renew: bool
     bookings_blocked: bool = False
     billing_method_code: str | None = None

@@ -668,6 +668,27 @@ function paymentMethodLabel(value: string | null | undefined, language: UiLangua
   return normalized;
 }
 
+function creditAllocationLabel(
+  allocation: { credit_type_code: string; credit_type_name: string },
+  language: UiLanguage,
+): string {
+  const code = normalizeStatus(allocation.credit_type_code);
+  if (code === "CREDIT_STUDIO") {
+    return language === "en" ? "Studio bookings" : "Réservations studio";
+  }
+  if (code === "CREDIT_PIANO_ONSITE") {
+    return language === "en" ? "On-site group classes" : "Cours collectifs en présentiel";
+  }
+  return allocation.credit_type_name.replace(/^cr[eé]dit\s+/i, "");
+}
+
+function creditAllocationSummary(
+  allocation: { credit_type_code: string; credit_type_name: string; credits_initial: number; credits_remaining: number },
+  language: UiLanguage,
+): string {
+  return `${allocation.credits_remaining}/${allocation.credits_initial} ${creditAllocationLabel(allocation, language)}`;
+}
+
 function paymentMethodBrandLabel(value: string | null | undefined): string {
   const normalized = String(value ?? "").trim().toLowerCase();
   const labels: Record<string, string> = {
@@ -3365,12 +3386,23 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               <strong>{sub.plan.name}</strong>
                               <span className="badge">{sub.owner_display_name}</span>
                             </div>
-                            <p className="muted">
-                              {t("client.credit_line", {
-                                remaining: sub.credits_remaining ?? 0,
-                                initial: sub.credits_initial ?? sub.credits_remaining ?? 0,
-                              })}
-                            </p>
+                            {sub.credit_allocations.length > 0 ? (
+                              <div className="list">
+                                {sub.credit_allocations.map((allocation) => (
+                                  <div className="row spread" key={`home-pack-credit-${sub.id}-${allocation.credit_type_id}`}>
+                                    <span>{creditAllocationLabel(allocation, language)}</span>
+                                    <strong className="badge">{allocation.credits_remaining}/{allocation.credits_initial}</strong>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="muted">
+                                {t("client.credit_line", {
+                                  remaining: sub.credits_remaining ?? 0,
+                                  initial: sub.credits_initial ?? sub.credits_remaining ?? 0,
+                                })}
+                              </p>
+                            )}
                           </article>
                         ))}
                         {homeManualCredits.map((credit) => (
@@ -3405,7 +3437,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           );
                           const offerActivityCount = new Set(offerBookings.map((booking) => booking.session.title)).size;
                           const detailLine = isPack
-                            ? t("client.remaining_credits", { remaining: remainingCredits, initial: initialCredits || "?" })
+                            ? sub.credit_allocations.length > 0
+                              ? sub.credit_allocations.map((allocation) => creditAllocationSummary(allocation, language)).join(" · ")
+                              : t("client.remaining_credits", { remaining: remainingCredits, initial: initialCredits || "?" })
                             : offerActivityCount > 0
                               ? t("client.offer_program_summary", { activities: offerActivityCount, sessions: offerBookings.length })
                               : `${toMoney(sub.plan.kind === "FORFAIT" ? "0" : subscriptionPrice, subscriptionCurrency, language)} ${language === "en" ? "/ period" : "/ periode"} · ${paymentMethodLabel(sub.billing_method_code, language)}`;
@@ -6310,7 +6344,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <ListRow
                             key={`mob-credit-${sub.id}`}
                             title={sub.plan.name}
-                            subtitle={`${t("client.start_date_label", { date: formatDate(sub.started_at, language) })}${sub.ends_at ? ` | ${t("client.end_date_label", { date: formatDate(sub.ends_at, language) })}` : ""}`}
+                            subtitle={`${sub.credit_allocations.map((allocation) => creditAllocationSummary(allocation, language)).join(" · ") || t("client.start_date_label", { date: formatDate(sub.started_at, language) })}${sub.ends_at ? ` | ${t("client.end_date_label", { date: formatDate(sub.ends_at, language) })}` : ""}`}
                             right={`${sub.credits_remaining ?? 0}/${sub.credits_initial ?? sub.credits_remaining ?? 0}`}
                           />
                         ))}
@@ -6505,9 +6539,20 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <strong>{sub.plan.name}</strong>
                           <span className="badge">{sub.owner_display_name}</span>
                         </div>
-                        <p className="muted">
-                          {t("client.credit_line", { remaining: sub.credits_remaining ?? 0, initial: sub.credits_initial ?? sub.credits_remaining ?? 0 })}
-                        </p>
+                        {sub.credit_allocations.length > 0 ? (
+                          <div className="list">
+                            {sub.credit_allocations.map((allocation) => (
+                              <div className="row spread" key={`account-credit-${sub.id}-${allocation.credit_type_id}`}>
+                                <span>{creditAllocationLabel(allocation, language)}</span>
+                                <strong className="badge">{allocation.credits_remaining}/{allocation.credits_initial}</strong>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="muted">
+                            {t("client.credit_line", { remaining: sub.credits_remaining ?? 0, initial: sub.credits_initial ?? sub.credits_remaining ?? 0 })}
+                          </p>
+                        )}
                         <p className="muted">
                           {t("client.start_date_label", { date: formatDate(sub.started_at, language) })}
                           {sub.ends_at ? ` | ${t("client.end_date_label", { date: formatDate(sub.ends_at, language) })}` : ""}

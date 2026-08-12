@@ -12,6 +12,7 @@ from app.models.catalog import BookingStatus, SessionStatus
 from app.models.plan import PlanKind, SubscriptionStatus
 from app.models.user import ClientKind
 from app.models.user import ClientStatus, UserRole
+from app.schemas.plan import ClientCreditAllocationOut
 
 
 class UserOut(BaseModel):
@@ -149,6 +150,7 @@ class FamilySubscriptionOut(BaseModel):
     current_period_end: datetime | None = None
     credits_initial: int | None
     credits_remaining: int | None
+    credit_allocations: list[ClientCreditAllocationOut] = Field(default_factory=list)
     auto_renew: bool
     bookings_blocked: bool = False
     billing_method_code: str | None = None
