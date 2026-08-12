@@ -372,6 +372,9 @@ function billingMethodLabel(code: string | null, language: UiLanguage = "fr"): s
   if (normalized === "PAYPAL") {
     return "PayPal";
   }
+  if (normalized === "GIFT_CARD") {
+    return uiText(language, "admin.client_detail.billing.gift_card");
+  }
   if (normalized === "FACTURATION_AUTO") {
     return uiText(language, "admin.client_detail.billing.invoice");
   }
@@ -388,6 +391,7 @@ function paymentMethodOptionLabel(method: { code: string; label: string }, langu
     normalized === "CASH" ||
     normalized === "CHECK" ||
     normalized === "PAYPAL" ||
+    normalized === "GIFT_CARD" ||
     normalized === "FACTURATION_AUTO"
   ) {
     return billingMethodLabel(normalized, language);
@@ -1425,6 +1429,7 @@ const DEFAULT_PAYMENT_METHOD_OPTIONS: Array<{
   { code: "PAYPAL", label: "PayPal" },
   { code: "SEPA_DEBIT", label: "SEPA direct debit" },
   { code: "BANK_TRANSFER", label: "Bank transfer" },
+  { code: "GIFT_CARD", label: "Gift card (paid by a third party)" },
   { code: "FACTURATION_AUTO", label: "Invoice billing" },
 ].map((row) => ({ ...row, default_legal_entity_id: null, default_legal_entity_name: null }));
 
@@ -1757,6 +1762,7 @@ function localizedBillingMethodLabel(code: string | null, language: UiLanguage):
   if (normalized === "CASH") return uiText(language, "admin.client_detail.billing.cash");
   if (normalized === "CHECK") return uiText(language, "admin.client_detail.billing.check");
   if (normalized === "PAYPAL") return "PayPal";
+  if (normalized === "GIFT_CARD") return uiText(language, "admin.client_detail.billing.gift_card");
   if (normalized === "FACTURATION_AUTO") return uiText(language, "admin.client_detail.billing.invoice");
   return code || uiText(language, "admin.client_detail.not_defined");
 }
@@ -2381,6 +2387,10 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
           : enabledPaymentMethods.map((method) => method.code)
         : enabledPaymentMethods.map((method) => method.code);
     const uniqueCodes = Array.from(new Set((sourceCodes.length > 0 ? sourceCodes : fallbackCodes).map((code) => code.toUpperCase())));
+    const giftCardAllowed = normalizedPurchaseType === "PRODUCT" || selectedPlanForPurchase?.kind === "PACK";
+    if (giftCardAllowed && !uniqueCodes.includes("GIFT_CARD")) {
+      uniqueCodes.push("GIFT_CARD");
+    }
     return uniqueCodes.map((code) => ({
       code,
       label: localizedBillingMethodLabel(code, language),
@@ -3992,6 +4002,21 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   </p>
                 </>
               )}
+
+              {purchasePaymentMethod === "GIFT_CARD" ? (
+                <article className="card modal-card purchase-summary-card">
+                  <h4>{t("admin.client_detail.gift_card_details_title")}</h4>
+                  <p className="muted">{t("admin.client_detail.gift_card_details_help")}</p>
+                  <label>
+                    {t("admin.client_detail.gift_purchaser_name")}
+                    <input name="gift_purchaser_name" required maxLength={160} />
+                  </label>
+                  <label>
+                    {t("admin.client_detail.gift_reference")}
+                    <input name="gift_reference" maxLength={160} placeholder={t("admin.client_detail.gift_reference_placeholder")} />
+                  </label>
+                </article>
+              ) : null}
 
               <div className="row modal-actions-end">
                 <Link

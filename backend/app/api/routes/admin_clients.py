@@ -4804,6 +4804,7 @@ def _payment_method_label(method_code: str | None) -> str:
         "CHECK": "Cheque",
         "CASH": "Especes",
         "PAYPAL": "PayPal",
+        "GIFT_CARD": "Carte cadeau (offerte par un tiers)",
         "FACTURATION_AUTO": "Paiement sur facture",
     }
     return labels.get(normalized, normalized or "Non defini")
@@ -4818,6 +4819,7 @@ def _payment_method_label_client(method_code: str | None) -> str:
         "CHECK": "Cheque",
         "CASH": "Especes",
         "PAYPAL": "PayPal",
+        "GIFT_CARD": "Carte cadeau",
         "FACTURATION_AUTO": "Paiement sur facture",
     }
     return labels.get(normalized, normalized or "Non defini")
@@ -14118,6 +14120,11 @@ def admin_purchase_plan_for_client(
     ends_at = None
     requested_method = _normalize_optional(payload.payment_method_code)
     method_code = (requested_method or _default_subscription_billing_method(plan) or "").strip().upper() or None
+    if method_code == "GIFT_CARD" and plan.kind != PlanKind.PACK:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="La carte cadeau est reservee aux carnets de credits",
+        )
     if plan.kind == PlanKind.SUBSCRIPTION and method_code not in {"CARD_ONLINE", "SEPA_DEBIT"}:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -14137,6 +14144,31 @@ def admin_purchase_plan_for_client(
     initial_status = SubscriptionStatus.PENDING if should_start_pending else SubscriptionStatus.ACTIVE
     if plan.kind == PlanKind.FORFAIT and ends_at is not None and ends_at <= now:
         initial_status = SubscriptionStatus.EXPIRED
+    initial_amount_excl_vat: Decimal | None = None
+    initial_vat_amount: Decimal | None = None
+    initial_total_incl_vat: Decimal | None = None
+    initial_currency_code: str | None = None
+    if plan.kind != PlanKind.FORFAIT:
+        billing_profile = resolve_billing_profile(db, client)
+        initial_pricing = _estimate_subscription_pricing(
+            db,
+            plan=plan,
+            residence_country=billing_profile.residence_country or "FR",
+            preferred_currency=billing_profile.preferred_currency or "EUR",
+            on_date=subscription_started_at,
+        )
+        if initial_pricing is not None:
+            initial_amount_excl_vat, initial_vat_rate, initial_vat_amount, initial_total_incl_vat, initial_currency_code = initial_pricing
+            if payload.discounted_total_incl_vat is not None:
+                initial_total_incl_vat = _quantize_money(Decimal(payload.discounted_total_incl_vat))
+                divisor = Decimal("1") + (Decimal(initial_vat_rate) / Decimal("100"))
+                initial_amount_excl_vat = (
+                    initial_total_incl_vat
+                    if divisor <= Decimal("0")
+                    else _quantize_money(initial_total_incl_vat / divisor)
+                )
+                initial_vat_amount = _quantize_money(initial_total_incl_vat - initial_amount_excl_vat)
+
     subscription = ClientPlanSubscription(
         user_id=client.id,
         plan_id=plan.id,
@@ -14148,6 +14180,12 @@ def admin_purchase_plan_for_client(
         auto_renew=(plan.kind == PlanKind.SUBSCRIPTION and not should_start_pending),
         billing_method_code=method_code,
         next_payment_at=ends_at if plan.kind == PlanKind.SUBSCRIPTION else None,
+        last_payment_at=now if method_code == "GIFT_CARD" else None,
+        last_payment_status="PAID" if method_code == "GIFT_CARD" else None,
+        initial_amount_excl_vat=initial_amount_excl_vat,
+        initial_vat_amount=initial_vat_amount,
+        initial_total_incl_vat=initial_total_incl_vat,
+        initial_currency_code=initial_currency_code,
         forfait_loyalty_discount_per_hour_ttc=Decimal("0.00"),
         forfait_family_discount_per_hour_ttc=Decimal("0.00"),
         forfait_short_commitment_supplement_per_hour_ttc=Decimal("0.00"),

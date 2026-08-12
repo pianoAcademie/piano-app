@@ -1299,6 +1299,7 @@ class AdminClientSubscriptionPaymentEmailOut(BaseModel):
 class AdminClientPlanPurchaseRequest(BaseModel):
     payment_method_code: str | None = Field(default=None, max_length=40)
     start_date: date | None = None
+    discounted_total_incl_vat: Decimal | None = Field(default=None, ge=0)
 
 
 class AdminClientForfaitActivityPricingIn(BaseModel):

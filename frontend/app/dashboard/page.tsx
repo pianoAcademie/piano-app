@@ -652,6 +652,9 @@ function paymentMethodLabel(value: string | null | undefined, language: UiLangua
   if (normalized.includes("PAYPAL")) {
     return "PayPal";
   }
+  if (normalized.includes("GIFT_CARD")) {
+    return uiText(language, "admin.client_detail.billing.gift_card");
+  }
   if (normalized.includes("CASH")) {
     return uiText(language, "admin.client_detail.billing.cash");
   }

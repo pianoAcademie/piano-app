@@ -67,6 +67,7 @@ function paymentMethodLabel(method: AdminPaymentMethodOptionOut, language: UiLan
   if (normalized === "CASH") return uiText(language, "admin.client_detail.billing.cash");
   if (normalized === "CHECK") return uiText(language, "admin.client_detail.billing.check");
   if (normalized === "PAYPAL") return "PayPal";
+  if (normalized === "GIFT_CARD") return uiText(language, "admin.client_detail.billing.gift_card");
   if (normalized === "FACTURATION_AUTO") return uiText(language, "admin.client_detail.billing.invoice");
   return method.label;
 }

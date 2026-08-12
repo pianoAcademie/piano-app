@@ -171,6 +171,7 @@ PAYMENT_METHOD_CATALOG: list[tuple[str, str]] = [
     ("PAYPAL", "PayPal"),
     ("SEPA_DEBIT", "Prelevement SEPA"),
     ("BANK_TRANSFER", "Virement bancaire"),
+    ("GIFT_CARD", "Carte cadeau (offerte par un tiers)"),
     ("FACTURATION_AUTO", "Paiement sur facture"),
 ]
 PAYMENT_METHOD_CODES = {code for code, _ in PAYMENT_METHOD_CATALOG}

@@ -1014,6 +1014,7 @@ function parsePaymentMethodCode(raw: string): string | null {
     normalized === "PAYPAL" ||
     normalized === "CARD_TERMINAL" ||
     normalized === "SEPA_DEBIT" ||
+    normalized === "GIFT_CARD" ||
     normalized === "FACTURATION_AUTO"
   ) {
     return normalized;
@@ -4840,7 +4841,7 @@ export async function adminOpenClientPurchaseTermsAction(formData: FormData): Pr
   }
 
   if (purchaseType === "FORMULA") {
-    const formulaResult = await backendRequest<{ id: string; payment_methods: string[] }>(
+    const formulaResult = await backendRequest<{ id: string; kind: string; payment_methods: string[] }>(
       `/api/v1/admin/formulas/${offerId}`,
       {},
       token,
@@ -4851,7 +4852,10 @@ export async function adminOpenClientPurchaseTermsAction(formData: FormData): Pr
     const allowedMethods = new Set(
       (formulaResult.data.payment_methods ?? []).map((method) => String(method || "").trim().toUpperCase()).filter(Boolean),
     );
-    if (allowedMethods.size > 0 && !allowedMethods.has(paymentMethodCode)) {
+    if (paymentMethodCode === "GIFT_CARD" && String(formulaResult.data.kind || "").toUpperCase() !== "PACK") {
+      redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "error", t("admin.client_action.gift_card_pack_only")));
+    }
+    if (paymentMethodCode !== "GIFT_CARD" && allowedMethods.size > 0 && !allowedMethods.has(paymentMethodCode)) {
       redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "error", t("admin.client_action.payment_method_not_allowed_for_formula")));
     }
   } else {
@@ -4909,6 +4913,8 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
   const discountedTotalRaw = String(formData.get("discounted_total_incl_vat") ?? "").trim();
   const discountedTotal = discountedTotalRaw ? parseNonNegativeDecimal(discountedTotalRaw.replace(",", ".")) : null;
   const signatureChannelRaw = String(formData.get("signature_channel") ?? "NONE").trim().toUpperCase();
+  const giftPurchaserName = String(formData.get("gift_purchaser_name") ?? "").trim();
+  const giftReference = String(formData.get("gift_reference") ?? "").trim();
   const isCardOnlinePayment = paymentMethodCode === "CARD_ONLINE";
   const canSendPaymentLink = purchaseType === "FORMULA" && isCardOnlinePayment;
   const signatureChannel =
@@ -4918,6 +4924,9 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
   }
   if (!paymentMethodCode) {
     redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "error", t("admin.client_action.payment_method_invalid")));
+  }
+  if (paymentMethodCode === "GIFT_CARD" && !giftPurchaserName) {
+    redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "error", t("admin.client_action.gift_purchaser_required")));
   }
   if (canSendPaymentLink && signatureChannel === "NONE") {
     redirect(appendQueryMessage(`/admin/clients/${clientId}?tab=${returnTab}`, "error", t("admin.client_action.payment_link_channel_required")));
@@ -4938,6 +4947,7 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
         body: JSON.stringify({
           payment_method_code: paymentMethodCode,
           start_date: startDateRaw || null,
+          discounted_total_incl_vat: discountedTotal !== null ? discountedTotal.toFixed(2) : null,
         }),
       },
       token,
@@ -5037,11 +5047,42 @@ export async function adminFinalizeClientPurchaseAction(formData: FormData): Pro
     if (!manualResult.ok) {
       redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(manualResult.message)}`);
     }
+    if (paymentMethodCode === "GIFT_CARD") {
+      const giftPaymentResult = await backendRequest<{ id: string }>(
+        `/api/v1/admin/clients/${clientId}/manual-transactions`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            transaction_type: "PAYMENT",
+            label: `Carte cadeau - ${product.title}`,
+            description: `Produit offert par ${giftPurchaserName}`,
+            category: "GIFT_CARD_REDEMPTION",
+            amount_incl_vat: amountInclVat.toFixed(2),
+            vat_rate: "0.000",
+            currency: "EUR",
+            payment_method_code: "GIFT_CARD",
+            reference: giftReference || `CATALOG:${product.id}`,
+            legal_entity_id: legalEntityId,
+          }),
+        },
+        token,
+      );
+      if (!giftPaymentResult.ok) {
+        redirect(`/admin/clients/${clientId}?tab=${returnTab}&error=${encodeURIComponent(giftPaymentResult.message)}`);
+      }
+    }
   }
 
   const notes: string[] = [];
   notes.push(`Nouvel achat (${purchaseType === "PRODUCT" ? "produit catalogue" : "formule de cours"}): ${planName}.`);
   notes.push(`Reglement: ${paymentMethodCode}.`);
+  if (paymentMethodCode === "GIFT_CARD") {
+    notes.push(`Produit offert par: ${giftPurchaserName}.`);
+    if (giftReference) {
+      notes.push(`Reference carte cadeau: ${giftReference}.`);
+    }
+    notes.push("Reglement acquitte par un tiers; aucune demande de paiement envoyee au beneficiaire.");
+  }
   if (discountedTotal !== null) {
     notes.push(`Prix remise saisi: ${discountedTotal.toFixed(2)} EUR TTC.`);
   }
