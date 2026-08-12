@@ -248,6 +248,17 @@ export type ClientBookingOut = {
   };
 };
 
+export type ClientManualCreditOut = {
+  id: string;
+  owner_client_id: string;
+  owner_display_name: string;
+  credit_type_id: string;
+  credit_type_code: string;
+  credit_type_name: string;
+  credits_count: number;
+  updated_at: string;
+};
+
 export type MakeupCreditOut = {
   id: string;
   status: string;

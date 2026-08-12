@@ -36,13 +36,14 @@ from app.models.catalog import (
     BookingStatus,
     CourseSession,
     CourseType,
+    CreditType,
     DeliveryMode,
     Location,
     Professor,
     SessionAudienceScope,
     SessionStatus,
 )
-from app.models.client_record import ClientInvoiceLine, ClientLegacyInvoice, ClientManualCreditBalance, ClientManualTransaction, ClientNoteEntry
+from app.models.client_record import ClientInvoiceLine, ClientLegacyInvoice, ClientManualCreditBalance, ClientManualTransaction, ClientNoteEntry, PaymentReceipt
 from app.models.external_content import (
     CourseTypeContentMapping,
     ExternalContentCourse,
@@ -89,6 +90,7 @@ from app.schemas.user import (
     ClientPaymentConfirmOut,
     ClientMessageOut,
     ClientMessageScope,
+    ClientManualCreditOut,
     ClientOfferOptionOut,
     ClientPaymentCheckoutOut,
     ClientSessionFormulaOptionOut,
@@ -3357,6 +3359,20 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
         .where(Booking.user_id.in_(managed_client_ids))
     ).all()
 
+    booking_ids = [booking.id for booking, *_ in rows_bookings]
+    completed_receipts_by_booking: dict[UUID, list[PaymentReceipt]] = defaultdict(list)
+    if booking_ids:
+        completed_receipts = db.scalars(
+            select(PaymentReceipt)
+            .where(
+                PaymentReceipt.booking_id.in_(booking_ids),
+                PaymentReceipt.status == "COMPLETED",
+            )
+            .order_by(PaymentReceipt.paid_at.asc().nullslast(), PaymentReceipt.created_at.asc())
+        ).all()
+        for receipt in completed_receipts:
+            completed_receipts_by_booking[receipt.booking_id].append(receipt)
+
     manual_rows = db.scalars(
         select(ClientManualTransaction)
         .where(
@@ -3386,6 +3402,7 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
             if forfait_subscription is not None and (plan is None or plan.kind == PlanKind.FORFAIT)
         },
     )
+    retained_cancelled_receipt_transaction_ids: set[UUID] = set()
 
     for sub, plan, owner in rows_subs:
         if plan.kind == PlanKind.FORFAIT:
@@ -3471,6 +3488,20 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
 
     for booking, session_obj, course_type, location, owner, forfait_subscription, plan in rows_bookings:
         status_value = booking.status.value if hasattr(booking.status, "value") else str(booking.status)
+        retained_receipts = completed_receipts_by_booking.get(booking.id, [])
+        retained_paid_total = sum((Decimal(row.amount_paid or 0) for row in retained_receipts), Decimal("0.00"))
+        booking_total = Decimal(booking.total_incl_vat_snapshot or 0).quantize(Decimal("0.01"))
+        has_fully_paid_cancelled_booking = (
+            booking.status == BookingStatus.CANCELLED
+            and retained_paid_total >= booking_total
+            and booking_total > Decimal("0.00")
+        )
+        if has_fully_paid_cancelled_booking:
+            retained_cancelled_receipt_transaction_ids.update(
+                receipt.manual_transaction_id
+                for receipt in retained_receipts
+                if receipt.manual_transaction_id is not None
+            )
         is_billable = True
         amount_excl_vat = booking.price_excl_vat_snapshot
         vat_rate = booking.vat_rate_snapshot
@@ -3479,12 +3510,14 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
         currency = booking.currency_snapshot
 
         if plan is None or (plan is not None and plan.kind == PlanKind.FORFAIT):
-            is_billable = (
+            is_billable = has_fully_paid_cancelled_booking or (
                 session_obj.status != SessionStatus.CANCELLED
                 and booking.status not in {BookingStatus.WAITLISTED, BookingStatus.CANCELLED, BookingStatus.EXCUSED_ABSENCE}
             )
             if not is_billable:
                 status_value = "NOT_BILLABLE"
+            elif has_fully_paid_cancelled_booking:
+                status_value = "COMPLETED"
             else:
                 billing_profile = resolve_billing_profile(db, owner)
                 computed = _booking_amounts_from_activity(
@@ -3508,7 +3541,7 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                 owner_client_id=owner.id,
                 owner_display_name=_display_name(owner),
                 source="BOOKING",
-                occurred_at=session_obj.start_at_utc,
+                occurred_at=(retained_receipts[-1].paid_at or retained_receipts[-1].created_at) if has_fully_paid_cancelled_booking else session_obj.start_at_utc,
                 label=f"{course_type.name} - {location.name}",
                 status=status_value,
                 amount_excl_vat=Decimal("0.00") if not is_billable else amount_excl_vat,
@@ -3516,7 +3549,7 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
                 vat_amount=Decimal("0.00") if not is_billable else vat_amount,
                 total_incl_vat=Decimal("0.00") if not is_billable else total_incl_vat,
                 currency=currency,
-                reference=str(session_obj.id),
+                reference=(retained_receipts[-1].provider_transaction_ref if has_fully_paid_cancelled_booking else str(session_obj.id)),
                 seller_legal_entity_id=seller_legal_entity_id,
                 billing_entity=_billing_entity_from_seller_id(
                     legal_entities_by_id=legal_entities_by_id,
@@ -3528,6 +3561,8 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
         )
 
     for transaction in manual_rows:
+        if transaction.id in retained_cancelled_receipt_transaction_ids:
+            continue
         owner_id = transaction.student_user_id if transaction.student_user_id in managed_client_ids else transaction.user_id
         owner = manual_owners.get(owner_id)
         items.append(
@@ -3556,6 +3591,37 @@ def _build_client_payments(db: Session, current_user: User) -> list[ClientPaymen
 
     items.sort(key=lambda item: item.occurred_at, reverse=True)
     return items
+
+
+@router.get("/clients/me/manual-credits", response_model=list[ClientManualCreditOut])
+def list_client_manual_credits(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.CLIENT)),
+) -> list[ClientManualCreditOut]:
+    managed_client_ids = _managed_client_ids_for_sessions(db, current_user)
+    rows = db.execute(
+        select(ClientManualCreditBalance, CreditType, User)
+        .join(CreditType, CreditType.id == ClientManualCreditBalance.credit_type_id)
+        .join(User, User.id == ClientManualCreditBalance.user_id)
+        .where(
+            ClientManualCreditBalance.user_id.in_(managed_client_ids),
+            ClientManualCreditBalance.credits_count > 0,
+        )
+        .order_by(User.last_name.asc().nullslast(), User.first_name.asc().nullslast(), CreditType.name.asc())
+    ).all()
+    return [
+        ClientManualCreditOut(
+            id=balance.id,
+            owner_client_id=owner.id,
+            owner_display_name=_display_name(owner),
+            credit_type_id=credit_type.id,
+            credit_type_code=credit_type.code,
+            credit_type_name=credit_type.name,
+            credits_count=int(balance.credits_count),
+            updated_at=balance.updated_at,
+        )
+        for balance, credit_type, owner in rows
+    ]
 
 
 @router.post("/clients/me/payments/{payment_id}/checkout", response_model=ClientPaymentCheckoutOut)
@@ -4793,6 +4859,7 @@ def list_client_invoices(
     ).all()
     range_note_ids = [note.id for note in range_notes]
     payment_keys_by_note_id: dict[UUID, list[str]] = defaultdict(list)
+    invoiced_payment_keys: set[str] = set()
     if range_note_ids:
         line_rows = db.execute(
             select(ClientInvoiceLine.note_id, ClientInvoiceLine.source, ClientInvoiceLine.source_payment_id).where(
@@ -4833,6 +4900,7 @@ def list_client_invoices(
                     continue
                 existing.add(key)
                 payment_keys.append(key)
+        invoiced_payment_keys.update(payment_keys)
         invoices.append(
             ClientInvoiceOut(
                 id=f"invoice-range:{note.id}",
@@ -4864,11 +4932,15 @@ def list_client_invoices(
             if booking_id is not None and booking_id in forfait_bookings:
                 continue
 
+        raw_id = payment.id.split(":", maxsplit=1)[-1]
+        payment_key = f"{(payment.source or '').strip().upper()}:{raw_id}"
+        if payment_key in invoiced_payment_keys:
+            continue
+
         invoice_status = _invoice_status_from_payment_status(payment.status)
         if invoice_status != "PAID":
             continue
 
-        raw_id = payment.id.split(":", maxsplit=1)[-1]
         compact = raw_id.replace("-", "").upper()
         short = compact[:8] if compact else "XXXX0000"
         number = f"FAC-{payment.occurred_at.strftime('%Y%m%d')}-{short}"

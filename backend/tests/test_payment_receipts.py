@@ -176,6 +176,52 @@ class PaymentReceiptsFlowTests(unittest.TestCase):
                     author_user_id=None,
                 )
 
+    def test_fully_retained_cancelled_payment_can_generate_final_invoice_explicitly(self) -> None:
+        cancelled_booking = SimpleNamespace(
+            id=self.booking_id,
+            status=BookingStatus.CANCELLED,
+            total_incl_vat_snapshot=Decimal("30.00"),
+            price_excl_vat_snapshot=Decimal("25.00"),
+            vat_rate_snapshot=Decimal("0.20"),
+            vat_amount_snapshot=Decimal("5.00"),
+        )
+        cancelled_session = SimpleNamespace(
+            **vars(self.session_obj),
+        )
+        cancelled_session.status = SessionStatus.CANCELLED
+        completed_receipts = [SimpleNamespace(final_invoice_note_id=None, final_invoice_generated_at=None, updated_at=None)]
+        fake_db = _FakeSession(rows=completed_receipts)
+
+        with patch("app.services.payment_receipts._invoice_note_for_booking", return_value=None), patch(
+            "app.services.payment_receipts.build_booking_receipt_snapshot",
+            return_value=self.snapshot,
+        ), patch(
+            "app.services.payment_receipts.reserve_next_invoice_number",
+            return_value="PA26-0188",
+        ), patch(
+            "app.services.payment_receipts.completed_payment_receipt_totals",
+            return_value=(Decimal("30.00"), "EUR", [uuid4()]),
+        ):
+            note, metadata, created = generate_final_invoice_for_booking(
+                fake_db,
+                booking=cancelled_booking,
+                session_obj=cancelled_session,
+                course_type=SimpleNamespace(),
+                location=SimpleNamespace(),
+                owner=SimpleNamespace(),
+                author_user_id=None,
+                issued_at=self.issued_at,
+                allow_retained_cancelled_payment=True,
+            )
+
+        self.assertTrue(created)
+        self.assertEqual(metadata["invoice_number"], "PA26-0188")
+        self.assertEqual(metadata["invoice_status"], "PAID")
+        self.assertEqual(metadata["generation_mode"], "RETAINED_CANCELLED_PAYMENT")
+        self.assertTrue(metadata["include_cancelled"])
+        self.assertIsNone(metadata["service_realized_date"])
+        self.assertEqual(completed_receipts[0].final_invoice_note_id, note.id)
+
     def test_excused_absence_never_generates_final_invoice(self) -> None:
         excused_booking = SimpleNamespace(id=self.booking_id, status=BookingStatus.EXCUSED_ABSENCE)
         with patch("app.services.payment_receipts._invoice_note_for_booking", return_value=None):

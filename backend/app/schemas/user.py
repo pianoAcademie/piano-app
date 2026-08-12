@@ -306,6 +306,17 @@ class ClientPaymentOut(BaseModel):
     payment_url: str | None = None
 
 
+class ClientManualCreditOut(BaseModel):
+    id: UUID
+    owner_client_id: UUID
+    owner_display_name: str
+    credit_type_id: UUID
+    credit_type_code: str
+    credit_type_name: str
+    credits_count: int
+    updated_at: datetime
+
+
 class ClientInvoiceOut(BaseModel):
     id: str
     owner_client_id: UUID

@@ -998,21 +998,29 @@ def generate_final_invoice_for_booking(
     owner: User,
     author_user_id: UUID | None,
     issued_at: datetime | None = None,
+    allow_retained_cancelled_payment: bool = False,
 ) -> tuple[ClientNoteEntry, dict[str, object], bool]:
     existing = _invoice_note_for_booking(db, booking_id=booking.id)
     if existing is not None:
         note, metadata = existing
         return note, metadata, False
-    if booking.status == BookingStatus.CANCELLED:
+    is_retained_cancelled_payment = (
+        booking.status == BookingStatus.CANCELLED and allow_retained_cancelled_payment
+    )
+    if booking.status == BookingStatus.CANCELLED and not is_retained_cancelled_payment:
         raise ValueError("Cancelled bookings cannot generate a final invoice")
     if booking.status == BookingStatus.EXCUSED_ABSENCE:
         raise ValueError("Excused absences cannot generate a final invoice")
-    if booking.status not in FINAL_INVOICE_ELIGIBLE_BOOKING_STATUSES:
+    if booking.status not in FINAL_INVOICE_ELIGIBLE_BOOKING_STATUSES and not is_retained_cancelled_payment:
         raise ValueError("Booking status is not eligible for final invoicing")
-    if session_obj.status != SessionStatus.COMPLETED:
+    if session_obj.status != SessionStatus.COMPLETED and not is_retained_cancelled_payment:
         raise ValueError("Final invoice can only be generated once the service is completed")
     if _booking_total_incl_vat(booking) <= Decimal("0.00"):
         raise ValueError("Zero-total bookings do not require a final invoice")
+
+    total_paid, _, reconciled_manual_payment_ids = completed_payment_receipt_totals(db, booking_id=booking.id)
+    if is_retained_cancelled_payment and total_paid < _booking_total_incl_vat(booking):
+        raise ValueError("Cancelled booking payment must be fully retained before final invoicing")
 
     snapshot = build_booking_receipt_snapshot(
         db,
@@ -1031,7 +1039,6 @@ def generate_final_invoice_for_booking(
             legal_entity_id=snapshot.legal_entity_id,
             issued_at=effective_issued_at,
         )
-    total_paid, _, reconciled_manual_payment_ids = completed_payment_receipt_totals(db, booking_id=booking.id)
     issuer_snapshot = build_company_identity_snapshot(
         db,
         legal_entity_id=snapshot.legal_entity_id,
@@ -1046,6 +1053,10 @@ def generate_final_invoice_for_booking(
         total_paid=total_paid,
         issuer_snapshot=issuer_snapshot,
     )
+    if is_retained_cancelled_payment:
+        metadata["generation_mode"] = "RETAINED_CANCELLED_PAYMENT"
+        metadata["include_cancelled"] = True
+        metadata["service_realized_date"] = None
     note = ClientNoteEntry(
         user_id=snapshot.customer_id,
         author_user_id=author_user_id,

@@ -36,6 +36,7 @@ import type {
   ClientFamilyOverviewOut,
   ClientPaymentConfirmOut,
   ClientInvoiceOut,
+  ClientManualCreditOut,
   ClientMessageOut,
   ClientNewsOut,
   ClientPaymentCheckoutOut,
@@ -1471,6 +1472,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     newsResult,
     paymentsResult,
     invoicesResult,
+    manualCreditsResult,
     makeupSummaryResult,
   ] = await Promise.all([
     backendRequest<CourseTypeOut[]>("/api/v1/course-types", {}, token),
@@ -1498,6 +1500,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     backendRequest<ClientNewsOut[]>("/api/v1/clients/me/news", {}, token),
     backendRequest<ClientPaymentOut[]>("/api/v1/clients/me/payments", {}, token),
     backendRequest<ClientInvoiceOut[]>("/api/v1/clients/me/invoices", {}, token),
+    backendRequest<ClientManualCreditOut[]>("/api/v1/clients/me/manual-credits", {}, token),
     backendRequest<MakeupStudentSummaryOut[]>("/api/v1/clients/me/makeup-summary", {}, token),
   ]);
 
@@ -1590,6 +1593,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     : (() => {
         errors.push(`makeup-summary: ${makeupSummaryResult.message}`);
         return [] as MakeupStudentSummaryOut[];
+      })();
+  const manualCredits = manualCreditsResult.ok
+    ? manualCreditsResult.data
+    : (() => {
+        errors.push(`manual-credits: ${manualCreditsResult.message}`);
+        return [] as ClientManualCreditOut[];
       })();
   const makeupSummaryByMemberId = new Map(makeupSummaries.map((summary) => [summary.user_id, summary]));
 
@@ -6251,7 +6260,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 <details className="client-account-accordion card">
                   <summary>{t("common.credits")}</summary>
                   <div className="client-account-accordion-content">
-                    {positivePackSubscriptions.length === 0 ? (
+                    {positivePackSubscriptions.length === 0 && manualCredits.length === 0 ? (
                       <p className="muted">{t("client.no_positive_credit")}</p>
                     ) : (
                       <div className="list client-mobile-list">
@@ -6261,6 +6270,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             title={sub.plan.name}
                             subtitle={`${t("client.start_date_label", { date: formatDate(sub.started_at, language) })}${sub.ends_at ? ` | ${t("client.end_date_label", { date: formatDate(sub.ends_at, language) })}` : ""}`}
                             right={`${sub.credits_remaining ?? 0}/${sub.credits_initial ?? sub.credits_remaining ?? 0}`}
+                          />
+                        ))}
+                        {manualCredits.map((credit) => (
+                          <ListRow
+                            key={`mob-manual-credit-${credit.id}`}
+                            title={credit.credit_type_name}
+                            subtitle={credit.owner_display_name}
+                            right={String(credit.credits_count)}
                           />
                         ))}
                       </div>
@@ -6436,7 +6453,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               <Card className="client-account-desktop">
                 <h2>{t("client.available_credits")}</h2>
                 <p className="muted">{t("client.positive_credits_only")}</p>
-                {positivePackSubscriptions.length === 0 ? (
+                {positivePackSubscriptions.length === 0 && manualCredits.length === 0 ? (
                   <p className="muted">{t("client.no_positive_credit")}</p>
                 ) : (
                   <div className="list">
@@ -6453,6 +6470,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           {t("client.start_date_label", { date: formatDate(sub.started_at, language) })}
                           {sub.ends_at ? ` | ${t("client.end_date_label", { date: formatDate(sub.ends_at, language) })}` : ""}
                         </p>
+                      </article>
+                    ))}
+                    {manualCredits.map((credit) => (
+                      <article key={`account-manual-credit-${credit.id}`} className="item">
+                        <div className="row spread">
+                          <strong>{credit.credit_type_name}</strong>
+                          <span className="badge">{credit.owner_display_name}</span>
+                        </div>
+                        <p className="muted">{t("client.manual_credit_count", { count: credit.credits_count })}</p>
                       </article>
                     ))}
                   </div>
