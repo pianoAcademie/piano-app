@@ -51,6 +51,7 @@ const DEFAULT_SIMULATION_SCHOOL_YEAR = "2026-2027";
 const DEFAULT_SIMULATION_ACTIVITY_FILTER = "__collective_piano__";
 const ALL_SIMULATION_ACTIVITY_FILTER = "__all__";
 const ACTIVITY_FILTER_PREFIX = "activity:";
+const TEACHER_NEEDS_EXCLUDED_LOCATION_NAME = "Bar-le-Duc";
 
 type SlotPeopleSection = {
   label: string;
@@ -185,8 +186,8 @@ function TeacherNeedsDashboard({
         <span>
           {text(
             language,
-            "Chaque type de cours est traite comme une competence distincte et un professeur reste sur le meme site pendant une demi-journee.",
-            "Each course type is treated as a separate skill and a teacher remains at the same location for a half-day.",
+            "Chaque type de cours est traite comme une competence distincte, un professeur reste sur le meme site pendant une demi-journee et Bar-le-Duc est exclu.",
+            "Each course type is treated as a separate skill, a teacher remains at the same location for a half-day, and Bar-le-Duc is excluded.",
           )}
         </span>
       </section>
@@ -681,6 +682,9 @@ export default async function AdminSimulationPlanningPage({
   if (requestedLocationId) simulationQuery.set("location_id", requestedLocationId);
   if (requestedActivityId) simulationQuery.set("activity_id", requestedActivityId);
   if (requestedActivityGroup) simulationQuery.set("activity_group", requestedActivityGroup);
+  if (requestedView === "teacher_needs") {
+    simulationQuery.append("exclude_location_name", TEACHER_NEEDS_EXCLUDED_LOCATION_NAME);
+  }
   const simulationPath = simulationQuery.size
     ? `/api/v1/admin/plannings/simulation?${simulationQuery.toString()}`
     : "/api/v1/admin/plannings/simulation";
@@ -691,11 +695,17 @@ export default async function AdminSimulationPlanningPage({
     backendRequest<AdminPlanningSimulationOut>(simulationPath, {}, token),
   ]);
 
-  const locations = locationsResult.ok
+  const permittedLocations = locationsResult.ok
     ? scopedLocationId
       ? locationsResult.data.filter((location) => location.id === scopedLocationId)
       : locationsResult.data
     : [];
+  const locations =
+    requestedView === "teacher_needs"
+      ? permittedLocations.filter(
+          (location) => location.name.trim().toLocaleLowerCase("fr") !== TEACHER_NEEDS_EXCLUDED_LOCATION_NAME.toLocaleLowerCase("fr"),
+        )
+      : permittedLocations;
   const courseTypes = courseTypesResult.ok
     ? courseTypesResult.data.filter((courseType) => courseType.code.toUpperCase() !== VACATION_COURSE_TYPE_CODE)
     : [];

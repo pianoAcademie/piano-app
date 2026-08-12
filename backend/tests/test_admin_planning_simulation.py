@@ -13,6 +13,7 @@ from app.api.routes.admin import (
     _parse_school_year_bounds,
     _planning_simulation_clean_location_label,
     _planning_simulation_live_slot_key,
+    _planning_simulation_location_name_key,
     _planning_simulation_quote_person_key,
     _planning_simulation_quote_location_name,
     _planning_simulation_resolve_live_slot_for_quote,
@@ -76,6 +77,10 @@ class AdminPlanningSimulationTests(unittest.TestCase):
             _planning_simulation_search_text("Cours collectif Éveil musical - Répétition"),
             "cours collectif eveil musical - repetition",
         )
+
+    def test_planning_simulation_location_name_key_matches_bar_le_duc_variants(self) -> None:
+        self.assertEqual(_planning_simulation_location_name_key("Bar-le-Duc"), "bar le duc")
+        self.assertEqual(_planning_simulation_location_name_key("  BAR LE DUC  "), "bar le duc")
 
     def test_planning_simulation_groups_recurrent_orphan_sessions_by_signature(self) -> None:
         signature = "richelieu|solfege|2|18:05|18:35"
@@ -223,7 +228,7 @@ class AdminPlanningSimulationTests(unittest.TestCase):
         self.assertEqual(needs.activities[0].slot_count, 3)
         self.assertEqual(needs.activities[0].peak_concurrent_teachers, 2)
         self.assertEqual(needs.days[0].time_buckets[0].start_time, "16:00")
-        self.assertEqual(needs.days[0].time_buckets[0].total_teachers, 1)
+        self.assertEqual(needs.days[0].time_buckets[0].total_teachers, 2)
 
     def test_teacher_needs_do_not_overlap_adjacent_courses(self) -> None:
         activity_id = uuid4()
@@ -287,7 +292,7 @@ class AdminPlanningSimulationTests(unittest.TestCase):
         self.assertEqual(len(needs.days[0].timeline_rows), 2)
         self.assertEqual(
             [bucket.total_teachers for bucket in needs.days[0].time_buckets],
-            [1, 1, 1, 1],
+            [1, 1],
         )
 
 

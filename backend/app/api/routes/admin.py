@@ -2852,7 +2852,7 @@ def _planning_simulation_teaching_minutes(slots: list[AdminPlanningSimulationSlo
     return total
 
 
-_PLANNING_SIMULATION_BUCKET_MINUTES = 30
+_PLANNING_SIMULATION_BUCKET_MINUTES = 60
 _PLANNING_SIMULATION_AFTERNOON_START = 13 * 60
 
 
@@ -3091,15 +3091,25 @@ def _planning_simulation_teacher_needs(
     )
 
 
+def _planning_simulation_location_name_key(value: object | None) -> str:
+    return " ".join(_planning_simulation_search_text(str(value or "")).replace("-", " ").split())
+
+
 @router.get("/plannings/simulation", response_model=AdminPlanningSimulationOut)
 def get_planning_simulation(
     school_year_label: str | None = Query(default=None),
     location_id: UUID | None = Query(default=None),
     activity_id: UUID | None = Query(default=None),
     activity_group: str | None = Query(default=None),
+    exclude_location_name: list[str] | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin_or_permissions("can_view_planning_simulation")),
 ) -> AdminPlanningSimulationOut:
+    excluded_location_name_keys = {
+        key
+        for value in (exclude_location_name or [])
+        if (key := _planning_simulation_location_name_key(value))
+    }
     permission_map = get_admin_permission_map(db, current_user)
     scoped_location_id = permission_map.get("planning_simulation_location_id")
     if scoped_location_id is not None:
@@ -3236,6 +3246,8 @@ def get_planning_simulation(
 
     session_rows = db.execute(session_stmt).all()
     for session_obj, course_type, location in session_rows:
+        if _planning_simulation_location_name_key(location.name) in excluded_location_name_keys:
+            continue
         zone = _safe_zoneinfo(session_obj.timezone or location.timezone)
         local_start = session_obj.start_at_utc.astimezone(zone)
         local_end = session_obj.end_at_utc.astimezone(zone)
@@ -3396,6 +3408,8 @@ def get_planning_simulation(
                 resolved_location_name=resolved_location_name,
                 course_type=block_course_type,
             )
+            if _planning_simulation_location_name_key(block_location_name) in excluded_location_name_keys:
+                continue
 
             block_start_date = _safe_parse_iso_date(block.get("start_date"))
             block_end_date = _safe_parse_iso_date(block.get("end_date"))
