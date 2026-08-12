@@ -670,6 +670,18 @@ def _first_currency_total(metadata: dict[str, object]) -> tuple[Decimal, str]:
     return Decimal("0.00"), "EUR"
 
 
+def _first_currency_invoice_total(metadata: dict[str, object]) -> tuple[Decimal, str]:
+    totals = metadata.get("totals_by_currency")
+    if isinstance(totals, dict) and totals:
+        first_currency = next(iter(sorted(totals.keys())))
+        currency_code = str(first_currency).strip().upper() or "EUR"
+        try:
+            return Decimal(str(totals.get(first_currency))).quantize(Decimal("0.01")), currency_code
+        except Exception:
+            pass
+    return _first_currency_total(metadata)
+
+
 def _invoice_range_status_for_client(raw_status: object) -> str:
     normalized = str(raw_status or "ISSUED").strip().upper()
     if normalized == "PAID":
@@ -4886,7 +4898,7 @@ def list_client_invoices(
             issued_date = date.fromisoformat(issued_date_text)
         except ValueError:
             continue
-        total_amount, currency_code = _first_currency_total(metadata)
+        total_amount, currency_code = _first_currency_invoice_total(metadata)
         invoice_status = _invoice_range_status_for_client(metadata.get("invoice_status"))
         if invoice_status == "CANCELLED":
             continue
