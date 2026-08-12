@@ -2888,25 +2888,38 @@ def _planning_simulation_peak_teachers_between(
     range_start: int,
     range_end: int,
 ) -> int:
-    peak = 0
-    for dated_slots in _planning_simulation_slots_by_date(slots).values():
-        events: list[tuple[int, int]] = []
-        for slot in dated_slots:
-            start = _planning_simulation_minutes(slot.start_time)
-            end = _planning_simulation_minutes(slot.end_time)
-            if start is None or end is None or end <= start:
-                continue
-            clipped_start = max(start, range_start)
-            clipped_end = min(end, range_end)
-            if clipped_end <= clipped_start:
-                continue
-            events.append((clipped_start, 1))
-            events.append((clipped_end, -1))
+    return max(
+        (
+            _planning_simulation_peak_teachers_for_same_date(dated_slots, range_start, range_end)
+            for dated_slots in _planning_simulation_slots_by_date(slots).values()
+        ),
+        default=0,
+    )
 
-        current = 0
-        for _, delta in sorted(events, key=lambda item: (item[0], item[1])):
-            current += delta
-            peak = max(peak, current)
+
+def _planning_simulation_peak_teachers_for_same_date(
+    slots: list[AdminPlanningSimulationSlotOut],
+    range_start: int,
+    range_end: int,
+) -> int:
+    events: list[tuple[int, int]] = []
+    for slot in slots:
+        start = _planning_simulation_minutes(slot.start_time)
+        end = _planning_simulation_minutes(slot.end_time)
+        if start is None or end is None or end <= start:
+            continue
+        clipped_start = max(start, range_start)
+        clipped_end = min(end, range_end)
+        if clipped_end <= clipped_start:
+            continue
+        events.append((clipped_start, 1))
+        events.append((clipped_end, -1))
+
+    current = 0
+    peak = 0
+    for _, delta in sorted(events, key=lambda item: (item[0], item[1])):
+        current += delta
+        peak = max(peak, current)
     return peak
 
 
@@ -2919,25 +2932,38 @@ def _planning_simulation_activity_key(slot: AdminPlanningSimulationSlotOut) -> s
 
 
 def _planning_simulation_activity_mobilized_teachers(slots: list[AdminPlanningSimulationSlotOut]) -> int:
-    daily_needs: list[int] = []
-    for day_slots in _planning_simulation_slots_by_date(slots).values():
-        slots_by_location: dict[str, list[AdminPlanningSimulationSlotOut]] = {}
-        for slot in day_slots:
-            slots_by_location.setdefault(_planning_simulation_location_key(slot), []).append(slot)
-        morning_need = sum(
-            _planning_simulation_peak_teachers_between(location_slots, 0, _PLANNING_SIMULATION_AFTERNOON_START)
-            for location_slots in slots_by_location.values()
+    return max(
+        (
+            _planning_simulation_activity_mobilized_for_same_date(day_slots)
+            for day_slots in _planning_simulation_slots_by_date(slots).values()
+        ),
+        default=0,
+    )
+
+
+def _planning_simulation_activity_mobilized_for_same_date(
+    slots: list[AdminPlanningSimulationSlotOut],
+) -> int:
+    slots_by_location: dict[str, list[AdminPlanningSimulationSlotOut]] = {}
+    for slot in slots:
+        slots_by_location.setdefault(_planning_simulation_location_key(slot), []).append(slot)
+    morning_need = sum(
+        _planning_simulation_peak_teachers_for_same_date(
+            location_slots,
+            0,
+            _PLANNING_SIMULATION_AFTERNOON_START,
         )
-        afternoon_need = sum(
-            _planning_simulation_peak_teachers_between(
-                location_slots,
-                _PLANNING_SIMULATION_AFTERNOON_START,
-                24 * 60,
-            )
-            for location_slots in slots_by_location.values()
+        for location_slots in slots_by_location.values()
+    )
+    afternoon_need = sum(
+        _planning_simulation_peak_teachers_for_same_date(
+            location_slots,
+            _PLANNING_SIMULATION_AFTERNOON_START,
+            24 * 60,
         )
-        daily_needs.append(max(morning_need, afternoon_need))
-    return max(daily_needs, default=0)
+        for location_slots in slots_by_location.values()
+    )
+    return max(morning_need, afternoon_need)
 
 
 def _planning_simulation_day_mobilized_teachers(slots: list[AdminPlanningSimulationSlotOut]) -> int:
@@ -2948,7 +2974,7 @@ def _planning_simulation_day_mobilized_teachers(slots: list[AdminPlanningSimulat
             slots_by_activity.setdefault(_planning_simulation_activity_key(slot), []).append(slot)
         daily_needs.append(
             sum(
-                _planning_simulation_activity_mobilized_teachers(activity_slots)
+                _planning_simulation_activity_mobilized_for_same_date(activity_slots)
                 for activity_slots in slots_by_activity.values()
             )
         )
