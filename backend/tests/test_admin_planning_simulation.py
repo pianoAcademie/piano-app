@@ -99,6 +99,18 @@ class AdminPlanningSimulationTests(unittest.TestCase):
                 SimpleNamespace(mode=DeliveryMode.ONLINE, code="PIANO_ONLINE", name="Piano en ligne")
             )
         )
+        self.assertTrue(
+            _planning_simulation_is_online_solfege(
+                SimpleNamespace(mode=DeliveryMode.ANY, code="SOLFEGE_3", name="Solfège niveau 3"),
+                location_name="Online",
+            )
+        )
+        self.assertFalse(
+            _planning_simulation_is_online_solfege(
+                SimpleNamespace(mode=DeliveryMode.ANY, code="SOLFEGE", name="Solfège en présentiel"),
+                location_name="Rue Scheffer",
+            )
+        )
 
     def test_planning_simulation_groups_recurrent_orphan_sessions_by_signature(self) -> None:
         signature = "richelieu|solfege|2|18:05|18:35"
