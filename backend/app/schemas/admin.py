@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.models.catalog import DeliveryMode, SessionAudienceScope, SessionStatus
+from app.models.catalog import DeliveryMode, LessonFormat, SessionAudienceScope, SessionStatus
 from app.models.ops import ReminderStatus
 from app.models.payout import PayoutStatus, SalaryPaymentMethod
 from app.models.plan import PlanCreditGrantsRelation, PlanKind, PlanPriceTaxMode, PlanRestrictionPeriod, SubscriptionStatus
@@ -653,6 +653,7 @@ class AdminActivityOut(BaseModel):
     duration_minutes: int
     color_hex: str
     mode: DeliveryMode
+    lesson_format: LessonFormat
     requires_professor: bool
     allows_student_bookings: bool
     supports_student_time_overrides: bool
@@ -686,6 +687,7 @@ class AdminActivityUpsertRequest(BaseModel):
     duration_minutes: int = Field(default=60, ge=5, le=1440)
     color_hex: str = Field(default="#94C973", min_length=7, max_length=7)
     mode: DeliveryMode = DeliveryMode.ANY
+    lesson_format: LessonFormat = LessonFormat.GROUP
     requires_professor: bool = True
     allows_student_bookings: bool = True
     supports_student_time_overrides: bool = False
@@ -717,6 +719,7 @@ class AdminActivityUpdateRequest(BaseModel):
     duration_minutes: int | None = Field(default=None, ge=5, le=1440)
     color_hex: str | None = Field(default=None, min_length=7, max_length=7)
     mode: DeliveryMode | None = None
+    lesson_format: LessonFormat | None = None
     requires_professor: bool | None = None
     allows_student_bookings: bool | None = None
     supports_student_time_overrides: bool | None = None
@@ -2662,6 +2665,7 @@ class AdminPlanningActivityOut(BaseModel):
     duration_minutes: int
     color_hex: str
     mode: DeliveryMode
+    lesson_format: LessonFormat
     default_capacity: int
     active: bool
     selected: bool

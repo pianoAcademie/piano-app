@@ -8567,6 +8567,9 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
   const colorHex = String(formData.get("color_hex") ?? "#94C973").trim();
   const modeRaw = String(formData.get("mode") ?? "ANY").trim().toUpperCase();
   const mode = modeRaw === "ONLINE" || modeRaw === "ONSITE" ? modeRaw : "ANY";
+  const lessonFormat = String(formData.get("lesson_format") ?? "GROUP").trim().toUpperCase() === "INDIVIDUAL"
+    ? "INDIVIDUAL"
+    : "GROUP";
   const requiresProfessor = checkboxField(formData, "requires_professor");
   const allowsStudentBookings = !checkboxField(formData, "without_students");
   const supportsStudentTimeOverrides = checkboxField(formData, "supports_student_time_overrides");
@@ -8652,6 +8655,7 @@ export async function createAdminActivityAction(formData: FormData): Promise<voi
     duration_minutes: durationMinutes,
     color_hex: colorHex,
     mode,
+    lesson_format: lessonFormat,
     requires_professor: allowsStudentBookings ? requiresProfessor : false,
     allows_student_bookings: allowsStudentBookings,
     supports_student_time_overrides: allowsStudentBookings ? supportsStudentTimeOverrides : false,
@@ -8762,6 +8766,9 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
   const colorHex = String(formData.get("color_hex") ?? "#94C973").trim();
   const modeRaw = String(formData.get("mode") ?? "ANY").trim().toUpperCase();
   const mode = modeRaw === "ONLINE" || modeRaw === "ONSITE" ? modeRaw : "ANY";
+  const lessonFormat = String(formData.get("lesson_format") ?? "GROUP").trim().toUpperCase() === "INDIVIDUAL"
+    ? "INDIVIDUAL"
+    : "GROUP";
   const requiresProfessor = checkboxField(formData, "requires_professor");
   const allowsStudentBookings = !checkboxField(formData, "without_students");
   const supportsStudentTimeOverrides = checkboxField(formData, "supports_student_time_overrides");
@@ -8848,6 +8855,7 @@ export async function updateAdminActivityAction(formData: FormData): Promise<voi
     duration_minutes: durationMinutes,
     color_hex: colorHex,
     mode,
+    lesson_format: lessonFormat,
     requires_professor: allowsStudentBookings ? requiresProfessor : false,
     allows_student_bookings: allowsStudentBookings,
     supports_student_time_overrides: allowsStudentBookings ? supportsStudentTimeOverrides : false,

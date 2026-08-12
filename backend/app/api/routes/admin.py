@@ -36,6 +36,7 @@ from app.models.catalog import (
     CourseSession,
     CourseType,
     DeliveryMode,
+    LessonFormat,
     Location,
     PlanningConfig,
     PlanningCourseType,
@@ -306,17 +307,12 @@ def _session_location_label(location: Location | None) -> str:
 
 
 def _session_type_label(session_obj: CourseSession, *, course_type: CourseType | None, location: Location | None) -> str:
-    if resolve_session_visibility_scopes(session_obj) == [SessionAudienceScope.PRIVATE]:
-        return "Prive"
-    location_code = (location.code if location is not None else "").upper()
-    location_name = (location.name if location is not None else "").lower()
-    if location is not None and (location.is_online or location_code == "ONLINE"):
-        return "Online"
-    if "DOMICILE" in location_code or "domicile" in location_name:
-        return "Domicile"
-    if course_type is not None and course_type.mode == DeliveryMode.ONLINE:
-        return "Online"
-    return "Collectif"
+    if course_type is not None:
+        lesson_format = getattr(course_type, "lesson_format", None)
+        if lesson_format is not None:
+            return "Individuel" if lesson_format == LessonFormat.INDIVIDUAL else "Collectif"
+        return "Individuel" if course_type.default_capacity == 1 else "Collectif"
+    return "Individuel" if session_obj.capacity_max == 1 else "Collectif"
 
 
 def _is_online_session_context(*, course_type: CourseType | None, location: Location | None) -> bool:
@@ -2707,6 +2703,7 @@ def get_planning_activities(
             duration_minutes=activity.duration_minutes,
             color_hex=activity.color_hex,
             mode=activity.mode,
+            lesson_format=activity.lesson_format,
             default_capacity=activity.default_capacity,
             active=activity.active,
             selected=activity.id in selected_set,

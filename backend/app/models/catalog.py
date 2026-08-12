@@ -36,6 +36,11 @@ class DeliveryMode(str, enum.Enum):
     ANY = "ANY"
 
 
+class LessonFormat(str, enum.Enum):
+    INDIVIDUAL = "INDIVIDUAL"
+    GROUP = "GROUP"
+
+
 class SessionStatus(str, enum.Enum):
     SCHEDULED = "SCHEDULED"
     CANCELLED = "CANCELLED"
@@ -266,6 +271,18 @@ class CourseType(Base):
             create_type=False,
         ),
         nullable=False,
+    )
+    lesson_format: Mapped[LessonFormat] = mapped_column(
+        Enum(
+            LessonFormat,
+            name="lesson_format",
+            native_enum=False,
+            values_callable=_enum_values,
+            validate_strings=True,
+            create_constraint=False,
+        ),
+        nullable=False,
+        server_default=text("'GROUP'"),
     )
     requires_professor: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     allows_student_bookings: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))

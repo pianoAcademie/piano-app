@@ -58,6 +58,7 @@ export type CourseTypeOut = {
   duration_minutes: number;
   color_hex: string;
   mode: string;
+  lesson_format: "INDIVIDUAL" | "GROUP" | string;
   requires_professor: boolean;
   allows_student_bookings: boolean;
   supports_student_time_overrides: boolean;
@@ -2354,6 +2355,7 @@ export type AdminActivityOut = {
   duration_minutes: number;
   color_hex: string;
   mode: "ONLINE" | "ONSITE" | "ANY" | string;
+  lesson_format: "INDIVIDUAL" | "GROUP" | string;
   requires_professor: boolean;
   allows_student_bookings: boolean;
   supports_student_time_overrides: boolean;
@@ -2493,6 +2495,7 @@ export type AdminPlanningActivityOut = {
   duration_minutes: number;
   color_hex: string;
   mode: "ONLINE" | "ONSITE" | "ANY" | string;
+  lesson_format: "INDIVIDUAL" | "GROUP" | string;
   default_capacity: number;
   active: boolean;
   selected: boolean;

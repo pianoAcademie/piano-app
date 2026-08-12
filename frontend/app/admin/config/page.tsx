@@ -3704,7 +3704,10 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                           <strong>{activity.name}</strong>
                           <small className="muted">
                             {activity.credit_type_name ?? t("admin.activities.unmapped_credit_type")} ·{" "}
-                            {activityModeLabel(activity.mode, language)} · {activity.duration_minutes} min
+                            {activity.lesson_format === "INDIVIDUAL"
+                              ? t("admin.activity_modal.lesson_format_individual")
+                              : t("admin.activity_modal.lesson_format_group")} · {activityModeLabel(activity.mode, language)} ·{" "}
+                            {activity.duration_minutes} min
                           </small>
                           <small className="muted">
                             {t("admin.planning.teacher_badge", {
@@ -3934,6 +3937,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                         <option value="ANY">{t("admin.professor_detail.mode_all")}</option>
                                         <option value="ONSITE">{t("admin.professor_detail.mode_onsite")}</option>
                                         <option value="ONLINE">{t("admin.professor_detail.mode_online")}</option>
+                                      </select>
+                                    </label>
+                                    <label>
+                                      {t("admin.activity_modal.lesson_format")}
+                                      <select name="lesson_format" defaultValue="GROUP">
+                                        <option value="INDIVIDUAL">{t("admin.activity_modal.lesson_format_individual")}</option>
+                                        <option value="GROUP">{t("admin.activity_modal.lesson_format_group")}</option>
                                       </select>
                                     </label>
                                     <label>
@@ -4278,6 +4288,13 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
                                         <option value="ANY">{t("admin.professor_detail.mode_all")}</option>
                                         <option value="ONSITE">{t("admin.professor_detail.mode_onsite")}</option>
                                         <option value="ONLINE">{t("admin.professor_detail.mode_online")}</option>
+                                      </select>
+                                    </label>
+                                    <label>
+                                      {t("admin.activity_modal.lesson_format")}
+                                      <select name="lesson_format" defaultValue={selectedActivity.lesson_format}>
+                                        <option value="INDIVIDUAL">{t("admin.activity_modal.lesson_format_individual")}</option>
+                                        <option value="GROUP">{t("admin.activity_modal.lesson_format_group")}</option>
                                       </select>
                                     </label>
                                     <label>

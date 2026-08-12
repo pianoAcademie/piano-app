@@ -82,8 +82,13 @@ function statusBadgeClass(status: string): string {
   return "month-badge-status-warning";
 }
 
-function normalizedTypeKey(value: string): "PRIVATE" | "ONLINE" | "HOME" | "GROUP" {
+type SessionTypeKey = "PRIVATE" | "ONLINE" | "HOME" | "INDIVIDUAL" | "GROUP";
+
+function normalizedTypeKey(value: string): SessionTypeKey {
   const normalized = (value || "").trim().toLowerCase();
+  if (normalized.includes("individ")) {
+    return "INDIVIDUAL";
+  }
   if (normalized.includes("priv")) {
     return "PRIVATE";
   }
@@ -96,7 +101,10 @@ function normalizedTypeKey(value: string): "PRIVATE" | "ONLINE" | "HOME" | "GROU
   return "GROUP";
 }
 
-function typeLabelFromKey(typeKey: "PRIVATE" | "ONLINE" | "HOME" | "GROUP", language: UiLanguage): string {
+function typeLabelFromKey(typeKey: SessionTypeKey, language: UiLanguage): string {
+  if (typeKey === "INDIVIDUAL") {
+    return pickText(language, "Individuel", "Individual");
+  }
   if (typeKey === "PRIVATE") {
     return pickText(language, "Prive", "Private");
   }
@@ -123,6 +131,9 @@ function isAdministrativeClosure(title: string): boolean {
 
 function defaultTitleFromType(typeLabel: string, language: UiLanguage): string {
   const typeKey = normalizedTypeKey(typeLabel);
+  if (typeKey === "INDIVIDUAL") {
+    return pickText(language, "Cours individuel", "Individual lesson");
+  }
   if (typeKey === "PRIVATE") {
     return pickText(language, "Cours prive", "Private lesson");
   }

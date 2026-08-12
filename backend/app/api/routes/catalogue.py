@@ -187,6 +187,7 @@ def list_course_types(
             duration_minutes=row.duration_minutes,
             color_hex=row.color_hex,
             mode=row.mode,
+            lesson_format=row.lesson_format,
             requires_professor=bool(row.requires_professor),
             allows_student_bookings=bool(row.allows_student_bookings),
             supports_student_time_overrides=bool(row.supports_student_time_overrides),

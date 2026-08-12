@@ -644,18 +644,17 @@ function attendanceBadgeToneClass(status: string): string {
   return "status-waitlist";
 }
 
-function sessionTypeLabel(session: AdminSessionOut, locationLabel: string, language: UiLanguage = "fr"): string {
-  const lowerLocation = locationLabel.toLowerCase();
-  if (lowerLocation.includes("online") || lowerLocation.includes("ligne")) {
-    return "Online";
+function sessionTypeLabel(session: AdminSessionOut, language: UiLanguage = "fr"): string {
+  const normalizedType = session.type_label.trim().toUpperCase();
+  if (normalizedType === "INDIVIDUEL" || normalizedType === "INDIVIDUAL") {
+    return pickText(language, "Individuel", "Individual");
   }
-  if (lowerLocation.includes("domicile")) {
-    return pickText(language, "Domicile", "Home visit");
+  if (normalizedType === "COLLECTIF" || normalizedType === "GROUP") {
+    return pickText(language, "Collectif", "Group");
   }
-  if (session.is_private) {
-    return pickText(language, "Prive", "Private");
-  }
-  return pickText(language, "Collectif", "Group");
+  return session.capacity_max === 1
+    ? pickText(language, "Individuel", "Individual")
+    : pickText(language, "Collectif", "Group");
 }
 
 function normalizeSessionAudienceScope(raw: unknown, fallback: SessionAudienceScope): SessionAudienceScope {
@@ -1417,7 +1416,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const selectedEffectiveProfessorDetail =
     selectedSession && selectedSession.effective_teacher_id ? professorById.get(selectedSession.effective_teacher_id) : null;
   const selectedSessionIsOnline = selectedSession
-    ? (locationById.get(selectedSession.location_id)?.is_online ?? false) || selectedSession.type_label.toLowerCase().includes("online")
+    ? (locationById.get(selectedSession.location_id)?.is_online ?? false)
+      || courseTypeById.get(selectedSession.course_type_id)?.mode === "ONLINE"
     : false;
   const selectedSessionRequiresProfessor = selectedSession ? selectedSession.requires_professor !== false : true;
   const selectedSessionAllowsStudentBookings = selectedSession ? selectedSession.allows_student_bookings !== false : true;
@@ -1463,7 +1463,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
     selectedSession && ((selectedSession.zoom_link ?? "").trim() || (selectedSessionIsOnline ? selectedEffectiveProfessorZoomLink : ""))
       ? ((selectedSession?.zoom_link ?? "").trim() || (selectedSessionIsOnline ? selectedEffectiveProfessorZoomLink : ""))
       : null;
-  const selectedSessionTypeName = selectedSession ? sessionTypeLabel(selectedSession, selectedLocationName, language) : "";
+  const selectedSessionTypeName = selectedSession ? sessionTypeLabel(selectedSession, language) : "";
   const selectedSessionHeaderTitle = selectedSession ? `${selectedCourseTypeName} - ${selectedLocationName}` : "";
   const selectedSessionSubtitle = selectedSession
     ? `${formatDate(selectedSession.start_at_utc, selectedSession.timezone, language)} · ${sessionTimeRangeLabel(selectedSession, language)} · ${selectedSession.timezone} · ${pickText(language, "Prof:", "Teacher:")} ${selectedEffectiveProfessorLabel || pickText(language, "Non requis", "Not required")}`

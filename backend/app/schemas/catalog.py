@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.models.catalog import DeliveryMode, SessionAudienceScope, SessionStatus
+from app.models.catalog import DeliveryMode, LessonFormat, SessionAudienceScope, SessionStatus
 
 
 class CourseTypeOut(BaseModel):
@@ -21,6 +21,7 @@ class CourseTypeOut(BaseModel):
     duration_minutes: int
     color_hex: str
     mode: DeliveryMode
+    lesson_format: LessonFormat
     requires_professor: bool
     allows_student_bookings: bool
     supports_student_time_overrides: bool

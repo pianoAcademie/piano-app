@@ -11,7 +11,7 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_admin_or_permissions, require_roles
-from app.models.catalog import CourseSession, CourseType, CreditType, DeliveryMode, SessionStatus
+from app.models.catalog import CourseSession, CourseType, CreditType, DeliveryMode, LessonFormat, SessionStatus
 from app.models.external_content import (
     CourseTypeContentMapping,
     ExternalContentCourse,
@@ -426,6 +426,7 @@ def _serialize_activity(
         duration_minutes=activity.duration_minutes,
         color_hex=activity.color_hex,
         mode=activity.mode,
+        lesson_format=activity.lesson_format,
         requires_professor=bool(activity.requires_professor),
         allows_student_bookings=bool(activity.allows_student_bookings),
         supports_student_time_overrides=bool(activity.supports_student_time_overrides),
@@ -2001,6 +2002,7 @@ def create_admin_activity(
         duration_minutes=int(payload.duration_minutes),
         color_hex=_normalize_color_hex(payload.color_hex),
         mode=DeliveryMode(payload.mode),
+        lesson_format=LessonFormat(payload.lesson_format),
         requires_professor=bool(payload.requires_professor) if payload.allows_student_bookings else False,
         allows_student_bookings=bool(payload.allows_student_bookings),
         supports_student_time_overrides=(
@@ -2123,6 +2125,9 @@ def update_admin_activity(
 
     if "mode" in changes:
         activity.mode = DeliveryMode(changes["mode"])
+
+    if "lesson_format" in changes:
+        activity.lesson_format = LessonFormat(changes["lesson_format"])
 
     if "requires_professor" in changes:
         activity.requires_professor = bool(changes["requires_professor"]) if activity.allows_student_bookings else False
