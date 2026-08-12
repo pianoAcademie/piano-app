@@ -13350,6 +13350,22 @@ button.danger:focus-visible {
   gap: 8px;
 }
 
+.client-pending-credit-list {
+  display: grid;
+  gap: 8px;
+}
+
+.client-pending-credit-item {
+  display: grid;
+  gap: 8px;
+  border-color: var(--client-gold-border) !important;
+  background: var(--client-gold-soft) !important;
+}
+
+.client-pending-credit-item .client-pay-cta {
+  width: fit-content;
+}
+
 .client-home-urgent-card {
   border: 1px solid #d4af37 !important;
   background: linear-gradient(180deg, #fffdf6 0%, #fffaf0 100%);

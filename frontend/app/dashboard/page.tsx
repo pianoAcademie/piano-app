@@ -1678,6 +1678,34 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       normalizedStatus === "WAITING_PAYMENT" ||
       normalizedStatus === "FAILED";
     if (canRedirectToCheckout) {
+      // A PSP callback can arrive late or be missed. Reconcile the existing
+      // reference before creating another checkout to avoid a duplicate charge.
+      const confirmation = await backendRequest<ClientPaymentConfirmOut>(
+        `/api/v1/clients/me/payments/${normalizedPaymentId}/confirm`,
+        { method: "POST" },
+        token,
+      );
+      if (confirmation.ok && confirmation.data.paid) {
+        redirect(
+          withUpdatedQuery(rawParams, {
+            tab: "home",
+            source: "PLAN_PURCHASE",
+            payment_id: `plan:${normalizedPaymentId}`,
+            payment_return: "success",
+          }),
+        );
+      }
+      if (confirmation.ok && confirmation.data.cancelled) {
+        redirect(
+          withUpdatedQuery(rawParams, {
+            tab: "finance",
+            finance_view: "transactions",
+            source: "PLAN_PURCHASE",
+            payment_id: `plan:${normalizedPaymentId}`,
+            payment_return: "cancel",
+          }),
+        );
+      }
       const checkout = await backendRequest<ClientPaymentCheckoutOut>(
         `/api/v1/clients/me/payments/${normalizedPaymentId}/checkout`,
         { method: "POST" },
@@ -2931,7 +2959,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       && sub.plan.kind === "PACK"
       && (sub.credits_remaining ?? 0) > 0,
   );
+  const pendingPackSubscriptions = subscriptions.filter(
+    (sub) =>
+      isPendingSubscriptionCoveredInPreview(sub, now)
+      && sub.plan.kind === "PACK"
+      && (sub.credits_remaining ?? 0) > 0,
+  );
   const homePositivePackSubscriptions = positivePackSubscriptions.filter(
+    (sub) => selectedMemberFilter === "ALL" || sub.owner_client_id === selectedMemberFilter,
+  );
+  const homePendingPackSubscriptions = pendingPackSubscriptions.filter(
     (sub) => selectedMemberFilter === "ALL" || sub.owner_client_id === selectedMemberFilter,
   );
   const homeManualCredits = manualCredits.filter(
@@ -3385,7 +3422,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 <aside className="client-home-side">
                   <SectionCard title={t("client.available_credits")} action={<a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "account" })}>{t("common.view_all")}</a>}>
                     {homePositivePackSubscriptions.length === 0 && homeManualCredits.length === 0 ? (
-                      <p className="muted">{t("client.no_positive_credit")}</p>
+                      homePendingPackSubscriptions.length === 0 ? (
+                        <p className="muted">{t("client.no_positive_credit")}</p>
+                      ) : null
                     ) : (
                       <div className="client-forfait-preview-list">
                         {homePositivePackSubscriptions.map((sub) => (
@@ -3424,6 +3463,36 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         ))}
                       </div>
                     )}
+                    {homePendingPackSubscriptions.length > 0 ? (
+                      <div className="client-pending-credit-list">
+                        {homePendingPackSubscriptions.map((sub) => (
+                          <article key={`home-pending-pack-credit-${sub.id}`} className="item client-pending-credit-item">
+                            <div className="row spread">
+                              <strong>{sub.plan.name}</strong>
+                              <span className="badge">{t("client.credit_activation_pending_badge")}</span>
+                            </div>
+                            <p className="muted">
+                              {t("client.pending_credit_line", {
+                                remaining: sub.credits_remaining ?? 0,
+                                initial: sub.credits_initial ?? sub.credits_remaining ?? 0,
+                              })}
+                            </p>
+                            <p className="muted">{t("client.pending_credit_activation_help")}</p>
+                            <a
+                              className="client-pay-cta"
+                              href={withUpdatedQuery(rawParams, {
+                                tab: "finance",
+                                finance_view: "transactions",
+                                source: "PLAN_PURCHASE",
+                                payment_id: `plan:${sub.id}`,
+                              })}
+                            >
+                              {t("client.finalize_payment")}
+                            </a>
+                          </article>
+                        ))}
+                      </div>
+                    ) : null}
                   </SectionCard>
 
                   <SectionCard title={t("client.my_plans")} action={<a className="mode-link" href={withUpdatedQuery(rawParams, { tab: "offers" })}>{t("common.view_all")}</a>}>
@@ -6345,7 +6414,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   <summary>{t("common.credits")}</summary>
                   <div className="client-account-accordion-content">
                     {positivePackSubscriptions.length === 0 && manualCredits.length === 0 ? (
-                      <p className="muted">{t("client.no_positive_credit")}</p>
+                      pendingPackSubscriptions.length === 0 ? (
+                        <p className="muted">{t("client.no_positive_credit")}</p>
+                      ) : null
                     ) : (
                       <div className="list client-mobile-list">
                         {positivePackSubscriptions.map((sub) => (
@@ -6366,6 +6437,36 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         ))}
                       </div>
                     )}
+                    {pendingPackSubscriptions.length > 0 ? (
+                      <div className="client-pending-credit-list">
+                        {pendingPackSubscriptions.map((sub) => (
+                          <article key={`mob-pending-credit-${sub.id}`} className="item client-pending-credit-item">
+                            <div className="row spread">
+                              <strong>{sub.plan.name}</strong>
+                              <span className="badge">{t("client.credit_activation_pending_badge")}</span>
+                            </div>
+                            <p className="muted">
+                              {t("client.pending_credit_line", {
+                                remaining: sub.credits_remaining ?? 0,
+                                initial: sub.credits_initial ?? sub.credits_remaining ?? 0,
+                              })}
+                            </p>
+                            <p className="muted">{t("client.pending_credit_activation_help")}</p>
+                            <a
+                              className="client-pay-cta"
+                              href={withUpdatedQuery(rawParams, {
+                                tab: "finance",
+                                finance_view: "transactions",
+                                source: "PLAN_PURCHASE",
+                                payment_id: `plan:${sub.id}`,
+                              })}
+                            >
+                              {t("client.finalize_payment")}
+                            </a>
+                          </article>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 </details>
 
@@ -6538,7 +6639,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                 <h2>{t("client.available_credits")}</h2>
                 <p className="muted">{t("client.positive_credits_only")}</p>
                 {positivePackSubscriptions.length === 0 && manualCredits.length === 0 ? (
-                  <p className="muted">{t("client.no_positive_credit")}</p>
+                  pendingPackSubscriptions.length === 0 ? (
+                    <p className="muted">{t("client.no_positive_credit")}</p>
+                  ) : null
                 ) : (
                   <div className="list">
                     {positivePackSubscriptions.map((sub) => (
@@ -6578,6 +6681,36 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     ))}
                   </div>
                 )}
+                {pendingPackSubscriptions.length > 0 ? (
+                  <div className="client-pending-credit-list">
+                    {pendingPackSubscriptions.map((sub) => (
+                      <article key={`account-pending-credit-${sub.id}`} className="item client-pending-credit-item">
+                        <div className="row spread">
+                          <strong>{sub.plan.name}</strong>
+                          <span className="badge">{t("client.credit_activation_pending_badge")}</span>
+                        </div>
+                        <p className="muted">
+                          {t("client.pending_credit_line", {
+                            remaining: sub.credits_remaining ?? 0,
+                            initial: sub.credits_initial ?? sub.credits_remaining ?? 0,
+                          })}
+                        </p>
+                        <p className="muted">{t("client.pending_credit_activation_help")}</p>
+                        <a
+                          className="client-pay-cta"
+                          href={withUpdatedQuery(rawParams, {
+                            tab: "finance",
+                            finance_view: "transactions",
+                            source: "PLAN_PURCHASE",
+                            payment_id: `plan:${sub.id}`,
+                          })}
+                        >
+                          {t("client.finalize_payment")}
+                        </a>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
               </Card>
 
               <Card className="client-account-desktop client-account-danger">
