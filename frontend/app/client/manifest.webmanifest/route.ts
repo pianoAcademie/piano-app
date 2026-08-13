@@ -11,7 +11,7 @@ function clientManifest(language: "fr" | "en") {
     short_name: "PA Client",
     description: english ? "Piano Academie client area" : "Espace client Piano Academie",
     id: "/client",
-    start_url: "/client?source=mobile_app",
+    start_url: "/client?source=installed_web",
     scope: "/",
     display: "standalone",
     orientation: "portrait",

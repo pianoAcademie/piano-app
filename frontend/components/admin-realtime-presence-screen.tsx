@@ -10,7 +10,17 @@ type Props = {
 };
 
 type RoleFilter = "ALL" | "client" | "prof" | "admin";
-type ChannelFilter = "ALL" | "WEB" | "MOBILE_APP";
+type PresenceChannel = AdminOnlinePresenceUserOut["channel"];
+type ChannelFilter = "ALL" | PresenceChannel;
+
+function channelLabel(channel: PresenceChannel, english: boolean): string {
+  if (channel === "NATIVE_APP") return english ? "Native iOS app" : "App iOS native";
+  if (channel === "INSTALLED_WEB") return english ? "Installed website" : "Site installé";
+  if (channel === "WEB_MOBILE") return english ? "Mobile website" : "Site web mobile";
+  if (channel === "WEB_DESKTOP") return english ? "Desktop website" : "Site web ordinateur";
+  if (channel === "MOBILE_APP") return english ? "Legacy app/PWA" : "Ancien classement app/site installé";
+  return english ? "Legacy website" : "Ancien classement site web";
+}
 
 function roleLabel(role: string, english: boolean): string {
   if (role === "client") return english ? "Client" : "Client";
@@ -45,7 +55,9 @@ function pageLabel(path: string | null, english: boolean): string {
 
 function originLabel(origin: string | null, english: boolean): string {
   if (!origin || origin === "DIRECT") return english ? "Direct access" : "Accès direct";
-  if (origin === "APP") return english ? "Mobile application" : "Application mobile";
+  if (origin === "NATIVE_APP") return english ? "Native application" : "Application native";
+  if (origin === "INSTALLED_WEB") return english ? "Installed website" : "Site installé";
+  if (origin === "APP") return english ? "Legacy app/PWA" : "Ancien classement app/site installé";
   if (origin.startsWith("CAMPAIGN:")) return `${english ? "Campaign" : "Campagne"} · ${origin.slice(9)}`;
   if (origin.startsWith("EXTERNAL:")) return `${english ? "External" : "Externe"} · ${origin.slice(9)}`;
   if (origin.startsWith("INTERNAL:")) return `${english ? "Internal navigation" : "Navigation interne"} · ${origin.slice(9)}`;
@@ -59,7 +71,10 @@ function actionLabel(action: string | null, english: boolean): string {
   return action;
 }
 
-function deviceLabel(device: string | null, english: boolean): string {
+function deviceLabel(device: string | null, channel: PresenceChannel, english: boolean): string {
+  if (device === "APP" && channel === "MOBILE_APP") {
+    return english ? "Legacy device (undetermined)" : "Ancien appareil (indéterminé)";
+  }
   if (device === "APP") return english ? "Native app" : "App native";
   if (device === "MOBILE") return english ? "Mobile browser" : "Navigateur mobile";
   if (device === "TABLET") return english ? "Tablet" : "Tablette";
@@ -149,8 +164,11 @@ export default function AdminRealtimePresenceScreen({ language }: Props): JSX.El
 
   const metrics = [
     { label: english ? "Online now" : "En ligne maintenant", value: summary?.total ?? "–", primary: true },
-    { label: english ? "Website" : "Site internet", value: summary?.web ?? "–" },
-    { label: english ? "Mobile app" : "Application mobile", value: summary?.mobile_app ?? "–" },
+    { label: english ? "Desktop website" : "Web ordinateur", value: summary?.web_desktop ?? "–" },
+    { label: english ? "Mobile website" : "Web mobile", value: summary?.web_mobile ?? "–" },
+    { label: english ? "Installed website" : "Site installé", value: summary?.installed_web ?? "–" },
+    { label: english ? "Native iOS app" : "App iOS native", value: summary?.native_app ?? "–" },
+    { label: english ? "Legacy unclassified" : "Historique indéterminé", value: summary?.legacy_unclassified ?? "–" },
     { label: english ? "Clients" : "Clients", value: summary?.clients ?? "–" },
     { label: english ? "Teachers" : "Professeurs", value: summary?.professors ?? "–" },
     { label: english ? "Admins" : "Administrateurs", value: summary?.admins ?? "–" },
@@ -195,8 +213,8 @@ export default function AdminRealtimePresenceScreen({ language }: Props): JSX.El
             <h2>{english ? "Today’s connection history" : "Historique des connexions aujourd’hui"}</h2>
             <p className="muted">
               {english
-                ? "Unique active users per hour. Hover or focus a bar for the website and mobile app breakdown."
-                : "Utilisateurs uniques actifs par heure. Survolez une barre pour le détail site internet et application mobile."}
+              ? "Unique active users per hour. Hover or focus a bar for the detailed access channel."
+              : "Utilisateurs uniques actifs par heure. Survolez une barre pour le détail du canal d’accès."}
             </p>
           </div>
           <div className="realtime-presence-history-peak">
@@ -216,8 +234,8 @@ export default function AdminRealtimePresenceScreen({ language }: Props): JSX.El
                 const bucketStart = new Date(bucket.hour_started_at).getTime();
                 const isCurrentHour = nowTimestamp >= bucketStart && nowTimestamp < bucketStart + 3_600_000;
                 const details = english
-                  ? `${bucket.hour_label}: ${bucket.total} unique user(s), ${bucket.web} website, ${bucket.mobile_app} mobile app`
-                  : `${bucket.hour_label} : ${bucket.total} utilisateur(s) unique(s), ${bucket.web} site internet, ${bucket.mobile_app} application mobile`;
+                  ? `${bucket.hour_label}: ${bucket.total} unique user(s), ${bucket.web_desktop} desktop web, ${bucket.web_mobile} mobile web, ${bucket.installed_web} installed web, ${bucket.native_app} native app, ${bucket.legacy_unclassified} legacy unclassified`
+                  : `${bucket.hour_label} : ${bucket.total} utilisateur(s) unique(s), ${bucket.web_desktop} web ordinateur, ${bucket.web_mobile} web mobile, ${bucket.installed_web} site installé, ${bucket.native_app} app native, ${bucket.legacy_unclassified} historique indéterminé`;
                 const showLabel = index % 2 === 0 || index === hourlyHistory.length - 1;
                 return (
                   <div key={bucket.hour_started_at} className={`realtime-presence-hour ${isCurrentHour ? "is-current" : ""}`}>
@@ -253,8 +271,8 @@ export default function AdminRealtimePresenceScreen({ language }: Props): JSX.El
             <h2>{english ? "Today’s visitors" : "Visiteurs aujourd’hui"}</h2>
             <p className="muted">
               {english
-                ? "People who used the website or mobile app since midnight. Your own admin session is excluded."
-                : "Personnes ayant utilisé le site ou l’application depuis minuit. Votre propre session admin est exclue."}
+                ? "People who used a browser, an installed website, or the native app since midnight. Your own admin session is excluded."
+                : "Personnes ayant utilisé le site web, le site installé ou l’app native depuis minuit. Votre propre session admin est exclue."}
             </p>
           </div>
           <span className="realtime-presence-visitor-count">
@@ -281,8 +299,12 @@ export default function AdminRealtimePresenceScreen({ language }: Props): JSX.El
             <span>{english ? "Channel" : "Canal"}</span>
             <select value={dailyChannel} onChange={(event) => setDailyChannel(event.target.value as ChannelFilter)}>
               <option value="ALL">{english ? "All channels" : "Tous les canaux"}</option>
-              <option value="WEB">{english ? "Website" : "Site internet"}</option>
-              <option value="MOBILE_APP">{english ? "Mobile app" : "Application mobile"}</option>
+              <option value="WEB_DESKTOP">{channelLabel("WEB_DESKTOP", english)}</option>
+              <option value="WEB_MOBILE">{channelLabel("WEB_MOBILE", english)}</option>
+              <option value="INSTALLED_WEB">{channelLabel("INSTALLED_WEB", english)}</option>
+              <option value="NATIVE_APP">{channelLabel("NATIVE_APP", english)}</option>
+              <option value="WEB">{channelLabel("WEB", english)}</option>
+              <option value="MOBILE_APP">{channelLabel("MOBILE_APP", english)}</option>
             </select>
           </label>
         </div>
@@ -311,7 +333,7 @@ export default function AdminRealtimePresenceScreen({ language }: Props): JSX.El
                         <span className="realtime-presence-channel-list">
                           {visitor.channels.map((visitorChannel) => (
                             <span key={visitorChannel} className="online-presence-channel">
-                              {visitorChannel === "MOBILE_APP" ? (english ? "App" : "Application") : (english ? "Website" : "Site")}
+                              {channelLabel(visitorChannel, english)}
                             </span>
                           ))}
                         </span>
@@ -369,8 +391,12 @@ export default function AdminRealtimePresenceScreen({ language }: Props): JSX.El
             <span>{english ? "Channel" : "Canal"}</span>
             <select value={channel} onChange={(event) => setChannel(event.target.value as ChannelFilter)}>
               <option value="ALL">{english ? "All channels" : "Tous les canaux"}</option>
-              <option value="WEB">{english ? "Website" : "Site internet"}</option>
-              <option value="MOBILE_APP">{english ? "Mobile app" : "Application mobile"}</option>
+              <option value="WEB_DESKTOP">{channelLabel("WEB_DESKTOP", english)}</option>
+              <option value="WEB_MOBILE">{channelLabel("WEB_MOBILE", english)}</option>
+              <option value="INSTALLED_WEB">{channelLabel("INSTALLED_WEB", english)}</option>
+              <option value="NATIVE_APP">{channelLabel("NATIVE_APP", english)}</option>
+              <option value="WEB">{channelLabel("WEB", english)}</option>
+              <option value="MOBILE_APP">{channelLabel("MOBILE_APP", english)}</option>
             </select>
           </label>
         </div>
@@ -401,9 +427,9 @@ export default function AdminRealtimePresenceScreen({ language }: Props): JSX.El
                       </td>
                       <td>
                         <span className="online-presence-channel">
-                          {user.channel === "MOBILE_APP" ? (english ? "App" : "Application") : (english ? "Website" : "Site")}
+                          {channelLabel(user.channel, english)}
                         </span>
-                        <span>{deviceLabel(user.device_type, english)}</span>
+                        <span>{deviceLabel(user.device_type, user.channel, english)}</span>
                       </td>
                       <td>
                         <strong>{pageLabel(user.current_path, english)}</strong>

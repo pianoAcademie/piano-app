@@ -150,7 +150,10 @@ class UserPresence(Base):
     __tablename__ = "user_presences"
     __table_args__ = (
         UniqueConstraint("user_id", "channel", name="uq_user_presences_user_channel"),
-        CheckConstraint("channel IN ('WEB', 'MOBILE_APP')", name="ck_user_presences_channel"),
+        CheckConstraint(
+            "channel IN ('WEB', 'MOBILE_APP', 'WEB_DESKTOP', 'WEB_MOBILE', 'INSTALLED_WEB', 'NATIVE_APP')",
+            name="ck_user_presences_channel",
+        ),
         Index("ix_user_presences_last_seen_at", "last_seen_at"),
     )
 
@@ -196,7 +199,10 @@ class UserPresenceHour(Base):
             "hour_started_at_utc",
             name="uq_user_presence_hours_user_channel_hour",
         ),
-        CheckConstraint("channel IN ('WEB', 'MOBILE_APP')", name="ck_user_presence_hours_channel"),
+        CheckConstraint(
+            "channel IN ('WEB', 'MOBILE_APP', 'WEB_DESKTOP', 'WEB_MOBILE', 'INSTALLED_WEB', 'NATIVE_APP')",
+            name="ck_user_presence_hours_channel",
+        ),
         CheckConstraint("heartbeat_count >= 1", name="ck_user_presence_hours_heartbeat_count"),
         Index("ix_user_presence_hours_hour_started_at_utc", "hour_started_at_utc"),
     )

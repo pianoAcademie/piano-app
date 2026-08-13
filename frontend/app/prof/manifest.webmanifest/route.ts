@@ -5,7 +5,7 @@ const professorManifest = {
   lang: "fr",
   categories: ["education", "productivity"],
   id: "/prof",
-  start_url: "/prof?source=mobile_app",
+  start_url: "/prof?source=installed_web",
   scope: "/",
   display: "standalone",
   orientation: "portrait",

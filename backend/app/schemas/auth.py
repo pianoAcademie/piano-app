@@ -40,7 +40,14 @@ class LoginRequest(BaseModel):
 
 
 class PresenceHeartbeatRequest(BaseModel):
-    channel: Literal["WEB", "MOBILE_APP"] = "WEB"
+    channel: Literal[
+        "WEB",
+        "MOBILE_APP",
+        "WEB_DESKTOP",
+        "WEB_MOBILE",
+        "INSTALLED_WEB",
+        "NATIVE_APP",
+    ] = "WEB_DESKTOP"
     current_path: str | None = Field(default=None, min_length=1, max_length=300)
     origin: str | None = Field(default=None, min_length=1, max_length=200)
     last_action: str | None = Field(default=None, min_length=1, max_length=200)
@@ -49,7 +56,14 @@ class PresenceHeartbeatRequest(BaseModel):
 
 class PresenceHeartbeatOut(BaseModel):
     seen_at: datetime
-    channel: Literal["WEB", "MOBILE_APP"]
+    channel: Literal[
+        "WEB",
+        "MOBILE_APP",
+        "WEB_DESKTOP",
+        "WEB_MOBILE",
+        "INSTALLED_WEB",
+        "NATIVE_APP",
+    ]
     current_path: str | None = None
     origin: str | None = None
     last_action: str | None = None

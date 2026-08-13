@@ -16,6 +16,15 @@ function roleLabel(role: string, english: boolean): string {
   return role;
 }
 
+function channelLabel(channel: AdminOnlinePresenceOut["online_users"][number]["channel"], english: boolean): string {
+  if (channel === "NATIVE_APP") return english ? "Native iOS app" : "App iOS native";
+  if (channel === "INSTALLED_WEB") return english ? "Installed website" : "Site installé";
+  if (channel === "WEB_MOBILE") return english ? "Mobile website" : "Site web mobile";
+  if (channel === "WEB_DESKTOP") return english ? "Desktop website" : "Site web ordinateur";
+  if (channel === "MOBILE_APP") return english ? "Legacy app/PWA" : "Ancien classement app/site installé";
+  return english ? "Legacy website" : "Ancien classement site web";
+}
+
 function pageLabel(path: string | null, english: boolean): string {
   if (!path) return english ? "Page not reported" : "Page non remontée";
   const pathname = path.split("?")[0];
@@ -67,8 +76,10 @@ export default function AdminOnlinePresenceDashboard({ language }: Props): JSX.E
 
   const metrics = [
     { label: english ? "Online now" : "En ligne maintenant", value: summary?.total ?? "–", primary: true },
-    { label: english ? "Website" : "Site internet", value: summary?.web ?? "–" },
-    { label: english ? "Mobile app" : "Application mobile", value: summary?.mobile_app ?? "–" },
+    { label: english ? "Desktop website" : "Web ordinateur", value: summary?.web_desktop ?? "–" },
+    { label: english ? "Mobile website" : "Web mobile", value: summary?.web_mobile ?? "–" },
+    { label: english ? "Installed website" : "Site installé", value: summary?.installed_web ?? "–" },
+    { label: english ? "Native iOS app" : "App iOS native", value: summary?.native_app ?? "–" },
     { label: english ? "Clients" : "Clients", value: summary?.clients ?? "–" },
     { label: english ? "Teachers" : "Professeurs", value: summary?.professors ?? "–" },
     { label: english ? "Admins" : "Administrateurs", value: summary?.admins ?? "–" },
@@ -107,7 +118,7 @@ export default function AdminOnlinePresenceDashboard({ language }: Props): JSX.E
                   <span>{roleLabel(user.role, english)}</span>
                 </div>
                 <span className="online-presence-channel">
-                  {user.channel === "MOBILE_APP" ? (english ? "Mobile app" : "Application") : (english ? "Website" : "Site internet")}
+                  {channelLabel(user.channel, english)}
                 </span>
                 <div className="online-presence-page">
                   <strong>{pageLabel(user.current_path, english)}</strong>

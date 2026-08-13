@@ -3,7 +3,7 @@
 import { Capacitor } from "@capacitor/core";
 import { useEffect, useRef } from "react";
 
-type PresenceChannel = "WEB" | "MOBILE_APP";
+type PresenceChannel = "WEB_DESKTOP" | "WEB_MOBILE" | "INSTALLED_WEB" | "NATIVE_APP";
 type DeviceType = "DESKTOP" | "MOBILE" | "TABLET" | "APP";
 
 const VISIBLE_QUERY_PARAMETERS = ["tab", "view", "section"] as const;
@@ -20,16 +20,21 @@ function currentPage(): string {
 
 function presenceChannel(): PresenceChannel {
   if (Capacitor.isNativePlatform()) {
-    return "MOBILE_APP";
+    return "NATIVE_APP";
   }
   const standalone = window.matchMedia?.("(display-mode: standalone)").matches === true;
   const iosStandalone = (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
   const source = new URLSearchParams(window.location.search).get("source")?.trim().toLowerCase();
-  return standalone || iosStandalone || source === "mobile_app" ? "MOBILE_APP" : "WEB";
+  if (standalone || iosStandalone || source === "installed_web" || source === "mobile_app") {
+    return "INSTALLED_WEB";
+  }
+  return /ipad|tablet|iphone|android|mobile/i.test(window.navigator.userAgent)
+    ? "WEB_MOBILE"
+    : "WEB_DESKTOP";
 }
 
 function deviceType(channel: PresenceChannel): DeviceType {
-  if (channel === "MOBILE_APP") return "APP";
+  if (channel === "NATIVE_APP") return "APP";
   const userAgent = navigator.userAgent.toLowerCase();
   if (/ipad|tablet/.test(userAgent)) return "TABLET";
   if (/iphone|android|mobile/.test(userAgent)) return "MOBILE";
@@ -37,7 +42,7 @@ function deviceType(channel: PresenceChannel): DeviceType {
 }
 
 function presenceOrigin(channel: PresenceChannel): string {
-  const storageKey = "piano_presence_origin_v1";
+  const storageKey = "piano_presence_origin_v2";
   try {
     const stored = window.sessionStorage.getItem(storageKey);
     if (stored) return stored;
@@ -45,17 +50,17 @@ function presenceOrigin(channel: PresenceChannel): string {
     // Continue without session storage.
   }
 
-  let origin = channel === "MOBILE_APP" ? "APP" : "DIRECT";
+  let origin = channel === "NATIVE_APP" ? "NATIVE_APP" : channel === "INSTALLED_WEB" ? "INSTALLED_WEB" : "DIRECT";
   const currentParameters = new URLSearchParams(window.location.search);
   const campaignSource = currentParameters.get("utm_source")?.trim();
-  if (channel !== "MOBILE_APP" && campaignSource) {
+  if (channel !== "NATIVE_APP" && channel !== "INSTALLED_WEB" && campaignSource) {
     const campaignParts = [
       campaignSource,
       currentParameters.get("utm_medium")?.trim(),
       currentParameters.get("utm_campaign")?.trim(),
     ].filter(Boolean);
     origin = `CAMPAIGN:${campaignParts.join(" / ")}`;
-  } else if (channel !== "MOBILE_APP" && document.referrer) {
+  } else if (channel !== "NATIVE_APP" && channel !== "INSTALLED_WEB" && document.referrer) {
     try {
       const referrer = new URL(document.referrer);
       origin = referrer.origin === window.location.origin

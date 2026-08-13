@@ -2472,8 +2472,19 @@ def admin_online_presence(
                 "student_site": row.student_site,
             }
 
-    web_users = {user_id for user_id, presence in latest_by_user.items() if presence["channel"] == "WEB"}
-    mobile_users = {user_id for user_id, presence in latest_by_user.items() if presence["channel"] == "MOBILE_APP"}
+    web_desktop_users = {user_id for user_id, presence in latest_by_user.items() if presence["channel"] == "WEB_DESKTOP"}
+    web_mobile_users = {user_id for user_id, presence in latest_by_user.items() if presence["channel"] == "WEB_MOBILE"}
+    installed_web_users = {user_id for user_id, presence in latest_by_user.items() if presence["channel"] == "INSTALLED_WEB"}
+    native_app_users = {user_id for user_id, presence in latest_by_user.items() if presence["channel"] == "NATIVE_APP"}
+    legacy_unclassified_users = {
+        user_id for user_id, presence in latest_by_user.items() if presence["channel"] in {"WEB", "MOBILE_APP"}
+    }
+    web_users = web_desktop_users | web_mobile_users | installed_web_users | {
+        user_id for user_id, presence in latest_by_user.items() if presence["channel"] == "WEB"
+    }
+    mobile_users = installed_web_users | native_app_users | {
+        user_id for user_id, presence in latest_by_user.items() if presence["channel"] == "MOBILE_APP"
+    }
     client_users = {user_id for user_id, presence in latest_by_user.items() if presence["role"] == UserRole.CLIENT}
     professor_users = {user_id for user_id, presence in latest_by_user.items() if presence["role"] == UserRole.PROF}
     admin_users = {user_id for user_id, presence in latest_by_user.items() if presence["role"] == UserRole.ADMIN}
@@ -2519,6 +2530,11 @@ def admin_online_presence(
                 "total": set(),
                 "web": set(),
                 "mobile_app": set(),
+                "web_desktop": set(),
+                "web_mobile": set(),
+                "installed_web": set(),
+                "native_app": set(),
+                "legacy_unclassified": set(),
                 "clients": set(),
                 "professors": set(),
                 "admins": set(),
@@ -2529,6 +2545,21 @@ def admin_online_presence(
             bucket["web"].add(row.user_id)
         elif row.channel == "MOBILE_APP":
             bucket["mobile_app"].add(row.user_id)
+        elif row.channel == "WEB_DESKTOP":
+            bucket["web"].add(row.user_id)
+            bucket["web_desktop"].add(row.user_id)
+        elif row.channel == "WEB_MOBILE":
+            bucket["web"].add(row.user_id)
+            bucket["web_mobile"].add(row.user_id)
+        elif row.channel == "INSTALLED_WEB":
+            bucket["web"].add(row.user_id)
+            bucket["mobile_app"].add(row.user_id)
+            bucket["installed_web"].add(row.user_id)
+        elif row.channel == "NATIVE_APP":
+            bucket["mobile_app"].add(row.user_id)
+            bucket["native_app"].add(row.user_id)
+        if row.channel in {"WEB", "MOBILE_APP"}:
+            bucket["legacy_unclassified"].add(row.user_id)
         if row.role == UserRole.CLIENT:
             bucket["clients"].add(row.user_id)
         elif row.role == UserRole.PROF:
@@ -2566,6 +2597,11 @@ def admin_online_presence(
                 total=len(bucket["total"]) if bucket else 0,
                 web=len(bucket["web"]) if bucket else 0,
                 mobile_app=len(bucket["mobile_app"]) if bucket else 0,
+                web_desktop=len(bucket["web_desktop"]) if bucket else 0,
+                web_mobile=len(bucket["web_mobile"]) if bucket else 0,
+                installed_web=len(bucket["installed_web"]) if bucket else 0,
+                native_app=len(bucket["native_app"]) if bucket else 0,
+                legacy_unclassified=len(bucket["legacy_unclassified"]) if bucket else 0,
                 clients=len(bucket["clients"]) if bucket else 0,
                 professors=len(bucket["professors"]) if bucket else 0,
                 admins=len(bucket["admins"]) if bucket else 0,
@@ -2620,6 +2656,11 @@ def admin_online_presence(
         total=len(latest_by_user),
         web=len(web_users),
         mobile_app=len(mobile_users),
+        web_desktop=len(web_desktop_users),
+        web_mobile=len(web_mobile_users),
+        installed_web=len(installed_web_users),
+        native_app=len(native_app_users),
+        legacy_unclassified=len(legacy_unclassified_users),
         clients=len(client_users),
         professors=len(professor_users),
         admins=len(admin_users),

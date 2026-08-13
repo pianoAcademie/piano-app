@@ -865,7 +865,7 @@ class AdminOnlinePresenceUserOut(BaseModel):
     user_id: UUID
     display_name: str
     role: UserRole
-    channel: Literal["WEB", "MOBILE_APP"]
+    channel: Literal["WEB", "MOBILE_APP", "WEB_DESKTOP", "WEB_MOBILE", "INSTALLED_WEB", "NATIVE_APP"]
     current_path: str | None = None
     origin: str | None = None
     last_action: str | None = None
@@ -881,6 +881,11 @@ class AdminPresenceHourlyBucketOut(BaseModel):
     total: int
     web: int
     mobile_app: int
+    web_desktop: int
+    web_mobile: int
+    installed_web: int
+    native_app: int
+    legacy_unclassified: int
     clients: int
     professors: int
     admins: int
@@ -890,7 +895,7 @@ class AdminDailyPresenceUserOut(BaseModel):
     user_id: UUID
     display_name: str
     role: UserRole
-    channels: list[Literal["WEB", "MOBILE_APP"]] = Field(default_factory=list)
+    channels: list[Literal["WEB", "MOBILE_APP", "WEB_DESKTOP", "WEB_MOBILE", "INSTALLED_WEB", "NATIVE_APP"]] = Field(default_factory=list)
     first_seen_at: datetime
     last_seen_at: datetime
     active_hour_labels: list[str] = Field(default_factory=list)
@@ -902,6 +907,11 @@ class AdminOnlinePresenceOut(BaseModel):
     total: int
     web: int
     mobile_app: int
+    web_desktop: int
+    web_mobile: int
+    installed_web: int
+    native_app: int
+    legacy_unclassified: int
     clients: int
     professors: int
     admins: int

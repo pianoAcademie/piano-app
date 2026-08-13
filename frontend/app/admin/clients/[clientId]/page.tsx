@@ -4534,7 +4534,14 @@ export default async function AdminClientDetailPage({ params, searchParams }: Pa
                   <span className="muted">{language === "en" ? "Last activity" : "Dernière activité"}</span>
                   <strong>
                     {client.last_seen_at
-                      ? `${formatDateUi(client.last_seen_at)} · ${client.last_seen_channel === "MOBILE_APP" ? (language === "en" ? "Mobile app" : "Application mobile") : (language === "en" ? "Website" : "Site internet")}`
+                      ? `${formatDateUi(client.last_seen_at)} · ${(() => {
+                        if (client.last_seen_channel === "NATIVE_APP") return language === "en" ? "Native iOS app" : "App iOS native";
+                        if (client.last_seen_channel === "INSTALLED_WEB") return language === "en" ? "Installed website" : "Site installé";
+                        if (client.last_seen_channel === "WEB_MOBILE") return language === "en" ? "Mobile website" : "Site web mobile";
+                        if (client.last_seen_channel === "WEB_DESKTOP") return language === "en" ? "Desktop website" : "Site web ordinateur";
+                        if (client.last_seen_channel === "MOBILE_APP") return language === "en" ? "Legacy app/PWA" : "Ancien classement app/site installé";
+                        return language === "en" ? "Legacy website" : "Ancien classement site web";
+                      })()}`
                       : (language === "en" ? "No activity recorded" : "Aucune activité enregistrée")}
                   </strong>
                 </article>

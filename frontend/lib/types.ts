@@ -344,6 +344,11 @@ export type AdminOnlinePresenceOut = {
   total: number;
   web: number;
   mobile_app: number;
+  web_desktop: number;
+  web_mobile: number;
+  installed_web: number;
+  native_app: number;
+  legacy_unclassified: number;
   clients: number;
   professors: number;
   admins: number;
@@ -360,6 +365,11 @@ export type AdminPresenceHourlyBucketOut = {
   total: number;
   web: number;
   mobile_app: number;
+  web_desktop: number;
+  web_mobile: number;
+  installed_web: number;
+  native_app: number;
+  legacy_unclassified: number;
   clients: number;
   professors: number;
   admins: number;
@@ -369,7 +379,7 @@ export type AdminOnlinePresenceUserOut = {
   user_id: string;
   display_name: string;
   role: "admin" | "prof" | "client" | string;
-  channel: "WEB" | "MOBILE_APP";
+  channel: "WEB" | "MOBILE_APP" | "WEB_DESKTOP" | "WEB_MOBILE" | "INSTALLED_WEB" | "NATIVE_APP";
   current_path: string | null;
   origin: string | null;
   last_action: string | null;
@@ -383,7 +393,7 @@ export type AdminDailyPresenceUserOut = {
   user_id: string;
   display_name: string;
   role: "admin" | "prof" | "client" | string;
-  channels: ("WEB" | "MOBILE_APP")[];
+  channels: ("WEB" | "MOBILE_APP" | "WEB_DESKTOP" | "WEB_MOBILE" | "INSTALLED_WEB" | "NATIVE_APP")[];
   first_seen_at: string;
   last_seen_at: string;
   active_hour_labels: string[];
