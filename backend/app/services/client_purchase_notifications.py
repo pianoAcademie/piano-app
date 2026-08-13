@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 import logging
 import re
+from urllib.parse import urlencode
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -19,6 +20,7 @@ from app.services.messaging_templates import (
     resolve_sender_profile,
 )
 from app.services.notifications.application.recipients import resolve_admin_plan_purchase_recipients
+from app.services.plan_invoice_access import create_plan_invoice_download_token
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +199,9 @@ def send_client_payment_success_notifications(
     language: str | None = None,
 ) -> dict[str, str | None]:
     transactions_url = _frontend_url(f"/dashboard?tab=transactions&source=PLAN_PURCHASE&payment_id={subscription_id}")
-    invoice_url = _frontend_url(f"/api/v1/public/invoices/plans/{subscription_id}/download")
+    invoice_token = create_plan_invoice_download_token(subscription_id=subscription_id)
+    invoice_query = urlencode({"token": invoice_token})
+    invoice_url = _frontend_url(f"/api/v1/public/invoices/plans/{subscription_id}/download?{invoice_query}")
     invoice_number = _invoice_number_for_subscription(subscription_id, paid_at)
     return send_payment_success_notifications(
         db,

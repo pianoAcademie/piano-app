@@ -32,6 +32,7 @@ services:
       DATABASE_URL: postgresql+psycopg://piano:piano@db:5432/piano_academie
       JWT_SECRET_KEY: dev-secret-change-me
       JWT_ALGORITHM: HS256
+      INVOICE_DOWNLOAD_SECRET: ${INVOICE_DOWNLOAD_SECRET:-dev-invoice-download-secret-change-me}
       ACCESS_TOKEN_EXPIRE_MINUTES: "60"
       ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES: ${ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES:-480}
       LOG_LEVEL: INFO
@@ -87,7 +88,7 @@ services:
     environment:
       BACKEND_INTERNAL_URL: http://backend:8000
       BACKEND_TIMEOUT_MS: ${BACKEND_TIMEOUT_MS:-30000}
-      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
       ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES: ${ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES:-480}
     ports:
       - "3000:3000"

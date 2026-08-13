@@ -6,14 +6,15 @@ type RouteParams = {
   };
 };
 
-export async function GET(_: Request, { params }: RouteParams): Promise<Response> {
+export async function GET(request: Request, { params }: RouteParams): Promise<Response> {
   const subscriptionId = params.subscriptionId.trim();
-  if (!subscriptionId) {
+  const token = new URL(request.url).searchParams.get("token")?.trim() ?? "";
+  if (!subscriptionId || !token) {
     return new Response("Invoice not found", { status: 404 });
   }
 
   const response = await fetch(
-    `${backendUrl()}/api/v1/public/invoices/plans/${encodeURIComponent(subscriptionId)}/download`,
+    `${backendUrl()}/api/v1/public/invoices/plans/${encodeURIComponent(subscriptionId)}/download?${new URLSearchParams({ token }).toString()}`,
     {
       method: "GET",
       cache: "no-store",

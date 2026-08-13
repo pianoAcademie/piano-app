@@ -77,6 +77,7 @@ from app.models.product_catalog import CatalogKit, CatalogKitItem, CatalogProduc
 from app.models.quote import Quote, QuoteAcceptanceFollowup, QuoteLine
 from app.models.user import ClientKind, ClientStatus, User, UserRole
 from app.services.security import hash_password, verify_password
+from app.services.plan_invoice_access import assert_plan_invoice_download_token
 from app.schemas.catalog import SessionCourseTypeOut, SessionLocationOut, SessionOut, SessionProfessorOut
 from app.schemas.booking import BookingCreateRequest, MakeupStudentSummaryOut
 from app.schemas.user import (
@@ -5320,8 +5321,10 @@ def _render_client_payment_invoice_response(
 @router.get("/public/invoices/plans/{subscription_id}/download")
 def download_public_plan_purchase_invoice(
     subscription_id: UUID,
+    token: str = Query(min_length=32, max_length=4096),
     db: Session = Depends(get_db),
 ) -> Response:
+    assert_plan_invoice_download_token(token=token, subscription_id=subscription_id)
     subscription = db.scalar(select(ClientPlanSubscription).where(ClientPlanSubscription.id == subscription_id))
     if subscription is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")

@@ -47,35 +47,6 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
     return redirectTo(invoiceErrorRedirect());
   }
 
-  if (invoiceId.startsWith("plan:")) {
-    const subscriptionId = invoiceId.slice("plan:".length).trim();
-    if (!subscriptionId) {
-      return redirectTo(invoiceErrorRedirect());
-    }
-    const publicUrl = `${backendUrl()}/api/v1/public/invoices/plans/${encodeURIComponent(subscriptionId)}/download`;
-    const response = await fetch(publicUrl, {
-      method: "GET",
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      return redirectTo(invoiceErrorRedirect(response.status));
-    }
-    const buffer = await response.arrayBuffer();
-    const contentDisposition = rewriteContentDisposition(
-      response.headers.get("content-disposition") ?? 'attachment; filename="facture.pdf"',
-      inline,
-    );
-    const contentType = response.headers.get("content-type") ?? "application/pdf";
-    return new Response(buffer, {
-      status: 200,
-      headers: {
-        "content-type": contentType,
-        "content-disposition": contentDisposition,
-        "cache-control": "no-store",
-      },
-    });
-  }
-
   const token = getPortalToken();
   if (!token) {
     return redirectTo("/login?error_code=session_expired");

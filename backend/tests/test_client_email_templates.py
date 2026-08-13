@@ -127,6 +127,9 @@ class ClientEmailTemplateTests(unittest.TestCase):
         ) as send_template_email, patch(
             "app.services.client_purchase_notifications._frontend_url",
             side_effect=lambda path: f"https://app.piano-academie.com{path}",
+        ), patch(
+            "app.services.client_purchase_notifications.create_plan_invoice_download_token",
+            return_value="signed.invoice.token",
         ):
             send_client_payment_success_notifications(
                 db=object(),
@@ -143,7 +146,7 @@ class ClientEmailTemplateTests(unittest.TestCase):
         invoice_context = send_template_email.call_args_list[1].kwargs["context"]
         self.assertEqual(
             invoice_context["invoice_url"],
-            f"https://app.piano-academie.com/api/v1/public/invoices/plans/{subscription_id}/download",
+            f"https://app.piano-academie.com/api/v1/public/invoices/plans/{subscription_id}/download?token=signed.invoice.token",
         )
 
     def test_plan_purchase_admin_notification_uses_admin_recipients_and_paris_time(self) -> None:
