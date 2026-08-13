@@ -636,6 +636,48 @@ def _template_condition_tokens(value: object | None) -> list[str]:
     return [token] if token else []
 
 
+def _requested_activity_type_from_simplified_answers(
+    simplified_answers: list[dict[str, object]],
+) -> str | None:
+    """Identify the answered branch of a mixed Eveil / Initiation Typeform.
+
+    Typeform only submits answers for the branch visited by the respondent. We
+    deliberately rely on branch-specific question labels before answer values:
+    generic pricing values such as "Annuel" do not identify an activity.
+    """
+
+    label_signals: set[str] = set()
+    value_signals: set[str] = set()
+    for answer in simplified_answers:
+        label_haystack = _normalize_token(
+            " ".join(
+                part
+                for part in (
+                    _text(answer.get("label")),
+                    _text(answer.get("field_title")),
+                )
+                if part
+            )
+        )
+        value_haystack = _normalize_token(answer.get("value"))
+        if "eveil musical" in label_haystack:
+            label_signals.add("eveil")
+        if "initiation" in label_haystack:
+            label_signals.add("initiation")
+        if "eveil musical" in value_haystack:
+            value_signals.add("eveil")
+        if "initiation" in value_haystack:
+            value_signals.add("initiation")
+
+    if len(label_signals) == 1:
+        return next(iter(label_signals))
+    if len(label_signals) > 1:
+        return None
+    if len(value_signals) == 1:
+        return next(iter(value_signals))
+    return None
+
+
 def _template_matches_when(
     template: dict[str, object],
     normalized: dict[str, object],
@@ -1951,6 +1993,7 @@ def _normalize_payload(
     requested_course_mode = _mapped_scalar(answer_map, field_mapping, "requested_course_mode") or _text(config_json.get("default_course_mode")) or None
     requested_location = _mapped_scalar(answer_map, field_mapping, "requested_location") or (config.location_code if config is not None else None)
     requested_formula_type = _mapped_scalar(answer_map, field_mapping, "requested_formula_type") or _text(config_json.get("default_formula_type")) or None
+    requested_activity_type = _requested_activity_type_from_simplified_answers(simplified_answers)
     requested_products = [
         _text(item)
         for item in _mapped_token_list(answer_map, field_mapping, "requested_products")
@@ -2204,6 +2247,7 @@ def _normalize_payload(
         "requested_second_course": requested_second_course,
         "requested_solfege_slot_preferences": requested_solfege_slot_preferences,
         "requested_formula_type": requested_formula_type,
+        "requested_activity_type": requested_activity_type,
         "requested_payment_method": requested_payment_method,
         "requested_products": requested_products,
         "estimated_solfege_level": estimated_solfege_level,

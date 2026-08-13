@@ -29,6 +29,7 @@ from app.api.routes.typeform_intakes import (
     _normalize_day_values,
     _normalize_payload,
     _normalize_slot_preferences,
+    _requested_activity_type_from_simplified_answers,
     _requires_strict_typeform_location_matching,
     _session_is_typeform_candidate,
     _session_recommendations_have_options,
@@ -52,6 +53,47 @@ from app.schemas.typeform_intake import TypeformQuotePreviewLineOut
 
 
 class TypeformIntakeMatchingTests(unittest.TestCase):
+    def test_mixed_eveil_form_detects_eveil_branch_from_answered_labels(self) -> None:
+        activity_type = _requested_activity_type_from_simplified_answers(
+            [
+                {
+                    "label": "Eveil musical - type d'engagement souhaité",
+                    "field_title": "",
+                    "value": "Annuel (22€ / cours)",
+                },
+                {
+                    "label": "Créneau éveil musical - Rue d'Assas",
+                    "field_title": "",
+                    "value": "Samedi 10h",
+                },
+            ]
+        )
+
+        self.assertEqual(activity_type, "eveil")
+
+    def test_mixed_eveil_form_detects_initiation_branch_from_answered_labels(self) -> None:
+        activity_type = _requested_activity_type_from_simplified_answers(
+            [
+                {
+                    "label": "Initiation au piano - type d'engagement souhaité",
+                    "field_title": "",
+                    "value": "Annuel",
+                }
+            ]
+        )
+
+        self.assertEqual(activity_type, "initiation")
+
+    def test_mixed_eveil_form_does_not_guess_when_both_branches_are_present(self) -> None:
+        activity_type = _requested_activity_type_from_simplified_answers(
+            [
+                {"label": "Eveil musical", "field_title": "", "value": "Samedi 10h"},
+                {"label": "Initiation au piano", "field_title": "", "value": "Mercredi 14h"},
+            ]
+        )
+
+        self.assertIsNone(activity_type)
+
     def test_private_scheduled_session_is_candidate_for_admin_quote(self) -> None:
         session = SimpleNamespace(
             status=SessionStatus.SCHEDULED,
