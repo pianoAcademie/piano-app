@@ -10,6 +10,10 @@ function passthroughHeaders(request: Request): HeadersInit {
   if (userAgent) {
     headers["user-agent"] = userAgent;
   }
+  const authorization = request.headers.get("authorization");
+  if (authorization) {
+    headers.authorization = authorization;
+  }
   return headers;
 }
 

@@ -45,7 +45,9 @@ jobs:
 
       - name: Check frontend endpoints
         run: |
+          docker compose exec -T frontend npm run test:security
           docker compose exec -T frontend node -e "fetch('http://localhost:3000/login').then(async r=>{const t=await r.text(); if(r.status!==200||!t.includes('Piano Academie')) process.exit(1);}).catch(()=>process.exit(1));"
+          docker compose exec -T frontend node -e "fetch('http://localhost:3000/login').then(async r=>{const t=await r.text(); const c=r.headers.get('content-security-policy')||''; const n=(c.match(/'nonce-([^']+)'/)||[])[1]; const s=[...t.matchAll(/<script\\b([^>]*)>/gi)].map(m=>m[1]); if(!n||c.includes(\"'unsafe-eval'\")||/script-src[^;]*'unsafe-inline'/.test(c)||!s.length||s.some(a=>!a.includes('nonce=\\\"'+n+'\\\"'))) process.exit(1);}).catch(()=>process.exit(1));"
           docker compose exec -T frontend node -e "fetch('http://localhost:3000/dashboard',{redirect:'manual'}).then(r=>{const loc=r.headers.get('location')||''; if(r.status!==307||!loc.includes('/login')) process.exit(1);}).catch(()=>process.exit(1));"
 
       - name: Dump service logs on failure

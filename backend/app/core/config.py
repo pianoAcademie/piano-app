@@ -22,6 +22,8 @@ class Settings:
         "INVOICE_DOWNLOAD_SECRET",
         "dev-invoice-download-secret-change-me",
     )
+    typeform_webhook_secret: str = os.getenv("TYPEFORM_WEBHOOK_SECRET", "")
+    brevo_webhook_secret: str = os.getenv("BREVO_WEBHOOK_SECRET", "")
     access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
     admin_access_token_expire_minutes: int = int(
         os.getenv(

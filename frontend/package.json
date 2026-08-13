@@ -25,7 +25,8 @@
     "mobile:bundle:android": "npm run mobile:sync:android && cd android && ./gradlew bundleClientRelease bundleProfesseurRelease",
     "mobile:verify": "node scripts/verify-mobile-release.mjs",
     "mobile:verify:client": "node scripts/verify-mobile-release.mjs client",
-    "mobile:verify:prof": "node scripts/verify-mobile-release.mjs prof"
+    "mobile:verify:prof": "node scripts/verify-mobile-release.mjs prof",
+    "test:security": "node --experimental-strip-types scripts/test-sanitize-rich-html.mjs"
   },
   "dependencies": {
     "@capacitor/push-notifications": "8.0.0",
@@ -37,10 +38,12 @@
     "@tiptap/extension-underline": "^2.11.5",
     "@tiptap/react": "^2.11.5",
     "@tiptap/starter-kit": "^2.11.5",
+    "@types/sanitize-html": "2.16.0",
     "next": "14.2.35",
     "react": "18.2.0",
     "react-dom": "18.2.0",
-    "read-excel-file": "^5.8.8"
+    "read-excel-file": "^5.8.8",
+    "sanitize-html": "2.17.6"
   },
   "devDependencies": {
     "@capacitor/android": "8.4.2",

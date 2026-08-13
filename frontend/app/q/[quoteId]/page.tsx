@@ -7,6 +7,7 @@ import {
 } from "../../../lib/actions";
 import { backendRequest } from "../../../lib/backend";
 import { localeForUiLanguage, normalizeUiLanguage, translateBackendMessage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
+import { sanitizeRichHtml } from "../../../lib/sanitize-rich-html";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -294,7 +295,7 @@ export default async function PublicQuotePage({ params, searchParams }: RoutePar
               <article className="card quote-public-lines-card">
                 <h3>{t("quote_public.document_title")}</h3>
                 {documentPayload ? (
-                  <div className="top-gap-sm" dangerouslySetInnerHTML={{ __html: documentPayload.combined_html }} />
+                  <div className="top-gap-sm" dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(documentPayload.combined_html) }} />
                 ) : (
                   <p className="muted top-gap-sm">{t("quote_public.document_unavailable")}</p>
                 )}

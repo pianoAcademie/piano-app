@@ -152,6 +152,7 @@ jobs:
             set -euo pipefail
             cd '${VPS_PATH}'
             export COMPOSE_PROJECT_NAME='piano-app'
+            sudo python3 infra/nginx/install-redacted-logging.py
             services=\$(docker compose config --services)
 
             docker compose down --remove-orphans || true

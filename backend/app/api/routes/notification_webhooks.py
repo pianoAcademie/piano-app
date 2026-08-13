@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
@@ -20,6 +20,7 @@ from app.services.notifications.domain.constants import (
 )
 from app.services.notifications.infrastructure.repository import create_domain_event
 from app.services.shared.queue.redis_queue import queue_push
+from app.services.webhook_security import assert_bearer_webhook_token
 
 router = APIRouter(prefix="/notifications/webhooks")
 
@@ -155,9 +156,11 @@ def _brevo_sms_delivery_status(payload: dict[str, Any]) -> CommunicationDelivery
 
 @router.post("/email")
 def email_feedback_webhook(
+    request: Request,
     payload: DeliveryFeedbackWebhookRequest,
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
+    assert_bearer_webhook_token(request)
     if (payload.channel or "").strip().upper() != "EMAIL":
         return {"accepted": False, "reason": "channel must be EMAIL"}
     event_type = _event_type_from_payload(payload)
@@ -202,9 +205,11 @@ def email_feedback_webhook(
 
 @router.post("/brevo/email")
 def brevo_email_webhook(
+    request: Request,
     payload: Any = Body(...),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
+    assert_bearer_webhook_token(request)
     accepted = 0
     updated = 0
     queued = 0
@@ -265,9 +270,11 @@ def brevo_email_webhook(
 
 @router.post("/sms")
 def sms_feedback_webhook(
+    request: Request,
     payload: DeliveryFeedbackWebhookRequest,
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
+    assert_bearer_webhook_token(request)
     if (payload.channel or "").strip().upper() != "SMS":
         return {"accepted": False, "reason": "channel must be SMS"}
     event_type = _event_type_from_payload(payload)
@@ -311,9 +318,11 @@ def sms_feedback_webhook(
 
 @router.post("/brevo/sms")
 def brevo_sms_webhook(
+    request: Request,
     payload: Any = Body(...),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
+    assert_bearer_webhook_token(request)
     accepted = 0
     updated = 0
     queued = 0

@@ -53,6 +53,7 @@ import type {
   UserOut,
 } from "../../lib/types";
 import { normalizeUiLanguage, resolveAuthOkMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
+import { sanitizeRichHtml } from "../../lib/sanitize-rich-html";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type Tab = "overview" | "planning" | "notes" | "finance" | "messages" | "catalog" | "profile";
@@ -1502,7 +1503,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
                       <span className="badge">{message.channel === "PUSH" ? t("teacher.push_channel") : message.channel}</span>
                     </summary>
                     {message.body_format === "HTML" ? (
-                      <article className="teacher-inbox-message-body" dangerouslySetInnerHTML={{ __html: message.body }} />
+                      <article className="teacher-inbox-message-body" dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(message.body) }} />
                     ) : (
                       <p className="teacher-inbox-message-body">{message.body}</p>
                     )}
@@ -1977,7 +1978,7 @@ export default async function ProfessorPage({ searchParams }: { searchParams: Se
               );
             })()}
             {selectedMessage.body_format === "HTML" ? (
-              <article className="item" dangerouslySetInnerHTML={{ __html: selectedMessage.body }} />
+              <article className="item" dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(selectedMessage.body) }} />
             ) : (
               <article className="item">
                 <p style={{ whiteSpace: "pre-wrap" }}>{selectedMessage.body}</p>

@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import Text, and_, cast, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
@@ -81,6 +81,7 @@ from app.services.referrals import (
     referral_summary,
 )
 from app.services.security import hash_password
+from app.services.webhook_security import assert_typeform_signature
 
 router = APIRouter(prefix="/typeform")
 logger = logging.getLogger(__name__)
@@ -7384,10 +7385,21 @@ def seed_typeform_demo(
 
 
 @router.post("/webhook", response_model=TypeformWebhookOut, status_code=status.HTTP_201_CREATED)
-def ingest_typeform_webhook(
-    payload: dict[str, object],
+async def ingest_typeform_webhook(
+    request: Request,
     db: Session = Depends(get_db),
 ) -> TypeformWebhookOut:
+    raw_body = await request.body()
+    assert_typeform_signature(
+        raw_body=raw_body,
+        signature=request.headers.get("typeform-signature"),
+    )
+    try:
+        payload = await request.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON payload") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid Typeform payload")
     intake = _ingest_typeform_payload(db, payload)
     return TypeformWebhookOut(
         intake_id=intake.id,

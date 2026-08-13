@@ -78,6 +78,7 @@ import TransactionRow from "../../components/ui-client/transaction-row";
 import UpcomingLessonRow from "../../components/ui-client/upcoming-lesson-row";
 import UrgentPayCard from "../../components/ui-client/urgent-pay-card";
 import { localeForUiLanguage, normalizeUiLanguage, resolveAuthErrorMessage, resolveAuthOkMessage, translateBackendMessage, type UiLanguage, uiText } from "../../lib/ui-i18n";
+import { sanitizeRichHtml } from "../../lib/sanitize-rich-html";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type AgendaView = "agenda" | "week" | "day";
@@ -4938,7 +4939,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               {selectedContentLesson.lesson.content_html ? (
                                 <div
                                   className="client-content-lesson-body"
-                                  dangerouslySetInnerHTML={{ __html: selectedContentLesson.lesson.content_html }}
+                                  dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(selectedContentLesson.lesson.content_html) }}
                                 />
                               ) : (
                                 <div className="client-content-empty-state">

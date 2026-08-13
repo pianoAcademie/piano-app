@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { normalizeUiLanguage, type UiLanguage, uiText } from "../lib/ui-i18n";
+import { sanitizeRichHtml } from "../lib/sanitize-rich-html";
 
 type QuoteEmailPreviewPayload = {
   recipient_email: string;
@@ -176,7 +177,7 @@ export default function QuoteEmailPreviewSubmitButton({
               <div className="quote-email-preview-field">
                 <strong>{t("common.message")}</strong>
                 {preview.body_format.trim().toUpperCase() === "HTML" ? (
-                  <div className="quote-email-preview-body" dangerouslySetInnerHTML={{ __html: preview.body || "<p>-</p>" }} />
+                  <div className="quote-email-preview-body" dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(preview.body || "<p>-</p>") }} />
                 ) : (
                   <pre className="quote-email-preview-body quote-email-preview-text">{preview.body || "-"}</pre>
                 )}

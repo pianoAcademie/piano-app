@@ -11,6 +11,7 @@ import type {
   UserOut,
 } from "../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../lib/ui-i18n";
+import { sanitizeRichHtml } from "../../../lib/sanitize-rich-html";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 type ChannelFilter = "ALL" | "EMAIL" | "SMS";
@@ -493,7 +494,7 @@ export default async function AdminCommunicationsPage({ searchParams }: { search
             <h3>{t("admin.communications.content")}</h3>
             {selected.content_format === "HTML" ? (
               <div className="card modal-card">
-                <div dangerouslySetInnerHTML={{ __html: selected.content }} />
+                <div dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(selected.content) }} />
               </div>
             ) : (
               <pre className="message-body-preview">{selected.content}</pre>

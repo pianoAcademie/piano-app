@@ -18,6 +18,12 @@ app = FastAPI(title="Piano Academie API", version="0.2.1")
 app.include_router(api_router, prefix="/api/v1")
 
 
+def _safe_request_query(request: Request) -> str:
+    """Keep only parameter names in logs; query values may contain auth tokens."""
+    names = sorted({str(name).strip() for name in request.query_params.keys() if str(name).strip()})
+    return "&".join(f"{name}=[REDACTED]" for name in names)
+
+
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
@@ -46,7 +52,7 @@ async def request_logging_middleware(request: Request, call_next):
                 "request_id": request_id,
                 "method": request.method,
                 "path": request.url.path,
-                "query": request.url.query,
+                "query": _safe_request_query(request),
                 "duration_ms": duration_ms,
                 "client_ip": request.client.host if request.client else None,
             },
@@ -62,7 +68,7 @@ async def request_logging_middleware(request: Request, call_next):
             "request_id": request_id,
             "method": request.method,
             "path": request.url.path,
-            "query": request.url.query,
+            "query": _safe_request_query(request),
             "status_code": response.status_code,
             "duration_ms": duration_ms,
             "client_ip": request.client.host if request.client else None,

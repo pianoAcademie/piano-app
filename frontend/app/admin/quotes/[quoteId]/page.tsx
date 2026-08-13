@@ -74,6 +74,7 @@ import type {
   UserOut,
 } from "../../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage, uiText } from "../../../../lib/ui-i18n";
+import { sanitizeRichHtml } from "../../../../lib/sanitize-rich-html";
 import { resolveUiFlashMessage, withUiLanguage, withUiMessageCode } from "../../../../lib/ui-messages";
 
 type SearchParams = Record<string, string | string[] | undefined>;
@@ -2585,7 +2586,7 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
                       {messageBodyFormat === "HTML" ? (
                         <div
                           className="quote-interaction-message-html"
-                          dangerouslySetInnerHTML={{ __html: messageBody }}
+                          dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(messageBody) }}
                         />
                       ) : (
                         <pre>{messageBody}</pre>
@@ -4026,14 +4027,14 @@ export default async function AdminQuoteDetailPage({ params, searchParams }: Rou
 	                      <h4>{t("admin.quote_detail.quote_preview")}</h4>
 	                      <div
                         className="top-gap-sm"
-                        dangerouslySetInnerHTML={{ __html: documentPreview.quote_body_html || documentPreview.combined_html }}
+                        dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(documentPreview.quote_body_html || documentPreview.combined_html) }}
                       />
 	                    </article>
 	                    <details className="modal-details top-gap-sm">
 	                      <summary>{t("admin.quote_detail.terms_conditions")}</summary>
 	                      <article className="item">
 	                        {documentPreview.terms_html ? (
-	                          <div dangerouslySetInnerHTML={{ __html: documentPreview.terms_html }} />
+	                          <div dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(documentPreview.terms_html) }} />
 	                        ) : (
 	                          <p className="muted">{t("admin.quote_detail.no_terms_available")}</p>
 	                        )}
