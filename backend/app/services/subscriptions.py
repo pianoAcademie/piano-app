@@ -37,6 +37,24 @@ def default_next_payment_at(started_at: datetime) -> datetime:
     return add_months_utc(started_at, 1)
 
 
+def extend_booking_horizon_after_payment_method_setup(
+    subscription: ClientPlanSubscription,
+    *,
+    now: datetime,
+) -> bool:
+    """Open the next recurring period for booking without moving its charge date."""
+    due_at = subscription.next_payment_at or subscription.current_period_end or subscription.ends_at
+    if (
+        due_at is None
+        or due_at <= now
+        or subscription.ends_at is None
+        or subscription.ends_at > due_at
+    ):
+        return False
+    subscription.ends_at = add_months_utc(due_at, 1)
+    return True
+
+
 def shift_calendar_days_utc(value: datetime, *, days: int, timezone_name: str = "Europe/Paris") -> datetime:
     local_timezone = ZoneInfo(timezone_name)
     localized = value.astimezone(local_timezone)

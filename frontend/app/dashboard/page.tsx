@@ -897,6 +897,15 @@ function isSubscriptionCoveredForPlanning(
   );
 }
 
+function subscriptionCoversSessionDate(
+  sub: { ends_at: string | null },
+  sessionStartAt: string,
+): boolean {
+  const sessionDate = safeDate(sessionStartAt);
+  const endsAt = safeDate(sub.ends_at);
+  return sessionDate !== null && (endsAt === null || sessionDate < endsAt);
+}
+
 function isSubscriptionVisibleInPortal(
   sub: {
     status: string;
@@ -2026,6 +2035,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     }
     activeEntitlementsByOwner.set(sub.owner_client_id, entitlementSet);
   }
+  const expiringSubscriptionsByOwner = new Map<string, typeof subscriptions>();
+  for (const sub of subscriptions) {
+    if (!isSubscriptionCoveredForPlanning(sub, now, isReadOnlyPreview) || !sub.payment_method_setup_required) {
+      continue;
+    }
+    const existing = expiringSubscriptionsByOwner.get(sub.owner_client_id) ?? [];
+    existing.push(sub);
+    expiringSubscriptionsByOwner.set(sub.owner_client_id, existing);
+  }
 
   const selectedPurchaseOwner = validMemberIds.has(readParam(searchParams, "purchase_user_id"))
     ? readParam(searchParams, "purchase_user_id")
@@ -2142,13 +2160,20 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       if (normalized !== "ACTIVE" && normalized !== "PAYMENT_ALERT") {
         return false;
       }
-      if (normalizeStatus(sub.billing_method_code || "") === "SEPA_DEBIT") {
-        return true;
-      }
-      const dueAt = safeDate(sub.next_payment_at || sub.current_period_end);
-      return dueAt !== null && dueAt <= now;
+      const dueAt = safeDate(sub.next_payment_at || sub.current_period_end || sub.ends_at);
+      return dueAt !== null;
     })
     .sort((a, b) => (a.next_payment_at || "").localeCompare(b.next_payment_at || ""));
+  const renewalPaymentMethodsForSubscription = (sub: SubscriptionOut): string[] => {
+    const plan = plans.find((entry) => entry.id === sub.plan.id);
+    const configured = (plan?.payment_methods ?? []).filter(
+      (method) => method === "CARD_ONLINE" || method === "SEPA_DEBIT",
+    );
+    if (configured.length > 0) {
+      return configured;
+    }
+    return [normalizeStatus(sub.billing_method_code || "") === "SEPA_DEBIT" ? "SEPA_DEBIT" : "CARD_ONLINE"];
+  };
   const hasPreTerminationAlert = subscriptionAlerts.some((sub) => normalizeStatus(sub.status) === "PRE_TERMINATION");
   const primaryRecoveryUrl = subscriptionAlerts.find((sub) => Boolean(sub.direct_payment_recovery_url))?.direct_payment_recovery_url ?? null;
   const homeSubscriptionsPreview = homeSubscriptions.slice(0, 2);
@@ -2324,6 +2349,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     const paymentPending = Boolean(memberBooking && isPendingPaymentBooking(memberBooking.status));
     const sessionIsPastOrStarted = (safeDate(session.start_at_utc)?.getTime() ?? 0) <= now.getTime();
     const eligibleByPlan = activeEntitlementsByOwner.get(ownerId)?.has(session.course_type.id) ?? false;
+    const renewalSubscription = (expiringSubscriptionsByOwner.get(ownerId) ?? []).find(
+      (sub) =>
+        (sub.entitlement_course_type_ids ?? []).includes(session.course_type.id)
+        && !subscriptionCoversSessionDate(sub, session.start_at_utc),
+    ) ?? null;
     const hasAnySubscription = activeSubscriptionByOwner.has(ownerId);
     const isFull = session.booked_count >= session.capacity_max;
     const hasDirectPayment = sessionHasDirectPayment(session);
@@ -2332,7 +2362,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       && session.online_booking_enabled
       && !sessionIsPastOrStarted
       && !isFull
-      && (paymentPending || (!memberBooking && (eligibleByPlan || hasDirectPayment)));
+      && (paymentPending || (!memberBooking && !renewalSubscription && (eligibleByPlan || hasDirectPayment)));
 
     let statusCode: PlanningStatusCode = "UNAVAILABLE";
     if (alreadyReserved) {
@@ -2345,6 +2375,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       statusCode = "PAST";
     } else if (!session.online_booking_enabled) {
       statusCode = "CLOSED";
+    } else if (renewalSubscription) {
+      statusCode = "NO_PLAN";
     } else if (canCheckout) {
       statusCode = hasDirectPayment && !eligibleByPlan ? "PAYMENT_REQUIRED" : "AVAILABLE";
     } else if (hasAnySubscription) {
@@ -2369,6 +2401,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       hasAnySubscription,
       isFull,
       hasDirectPayment,
+      renewalSubscription,
       canCheckout,
       statusCode,
       statusLabel: planningStatusLabel(statusCode),
@@ -2389,6 +2422,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
             ? hasDirectPayment && !ownerState.eligibleByPlan
               ? t("client.online_payment_required_confirmation")
               : t("client.available_for_booking")
+            : ownerState.renewalSubscription
+              ? t("client.renewal_required_for_future_booking", {
+                  date: formatDate(ownerState.renewalSubscription.next_payment_at || ownerState.renewalSubscription.ends_at, language),
+                })
             : ownerState.statusCode === "INCOMPATIBLE_PLAN"
               ? t("client.member_plan_incompatible")
               : ownerState.statusCode === "NO_PLAN"
@@ -2419,9 +2456,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     );
     const reservedFamilyBookings = familyBookings.filter((booking) => isAlreadyReservedByMember(booking.status));
     const pendingFamilyBookings = familyBookings.filter((booking) => isPendingPaymentBooking(booking.status));
-    const actionableMembers = members
-      .map((member) => ({ member, state: memberPlanningStateForSession(session, member.id) }))
-      .filter((entry) => entry.state.canCheckout);
+    const familyMemberStates = members
+      .map((member) => ({ member, state: memberPlanningStateForSession(session, member.id) }));
+    const actionableMembers = familyMemberStates.filter((entry) => entry.state.canCheckout);
+    const renewalSubscription = familyMemberStates
+      .find((entry) => entry.state.renewalSubscription)?.state.renewalSubscription ?? null;
     const hasAdditionalFamilyOptions = reservedFamilyBookings.length > 0 && actionableMembers.length > 0;
     const reservedNames = reservedFamilyBookings.map((booking) => booking.owner_display_name).join(", ");
     const pendingNames = pendingFamilyBookings.map((booking) => booking.owner_display_name).join(", ");
@@ -2460,6 +2499,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         actionableMembers[0].state.hasDirectPayment && !actionableMembers[0].state.eligibleByPlan
           ? t("client.payment_required_for_member", { member: actionableMembers[0].member.display_name })
           : t("client.available_for_member", { member: actionableMembers[0].member.display_name });
+    } else if (renewalSubscription) {
+      statusCode = "NO_PLAN";
+      contextLine = t("client.renewal_required_for_future_booking", {
+        date: formatDate(renewalSubscription.next_payment_at || renewalSubscription.ends_at, language),
+      });
     } else if (hasAnySubscription) {
       statusCode = "INCOMPATIBLE_PLAN";
       contextLine = t("client.no_compatible_family_plan");
@@ -2481,6 +2525,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       hasAnySubscription,
       isFull: session.booked_count >= session.capacity_max,
       hasDirectPayment,
+      renewalSubscription,
       canCheckout: actionableMembers.length > 0,
       statusCode,
       statusLabel: planningStatusLabel(statusCode),
@@ -2569,7 +2614,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
           formula_options: [],
         }))
       : [];
-  const reservationOptionsMembers = selectedSessionReservationOptions?.members ?? fallbackReservationOptionsMembers;
+  const reservationOptionsMembers = selectedSessionPlanningState?.renewalSubscription
+    ? []
+    : selectedSessionReservationOptions?.members ?? fallbackReservationOptionsMembers;
   const reservationMemberOptionPriority = (option: ClientSessionReservationMemberOptionOut): number => {
     switch (option.action_code) {
       case "BOOK_WITH_CREDIT":
@@ -2861,9 +2908,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     }
     return null;
   };
+  const selectedSessionRenewalSubscription = selectedSessionPlanningState?.renewalSubscription ?? null;
+  const selectedSessionRenewalPaymentMethods = selectedSessionRenewalSubscription
+    ? renewalPaymentMethodsForSubscription(selectedSessionRenewalSubscription)
+    : [];
   const selectedSessionStateTitle =
     selectedSessionRequiresMemberChoice
       ? t("client.member_concerned")
+      : selectedSessionRenewalSubscription
+        ? t("client.renewal_required_title")
       : selectedSessionEffectiveActionCode === "FINALIZE_PAYMENT" && selectedReservationMemberOption
         ? t("client.finalize_payment_for", { member: selectedReservationMemberOption.member_display_name })
         : selectedSessionEffectiveActionCode === "BOOK_WITH_CREDIT" && selectedReservationMemberOption
@@ -2882,6 +2935,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const selectedSessionStateDescription =
     selectedSessionRequiresMemberChoice
       ? t("client.best_option_auto")
+      : selectedSessionRenewalSubscription
+        ? t("client.renewal_required_for_future_booking", {
+            date: formatDate(selectedSessionRenewalSubscription.next_payment_at || selectedSessionRenewalSubscription.ends_at, language),
+          })
       : selectedSessionEffectiveActionCode === "FINALIZE_PAYMENT" && selectedReservationMemberOption
         ? alternativeReservationOptions.length > 0
           ? t("client.pending_payment_other_member", { member: selectedReservationMemberOption.member_display_name })
@@ -3269,22 +3326,31 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
               {paymentMethodSetupSubscriptions.map((sub) => {
                 const isSepaSetup = normalizeStatus(sub.billing_method_code || "") === "SEPA_DEBIT";
                 const renewalDate = formatDate(sub.next_payment_at || sub.current_period_end, language);
+                const renewalPaymentMethods = renewalPaymentMethodsForSubscription(sub);
                 return (
                   <div key={`payment-method-setup-${sub.id}`}>
                     <p>
                       {isSepaSetup
                         ? t("client.sepa_mandate_required_for_renewal", { date: renewalDate })
-                        : t("client.payment_method_required_at_renewal")}
+                        : t("client.payment_method_required_at_renewal", { date: renewalDate })}
                     </p>
-                    <form action={openClientPaymentCheckoutAction}>
-                      {sub.direct_payment_recovery_url ? (
-                        <input type="hidden" name="payment_url" value={sub.direct_payment_recovery_url} />
-                      ) : (
-                        <input type="hidden" name="payment_id" value={`plan:${sub.id}`} />
-                      )}
+                    <form action={openClientPaymentMethodSetupAction}>
+                      <input type="hidden" name="subscription_id" value={sub.id} />
                       <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "offers", offer_detail_id: sub.id })} />
+                      {renewalPaymentMethods.length > 1 ? (
+                        <label>
+                          {t("client.catalog_renewal_method")}
+                          <select name="billing_method_code" defaultValue={sub.billing_method_code || "CARD_ONLINE"}>
+                            {renewalPaymentMethods.map((method) => (
+                              <option key={method} value={method}>{paymentMethodLabel(method, language)}</option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : (
+                        <input type="hidden" name="billing_method_code" value={renewalPaymentMethods[0]} />
+                      )}
                       <button type="submit" className="client-pay-cta">
-                        {t(isSepaSetup ? "client.register_sepa_mandate" : "client.enter_payment_method")} · {sub.owner_display_name}
+                        {t(isSepaSetup && renewalPaymentMethods.length === 1 ? "client.register_sepa_mandate" : "client.enter_payment_method")} · {sub.owner_display_name}
                       </button>
                     </form>
                   </div>
@@ -4327,6 +4393,47 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     {sessionOkMessage ? <section className="flash-ok modal-card">{sessionOkMessage}</section> : null}
                     {sessionErrorMessage ? <section className="flash-err modal-card">{sessionErrorMessage}</section> : null}
 
+                    {!selectedSessionHasBooking && selectedSessionRenewalSubscription ? (
+                      <section className="modal-card client-session-inline-warning">
+                        <strong>{t("client.renewal_required_title")}</strong>
+                        <p>
+                          {t("client.renewal_required_for_future_booking", {
+                            date: formatDate(
+                              selectedSessionRenewalSubscription.next_payment_at || selectedSessionRenewalSubscription.ends_at,
+                              language,
+                            ),
+                          })}
+                        </p>
+                        <form action={openClientPaymentMethodSetupAction}>
+                          <input type="hidden" name="subscription_id" value={selectedSessionRenewalSubscription.id} />
+                          <input type="hidden" name="return_to" value={selectedSessionReturnTo} />
+                          {selectedSessionRenewalPaymentMethods.length > 1 ? (
+                            <label>
+                              {t("client.catalog_renewal_method")}
+                              <select
+                                name="billing_method_code"
+                                defaultValue={selectedSessionRenewalSubscription.billing_method_code || "CARD_ONLINE"}
+                              >
+                                {selectedSessionRenewalPaymentMethods.map((method) => (
+                                  <option key={method} value={method}>{paymentMethodLabel(method, language)}</option>
+                                ))}
+                              </select>
+                            </label>
+                          ) : (
+                            <input type="hidden" name="billing_method_code" value={selectedSessionRenewalPaymentMethods[0]} />
+                          )}
+                          <button type="submit" className="client-session-primary-button">
+                            {t(
+                              selectedSessionRenewalPaymentMethods.length === 1
+                                && selectedSessionRenewalPaymentMethods[0] === "SEPA_DEBIT"
+                                ? "client.register_sepa_mandate"
+                                : "client.enter_payment_method",
+                            )}
+                          </button>
+                        </form>
+                      </section>
+                    ) : null}
+
                     {!selectedSessionHasBooking &&
                     selectedReservationMemberOption &&
                     selectedSessionFormulaOptions.length > 0 &&
@@ -4594,7 +4701,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                             <span className="badge">{t("client.choose_member_first")}</span>
                           </div>
                         ) : null}
-                        {!selectedReservationMemberOption && !selectedSessionRequiresMemberChoice ? (
+                        {!selectedReservationMemberOption && !selectedSessionRequiresMemberChoice && !selectedSessionRenewalSubscription ? (
                           <div className="stack-sm">
                             <span className="badge">
                               {selectedSessionPlanningState?.contextLine || t("client.unavailable_slot")}
@@ -6321,8 +6428,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                               </div>
                               <p className="muted">{sub.owner_display_name} · {sub.plan.name}</p>
                               {expiry ? <p className="muted">{t("client.expires_on", { date: expiry })}</p> : null}
-                              {sub.payment_method_setup_required ? (
-                                <p className="muted">{t("client.payment_method_will_be_requested")}</p>
+                            {sub.payment_method_setup_required ? (
+                                <div className="stack-sm">
+                                  <p className="muted">{t("client.payment_method_will_be_requested")}</p>
+                                  <form action={openClientPaymentMethodSetupAction}>
+                                    <input type="hidden" name="subscription_id" value={sub.id} />
+                                    <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "account" })} />
+                                    <button type="submit" className="mode-link client-payment-method-action">
+                                      {t("client.enter_payment_method")}
+                                    </button>
+                                  </form>
+                                </div>
                               ) : (
                                 <form action={openClientPaymentMethodSetupAction}>
                                   <input type="hidden" name="subscription_id" value={sub.id} />
@@ -6576,7 +6692,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           <p className="muted">{sub.owner_display_name} · {sub.plan.name}</p>
                           {expiry ? <p className="muted">{t("client.expires_on", { date: expiry })}</p> : null}
                           {sub.payment_method_setup_required ? (
-                            <p className="muted">{t("client.payment_method_will_be_requested")}</p>
+                            <div className="stack-sm">
+                              <p className="muted">{t("client.payment_method_will_be_requested")}</p>
+                              <form action={openClientPaymentMethodSetupAction}>
+                                <input type="hidden" name="subscription_id" value={sub.id} />
+                                <input type="hidden" name="return_to" value={withUpdatedQuery(rawParams, { tab: "account" })} />
+                                <button type="submit" className="mode-link client-payment-method-action">
+                                  {t("client.enter_payment_method")}
+                                </button>
+                              </form>
+                            </div>
                           ) : (
                             <form action={openClientPaymentMethodSetupAction}>
                               <input type="hidden" name="subscription_id" value={sub.id} />

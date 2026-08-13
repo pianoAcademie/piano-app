@@ -67,7 +67,8 @@ class PaymentLookupResult:
 def create_stripe_payment_method_setup_session(
     db: Session,
     *,
-    customer_reference: str,
+    customer_reference: str | None,
+    customer_email: str | None = None,
     success_return_url: str,
     cancel_return_url: str,
     metadata: dict[str, str],
@@ -97,11 +98,27 @@ def create_stripe_payment_method_setup_session(
         )
     body: dict[str, str] = {
         "mode": "setup",
-        "customer": customer_reference,
         "payment_method_types[0]": normalized_payment_method_type,
         "success_url": success_return_url,
         "cancel_url": cancel_return_url,
     }
+    normalized_customer_reference = (customer_reference or "").strip()
+    if normalized_customer_reference:
+        body["customer"] = normalized_customer_reference
+    else:
+        normalized_customer_email = (customer_email or "").strip()
+        if not normalized_customer_email:
+            return CheckoutCreateResult(
+                success=False,
+                provider=PaymentProvider.STRIPE,
+                checkout_url=None,
+                provider_reference=None,
+                status="MISSING_CUSTOMER",
+                message="Stripe customer reference or email is required",
+                retryable=False,
+            )
+        body["customer_email"] = normalized_customer_email
+        body["customer_creation"] = "always"
     for key, value in metadata.items():
         normalized_key = str(key).strip()
         if not normalized_key:

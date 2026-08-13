@@ -2112,12 +2112,18 @@ export async function openClientPaymentMethodSetupAction(formData: FormData): Pr
 
   const returnTo = safeClientReturnPath(formData, "/client?tab=account");
   const subscriptionId = String(formData.get("subscription_id") ?? "").trim();
+  const billingMethodCode = String(formData.get("billing_method_code") ?? "").trim().toUpperCase();
   if (!subscriptionId) {
     redirect(appendQueryMessage(returnTo, "error_code", "payment_not_found"));
   }
 
+  const setupParams = new URLSearchParams();
+  setupParams.set("return_to", returnTo);
+  if (billingMethodCode) {
+    setupParams.set("billing_method_code", billingMethodCode);
+  }
   const result = await backendRequest<ClientPaymentCheckoutOut>(
-    `/api/v1/clients/me/subscriptions/${subscriptionId}/payment-method-setup`,
+    `/api/v1/clients/me/subscriptions/${subscriptionId}/payment-method-setup?${setupParams.toString()}`,
     { method: "POST" },
     token,
   );

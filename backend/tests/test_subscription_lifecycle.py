@@ -9,7 +9,15 @@ from app.services.subscription_lifecycle_notifications import (
     send_cancellation_decision_email,
     send_suspension_confirmation_email,
 )
-from app.services.subscriptions import apply_suspension_dates, replace_suspension_dates
+from app.services.subscriptions import (
+    apply_suspension_dates,
+    extend_booking_horizon_after_payment_method_setup,
+    replace_suspension_dates,
+)
+from app.api.routes.clients import (
+    _append_client_payment_setup_query,
+    _safe_client_payment_setup_return_path,
+)
 
 
 def _subscription() -> SimpleNamespace:
@@ -28,6 +36,39 @@ def _subscription() -> SimpleNamespace:
 
 
 class SubscriptionLifecycleTests(unittest.TestCase):
+    def test_payment_method_setup_return_path_keeps_selected_client_session(self) -> None:
+        return_path = "/client?tab=planning&session_id=session-17"
+        safe_path = _safe_client_payment_setup_return_path(return_path)
+
+        self.assertEqual(safe_path, return_path)
+        self.assertEqual(
+            _append_client_payment_setup_query(safe_path, "source=PAYMENT_METHOD_SETUP"),
+            "/client?tab=planning&session_id=session-17&source=PAYMENT_METHOD_SETUP",
+        )
+        self.assertEqual(_safe_client_payment_setup_return_path("//evil.example/client"), "/client?tab=account")
+
+    def test_payment_method_setup_opens_next_period_without_moving_charge_date(self) -> None:
+        subscription = _subscription()
+        subscription.ends_at = subscription.next_payment_at
+        original_due_at = subscription.next_payment_at
+
+        changed = extend_booking_horizon_after_payment_method_setup(
+            subscription,  # type: ignore[arg-type]
+            now=datetime(2026, 8, 5, 8, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(subscription.next_payment_at, original_due_at)
+        self.assertEqual(subscription.current_period_end, original_due_at)
+        self.assertEqual(subscription.ends_at, datetime(2026, 9, 10, 8, 0, tzinfo=timezone.utc))
+
+        changed_again = extend_booking_horizon_after_payment_method_setup(
+            subscription,  # type: ignore[arg-type]
+            now=datetime(2026, 8, 5, 8, 0, tzinfo=timezone.utc),
+        )
+        self.assertFalse(changed_again)
+        self.assertEqual(subscription.ends_at, datetime(2026, 9, 10, 8, 0, tzinfo=timezone.utc))
+
     def test_pause_end_date_is_inclusive_and_resume_is_next_day(self) -> None:
         subscription = _subscription()
 

@@ -103,6 +103,32 @@ def test_stripe_sepa_setup_checkout_uses_existing_customer(monkeypatch) -> None:
     assert body["setup_intent_data[metadata][subscription_id]"] == "sub-1"
 
 
+def test_stripe_sepa_setup_checkout_creates_customer_for_migrated_subscription(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(payment_checkout, "resolve_active_secret", lambda *_args, **_kwargs: "sk_test")
+
+    def fake_request_form(**kwargs: object) -> tuple[int, dict[str, object], str]:
+        captured.update(kwargs)
+        return 200, {"id": "cs_setup_new_customer", "url": "https://checkout.stripe.test/setup", "status": "open"}, ""
+
+    monkeypatch.setattr(payment_checkout, "_request_form", fake_request_form)
+    result = payment_checkout.create_stripe_payment_method_setup_session(
+        object(),  # type: ignore[arg-type]
+        customer_reference=None,
+        customer_email="migrated@example.test",
+        success_return_url="https://app.example.test/success",
+        cancel_return_url="https://app.example.test/cancel",
+        metadata={"subscription_id": "sub-migrated"},
+    )
+
+    assert result.success is True
+    body = captured["body"]
+    assert isinstance(body, dict)
+    assert "customer" not in body
+    assert body["customer_email"] == "migrated@example.test"
+    assert body["customer_creation"] == "always"
+
+
 def test_stripe_checkout_lookup_extracts_saved_card_and_customer(monkeypatch) -> None:
     monkeypatch.setattr(
         payment_checkout,
