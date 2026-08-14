@@ -187,6 +187,17 @@ function formatMoney(amountRaw: string | null, currencyRaw: string | null, langu
   }
 }
 
+function publicPlanningRateLabel(
+  session: SessionOut,
+  participantKind: PlanningParticipantKind | null,
+  language: UiLanguage,
+): string {
+  if (participantKind && session.external_booking_price_ttc === null) {
+    return uiText(language, "embed_planning.formula_access_rate");
+  }
+  return formatMoney(session.external_booking_price_ttc, session.external_booking_currency, language);
+}
+
 function normalizeLocationName(value: string): string {
   return value
     .normalize("NFD")
@@ -292,7 +303,7 @@ function isPublicPlanningSession(session: SessionOut, participantKind: PlanningP
     participantAllowed &&
     session.online_booking_enabled &&
     session.booking_scopes.includes("EXTERNAL") &&
-    session.external_booking_price_ttc !== null
+    (participantKind !== null || session.external_booking_price_ttc !== null)
   );
 }
 
@@ -543,7 +554,13 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
   const sessionCheckoutHref = selectedSession ? buildSessionCheckoutHref(selectedSession.id, selectedSessionReturnTo, language) : `/buy/session/checkout${language === "en" ? "?lang=en" : ""}`;
   const sessionCheckoutLoginHref = `/login?mode=login&return_to=${encodeURIComponent(sessionCheckoutHref)}${language === "en" ? "&lang=en" : ""}`;
   const selectedSessionRequiresCheckout =
-    selectedSession !== null && Number(selectedSession.external_booking_price_ttc ?? "0") > 0 && !selectedSessionIsFull;
+    selectedSession !== null
+    && !selectedSessionIsFull
+    && (
+      participantKind !== null
+      || Number(selectedSession.external_booking_price_ttc ?? "0") > 0
+      || featuredTrialOffer !== null
+    );
   const selectedSessionDetail = selectedSession ? (
     <section className="embed-planning-detail embed-planning-detail-priority">
       <div className="row spread">
@@ -560,8 +577,10 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
 
       <div className="embed-planning-detail-grid">
         <article className="item">
-          <small className="muted">{t("embed_planning.external_rate")}</small>
-          <p>{formatMoney(selectedSession.external_booking_price_ttc, selectedSession.external_booking_currency, language)}</p>
+          <small className="muted">
+            {t(selectedSession.external_booking_price_ttc === null ? "embed_planning.formula_access_label" : "embed_planning.external_rate")}
+          </small>
+          <p>{publicPlanningRateLabel(selectedSession, participantKind, language)}</p>
         </article>
         {selectedSessionTrialOffers.map((trialOffer) => (
           <article className="item embed-planning-trial-offer" key={trialOffer.formula_id}>
@@ -590,14 +609,18 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
               <div>
                 <strong>{t("embed_planning.rate_choice_title")}</strong>
                 <p>
-                  {t("embed_planning.rate_choice_body", {
-                    unitPrice: formatMoney(
-                      selectedSession.external_booking_price_ttc,
-                      selectedSession.external_booking_currency,
-                      language,
-                    ),
-                    trialPrice: formatMoney(featuredTrialOffer.price_ttc, featuredTrialOffer.currency, language),
-                  })}
+                  {selectedSession.external_booking_price_ttc === null
+                    ? t("embed_planning.rate_choice_body_formula_only", {
+                        trialPrice: formatMoney(featuredTrialOffer.price_ttc, featuredTrialOffer.currency, language),
+                      })
+                    : t("embed_planning.rate_choice_body", {
+                        unitPrice: formatMoney(
+                          selectedSession.external_booking_price_ttc,
+                          selectedSession.external_booking_currency,
+                          language,
+                        ),
+                        trialPrice: formatMoney(featuredTrialOffer.price_ttc, featuredTrialOffer.currency, language),
+                      })}
                 </p>
                 <small>{t("embed_planning.rate_choice_login_note")}</small>
               </div>
@@ -778,7 +801,7 @@ export default async function EmbedPlanningPage({ searchParams }: { searchParams
                           {!usesParisLocationGroup && !selectedLocation ? (
                             <small className="embed-slot-location">{session.location?.name || t("embed_planning.location_to_confirm")}</small>
                           ) : null}
-                          <small>{formatMoney(session.external_booking_price_ttc, session.external_booking_currency, language)}</small>
+                          <small>{publicPlanningRateLabel(session, participantKind, language)}</small>
                           <small>{externalAvailabilityLabel(session, language)}</small>
                           <span className="embed-slot-card-action">{isReserved ? t("embed_planning.reserved_badge") : t("embed_planning.select_slot_cta")}</span>
                         </Link>
