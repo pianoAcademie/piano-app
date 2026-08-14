@@ -51,7 +51,7 @@ def _account_default_currency(db: Session) -> str:
 
 def _session_accepts_participant_kind(session: CourseSession, participant_kind: ClientKind | None) -> bool:
     if participant_kind == ClientKind.ADULT:
-        return bool(getattr(session, "adult_bookings_enabled", True))
+        return bool(getattr(session, "adult_bookings_enabled", False))
     if participant_kind == ClientKind.CHILD:
         return bool(getattr(session, "child_bookings_enabled", True))
     return True
@@ -140,11 +140,11 @@ def _serialize_public_session(
         booked_count=booked,
         seats_remaining=seats_remaining,
         child_bookings_enabled=bool(getattr(session, "child_bookings_enabled", True)),
-        adult_bookings_enabled=bool(getattr(session, "adult_bookings_enabled", True)),
+        adult_bookings_enabled=bool(getattr(session, "adult_bookings_enabled", False)),
         adult_capacity_max=getattr(session, "adult_capacity_max", None),
         adult_booked_count=int(adult_booked_count or 0),
         child_trial_bookings_enabled=bool(getattr(session, "child_trial_bookings_enabled", True)),
-        adult_trial_bookings_enabled=bool(getattr(session, "adult_trial_bookings_enabled", True)),
+        adult_trial_bookings_enabled=bool(getattr(session, "adult_trial_bookings_enabled", False)),
         visibility_scopes=visibility_scopes,
         booking_scopes=booking_scopes,
         visibility_scope=visibility_scope,

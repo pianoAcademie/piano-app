@@ -2315,10 +2315,10 @@ class AdminSessionCreateRequest(BaseModel):
     is_all_day: bool = False
     capacity_max: int = Field(default=1, ge=0)
     child_bookings_enabled: bool = True
-    adult_bookings_enabled: bool = True
+    adult_bookings_enabled: bool = False
     adult_capacity_max: int | None = Field(default=None, ge=1)
     child_trial_bookings_enabled: bool = True
-    adult_trial_bookings_enabled: bool = True
+    adult_trial_bookings_enabled: bool = False
     auto_cancel_deadline_utc: datetime | None = None
     auto_cancel_rule_enabled_override: bool | None = None
     auto_cancel_if_booked_less_than_override: int | None = Field(default=None, ge=1)

@@ -144,13 +144,13 @@ def _count_booked(db: Session, session_id: UUID, *, exclude_booking_id: UUID | N
 
 def _session_client_kind_allowed(session_obj: CourseSession, client_kind: ClientKind) -> bool:
     if client_kind == ClientKind.ADULT:
-        return bool(getattr(session_obj, "adult_bookings_enabled", True))
+        return bool(getattr(session_obj, "adult_bookings_enabled", False))
     return bool(getattr(session_obj, "child_bookings_enabled", True))
 
 
 def _session_trial_allowed(session_obj: CourseSession, client_kind: ClientKind) -> bool:
     if client_kind == ClientKind.ADULT:
-        return bool(getattr(session_obj, "adult_trial_bookings_enabled", True))
+        return bool(getattr(session_obj, "adult_trial_bookings_enabled", False))
     return bool(getattr(session_obj, "child_trial_bookings_enabled", True))
 
 

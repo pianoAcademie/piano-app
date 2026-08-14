@@ -24,6 +24,11 @@ class PublicSessionParticipantFilterTests(unittest.TestCase):
         self.assertFalse(_session_accepts_participant_kind(session_obj, ClientKind.ADULT))
         self.assertTrue(_session_accepts_participant_kind(session_obj, ClientKind.CHILD))
 
+    def test_adult_planning_fails_closed_when_legacy_flag_is_missing(self) -> None:
+        session_obj = SimpleNamespace(child_bookings_enabled=True)
+
+        self.assertFalse(_session_accepts_participant_kind(session_obj, ClientKind.ADULT))
+
     def test_adult_remaining_seats_respects_adult_quota(self) -> None:
         session_obj = SimpleNamespace(capacity_max=6, adult_capacity_max=2)
 

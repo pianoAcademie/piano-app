@@ -401,10 +401,10 @@ class CourseSession(Base):
     is_all_day: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     capacity_max: Mapped[int] = mapped_column(Integer, nullable=False)
     child_bookings_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
-    adult_bookings_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    adult_bookings_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     adult_capacity_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
     child_trial_bookings_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
-    adult_trial_bookings_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    adult_trial_bookings_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     status: Mapped[SessionStatus] = mapped_column(
         Enum(
             SessionStatus,

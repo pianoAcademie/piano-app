@@ -894,10 +894,10 @@ function parseCreateSessionDraft(raw: string): CreateSessionDraft | null {
       duration_minutes: String(parsed.duration_minutes ?? ""),
       capacity_max: String(parsed.capacity_max ?? ""),
       child_bookings_enabled: String(parsed.child_bookings_enabled ?? "1") === "0" ? "0" : "1",
-      adult_bookings_enabled: String(parsed.adult_bookings_enabled ?? "1") === "0" ? "0" : "1",
+      adult_bookings_enabled: String(parsed.adult_bookings_enabled ?? "0") === "0" ? "0" : "1",
       adult_capacity_max: String(parsed.adult_capacity_max ?? ""),
       child_trial_bookings_enabled: String(parsed.child_trial_bookings_enabled ?? "1") === "0" ? "0" : "1",
-      adult_trial_bookings_enabled: String(parsed.adult_trial_bookings_enabled ?? "1") === "0" ? "0" : "1",
+      adult_trial_bookings_enabled: String(parsed.adult_trial_bookings_enabled ?? "0") === "0" ? "0" : "1",
       is_all_day: String(parsed.is_all_day ?? "") === "1" ? "1" : "0",
       zoom_link: String(parsed.zoom_link ?? ""),
       recurrence_mode: String(parsed.recurrence_mode ?? "NONE"),
@@ -2047,7 +2047,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                           type="checkbox"
                           name="adult_bookings_enabled"
                           value="1"
-                          defaultChecked={createDraft?.adult_bookings_enabled !== "0"}
+                          defaultChecked={createDraft?.adult_bookings_enabled === "1"}
                         />
                         <span><strong>{pickText(language, "Reservations adultes", "Adult bookings")}</strong></span>
                       </label>
@@ -2075,7 +2075,7 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                           type="checkbox"
                           name="adult_trial_bookings_enabled"
                           value="1"
-                          defaultChecked={createDraft?.adult_trial_bookings_enabled !== "0"}
+                          defaultChecked={createDraft?.adult_trial_bookings_enabled === "1"}
                         />
                         <span><strong>{pickText(language, "Essai adulte autorise", "Adult trial allowed")}</strong></span>
                       </label>
