@@ -198,7 +198,10 @@ function multiValueField(formData: FormData, fieldName: string): string[] | null
 }
 
 function checkboxField(formData: FormData, fieldName: string): boolean {
-  return String(formData.get(fieldName) ?? "").toLowerCase() === "on";
+  const normalized = String(formData.get(fieldName) ?? "")
+    .trim()
+    .toLowerCase();
+  return normalized === "on" || normalized === "true" || normalized === "1";
 }
 
 function checkboxFieldWithDefault(formData: FormData, fieldName: string, defaultValue: boolean): boolean {
