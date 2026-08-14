@@ -4627,6 +4627,7 @@ def get_client_session_purchase_catalog(
 @router.get("/public/sessions/{session_id}/trial-offers", response_model=list[ClientSessionFormulaOptionOut])
 def get_public_session_trial_offers(
     session_id: UUID,
+    participant_kind: ClientKind | None = None,
     db: Session = Depends(get_db),
 ) -> list[ClientSessionFormulaOptionOut]:
     """Expose configured trial prices before login, without deciding member eligibility."""
@@ -4644,12 +4645,11 @@ def get_public_session_trial_offers(
         return []
     if not scopes_allow_external_visibility(resolve_session_visibility_scopes(session_obj)):
         return []
-    if not (
-        bool(getattr(session_obj, "child_bookings_enabled", True))
-        and bool(getattr(session_obj, "child_trial_bookings_enabled", True))
-    ) and not (
-        bool(getattr(session_obj, "adult_bookings_enabled", True))
-        and bool(getattr(session_obj, "adult_trial_bookings_enabled", True))
+    if participant_kind is not None and not _session_trial_allowed(session_obj, participant_kind):
+        return []
+    if participant_kind is None and not (
+        _session_trial_allowed(session_obj, ClientKind.CHILD)
+        or _session_trial_allowed(session_obj, ClientKind.ADULT)
     ):
         return []
 

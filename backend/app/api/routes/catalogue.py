@@ -49,6 +49,32 @@ def _account_default_currency(db: Session) -> str:
     return candidate if len(candidate) == 3 else "EUR"
 
 
+def _session_accepts_participant_kind(session: CourseSession, participant_kind: ClientKind | None) -> bool:
+    if participant_kind == ClientKind.ADULT:
+        return bool(getattr(session, "adult_bookings_enabled", True))
+    if participant_kind == ClientKind.CHILD:
+        return bool(getattr(session, "child_bookings_enabled", True))
+    return True
+
+
+def _participant_seats_remaining(
+    session: CourseSession,
+    *,
+    booked_count: int,
+    adult_booked_count: int,
+    participant_kind: ClientKind | None,
+) -> int:
+    total_remaining = max(int(session.capacity_max) - int(booked_count or 0), 0)
+    if participant_kind != ClientKind.ADULT:
+        return total_remaining
+
+    adult_capacity_max = getattr(session, "adult_capacity_max", None)
+    if adult_capacity_max is None:
+        return total_remaining
+    adult_remaining = max(int(adult_capacity_max) - int(adult_booked_count or 0), 0)
+    return min(total_remaining, adult_remaining)
+
+
 def _serialize_public_session(
     *,
     session: CourseSession,
@@ -60,7 +86,10 @@ def _serialize_public_session(
     adult_booked_count: int,
     timezone: str,
     external_booking_currency: str,
+    participant_kind: ClientKind | None = None,
 ) -> SessionOut | None:
+    if not _session_accepts_participant_kind(session, participant_kind):
+        return None
     visibility_scopes = resolve_session_visibility_scopes(session)
     if not scopes_allow_external_visibility(visibility_scopes):
         return None
@@ -82,7 +111,12 @@ def _serialize_public_session(
         else None
     )
     booked = int(booked_count or 0)
-    seats_remaining = max(session.capacity_max - booked, 0)
+    seats_remaining = _participant_seats_remaining(
+        session,
+        booked_count=booked,
+        adult_booked_count=adult_booked_count,
+        participant_kind=participant_kind,
+    )
     external_booking_price_ttc = None
     if session.external_booking_price_ttc is not None:
         duration_seconds = int(max((session.end_at_utc - session.start_at_utc).total_seconds(), 0))
@@ -239,6 +273,7 @@ def list_locations(active: bool = True, db: Session = Depends(get_db)) -> list[L
 def list_sessions(
     course_type_id: UUID | None = None,
     location_id: UUID | None = None,
+    participant_kind: ClientKind | None = None,
     from_: datetime | None = Query(default=None, alias="from"),
     to: datetime | None = None,
     timezone: str = "UTC",
@@ -305,6 +340,10 @@ def list_sessions(
         stmt = stmt.where(CourseSession.course_type_id == course_type_id)
     if location_id is not None:
         stmt = stmt.where(CourseSession.location_id == location_id)
+    if participant_kind == ClientKind.ADULT:
+        stmt = stmt.where(CourseSession.adult_bookings_enabled.is_(True))
+    elif participant_kind == ClientKind.CHILD:
+        stmt = stmt.where(CourseSession.child_bookings_enabled.is_(True))
     if from_ is not None:
         stmt = stmt.where(CourseSession.start_at_utc >= from_)
     if to is not None:
@@ -327,6 +366,7 @@ def list_sessions(
             adult_booked_count=int(adult_booked_count or 0),
             timezone=timezone,
             external_booking_currency=external_booking_currency,
+            participant_kind=participant_kind,
         )
         if serialized is None:
             continue
@@ -339,6 +379,7 @@ def list_sessions(
 def get_session(
     session_id: UUID,
     timezone: str = "UTC",
+    participant_kind: ClientKind | None = None,
     db: Session = Depends(get_db),
 ) -> SessionOut:
     try:
@@ -408,6 +449,7 @@ def get_session(
         adult_booked_count=int(adult_booked_count or 0),
         timezone=tz.key,
         external_booking_currency=_account_default_currency(db),
+        participant_kind=participant_kind,
     )
     if serialized is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")

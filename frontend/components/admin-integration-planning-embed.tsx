@@ -42,6 +42,7 @@ type AdminIntegrationPlanningEmbedProps = {
   activities: AdminActivityOut[];
   locations: LocationOut[];
   selectedActivityIds?: string[];
+  selectedAdultBookingSlots?: boolean;
   selectedLocationId?: string;
   selectedDisplayDate?: string;
   language?: UiLanguage | string;
@@ -52,6 +53,7 @@ export default function AdminIntegrationPlanningEmbed({
   activities,
   locations,
   selectedActivityIds = [],
+  selectedAdultBookingSlots = false,
   selectedLocationId = "",
   selectedDisplayDate = "",
   language: languageProp = "fr",
@@ -89,15 +91,21 @@ export default function AdminIntegrationPlanningEmbed({
   const selectedLocationLabel = isParisVirtualLocation
     ? "Paris - tous les lieux"
     : (selectableLocations.find((location) => location.id === selectedLocationId)?.name ?? "");
-  const selectedActivityLabel = selectedActivities.map((activity) => activity.name).join(" + ");
+  const selectedActivityLabel = selectedAdultBookingSlots
+    ? t("admin.integration_embed.all_adult_booking_slots")
+    : selectedActivities.map((activity) => activity.name).join(" + ");
   const embedPath = (() => {
-    if (selectedActivities.length === 0 || (!selectedLocation && !isParisVirtualLocation)) {
+    if ((!selectedAdultBookingSlots && selectedActivities.length === 0) || (!selectedLocation && !isParisVirtualLocation)) {
       return "";
     }
     const params = new URLSearchParams();
-    selectedActivities.forEach((activity) => {
-      params.append("course_type_id", activity.id);
-    });
+    if (selectedAdultBookingSlots) {
+      params.set("participant_kind", "ADULT");
+    } else {
+      selectedActivities.forEach((activity) => {
+        params.append("course_type_id", activity.id);
+      });
+    }
     if (isParisVirtualLocation) {
       params.set("location_group", "paris");
     } else if (selectedLocation) {
@@ -114,7 +122,7 @@ export default function AdminIntegrationPlanningEmbed({
   const normalizedBaseUrl = normalizeBaseUrl(accountWebsite);
   const absoluteEmbedUrl = embedPath && normalizedBaseUrl ? `${normalizedBaseUrl}${embedPath}` : "";
   const iframeTitle =
-    selectedActivities.length > 0
+    selectedAdultBookingSlots || selectedActivities.length > 0
       ? `${t("admin.integration_embed.iframe_title_prefix")} ${selectedActivityLabel}${selectedLocationLabel ? ` - ${selectedLocationLabel}` : ""}`
       : t("admin.integration_embed.external_planning");
   const iframeHtml = absoluteEmbedUrl
@@ -131,6 +139,16 @@ export default function AdminIntegrationPlanningEmbed({
 
         <fieldset className="integration-course-picker">
           <legend>{t("common.course")}</legend>
+          <label className="checkline integration-course-option">
+            <input
+              type="checkbox"
+              name="integration_adult_booking_slots"
+              value="1"
+              defaultChecked={selectedAdultBookingSlots}
+            />
+            <span><strong>{t("admin.integration_embed.all_adult_booking_slots")}</strong></span>
+          </label>
+          <p className="muted">{t("admin.integration_embed.all_adult_booking_slots_help")}</p>
           <p className="muted">{t("admin.integration_embed.choose_courses_help")}</p>
           <div className="integration-course-options">
             {eligibleActivities.map((activity) => (
@@ -166,7 +184,7 @@ export default function AdminIntegrationPlanningEmbed({
 
         <div className="row span-2">
           <button type="submit">{t("admin.integration_embed.generate_iframe")}</button>
-          {selectedActivities.length > 0 || selectedLocationId || selectedDisplayDate ? (
+          {selectedAdultBookingSlots || selectedActivities.length > 0 || selectedLocationId || selectedDisplayDate ? (
             <Link className="ghost small-btn" href="/admin/config?section=integrations">
               {t("common.reset")}
             </Link>

@@ -1109,6 +1109,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
   const okMessage = readParam(params, "ok");
   const errorMessage = readParam(params, "error");
   const selectedIntegrationActivityIds = readParamList(params, "integration_course_type_id");
+  const selectedIntegrationAdultBookingSlots = readParam(params, "integration_adult_booking_slots") === "1";
   const selectedIntegrationLocationId = readParam(params, "integration_location_id").trim();
   const selectedIntegrationDate = readParam(params, "integration_date").trim();
 
@@ -5167,6 +5168,7 @@ export default async function AdminConfigPage({ searchParams }: { searchParams?:
               activities={activities}
               locations={integrationLocations}
               selectedActivityIds={selectedIntegrationActivityIds}
+              selectedAdultBookingSlots={selectedIntegrationAdultBookingSlots}
               selectedLocationId={selectedIntegrationLocationId}
               selectedDisplayDate={selectedIntegrationDate}
               language={language}
