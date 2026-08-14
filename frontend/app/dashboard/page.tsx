@@ -2333,11 +2333,17 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
         && !subscriptionCoversSessionDate(sub, session.start_at_utc),
     ) ?? null;
     const hasAnySubscription = activeSubscriptionByOwner.has(ownerId);
-    const isFull = session.booked_count >= session.capacity_max;
+    const memberKind = members.find((member) => member.id === ownerId)?.kind ?? "ADULT";
+    const participantAllowed = memberKind === "CHILD" ? session.child_bookings_enabled : session.adult_bookings_enabled;
+    const adultQuotaFull = memberKind === "ADULT"
+      && session.adult_capacity_max !== null
+      && session.adult_booked_count >= session.adult_capacity_max;
+    const isFull = session.booked_count >= session.capacity_max || adultQuotaFull;
     const hasDirectPayment = sessionHasDirectPayment(session);
     const canCheckout =
       normalizeStatus(session.status) === "SCHEDULED"
       && session.online_booking_enabled
+      && participantAllowed
       && !sessionIsPastOrStarted
       && !isFull
       && (paymentPending || (!memberBooking && !renewalSubscription && (eligibleByPlan || hasDirectPayment)));
@@ -2349,6 +2355,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       statusCode = "PAYMENT_PENDING";
     } else if (isFull) {
       statusCode = "FULL";
+    } else if (!participantAllowed) {
+      statusCode = "CLOSED";
     } else if (sessionIsPastOrStarted) {
       statusCode = "PAST";
     } else if (!session.online_booking_enabled) {
@@ -2378,6 +2386,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
       eligibleByPlan,
       hasAnySubscription,
       isFull,
+      participantAllowed,
+      adultQuotaFull,
       hasDirectPayment,
       renewalSubscription,
       canCheckout,

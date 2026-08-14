@@ -142,6 +142,64 @@ def _count_booked(db: Session, session_id: UUID, *, exclude_booking_id: UUID | N
     return int(value or 0)
 
 
+def _session_client_kind_allowed(session_obj: CourseSession, client_kind: ClientKind) -> bool:
+    if client_kind == ClientKind.ADULT:
+        return bool(getattr(session_obj, "adult_bookings_enabled", True))
+    return bool(getattr(session_obj, "child_bookings_enabled", True))
+
+
+def _session_trial_allowed(session_obj: CourseSession, client_kind: ClientKind) -> bool:
+    if client_kind == ClientKind.ADULT:
+        return bool(getattr(session_obj, "adult_trial_bookings_enabled", True))
+    return bool(getattr(session_obj, "child_trial_bookings_enabled", True))
+
+
+def _count_booked_for_client_kind(
+    db: Session,
+    session_id: UUID,
+    *,
+    client_kind: ClientKind,
+    exclude_booking_id: UUID | None = None,
+) -> int:
+    stmt = (
+        select(func.count(Booking.id))
+        .join(User, User.id == Booking.user_id)
+        .where(
+            Booking.session_id == session_id,
+            Booking.status.in_(BOOKING_STATUSES_CONSUMING_CAPACITY),
+            User.client_kind == client_kind,
+        )
+    )
+    if exclude_booking_id is not None:
+        stmt = stmt.where(Booking.id != exclude_booking_id)
+    value = db.scalar(stmt)
+    return int(value or 0)
+
+
+def _participant_capacity_block_reason(
+    db: Session,
+    *,
+    session_obj: CourseSession,
+    client_kind: ClientKind,
+    exclude_booking_id: UUID | None = None,
+) -> str | None:
+    if not _session_client_kind_allowed(session_obj, client_kind):
+        return "AUDIENCE_DISABLED"
+    if _count_booked(db, session_obj.id, exclude_booking_id=exclude_booking_id) >= session_obj.capacity_max:
+        return "SESSION_FULL"
+    adult_capacity_max = getattr(session_obj, "adult_capacity_max", None)
+    if client_kind == ClientKind.ADULT and adult_capacity_max is not None:
+        adult_count = _count_booked_for_client_kind(
+            db,
+            session_obj.id,
+            client_kind=ClientKind.ADULT,
+            exclude_booking_id=exclude_booking_id,
+        )
+        if adult_count >= int(adult_capacity_max):
+            return "ADULT_QUOTA_FULL"
+    return None
+
+
 def _count_waitlisted(db: Session, session_id: UUID, *, exclude_booking_id: UUID | None = None) -> int:
     stmt = select(func.count(Booking.id)).where(
         Booking.session_id == session_id,
@@ -167,10 +225,26 @@ def _next_booking_status(
     session_obj: CourseSession,
     exclude_booking_id: UUID | None = None,
     create_payment_hold: bool = False,
+    client_kind: ClientKind | None = None,
 ) -> BookingStatus | None:
-    booked_count = _count_booked(db, session_obj.id, exclude_booking_id=exclude_booking_id)
-    if booked_count < session_obj.capacity_max:
+    block_reason = (
+        _participant_capacity_block_reason(
+            db,
+            session_obj=session_obj,
+            client_kind=client_kind,
+            exclude_booking_id=exclude_booking_id,
+        )
+        if client_kind is not None
+        else (
+            "SESSION_FULL"
+            if _count_booked(db, session_obj.id, exclude_booking_id=exclude_booking_id) >= session_obj.capacity_max
+            else None
+        )
+    )
+    if block_reason is None:
         return BookingStatus.PENDING_PAYMENT if create_payment_hold else BookingStatus.BOOKED
+    if block_reason == "AUDIENCE_DISABLED":
+        return None
 
     waitlisted_count = _count_waitlisted(db, session_obj.id, exclude_booking_id=exclude_booking_id)
     if waitlisted_count < _effective_waitlist_capacity(db, session_obj=session_obj):
@@ -237,8 +311,12 @@ def promote_pending_payment_booking(
         return False
     if session_obj.status != SessionStatus.SCHEDULED:
         raise ValueError("Only scheduled sessions can be confirmed")
-    reserved_count = _count_booked(db, session_obj.id, exclude_booking_id=booking.id)
-    if reserved_count >= session_obj.capacity_max:
+    if _participant_capacity_block_reason(
+        db,
+        session_obj=session_obj,
+        client_kind=booking_owner.client_kind,
+        exclude_booking_id=booking.id,
+    ) is not None:
         raise ValueError("Session is no longer available")
     booking.status = BookingStatus.BOOKED
     booking.cancelled_at = None
@@ -837,6 +915,7 @@ def _select_eligible_subscription(
     allowed_plan_kinds: set[PlanKind] | None = None,
     coverage_at: datetime | None = None,
     include_pending_preview: bool = False,
+    allow_trial: bool = True,
 ) -> tuple[ClientPlanSubscription, Plan] | None:
     eligibility_at = coverage_at or now
     course_type = db.scalar(select(CourseType).where(CourseType.id == course_type_id))
@@ -897,6 +976,8 @@ def _select_eligible_subscription(
         if plan.kind == PlanKind.PACK and (subscription.credits_remaining is None or subscription.credits_remaining <= 0):
             continue
         if bool(getattr(plan, "is_trial_offer", False)):
+            if not allow_trial:
+                continue
             if (
                 course_type is None
                 or not bool(getattr(course_type, "trial_course_enabled", False))
@@ -1034,7 +1115,7 @@ def _promote_waitlist_if_possible(
         if booked_count >= session_obj.capacity_max:
             return notifications
 
-        next_waitlisted = db.scalar(
+        waitlisted_candidates = db.scalars(
             select(Booking)
             .where(
                 Booking.session_id == session_obj.id,
@@ -1042,21 +1123,41 @@ def _promote_waitlist_if_possible(
             )
             .order_by(Booking.booked_at.asc(), Booking.id.asc())
             .with_for_update()
-            .limit(1)
-        )
+        ).all()
 
-        if next_waitlisted is None:
+        next_waitlisted: Booking | None = None
+        promoted_user: User | None = None
+        for candidate in waitlisted_candidates:
+            candidate_user = db.scalar(
+                select(User)
+                .where(User.id == candidate.user_id)
+                .with_for_update()
+            )
+            if candidate_user is None:
+                candidate.status = BookingStatus.CANCELLED
+                candidate.cancelled_at = now
+                candidate.cancellation_reason = "WAITLIST_PROMOTION_USER_MISSING"
+                db.flush()
+                continue
+            if _participant_capacity_block_reason(
+                db,
+                session_obj=session_obj,
+                client_kind=candidate_user.client_kind,
+            ) is None:
+                next_waitlisted = candidate
+                promoted_user = candidate_user
+                break
+
+        if next_waitlisted is None or promoted_user is None:
             return notifications
 
-        promoted_user = db.scalar(
-            select(User)
-            .where(User.id == next_waitlisted.user_id)
-            .with_for_update()
-        )
-        if promoted_user is None:
+        if bool(next_waitlisted.is_trial_course) and not _session_trial_allowed(
+            session_obj,
+            promoted_user.client_kind,
+        ):
             next_waitlisted.status = BookingStatus.CANCELLED
             next_waitlisted.cancelled_at = now
-            next_waitlisted.cancellation_reason = "WAITLIST_PROMOTION_USER_MISSING"
+            next_waitlisted.cancellation_reason = "WAITLIST_PROMOTION_TRIAL_DISABLED"
             db.flush()
             continue
 
@@ -1201,6 +1302,11 @@ def _book_session_internal(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This slot does not accept student bookings",
         )
+    if not _session_client_kind_allowed(session_obj, booking_owner.client_kind):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This slot is not open to this participant type",
+        )
 
     if session_obj.status != SessionStatus.SCHEDULED:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session is not bookable")
@@ -1271,6 +1377,26 @@ def _book_session_internal(
         allowed_plan_kinds=allowed_plan_kinds,
         coverage_at=session_obj.start_at_utc,
     )
+    if (
+        selected is not None
+        and bool(selected[1].is_trial_offer)
+        and not _session_trial_allowed(session_obj, booking_owner.client_kind)
+    ):
+        if payload.client_plan_subscription_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Trial bookings are not open to this participant type for this slot",
+            )
+        selected = _select_eligible_subscription(
+            db,
+            user_id=booking_owner.id,
+            course_type_id=session_obj.course_type_id,
+            now=now,
+            requested_subscription_id=None,
+            allowed_plan_kinds=allowed_plan_kinds,
+            coverage_at=session_obj.start_at_utc,
+            allow_trial=False,
+        )
     subscription: ClientPlanSubscription | None = None
     plan: Plan | None = None
     manual_credit_balance: ClientManualCreditBalance | None = None
@@ -1305,6 +1431,11 @@ def _book_session_internal(
         covered_by_manual_credit=manual_credit_type_id is not None,
     )
     is_trial_booking = bool(plan is not None and plan.is_trial_offer)
+    if is_trial_booking and not _session_trial_allowed(session_obj, booking_owner.client_kind):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Trial bookings are not open to this participant type for this slot",
+        )
 
     should_create_payment_hold = allow_pending_payment_hold and subscription is None and total > Decimal("0.00")
     booking_status = _next_booking_status(
@@ -1316,6 +1447,7 @@ def _book_session_internal(
             else None
         ),
         create_payment_hold=should_create_payment_hold,
+        client_kind=booking_owner.client_kind,
     )
     if booking_status is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session is full")

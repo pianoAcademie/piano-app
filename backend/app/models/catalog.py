@@ -325,6 +325,14 @@ class CourseSession(Base):
     __tablename__ = "course_sessions"
     __table_args__ = (
         CheckConstraint(
+            "adult_capacity_max IS NULL OR adult_capacity_max >= 1",
+            name="ck_course_sessions_adult_capacity_positive",
+        ),
+        CheckConstraint(
+            "adult_capacity_max IS NULL OR adult_capacity_max <= capacity_max",
+            name="ck_course_sessions_adult_capacity_within_total",
+        ),
+        CheckConstraint(
             "auto_cancel_if_booked_less_than_override IS NULL OR auto_cancel_if_booked_less_than_override >= 1",
             name="ck_course_sessions_auto_cancel_count_override_positive",
         ),
@@ -392,6 +400,11 @@ class CourseSession(Base):
     end_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     is_all_day: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     capacity_max: Mapped[int] = mapped_column(Integer, nullable=False)
+    child_bookings_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    adult_bookings_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    adult_capacity_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    child_trial_bookings_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    adult_trial_bookings_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     status: Mapped[SessionStatus] = mapped_column(
         Enum(
             SessionStatus,

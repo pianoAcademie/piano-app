@@ -17,6 +17,7 @@ from app.api.routes.bookings import (
     promote_pending_payment_booking,
 )
 from app.models.catalog import BookingStatus, SessionStatus
+from app.models.user import ClientKind
 from app.services.session_automation import run_expire_pending_payment_bookings_job
 
 
@@ -87,6 +88,65 @@ class BookingHoldTests(unittest.TestCase):
 
         self.assertIsNone(next_status)
 
+    def test_next_booking_status_waitlists_adult_when_adult_quota_is_full(self) -> None:
+        session_obj = SimpleNamespace(
+            id=uuid4(),
+            capacity_max=6,
+            adult_capacity_max=1,
+            adult_bookings_enabled=True,
+            location_id=uuid4(),
+        )
+        fake_db = _FakeSession(
+            scalar_values=[
+                1,
+                1,
+                0,
+                SimpleNamespace(waitlist_capacity=3),
+            ]
+        )
+
+        next_status = _next_booking_status(
+            fake_db,
+            session_obj=session_obj,
+            client_kind=ClientKind.ADULT,
+        )
+
+        self.assertEqual(next_status, BookingStatus.WAITLISTED)
+
+    def test_next_booking_status_keeps_remaining_seat_available_for_child(self) -> None:
+        session_obj = SimpleNamespace(
+            id=uuid4(),
+            capacity_max=6,
+            adult_capacity_max=1,
+            child_bookings_enabled=True,
+            location_id=uuid4(),
+        )
+        fake_db = _FakeSession(scalar_values=[1])
+
+        next_status = _next_booking_status(
+            fake_db,
+            session_obj=session_obj,
+            client_kind=ClientKind.CHILD,
+        )
+
+        self.assertEqual(next_status, BookingStatus.BOOKED)
+
+    def test_next_booking_status_rejects_disabled_participant_type(self) -> None:
+        session_obj = SimpleNamespace(
+            id=uuid4(),
+            capacity_max=6,
+            adult_bookings_enabled=False,
+            location_id=uuid4(),
+        )
+
+        next_status = _next_booking_status(
+            _FakeSession(),
+            session_obj=session_obj,
+            client_kind=ClientKind.ADULT,
+        )
+
+        self.assertIsNone(next_status)
+
     def test_promote_pending_payment_booking_confirms_booking(self) -> None:
         now = datetime(2026, 3, 31, 10, 0, tzinfo=timezone.utc)
         booking = SimpleNamespace(
@@ -96,7 +156,7 @@ class BookingHoldTests(unittest.TestCase):
             cancelled_at=None,
             cancellation_reason=None,
         )
-        owner = SimpleNamespace(first_course_at=None)
+        owner = SimpleNamespace(first_course_at=None, client_kind=ClientKind.CHILD)
         session_obj = SimpleNamespace(
             id=uuid4(),
             status=SessionStatus.SCHEDULED,
@@ -156,12 +216,16 @@ class BookingHoldTests(unittest.TestCase):
             cancelled_at=None,
             cancellation_reason=None,
         )
-        user = SimpleNamespace(id=user_id)
+        user = SimpleNamespace(id=user_id, client_kind=ClientKind.CHILD)
         balance = SimpleNamespace(credits_count=1)
         queued_notification = SimpleNamespace(notification_id=uuid4())
-        fake_db = _FakeSession(scalar_values=[course_type, waitlisted, user, None])
+        waitlisted.is_trial_course = False
+        fake_db = _FakeSession(
+            scalar_values=[course_type, user, None],
+            scalars_results=[[waitlisted]],
+        )
 
-        with patch("app.api.routes.bookings._count_booked", side_effect=[0, 1]), patch(
+        with patch("app.api.routes.bookings._count_booked", side_effect=[0, 0, 1]), patch(
             "app.api.routes.bookings._load_manual_credit_balance_for_update",
             return_value=balance,
         ), patch(
@@ -178,6 +242,73 @@ class BookingHoldTests(unittest.TestCase):
         self.assertEqual(balance.credits_count, 0)
         self.assertEqual(notifications, [queued_notification])
         schedule_promoted.assert_called_once_with(fake_db, booking=waitlisted, occurred_at=now)
+
+    def test_waitlist_promotion_skips_blocked_adult_and_promotes_child(self) -> None:
+        now = datetime(2026, 8, 10, 10, 0, tzinfo=timezone.utc)
+        session_obj = SimpleNamespace(
+            id=uuid4(),
+            course_type_id=uuid4(),
+            capacity_max=3,
+            adult_capacity_max=1,
+            start_at_utc=now + timedelta(days=1),
+        )
+        course_type = SimpleNamespace(
+            id=session_obj.course_type_id,
+            name="Cours collectif",
+            credit_type_id=None,
+            service_code="COLLECTIF",
+        )
+        adult_user = SimpleNamespace(id=uuid4(), client_kind=ClientKind.ADULT)
+        child_user = SimpleNamespace(id=uuid4(), client_kind=ClientKind.CHILD)
+        adult_waitlisted = SimpleNamespace(
+            id=uuid4(),
+            user_id=adult_user.id,
+            status=BookingStatus.WAITLISTED,
+            booked_at=now - timedelta(hours=2),
+            client_plan_subscription_id=None,
+            manual_credit_type_id=None,
+            is_trial_course=False,
+            cancelled_at=None,
+            cancellation_reason=None,
+        )
+        child_waitlisted = SimpleNamespace(
+            id=uuid4(),
+            user_id=child_user.id,
+            status=BookingStatus.WAITLISTED,
+            booked_at=now - timedelta(hours=1),
+            client_plan_subscription_id=None,
+            manual_credit_type_id=None,
+            is_trial_course=False,
+            cancelled_at=None,
+            cancellation_reason=None,
+        )
+        fake_db = _FakeSession(
+            scalar_values=[course_type, adult_user, child_user],
+            scalars_results=[[adult_waitlisted, child_waitlisted]],
+        )
+
+        def participant_block(*_args: object, client_kind: ClientKind, **_kwargs: object) -> str | None:
+            return "ADULT_QUOTA_FULL" if client_kind == ClientKind.ADULT else None
+
+        with patch("app.api.routes.bookings._count_booked", side_effect=[1, 3]), patch(
+            "app.api.routes.bookings._participant_capacity_block_reason",
+            side_effect=participant_block,
+        ), patch(
+            "app.api.routes.bookings._activate_confirmed_booking",
+            return_value=[],
+        ), patch(
+            "app.api.routes.bookings.schedule_waitlist_promoted_notification",
+            return_value=[],
+        ):
+            _promote_waitlist_if_possible(
+                fake_db,
+                session_obj,
+                now,
+                allow_planless_promotion=True,
+            )
+
+        self.assertEqual(adult_waitlisted.status, BookingStatus.WAITLISTED)
+        self.assertEqual(child_waitlisted.status, BookingStatus.BOOKED)
 
     def test_expire_pending_payment_bookings_cancels_booking_and_receipt(self) -> None:
         now = datetime(2026, 3, 31, 10, 30, tzinfo=timezone.utc)

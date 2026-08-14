@@ -23,6 +23,7 @@ from app.models.catalog import (
     SessionStatus,
 )
 from app.models.ops import AppSetting
+from app.models.user import ClientKind, User
 from app.schemas.catalog import (
     CourseTypeOut,
     LocationOut,
@@ -56,6 +57,7 @@ def _serialize_public_session(
     professor: Professor | None,
     substitute: Professor | None,
     booked_count: int,
+    adult_booked_count: int,
     timezone: str,
     external_booking_currency: str,
 ) -> SessionOut | None:
@@ -103,6 +105,12 @@ def _serialize_public_session(
         capacity_max=session.capacity_max,
         booked_count=booked,
         seats_remaining=seats_remaining,
+        child_bookings_enabled=bool(getattr(session, "child_bookings_enabled", True)),
+        adult_bookings_enabled=bool(getattr(session, "adult_bookings_enabled", True)),
+        adult_capacity_max=getattr(session, "adult_capacity_max", None),
+        adult_booked_count=int(adult_booked_count or 0),
+        child_trial_bookings_enabled=bool(getattr(session, "child_trial_bookings_enabled", True)),
+        adult_trial_bookings_enabled=bool(getattr(session, "adult_trial_bookings_enabled", True)),
         visibility_scopes=visibility_scopes,
         booking_scopes=booking_scopes,
         visibility_scope=visibility_scope,
@@ -259,6 +267,19 @@ def list_sessions(
         .group_by(Booking.session_id)
         .subquery()
     )
+    adult_booked_counts = (
+        select(
+            Booking.session_id.label("session_id"),
+            func.count(Booking.id).label("adult_booked_count"),
+        )
+        .join(User, User.id == Booking.user_id)
+        .where(
+            Booking.status.in_(BOOKING_STATUSES_CONSUMING_CAPACITY),
+            User.client_kind == ClientKind.ADULT,
+        )
+        .group_by(Booking.session_id)
+        .subquery()
+    )
     substitute_professor = aliased(Professor, name="substitute_professor")
 
     stmt = (
@@ -269,12 +290,14 @@ def list_sessions(
             Professor,
             substitute_professor,
             func.coalesce(booked_counts.c.booked_count, 0).label("booked_count"),
+            func.coalesce(adult_booked_counts.c.adult_booked_count, 0).label("adult_booked_count"),
         )
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
         .outerjoin(Professor, Professor.id == CourseSession.professor_id)
         .outerjoin(substitute_professor, substitute_professor.id == CourseSession.substitute_teacher_id)
         .outerjoin(booked_counts, booked_counts.c.session_id == CourseSession.id)
+        .outerjoin(adult_booked_counts, adult_booked_counts.c.session_id == CourseSession.id)
         .where(CourseSession.status == SessionStatus.SCHEDULED, CourseSession.is_private.is_(False))
     )
 
@@ -293,7 +316,7 @@ def list_sessions(
     external_booking_currency = _account_default_currency(db)
 
     result: list[SessionOut] = []
-    for session, course_type, location, professor, substitute, booked_count in rows:
+    for session, course_type, location, professor, substitute, booked_count, adult_booked_count in rows:
         serialized = _serialize_public_session(
             session=session,
             course_type=course_type,
@@ -301,6 +324,7 @@ def list_sessions(
             professor=professor,
             substitute=substitute,
             booked_count=int(booked_count or 0),
+            adult_booked_count=int(adult_booked_count or 0),
             timezone=timezone,
             external_booking_currency=external_booking_currency,
         )
@@ -334,6 +358,19 @@ def get_session(
         .group_by(Booking.session_id)
         .subquery()
     )
+    adult_booked_counts = (
+        select(
+            Booking.session_id.label("session_id"),
+            func.count(Booking.id).label("adult_booked_count"),
+        )
+        .join(User, User.id == Booking.user_id)
+        .where(
+            Booking.status.in_(BOOKING_STATUSES_CONSUMING_CAPACITY),
+            User.client_kind == ClientKind.ADULT,
+        )
+        .group_by(Booking.session_id)
+        .subquery()
+    )
     substitute_professor = aliased(Professor, name="substitute_professor_detail")
     row = db.execute(
         select(
@@ -343,12 +380,14 @@ def get_session(
             Professor,
             substitute_professor,
             func.coalesce(booked_counts.c.booked_count, 0).label("booked_count"),
+            func.coalesce(adult_booked_counts.c.adult_booked_count, 0).label("adult_booked_count"),
         )
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
         .outerjoin(Professor, Professor.id == CourseSession.professor_id)
         .outerjoin(substitute_professor, substitute_professor.id == CourseSession.substitute_teacher_id)
         .outerjoin(booked_counts, booked_counts.c.session_id == CourseSession.id)
+        .outerjoin(adult_booked_counts, adult_booked_counts.c.session_id == CourseSession.id)
         .where(
             CourseSession.id == session_id,
             CourseSession.status == SessionStatus.SCHEDULED,
@@ -358,7 +397,7 @@ def get_session(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
-    session, course_type, location, professor, substitute, booked_count = row
+    session, course_type, location, professor, substitute, booked_count, adult_booked_count = row
     serialized = _serialize_public_session(
         session=session,
         course_type=course_type,
@@ -366,6 +405,7 @@ def get_session(
         professor=professor,
         substitute=substitute,
         booked_count=int(booked_count or 0),
+        adult_booked_count=int(adult_booked_count or 0),
         timezone=tz.key,
         external_booking_currency=_account_default_currency(db),
     )

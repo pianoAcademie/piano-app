@@ -105,6 +105,12 @@ export type SessionOut = {
   capacity_max: number;
   booked_count: number;
   seats_remaining: number;
+  child_bookings_enabled: boolean;
+  adult_bookings_enabled: boolean;
+  adult_capacity_max: number | null;
+  adult_booked_count: number;
+  child_trial_bookings_enabled: boolean;
+  adult_trial_bookings_enabled: boolean;
   visibility_scopes: SessionAudienceScope[];
   booking_scopes: SessionAudienceScope[];
   visibility_scope: SessionAudienceScope;
@@ -1673,6 +1679,11 @@ export type AdminSessionOut = {
   is_all_day: boolean;
   capacity_max: number;
   booked_count: number;
+  child_bookings_enabled: boolean;
+  adult_bookings_enabled: boolean;
+  adult_capacity_max: number | null;
+  child_trial_bookings_enabled: boolean;
+  adult_trial_bookings_enabled: boolean;
   status: "SCHEDULED" | "CANCELLED" | "COMPLETED" | string;
   auto_cancel_deadline_utc: string;
   auto_cancel_rule_enabled_override: boolean | null;
@@ -1704,6 +1715,7 @@ export type AdminSessionBookingOut = {
   client_first_name: string | null;
   client_last_name: string | null;
   client_display_name: string;
+  client_kind: "ADULT" | "CHILD";
   client_plan_subscription_id: string | null;
   status: string;
   booked_at: string;

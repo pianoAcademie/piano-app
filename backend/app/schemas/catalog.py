@@ -80,6 +80,12 @@ class SessionOut(BaseModel):
     capacity_max: int
     booked_count: int
     seats_remaining: int
+    child_bookings_enabled: bool = True
+    adult_bookings_enabled: bool = True
+    adult_capacity_max: int | None = None
+    adult_booked_count: int = 0
+    child_trial_bookings_enabled: bool = True
+    adult_trial_bookings_enabled: bool = True
     visibility_scopes: list[SessionAudienceScope]
     booking_scopes: list[SessionAudienceScope]
     visibility_scope: SessionAudienceScope

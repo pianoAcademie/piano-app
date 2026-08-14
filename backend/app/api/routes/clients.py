@@ -24,7 +24,10 @@ from app.api.routes.bookings import (
     _count_booked,
     _effective_session_booking_rules,
     _normalize_course_access_key,
+    _participant_capacity_block_reason,
     _select_eligible_subscription,
+    _session_client_kind_allowed,
+    _session_trial_allowed,
     book_session,
     create_or_refresh_pending_payment_booking,
 )
@@ -2417,6 +2420,9 @@ def list_client_visible_sessions(
         ) from exc
 
     managed_client_ids = _managed_client_ids_for_sessions(db, current_user)
+    managed_client_kinds = set(
+        db.scalars(select(User.client_kind).where(User.id.in_(managed_client_ids))).all()
+    )
     visible_booked_session_ids_stmt = (
         select(Booking.session_id)
         .where(
@@ -2467,6 +2473,19 @@ def list_client_visible_sessions(
         .group_by(Booking.session_id)
         .subquery()
     )
+    adult_booked_counts = (
+        select(
+            Booking.session_id.label("session_id"),
+            func.count(Booking.id).label("adult_booked_count"),
+        )
+        .join(User, User.id == Booking.user_id)
+        .where(
+            Booking.status.in_(BOOKING_STATUSES_CONSUMING_CAPACITY),
+            User.client_kind == ClientKind.ADULT,
+        )
+        .group_by(Booking.session_id)
+        .subquery()
+    )
     substitute_professor = aliased(Professor, name="substitute_professor")
 
     stmt = (
@@ -2477,12 +2496,14 @@ def list_client_visible_sessions(
             Professor,
             substitute_professor,
             func.coalesce(booked_counts.c.booked_count, 0).label("booked_count"),
+            func.coalesce(adult_booked_counts.c.adult_booked_count, 0).label("adult_booked_count"),
         )
         .join(CourseType, CourseType.id == CourseSession.course_type_id)
         .join(Location, Location.id == CourseSession.location_id)
         .outerjoin(Professor, Professor.id == CourseSession.professor_id)
         .outerjoin(substitute_professor, substitute_professor.id == CourseSession.substitute_teacher_id)
         .outerjoin(booked_counts, booked_counts.c.session_id == CourseSession.id)
+        .outerjoin(adult_booked_counts, adult_booked_counts.c.session_id == CourseSession.id)
         .where(
             CourseSession.status == SessionStatus.SCHEDULED,
             (
@@ -2506,7 +2527,7 @@ def list_client_visible_sessions(
     external_booking_currency = _account_default_currency(db)
 
     payload: list[SessionOut] = []
-    for session, course_type, location, professor, substitute, booked_count in rows:
+    for session, course_type, location, professor, substitute, booked_count, adult_booked_count in rows:
         visibility_scopes = resolve_session_visibility_scopes(session)
         booking_scopes = resolve_session_booking_scopes(
             session,
@@ -2515,6 +2536,13 @@ def list_client_visible_sessions(
         visibility_scope = primary_session_audience_scope(visibility_scopes)
         booking_scope = primary_session_audience_scope(booking_scopes, fallback=SessionAudienceScope.PRIVATE)
         if session.id not in visible_booked_session_ids:
+            audience_matches_family = (
+                ClientKind.CHILD in managed_client_kinds and bool(getattr(session, "child_bookings_enabled", True))
+            ) or (
+                ClientKind.ADULT in managed_client_kinds and bool(getattr(session, "adult_bookings_enabled", True))
+            )
+            if not audience_matches_family:
+                continue
             if visibility_scopes == [SessionAudienceScope.PRIVATE]:
                 continue
             if scopes_allow_external_visibility(visibility_scopes):
@@ -2568,6 +2596,12 @@ def list_client_visible_sessions(
                 capacity_max=session.capacity_max,
                 booked_count=booked,
                 seats_remaining=seats_remaining,
+                child_bookings_enabled=bool(getattr(session, "child_bookings_enabled", True)),
+                adult_bookings_enabled=bool(getattr(session, "adult_bookings_enabled", True)),
+                adult_capacity_max=getattr(session, "adult_capacity_max", None),
+                adult_booked_count=int(adult_booked_count or 0),
+                child_trial_bookings_enabled=bool(getattr(session, "child_trial_bookings_enabled", True)),
+                adult_trial_bookings_enabled=bool(getattr(session, "adult_trial_bookings_enabled", True)),
                 visibility_scopes=visibility_scopes,
                 booking_scopes=booking_scopes,
                 visibility_scope=visibility_scope,
@@ -4350,7 +4384,26 @@ def get_client_session_reservation_options(
                 )
                 continue
 
-            if is_full:
+            capacity_block_reason = _participant_capacity_block_reason(
+                db,
+                session_obj=session_obj,
+                client_kind=member.client_kind,
+            )
+            if capacity_block_reason == "AUDIENCE_DISABLED":
+                member_options.append(
+                    ClientSessionReservationMemberOptionOut(
+                        member_id=member.id,
+                        member_display_name=_display_name(member),
+                        member_kind=member.client_kind,
+                        action_code="UNAVAILABLE",
+                        action_label="Non reservable",
+                        status_label="Public non autorise",
+                        reason="Ce creneau n est pas ouvert a ce type de participant.",
+                    )
+                )
+                continue
+
+            if capacity_block_reason is not None:
                 member_options.append(
                     ClientSessionReservationMemberOptionOut(
                         member_id=member.id,
@@ -4359,7 +4412,11 @@ def get_client_session_reservation_options(
                         action_code="JOIN_WAITLIST",
                         action_label="Rejoindre la liste d attente",
                         status_label="Liste d attente",
-                        reason="Le creneau est complet. Vous pouvez rejoindre la liste d attente.",
+                        reason=(
+                            "Le quota de places adultes est atteint. Vous pouvez rejoindre la liste d attente."
+                            if capacity_block_reason == "ADULT_QUOTA_FULL"
+                            else "Le creneau est complet. Vous pouvez rejoindre la liste d attente."
+                        ),
                     )
                 )
                 continue
@@ -4371,6 +4428,8 @@ def get_client_session_reservation_options(
                 formula_options=formula_options,
                 trial_reference_at=session_obj.start_at_utc,
             )
+            if not _session_trial_allowed(session_obj, member.client_kind):
+                member_formula_options = [option for option in member_formula_options if not option.is_trial_offer]
 
             selected_subscription = _select_eligible_subscription(
                 db,
@@ -4380,6 +4439,7 @@ def get_client_session_reservation_options(
                 requested_subscription_id=None,
                 allowed_plan_kinds=allowed_plan_kinds,
                 include_pending_preview=include_pending_preview,
+                allow_trial=_session_trial_allowed(session_obj, member.client_kind),
             )
             if selected_subscription is not None:
                 _, selected_plan = selected_subscription
@@ -4551,6 +4611,11 @@ def get_client_session_purchase_catalog(
         session_obj=session_obj,
         course_type=course_type,
     )
+    member_kinds = set(
+        db.scalars(select(User.client_kind).where(User.id.in_(managed_ids))).all()
+    )
+    if not any(_session_trial_allowed(session_obj, kind) for kind in member_kinds):
+        formula_options = [option for option in formula_options if not option.is_trial_offer]
     return ClientSessionPurchaseCatalogOut(
         session_id=session_obj.id,
         formula_options=formula_options,
@@ -4578,6 +4643,14 @@ def get_public_session_trial_offers(
     if not bool(course_type.allows_student_bookings):
         return []
     if not scopes_allow_external_visibility(resolve_session_visibility_scopes(session_obj)):
+        return []
+    if not (
+        bool(getattr(session_obj, "child_bookings_enabled", True))
+        and bool(getattr(session_obj, "child_trial_bookings_enabled", True))
+    ) and not (
+        bool(getattr(session_obj, "adult_bookings_enabled", True))
+        and bool(getattr(session_obj, "adult_trial_bookings_enabled", True))
+    ):
         return []
 
     formula_options, _, _, booking_scopes = _session_purchase_catalog(

@@ -539,6 +539,11 @@ type CreateSessionDraftPayload = {
   end_time: string;
   duration_minutes: string;
   capacity_max: string;
+  child_bookings_enabled: "1" | "0";
+  adult_bookings_enabled: "1" | "0";
+  adult_capacity_max: string;
+  child_trial_bookings_enabled: "1" | "0";
+  adult_trial_bookings_enabled: "1" | "0";
   is_all_day: "1" | "0";
   zoom_link: string;
   recurrence_mode: string;
@@ -2929,6 +2934,12 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   const capacity_raw = String(formData.get("capacity_max") ?? "");
   const parsed_capacity_max = parseNonNegativeInt(capacity_raw);
   const capacity_max = parsed_capacity_max ?? 1;
+  const child_bookings_enabled = checkboxField(formData, "child_bookings_enabled");
+  const adult_bookings_enabled = checkboxField(formData, "adult_bookings_enabled");
+  const adultCapacityRaw = String(formData.get("adult_capacity_max") ?? "").trim();
+  const adult_capacity_max = adultCapacityRaw ? parsePositiveInt(adultCapacityRaw) : null;
+  const child_trial_bookings_enabled = checkboxField(formData, "child_trial_bookings_enabled");
+  const adult_trial_bookings_enabled = checkboxField(formData, "adult_trial_bookings_enabled");
 
   const createDraftPayload: CreateSessionDraftPayload = {
     title: clampDraftValue(title, 255),
@@ -2941,6 +2952,11 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     end_time: String(end_time || "").trim(),
     duration_minutes: duration_minutes_raw,
     capacity_max: String(capacity_raw || "").trim(),
+    child_bookings_enabled: child_bookings_enabled ? "1" : "0",
+    adult_bookings_enabled: adult_bookings_enabled ? "1" : "0",
+    adult_capacity_max: adultCapacityRaw,
+    child_trial_bookings_enabled: child_trial_bookings_enabled ? "1" : "0",
+    adult_trial_bookings_enabled: adult_trial_bookings_enabled ? "1" : "0",
     is_all_day: is_all_day ? "1" : "0",
     zoom_link: clampDraftValue(zoom_link ?? "", 1200),
     recurrence_mode: recurrence_mode || "NONE",
@@ -2988,6 +3004,9 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
   if (!capacity_raw.trim() || parsed_capacity_max === null || capacity_max < 0) {
     redirect(createSessionErrorPath(returnTo, createDraftPayload, t("admin.planning_action.capacity_required")));
   }
+  if (adultCapacityRaw && (adult_capacity_max === null || adult_capacity_max > capacity_max)) {
+    redirect(createSessionErrorPath(returnTo, createDraftPayload, "Le quota adulte doit etre compris entre 1 et la capacite totale."));
+  }
   if (externalBookingPriceRaw && externalBookingPrice === null) {
     redirect(createSessionErrorPath(returnTo, createDraftPayload, t("admin.planning_action.external_price_invalid")));
   }
@@ -3012,6 +3031,11 @@ export async function createAdminSessionAction(formData: FormData): Promise<void
     start_at_utc,
     is_all_day,
     capacity_max,
+    child_bookings_enabled,
+    adult_bookings_enabled,
+    adult_capacity_max: adult_bookings_enabled ? adult_capacity_max : null,
+    child_trial_bookings_enabled: child_bookings_enabled && child_trial_bookings_enabled,
+    adult_trial_bookings_enabled: adult_bookings_enabled && adult_trial_bookings_enabled,
     visibility_scopes,
     booking_scopes,
     is_private,
@@ -3124,6 +3148,12 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   }
   const capacity_raw = String(formData.get("capacity_max") ?? "");
   const capacity_max = parseNonNegativeInt(capacity_raw);
+  const child_bookings_enabled = checkboxField(formData, "child_bookings_enabled");
+  const adult_bookings_enabled = checkboxField(formData, "adult_bookings_enabled");
+  const adultCapacityRaw = String(formData.get("adult_capacity_max") ?? "").trim();
+  const adult_capacity_max = adultCapacityRaw ? parsePositiveInt(adultCapacityRaw) : null;
+  const child_trial_bookings_enabled = checkboxField(formData, "child_trial_bookings_enabled");
+  const adult_trial_bookings_enabled = checkboxField(formData, "adult_trial_bookings_enabled");
   const autoCancelRuleMode = String(formData.get("auto_cancel_rule_mode") ?? "INHERIT").trim().toUpperCase();
   const autoCancelThresholdRaw = String(formData.get("auto_cancel_if_booked_less_than_override") ?? "").trim();
   const autoCancelHoursRaw = String(formData.get("auto_cancel_hours_before_start_override") ?? "").trim();
@@ -3160,6 +3190,9 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
   if (capacity_raw.trim() && capacity_max === null) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.capacity_invalid")));
   }
+  if (adultCapacityRaw && (adult_capacity_max === null || (capacity_max !== null && adult_capacity_max > capacity_max))) {
+    redirect(appendQueryMessage(returnTo, "error", "Le quota adulte doit etre compris entre 1 et la capacite totale."));
+  }
   if (externalBookingPriceRaw && externalBookingPrice === null) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.planning_action.external_price_invalid")));
   }
@@ -3195,6 +3228,11 @@ export async function updateAdminSessionAction(formData: FormData): Promise<void
     location_id,
     start_at_utc,
     is_all_day,
+    child_bookings_enabled,
+    adult_bookings_enabled,
+    adult_capacity_max: adult_bookings_enabled ? adult_capacity_max : null,
+    child_trial_bookings_enabled: child_bookings_enabled && child_trial_bookings_enabled,
+    adult_trial_bookings_enabled: adult_bookings_enabled && adult_trial_bookings_enabled,
     visibility_scopes,
     booking_scopes,
     is_private,

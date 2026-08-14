@@ -68,6 +68,11 @@ type CreateSessionDraft = {
   end_time: string;
   duration_minutes: string;
   capacity_max: string;
+  child_bookings_enabled: "1" | "0";
+  adult_bookings_enabled: "1" | "0";
+  adult_capacity_max: string;
+  child_trial_bookings_enabled: "1" | "0";
+  adult_trial_bookings_enabled: "1" | "0";
   is_all_day: "1" | "0";
   zoom_link: string;
   recurrence_mode: string;
@@ -888,6 +893,11 @@ function parseCreateSessionDraft(raw: string): CreateSessionDraft | null {
       end_time: String(parsed.end_time ?? ""),
       duration_minutes: String(parsed.duration_minutes ?? ""),
       capacity_max: String(parsed.capacity_max ?? ""),
+      child_bookings_enabled: String(parsed.child_bookings_enabled ?? "1") === "0" ? "0" : "1",
+      adult_bookings_enabled: String(parsed.adult_bookings_enabled ?? "1") === "0" ? "0" : "1",
+      adult_capacity_max: String(parsed.adult_capacity_max ?? ""),
+      child_trial_bookings_enabled: String(parsed.child_trial_bookings_enabled ?? "1") === "0" ? "0" : "1",
+      adult_trial_bookings_enabled: String(parsed.adult_trial_bookings_enabled ?? "1") === "0" ? "0" : "1",
       is_all_day: String(parsed.is_all_day ?? "") === "1" ? "1" : "0",
       zoom_link: String(parsed.zoom_link ?? ""),
       recurrence_mode: String(parsed.recurrence_mode ?? "NONE"),
@@ -1315,6 +1325,9 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
   const selectedSessionConfirmedBookings = selectedSessionBookings.filter(
     (booking) => booking.status !== "WAITLISTED",
   );
+  const selectedSessionAdultConfirmedCount = selectedSessionConfirmedBookings.filter(
+    (booking) => booking.client_kind === "ADULT",
+  ).length;
 
   const clientsSorted = [...clients]
     .filter((client) => client.is_active)
@@ -1502,8 +1515,8 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
           )
         : pickText(
             language,
-            `${selectedSessionConfirmedBookings.length} élève${selectedSessionConfirmedBookings.length > 1 ? "s" : ""} inscrit${selectedSessionConfirmedBookings.length > 1 ? "s" : ""}${selectedSessionWaitlistedBookings.length > 0 ? ` · ${selectedSessionWaitlistedBookings.length} en liste d’attente` : ""}`,
-            `${selectedSessionConfirmedBookings.length} attendee${selectedSessionConfirmedBookings.length > 1 ? "s" : ""}${selectedSessionWaitlistedBookings.length > 0 ? ` · ${selectedSessionWaitlistedBookings.length} waitlisted` : ""}`,
+            `${selectedSessionConfirmedBookings.length} élève${selectedSessionConfirmedBookings.length > 1 ? "s" : ""} inscrit${selectedSessionConfirmedBookings.length > 1 ? "s" : ""}${selectedSession.adult_bookings_enabled ? ` · Adultes ${selectedSessionAdultConfirmedCount}/${selectedSession.adult_capacity_max ?? selectedSession.capacity_max}` : " · Adultes fermés"}${selectedSessionWaitlistedBookings.length > 0 ? ` · ${selectedSessionWaitlistedBookings.length} en liste d’attente` : ""}`,
+            `${selectedSessionConfirmedBookings.length} attendee${selectedSessionConfirmedBookings.length > 1 ? "s" : ""}${selectedSession.adult_bookings_enabled ? ` · Adults ${selectedSessionAdultConfirmedCount}/${selectedSession.adult_capacity_max ?? selectedSession.capacity_max}` : " · Adults closed"}${selectedSessionWaitlistedBookings.length > 0 ? ` · ${selectedSessionWaitlistedBookings.length} waitlisted` : ""}`,
           );
   const sessionTimezoneValues = new Set<string>([
     ...PLANNING_TIMEZONES.map((option) => option.value),
@@ -2013,6 +2026,61 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                     initialBookingScopes={createInitialBookingScopes}
                     allowsStudentBookings={createAllowsStudentBookings}
                   />
+
+                  <fieldset className="session-audience-fieldset">
+                    <legend>{pickText(language, "Publics et quotas", "Participants and quotas")}</legend>
+                    <small className="muted">
+                      {pickText(language, "Le quota adulte est un plafond non reserve dans la capacite totale.", "The adult quota is a non-reserved cap within total capacity.")}
+                    </small>
+                    <div className="session-audience-option-list">
+                      <label className="session-audience-option">
+                        <input
+                          type="checkbox"
+                          name="child_bookings_enabled"
+                          value="1"
+                          defaultChecked={createDraft?.child_bookings_enabled !== "0"}
+                        />
+                        <span><strong>{pickText(language, "Reservations enfants", "Child bookings")}</strong></span>
+                      </label>
+                      <label className="session-audience-option">
+                        <input
+                          type="checkbox"
+                          name="adult_bookings_enabled"
+                          value="1"
+                          defaultChecked={createDraft?.adult_bookings_enabled !== "0"}
+                        />
+                        <span><strong>{pickText(language, "Reservations adultes", "Adult bookings")}</strong></span>
+                      </label>
+                      <label>
+                        {pickText(language, "Maximum adultes (optionnel)", "Maximum adults (optional)")}
+                        <input
+                          type="number"
+                          name="adult_capacity_max"
+                          min={1}
+                          defaultValue={createDraft?.adult_capacity_max || ""}
+                          placeholder={pickText(language, "Sans plafond specifique", "No specific cap")}
+                        />
+                      </label>
+                      <label className="session-audience-option">
+                        <input
+                          type="checkbox"
+                          name="child_trial_bookings_enabled"
+                          value="1"
+                          defaultChecked={createDraft?.child_trial_bookings_enabled !== "0"}
+                        />
+                        <span><strong>{pickText(language, "Essai enfant autorise", "Child trial allowed")}</strong></span>
+                      </label>
+                      <label className="session-audience-option">
+                        <input
+                          type="checkbox"
+                          name="adult_trial_bookings_enabled"
+                          value="1"
+                          defaultChecked={createDraft?.adult_trial_bookings_enabled !== "0"}
+                        />
+                        <span><strong>{pickText(language, "Essai adulte autorise", "Adult trial allowed")}</strong></span>
+                      </label>
+                    </div>
+                  </fieldset>
 
                   <label>
                     {language === "en" ? "External booking price incl. VAT" : "Tarif reservation externe TTC"}
@@ -3038,6 +3106,35 @@ export default async function AdminPlanningPage({ searchParams }: { searchParams
                       initialBookingScopes={selectedBookingScopes}
                       allowsStudentBookings={selectedSessionAllowsStudentBookings}
                     />
+
+                    <fieldset className="session-audience-fieldset">
+                      <legend>{pickText(language, "Publics et quotas", "Participants and quotas")}</legend>
+                      <small className="muted">
+                        {pickText(language, "Le quota adulte est un plafond non reserve dans la capacite totale.", "The adult quota is a non-reserved cap within total capacity.")}
+                      </small>
+                      <div className="session-audience-option-list">
+                        <label className="session-audience-option">
+                          <input type="checkbox" name="child_bookings_enabled" value="1" defaultChecked={selectedSession.child_bookings_enabled} />
+                          <span><strong>{pickText(language, "Reservations enfants", "Child bookings")}</strong></span>
+                        </label>
+                        <label className="session-audience-option">
+                          <input type="checkbox" name="adult_bookings_enabled" value="1" defaultChecked={selectedSession.adult_bookings_enabled} />
+                          <span><strong>{pickText(language, "Reservations adultes", "Adult bookings")}</strong></span>
+                        </label>
+                        <label>
+                          {pickText(language, "Maximum adultes (optionnel)", "Maximum adults (optional)")}
+                          <input type="number" name="adult_capacity_max" min={1} defaultValue={selectedSession.adult_capacity_max ?? ""} />
+                        </label>
+                        <label className="session-audience-option">
+                          <input type="checkbox" name="child_trial_bookings_enabled" value="1" defaultChecked={selectedSession.child_trial_bookings_enabled} />
+                          <span><strong>{pickText(language, "Essai enfant autorise", "Child trial allowed")}</strong></span>
+                        </label>
+                        <label className="session-audience-option">
+                          <input type="checkbox" name="adult_trial_bookings_enabled" value="1" defaultChecked={selectedSession.adult_trial_bookings_enabled} />
+                          <span><strong>{pickText(language, "Essai adulte autorise", "Adult trial allowed")}</strong></span>
+                        </label>
+                      </div>
+                    </fieldset>
 
                     <label>
                       {language === "en" ? "External booking price incl. VAT" : "Tarif reservation externe TTC"}

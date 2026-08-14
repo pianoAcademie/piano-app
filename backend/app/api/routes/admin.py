@@ -22,10 +22,13 @@ from app.api.routes.bookings import (
     _enforce_plan_restrictions,
     _load_subscription_with_plan_for_update,
     _next_booking_status,
+    _participant_capacity_block_reason,
     _promote_waitlist_if_possible,
     _resolve_booking_snapshot,
     _restore_pack_credit,
     _select_eligible_subscription,
+    _session_client_kind_allowed,
+    _session_trial_allowed,
     _waitlist_position,
 )
 from app.api.deps import get_admin_permission_map, get_db, require_admin_or_permissions, require_roles
@@ -467,6 +470,11 @@ def _to_admin_session_out(
         is_all_day=session_obj.is_all_day,
         capacity_max=session_obj.capacity_max,
         booked_count=booked_count,
+        child_bookings_enabled=bool(getattr(session_obj, "child_bookings_enabled", True)),
+        adult_bookings_enabled=bool(getattr(session_obj, "adult_bookings_enabled", True)),
+        adult_capacity_max=getattr(session_obj, "adult_capacity_max", None),
+        child_trial_bookings_enabled=bool(getattr(session_obj, "child_trial_bookings_enabled", True)),
+        adult_trial_bookings_enabled=bool(getattr(session_obj, "adult_trial_bookings_enabled", True)),
         status=session_obj.status,
         auto_cancel_deadline_utc=session_obj.auto_cancel_deadline_utc,
         auto_cancel_rule_enabled_override=session_obj.auto_cancel_rule_enabled_override,
@@ -589,6 +597,7 @@ def _to_admin_session_booking_out(db: Session, booking: Booking, client: User) -
         client_first_name=client.first_name,
         client_last_name=client.last_name,
         client_display_name=_client_display_name(client),
+        client_kind=client.client_kind,
         client_plan_subscription_id=booking.client_plan_subscription_id,
         status=booking.status.value,
         booked_at=booking.booked_at,
@@ -830,6 +839,13 @@ def _move_planning_reorganization_booking_occurrence(
         return False, "Activite du creneau cible introuvable"
     if not bool(target_course_type.allows_student_bookings):
         return False, "Creneau cible sans inscription eleve"
+    participant = db.scalar(select(User).where(User.id == booking.user_id).with_for_update())
+    if participant is None:
+        return False, "Eleve introuvable"
+    if not _session_client_kind_allowed(target_session, participant.client_kind):
+        return False, "Ce public n est pas autorise sur le creneau cible"
+    if bool(booking.is_trial_course) and not _session_trial_allowed(target_session, participant.client_kind):
+        return False, "Les cours d essai ne sont pas autorises pour ce public"
 
     existing_target_booking = db.scalar(
         select(Booking)
@@ -865,10 +881,14 @@ def _move_planning_reorganization_booking_occurrence(
         return False, "Eleve deja inscrit sur un creneau au meme horaire"
 
     if booking.status in BOOKING_STATUSES_COUNTED_AS_RESERVED:
-        reserved_count = _booked_count_by_session(db, target_session.id)
-        if reserved_count >= target_session.capacity_max and target_booking.id == booking.id:
-            return False, "Creneau cible complet"
-        if reserved_count >= target_session.capacity_max and target_booking.id != booking.id:
+        capacity_block = _participant_capacity_block_reason(
+            db,
+            session_obj=target_session,
+            client_kind=participant.client_kind,
+        )
+        if capacity_block == "ADULT_QUOTA_FULL":
+            return False, "Quota adulte du creneau cible atteint"
+        if capacity_block is not None:
             return False, "Creneau cible complet"
 
     if target_booking.id == booking.id:
@@ -4136,6 +4156,19 @@ def create_session(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Capacite max obligatoire (>= 1, sauf creneau sans eleve)",
             )
+    child_bookings_enabled = bool(payload.child_bookings_enabled) if allows_student_bookings else False
+    adult_bookings_enabled = bool(payload.adult_bookings_enabled) if allows_student_bookings else False
+    adult_capacity_max = payload.adult_capacity_max if adult_bookings_enabled else None
+    if allows_student_bookings and not (child_bookings_enabled or adult_bookings_enabled):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Au moins un public, enfant ou adulte, doit etre autorise",
+        )
+    if adult_capacity_max is not None and adult_capacity_max > capacity_max:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Le quota adulte ne peut pas depasser la capacite totale",
+        )
 
     _validate_session_times(
         start_at_utc=start_at_utc,
@@ -4259,6 +4292,15 @@ def create_session(
                 end_at_utc=ends_at,
                 is_all_day=is_all_day,
                 capacity_max=capacity_max,
+                child_bookings_enabled=child_bookings_enabled,
+                adult_bookings_enabled=adult_bookings_enabled,
+                adult_capacity_max=adult_capacity_max,
+                child_trial_bookings_enabled=(
+                    payload.child_trial_bookings_enabled and child_bookings_enabled
+                ),
+                adult_trial_bookings_enabled=(
+                    payload.adult_trial_bookings_enabled and adult_bookings_enabled
+                ),
                 status=SessionStatus.SCHEDULED,
                 auto_cancel_deadline_utc=deadline_at,
                 auto_cancel_rule_enabled_override=payload.auto_cancel_rule_enabled_override,
@@ -5010,6 +5052,10 @@ def add_admin_session_booking(
                 skipped_count += 1
                 add_detail("Creneau sans eleve: inscription impossible")
                 continue
+            if not _session_client_kind_allowed(target, client.client_kind):
+                skipped_count += 1
+                add_detail("Ce public n est pas autorise sur ce creneau")
+                continue
             student_start_at_utc, student_end_at_utc = _student_time_override_for_session(
                 session_obj=target,
                 course_type=target_course_type,
@@ -5056,6 +5102,10 @@ def add_admin_session_booking(
                 continue
 
             is_trial_booking = bool(plan is not None and plan.is_trial_offer)
+            if is_trial_booking and not _session_trial_allowed(target, client.client_kind):
+                skipped_count += 1
+                add_detail("Cours d essai non autorise pour ce public sur ce creneau")
+                continue
 
             price, vat_rate, vat_amount, total, currency = _resolve_booking_snapshot(
                 db,
@@ -5065,7 +5115,11 @@ def add_admin_session_booking(
                 subscription=subscription,
                 plan=plan,
             )
-            next_status = _next_booking_status(db, session_obj=target)
+            next_status = _next_booking_status(
+                db,
+                session_obj=target,
+                client_kind=client.client_kind,
+            )
             if next_status is None:
                 skipped_count += 1
                 add_detail("Creneau complet et liste d attente pleine")
@@ -5406,6 +5460,28 @@ def update_session(
         booking_scopes=next_booking_scopes,
         allows_student_bookings=allows_student_bookings,
     )
+    next_capacity_max = int(updates.get("capacity_max", session_obj.capacity_max))
+    next_child_bookings_enabled = bool(
+        updates.get("child_bookings_enabled", session_obj.child_bookings_enabled)
+    )
+    next_adult_bookings_enabled = bool(
+        updates.get("adult_bookings_enabled", session_obj.adult_bookings_enabled)
+    )
+    next_adult_capacity_max = updates.get("adult_capacity_max", session_obj.adult_capacity_max)
+    if not allows_student_bookings:
+        next_child_bookings_enabled = False
+        next_adult_bookings_enabled = False
+        next_adult_capacity_max = None
+    if allows_student_bookings and not (next_child_bookings_enabled or next_adult_bookings_enabled):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Au moins un public, enfant ou adulte, doit etre autorise",
+        )
+    if next_adult_capacity_max is not None and int(next_adult_capacity_max) > next_capacity_max:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Le quota adulte ne peut pas depasser la capacite totale",
+        )
 
     original_anchor_start = session_obj.start_at_utc
     original_anchor_end = session_obj.end_at_utc
@@ -5598,6 +5674,19 @@ def update_session(
     sessions_completed_for_invoicing: set[UUID] = set()
     for target_index, target in enumerate(target_sessions):
         previous_status = target.status
+        target_capacity_for_participant_rules = (
+            0
+            if is_vacation or not allows_student_bookings
+            else int(updates.get("capacity_max", target.capacity_max))
+        )
+        if (
+            next_adult_capacity_max is not None
+            and int(next_adult_capacity_max) > target_capacity_for_participant_rules
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Le quota adulte ne peut pas depasser la capacite totale d un creneau de la serie",
+            )
         target.course_type_id = course_type_id
         target.billing_entity_snapshot = normalize_billing_entity(course_type.billing_entity_code)
         target.snapshot_seller_legal_entity_id = course_type.seller_legal_entity_id
@@ -5647,6 +5736,21 @@ def update_session(
             target.capacity_max = next_capacity
         elif target.capacity_max <= 0:
             target.capacity_max = 1
+        target.child_bookings_enabled = next_child_bookings_enabled
+        target.adult_bookings_enabled = next_adult_bookings_enabled
+        target.adult_capacity_max = (
+            int(next_adult_capacity_max)
+            if next_adult_bookings_enabled and next_adult_capacity_max is not None
+            else None
+        )
+        target.child_trial_bookings_enabled = (
+            bool(updates.get("child_trial_bookings_enabled", target.child_trial_bookings_enabled))
+            and next_child_bookings_enabled
+        )
+        target.adult_trial_bookings_enabled = (
+            bool(updates.get("adult_trial_bookings_enabled", target.adult_trial_bookings_enabled))
+            and next_adult_bookings_enabled
+        )
         if "status" in updates:
             target.status = updates["status"]
         if "cancel_reason" in updates:
@@ -5779,7 +5883,15 @@ def update_session(
         if previous_status != SessionStatus.COMPLETED and target.status == SessionStatus.COMPLETED:
             sessions_completed_for_invoicing.add(target.id)
         if (
-            "capacity_max" in updates
+            any(
+                field in updates
+                for field in (
+                    "capacity_max",
+                    "adult_capacity_max",
+                    "child_bookings_enabled",
+                    "adult_bookings_enabled",
+                )
+            )
             and target.status == SessionStatus.SCHEDULED
             and target.capacity_max > 0
         ):
@@ -5891,6 +6003,11 @@ def update_session(
                     end_at_utc=ends_at,
                     is_all_day=session_obj.is_all_day,
                     capacity_max=session_obj.capacity_max,
+                    child_bookings_enabled=session_obj.child_bookings_enabled,
+                    adult_bookings_enabled=session_obj.adult_bookings_enabled,
+                    adult_capacity_max=session_obj.adult_capacity_max,
+                    child_trial_bookings_enabled=session_obj.child_trial_bookings_enabled,
+                    adult_trial_bookings_enabled=session_obj.adult_trial_bookings_enabled,
                     status=session_obj.status,
                     auto_cancel_deadline_utc=deadline_at,
                     auto_cancel_rule_enabled_override=session_obj.auto_cancel_rule_enabled_override,
@@ -5959,6 +6076,11 @@ def update_session(
                     end_at_utc=ends_at,
                     is_all_day=session_obj.is_all_day,
                     capacity_max=session_obj.capacity_max,
+                    child_bookings_enabled=session_obj.child_bookings_enabled,
+                    adult_bookings_enabled=session_obj.adult_bookings_enabled,
+                    adult_capacity_max=session_obj.adult_capacity_max,
+                    child_trial_bookings_enabled=session_obj.child_trial_bookings_enabled,
+                    adult_trial_bookings_enabled=session_obj.adult_trial_bookings_enabled,
                     status=session_obj.status,
                     auto_cancel_deadline_utc=deadline_at,
                     auto_cancel_rule_enabled_override=session_obj.auto_cancel_rule_enabled_override,
@@ -6132,6 +6254,11 @@ def duplicate_session_operation(
                 end_at_utc=duplicate_end,
                 is_all_day=target.is_all_day,
                 capacity_max=target.capacity_max,
+                child_bookings_enabled=target.child_bookings_enabled,
+                adult_bookings_enabled=target.adult_bookings_enabled,
+                adult_capacity_max=target.adult_capacity_max,
+                child_trial_bookings_enabled=target.child_trial_bookings_enabled,
+                adult_trial_bookings_enabled=target.adult_trial_bookings_enabled,
                 status=SessionStatus.SCHEDULED,
                 auto_cancel_deadline_utc=duplicate_deadline,
                 auto_cancel_rule_enabled_override=target.auto_cancel_rule_enabled_override,

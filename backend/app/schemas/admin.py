@@ -2314,6 +2314,11 @@ class AdminSessionCreateRequest(BaseModel):
     end_at_utc: datetime | None = None
     is_all_day: bool = False
     capacity_max: int = Field(default=1, ge=0)
+    child_bookings_enabled: bool = True
+    adult_bookings_enabled: bool = True
+    adult_capacity_max: int | None = Field(default=None, ge=1)
+    child_trial_bookings_enabled: bool = True
+    adult_trial_bookings_enabled: bool = True
     auto_cancel_deadline_utc: datetime | None = None
     auto_cancel_rule_enabled_override: bool | None = None
     auto_cancel_if_booked_less_than_override: int | None = Field(default=None, ge=1)
@@ -2346,6 +2351,11 @@ class AdminSessionUpdateRequest(BaseModel):
     end_at_utc: datetime | None = None
     is_all_day: bool | None = None
     capacity_max: int | None = Field(default=None, ge=0)
+    child_bookings_enabled: bool | None = None
+    adult_bookings_enabled: bool | None = None
+    adult_capacity_max: int | None = Field(default=None, ge=1)
+    child_trial_bookings_enabled: bool | None = None
+    adult_trial_bookings_enabled: bool | None = None
     auto_cancel_deadline_utc: datetime | None = None
     auto_cancel_rule_enabled_override: bool | None = None
     auto_cancel_if_booked_less_than_override: int | None = Field(default=None, ge=1)
@@ -2399,6 +2409,11 @@ class AdminSessionOut(BaseModel):
     is_all_day: bool
     capacity_max: int
     booked_count: int
+    child_bookings_enabled: bool
+    adult_bookings_enabled: bool
+    adult_capacity_max: int | None
+    child_trial_bookings_enabled: bool
+    adult_trial_bookings_enabled: bool
     status: SessionStatus
     auto_cancel_deadline_utc: datetime
     auto_cancel_rule_enabled_override: bool | None
@@ -2430,6 +2445,7 @@ class AdminSessionBookingOut(BaseModel):
     client_first_name: str | None
     client_last_name: str | None
     client_display_name: str
+    client_kind: ClientKind
     client_plan_subscription_id: UUID | None
     status: str
     booked_at: datetime
