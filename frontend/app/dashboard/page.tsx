@@ -931,20 +931,6 @@ function isSubscriptionVisibleInPortal(
   return true;
 }
 
-function nextActiveBookingDateKey(
-  bookings: Array<{ status: string; session: { start_at_utc: string } }>,
-  timezone: string,
-  now: Date,
-): string | null {
-  const nextBooking = bookings
-    .filter((booking) => {
-      const sessionStart = safeDate(booking.session.start_at_utc);
-      return sessionStart != null && sessionStart >= now && ACTIVE_CLIENT_BOOKING_STATUSES.has(normalizeStatus(booking.status));
-    })
-    .sort((a, b) => a.session.start_at_utc.localeCompare(b.session.start_at_utc))[0];
-  return nextBooking ? dateKeyInTimezone(nextBooking.session.start_at_utc, timezone) : null;
-}
-
 function resolveTimezone(value: string | null | undefined): string {
   const fallback = DEFAULT_TIMEZONE;
   const candidate = (value ?? "").trim();
@@ -983,12 +969,6 @@ function shiftDateKeyByDays(key: string, days: number): string {
 
 function startOfMonthUtc(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
-}
-
-function startOfWeekUtc(date: Date): Date {
-  const day = date.getUTCDay();
-  const offsetFromMonday = (day + 6) % 7;
-  return addUtcDays(date, -offsetFromMonday);
 }
 
 function getDatePart(parts: Intl.DateTimeFormatPart[], type: "year" | "month" | "day"): string {
@@ -1091,7 +1071,7 @@ function buildAgendaRange(view: AgendaView, focusDayKey: string, language: UiLan
   }
 
   if (view === "week") {
-    const from = startOfWeekUtc(focusDate);
+    const from = focusDate;
     const dayKeys: string[] = [];
 
     for (let i = 0; i < 7; i += 1) {
@@ -1351,16 +1331,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
   const inputAgendaDate = readParam(searchParams, "agenda_date");
   const now = new Date();
   const defaultAgendaDate = todayKeyInTimezone(timezone);
-  let autoAgendaDate = defaultAgendaDate;
-  if (tab === "planning" && !isDateKey(inputAgendaDate)) {
-    const earlyFamilyResult = await familyResultPromise;
-    if (earlyFamilyResult.ok) {
-      autoAgendaDate = nextActiveBookingDateKey(earlyFamilyResult.data.bookings, timezone, now) ?? defaultAgendaDate;
-    }
-  }
-  const agendaDate = isDateKey(inputAgendaDate) ? inputAgendaDate : autoAgendaDate;
+  const requestedAgendaDate = isDateKey(inputAgendaDate) ? inputAgendaDate : defaultAgendaDate;
+  const agendaDate = requestedAgendaDate < defaultAgendaDate ? defaultAgendaDate : requestedAgendaDate;
   const agendaView: AgendaView = tab === "planning" ? "week" : requestedAgendaView;
   const agendaRange = buildAgendaRange(agendaView, agendaDate, language);
+  const previousAgendaDate = shiftDateKeyByDays(agendaDate, -7) < defaultAgendaDate
+    ? defaultAgendaDate
+    : shiftDateKeyByDays(agendaDate, -7);
 
   const reservationScope = readParam(searchParams, "reservation_scope") || "CURRENT";
   const reservationStatusFilter = readParam(searchParams, "reservation_status");
@@ -2992,7 +2969,22 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
     selectedSession && selectedReservationMemberOption
       ? buildClientSessionCheckoutHref(selectedSession.id, selectedSessionReturnTo, selectedReservationMemberOption.member_id)
       : "/buy/session/checkout";
-  const agendaSessionCount = agendaDays.reduce((sum, day) => sum + day.sessions.length, 0);
+  const visibleAgendaDays = agendaDays
+    .map((day) => ({
+      ...day,
+      sessions: day.sessions.filter((session) => {
+        const sessionState = planningStateForSession(session);
+        if (planningSlotFilter === "AVAILABLE") {
+          return sessionState.canCheckout;
+        }
+        if (planningSlotFilter === "ALREADY_BOOKED") {
+          return sessionState.alreadyReserved || sessionState.paymentPending;
+        }
+        return true;
+      }),
+    }))
+    .filter((day) => day.sessions.length > 0);
+  const agendaSessionCount = visibleAgendaDays.reduce((sum, day) => sum + day.sessions.length, 0);
   const advancedFiltersOpen =
     Boolean(selectedCourseType) ||
     Boolean(selectedCoachId) ||
@@ -3738,6 +3730,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                         type="date"
                         name="agenda_date"
                         defaultValue={agendaDate}
+                        min={defaultAgendaDate}
                         ariaLabel={t("client.schedule_date")}
                       />
                     </label>
@@ -3856,13 +3849,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                       <small>{hasMultipleVisibleMembers ? t("client.week_toolbar_family_help") : t("client.week_toolbar_single_help")}</small>
                     </div>
                     <div className="client-week-toolbar-actions">
-                      <a
-                        className="client-date-nav-btn"
-                        href={`${withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: shiftDateKeyByDays(agendaDate, -7), agenda_view: "week" })}#client-week-navigation`}
-                        aria-label={t("client.previous_week")}
-                      >
-                        ←
-                      </a>
+                      {agendaDate > defaultAgendaDate ? (
+                        <a
+                          className="client-date-nav-btn"
+                          href={`${withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: previousAgendaDate, agenda_view: "week" })}#client-week-navigation`}
+                          aria-label={t("client.previous_week")}
+                        >
+                          ←
+                        </a>
+                      ) : null}
                       <a className="mode-link" href={`${withUpdatedQuery(rawParams, { tab: "planning", planning_mode: "book", agenda_date: todayKeyInTimezone(timezone), agenda_view: "week" })}#client-week-navigation`}>
                         {t("client.today")}
                       </a>
@@ -4054,18 +4049,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                   </label>
                 </form>
                 <div className={`agenda-grid client-agenda-grid agenda-grid-${agendaView}`}>
-                  {agendaDays.map((day) => {
-                    const daySessions = day.sessions.filter((session) => {
-                      const sessionState = planningStateForSession(session);
-                      if (planningSlotFilter === "AVAILABLE") {
-                        return sessionState.canCheckout;
-                      }
-                      if (planningSlotFilter === "ALREADY_BOOKED") {
-                        return sessionState.alreadyReserved || sessionState.paymentPending;
-                      }
-                      return true;
-                    });
-
+                  {visibleAgendaDays.map((day) => {
                     return (
                       <article key={day.key} className={`agenda-day client-agenda-day client-agenda-day-${agendaView}`}>
                         <div className="row spread agenda-day-header">
@@ -4074,10 +4058,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                           </div>
                         </div>
 
-                        {daySessions.length === 0 ? <p className="muted agenda-empty">{t("client.no_course")}</p> : null}
-
                         <div className="agenda-events">
-                          {daySessions.map((session) => {
+                          {day.sessions.map((session) => {
                             const sessionState = planningStateForSession(session);
                             const compactAgendaCard = true;
                             const accentColor = accentColorForId(session.course_type.id);
@@ -4198,6 +4180,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Se
                     );
                   })}
                 </div>
+                {visibleAgendaDays.length === 0 ? (
+                  <p className="muted agenda-empty">{t("client.no_course_in_rolling_week")}</p>
+                ) : null}
               </Card>
               ) : null}
 
