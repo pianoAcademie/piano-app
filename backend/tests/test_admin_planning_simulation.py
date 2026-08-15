@@ -7,6 +7,8 @@ import unittest
 from types import SimpleNamespace
 from uuid import uuid4
 
+from fastapi import HTTPException
+
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.api.routes.admin import (
@@ -503,6 +505,33 @@ class AdminPlanningSimulationTests(unittest.TestCase):
         self.assertEqual(assignment.status, "CONFIRMED")  # type: ignore[attr-defined]
         self.assertEqual(result.teacher_label, "Camille Martin")
         self.assertEqual(db.commits, 1)
+
+    def test_teacher_assignment_update_rejects_inactive_professor(self) -> None:
+        professor_id = uuid4()
+        db = _AssignmentSession([
+            SimpleNamespace(
+                id=professor_id,
+                first_name="Ancien",
+                last_name="Professeur",
+                active=False,
+            ),
+        ])
+
+        with self.assertRaises(HTTPException) as raised:
+            update_planning_simulation_teacher_assignment(
+                AdminPlanningSimulationTeacherAssignmentUpdateRequest(
+                    school_year_label="2026-2027",
+                    slot_key="live:test-slot",
+                    professor_id=professor_id,
+                ),
+                db,  # type: ignore[arg-type]
+                SimpleNamespace(id=uuid4()),  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertEqual(raised.exception.detail, "Professor is inactive")
+        self.assertEqual(db.added, [])
+        self.assertEqual(db.commits, 0)
 
     def test_teacher_assignment_update_clears_existing_assignment(self) -> None:
         assignment = PlanningSimulationTeacherAssignment(

@@ -17,6 +17,7 @@ import type {
 } from "../../../lib/types";
 import { localeForUiLanguage, normalizeUiLanguage, type UiLanguage } from "../../../lib/ui-i18n";
 import { SimulationPlanningFilterForm } from "./filter-form";
+import { TeacherAssignmentGridCell } from "./assignment-grid-cell";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -148,13 +149,64 @@ function formatTeachingMinutes(minutes: number, language: UiLanguage): string {
   return `${hours} h ${String(remainingMinutes).padStart(2, "0")}`;
 }
 
+function planningDimensionMatches(
+  slotId: string | null,
+  slotName: string,
+  rowId: string | null,
+  rowName: string,
+): boolean {
+  if (slotId && rowId) {
+    return slotId === rowId;
+  }
+  return slotName.trim().toLocaleLowerCase("fr") === rowName.trim().toLocaleLowerCase("fr");
+}
+
+function teacherSlotsForTimelineCell(
+  slots: AdminPlanningSimulationSlotOut[],
+  weekday: number,
+  locationId: string | null,
+  locationName: string,
+  courseTypeId: string | null,
+  courseTypeName: string,
+  bucketStart: string,
+  bucketEnd: string,
+): AdminPlanningSimulationSlotOut[] {
+  const bucketStartMinutes = parseTimeToMinutes(bucketStart);
+  const bucketEndMinutes = parseTimeToMinutes(bucketEnd);
+  if (bucketStartMinutes === null || bucketEndMinutes === null) {
+    return [];
+  }
+  return slots.filter((slot) => {
+    const slotStart = parseTimeToMinutes(slot.start_time);
+    const slotEnd = parseTimeToMinutes(slot.end_time);
+    return slot.weekday === weekday
+      && planningDimensionMatches(slot.location_id, slot.location_name, locationId, locationName)
+      && planningDimensionMatches(slot.course_type_id, slot.course_type_name, courseTypeId, courseTypeName)
+      && slotStart !== null
+      && slotEnd !== null
+      && slotStart < bucketEndMinutes
+      && slotEnd > bucketStartMinutes;
+  });
+}
+
 function TeacherNeedsDashboard({
   needs,
+  slots,
+  professors,
+  schoolYearLabel,
+  returnTo,
+  canEdit,
   language,
 }: {
   needs: AdminPlanningSimulationTeacherNeedsOut;
+  slots: AdminPlanningSimulationSlotOut[];
+  professors: AdminProfessorOut[];
+  schoolYearLabel: string;
+  returnTo: string;
+  canEdit: boolean;
   language: UiLanguage;
 }): JSX.Element {
+  const activeProfessors = professors.filter((professor) => professor.active);
   return (
     <div className="simulation-teacher-needs-shell">
       <section className="card simulation-teacher-needs-hero">
@@ -324,14 +376,39 @@ function TeacherNeedsDashboard({
                             {row.course_type_name}
                           </span>
                         </th>
-                        {row.bucket_teachers.map((teacherCount, index) => (
-                          <td
-                            className={teacherCount > 0 ? `need need-${Math.min(teacherCount, 4)}` : ""}
-                            key={`${day.time_buckets[index]?.start_time || index}`}
-                          >
-                            {teacherCount || ""}
-                          </td>
-                        ))}
+                        {row.bucket_teachers.map((teacherCount, index) => {
+                          const bucket = day.time_buckets[index];
+                          const cellSlots = bucket
+                            ? teacherSlotsForTimelineCell(
+                                slots,
+                                day.weekday,
+                                row.location_id,
+                                row.location_name,
+                                row.course_type_id,
+                                row.course_type_name,
+                                bucket.start_time,
+                                bucket.end_time,
+                              )
+                            : [];
+                          return (
+                            <td
+                              className={teacherCount > 0 ? `need need-${Math.min(teacherCount, 4)} interactive` : ""}
+                              key={`${bucket?.start_time || index}`}
+                            >
+                              {teacherCount > 0 ? (
+                                <TeacherAssignmentGridCell
+                                  count={teacherCount}
+                                  slots={cellSlots}
+                                  professors={activeProfessors}
+                                  schoolYearLabel={schoolYearLabel}
+                                  returnTo={returnTo}
+                                  canEdit={canEdit}
+                                  language={language}
+                                />
+                              ) : ""}
+                            </td>
+                          );
+                        })}
                       </tr>
                     ))}
                   </tbody>
@@ -362,16 +439,38 @@ function TeacherNeedsDashboard({
                       <strong>{bucket.total_teachers} {text(language, "prof.", "teachers")}</strong>
                     </header>
                     <div>
-                      {activeRows.map((row) => (
-                        <article key={`${row.location_id || row.location_name}:${row.course_type_id || row.course_type_name}`}>
-                          <span>{row.location_name}</span>
-                          <span className="simulation-teacher-activity-name">
-                            <i style={{ backgroundColor: row.course_type_color_hex || "#94C973" }} />
-                            {row.course_type_name}
-                          </span>
-                          <b>{row.bucket_teachers[bucketIndex]}</b>
-                        </article>
-                      ))}
+                      {activeRows.map((row) => {
+                        const teacherCount = row.bucket_teachers[bucketIndex] || 0;
+                        const cellSlots = teacherSlotsForTimelineCell(
+                          slots,
+                          day.weekday,
+                          row.location_id,
+                          row.location_name,
+                          row.course_type_id,
+                          row.course_type_name,
+                          bucket.start_time,
+                          bucket.end_time,
+                        );
+                        return (
+                          <article key={`${row.location_id || row.location_name}:${row.course_type_id || row.course_type_name}`}>
+                            <span>{row.location_name}</span>
+                            <span className="simulation-teacher-activity-name">
+                              <i style={{ backgroundColor: row.course_type_color_hex || "#94C973" }} />
+                              {row.course_type_name}
+                            </span>
+                            <TeacherAssignmentGridCell
+                              count={teacherCount}
+                              slots={cellSlots}
+                              professors={activeProfessors}
+                              schoolYearLabel={schoolYearLabel}
+                              returnTo={returnTo}
+                              canEdit={canEdit}
+                              language={language}
+                              mobile
+                            />
+                          </article>
+                        );
+                      })}
                     </div>
                   </section>
                 );
@@ -435,6 +534,7 @@ function TeacherAssignmentBoard({
   canEdit: boolean;
   language: UiLanguage;
 }): JSX.Element {
+  const activeProfessors = professors.filter((professor) => professor.active);
   const assignedSlots = slots.filter((slot) => Boolean(slot.teacher_assignment_label));
   const confirmedSlots = assignedSlots.filter((slot) => slot.teacher_assignment_status === "CONFIRMED");
   const warningSlots = assignedSlots.filter((slot) => slot.teacher_assignment_warnings.length > 0);
@@ -516,7 +616,7 @@ function TeacherAssignmentBoard({
                       {summary.slotKeys.map((slotKey) => <input type="hidden" name="slot_key" value={slotKey} key={slotKey} />)}
                       <select name="professor_id" defaultValue="" required aria-label={text(language, "Professeur définitif", "Final teacher")}>
                         <option value="" disabled>{text(language, "Remplacer par…", "Replace with…")}</option>
-                        {professors.map((professor) => (
+                        {activeProfessors.map((professor) => (
                           <option value={professor.id} key={professor.id}>{professor.first_name} {professor.last_name}</option>
                         ))}
                       </select>
@@ -553,7 +653,7 @@ function TeacherAssignmentBoard({
                       <small>{group.slots.length} {text(language, "créneau(x)", "slot(s)")}</small>
                       <select name="professor_id" defaultValue="" aria-label={text(language, "Professeur", "Teacher")}>
                         <option value="">{text(language, "— Professeur provisoire —", "— Placeholder teacher —")}</option>
-                        {professors.map((professor) => (
+                        {activeProfessors.map((professor) => (
                           <option value={professor.id} key={professor.id}>{professor.first_name} {professor.last_name}</option>
                         ))}
                       </select>
@@ -614,7 +714,7 @@ function TeacherAssignmentBoard({
                           <span>{text(language, "Professeur connu", "Known teacher")}</span>
                           <select name="professor_id" defaultValue={slot.teacher_assignment_professor_id || ""}>
                             <option value="">{text(language, "— Aucun / provisoire —", "— None / placeholder —")}</option>
-                            {professors.map((professor) => (
+                            {activeProfessors.map((professor) => (
                               <option value={professor.id} key={professor.id}>{professor.first_name} {professor.last_name}</option>
                             ))}
                           </select>
@@ -1161,7 +1261,15 @@ export default async function AdminSimulationPlanningPage({
           </section>
         ) : (
           <>
-            <TeacherNeedsDashboard needs={simulation.teacher_needs} language={language} />
+            <TeacherNeedsDashboard
+              needs={simulation.teacher_needs}
+              slots={simulation.slots}
+              professors={professors}
+              schoolYearLabel={effectiveSchoolYear}
+              returnTo={assignmentReturnTo}
+              canEdit={canEditSimulation && !professorsError}
+              language={language}
+            />
             <TeacherAssignmentBoard
               slots={simulation.slots}
               professors={professors}

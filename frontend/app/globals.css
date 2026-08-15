@@ -20777,6 +20777,217 @@ button.danger:focus-visible {
   color: #fff;
 }
 
+.simulation-teacher-timeline-scroll td.need.interactive {
+  padding: 0;
+}
+
+.simulation-teacher-cell-trigger {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 52px;
+  height: 100%;
+  min-height: 44px;
+  padding: 4px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.simulation-teacher-cell-trigger:hover,
+.simulation-teacher-cell-trigger:focus-visible {
+  z-index: 1;
+  outline: 2px solid #2f6d50;
+  outline-offset: -2px;
+  background: rgb(255 255 255 / 42%);
+}
+
+.simulation-teacher-cell-trigger > strong {
+  font-size: 0.82rem;
+}
+
+.simulation-teacher-cell-avatars {
+  display: flex;
+  align-items: center;
+}
+
+.simulation-teacher-cell-avatars i {
+  display: grid;
+  width: 21px;
+  height: 21px;
+  margin-left: -5px;
+  place-items: center;
+  border: 2px solid #e6f3e9;
+  border-radius: 999px;
+  background: #d8e5ff;
+  color: #31578c;
+  font-size: 0.54rem;
+  font-style: normal;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.simulation-teacher-cell-avatars i:first-child {
+  margin-left: 0;
+}
+
+.simulation-teacher-cell-avatars i.confirmed {
+  background: #2f7553;
+  color: #fff;
+}
+
+.simulation-teacher-cell-avatars i.empty {
+  background: #fff8e8;
+  color: #9a641e;
+}
+
+.simulation-teacher-cell-alert {
+  display: grid;
+  width: 17px;
+  height: 17px;
+  place-items: center;
+  border-radius: 999px;
+  background: #b7503c;
+  color: #fff;
+  font-size: 0.64rem;
+  font-weight: 900;
+}
+
+.simulation-teacher-assignment-overlay {
+  position: fixed;
+  z-index: 1200;
+  inset: 0;
+  display: grid;
+  padding: 24px;
+  place-items: center;
+  background: rgb(25 31 27 / 58%);
+  backdrop-filter: blur(3px);
+}
+
+.simulation-teacher-assignment-dialog {
+  display: grid;
+  width: min(760px, 100%);
+  max-height: min(88vh, 820px);
+  overflow: hidden;
+  border: 1px solid #d9cdbb;
+  border-radius: 20px;
+  background: #fffdfa;
+  box-shadow: 0 28px 80px rgb(24 35 29 / 32%);
+  color: #2f261d;
+  text-align: left;
+  white-space: normal;
+}
+
+.simulation-teacher-assignment-dialog > header {
+  display: flex;
+  padding: 18px 20px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid #eadfce;
+  background: linear-gradient(135deg, #edf7f0, #fffaf1);
+}
+
+.simulation-teacher-assignment-dialog > header span {
+  color: #5d765f;
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.simulation-teacher-assignment-dialog > header h3,
+.simulation-teacher-assignment-dialog > header p {
+  margin: 2px 0 0;
+}
+
+.simulation-teacher-assignment-dialog > header p {
+  color: #78664f;
+  font-size: 0.86rem;
+}
+
+.simulation-teacher-assignment-dialog > header button {
+  min-width: 38px;
+  padding: 5px 10px;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.simulation-teacher-assignment-dialog-list {
+  display: grid;
+  overflow-y: auto;
+}
+
+.simulation-teacher-assignment-dialog-list > article {
+  display: grid;
+  gap: 12px;
+  padding: 18px 20px;
+  border-top: 1px solid #eee4d7;
+}
+
+.simulation-teacher-assignment-dialog-list > article:first-child {
+  border-top: 0;
+}
+
+.simulation-teacher-assignment-dialog-list > article.has-warning {
+  background: #fff9ed;
+}
+
+.simulation-teacher-assignment-dialog-current {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.simulation-teacher-assignment-dialog-current > div {
+  display: grid;
+  gap: 2px;
+}
+
+.simulation-teacher-assignment-dialog-current > div > span {
+  color: #8b7861;
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.simulation-teacher-assignment-dialog-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.1fr) minmax(170px, 1fr) minmax(125px, 0.7fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.simulation-teacher-assignment-dialog-form label {
+  display: grid;
+  gap: 5px;
+}
+
+.simulation-teacher-assignment-dialog-form label > span {
+  color: #715f49;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.simulation-teacher-assignment-dialog-form select,
+.simulation-teacher-assignment-dialog-form input {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid #d8cbb9;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.simulation-teacher-assignment-dialog-form .simulation-assignment-actions {
+  flex-wrap: nowrap;
+}
+
 .simulation-teacher-timeline-mobile {
   display: none;
 }
@@ -21861,6 +22072,10 @@ button.danger:focus-visible {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .simulation-teacher-assignment-dialog-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .simulation-assignment-bulk form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -21919,8 +22134,23 @@ button.danger:focus-visible {
   .simulation-assignment-overview dl,
   .simulation-assignment-form,
   .simulation-assignment-bulk form,
-  .simulation-assignment-replace-form {
+  .simulation-assignment-replace-form,
+  .simulation-teacher-assignment-dialog-form {
     grid-template-columns: 1fr;
+  }
+
+  .simulation-teacher-assignment-overlay {
+    padding: 10px;
+  }
+
+  .simulation-teacher-assignment-dialog {
+    max-height: 94vh;
+    border-radius: 15px;
+  }
+
+  .simulation-teacher-assignment-dialog > header,
+  .simulation-teacher-assignment-dialog-list > article {
+    padding: 14px;
   }
 
   .simulation-assignment-slot-heading,
@@ -22059,6 +22289,22 @@ button.danger:focus-visible {
     font-size: 0.72rem;
     line-height: 1.25;
     white-space: normal;
+  }
+
+  .simulation-teacher-mobile-hour .simulation-teacher-cell-trigger.mobile {
+    width: 42px;
+    min-width: 42px;
+    min-height: 38px;
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: stretch;
+    border-radius: 9px;
+    background: #e0f0e5;
+    color: #24583e;
+  }
+
+  .simulation-teacher-cell-trigger.mobile .simulation-teacher-cell-avatars {
+    display: none;
   }
 
   .simulation-teacher-mobile-hour article b {
