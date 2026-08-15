@@ -397,7 +397,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut
             email_opt_in=bool(payload.transactional_email_opt_in),
             sms_opt_in=bool(payload.transactional_sms_opt_in),
             lesson_reminder_email_opt_in=bool(payload.transactional_email_opt_in),
-            lesson_reminder_sms_opt_in=bool(payload.transactional_sms_opt_in),
+            lesson_reminder_sms_opt_in=False,
             updated_at=now,
         )
         parent_label = " ".join(part for part in [parent_first_name, parent_last_name] if part).strip()
@@ -477,7 +477,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> UserOut
             email_opt_in=bool(payload.transactional_email_opt_in),
             sms_opt_in=bool(payload.transactional_sms_opt_in),
             lesson_reminder_email_opt_in=bool(payload.transactional_email_opt_in),
-            lesson_reminder_sms_opt_in=bool(payload.transactional_sms_opt_in),
+            lesson_reminder_sms_opt_in=False,
             updated_at=now,
         )
         db.add(user)

@@ -2590,6 +2590,11 @@ export type AdminPlanningSimulationSlotOut = {
   pending_quote_students: string[];
   draft_quote_students: string[];
   notes: string[];
+  teacher_assignment_id: string | null;
+  teacher_assignment_professor_id: string | null;
+  teacher_assignment_label: string | null;
+  teacher_assignment_status: "PREVISIONAL" | "CONFIRMED" | null;
+  teacher_assignment_warnings: Array<"TIME_OVERLAP" | "MULTI_SITE_HALF_DAY" | string>;
 };
 
 export type AdminPlanningSimulationSummaryOut = {

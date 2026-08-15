@@ -3628,6 +3628,80 @@ export async function adminAddClientToSessionAction(formData: FormData): Promise
   redirect(appendQueryMessage(returnTo, "ok", summary));
 }
 
+export async function adminUpdatePlanningSimulationTeacherAssignmentAction(formData: FormData): Promise<void> {
+  const token = currentToken();
+  if (!token) {
+    redirect("/login?error_code=session_expired");
+  }
+
+  const language = await ensureAdminAndGetLanguage(token);
+  const returnTo = safeAdminReturnPath(formData, "/admin/simulation-planning?view=teacher_needs");
+  const schoolYearLabel = String(formData.get("school_year_label") ?? "").trim();
+  const slotKeys = formData.getAll("slot_key").map((value) => String(value).trim()).filter(Boolean);
+  const operation = String(formData.get("operation") ?? "save").trim();
+  const professorId = operation === "clear" ? null : parseUuid(String(formData.get("professor_id") ?? ""));
+  const teacherLabel = operation === "clear" ? null : optionalField(formData, "teacher_label");
+  const statusValue = String(formData.get("assignment_status") ?? "PREVISIONAL").trim().toUpperCase();
+  const assignmentStatus = statusValue === "CONFIRMED" ? "CONFIRMED" : "PREVISIONAL";
+
+  if (!schoolYearLabel || slotKeys.length === 0) {
+    redirect(
+      appendQueryMessage(
+        returnTo,
+        "error",
+        language === "en" ? "The simulated slot is invalid." : "Le créneau simulé est invalide.",
+      ),
+    );
+  }
+  if (operation !== "clear" && !professorId && !teacherLabel) {
+    redirect(
+      appendQueryMessage(
+        returnTo,
+        "error",
+        language === "en"
+          ? "Choose a teacher or enter a placeholder label."
+          : "Choisissez un professeur ou saisissez un libellé provisoire.",
+      ),
+    );
+  }
+
+  const results = await Promise.all(
+    slotKeys.map((slotKey) => backendRequest<Record<string, unknown>>(
+      "/api/v1/admin/plannings/simulation/teacher-assignment",
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          school_year_label: schoolYearLabel,
+          slot_key: slotKey,
+          professor_id: professorId,
+          teacher_label: teacherLabel,
+          status: assignmentStatus,
+        }),
+      },
+      token,
+    )),
+  );
+  const failedResult = results.find((result) => !result.ok);
+  if (failedResult && !failedResult.ok) {
+    redirect(appendQueryMessage(returnTo, "error", failedResult.message));
+  }
+
+  revalidatePath("/admin/simulation-planning");
+  redirect(
+    appendQueryMessage(
+      returnTo,
+      "ok",
+      operation === "clear"
+        ? language === "en"
+          ? "Provisional assignment cleared."
+          : "Affectation prévisionnelle supprimée."
+        : language === "en"
+          ? `${slotKeys.length} provisional assignment(s) saved.`
+          : `${slotKeys.length} affectation(s) prévisionnelle(s) enregistrée(s).`,
+    ),
+  );
+}
+
 export async function adminRemoveClientFromSessionAction(formData: FormData): Promise<void> {
   const token = currentToken();
   if (!token) {

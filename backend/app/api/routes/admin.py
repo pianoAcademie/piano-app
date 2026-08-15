@@ -55,6 +55,7 @@ from app.models.ops import (
     CommunicationSenderCategory,
 )
 from app.models.notification_engine import Notification
+from app.models.planning_simulation import PlanningSimulationTeacherAssignment
 from app.models.quote import Prospect, Quote, QuoteAcceptanceFollowup
 from app.models.user import ClientStatus, User, UserPresence, UserPresenceHour, UserRole
 from app.services.automation_triggers import schedule_trial_attended_triggers
@@ -116,6 +117,8 @@ from app.schemas.admin import (
     AdminPlanningSimulationSlotOut,
     AdminPlanningSimulationSummaryOut,
     AdminPlanningSimulationTeacherActivityNeedOut,
+    AdminPlanningSimulationTeacherAssignmentOut,
+    AdminPlanningSimulationTeacherAssignmentUpdateRequest,
     AdminPlanningSimulationTeacherDayNeedOut,
     AdminPlanningSimulationTeacherNeedsOut,
     AdminPlanningSimulationTeacherNeedSummaryOut,
@@ -3227,6 +3230,66 @@ def _planning_simulation_teacher_needs(
     )
 
 
+def _planning_simulation_teacher_assignment_key(slot: AdminPlanningSimulationSlotOut) -> str | None:
+    if slot.teacher_assignment_professor_id is not None:
+        return f"professor:{slot.teacher_assignment_professor_id}"
+    normalized_label = " ".join(str(slot.teacher_assignment_label or "").casefold().split())
+    return f"label:{normalized_label}" if normalized_label else None
+
+
+def _planning_simulation_slot_half_days(slot: AdminPlanningSimulationSlotOut) -> set[str]:
+    start = _planning_simulation_minutes(slot.start_time)
+    end = _planning_simulation_minutes(slot.end_time)
+    if start is None or end is None or end <= start:
+        return set()
+    half_days: set[str] = set()
+    if start < _PLANNING_SIMULATION_AFTERNOON_START and end > 0:
+        half_days.add("MORNING")
+    if start < 24 * 60 and end > _PLANNING_SIMULATION_AFTERNOON_START:
+        half_days.add("AFTERNOON")
+    return half_days
+
+
+def _planning_simulation_teacher_assignment_warnings(
+    slots: list[AdminPlanningSimulationSlotOut],
+) -> dict[str, list[str]]:
+    assigned_slots = [slot for slot in slots if _planning_simulation_teacher_assignment_key(slot) is not None]
+    warning_codes: dict[str, set[str]] = {slot.slot_key: set() for slot in assigned_slots}
+
+    for index, first in enumerate(assigned_slots):
+        first_key = _planning_simulation_teacher_assignment_key(first)
+        first_dates = _planning_simulation_slot_occurrence_dates(first)
+        first_start = _planning_simulation_minutes(first.start_time)
+        first_end = _planning_simulation_minutes(first.end_time)
+        first_half_days = _planning_simulation_slot_half_days(first)
+        for second in assigned_slots[index + 1 :]:
+            if first_key != _planning_simulation_teacher_assignment_key(second):
+                continue
+            if not first_dates.intersection(_planning_simulation_slot_occurrence_dates(second)):
+                continue
+
+            second_start = _planning_simulation_minutes(second.start_time)
+            second_end = _planning_simulation_minutes(second.end_time)
+            if (
+                first_start is not None
+                and first_end is not None
+                and second_start is not None
+                and second_end is not None
+                and max(first_start, second_start) < min(first_end, second_end)
+            ):
+                warning_codes[first.slot_key].add("TIME_OVERLAP")
+                warning_codes[second.slot_key].add("TIME_OVERLAP")
+
+            if (
+                _planning_simulation_location_key(first) != _planning_simulation_location_key(second)
+                and first_half_days.intersection(_planning_simulation_slot_half_days(second))
+            ):
+                warning_codes[first.slot_key].add("MULTI_SITE_HALF_DAY")
+                warning_codes[second.slot_key].add("MULTI_SITE_HALF_DAY")
+
+    return {slot_key: sorted(codes) for slot_key, codes in warning_codes.items() if codes}
+
+
 def _planning_simulation_location_name_key(value: object | None) -> str:
     return " ".join(_planning_simulation_search_text(str(value or "")).replace("-", " ").split())
 
@@ -3245,6 +3308,83 @@ def _planning_simulation_is_online_solfege(
         "online",
         "en ligne",
     }
+
+
+@router.put(
+    "/plannings/simulation/teacher-assignment",
+    response_model=AdminPlanningSimulationTeacherAssignmentOut,
+)
+def update_planning_simulation_teacher_assignment(
+    payload: AdminPlanningSimulationTeacherAssignmentUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin_or_permissions("can_edit_planning")),
+) -> AdminPlanningSimulationTeacherAssignmentOut:
+    school_year_label = payload.school_year_label.strip()
+    if _parse_school_year_bounds(school_year_label) is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid school year label")
+
+    slot_key = payload.slot_key.strip()
+    teacher_label = str(payload.teacher_label or "").strip()
+    professor: Professor | None = None
+    if payload.professor_id is not None:
+        professor = db.scalar(select(Professor).where(Professor.id == payload.professor_id).limit(1))
+        if professor is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Professor not found")
+        if not professor.active:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Professor is inactive")
+        teacher_label = " ".join(part for part in [professor.first_name, professor.last_name] if part).strip()
+
+    assignment = db.scalar(
+        select(PlanningSimulationTeacherAssignment)
+        .where(
+            PlanningSimulationTeacherAssignment.school_year_label == school_year_label,
+            PlanningSimulationTeacherAssignment.slot_key == slot_key,
+        )
+        .with_for_update()
+    )
+
+    if professor is None and not teacher_label:
+        deleted_id = assignment.id if assignment is not None else None
+        if assignment is not None:
+            db.delete(assignment)
+            db.commit()
+        return AdminPlanningSimulationTeacherAssignmentOut(
+            id=deleted_id,
+            school_year_label=school_year_label,
+            slot_key=slot_key,
+            deleted=True,
+        )
+
+    now = _utcnow()
+    if assignment is None:
+        assignment = PlanningSimulationTeacherAssignment(
+            school_year_label=school_year_label,
+            slot_key=slot_key,
+            professor_id=professor.id if professor is not None else None,
+            teacher_label=teacher_label,
+            status=payload.status,
+            created_by_user_id=current_user.id,
+            updated_by_user_id=current_user.id,
+            updated_at=now,
+        )
+        db.add(assignment)
+    else:
+        assignment.professor_id = professor.id if professor is not None else None
+        assignment.teacher_label = teacher_label
+        assignment.status = payload.status
+        assignment.updated_by_user_id = current_user.id
+        assignment.updated_at = now
+
+    db.commit()
+    db.refresh(assignment)
+    return AdminPlanningSimulationTeacherAssignmentOut(
+        id=assignment.id,
+        school_year_label=assignment.school_year_label,
+        slot_key=assignment.slot_key,
+        professor_id=assignment.professor_id,
+        teacher_label=assignment.teacher_label,
+        status=assignment.status,
+    )
 
 
 @router.get("/plannings/simulation", response_model=AdminPlanningSimulationOut)
@@ -3649,6 +3789,14 @@ def get_planning_simulation(
     total_pending = 0
     total_draft = 0
     quote_only_slot_count = 0
+    teacher_assignments_by_slot_key = {
+        assignment.slot_key: assignment
+        for assignment in db.scalars(
+            select(PlanningSimulationTeacherAssignment).where(
+                PlanningSimulationTeacherAssignment.school_year_label == requested_school_year
+            )
+        ).all()
+    }
 
     sorted_entries = sorted(
         slot_entries.values(),
@@ -3662,6 +3810,7 @@ def get_planning_simulation(
     )
 
     for entry in sorted_entries:
+        teacher_assignment = teacher_assignments_by_slot_key.get(str(entry["slot_key"]))
         booked_count = len(entry["_booked_user_ids"])
         approved_quotes_count = len(entry["_approved_quote_ids"])
         pending_quotes_count = len(entry["_pending_quote_ids"])
@@ -3723,8 +3872,22 @@ def get_planning_simulation(
                 pending_quote_students=sorted(str(item) for item in entry["_pending_quote_students"].values()),
                 draft_quote_students=sorted(str(item) for item in entry["_draft_quote_students"].values()),
                 notes=[str(item) for item in entry["notes"]],
+                teacher_assignment_id=teacher_assignment.id if teacher_assignment is not None else None,
+                teacher_assignment_professor_id=(
+                    teacher_assignment.professor_id if teacher_assignment is not None else None
+                ),
+                teacher_assignment_label=(
+                    teacher_assignment.teacher_label if teacher_assignment is not None else None
+                ),
+                teacher_assignment_status=(
+                    teacher_assignment.status if teacher_assignment is not None else None
+                ),
             )
         )
+
+    assignment_warnings = _planning_simulation_teacher_assignment_warnings(slot_payloads)
+    for slot_payload in slot_payloads:
+        slot_payload.teacher_assignment_warnings = assignment_warnings.get(slot_payload.slot_key, [])
 
     return AdminPlanningSimulationOut(
         school_year_label=requested_school_year,

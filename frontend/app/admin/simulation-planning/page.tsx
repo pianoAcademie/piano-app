@@ -4,8 +4,10 @@ import { redirect } from "next/navigation";
 import type { CSSProperties } from "react";
 
 import { backendRequest } from "../../../lib/backend";
+import { adminUpdatePlanningSimulationTeacherAssignmentAction } from "../../../lib/actions";
 import { hasAdminPermission } from "../../../lib/admin-access";
 import type {
+  AdminProfessorOut,
   AdminPlanningSimulationOut,
   AdminPlanningSimulationSlotOut,
   AdminPlanningSimulationTeacherNeedsOut,
@@ -382,6 +384,275 @@ function TeacherNeedsDashboard({
   );
 }
 
+function teacherAssignmentWarningLabel(code: string, language: UiLanguage): string {
+  if (code === "TIME_OVERLAP") {
+    return text(language, "Chevauchement horaire", "Schedule overlap");
+  }
+  if (code === "MULTI_SITE_HALF_DAY") {
+    return text(language, "Plusieurs sites sur la même demi-journée", "Multiple locations in the same half-day");
+  }
+  return code;
+}
+
+function slotTeachingMinutes(slot: AdminPlanningSimulationSlotOut): number {
+  const start = parseTimeToMinutes(slot.start_time);
+  const end = parseTimeToMinutes(slot.end_time);
+  return start === null || end === null || end <= start ? 0 : end - start;
+}
+
+function teacherAssignmentBulkGroups(
+  slots: AdminPlanningSimulationSlotOut[],
+  language: UiLanguage,
+): Array<{ key: string; label: string; slots: AdminPlanningSimulationSlotOut[] }> {
+  const groups = new Map<string, { key: string; label: string; slots: AdminPlanningSimulationSlotOut[] }>();
+  for (const slot of slots) {
+    const start = parseTimeToMinutes(slot.start_time) ?? 0;
+    const halfDay = start < 13 * 60 ? "morning" : "afternoon";
+    const key = `${slot.location_id || slot.location_name}:${halfDay}`;
+    const label = `${slot.location_name} · ${halfDay === "morning" ? text(language, "matin", "morning") : text(language, "après-midi", "afternoon")}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.slots.push(slot);
+    } else {
+      groups.set(key, { key, label, slots: [slot] });
+    }
+  }
+  return Array.from(groups.values()).sort((first, second) => first.label.localeCompare(second.label, "fr"));
+}
+
+function TeacherAssignmentBoard({
+  slots,
+  professors,
+  schoolYearLabel,
+  returnTo,
+  canEdit,
+  language,
+}: {
+  slots: AdminPlanningSimulationSlotOut[];
+  professors: AdminProfessorOut[];
+  schoolYearLabel: string;
+  returnTo: string;
+  canEdit: boolean;
+  language: UiLanguage;
+}): JSX.Element {
+  const assignedSlots = slots.filter((slot) => Boolean(slot.teacher_assignment_label));
+  const confirmedSlots = assignedSlots.filter((slot) => slot.teacher_assignment_status === "CONFIRMED");
+  const warningSlots = assignedSlots.filter((slot) => slot.teacher_assignment_warnings.length > 0);
+  const dayGroups = groupByWeekday(slots);
+  const teacherSummary = new Map<string, {
+    slotCount: number;
+    minutes: number;
+    confirmed: number;
+    warnings: number;
+    professorId: string | null;
+    slotKeys: string[];
+  }>();
+
+  for (const slot of assignedSlots) {
+    const label = slot.teacher_assignment_label || "-";
+    const current = teacherSummary.get(label) || {
+      slotCount: 0,
+      minutes: 0,
+      confirmed: 0,
+      warnings: 0,
+      professorId: slot.teacher_assignment_professor_id,
+      slotKeys: [],
+    };
+    current.slotCount += 1;
+    current.minutes += slotTeachingMinutes(slot);
+    current.confirmed += slot.teacher_assignment_status === "CONFIRMED" ? 1 : 0;
+    current.warnings += slot.teacher_assignment_warnings.length > 0 ? 1 : 0;
+    current.slotKeys.push(slot.slot_key);
+    teacherSummary.set(label, current);
+  }
+
+  return (
+    <section className="simulation-assignment-board">
+      <datalist id="simulation-placeholder-teachers">
+        <option value="Prof à confirmer 1" />
+        <option value="Prof à confirmer 2" />
+        <option value="Prof à confirmer 3" />
+        <option value="Poste à recruter 1" />
+        <option value="Renfort à prévoir" />
+      </datalist>
+
+      <section className="card simulation-assignment-overview">
+        <div>
+          <span className="simulation-teacher-needs-eyebrow">
+            {text(language, "Organisation prévisionnelle", "Provisional organization")}
+          </span>
+          <h3>{text(language, "Prépositionnement des professeurs", "Provisional teacher assignments")}</h3>
+          <p className="muted">
+            {text(
+              language,
+              "Ces choix restent dans la simulation et ne modifient jamais le planning réel.",
+              "These choices stay in the simulation and never modify the live schedule.",
+            )}
+          </p>
+        </div>
+        <dl>
+          <div><dt>{text(language, "Affectés", "Assigned")}</dt><dd>{assignedSlots.length}/{slots.length}</dd></div>
+          <div><dt>{text(language, "Confirmés", "Confirmed")}</dt><dd>{confirmedSlots.length}</dd></div>
+          <div><dt>{text(language, "À pourvoir", "Unfilled")}</dt><dd>{Math.max(0, slots.length - assignedSlots.length)}</dd></div>
+          <div className={warningSlots.length > 0 ? "warning" : ""}><dt>{text(language, "Alertes", "Warnings")}</dt><dd>{warningSlots.length}</dd></div>
+        </dl>
+      </section>
+
+      {teacherSummary.size > 0 ? (
+        <section className="card simulation-assignment-summary">
+          <h3>{text(language, "Charge prévisionnelle par professeur", "Provisional workload by teacher")}</h3>
+          <div>
+            {Array.from(teacherSummary.entries())
+              .sort(([first], [second]) => first.localeCompare(second, "fr"))
+              .map(([label, summary]) => (
+                <article className={summary.warnings > 0 ? "has-warning" : ""} key={label}>
+                  <strong>{label}</strong>
+                  <span>{summary.slotCount} {text(language, "cours", "courses")} · {formatTeachingMinutes(summary.minutes, language)}</span>
+                  <small>{summary.confirmed} {text(language, "confirmé(s)", "confirmed")} {summary.warnings > 0 ? `· ${summary.warnings} ${text(language, "alerte(s)", "warning(s)")}` : ""}</small>
+                  {canEdit && !summary.professorId ? (
+                    <form action={adminUpdatePlanningSimulationTeacherAssignmentAction} className="simulation-assignment-replace-form">
+                      <input type="hidden" name="school_year_label" value={schoolYearLabel} />
+                      <input type="hidden" name="return_to" value={returnTo} />
+                      {summary.slotKeys.map((slotKey) => <input type="hidden" name="slot_key" value={slotKey} key={slotKey} />)}
+                      <select name="professor_id" defaultValue="" required aria-label={text(language, "Professeur définitif", "Final teacher")}>
+                        <option value="" disabled>{text(language, "Remplacer par…", "Replace with…")}</option>
+                        {professors.map((professor) => (
+                          <option value={professor.id} key={professor.id}>{professor.first_name} {professor.last_name}</option>
+                        ))}
+                      </select>
+                      <select name="assignment_status" defaultValue="PREVISIONAL" aria-label={text(language, "Statut", "Status")}>
+                        <option value="PREVISIONAL">{text(language, "Prévisionnel", "Provisional")}</option>
+                        <option value="CONFIRMED">{text(language, "Confirmé", "Confirmed")}</option>
+                      </select>
+                      <button type="submit" name="operation" value="save">{text(language, "Remplacer partout", "Replace everywhere")}</button>
+                    </form>
+                  ) : null}
+                </article>
+              ))}
+          </div>
+        </section>
+      ) : null}
+
+      <section className="simulation-assignment-days">
+        {dayGroups.map((day) => (
+          <article className="card simulation-assignment-day" key={day.weekday}>
+            <header>
+              <h3>{day.weekdayLabel}</h3>
+              <span>{day.slots.filter((slot) => slot.teacher_assignment_label).length}/{day.slots.length} {text(language, "affectés", "assigned")}</span>
+            </header>
+            {canEdit ? (
+              <details className="simulation-assignment-bulk">
+                <summary>{text(language, "Affecter une demi-journée en une fois", "Assign a half-day at once")}</summary>
+                <div>
+                  {teacherAssignmentBulkGroups(day.slots, language).map((group) => (
+                    <form action={adminUpdatePlanningSimulationTeacherAssignmentAction} key={group.key}>
+                      <input type="hidden" name="school_year_label" value={schoolYearLabel} />
+                      <input type="hidden" name="return_to" value={returnTo} />
+                      {group.slots.map((slot) => <input type="hidden" name="slot_key" value={slot.slot_key} key={slot.slot_key} />)}
+                      <strong>{group.label}</strong>
+                      <small>{group.slots.length} {text(language, "créneau(x)", "slot(s)")}</small>
+                      <select name="professor_id" defaultValue="" aria-label={text(language, "Professeur", "Teacher")}>
+                        <option value="">{text(language, "— Professeur provisoire —", "— Placeholder teacher —")}</option>
+                        {professors.map((professor) => (
+                          <option value={professor.id} key={professor.id}>{professor.first_name} {professor.last_name}</option>
+                        ))}
+                      </select>
+                      <input
+                        name="teacher_label"
+                        list="simulation-placeholder-teachers"
+                        placeholder={text(language, "Ou libellé provisoire", "Or placeholder label")}
+                        aria-label={text(language, "Libellé provisoire", "Placeholder label")}
+                      />
+                      <select name="assignment_status" defaultValue="PREVISIONAL" aria-label={text(language, "Statut", "Status")}>
+                        <option value="PREVISIONAL">{text(language, "Prévisionnel", "Provisional")}</option>
+                        <option value="CONFIRMED">{text(language, "Confirmé", "Confirmed")}</option>
+                      </select>
+                      <button type="submit" name="operation" value="save">{text(language, "Affecter le groupe", "Assign group")}</button>
+                    </form>
+                  ))}
+                </div>
+              </details>
+            ) : null}
+            <div className="simulation-assignment-slot-list">
+              {day.slots
+                .slice()
+                .sort((first, second) => first.start_time.localeCompare(second.start_time) || first.location_name.localeCompare(second.location_name, "fr"))
+                .map((slot) => (
+                  <section className={`simulation-assignment-slot ${slot.teacher_assignment_label ? "assigned" : "unfilled"}`} key={slot.slot_key}>
+                    <div className="simulation-assignment-slot-heading">
+                      <div>
+                        <time>{slot.start_time}–{slot.end_time}</time>
+                        <strong>{slot.course_type_name}</strong>
+                        <span>{slot.location_name}</span>
+                      </div>
+                      <div className="simulation-assignment-current">
+                        <span className={`simulation-assignment-status ${slot.teacher_assignment_status?.toLowerCase() || "unfilled"}`}>
+                          {slot.teacher_assignment_status === "CONFIRMED"
+                            ? text(language, "Confirmé", "Confirmed")
+                            : slot.teacher_assignment_label
+                              ? text(language, "Prévisionnel", "Provisional")
+                              : text(language, "À pourvoir", "Unfilled")}
+                        </span>
+                        <strong>{slot.teacher_assignment_label || text(language, "Aucun professeur", "No teacher")}</strong>
+                      </div>
+                    </div>
+
+                    {slot.teacher_assignment_warnings.length > 0 ? (
+                      <div className="simulation-assignment-warnings">
+                        {slot.teacher_assignment_warnings.map((warning) => (
+                          <span key={warning}>{teacherAssignmentWarningLabel(warning, language)}</span>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    {canEdit ? (
+                      <form action={adminUpdatePlanningSimulationTeacherAssignmentAction} className="simulation-assignment-form">
+                        <input type="hidden" name="school_year_label" value={schoolYearLabel} />
+                        <input type="hidden" name="slot_key" value={slot.slot_key} />
+                        <input type="hidden" name="return_to" value={returnTo} />
+                        <label>
+                          <span>{text(language, "Professeur connu", "Known teacher")}</span>
+                          <select name="professor_id" defaultValue={slot.teacher_assignment_professor_id || ""}>
+                            <option value="">{text(language, "— Aucun / provisoire —", "— None / placeholder —")}</option>
+                            {professors.map((professor) => (
+                              <option value={professor.id} key={professor.id}>{professor.first_name} {professor.last_name}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          <span>{text(language, "Ou libellé provisoire", "Or placeholder label")}</span>
+                          <input
+                            name="teacher_label"
+                            list="simulation-placeholder-teachers"
+                            defaultValue={slot.teacher_assignment_professor_id ? "" : slot.teacher_assignment_label || ""}
+                            placeholder={text(language, "Ex. Prof à confirmer 1", "E.g. Teacher to confirm 1")}
+                          />
+                        </label>
+                        <label>
+                          <span>{text(language, "Statut", "Status")}</span>
+                          <select name="assignment_status" defaultValue={slot.teacher_assignment_status || "PREVISIONAL"}>
+                            <option value="PREVISIONAL">{text(language, "Prévisionnel", "Provisional")}</option>
+                            <option value="CONFIRMED">{text(language, "Confirmé", "Confirmed")}</option>
+                          </select>
+                        </label>
+                        <div className="simulation-assignment-actions">
+                          <button type="submit" name="operation" value="save">{text(language, "Enregistrer", "Save")}</button>
+                          {slot.teacher_assignment_label ? (
+                            <button className="ghost" type="submit" name="operation" value="clear">{text(language, "Retirer", "Clear")}</button>
+                          ) : null}
+                        </div>
+                      </form>
+                    ) : null}
+                  </section>
+                ))}
+            </div>
+          </article>
+        ))}
+      </section>
+    </section>
+  );
+}
+
 function formatSeasonWindow(slot: AdminPlanningSimulationSlotOut, language: UiLanguage): string {
   const datesCount = slot.occurrence_count;
   const seasonSpan =
@@ -673,6 +944,7 @@ export default async function AdminSimulationPlanningPage({
   }
 
   const language = normalizeUiLanguage(meResult.data.preferred_language);
+  const canEditSimulation = hasAdminPermission(meResult.data, "can_edit_planning");
   const requestedView = simulationViewFromParams(searchParams ?? {});
   const requestedSchoolYear = readParam(searchParams ?? {}, "school_year").trim() || DEFAULT_SIMULATION_SCHOOL_YEAR;
   const scopedLocationId = String(meResult.data.admin_permissions?.planning_simulation_location_id ?? "").trim();
@@ -698,10 +970,13 @@ export default async function AdminSimulationPlanningPage({
     ? `/api/v1/admin/plannings/simulation?${simulationQuery.toString()}`
     : "/api/v1/admin/plannings/simulation";
 
-  const [locationsResult, courseTypesResult, simulationResult] = await Promise.all([
+  const [locationsResult, courseTypesResult, simulationResult, professorsResult] = await Promise.all([
     loadPlanningSimulationLocations(token),
     backendRequest<CourseTypeOut[]>("/api/v1/course-types?active=true", {}, token),
     backendRequest<AdminPlanningSimulationOut>(simulationPath, {}, token),
+    requestedView === "teacher_needs" && canEditSimulation
+      ? backendRequest<AdminProfessorOut[]>("/api/v1/admin/professors?active=true", {}, token)
+      : Promise.resolve({ ok: true as const, data: [] as AdminProfessorOut[] }),
   ]);
 
   const permittedLocations = locationsResult.ok
@@ -726,12 +1001,22 @@ export default async function AdminSimulationPlanningPage({
   const locationsError = locationsResult.ok ? null : locationsResult.message;
   const courseTypesError = courseTypesResult.ok ? null : courseTypesResult.message;
   const simulationError = simulationResult.ok ? null : simulationResult.message;
+  const professors = professorsResult.ok ? professorsResult.data : [];
+  const professorsError = professorsResult.ok ? null : professorsResult.message;
+  const okMessage = readParam(searchParams ?? {}, "ok").trim();
+  const actionError = readParam(searchParams ?? {}, "error").trim();
 
   const effectiveSchoolYear = simulation?.school_year_label || requestedSchoolYear || "";
   const availableSchoolYears = Array.from(
     new Set([effectiveSchoolYear, ...(simulation?.available_school_years ?? [])].filter(Boolean)),
   );
   const groupedLocations = simulation ? groupByLocation(simulation.slots) : [];
+  const assignmentReturnParams = new URLSearchParams();
+  assignmentReturnParams.set("view", "teacher_needs");
+  assignmentReturnParams.set("school_year", effectiveSchoolYear);
+  if (requestedLocationId) assignmentReturnParams.set("location_id", requestedLocationId);
+  assignmentReturnParams.set("activity_filter", requestedActivityFilter);
+  const assignmentReturnTo = `/admin/simulation-planning?${assignmentReturnParams.toString()}`;
 
   return (
     <section className="admin-page-grid">
@@ -757,6 +1042,9 @@ export default async function AdminSimulationPlanningPage({
           </div>
         </div>
       </section>
+
+      {okMessage ? <section className="flash-ok">{okMessage}</section> : null}
+      {actionError ? <section className="flash-err">{actionError}</section> : null}
 
       <nav className="simulation-planning-tabs" aria-label={text(language, "Vues de simulation", "Simulation views")}>
         <Link
@@ -847,6 +1135,13 @@ export default async function AdminSimulationPlanningPage({
         </section>
       ) : null}
 
+      {professorsError ? (
+        <section className="flash-err">
+          {text(language, "Impossible de charger les professeurs : ", "Unable to load teachers: ")}
+          {professorsError}
+        </section>
+      ) : null}
+
       {!simulation ? (
         <section className="flash-err">
           {text(language, "Impossible de charger la simulation : ", "Unable to load the simulation: ")}
@@ -865,7 +1160,17 @@ export default async function AdminSimulationPlanningPage({
             </p>
           </section>
         ) : (
-          <TeacherNeedsDashboard needs={simulation.teacher_needs} language={language} />
+          <>
+            <TeacherNeedsDashboard needs={simulation.teacher_needs} language={language} />
+            <TeacherAssignmentBoard
+              slots={simulation.slots}
+              professors={professors}
+              schoolYearLabel={effectiveSchoolYear}
+              returnTo={assignmentReturnTo}
+              canEdit={canEditSimulation && !professorsError}
+              language={language}
+            />
+          </>
         )
       ) : (
         <>

@@ -20,10 +20,37 @@ from app.api.routes.admin import (
     _planning_simulation_resolve_live_slot_for_quote,
     _planning_simulation_search_text,
     _planning_simulation_select_live_slot_for_quote,
+    _planning_simulation_teacher_assignment_warnings,
     _planning_simulation_teacher_needs,
     _safe_zoneinfo,
+    update_planning_simulation_teacher_assignment,
 )
 from app.models.catalog import DeliveryMode
+from app.models.planning_simulation import PlanningSimulationTeacherAssignment
+from app.schemas.admin import AdminPlanningSimulationTeacherAssignmentUpdateRequest
+
+
+class _AssignmentSession:
+    def __init__(self, scalar_results: list[object | None]) -> None:
+        self.scalar_results = list(scalar_results)
+        self.added: list[object] = []
+        self.deleted: list[object] = []
+        self.commits = 0
+
+    def scalar(self, _statement: object) -> object | None:
+        return self.scalar_results.pop(0)
+
+    def add(self, value: object) -> None:
+        self.added.append(value)
+
+    def delete(self, value: object) -> None:
+        self.deleted.append(value)
+
+    def commit(self) -> None:
+        self.commits += 1
+
+    def refresh(self, _value: object) -> None:
+        pass
 
 
 class AdminPlanningSimulationTests(unittest.TestCase):
@@ -39,8 +66,12 @@ class AdminPlanningSimulationTests(unittest.TestCase):
         location_id: object | None = None,
         location_name: str = "Site principal",
         occurrence_dates: list[date] | None = None,
+        slot_key: str | None = None,
+        teacher_assignment_professor_id: object | None = None,
+        teacher_assignment_label: str | None = None,
     ) -> SimpleNamespace:
         return SimpleNamespace(
+            slot_key=slot_key or f"slot-{uuid4()}",
             course_type_id=activity_id,
             course_type_name=activity_name,
             course_type_color_hex="#94C973",
@@ -51,6 +82,8 @@ class AdminPlanningSimulationTests(unittest.TestCase):
             start_time=start_time,
             end_time=end_time,
             occurrence_dates=occurrence_dates or [],
+            teacher_assignment_professor_id=teacher_assignment_professor_id,
+            teacher_assignment_label=teacher_assignment_label,
         )
 
     def test_parse_school_year_bounds_accepts_standard_label(self) -> None:
@@ -377,6 +410,122 @@ class AdminPlanningSimulationTests(unittest.TestCase):
 
         self.assertEqual(needs.summary.peak_concurrent_teachers, 2)
         self.assertEqual(needs.summary.mobilized_teachers, 2)
+
+    def test_teacher_assignment_warnings_detect_overlap_for_same_placeholder(self) -> None:
+        common = {
+            "activity_id": uuid4(),
+            "activity_name": "Piano collectif",
+            "weekday": 2,
+            "weekday_label": "Mercredi",
+            "location_name": "Rue Scheffer",
+            "occurrence_dates": [date(2026, 9, 9)],
+            "teacher_assignment_label": "Prof à confirmer 1",
+        }
+        first = self._teacher_need_slot(
+            **common,
+            slot_key="first",
+            start_time="14:00",
+            end_time="15:00",
+        )
+        second = self._teacher_need_slot(
+            **common,
+            slot_key="second",
+            start_time="14:30",
+            end_time="15:30",
+        )
+
+        warnings = _planning_simulation_teacher_assignment_warnings([first, second])  # type: ignore[arg-type]
+
+        self.assertEqual(warnings["first"], ["TIME_OVERLAP"])
+        self.assertEqual(warnings["second"], ["TIME_OVERLAP"])
+
+    def test_teacher_assignment_warnings_flag_multi_site_half_day_without_false_overlap(self) -> None:
+        professor_id = uuid4()
+        common = {
+            "activity_id": uuid4(),
+            "activity_name": "Piano collectif",
+            "weekday": 5,
+            "weekday_label": "Samedi",
+            "occurrence_dates": [date(2026, 9, 12)],
+            "teacher_assignment_professor_id": professor_id,
+            "teacher_assignment_label": "Camille Martin",
+        }
+        first = self._teacher_need_slot(
+            **common,
+            slot_key="assas",
+            location_id=uuid4(),
+            location_name="Rue d'Assas",
+            start_time="09:00",
+            end_time="10:00",
+        )
+        second = self._teacher_need_slot(
+            **common,
+            slot_key="pompe",
+            location_id=uuid4(),
+            location_name="Rue de la Pompe",
+            start_time="10:00",
+            end_time="11:00",
+        )
+
+        warnings = _planning_simulation_teacher_assignment_warnings([first, second])  # type: ignore[arg-type]
+
+        self.assertEqual(warnings["assas"], ["MULTI_SITE_HALF_DAY"])
+        self.assertEqual(warnings["pompe"], ["MULTI_SITE_HALF_DAY"])
+
+    def test_teacher_assignment_update_resolves_professor_label(self) -> None:
+        professor_id = uuid4()
+        current_user_id = uuid4()
+        professor = SimpleNamespace(
+            id=professor_id,
+            first_name="Camille",
+            last_name="Martin",
+            active=True,
+        )
+        db = _AssignmentSession([professor, None])
+
+        result = update_planning_simulation_teacher_assignment(
+            AdminPlanningSimulationTeacherAssignmentUpdateRequest(
+                school_year_label="2026-2027",
+                slot_key="live:test-slot",
+                professor_id=professor_id,
+                teacher_label="Ignored placeholder",
+                status="CONFIRMED",
+            ),
+            db,  # type: ignore[arg-type]
+            SimpleNamespace(id=current_user_id),  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(len(db.added), 1)
+        assignment = db.added[0]
+        self.assertIsInstance(assignment, PlanningSimulationTeacherAssignment)
+        self.assertEqual(assignment.professor_id, professor_id)  # type: ignore[attr-defined]
+        self.assertEqual(assignment.teacher_label, "Camille Martin")  # type: ignore[attr-defined]
+        self.assertEqual(assignment.status, "CONFIRMED")  # type: ignore[attr-defined]
+        self.assertEqual(result.teacher_label, "Camille Martin")
+        self.assertEqual(db.commits, 1)
+
+    def test_teacher_assignment_update_clears_existing_assignment(self) -> None:
+        assignment = PlanningSimulationTeacherAssignment(
+            id=uuid4(),
+            school_year_label="2026-2027",
+            slot_key="live:test-slot",
+            teacher_label="Prof à confirmer 1",
+            status="PREVISIONAL",
+        )
+        db = _AssignmentSession([assignment])
+
+        result = update_planning_simulation_teacher_assignment(
+            AdminPlanningSimulationTeacherAssignmentUpdateRequest(
+                school_year_label="2026-2027",
+                slot_key="live:test-slot",
+            ),
+            db,  # type: ignore[arg-type]
+            SimpleNamespace(id=uuid4()),  # type: ignore[arg-type]
+        )
+
+        self.assertEqual(db.deleted, [assignment])
+        self.assertTrue(result.deleted)
+        self.assertEqual(db.commits, 1)
 
 
 if __name__ == "__main__":

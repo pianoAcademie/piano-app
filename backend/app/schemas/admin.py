@@ -2763,6 +2763,29 @@ class AdminPlanningSimulationSlotOut(BaseModel):
     pending_quote_students: list[str] = Field(default_factory=list)
     draft_quote_students: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+    teacher_assignment_id: UUID | None = None
+    teacher_assignment_professor_id: UUID | None = None
+    teacher_assignment_label: str | None = None
+    teacher_assignment_status: Literal["PREVISIONAL", "CONFIRMED"] | None = None
+    teacher_assignment_warnings: list[str] = Field(default_factory=list)
+
+
+class AdminPlanningSimulationTeacherAssignmentUpdateRequest(BaseModel):
+    school_year_label: str = Field(min_length=4, max_length=20)
+    slot_key: str = Field(min_length=1, max_length=600)
+    professor_id: UUID | None = None
+    teacher_label: str | None = Field(default=None, max_length=180)
+    status: Literal["PREVISIONAL", "CONFIRMED"] = "PREVISIONAL"
+
+
+class AdminPlanningSimulationTeacherAssignmentOut(BaseModel):
+    id: UUID | None = None
+    school_year_label: str
+    slot_key: str
+    professor_id: UUID | None = None
+    teacher_label: str | None = None
+    status: Literal["PREVISIONAL", "CONFIRMED"] | None = None
+    deleted: bool = False
 
 
 class AdminPlanningSimulationSummaryOut(BaseModel):

@@ -110,6 +110,7 @@ from app.models.subscription_engine import (
 )
 from app.models.pricing import CourseTypePrice, PlanPrice, VatRule
 from app.models.professor_access import ProfessorPermission
+from app.models.planning_simulation import PlanningSimulationTeacherAssignment
 from app.models.teacher_invoicing import (
     DocumentTemplate,
     TeacherInvoice,
@@ -243,6 +244,7 @@ __all__ = [
     "ProfessorContractGridLineRule",
     "ProfessorContractLineMode",
     "ProfessorPermission",
+    "PlanningSimulationTeacherAssignment",
     "ProfessorSalaryPayment",
     "ProfessorSessionMessage",
     "ProfessorSessionPayout",
