@@ -20858,6 +20858,100 @@ button.danger:focus-visible {
   font-weight: 900;
 }
 
+.simulation-teacher-student-tooltip {
+  position: fixed;
+  z-index: 1250;
+  display: grid;
+  width: min(340px, calc(100vw - 24px));
+  max-height: min(420px, calc(100vh - 24px));
+  overflow: hidden;
+  border: 1px solid #d8c8b2;
+  border-radius: 14px;
+  background: #fffdfa;
+  box-shadow: 0 20px 44px rgb(44 34 22 / 28%);
+  color: #302112;
+  pointer-events: none;
+  text-align: left;
+  white-space: normal;
+}
+
+.simulation-teacher-student-tooltip > header {
+  display: flex;
+  padding: 10px 12px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #eadfcc;
+  background: linear-gradient(135deg, #edf7f0, #fffaf1);
+}
+
+.simulation-teacher-student-tooltip > header > strong {
+  font-size: 0.82rem;
+}
+
+.simulation-teacher-student-tooltip > header > span {
+  flex: 0 0 auto;
+  color: #58725e;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.simulation-teacher-student-tooltip-slots {
+  display: grid;
+  overflow-y: auto;
+}
+
+.simulation-teacher-student-tooltip-slots > section {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-top: 1px solid #eee4d7;
+}
+
+.simulation-teacher-student-tooltip-slots > section:first-child {
+  border-top: 0;
+}
+
+.simulation-teacher-student-tooltip-slot-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #2f6448;
+  font-size: 0.74rem;
+}
+
+.simulation-teacher-student-tooltip-slot-head > span {
+  color: #8b7861;
+  font-size: 0.66rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.simulation-teacher-student-tooltip-section {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.simulation-teacher-student-tooltip-section > strong {
+  color: #73542e;
+}
+
+.simulation-teacher-student-tooltip-section > span,
+.simulation-teacher-student-tooltip p {
+  color: #44372a;
+  overflow-wrap: anywhere;
+}
+
+.simulation-teacher-student-tooltip p {
+  margin: 0;
+  font-size: 0.75rem;
+}
+
 .simulation-teacher-assignment-overlay {
   position: fixed;
   z-index: 1200;

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 
 import { adminUpdatePlanningSimulationTeacherAssignmentAction } from "../../../lib/actions";
 import type { AdminPlanningSimulationSlotOut, AdminProfessorOut } from "../../../lib/types";
@@ -28,6 +29,37 @@ function warningLabel(code: string, language: UiLanguage): string {
   return code;
 }
 
+type StudentSection = {
+  label: string;
+  people: string[];
+};
+
+type TooltipAnchor = {
+  above: boolean;
+  left: number;
+  top: number;
+};
+
+function studentSections(slot: AdminPlanningSimulationSlotOut, language: UiLanguage): StudentSection[] {
+  return [
+    { label: text(language, "Inscrits", "Enrolled"), people: slot.booked_students },
+    { label: text(language, "Devis validés", "Approved quotes"), people: slot.approved_quote_students },
+    { label: text(language, "En attente", "Pending"), people: slot.pending_quote_students },
+    { label: text(language, "Brouillons", "Drafts"), people: slot.draft_quote_students },
+  ].filter((section) => section.people.length > 0);
+}
+
+function uniqueStudentCount(slots: AdminPlanningSimulationSlotOut[]): number {
+  return new Set(
+    slots.flatMap((slot) => [
+      ...slot.booked_students,
+      ...slot.approved_quote_students,
+      ...slot.pending_quote_students,
+      ...slot.draft_quote_students,
+    ]),
+  ).size;
+}
+
 export function TeacherAssignmentGridCell({
   count,
   slots,
@@ -48,9 +80,13 @@ export function TeacherAssignmentGridCell({
   mobile?: boolean;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
+  const [tooltipAnchor, setTooltipAnchor] = useState<TooltipAnchor | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const tooltipId = useId();
   const activeProfessors = professors.filter((professor) => professor.active);
   const assignedSlots = slots.filter((slot) => Boolean(slot.teacher_assignment_label));
   const warningCount = slots.filter((slot) => slot.teacher_assignment_warnings.length > 0).length;
+  const studentCount = uniqueStudentCount(slots);
   const allConfirmed = slots.length > 0 && slots.every((slot) => slot.teacher_assignment_status === "CONFIRMED");
   const stateClass = warningCount > 0
     ? "warning"
@@ -60,12 +96,43 @@ export function TeacherAssignmentGridCell({
         ? "assigned"
         : "unfilled";
 
+  function showStudentTooltip(): void {
+    if (mobile || open || !triggerRef.current) {
+      return;
+    }
+    const rect = triggerRef.current.getBoundingClientRect();
+    const estimatedTooltipHeight = Math.min(380, 92 + slots.length * 120);
+    const above = window.innerHeight - rect.bottom < estimatedTooltipHeight && rect.top > estimatedTooltipHeight;
+    setTooltipAnchor({
+      above,
+      left: Math.min(Math.max(rect.left + rect.width / 2, 170), window.innerWidth - 170),
+      top: above ? rect.top - 8 : rect.bottom + 8,
+    });
+  }
+
+  const tooltipStyle: CSSProperties | undefined = tooltipAnchor
+    ? {
+        left: tooltipAnchor.left,
+        top: tooltipAnchor.top,
+        transform: tooltipAnchor.above ? "translate(-50%, -100%)" : "translateX(-50%)",
+      }
+    : undefined;
+
   return (
     <>
       <button
+        ref={triggerRef}
         className={`simulation-teacher-cell-trigger ${stateClass} ${mobile ? "mobile" : ""}`}
         type="button"
-        onClick={() => setOpen(true)}
+        onBlur={() => setTooltipAnchor(null)}
+        onClick={() => {
+          setTooltipAnchor(null);
+          setOpen(true);
+        }}
+        onFocus={showStudentTooltip}
+        onMouseEnter={showStudentTooltip}
+        onMouseLeave={() => setTooltipAnchor(null)}
+        aria-describedby={tooltipAnchor ? tooltipId : undefined}
         aria-label={text(
           language,
           `Gérer ${count} affectation${count > 1 ? "s" : ""}`,
@@ -87,6 +154,52 @@ export function TeacherAssignmentGridCell({
         </span>
         {warningCount > 0 ? <span className="simulation-teacher-cell-alert" aria-hidden="true">!</span> : null}
       </button>
+
+      {tooltipAnchor && tooltipStyle && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="simulation-teacher-student-tooltip"
+              id={tooltipId}
+              role="tooltip"
+              style={tooltipStyle}
+            >
+              <header>
+                <strong>{text(language, "Élèves du créneau", "Students in this slot")}</strong>
+                <span>
+                  {studentCount} {text(
+                    language,
+                    `élève${studentCount > 1 ? "s" : ""}`,
+                    `student${studentCount === 1 ? "" : "s"}`,
+                  )}
+                </span>
+              </header>
+              <div className="simulation-teacher-student-tooltip-slots">
+                {slots.map((slot, index) => {
+                  const sections = studentSections(slot, language);
+                  return (
+                    <section key={slot.slot_key}>
+                      <div className="simulation-teacher-student-tooltip-slot-head">
+                        <strong>{slot.start_time}–{slot.end_time}</strong>
+                        {slots.length > 1 ? (
+                          <span>{text(language, "Poste", "Position")} {index + 1}</span>
+                        ) : null}
+                      </div>
+                      {sections.length === 0 ? (
+                        <p>{text(language, "Aucun élève associé.", "No student associated.")}</p>
+                      ) : sections.map((section) => (
+                        <div className="simulation-teacher-student-tooltip-section" key={section.label}>
+                          <strong>{section.label}</strong>
+                          <span>{section.people.join(", ")}</span>
+                        </div>
+                      ))}
+                    </section>
+                  );
+                })}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
 
       {open ? (
         <div className="simulation-teacher-assignment-overlay" role="presentation" onMouseDown={() => setOpen(false)}>
