@@ -11037,11 +11037,10 @@ export async function createAdminCatalogRequestAction(formData: FormData): Promi
 
   const studentUserId = parseUuid(String(formData.get("student_user_id") ?? ""));
   const productId = parseUuid(String(formData.get("product_id") ?? ""));
-  const locationId = parseUuid(String(formData.get("location_id") ?? ""));
   const quantity = parsePositiveInt(String(formData.get("quantity") ?? "1")) ?? 1;
   const shouldBill = checkboxField(formData, "should_bill");
   const note = optionalField(formData, "note");
-  if (!studentUserId || !productId || !locationId) {
+  if (!studentUserId || !productId) {
     redirect(appendQueryMessage(returnTo, "error", t("admin.catalog_action.invalid_product_request")));
   }
 
@@ -11052,7 +11051,6 @@ export async function createAdminCatalogRequestAction(formData: FormData): Promi
       body: JSON.stringify({
         student_user_id: studentUserId,
         product_id: productId,
-        location_id: locationId,
         quantity,
         should_bill: shouldBill,
         note,

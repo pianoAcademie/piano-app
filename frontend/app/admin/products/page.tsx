@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import AdminProductActionsMenu from "../../../components/admin-product-actions-menu";
 import AdminProductCreateModal from "../../../components/admin-product-create-modal";
 import AdminProductEditModal from "../../../components/admin-product-edit-modal";
+import SearchMultiSelect from "../../../components/search-multi-select";
 import {
   cancelAdminCatalogTransferAction,
   completeAdminCatalogTransferAction,
@@ -1701,17 +1702,19 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
           <p className="muted">{t("admin.products.student_requests_subtitle")}</p>
           <form action={createAdminCatalogRequestAction} className="grid cols-4 config-form-grid">
             <input type="hidden" name="return_to" value={returnTo} />
-            <label>
-              {t("admin.products.student")}
-              <select name="student_user_id" required defaultValue="">
-                <option value="">{t("admin.products.select_student")}</option>
-                {clientOptions.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <SearchMultiSelect
+              className="span-2"
+              label={t("admin.products.student")}
+              name="student_user_id"
+              options={clientOptions}
+              selectedIds={[]}
+              placeholder={t("admin.products.search_student")}
+              language={language}
+              maxSelections={1}
+              requiredSelection
+              emptySelectionLabel={t("admin.products.select_student")}
+              emptySummaryLabel={t("admin.products.select_student")}
+            />
             <label>
               {t("common.product")}
               <select name="product_id" required defaultValue={selectedProduct?.id ?? ""}>
@@ -1724,20 +1727,13 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
               </select>
             </label>
             <label>
-              {t("common.location")}
-              <select name="location_id" required defaultValue={selectedProduct?.primary_location_id ?? ""}>
-                <option value="">{t("admin.products.select_location")}</option>
-                {activeLocations.map((location) => (
-                  <option key={location.id} value={location.id}>
-                    {location.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
               {t("common.quantity")}
               <input type="number" name="quantity" min={1} step={1} defaultValue={1} required />
             </label>
+            <div className="span-2 catalog-request-auto-location">
+              <strong>{t("common.location")}</strong>
+              <span className="muted">{t("admin.products.location_from_next_lesson")}</span>
+            </div>
             <label className="span-2">
               {t("admin.products.note")}
               <input type="text" name="note" maxLength={2000} />

@@ -11389,6 +11389,17 @@ button.danger:focus-visible {
   gap: 8px;
 }
 
+.catalog-request-auto-location {
+  align-self: end;
+  display: grid;
+  gap: 6px;
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px solid #ead6b7;
+  border-radius: 8px;
+  background: #fffaf2;
+}
+
 .catalog-tabs-scroll {
   overflow-x: auto;
   padding-bottom: 4px;

@@ -5,7 +5,12 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import pytest
+from fastapi import HTTPException
+
+from app.api.routes.admin_catalog import create_admin_catalog_request
 from app.models.product_catalog import ProductReorderStatus, ProductRequestStatus
+from app.schemas.catalog_admin import AdminCatalogRequestCreateRequest
 from app.services.product_catalog import (
     _assign_request_to_next_session,
     find_next_in_person_delivery_session,
@@ -207,3 +212,54 @@ def test_next_delivery_course_skips_a_day_whose_morning_email_was_already_sent()
     )
 
     assert selected is future_session
+
+
+def test_admin_request_uses_location_from_next_delivery_session() -> None:
+    student_id = uuid4()
+    product_id = uuid4()
+    next_location_id = uuid4()
+    actor = SimpleNamespace(id=uuid4())
+    payload = AdminCatalogRequestCreateRequest(
+        student_user_id=student_id,
+        product_id=product_id,
+    )
+    db = SimpleNamespace(
+        add=MagicMock(),
+        flush=MagicMock(),
+        commit=MagicMock(),
+        refresh=MagicMock(),
+    )
+
+    with (
+        patch("app.api.routes.admin_catalog._require_student_client"),
+        patch("app.api.routes.admin_catalog._require_product"),
+        patch("app.api.routes.admin_catalog._require_location") as require_location,
+        patch(
+            "app.api.routes.admin_catalog.find_next_in_person_delivery_session",
+            return_value=SimpleNamespace(location_id=next_location_id),
+        ),
+        patch("app.api.routes.admin_catalog.apply_request_acceptance"),
+        patch("app.api.routes.admin_catalog._request_out", side_effect=lambda _db, row: row),
+    ):
+        created = create_admin_catalog_request(payload=payload, db=db, actor=actor)
+
+    assert created.location_id == next_location_id
+    require_location.assert_called_once_with(db, next_location_id)
+
+
+def test_admin_request_without_future_lesson_requires_a_fallback_location() -> None:
+    payload = AdminCatalogRequestCreateRequest(
+        student_user_id=uuid4(),
+        product_id=uuid4(),
+    )
+    db = SimpleNamespace()
+
+    with (
+        patch("app.api.routes.admin_catalog._require_student_client"),
+        patch("app.api.routes.admin_catalog._require_product"),
+        patch("app.api.routes.admin_catalog.find_next_in_person_delivery_session", return_value=None),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            create_admin_catalog_request(payload=payload, db=db, actor=SimpleNamespace(id=uuid4()))
+
+    assert exc_info.value.status_code == 409

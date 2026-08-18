@@ -69,6 +69,7 @@ from app.services.product_catalog import (
     create_stock_movement,
     create_stock_transfer,
     ensure_product_stock_rows,
+    find_next_in_person_delivery_session,
     find_recent_stock_movement_by_idempotency_key,
     mark_stock_transfer_done,
     mark_request_delivered,
@@ -1560,13 +1561,25 @@ def create_admin_catalog_request(
 ) -> AdminCatalogRequestOut:
     _require_student_client(db, payload.student_user_id)
     _require_product(db, payload.product_id)
-    _require_location(db, payload.location_id)
 
     now = utcnow()
+    next_session = find_next_in_person_delivery_session(
+        db,
+        student_user_id=payload.student_user_id,
+        now=now,
+    )
+    resolved_location_id = next_session.location_id if next_session is not None else payload.location_id
+    if resolved_location_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Aucun prochain cours en presentiel n a ete trouve pour cet eleve.",
+        )
+    _require_location(db, resolved_location_id)
+
     row = ProductRequest(
         student_user_id=payload.student_user_id,
         product_id=payload.product_id,
-        location_id=payload.location_id,
+        location_id=resolved_location_id,
         quantity=payload.quantity,
         requested_by_user_id=actor.id,
         request_source=ProductRequestSource.ADMIN,

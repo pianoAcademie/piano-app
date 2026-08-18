@@ -356,7 +356,7 @@ class AdminCatalogRequestOut(BaseModel):
 class AdminCatalogRequestCreateRequest(BaseModel):
     student_user_id: UUID
     product_id: UUID
-    location_id: UUID
+    location_id: UUID | None = None
     quantity: int = Field(default=1, ge=1, le=1000)
     should_bill: bool = False
     note: str | None = Field(default=None, max_length=2000)
