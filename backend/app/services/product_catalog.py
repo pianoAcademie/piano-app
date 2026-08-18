@@ -3,11 +3,12 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.catalog import Location
+from app.models.catalog import Booking, BookingStatus, CourseSession, Location, Professor, SessionStatus
 from app.models.client_record import ClientManualTransaction
 from app.models.product_catalog import (
     CatalogProduct,
@@ -24,6 +25,18 @@ from app.models.product_catalog import (
 )
 from app.models.user import User
 from app.services.family_billing import resolve_billing_profile
+from app.services.session_teachers import effective_teacher_id_for_session
+
+
+READY_FOR_DELIVERY_STATUSES = {
+    ProductRequestStatus.INVOICE_TO_SEND,
+    ProductRequestStatus.TO_DELIVER,
+}
+OPEN_FULFILLMENT_STATUSES = {
+    ProductRequestStatus.WAITING_STOCK,
+    *READY_FOR_DELIVERY_STATUSES,
+}
+PARIS_TIMEZONE = ZoneInfo("Europe/Paris")
 
 
 def utcnow() -> datetime:
@@ -206,6 +219,7 @@ def create_stock_movement(
 
     recalculate_product_global_stock(db, product_id=product_id)
     db.flush()
+    reconcile_waiting_product_requests(db, product_id=product_id, location_id=location_id, now=now)
     return movement
 
 
@@ -326,6 +340,12 @@ def mark_stock_transfer_done(
     db.add(transfer)
 
     recalculate_product_global_stock(db, product_id=transfer.product_id)
+    reconcile_waiting_product_requests(
+        db,
+        product_id=transfer.product_id,
+        location_id=transfer.target_location_id,
+        now=now,
+    )
     return transfer
 
 
@@ -361,6 +381,294 @@ def cancel_stock_transfer(
 
     recalculate_product_global_stock(db, product_id=transfer.product_id)
     return transfer
+
+
+def find_next_in_person_delivery_session(
+    db: Session,
+    *,
+    student_user_id: UUID,
+    now: datetime | None = None,
+) -> CourseSession | None:
+    """Return the next confirmed, non-cancelled, physical lesson for a student."""
+    reference = now or utcnow()
+    candidates = db.scalars(
+        select(CourseSession)
+        .join(Booking, Booking.session_id == CourseSession.id)
+        .join(Location, Location.id == CourseSession.location_id)
+        .where(
+            Booking.user_id == student_user_id,
+            Booking.status == BookingStatus.BOOKED,
+            CourseSession.status == SessionStatus.SCHEDULED,
+            CourseSession.start_at_utc >= reference,
+            Location.is_online.is_(False),
+        )
+        .order_by(CourseSession.start_at_utc.asc())
+        .limit(100)
+    ).all()
+    for session_obj in candidates:
+        professor_id = effective_teacher_id_for_session(session_obj)
+        if professor_id is None:
+            continue
+        professor = db.scalar(select(Professor).where(Professor.id == professor_id))
+        if professor is None or not professor.active or not professor.daily_schedule_email_enabled:
+            continue
+        lesson_date = session_obj.start_at_utc.astimezone(PARIS_TIMEZONE).date()
+        if professor.last_daily_schedule_sent_on == lesson_date:
+            continue
+        return session_obj
+    return None
+
+
+def _reserved_physical_quantity(
+    db: Session,
+    *,
+    product_id: UUID,
+    location_id: UUID,
+    exclude_request_id: UUID | None = None,
+) -> int:
+    stmt = select(func.coalesce(func.sum(ProductRequest.stock_reserved_quantity), 0)).where(
+        ProductRequest.product_id == product_id,
+        ProductRequest.location_id == location_id,
+        ProductRequest.status.in_(READY_FOR_DELIVERY_STATUSES),
+        ProductRequest.stock_reserved_quantity > 0,
+    )
+    if exclude_request_id is not None:
+        stmt = stmt.where(ProductRequest.id != exclude_request_id)
+    return int(db.scalar(stmt) or 0)
+
+
+def _available_physical_quantity(
+    db: Session,
+    *,
+    stock: ProductLocationStock,
+    exclude_request_id: UUID | None = None,
+) -> int:
+    reserved = _reserved_physical_quantity(
+        db,
+        product_id=stock.product_id,
+        location_id=stock.location_id,
+        exclude_request_id=exclude_request_id,
+    )
+    return max(int(stock.real_quantity or 0) - reserved, 0)
+
+
+def _find_stock_transfer_source(
+    db: Session,
+    *,
+    product: CatalogProduct,
+    target_location_id: UUID,
+    quantity: int,
+) -> ProductLocationStock | None:
+    rows = db.scalars(
+        select(ProductLocationStock).where(
+            ProductLocationStock.product_id == product.id,
+            ProductLocationStock.location_id != target_location_id,
+        )
+    ).all()
+    candidates = [
+        row
+        for row in rows
+        if _available_physical_quantity(db, stock=row) >= quantity
+        and int(row.estimated_quantity or 0) >= quantity
+    ]
+    candidates.sort(
+        key=lambda row: (
+            0 if row.location_id == product.primary_location_id else 1,
+            -_available_physical_quantity(db, stock=row),
+            str(row.location_id),
+        )
+    )
+    return candidates[0] if candidates else None
+
+
+def _ready_status_for_request(request_row: ProductRequest) -> ProductRequestStatus:
+    return ProductRequestStatus.INVOICE_TO_SEND if bool(request_row.should_bill) else ProductRequestStatus.TO_DELIVER
+
+
+def _assign_request_to_next_session(
+    db: Session,
+    *,
+    request_row: ProductRequest,
+    now: datetime,
+    move_estimated_demand: bool,
+) -> CourseSession | None:
+    session_obj = find_next_in_person_delivery_session(
+        db,
+        student_user_id=request_row.student_user_id,
+        now=now,
+    )
+    previous_location_id = request_row.location_id
+    next_location_id = session_obj.location_id if session_obj is not None else previous_location_id
+
+    if next_location_id != previous_location_id and move_estimated_demand:
+        quantity = max(int(request_row.quantity or 0), 1)
+        previous_stock = get_or_create_stock_row(
+            db,
+            product_id=request_row.product_id,
+            location_id=previous_location_id,
+            lock=True,
+        )
+        next_stock = get_or_create_stock_row(
+            db,
+            product_id=request_row.product_id,
+            location_id=next_location_id,
+            lock=True,
+        )
+        previous_stock.estimated_quantity = int(previous_stock.estimated_quantity or 0) + quantity
+        next_stock.estimated_quantity = int(next_stock.estimated_quantity or 0) - quantity
+        previous_stock.estimated_updated_at = now
+        next_stock.estimated_updated_at = now
+        previous_stock.updated_at = now
+        next_stock.updated_at = now
+        db.add(previous_stock)
+        db.add(next_stock)
+
+        if request_row.stock_transfer_id is not None:
+            linked_transfer = db.scalar(
+                select(ProductStockTransfer).where(ProductStockTransfer.id == request_row.stock_transfer_id).with_for_update()
+            )
+            if linked_transfer is not None and linked_transfer.status == ProductTransferStatus.PENDING:
+                cancel_stock_transfer(db, transfer=linked_transfer, note="Cours de remise modifié")
+            request_row.stock_transfer_id = None
+        request_row.stock_reserved_quantity = 0
+        request_row.ready_at = None
+
+    request_row.location_id = next_location_id
+    request_row.assigned_session_id = session_obj.id if session_obj is not None else None
+    request_row.assigned_professor_id = (
+        effective_teacher_id_for_session(session_obj) if session_obj is not None else None
+    )
+    return session_obj
+
+
+def prepare_product_request_fulfillment(
+    db: Session,
+    *,
+    request_row: ProductRequest,
+    actor_user_id: UUID | None,
+    now: datetime | None = None,
+    reserve_estimated_demand: bool = False,
+) -> ProductRequest:
+    """Assign the next lesson and expose a request only when stock is physically ready."""
+    reference = now or utcnow()
+    product = db.scalar(select(CatalogProduct).where(CatalogProduct.id == request_row.product_id))
+    if product is None:
+        raise ValueError("Product not found")
+
+    _assign_request_to_next_session(
+        db,
+        request_row=request_row,
+        now=reference,
+        move_estimated_demand=not reserve_estimated_demand,
+    )
+    quantity = max(int(request_row.quantity or 0), 1)
+
+    if product.is_virtual:
+        request_row.stock_reserved_quantity = 0
+        request_row.status = _ready_status_for_request(request_row)
+        request_row.ready_at = request_row.ready_at or reference
+        request_row.updated_at = reference
+        db.add(request_row)
+        return request_row
+
+    target_stock = get_or_create_stock_row(
+        db,
+        product_id=request_row.product_id,
+        location_id=request_row.location_id,
+        lock=True,
+    )
+    if reserve_estimated_demand:
+        target_stock.estimated_quantity = int(target_stock.estimated_quantity or 0) - quantity
+        target_stock.estimated_updated_at = reference
+        target_stock.updated_at = reference
+        db.add(target_stock)
+
+    available_here = _available_physical_quantity(
+        db,
+        stock=target_stock,
+        exclude_request_id=request_row.id,
+    )
+    if available_here >= quantity:
+        if request_row.stock_transfer_id is not None:
+            linked_transfer = db.scalar(
+                select(ProductStockTransfer).where(ProductStockTransfer.id == request_row.stock_transfer_id).with_for_update()
+            )
+            if linked_transfer is not None and linked_transfer.status == ProductTransferStatus.PENDING:
+                cancel_stock_transfer(db, transfer=linked_transfer, note="Stock déjà disponible sur le lieu du cours")
+            request_row.stock_transfer_id = None
+        request_row.stock_reserved_quantity = quantity
+        request_row.status = _ready_status_for_request(request_row)
+        request_row.ready_at = request_row.ready_at or reference
+        request_row.updated_at = reference
+        db.add(request_row)
+        return request_row
+
+    request_row.status = ProductRequestStatus.WAITING_STOCK
+    request_row.stock_reserved_quantity = 0
+    request_row.ready_at = None
+    request_row.updated_at = reference
+
+    linked_transfer = None
+    if request_row.stock_transfer_id is not None:
+        linked_transfer = db.scalar(select(ProductStockTransfer).where(ProductStockTransfer.id == request_row.stock_transfer_id))
+        if linked_transfer is not None and linked_transfer.status != ProductTransferStatus.PENDING:
+            request_row.stock_transfer_id = None
+            linked_transfer = None
+
+    if linked_transfer is None:
+        source_stock = _find_stock_transfer_source(
+            db,
+            product=product,
+            target_location_id=request_row.location_id,
+            quantity=quantity,
+        )
+        if source_stock is not None:
+            transfer = create_stock_transfer(
+                db,
+                product_id=request_row.product_id,
+                source_location_id=source_stock.location_id,
+                target_location_id=request_row.location_id,
+                quantity=quantity,
+                planned_transfer_date=reference.date(),
+                assigned_to_user_id=actor_user_id,
+                requested_by_user_id=actor_user_id,
+                note=f"Transfert pour demande produit {request_row.id}",
+            )
+            request_row.stock_transfer_id = transfer.id
+        elif product.reorder_status in {ProductReorderStatus.NORMAL, ProductReorderStatus.RECEIVED}:
+            product.reorder_status = ProductReorderStatus.TO_ORDER
+            product.reorder_status_updated_at = reference
+            product.updated_at = reference
+            db.add(product)
+
+    db.add(request_row)
+    recalculate_product_global_stock(db, product_id=request_row.product_id)
+    return request_row
+
+
+def reconcile_waiting_product_requests(
+    db: Session,
+    *,
+    product_id: UUID | None = None,
+    location_id: UUID | None = None,
+    now: datetime | None = None,
+) -> int:
+    stmt = select(ProductRequest).where(ProductRequest.status.in_(OPEN_FULFILLMENT_STATUSES))
+    if product_id is not None:
+        stmt = stmt.where(ProductRequest.product_id == product_id)
+    if location_id is not None:
+        stmt = stmt.where(ProductRequest.location_id == location_id)
+    rows = db.scalars(stmt.order_by(ProductRequest.requested_at.asc()).with_for_update()).all()
+    reference = now or utcnow()
+    for row in rows:
+        prepare_product_request_fulfillment(
+            db,
+            request_row=row,
+            actor_user_id=None,
+            now=reference,
+            reserve_estimated_demand=False,
+        )
+    return len(rows)
 
 
 def create_billable_product_transaction(
@@ -436,46 +744,6 @@ def apply_request_acceptance(
         raise ValueError("Product or student not found")
 
     requested_quantity = max(int(request_row.quantity or 0), 1)
-    if not product.is_virtual:
-        stock = get_or_create_stock_row(
-            db,
-            product_id=request_row.product_id,
-            location_id=request_row.location_id,
-            lock=True,
-        )
-        available_estimated = int(stock.estimated_quantity or 0)
-        shortage = max(requested_quantity - available_estimated, 0)
-
-        # If destination stock is insufficient, create a pending transfer from the product's
-        # primary location (when configured) so operations can track replenishment by location.
-        if (
-            shortage > 0
-            and product.primary_location_id is not None
-            and product.primary_location_id != request_row.location_id
-        ):
-            create_stock_transfer(
-                db,
-                product_id=request_row.product_id,
-                source_location_id=product.primary_location_id,
-                target_location_id=request_row.location_id,
-                quantity=shortage,
-                planned_transfer_date=now.date(),
-                assigned_to_user_id=actor_user_id,
-                requested_by_user_id=actor_user_id,
-                note=f"Transfert auto pour demande produit {request_row.id}",
-            )
-            stock = get_or_create_stock_row(
-                db,
-                product_id=request_row.product_id,
-                location_id=request_row.location_id,
-                lock=True,
-            )
-
-        stock.estimated_quantity = int(stock.estimated_quantity or 0) - requested_quantity
-        stock.estimated_updated_at = now
-        stock.updated_at = now
-        db.add(stock)
-
     transaction = None
     if should_bill:
         transaction = create_billable_product_transaction(
@@ -487,7 +755,6 @@ def apply_request_acceptance(
             occurred_at=now,
         )
 
-    request_row.status = ProductRequestStatus.INVOICE_TO_SEND if should_bill else ProductRequestStatus.TO_DELIVER
     request_row.accepted = True
     request_row.should_bill = should_bill
     request_row.manual_transaction_id = transaction.id if transaction is not None else None
@@ -497,6 +764,14 @@ def apply_request_acceptance(
         request_row.note = normalize_optional(note)
     request_row.updated_at = now
     db.add(request_row)
+
+    prepare_product_request_fulfillment(
+        db,
+        request_row=request_row,
+        actor_user_id=actor_user_id,
+        now=now,
+        reserve_estimated_demand=not product.is_virtual,
+    )
 
     recalculate_product_global_stock(db, product_id=request_row.product_id)
     return request_row
@@ -531,7 +806,7 @@ def mark_request_delivered(
     delivered_by_user_id: UUID | None,
     note: str | None,
 ) -> ProductRequest:
-    if request_row.status not in {ProductRequestStatus.TO_DELIVER, ProductRequestStatus.INVOICE_TO_SEND}:
+    if request_row.status not in READY_FOR_DELIVERY_STATUSES:
         return request_row
 
     now = utcnow()
@@ -552,6 +827,7 @@ def mark_request_delivered(
     request_row.delivered_by_user_id = delivered_by_user_id or marker_user_id
     request_row.delivery_marked_by_user_id = marker_user_id
     request_row.delivery_marked_at = now
+    request_row.stock_reserved_quantity = 0
     if note is not None:
         request_row.note = normalize_optional(note)
     request_row.updated_at = now
@@ -587,4 +863,5 @@ def reset_inventory_stock(
     row.updated_at = now
     db.add(row)
     recalculate_product_global_stock(db, product_id=product_id)
+    reconcile_waiting_product_requests(db, product_id=product_id, location_id=location_id, now=now)
     return row

@@ -2015,7 +2015,7 @@ export type AdminCatalogProductStockOut = {
   recent_movements: AdminStockMovementOut[];
 };
 
-export type AdminCatalogRequestStatus = "PROCESSING" | "REJECTED" | "INVOICE_TO_SEND" | "TO_DELIVER" | "DELIVERED" | string;
+export type AdminCatalogRequestStatus = "PROCESSING" | "REJECTED" | "WAITING_STOCK" | "INVOICE_TO_SEND" | "TO_DELIVER" | "DELIVERED" | string;
 export type AdminCatalogRequestSource = "ADMIN" | "PROFESSOR" | string;
 
 export type AdminCatalogRequestOut = {
@@ -2038,6 +2038,14 @@ export type AdminCatalogRequestOut = {
   accepted: boolean | null;
   should_bill: boolean | null;
   manual_transaction_id: string | null;
+  assigned_session_id: string | null;
+  assigned_session_start_at: string | null;
+  assigned_professor_id: string | null;
+  assigned_professor_name: string | null;
+  stock_transfer_id: string | null;
+  stock_reserved_quantity: number;
+  ready_at: string | null;
+  professor_notified_at: string | null;
   delivered_by_user_id: string | null;
   delivered_by_name: string | null;
   delivery_marked_by_user_id: string | null;

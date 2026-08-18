@@ -9,10 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, Professor, SessionStatus
+from app.models.product_catalog import CatalogProduct, ProductRequest
 from app.models.user import User
 from app.services.email_branding import render_branded_email
 from app.services.email_delivery import send_email
 from app.services.session_teachers import effective_teacher_filter_for_professor
+from app.services.product_catalog import READY_FOR_DELIVERY_STATUSES, reconcile_waiting_product_requests
 
 logger = logging.getLogger(__name__)
 PARIS_TIMEZONE = ZoneInfo("Europe/Paris")
@@ -50,6 +52,14 @@ def _attendance_label(status: BookingStatus) -> str:
         BookingStatus.EXCUSED_ABSENCE: "Absent excusé",
     }
     return labels.get(status, status.value)
+
+
+def product_request_is_ready_for_notification(request_row: ProductRequest, product: CatalogProduct) -> bool:
+    if request_row.status not in READY_FOR_DELIVERY_STATUSES:
+        return False
+    if product.is_virtual:
+        return True
+    return int(request_row.stock_reserved_quantity or 0) >= int(request_row.quantity or 0)
 
 
 def _build_digest_body(
@@ -118,10 +128,31 @@ def _build_digest_body(
                 display_name = f"{(user.first_name or '').strip()} {(user.last_name or '').strip()}".strip() or user.email
                 roster_labels.append(f"{display_name} ({_attendance_label(booking.status)})")
             roster = ", ".join(roster_labels)
+
+        delivery_rows = db.execute(
+            select(ProductRequest, CatalogProduct, User)
+            .join(CatalogProduct, CatalogProduct.id == ProductRequest.product_id)
+            .join(User, User.id == ProductRequest.student_user_id)
+            .where(
+                ProductRequest.assigned_session_id == session_obj.id,
+                ProductRequest.assigned_professor_id == professor.id,
+                ProductRequest.status.in_(READY_FOR_DELIVERY_STATUSES),
+            )
+            .order_by(User.last_name.asc(), User.first_name.asc(), CatalogProduct.title.asc())
+        ).all()
+        delivery_labels: list[str] = []
+        for request_row, product, student in delivery_rows:
+            if not product_request_is_ready_for_notification(request_row, product):
+                continue
+            student_name = f"{(student.first_name or '').strip()} {(student.last_name or '').strip()}".strip() or student.email
+            delivery_labels.append(f"{product.title} x{int(request_row.quantity or 0)} pour {student_name}")
+        delivery_note = ""
+        if delivery_labels:
+            delivery_note = " | À remettre (stock présent et réservé) : " + "; ".join(delivery_labels)
         digest_rows.append(
             (
                 f"{local_start.strftime('%H:%M')}–{local_end.strftime('%H:%M')}",
-                f"{session_obj.title} · {course_type.name} · {location.name} · {roster}",
+                f"{session_obj.title} · {course_type.name} · {location.name} · {roster}{delivery_note}",
             )
         )
 
@@ -139,12 +170,37 @@ def _build_digest_body(
     )
 
 
+def _mark_ready_requests_notified(
+    db: Session,
+    *,
+    professor_id,
+    day_start_utc: datetime,
+    day_end_utc: datetime,
+    notified_at: datetime,
+) -> None:
+    ready_requests = db.scalars(
+        select(ProductRequest)
+        .join(CourseSession, CourseSession.id == ProductRequest.assigned_session_id)
+        .where(
+            ProductRequest.assigned_professor_id == professor_id,
+            ProductRequest.status.in_(READY_FOR_DELIVERY_STATUSES),
+            CourseSession.start_at_utc >= day_start_utc,
+            CourseSession.start_at_utc < day_end_utc,
+        )
+    ).all()
+    for request_row in ready_requests:
+        request_row.professor_notified_at = notified_at
+        request_row.updated_at = notified_at
+        db.add(request_row)
+
+
 def run_send_professor_daily_digest_job(
     db: Session,
     *,
     now: datetime,
     limit: int = 300,
 ) -> ProfessorDailyDigestResult:
+    reconcile_waiting_product_requests(db, now=now)
     paris_now = now.astimezone(PARIS_TIMEZONE)
     today_paris: date = paris_now.date()
     day_start_paris = datetime.combine(today_paris, time.min, tzinfo=PARIS_TIMEZONE)
@@ -212,6 +268,13 @@ def run_send_professor_daily_digest_job(
                 subject,
             )
             professor.last_daily_schedule_sent_on = today_paris
+            _mark_ready_requests_notified(
+                db,
+                professor_id=professor.id,
+                day_start_utc=day_start_utc,
+                day_end_utc=day_end_utc,
+                notified_at=now,
+            )
             sent += 1
         except Exception as exc:  # pragma: no cover - defensive logging path
             logger.exception("Professor daily digest failed | professor_id=%s | error=%s", professor.id, exc)

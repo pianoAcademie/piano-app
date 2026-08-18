@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_admin_or_permissions, require_roles
-from app.models.catalog import Location
+from app.models.catalog import CourseSession, Location, Professor
 from app.models.product_catalog import (
     CatalogKit,
     CatalogKitItem,
@@ -400,6 +400,16 @@ def _request_out(db: Session, row: ProductRequest) -> AdminCatalogRequestOut:
             ProductLocationStock.location_id == row.location_id,
         )
     )
+    assigned_session = (
+        db.scalar(select(CourseSession).where(CourseSession.id == row.assigned_session_id))
+        if row.assigned_session_id is not None
+        else None
+    )
+    assigned_professor = (
+        db.scalar(select(Professor).where(Professor.id == row.assigned_professor_id))
+        if row.assigned_professor_id is not None
+        else None
+    )
 
     student = users.get(row.student_user_id)
     is_virtual = bool(product.is_virtual) if product is not None else False
@@ -423,6 +433,18 @@ def _request_out(db: Session, row: ProductRequest) -> AdminCatalogRequestOut:
         accepted=row.accepted,
         should_bill=row.should_bill,
         manual_transaction_id=row.manual_transaction_id,
+        assigned_session_id=row.assigned_session_id,
+        assigned_session_start_at=assigned_session.start_at_utc if assigned_session is not None else None,
+        assigned_professor_id=row.assigned_professor_id,
+        assigned_professor_name=(
+            f"{assigned_professor.first_name} {assigned_professor.last_name}".strip()
+            if assigned_professor is not None
+            else None
+        ),
+        stock_transfer_id=row.stock_transfer_id,
+        stock_reserved_quantity=int(row.stock_reserved_quantity or 0),
+        ready_at=row.ready_at,
+        professor_notified_at=row.professor_notified_at,
         delivered_by_user_id=row.delivered_by_user_id,
         delivered_by_name=_display_name(users.get(row.delivered_by_user_id)),
         delivery_marked_by_user_id=row.delivery_marked_by_user_id,

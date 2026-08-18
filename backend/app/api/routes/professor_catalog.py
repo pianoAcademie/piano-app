@@ -84,6 +84,16 @@ def _request_out(db: Session, row: ProductRequest) -> AdminCatalogRequestOut:
             ProductLocationStock.location_id == row.location_id,
         )
     )
+    assigned_session = (
+        db.scalar(select(CourseSession).where(CourseSession.id == row.assigned_session_id))
+        if row.assigned_session_id is not None
+        else None
+    )
+    assigned_professor = (
+        db.scalar(select(ProfessorModel).where(ProfessorModel.id == row.assigned_professor_id))
+        if row.assigned_professor_id is not None
+        else None
+    )
 
     is_virtual = bool(product.is_virtual) if product is not None else False
     return AdminCatalogRequestOut(
@@ -106,6 +116,18 @@ def _request_out(db: Session, row: ProductRequest) -> AdminCatalogRequestOut:
         accepted=row.accepted,
         should_bill=row.should_bill,
         manual_transaction_id=row.manual_transaction_id,
+        assigned_session_id=row.assigned_session_id,
+        assigned_session_start_at=assigned_session.start_at_utc if assigned_session is not None else None,
+        assigned_professor_id=row.assigned_professor_id,
+        assigned_professor_name=(
+            f"{assigned_professor.first_name} {assigned_professor.last_name}".strip()
+            if assigned_professor is not None
+            else None
+        ),
+        stock_transfer_id=row.stock_transfer_id,
+        stock_reserved_quantity=int(row.stock_reserved_quantity or 0),
+        ready_at=row.ready_at,
+        professor_notified_at=row.professor_notified_at,
         delivered_by_user_id=row.delivered_by_user_id,
         delivered_by_name=_display_name(users.get(row.delivered_by_user_id)) if row.delivered_by_user_id else None,
         delivery_marked_by_user_id=row.delivery_marked_by_user_id,
@@ -230,7 +252,7 @@ def list_professor_catalog_requests(
     if not student_ids:
         return []
 
-    stmt = select(ProductRequest).where(ProductRequest.student_user_id.in_(student_ids))
+    stmt = select(ProductRequest).where(ProductRequest.assigned_professor_id == professor.id)
     if only_to_deliver:
         stmt = stmt.where(ProductRequest.status.in_([ProductRequestStatus.TO_DELIVER, ProductRequestStatus.INVOICE_TO_SEND]))
     rows = db.scalars(stmt.order_by(ProductRequest.requested_at.desc())).all()
@@ -245,12 +267,10 @@ def mark_professor_catalog_request_delivered(
     current_user: User = Depends(require_roles(UserRole.PROF)),
 ) -> AdminCatalogRequestOut:
     professor = _resolve_professor_profile(db, current_user=current_user)
-    student_ids = _student_ids_for_professor(db, professor_id=professor.id)
-
     row = db.scalar(select(ProductRequest).where(ProductRequest.id == request_id).with_for_update())
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
-    if row.student_user_id not in student_ids:
+    if row.assigned_professor_id != professor.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Request is not assigned to this professor")
     if row.status not in {ProductRequestStatus.TO_DELIVER, ProductRequestStatus.INVOICE_TO_SEND}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Request cannot be marked as delivered")

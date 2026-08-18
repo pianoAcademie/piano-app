@@ -335,6 +335,14 @@ class AdminCatalogRequestOut(BaseModel):
     accepted: bool | None
     should_bill: bool | None
     manual_transaction_id: UUID | None
+    assigned_session_id: UUID | None
+    assigned_session_start_at: datetime | None
+    assigned_professor_id: UUID | None
+    assigned_professor_name: str | None
+    stock_transfer_id: UUID | None
+    stock_reserved_quantity: int
+    ready_at: datetime | None
+    professor_notified_at: datetime | None
     delivered_by_user_id: UUID | None
     delivered_by_name: str | None
     delivery_marked_by_user_id: UUID | None

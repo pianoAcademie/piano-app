@@ -204,6 +204,9 @@ function catalogRequestStatusLabel(status: string, language: UiLanguage): string
   if (normalized === "REJECTED") {
     return uiText(language, "admin.products.request_status_rejected");
   }
+  if (normalized === "WAITING_STOCK") {
+    return uiText(language, "admin.products.request_status_waiting_stock");
+  }
   if (normalized === "INVOICE_TO_SEND") {
     return uiText(language, "admin.products.request_status_invoice_to_send");
   }
@@ -530,7 +533,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
   const stockableProducts = activeProducts.filter((row) => !row.is_virtual);
   const activeLocations = locations.filter((row) => row.active);
   const activeCatalogRequests = requests.filter(
-    (row) => row.status === "PROCESSING" || row.status === "INVOICE_TO_SEND" || row.status === "TO_DELIVER",
+    (row) => row.status === "PROCESSING" || row.status === "WAITING_STOCK" || row.status === "INVOICE_TO_SEND" || row.status === "TO_DELIVER",
   );
   const activeCatalogRequestIds = new Set(activeCatalogRequests.map((row) => row.id));
   const productStats = {
@@ -1780,6 +1783,20 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                         {request.product_title}
                         <br />
                         <small className="muted">{request.location_name}</small>
+                        {request.assigned_session_start_at ? (
+                          <>
+                            <br />
+                            <small className="muted">
+                              {formatDateTime(request.assigned_session_start_at, language)} · {request.assigned_professor_name || t("admin.products.teacher_to_assign")}
+                            </small>
+                          </>
+                        ) : null}
+                        {request.stock_transfer_id ? (
+                          <>
+                            <br />
+                            <small className="muted">{t("admin.products.stock_transfer_in_progress")}</small>
+                          </>
+                        ) : null}
                       </td>
                       <td>{request.quantity}</td>
                       <td>{catalogRequestStatusLabel(request.status, language)}</td>
@@ -1788,6 +1805,8 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                         {t("admin.products.real_stock_label")}: {request.stock_real_quantity ?? "-"}
                         <br />
                         {t("admin.products.estimated_stock_label")}: {request.stock_estimated_quantity ?? "-"}
+                        <br />
+                        <small className="muted">{t("admin.products.reserved_for_handover", { quantity: request.stock_reserved_quantity })}</small>
                       </td>
                       <td>
                         <div className="catalog-request-actions">
@@ -1850,6 +1869,11 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
                 <p className="muted">
                   {catalogRequestStatusLabel(request.status, language)} · {t("admin.products.quantity_short", { quantity: request.quantity })}
                 </p>
+                {request.assigned_session_start_at ? (
+                  <p className="muted">
+                    {formatDateTime(request.assigned_session_start_at, language)} · {request.assigned_professor_name || t("admin.products.teacher_to_assign")}
+                  </p>
+                ) : null}
                 <div className="catalog-request-actions">
                   {request.status === "PROCESSING" ? (
                     <>

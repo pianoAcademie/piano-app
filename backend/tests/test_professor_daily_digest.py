@@ -10,7 +10,8 @@ from uuid import uuid4
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from app.services.professor_daily_digest import run_send_professor_daily_digest_job
+from app.models.product_catalog import ProductRequestStatus
+from app.services.professor_daily_digest import product_request_is_ready_for_notification, run_send_professor_daily_digest_job
 
 
 class _FakeScalarResult:
@@ -40,6 +41,28 @@ def _professor() -> SimpleNamespace:
 
 
 class ProfessorDailyDigestTests(unittest.TestCase):
+    def test_product_delivery_notification_requires_ready_status_and_reserved_stock(self) -> None:
+        product = SimpleNamespace(is_virtual=False)
+        waiting = SimpleNamespace(
+            status=ProductRequestStatus.WAITING_STOCK,
+            stock_reserved_quantity=0,
+            quantity=1,
+        )
+        ready_without_stock = SimpleNamespace(
+            status=ProductRequestStatus.TO_DELIVER,
+            stock_reserved_quantity=0,
+            quantity=1,
+        )
+        ready = SimpleNamespace(
+            status=ProductRequestStatus.TO_DELIVER,
+            stock_reserved_quantity=1,
+            quantity=1,
+        )
+
+        self.assertFalse(product_request_is_ready_for_notification(waiting, product))
+        self.assertFalse(product_request_is_ready_for_notification(ready_without_stock, product))
+        self.assertTrue(product_request_is_ready_for_notification(ready, product))
+
     def test_summer_digest_is_due_at_seven_in_paris(self) -> None:
         professor = _professor()
         db = _FakeSession([professor])
@@ -48,6 +71,10 @@ class ProfessorDailyDigestTests(unittest.TestCase):
             "app.services.professor_daily_digest._build_digest_body",
             return_value=("Planning", "Body", 1),
         ) as build_body, patch(
+            "app.services.professor_daily_digest.reconcile_waiting_product_requests",
+        ), patch(
+            "app.services.professor_daily_digest._mark_ready_requests_notified",
+        ), patch(
             "app.services.professor_daily_digest.send_email",
             return_value="message-id",
         ) as send_email:
@@ -80,6 +107,10 @@ class ProfessorDailyDigestTests(unittest.TestCase):
         with patch(
             "app.services.professor_daily_digest._build_digest_body",
             return_value=("Planning", "Body", 1),
+        ), patch(
+            "app.services.professor_daily_digest.reconcile_waiting_product_requests",
+        ), patch(
+            "app.services.professor_daily_digest._mark_ready_requests_notified",
         ), patch(
             "app.services.professor_daily_digest.send_email",
             return_value="message-id",

@@ -565,6 +565,9 @@ function catalogRequestStatusLabel(status: string, language: UiLanguage): string
   if (normalized === "REJECTED") {
     return uiText(language, "admin.products.request_status_rejected");
   }
+  if (normalized === "WAITING_STOCK") {
+    return uiText(language, "admin.products.request_status_waiting_stock");
+  }
   if (normalized === "INVOICE_TO_SEND") {
     return uiText(language, "admin.products.request_status_invoice_to_send");
   }

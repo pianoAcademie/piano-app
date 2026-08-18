@@ -37,6 +37,7 @@ class ProductRequestSource(str, enum.Enum):
 class ProductRequestStatus(str, enum.Enum):
     PROCESSING = "PROCESSING"
     REJECTED = "REJECTED"
+    WAITING_STOCK = "WAITING_STOCK"
     INVOICE_TO_SEND = "INVOICE_TO_SEND"
     TO_DELIVER = "TO_DELIVER"
     DELIVERED = "DELIVERED"
@@ -316,6 +317,10 @@ class ProductRequest(Base):
     __tablename__ = "product_requests"
     __table_args__ = (
         CheckConstraint("quantity > 0", name="ck_product_requests_quantity_positive"),
+        CheckConstraint(
+            "stock_reserved_quantity >= 0",
+            name="ck_product_requests_stock_reserved_non_negative",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -382,6 +387,24 @@ class ProductRequest(Base):
         ForeignKey("client_manual_transactions.id", ondelete="SET NULL"),
         nullable=True,
     )
+    assigned_session_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("course_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    assigned_professor_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("professors.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    stock_transfer_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("product_stock_transfers.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    stock_reserved_quantity: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    professor_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     delivered_by_user_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
