@@ -182,9 +182,10 @@ def _is_protected_richelieu_collective(
 def _has_booked_overlapping_rehearsal_studio(db: Session, *, session_obj: CourseSession) -> bool:
     context = db.execute(
         select(CourseType, Location)
+        .join(CourseSession, CourseSession.course_type_id == CourseType.id)
+        .join(Location, Location.id == CourseSession.location_id)
         .where(
-            CourseType.id == session_obj.course_type_id,
-            Location.id == session_obj.location_id,
+            CourseSession.id == session_obj.id,
         )
     ).one_or_none()
     if context is None:
