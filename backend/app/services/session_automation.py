@@ -3,11 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, SessionStatus
+from app.models.catalog import Booking, BookingStatus, CourseSession, CourseType, Location, SessionStatus
 from app.models.client_record import ClientManualCreditBalance, PaymentReceipt
 from app.models.plan import ClientPlanSubscription, Plan, PlanKind
 from app.services.notifications.application.orchestrator import (
@@ -34,6 +35,9 @@ class PaymentHoldExpirationResult:
 
 PAYMENT_TIMEOUT_CANCELLATION_REASON = "PAYMENT_TIMEOUT"
 DIRECT_BOOKING_CREDIT_RESTORED_AT_KEY = "cancelled_booking_credit_restored_at"
+RICHELIEU_LOCATION_CODE = "RICHELIEU"
+REHEARSAL_STUDIO_COURSE_CODE = "STUDIO_REHEARSAL"
+RICHELIEU_COLLECTIVE_PROTECTED_HOUR = 19
 
 
 def _restore_fully_paid_direct_booking_credit(db: Session, *, booking: Booking) -> bool:
@@ -157,6 +161,59 @@ def _effective_auto_cancel_threshold(db: Session, *, session_obj: CourseSession)
     return int(threshold) if threshold is not None and int(threshold) >= 1 else None
 
 
+def _is_protected_richelieu_collective(
+    *,
+    session_obj: CourseSession,
+    course_type: CourseType,
+    location: Location,
+) -> bool:
+    if (location.code or "").strip().upper() != RICHELIEU_LOCATION_CODE:
+        return False
+    course_type_label = (course_type.name or "").casefold()
+    if "collectif" not in course_type_label or "ado/adultes" not in course_type_label:
+        return False
+    try:
+        local_start = session_obj.start_at_utc.astimezone(ZoneInfo(location.timezone or "Europe/Paris"))
+    except ZoneInfoNotFoundError:
+        return False
+    return local_start.hour == RICHELIEU_COLLECTIVE_PROTECTED_HOUR and local_start.minute == 0
+
+
+def _has_booked_overlapping_rehearsal_studio(db: Session, *, session_obj: CourseSession) -> bool:
+    context = db.execute(
+        select(CourseType, Location)
+        .where(
+            CourseType.id == session_obj.course_type_id,
+            Location.id == session_obj.location_id,
+        )
+    ).one_or_none()
+    if context is None:
+        return False
+    course_type, location = context
+    if not _is_protected_richelieu_collective(
+        session_obj=session_obj,
+        course_type=course_type,
+        location=location,
+    ):
+        return False
+
+    booked_studio_count = db.scalar(
+        select(func.count(Booking.id))
+        .join(CourseSession, CourseSession.id == Booking.session_id)
+        .join(CourseType, CourseType.id == CourseSession.course_type_id)
+        .where(
+            CourseSession.id != session_obj.id,
+            CourseSession.location_id == session_obj.location_id,
+            CourseSession.status == SessionStatus.SCHEDULED,
+            CourseSession.start_at_utc < session_obj.end_at_utc,
+            CourseSession.end_at_utc > session_obj.start_at_utc,
+            CourseType.code == REHEARSAL_STUDIO_COURSE_CODE,
+            Booking.status == BookingStatus.BOOKED,
+        )
+    )
+    return int(booked_studio_count or 0) >= 1
+
+
 def run_auto_cancel_empty_sessions_job(db: Session, *, now: datetime, limit: int = 200) -> AutoCancelResult:
     sessions = db.scalars(
         select(CourseSession)
@@ -188,6 +245,8 @@ def run_auto_cancel_empty_sessions_job(db: Session, *, now: datetime, limit: int
         if threshold is None:
             continue
         session_obj.auto_cancel_checked_at = now
+        if _has_booked_overlapping_rehearsal_studio(db, session_obj=session_obj):
+            continue
         booked_count = int(
             db.scalar(
                 select(func.count(Booking.id))
