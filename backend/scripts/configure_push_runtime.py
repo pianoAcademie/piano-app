@@ -56,6 +56,7 @@ def _active_non_system_user_count() -> int:
         check=True,
         capture_output=True,
         text=True,
+        stdin=subprocess.DEVNULL,
     )
     output_lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     if not output_lines:
