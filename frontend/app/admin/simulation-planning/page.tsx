@@ -540,30 +540,52 @@ function TeacherAssignmentBoard({
   const warningSlots = assignedSlots.filter((slot) => slot.teacher_assignment_warnings.length > 0);
   const dayGroups = groupByWeekday(slots);
   const teacherSummary = new Map<string, {
+    label: string;
     slotCount: number;
     minutes: number;
     confirmed: number;
     warnings: number;
     professorId: string | null;
     slotKeys: string[];
+    assignments: Array<{
+      slot: AdminPlanningSimulationSlotOut;
+      position: number;
+      status: "PREVISIONAL" | "CONFIRMED";
+    }>;
   }>();
 
   for (const slot of assignedSlots) {
-    const label = slot.teacher_assignment_label || "-";
-    const current = teacherSummary.get(label) || {
-      slotCount: 0,
-      minutes: 0,
-      confirmed: 0,
-      warnings: 0,
-      professorId: slot.teacher_assignment_professor_id,
-      slotKeys: [],
-    };
-    current.slotCount += 1;
-    current.minutes += slotTeachingMinutes(slot);
-    current.confirmed += slot.teacher_assignment_status === "CONFIRMED" ? 1 : 0;
-    current.warnings += slot.teacher_assignment_warnings.length > 0 ? 1 : 0;
-    current.slotKeys.push(slot.slot_key);
-    teacherSummary.set(label, current);
+    const labels = slot.teacher_assignment_labels.length > 0
+      ? slot.teacher_assignment_labels
+      : slot.teacher_assignment_label
+        ? [slot.teacher_assignment_label]
+        : [];
+
+    labels.forEach((label, index) => {
+      const professorId = slot.teacher_assignment_professor_ids[index]
+        ?? (index === 0 ? slot.teacher_assignment_professor_id : null);
+      const status = slot.teacher_assignment_statuses[index]
+        ?? (index === 0 ? slot.teacher_assignment_status : null)
+        ?? "PREVISIONAL";
+      const summaryKey = professorId || `placeholder:${label.trim().toLocaleLowerCase("fr")}`;
+      const current = teacherSummary.get(summaryKey) || {
+        label,
+        slotCount: 0,
+        minutes: 0,
+        confirmed: 0,
+        warnings: 0,
+        professorId,
+        slotKeys: [],
+        assignments: [],
+      };
+      current.slotCount += 1;
+      current.minutes += slotTeachingMinutes(slot);
+      current.confirmed += status === "CONFIRMED" ? 1 : 0;
+      current.warnings += slot.teacher_assignment_warnings.length > 0 ? 1 : 0;
+      current.slotKeys.push(slot.slot_key);
+      current.assignments.push({ slot, position: index + 1, status });
+      teacherSummary.set(summaryKey, current);
+    });
   }
 
   return (
@@ -603,12 +625,58 @@ function TeacherAssignmentBoard({
           <h3>{text(language, "Charge prévisionnelle par professeur", "Provisional workload by teacher")}</h3>
           <div>
             {Array.from(teacherSummary.entries())
-              .sort(([first], [second]) => first.localeCompare(second, "fr"))
-              .map(([label, summary]) => (
-                <article className={summary.warnings > 0 ? "has-warning" : ""} key={label}>
-                  <strong>{label}</strong>
-                  <span>{summary.slotCount} {text(language, "cours", "courses")} · {formatTeachingMinutes(summary.minutes, language)}</span>
-                  <small>{summary.confirmed} {text(language, "confirmé(s)", "confirmed")} {summary.warnings > 0 ? `· ${summary.warnings} ${text(language, "alerte(s)", "warning(s)")}` : ""}</small>
+              .sort(([, first], [, second]) => first.label.localeCompare(second.label, "fr"))
+              .map(([summaryKey, summary]) => (
+                <article className={summary.warnings > 0 ? "has-warning" : ""} key={summaryKey}>
+                  <details className="simulation-assignment-teacher-details">
+                    <summary>
+                      <span className="simulation-assignment-teacher-metrics">
+                        <strong>{summary.label}</strong>
+                        <span>{summary.slotCount} {text(language, "cours", "courses")} · {formatTeachingMinutes(summary.minutes, language)}</span>
+                        <small>{summary.confirmed} {text(language, "confirmé(s)", "confirmed")} {summary.warnings > 0 ? `· ${summary.warnings} ${text(language, "alerte(s)", "warning(s)")}` : ""}</small>
+                      </span>
+                      <span className="simulation-assignment-teacher-toggle">
+                        {text(language, "Voir les créneaux", "View time slots")}
+                      </span>
+                    </summary>
+                    <div className="simulation-assignment-teacher-slot-list">
+                      {summary.assignments
+                        .slice()
+                        .sort((first, second) => (
+                          first.slot.weekday - second.slot.weekday
+                          || first.slot.start_time.localeCompare(second.slot.start_time)
+                          || first.slot.location_name.localeCompare(second.slot.location_name, "fr")
+                          || first.slot.course_type_name.localeCompare(second.slot.course_type_name, "fr")
+                        ))
+                        .map(({ slot, position, status }) => (
+                          <div className="simulation-assignment-teacher-slot" key={`${slot.slot_key}-${position}`}>
+                            <div>
+                              <strong>{slot.weekday_label}</strong>
+                              <time>{slot.start_time}–{slot.end_time}</time>
+                            </div>
+                            <div>
+                              <strong>{slot.course_type_name}</strong>
+                              <span>{slot.location_name} · {formatSeasonWindow(slot, language)}</span>
+                            </div>
+                            <div>
+                              <span className={`simulation-assignment-status ${status.toLowerCase()}`}>
+                                {status === "CONFIRMED"
+                                  ? text(language, "Confirmé", "Confirmed")
+                                  : text(language, "Prévisionnel", "Provisional")}
+                              </span>
+                              {position > 1 ? (
+                                <small>{text(language, `Intervenant ${position}/4`, `Teacher ${position}/4`)}</small>
+                              ) : null}
+                              {slot.teacher_assignment_warnings.length > 0 ? (
+                                <small className="simulation-assignment-teacher-slot-warning">
+                                  {text(language, "Alerte à vérifier", "Warning to review")}
+                                </small>
+                              ) : null}
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  </details>
                   {canEdit && !summary.professorId ? (
                     <form action={adminUpdatePlanningSimulationTeacherAssignmentAction} className="simulation-assignment-replace-form">
                       <input type="hidden" name="school_year_label" value={schoolYearLabel} />
